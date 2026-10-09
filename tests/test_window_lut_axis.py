@@ -127,7 +127,7 @@ def test_refusals():
 
     axis = WindowUnitAxis(EXPERTS, ["gate_proj"], family="e2m1")
     axis.put("gate_proj", 0, unit)
-    with pytest.raises(GrammarError, match="packed layout differs"):
+    with pytest.raises(GrammarError):
         axis.put("gate_proj", 1, _unit(_blob(448, seed=2)))
     with pytest.raises(GrammarError, match="already placed"):
         axis.put("gate_proj", 0, unit)

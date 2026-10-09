@@ -59,10 +59,9 @@ set and dispatches through the same ``select_nvfp4_moe_backend`` /
 refused by name through the FP8 builder's front door
 (``refuse_a_family_with_no_expert_route``).  ``TESSERA_BF16`` goes to
 ``moe_route`` too (tessera#609): a compressed BF16 expert stack is served on
-the compact native window lane with the folded arithmetic, and has no
-materialising path; a SOURCE-precision BF16 stack is still the passthrough
-``ignore`` gives.  When the checkpoint carries
-``research_selected_moe``, only the stacks that block serves
+the compact native window lane with the row scale on the fp32 epilogue,
+and has no materialising path; a SOURCE-precision BF16 stack is still
+the passthrough ``ignore`` gives.  When the checkpoint carries
 (``ResearchSelectedMoeConfig.applies_to``: FP8/E4M3, BF16/BF16) take the
 selected owner; an NVFP4 stack beside them takes its production builder.
 
@@ -586,7 +585,10 @@ class TesseraConfig(QuantizationConfig):
             if scheme is not None:
                 self._require_a_cutter(prefix)
                 self._declare_once()
-                return build_tessera_method(scheme, prefix, self._mode)
+                from .projection_routes import adapt_method
+
+                method = build_tessera_method(scheme, prefix, self._mode)
+                return adapt_method(method, scheme, prefix, layer)
             if lookup_prefix in ignored:
                 return UnquantizedLinearMethod()
             raise ValueError(

@@ -414,10 +414,9 @@ def validate_activation_quantizers(block: Any, *, platforms: Iterable[str],
     (tessera#555): the fp4 rounding decision belongs to the runtime's compiled
     operator, and two builds of one operator are two objects, so each image's
     table travels under its own ``generated`` block.  A consumer admits a cell
-    only under an attestation whose image is the one executing.  Two entries
-    naming one image is refused -- the second would shadow the first -- as is
-    a platform entry that is not a non-empty list: a reader that cannot read
-    this grammar must fail closed on the schema name, never half-read it.
+    only under an attestation whose image is the one executing.
+    Two entries naming one image are refused. Each platform entry must be
+    a non-empty image list. An empty root mapping makes no current claim.
 
     ABSENCE IS NOT A DEFAULT.  A platform or a contract with no entry
     publishes no attestation at all, and a consumer gate must refuse the
@@ -437,8 +436,8 @@ def validate_activation_quantizers(block: Any, *, platforms: Iterable[str],
             f"produced this table, under experiments/; got {generator!r}"
         )
     entries = block["platforms"]
-    if not isinstance(entries, Mapping) or not entries:
-        raise ValueError(f"{where}.platforms must be a non-empty object")
+    if not isinstance(entries, Mapping):
+        raise ValueError(f"{where}.platforms must be an object")
     known = set(platforms)
     for platform, attestations in entries.items():
         at = f"{where}.platforms[{platform!r}]"

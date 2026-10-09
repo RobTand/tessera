@@ -45,7 +45,7 @@ from tessera import serving_parts as parts
 from tessera import source_profiles
 
 ROOT = Path(__file__).resolve().parents[1]
-HIDDEN, MOE_INTER, EXPERTS = 128, 64, 3
+HIDDEN, MOE_INTER, EXPERTS = 128, 256, 3
 LAYER = "model.language_model.layers.1"
 STACK = f"{LAYER}.mlp.experts"
 PART_ARGV = ("--partition", "0/1", "--partition-runtime-image",
@@ -96,7 +96,37 @@ def _write(tmp_path, tensors, config=None):
     return src
 
 
+def _fixture_output_sizes(*, hidden=HIDDEN, mlp_inter=2 * HIDDEN, shared_inter=MOE_INTER):
+    return {
+        "language_model.model.layers.*.self_attn.o_proj": [hidden],
+        "language_model.model.layers.*.mlp.down_proj": [hidden],
+        "language_model.model.layers.*.mlp.gate_up_proj": [mlp_inter, mlp_inter],
+        "language_model.model.layers.*.mlp.shared_experts.down_proj": [hidden],
+        "language_model.model.layers.*.mlp.shared_experts.gate_up_proj": [shared_inter, shared_inter],
+    }
+
+
+def _declare_fixture_geometry(monkeypatch, *, hidden=HIDDEN,
+                              mlp_inter=2 * HIDDEN, shared_inter=MOE_INTER):
+    """Declare the small fixture partitions without a production contract change."""
+    import copy
+    from tessera.serving.contract import construction_entry as live_entry
+
+    sizes = _fixture_output_sizes(hidden=hidden, mlp_inter=mlp_inter, shared_inter=shared_inter)
+
+    def _entry(architectures, contract=None):
+        entry = live_entry(architectures) if contract is None else live_entry(architectures, contract)
+        if entry is None or entry.get("architecture") != "Glm5NextForConditionalGeneration":
+            return entry
+        entry = copy.deepcopy(entry)
+        entry.setdefault("output_sizes", {}).update(sizes)
+        return entry
+
+    monkeypatch.setattr(export, "construction_entry", _entry)
+
+
 def _export(tmp_path, monkeypatch, tensors, plan, *extra, config=None):
+    _declare_fixture_geometry(monkeypatch)
     src = _write(tmp_path, tensors, config)
     out = tmp_path / "out"
     argv = ["export", str(src), str(out), "--grid", "E4M3", "--q256", "1024",
@@ -302,13 +332,10 @@ def _selected_export_env(site, repo):
 
 
 def _run_selected_exporter(tmp_path, site, repo, out_name="out"):
-    """The real exporter main, in a subprocess, under the fixture install.
+    """Run the real exporter under the fixture install.
 
-    The driver binds only the ANCESTRY REFERENCE to the fixture's own
-    (main passes the genuine b770 constant, which no fixture can forge);
-    every check around it -- interpreter, install, projection, clean HEAD,
-    loaded origins, the receipt and its sealing -- is the production code
-    reached through ``export_serving.main`` itself.
+    The driver declares the fixture ancestry and miniature output partitions.
+    All identity checks, origin checks and receipt sealing use production code.
     """
     src = _write(tmp_path, _checkpoint(), _config())
     plan_path = tmp_path / "plan.json"
@@ -316,12 +343,20 @@ def _run_selected_exporter(tmp_path, site, repo, out_name="out"):
     out = tmp_path / out_name
     base = _fixture_ancestor(repo)
     driver = tmp_path / "driver.py"
+    sizes = _fixture_output_sizes()
     driver.write_text(
         "import sys\n"
         "from tessera import export_serving as export\n"
         "real = export.authenticate_producer_python\n"
         f"export.authenticate_producer_python = "
         f"lambda *a, **k: real(*a, descends_from={base!r}, **k)\n"
+        # The fixture is a miniature; state its own partition lists here,
+        # inside the subprocess, beside the ancestry binding above.
+        "import copy\n"
+        "from tessera.serving.contract import construction_entry as live_entry\n"
+        f"small = copy.deepcopy(live_entry(['Glm5NextForConditionalGeneration']))\n"
+        f"small['output_sizes'].update({sizes!r})\n"
+        "export.construction_entry = lambda architectures, contract=None: small\n"
         "export.main()\n")
     done = subprocess.run(
         [sys.executable, str(driver), *_selected_export_argv(src, out, plan_path)],
@@ -458,7 +493,7 @@ def test_parts_with_different_scale_bindings_refuse_to_merge(tmp_path):
 # The input-scale binding seals the bytes the roles consumed
 # --------------------------------------------------------------------------
 
-NVFP4_HIDDEN = NVFP4_INTER = 64
+NVFP4_HIDDEN = NVFP4_INTER = 256
 
 
 def _nvfp4_scales(experts=1):

@@ -1,23 +1,26 @@
-"""The eight GLM-image cells rest on a committed receipt, not on a summary of it.
+"""The four GLM-image E4M3 cells rest on a committed receipt, not on a summary of it.
 
 Contract v38 (tessera#604) minted dense and routed ``TESSERA_E4M3_K1`` and
 ``TESSERA_BF16_K1`` cells on the GLM serving image from one route census of a
 GLM-5.3-Flash stub (one dense and three MoE layers), TP 1, eager, resident.
-The receipt and the stub's ``config.json`` are committed byte for byte under
-``experiments/results/``; this module replays the census tool's own join --
-``all_structure_agreement``, the function the tool calls on a live serve --
-over the receipt's records against the PACKAGED table.
+Contract v59 withdrew the four BF16 cells. The T16 epilogue cutover changed
+the BF16 arithmetic. The folded launches the receipt recorded no longer state
+what the build executes. The receipt and the stub's ``config.json`` stay
+committed byte for byte under ``experiments/results/``; this module
+replays the census tool's own join -- ``all_structure_agreement``, the
+function the tool calls on a live serve -- over the receipt's records against
+the PACKAGED table.
 
 What it pins:
 
-1. every one of the nine served modules, in both phases, joins a cell, and the
-   join agrees (the fail-before: on contract v37 every module is
-   ``unattested``, because no cell names this image and three of the four
-   pairs were experimental);
-2. the cells still cover every rung the stub carried per family and
-   structure -- a receipt rung dropped from a cell fails here.  Contract v39
-   widened six of them on eight more receipts, so the EXACT coverage check
-   over all nine lives in ``tests/test_glm_u1_census_cells.py``;
+1. every E4M3 module, in both phases, joins a cell, and the BF16 records join
+   no cell. Withdrawal is absence, and an unattested record is not a problem.
+   The fail-before is the v37 table: no cell names this image there, so every
+   module is ``unattested``;
+2. the E4M3 cells still cover every rung the stub carried for that family --
+   a receipt rung dropped from a cell fails here. Contract v39 widened six of
+   them on eight more receipts, so the EXACT coverage check over all nine
+   lives in ``tests/test_glm_u1_census_cells.py``;
 3. the receipt is the one the contract cites: same checkpoint config, same
    image, same toolchain, the serve's backends recorded.
 """
@@ -43,8 +46,7 @@ RECEIPT_SHA256 = "d10738cd5692588a4afd4b8f3aeeb33924b99a8e144f84bb125624c660a34e
 IMAGE = ("localhost/prismaquant/spark-vllm-nccl230@sha256:"
          "f8dbe1a02e33ccb7416ab40b72a83e8c725dcb6fed3e90bae4a658cce5e1b7f5")
 CELL_IDS = sorted(
-    f"tessera_{family}_{structure}_sm121_{regime}_resident"
-    for family in ("e4m3_k1", "bf16_k1")
+    f"tessera_e4m3_k1_{structure}_sm121_{regime}_resident"
     for structure in ("dense", "routed_moe")
     for regime in ("decode", "batch"))
 
@@ -112,23 +114,39 @@ def test_the_committed_receipt_is_the_one_the_contract_cites():
 
 
 def test_every_served_module_joins_a_cell_in_both_phases():
+    """Current agreement: the E4M3 records join, the BF16 records do not.
+
+    Contract v59 withdrew the four BF16 cells and gave them no new names. The
+    folded launches the receipt recorded have no current cell. The expected
+    split is derived from the receipt's own policies, family by family. A
+    record in the wrong cell still fails here.
+    """
+    receipt = _receipt()
+    want = {}
+    for phase, records in receipt["records"].items():
+        for name, record in records.items():
+            family = PAYLOAD_FAMILY_BY_ROUTE[record["policy"].partition(":")[0]]
+            structure = "routed_moe" if record["kind"] == "moe" else "dense"
+            counts = want.setdefault((structure, phase), {})
+            counts[family] = counts.get(family, 0) + 1
     block, problems = _agreement(load_serving_contract())
     assert problems == []
     assert block["agrees"] is True, json.dumps(block, indent=1)[:2000]
-    seen = 0
     for structure, per in block["structures"].items():
-        assert per["agrees"] is True, structure
         for phase, row in per["phases"].items():
-            assert row["unattested"] == 0, (structure, phase, row)
-            assert row["covered_by_cell"] == row["modules"] > 0, (structure, phase, row)
-            seen += row["modules"]
-    # Nine modules, two phases.
-    assert seen == 18
+            counts = want[(structure, phase)]
+            assert row["modules"] == sum(counts.values()), (structure, phase, row)
+            assert row["covered_by_cell"] == counts.get("TESSERA_E4M3_K1", 0), (
+                structure, phase, row)
+            assert row["unattested"] == counts.get("TESSERA_BF16_K1", 0), (
+                structure, phase, row)
+    cells = load_serving_contract()["lane_eligibility"]["cells"]
+    assert [c["id"] for c in cells if c["family"] == "TESSERA_BF16_K1"] == []
 
 
 def test_the_join_fails_on_the_table_before_these_cells():
-    """The fail-before, as a mutation of the packaged table: drop the eight
-    cells and no served module is covered any more."""
+    """The fail-before, as a mutation of the packaged table: drop the four
+    E4M3 cells and no served module is covered any more."""
     contract = load_serving_contract()
     contract["lane_eligibility"]["cells"] = [
         c for c in contract["lane_eligibility"]["cells"] if c["id"] not in CELL_IDS]

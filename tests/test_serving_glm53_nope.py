@@ -2,7 +2,7 @@
 from types import SimpleNamespace
 
 import pytest
-pytest.importorskip("vllm")
+pytest.importorskip("vllm.config")
 
 from tessera.serving import glm53_nope
 from tessera.serving.glm53_nope import _config_reason, TesseraGLM53NoPEBackend

@@ -1,10 +1,19 @@
 """The canonical admission home is metadata-only and fail closed on bad evidence."""
 import copy
 import json
+import os
+from pathlib import Path
 import subprocess
 import sys
 import unittest
 from tessera.rung_allowability import admit_rung, validate_index, validate_table
+
+#: The tree under test.  A child interpreter does not see the ``sys.path``
+#: entry ``conftest.py`` gives this process, so without this it imports an
+#: installed ``tessera`` pin -- one that may predate this checkout, or none.
+SRC = Path(__file__).resolve().parents[1] / "src"
+CHILD_ENV = {**os.environ, "PYTHONPATH": os.pathsep.join(
+    [str(SRC), *filter(None, [os.environ.get("PYTHONPATH")])])}
 
 
 def fixture():
@@ -22,7 +31,7 @@ def fixture():
 
 class Admission(unittest.TestCase):
     def test_metadata_only_import(self):
-        subprocess.run([sys.executable,"-c","import sys; import tessera.rung_allowability; assert 'torch' not in sys.modules; assert not any(k.startswith('tessera.serving') for k in sys.modules)"],check=True)
+        subprocess.run([sys.executable,"-c","import sys; import tessera.rung_allowability; assert 'torch' not in sys.modules; assert not any(k.startswith('tessera.serving') for k in sys.modules)"],check=True,env=CHILD_ENV)
 
     def test_valid_and_allowed(self):
         t=fixture()
@@ -133,4 +142,455 @@ class Admission(unittest.TestCase):
 
 
 
+class GeometryHarvest(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        import importlib.util
+        if importlib.util.find_spec('torch') is None:
+            # bench_rates imports torch at module level; the hosted bytes-only run has none.
+            raise unittest.SkipTest('torch is required by experiments/t8r_speed/bench_rates.py')
+        from pathlib import Path
+        sys.path.insert(0,str(Path(__file__).resolve().parents[1]/'experiments'/'t8r_speed'))
+        import bench_rates, rung_allowability_table
+        cls.rates,cls.harvest=bench_rates,rung_allowability_table
+
+    def test_increment_reader_findings_preserve_correctness_holds(self):
+        import importlib.util
+        if importlib.util.find_spec("torch") is not None and importlib.util.find_spec("jsonschema") is None:
+            self.fail("jsonschema is missing in this venv. Install it before running this test. The pool venv runs this test with CPU torch. PB x86 CPU actions also run it. Hosted pure has no torch and never covers it.")
+        import tempfile
+        from pathlib import Path
+        from test_rung_performant_policy import v3_fixture
+        table = v3_fixture()
+        table['evidence'] = {}
+        table['kernel_build']['metadata'] = {'observed_signature': {'kernel_sha': 'reader-source'}}
+        table['rungs'][1]['anomaly_flags'] = ['prior_hold']
+        table['rungs'][1]['quality']['anomaly_flags'] = ['prior_hold']
+        prior = {'kind': 'reader_correctness_finding', 'blocking': True, 'finding': {'anomaly_flag': 'prior_hold'}}
+        table['rungs'][1]['observations'].append(prior)
+        finding = {'format': table['format'], 'kernel_sha': 'reader-source', 'anomaly_flag': 'reader_wrong'}
+        findings = [finding, dict(finding, kernel_sha='other-source', anomaly_flag='other_source'),
+                    dict(finding, format='TESSERA_BF16_K1', anomaly_flag='other_family')]
+        repo = Path(__file__).resolve().parents[1]
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / 'input.json').write_text(json.dumps(table))
+            (root / 'findings.json').write_text(json.dumps(findings))
+            command = [sys.executable, str(repo / 'experiments/t8r_speed/rung_allowability_table.py'),
+                       '--input-table', str(root / 'input.json'), '--reader-findings', str(root / 'findings.json'),
+                       '--root', str(root), '--out', str(root / 'out'), '--version', '2',
+                       '--schema', str(repo / 'docs/schema/allowable-rung-table.v3.schema.json'),
+                       '--index-schema', str(repo / 'docs/schema/index.v2.schema.json')]
+            result = subprocess.run(command, capture_output=True, text=True, env=CHILD_ENV)
+            self.assertEqual(result.returncode, 0, result.stderr + result.stdout)
+            actual = json.loads((root / 'out/table.json').read_text())
+        decision = admit_rung(actual, format=table['format'], kernel_build_id='build', rung=768, cell_ids=['dense:o:M1'])
+        self.assertEqual(decision['status'], 'hold')
+        self.assertEqual(actual['rungs'][0]['anomaly_flags'], ['reader_wrong'])
+        self.assertEqual(actual['rungs'][1]['anomaly_flags'], ['prior_hold', 'reader_wrong'])
+        self.assertIn(prior, actual['rungs'][1]['observations'])
+        for row in actual['rungs']:
+            self.assertEqual(row['quality']['anomaly_flags'], row['anomaly_flags'])
+            self.assertIn({'kind': 'reader_correctness_finding', 'blocking': True, 'exclusion_basis': False,
+                           'finding': finding}, row['observations'])
+
+    def test_bf16_true_step_and_wide_boundaries(self):
+        for q in (256,257,2048,2049,3584,3585,3840,3841,4095,4096):
+            rate,fraction=self.rates.parse_case(f'q{q}','value')
+            self.assertEqual(self.rates.q256_of(rate,fraction),q)
+        for q in (255,4097):
+            with self.assertRaises(ValueError):self.rates.parse_case(f'q{q}','value')
+        with self.assertRaises(ValueError):self.rates.parse_case('q2049','e4m3')
+
+    def test_bf16_projection_uses_actual_recipe_width_and_finite_table(self):
+        import torch
+        from tessera import routed_fused
+        for q,width in ((3584,14),(3585,15),(3840,15),(3841,16),(4096,16)):
+            rate,fraction=self.rates.parse_case(f'q{q}','value')
+            p=self.rates.build_projection(routed_fused,1,512,256,rate,
+                round(256*(fraction or 0)),41,torch.device('cpu'),False,bf16_table=True)
+            self.assertEqual(p['window_bits'],width)
+            self.assertEqual(p['table'].numel(),1<<width)
+            self.assertTrue(bool(torch.isfinite(p['table'].view(torch.bfloat16)).all()))
+            self.assertTrue(bool(((p['init']>=0)&(p['init']<(1<<width))).all()))
+
+    def test_index_merge_preserves_t8_and_immutable_versions(self):
+        index={'schema':'fleet.rung_allowability.index.v1','formats':{
+            'TESSERA_E4M3_K1':{'kernel_builds':{'existing':{
+                'current_version':9,'versions':{'9':{'path':'TESSERA_E4M3_K1/existing/v0009.json',
+                'table_schema':'fleet.rung_allowability.v1','table_status':'complete'}}}}}}}
+        before=copy.deepcopy(index['formats']['TESSERA_E4M3_K1'])
+        table={'schema':'fleet.rung_allowability.v1','table_status':'partial'}
+        self.harvest.merge_index(index,'TESSERA_BF16_K1','value',1,'TESSERA_BF16_K1/value/v0001.json',table)
+        self.assertEqual(index['formats']['TESSERA_E4M3_K1'],before)
+        with self.assertRaises(ValueError):
+            self.harvest.merge_index(index,'TESSERA_BF16_K1','value',1,'TESSERA_BF16_K1/value/changed.json',table)
+
+    def test_select_identical_published_version_preserves_history(self):
+        index={'schema':'fleet.rung_allowability.index.v1','formats':{'TESSERA_E4M3_K1':{'kernel_builds':{'old':{'current_version':9,'versions':{'9':{'path':'TESSERA_E4M3_K1/old/v0009.json','table_schema':'fleet.rung_allowability.v1','table_status':'complete'}}}}}}}
+        prior=copy.deepcopy(index['formats']['TESSERA_E4M3_K1'])
+        table={'schema':'fleet.rung_allowability.v2','table_status':'partial'}
+        args=(index,'TESSERA_BF16_K1','value',2,'TESSERA_BF16_K1/value/v0002.json',table)
+        self.harvest.merge_index(*args)
+        self.harvest.merge_index(*args)
+        self.assertEqual(index['formats']['TESSERA_E4M3_K1'],prior)
+        with self.assertRaises(ValueError):
+            self.harvest.merge_index(index,'TESSERA_BF16_K1','value',2,'TESSERA_BF16_K1/value/changed.json',table)
+
+
+    def test_activation_uses_staged_candidate_and_keeps_immutable_history(self):
+        import tempfile,hashlib
+        from pathlib import Path
+        with tempfile.TemporaryDirectory() as directory:
+            root=Path(directory);published=root/'tables';published.mkdir()
+            versions={}
+            hashes={}
+            for version in (1,2,3):
+                t=fixture();t['table_version']=version
+                relative=f'TESSERA_E4M3_K1/build/v{version:04d}.json'
+                path=published/relative;path.parent.mkdir(parents=True,exist_ok=True)
+                path.write_text(json.dumps(t));hashes[relative]=hashlib.sha256(path.read_bytes()).hexdigest()
+                versions[str(version)]={'path':relative,'table_schema':t['schema'],'table_status':t['table_status']}
+            current={'schema':'fleet.rung_allowability.index.v1','formats':{'TESSERA_E4M3_K1':{'kernel_builds':{'build':{'current_version':1,'versions':{k:versions[k] for k in ('1','3')}}}}}}
+            candidate=copy.deepcopy(current);candidate['schema']='fleet.rung_allowability.index.v2'
+            candidate['formats']['TESSERA_E4M3_K1']['kernel_builds']['build']={'current_version':2,'versions':{k:versions[k] for k in ('1','2')}}
+            (published/'index.json').write_text(json.dumps(current));(published/'index.v2-candidate.json').write_text(json.dumps(candidate))
+            script=Path(__file__).resolve().parents[1]/'experiments'/'t8r_speed'/'rung_allowability_table.py'
+            command=[sys.executable,str(script),'--activate-index','--publish-root',str(published),
+                     '--root',str(root/'must-not-reharvest'),'--schema',str(root/'unused-schema'),
+                     '--index-schema',str(root/'unused-index-schema'),'--out',str(root/'report'),
+                     '--version','2','--format','TESSERA_E4M3_K1']
+            result=subprocess.run(command,capture_output=True,text=True,env=CHILD_ENV)
+            self.assertEqual(result.returncode,0,result.stderr+result.stdout)
+            selected=json.loads((published/'index.json').read_text())['formats']['TESSERA_E4M3_K1']['kernel_builds']['build']
+            self.assertEqual(selected['current_version'],2)
+            self.assertEqual(set(selected['versions']),{'1','2','3'})
+            self.assertEqual(json.loads((published/'index.v1-history.json').read_text()),current)
+            self.assertEqual(subprocess.run(command,capture_output=True,text=True,env=CHILD_ENV).returncode,0)
+            for relative,digest in hashes.items():self.assertEqual(hashlib.sha256((published/relative).read_bytes()).hexdigest(),digest)
+
+
+
+
+
+def fixture_v2(body='window',decoder='fused_window'):
+    t=fixture()
+    t['schema']='fleet.rung_allowability.v2'
+    for row in t['rungs']:
+        g=row['measurements'][0]['geometry']
+        g.update(body_kind=body,decoder_kind=decoder,decoder_owner='tessera.routed_fused',
+                 execution_scope='raw_packed_window',word_ring={'kind':'staged','owner':'tessera.routed_fused'})
+        g['shared_memory']['kind']='used'
+        g['register_pressure']['compiler']='cuda_cuobjdump'
+    if body=='tcq':
+        t['format']='TESSERA_E2M1_K2';t['scope'].update(rung_min=896,rung_max=896)
+        t['rungs']=t['rungs'][:1];t['rungs'][0]['rung']=896
+        g=t['rungs'][0]['measurements'][0]['geometry']
+        g.update(decoder_owner='tessera.kernel_a4',execution_scope='native_tcq_decode_gemm',
+                 word_ring={'kind':'none','owner':'tessera.kernel_a4'})
+        g['decode_width']={'window_bits':0,'word_stages':None,'value_bits':4,'arity':2,
+            'run_widths':[7],'memory':6,'span':2,'history_lookup_bits':7,'label_lut_entries':128,
+            'block_m':64,'block_n':64,'block_k':128,'mma_k':64,'scale_group':16}
+        # Recorded native o_proj census from cff24a0e7d05; not a synthetic two-plane proxy.
+        g['alignment']={"rate":7,"arity":2,"span":2,"plane_shapes":{"select":[528392],"label":[1048576],"point":[6291456],"nibbles":[524288],"lut_bytes":[16],"label_lut":[128],"code_nibbles":[256]},"plane_bytes":{"select":528392,"label":1048576,"point":6291456,"nibbles":524288,"lut_bytes":16,"label_lut":512,"code_nibbles":256},"kind":"tcq_planes","owner":"tessera.compact_prep.prepare_span2_compact","slot_words":None,"plane_element_bytes":{"select":1,"label":1,"point":1,"nibbles":1,"lut_bytes":1,"label_lut":4,"code_nibbles":1}}
+        g['shared_memory']={'kind':'used','requested_bytes':12800,'available_bytes':101376,'fits':True}
+        g['register_pressure']={'compiler':'triton_compiled_kernel','REG':196,'SPILLS':0,
+            'STACK':None,'LOCAL':None,'SHARED':12800,'compiler_symbol':'_a4_span2_gemm_kernel'}
+    for row in t['rungs']:
+        cfg={'body':body,'span':2 if body=='tcq' else 1,'plane':'lut16' if body=='tcq' else 'channel',
+             'window_bits':0 if body=='tcq' else 14,'seed':0,'sigma':None,'channel_sigma':None if body=='tcq' else 1.0}
+        row['measurements'][0]['geometry']['recipe']=copy.deepcopy(cfg)
+        row['quality']['scope']={'format':t['format'],'grid':'E2M1x2' if body=='tcq' else 'E4M3',
+            'arity':2 if body=='tcq' else 1,'rung':row['rung'],'recipe':cfg,'kernel_kinds':['dense','routed'],
+            'owner':'tessera.export.encode_linear'}
+
+    return t
+
+
+class BodyAwareGrammar(unittest.TestCase):
+    def test_empty_required_native_input_planes_refuse(self):
+        for name in ('select','label','nibbles'):
+            t=fixture_v2('tcq','native_tcq');a=t['rungs'][0]['measurements'][0]['geometry']['alignment']
+            a['plane_shapes'][name]=[0];a['plane_bytes'][name]=0
+            with self.assertRaises(ValueError):validate_table(t)
+
+    def test_nonempty_point_for_zero_width_field_refuses(self):
+        t=fixture_v2('tcq','native_tcq');g=t['rungs'][0]['measurements'][0]['geometry']
+        g['decode_width']['run_widths']=[1]
+        g['alignment']['plane_shapes']['code_nibbles']=[4];g['alignment']['plane_bytes']['code_nibbles']=4
+        with self.assertRaises(ValueError):validate_table(t)
+
+
+    def test_quality_scope_missing_or_wrong_family_refuses(self):
+        for change in ('missing','family','grid','arity','recipe'):
+            t=fixture_v2('tcq','native_tcq');s=t['rungs'][0]['quality']['scope']
+            if change=='missing':t['rungs'][0]['quality'].pop('scope')
+            elif change=='family':s['format']='TESSERA_BF16_K1'
+            elif change=='grid':s['grid']='BF16'
+            elif change=='arity':s['arity']=1
+            else:s['recipe']['body']='window'
+            with self.assertRaises(ValueError):validate_table(t)
+
+
+    def test_native_plane_census_missing_real_input_refuses(self):
+        for name in ('select','label','point','nibbles','lut_bytes','label_lut','code_nibbles'):
+            t=fixture_v2('tcq','native_tcq');a=t['rungs'][0]['measurements'][0]['geometry']['alignment']
+            for field in ('plane_shapes','plane_bytes','plane_element_bytes'):a[field].pop(name)
+            with self.assertRaises(ValueError):validate_table(t)
+
+    def test_native_plane_byte_count_matches_actual_tensor_width(self):
+        t=fixture_v2('tcq','native_tcq')
+        t['rungs'][0]['measurements'][0]['geometry']['alignment']['plane_bytes']['label_lut']+=1
+        with self.assertRaises(ValueError):validate_table(t)
+
+
+    def test_actual_zero_width_point_has_zero_bytes_not_a_placeholder(self):
+        t=fixture_v2('tcq','native_tcq');row=t['rungs'][0];row['rung']=128
+        t['scope'].update(rung_min=128,rung_max=128)
+        cell=row['measurements'][0];key=t['scope']['required_cells'][0]
+        cell.update(cell_id='routed:gate_up:M1',kernel_kind='routed',shape_id='gate_up')
+        key.update(cell_id='routed:gate_up:M1',kernel_kind='routed',shape_id='gate_up')
+        g=cell['geometry'];g['decode_width']['run_widths']=[1]
+        g['alignment']['plane_shapes']['point']=[0];g['alignment']['plane_bytes']['point']=0
+        g['alignment']['plane_shapes']['code_nibbles']=[4];g['alignment']['plane_bytes']['code_nibbles']=4
+        row['quality']['scope'].update(rung=128,kernel_kinds=['routed'])
+        validate_table(t)
+        g['alignment']['plane_bytes']['point']=1
+        with self.assertRaises(ValueError):validate_table(t)
+
+
+    def test_valid_native_tcq_and_explicit_v1_history(self):
+        t=fixture_v2('tcq','native_tcq')
+        self.assertIs(validate_table(t),t)
+        self.assertEqual(admit_rung(t,format=t['format'],kernel_build_id='build',rung=896)['status'],'allow')
+        legacy=fixture();self.assertIs(validate_table(legacy),legacy)
+
+    def test_window_zero_remains_invalid_in_both_versions(self):
+        for t in (fixture(),fixture_v2()):
+            t['rungs'][0]['measurements'][0]['geometry']['decode_width']['window_bits']=0
+            with self.assertRaises(ValueError):validate_table(t)
+
+    def test_unknown_missing_body_or_owner_refuses(self):
+        for field,value in (('body_kind','unknown'),('body_kind',None),('decoder_owner',None),('word_ring',{})):
+            t=fixture_v2('tcq','native_tcq');g=t['rungs'][0]['measurements'][0]['geometry']
+            if value is None:g.pop(field)
+            else:g[field]=value
+            with self.assertRaises(ValueError):validate_table(t)
+
+    def test_native_tcq_scope_and_history_are_real_facts(self):
+        for mutate in (lambda g:g.update(execution_scope='raw_packed_window'),
+                       lambda g:g['decode_width'].update(window_bits=14),
+                       lambda g:g['decode_width'].update(history_lookup_bits=6),
+                       lambda g:g['decode_width'].update(label_lut_entries=64),
+                       lambda g:g['alignment'].update(slot_words=8)):
+            t=fixture_v2('tcq','native_tcq');mutate(t['rungs'][0]['measurements'][0]['geometry'])
+            with self.assertRaises(ValueError):validate_table(t)
+
+    def test_v2_witness_preserves_scope_and_finite_paired_mean(self):
+        t=fixture_v2();low,high=t['rungs'];low.update(excluded=True,dominating_rung=769)
+        a=copy.deepcopy(low['measurements'][0]);b=copy.deepcopy(high['measurements'][0])
+        low['dominance_evidence']=[{'cell_id':a['cell_id'],'lower_time_us':a['kernel_time_us'],
+            'higher_time_us':b['kernel_time_us'],'comparison_id':'paired','lower_measurement':a,'higher_measurement':b}]
+        validate_table(t)
+        for mutate in (lambda w:w['geometry'].update(body_kind='tcq'),
+                       lambda w:w['geometry'].update(execution_scope='native_tcq_decode_gemm'),
+                       lambda w:w.update(kernel_time_us=float('nan')),
+                       lambda w:w.update(pass_times_us=[8,8])):
+            bad=copy.deepcopy(t);mutate(bad['rungs'][0]['dominance_evidence'][0]['higher_measurement'])
+            with self.assertRaises(ValueError):validate_table(bad)
+
+
+
 if __name__=='__main__': unittest.main()
+
+
+def _rd_widths(q):
+    """The run widths a k-step rung q256 mixes: one whole rate, or the two that bracket it."""
+    low, remainder = divmod(q, 256)
+    return [low, low + 1] if remainder else [low]
+
+
+def _rd_geometry(rates):
+    """Actual register-direct facts (eng-regdirect-build stage 1): fragment-order units of
+    R words x 32 lanes, a register prefetch ring, the 16 KiB E4M3 table in shared memory."""
+    return {"bits_per_256_weight_tile": {"numerator": 256 * rates[0], "denominator": 1},
+            "alignment": {"kind": "fragment_order", "owner": "tessera.fragment_wire", "lanes": 32,
+                          "history_lanes": 8, "unit_words": [32 * r for r in rates], "slot_words": None},
+            "shared_memory": {"kind": "used", "requested_bytes": 16384, "available_bytes": 101376, "fits": True},
+            "register_pressure": {"compiler": "cuda_ptxas", "REG": 128, "STACK": 0, "LOCAL": 0, "SHARED": 0},
+            "decode_width": {"window_bits": 14, "value_bits": 8, "run_widths": list(rates), "word_stages": None,
+                             "kstep_columns": 32, "prefetch_depth": 4, "superblock_routes": 8, "k_parts": 3},
+            "body_kind": "window", "decoder_kind": "register_direct", "decoder_owner": "tessera.regdirect_routed",
+            "execution_scope": "register_direct_fragment",
+            "word_ring": {"kind": "register", "owner": "tessera.regdirect_routed"},
+            "recipe": {"body": "window", "span": 1, "plane": "channel", "window_bits": 14, "seed": 0,
+                       "sigma": None, "channel_sigma": 1.0}}
+
+
+def fixture_register_direct(steps=None, rungs=(768, 770), shapes=("gate_up",)):
+    """A v2 table for the register-direct kernel; ``steps`` is the per-shape q256 grid."""
+    build = {"id": "regdirect-sm_121", "source_commit": "abc", "library_variant": "regdirect",
+             "architecture": "sm_121", "activation_contract": "fp8", "metadata": {"serving_qualified": False}}
+    cells = [{"cell_id": f"routed:{s}:M1", "kernel_kind": "routed", "shape_id": s, "M": 1} for s in shapes]
+    dims = {"gate_up": (1024, 4096), "down": (4096, 1024)}
+    scope = {"rung_min": rungs[0], "rung_max": rungs[-1], "grid_step_q256": rungs[1] - rungs[0],
+             "grid_owner": "tessera.grammar k-step quota", "required_cells": cells}
+    scope["shapes"] = [{"shape_id": s, "kernel_kind": "routed", "rows": dims[s][0], "columns": dims[s][1]} for s in shapes]
+    if steps is not None:
+        scope["grid_steps_q256"] = steps
+    rows = []
+    for q in range(rungs[0], rungs[-1] + 1, rungs[1] - rungs[0]):
+        evidence = {"comparison_id": "paired", "paired_seed_contract": "same", "timing_statistic": "F/R", "timer": "graph"}
+        measured = []
+        for cell in cells:
+            step = (steps or {}).get(cell["shape_id"], scope["grid_step_q256"])
+            if (q - rungs[0]) % step:
+                continue
+            measured.append({**cell, "measurement_status": "measured", "kernel_time_us": 100.0 + q - 768,
+                             "kernel_path": "rd_decode<0, false>", "geometry": _rd_geometry(_rd_widths(q)),
+                             "evidence": dict(evidence, rows=dims[cell["shape_id"]][0], columns=dims[cell["shape_id"]][1]),
+                             "pass_times_us": [100.0 + q - 768] * 2,
+                             "measurement_build_id": build["id"]})
+        quality = {"measurement_status": "measured", "source_kind": "actual_sampled_expert_weights", "device": "cpu",
+                   "anomaly_flags": [], "samples": [{"source_sha256": "actual", "source_squared_norm": 2.0,
+                                                    "relative_sse": .1, "exact_bytes": 3}],
+                   "scope": {"format": "TESSERA_E4M3_K1", "grid": "E4M3", "arity": 1, "rung": q,
+                             "recipe": _rd_geometry([3])["recipe"], "kernel_kinds": ["routed"],
+                             "owner": "tessera.export.encode_linear"}}
+        rows.append({"rung": q, "measurement_status": "measured", "supported": True, "anomaly_flags": [],
+                     "observations": [], "excluded": False, "dominating_rung": None, "measurements": measured,
+                     "quality": quality, "dominance_evidence": [], "lineage": {}})
+    return {"schema": "fleet.rung_allowability.v2", "table_version": 1, "table_status": "complete",
+            "format": "TESSERA_E4M3_K1", "generated_at": "2026-10-07T08:00:00Z", "kernel_build": build,
+            "scope": scope, "rungs": rows}
+
+
+class RegisterDirect(unittest.TestCase):
+    """dec-1007-074543-94b8: the register-direct decoder states its own geometry, a shape
+    may carry its own rung step, and a build not yet serving-qualified admits nothing."""
+
+    def test_register_direct_geometry_validates(self):
+        t = fixture_register_direct()
+        self.assertIs(validate_table(t), t)
+
+    def test_register_direct_refuses_a_foreign_owner_ring_or_layout(self):
+        for change in ("owner", "ring", "layout", "units", "dense", "rates"):
+            t = fixture_register_direct()
+            m = t["rungs"][0]["measurements"][0]
+            g = m["geometry"]
+            if change == "owner":
+                g["decoder_owner"] = "tessera.routed_fused"
+            elif change == "ring":
+                g["word_ring"]["kind"] = "staged"
+            elif change == "layout":
+                g["alignment"]["owner"] = "tessera.kernel_window_gemv.Repacked"
+            elif change == "units":
+                g["alignment"]["unit_words"] = [64]
+            elif change == "dense":
+                for cell in [m, t["scope"]["required_cells"][0]]:
+                    cell.update(kernel_kind="dense")
+            else:
+                g["decode_width"]["run_widths"] = [3, 4, 5]
+                g["alignment"]["unit_words"] = [96, 128, 160]
+            with self.assertRaises(ValueError, msg=change):
+                validate_table(t)
+
+    def test_a_shape_measures_only_the_rungs_on_its_own_grid(self):
+        t = fixture_register_direct(steps={"down": 16}, rungs=tuple(range(768, 786, 2)), shapes=("gate_up", "down"))
+        self.assertIs(validate_table(t), t)
+        by_rung = {r["rung"]: {m["shape_id"] for m in r["measurements"]} for r in t["rungs"]}
+        self.assertEqual(by_rung[768], {"gate_up", "down"})
+        self.assertEqual(by_rung[770], {"gate_up"})
+        self.assertEqual(by_rung[784], {"gate_up", "down"})
+
+    def test_per_shape_grid_refuses_off_grid_cells_missing_cells_and_bad_steps(self):
+        base = dict(steps={"down": 16}, rungs=tuple(range(768, 786, 2)), shapes=("gate_up", "down"))
+        off = fixture_register_direct(**base)
+        extra = copy.deepcopy(off["rungs"][0]["measurements"][1])
+        off["rungs"][1]["measurements"].append(extra)                   # down at 770: not on its grid
+        missing = fixture_register_direct(**base)
+        missing["rungs"][0]["measurements"].pop(1)                      # down at 768: on its grid, absent
+        bad_step = fixture_register_direct(**base)
+        bad_step["scope"]["grid_steps_q256"]["down"] = 3                # not a multiple of the table step
+        unknown = fixture_register_direct(**base)
+        unknown["scope"]["grid_steps_q256"]["o_proj"] = 16              # no such shape in the scope
+        v1 = fixture()
+        v1["scope"]["grid_steps_q256"] = {"o": 1}                       # v1 is frozen
+        for name, t in (("off", off), ("missing", missing), ("bad_step", bad_step), ("unknown", unknown), ("v1", v1)):
+            with self.assertRaises(ValueError, msg=name):
+                validate_table(t)
+
+    def test_a_build_not_serving_qualified_admits_nothing(self):
+        t = fixture_register_direct()
+        decision = admit_rung(t, format=t["format"], kernel_build_id=t["kernel_build"]["id"], rung=768)
+        self.assertEqual((decision["status"], decision["reason"]), ("wait", "kernel_not_serving_qualified"))
+        t["kernel_build"]["metadata"]["serving_qualified"] = True
+        self.assertEqual(admit_rung(t, format=t["format"], kernel_build_id=t["kernel_build"]["id"], rung=768)["status"], "allow")
+
+
+def _without_descriptions(node):
+    if isinstance(node, dict):
+        return {k: _without_descriptions(v) for k, v in node.items() if k != "description"}
+    if isinstance(node, list):
+        return [_without_descriptions(v) for v in node]
+    return node
+
+
+def _dominated(t, low, high):
+    """Mark rung ``low`` excluded by ``high``, with ``high`` faster in every cell it shares."""
+    rows = {r["rung"]: r for r in t["rungs"]}
+    for m in rows[high]["measurements"]:
+        m["kernel_time_us"] = 1.0
+        m["pass_times_us"] = [1.0, 1.0]
+    row = rows[low]
+    row.update(excluded=True, dominating_rung=high)
+    row["dominance_evidence"] = [{"cell_id": m["cell_id"], "lower_time_us": m["kernel_time_us"], "higher_time_us": 1.0,
+                                  "comparison_id": "paired"} for m in row["measurements"]]
+    return t
+
+
+class RegisterDirectReview(unittest.TestCase):
+    """Review rev-1007-091801-de68 of PR 1027."""
+
+    def test_published_schema_files_match_the_python_schemas_and_accept_register_direct(self):
+        from pathlib import Path
+        from tessera import rung_allowability as ra
+        root = Path(__file__).resolve().parents[1] / "docs" / "schema"
+        for version, schema in (("v2", ra.TABLE_SCHEMA_V2), ("v3", ra.TABLE_SCHEMA_V3)):
+            published = json.loads((root / f"allowable-rung-table.{version}.schema.json").read_text())
+            self.assertEqual(_without_descriptions(published), _without_descriptions(schema), version)
+        published = json.loads((root / "allowable-rung-table.v2.schema.json").read_text())
+        t = fixture_register_direct(steps={"down": 16}, rungs=tuple(range(768, 786, 2)), shapes=("gate_up", "down"))
+        ra._structure(t, published)
+
+    def test_unscoped_admission_waits_for_a_rung_a_declared_shape_does_not_measure(self):
+        t = fixture_register_direct(steps={"down": 16}, rungs=tuple(range(768, 786, 2)), shapes=("gate_up", "down"))
+        t["kernel_build"]["metadata"]["serving_qualified"] = True
+        args = dict(format=t["format"], kernel_build_id=t["kernel_build"]["id"])
+        self.assertEqual(admit_rung(t, rung=768, **args)["status"], "allow")
+        self.assertEqual(admit_rung(t, rung=770, **args)["status"], "wait")
+
+    def test_per_shape_dominance_needs_the_higher_rung_to_carry_every_lower_cell(self):
+        base = dict(steps={"down": 16}, rungs=tuple(range(768, 786, 2)), shapes=("gate_up", "down"))
+        validate_table(_dominated(fixture_register_direct(**base), 770, 772))        # same cells
+        validate_table(_dominated(fixture_register_direct(**base), 782, 784))        # higher carries more
+        with self.assertRaises(ValueError):                                          # higher lacks down
+            validate_table(_dominated(fixture_register_direct(**base), 768, 770))
+
+
+class RegisterDirectPublishedV3(unittest.TestCase):
+    """Review rev-1007-091801-de68: a register-direct record validates against each published schema."""
+
+    def test_a_register_direct_record_validates_against_the_v3_schema_file(self):
+        from pathlib import Path
+        from tessera import rung_allowability as ra
+        t = fixture_register_direct(steps={"down": 16}, rungs=tuple(range(768, 786, 2)), shapes=("gate_up", "down"))
+        t["schema"] = "fleet.rung_allowability.v3"
+        t["performant_policy"] = {"kind": "whole_bit_per_structure"}
+        # A producer fills the classes from its rows through the owner; the validator requires equality.
+        t["geometry_classes"] = ra.measured_geometry_classes(t)
+        self.assertEqual(len(t["geometry_classes"]), 4)      # pure and mixed, for each of the two shapes
+        published = json.loads((Path(__file__).resolve().parents[1] / "docs" / "schema"
+                                / "allowable-rung-table.v3.schema.json").read_text())
+        ra._structure(t, published)
+        self.assertIs(validate_table(t), t)

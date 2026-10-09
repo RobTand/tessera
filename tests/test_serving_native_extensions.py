@@ -219,6 +219,25 @@ def _producible_name(expr: ast.expr | None, tree: ast.AST, lineno: int,
     if (isinstance(expr, ast.Call) and isinstance(expr.func, ast.Name)
             and expr.func.id == "str" and len(expr.args) == 1 and not expr.keywords):
         return read(expr.args[0])
+    if isinstance(expr, ast.Call) and isinstance(expr.func, ast.Name):
+        # cpp_extension.load(..., is_python_module=False) returns the path of
+        # the library it compiled under its explicit name. Follow that real
+        # compiler result, not a predicted directory or an invented prefix.
+        imports = {alias.asname or alias.name for node in ast.walk(tree)
+                   if isinstance(node, ast.ImportFrom) and node.module == "torch.utils.cpp_extension"
+                   for alias in node.names if alias.name == "load"}
+        rebound = any((isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef))
+                       and node.name == expr.func.id) or
+                      (isinstance(node, ast.Name) and isinstance(node.ctx, ast.Store)
+                       and node.id == expr.func.id) for node in ast.walk(tree))
+        non_python = any(keyword.arg == "is_python_module"
+                         and isinstance(keyword.value, ast.Constant)
+                         and keyword.value.value is False for keyword in expr.keywords)
+        standalone = any(keyword.arg == "is_standalone"
+                         and not (isinstance(keyword.value, ast.Constant)
+                                  and keyword.value.value is False) for keyword in expr.keywords)
+        if expr.func.id in imports and non_python and not standalone and not rebound:
+            return read(_name_argument(expr))
     if isinstance(expr, ast.BinOp) and isinstance(expr.op, ast.Add):
         left = read(expr.left)
         right = read(expr.right)
@@ -517,6 +536,40 @@ def test_shared_builder_name_and_retained_path_have_one_inventory_identity(tmp_p
 ])
 def test_shared_builder_inventory_refuses_opaque_or_ambiguous_names(tmp_path, changes, expected):
     assert [s['name'] for s in _shared_builder_sites(tmp_path, **changes)] == expected
+
+def _compiler_result_sites(tmp_path, *, builder="load", module_name='"tessera_compiler_result"',
+                           is_python="False", extra=""):
+    root = tmp_path / "src" / "tessera"
+    root.mkdir(parents=True)
+    (root / "__init__.py").write_text(textwrap.dedent(f"""
+        import ctypes
+        from torch.utils.cpp_extension import load
+        {extra}
+        def build():
+            name = {module_name}
+            built = {builder}(name=name, sources=["x.cu"], is_python_module={is_python})
+            ctypes.CDLL(str(built))
+    """))
+    return scan_jit_extension_loads(tmp_path / "src", ["tessera"])
+
+
+def test_compiler_returned_library_path_keeps_its_explicit_inventory_name(tmp_path):
+    sites = _compiler_result_sites(tmp_path)
+    assert [site["name"] for site in sites] == ["tessera_compiler_result"] * 2
+    assert _undeclared(sites, []) == sites
+    assert not _undeclared(sites, [{"filename_glob": "tessera_compiler_result.so"}])
+
+
+@pytest.mark.parametrize("changes,expected", [
+    ({"builder": "choose_runtime_library"}, [None]),
+    ({"module_name": "unknown_name"}, [None, None]),
+    ({"is_python": "True"}, ["tessera_compiler_result", None]),
+    ({"is_python": "False, is_standalone=True"}, ["tessera_compiler_result", None]),
+    ({"extra": "load = choose_runtime_library"}, ["tessera_compiler_result", None]),
+])
+def test_compiler_result_proof_keeps_opaque_and_rebound_factories_unreadable(tmp_path, changes, expected):
+    assert [site["name"] for site in _compiler_result_sites(tmp_path, **changes)] == expected
+
 
 def test_the_scanner_does_not_trip_on_an_ordinary_load(tmp_path):
     root = tmp_path / "src" / "tessera" / "serving"

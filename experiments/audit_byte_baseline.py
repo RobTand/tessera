@@ -1,9 +1,9 @@
 """Byte and decode baselines for the 2026-09-02 math-audit fix passes.
 
-Fifteen checkpoints exist and the wire is a compatibility surface, so every
-audit fix has to say -- and prove -- whether it changes the bytes an encoder
-emits or the tensor a reader decodes.  This is the proof harness both halves
-of that claim are made with.
+The harness records serialized bytes and decoded tensors before and after
+a source change. A difference is a measured result, not an automatic
+compatibility refusal. Preserve each baseline path while an active comparison
+can read it.
 
     python experiments/audit_byte_baseline.py before.json     # at HEAD
     ...apply the fix...
@@ -16,10 +16,9 @@ of that claim are made with.
 exercise a partial trailing superblock.  The **value** matrix (``_value_cases``)
 encodes a real weight slice against a real Hessian through ``ActivationSource``,
 which is the only way the encoder's activation-aware arithmetic is reachable at
-all.  ``decode`` hashes the tensor every ``.tessera`` file on this box decodes
-to, which is the half that matters for the artifacts already written: a fix may
-legitimately change future bytes, but it may never change what today's bytes
-mean.
+all. ``decode`` hashes the tensor each stored file decodes to. The diff
+reports semantic changes explicitly. D46 permits a clean cutover after each
+active baseline user ends.
 
 **Why the second matrix exists** (issue #39).  The shape matrix alone reported
 ``0 changed of 36`` for the CHANNEL-refit collapse fix (merge ``2b8ffe9``), and
@@ -42,6 +41,11 @@ needs a reach floor above fp16's range over the unit's global scale, which no
 real slice produces, and ``shared_lut_global``'s subnormal range check lives in
 the fused lane, which ``encode_linear`` never calls.  Both are pinned by unit
 tests instead.
+
+The BF16 substack condition also hashes raw values, FP32 row scales and a
+one-hot epilogue reference. The reference must equal the canonical reader.
+This condition covers the pair that a T16 dot consumes, not a derived
+plain BF16 checkpoint.
 
 ``release`` is the third matrix, and it exists because the first two are blind
 to the RELEASE plane: ``export.encode_linear`` has no ``released_positions``
@@ -576,18 +580,20 @@ def substack_hashes() -> dict:
     from tessera.unit_artifact import read_unit_artifact
 
     stack = "model.layers.2.mlp.experts"
-    shapes = {f"{stack}.{e}.{p}.weight": (32, 32) for e in range(2)
-              for p in ("gate_proj", "up_proj", "down_proj")}
-    config = {"num_experts": 2, "hidden_size": 32, "moe_intermediate_size": 32}
-    picked = stack + ".0.up_proj"
+    hidden, inter = 128, 128
+    shapes = {f"{stack}.{e}.{p}.weight":
+              ((hidden, inter) if p == "down_proj" else (inter, hidden))
+              for e in range(2) for p in ("gate_proj", "up_proj", "down_proj")}
+    config = {"num_experts": 2, "hidden_size": hidden, "moe_intermediate_size": inter}
     out = {}
     for grid in (E4M3_GRID, BF16_GRID):
-        choice = {"grid": grid.name, "q256": 1024, "unit_q256": {picked: 1088}}
+        choice = {"grid": grid.name, "q256": 1024,
+                  "unit_q256": {stack + ".0." + p: 1088 for p in ("gate_proj", "up_proj")}}
         record = project_expert_plan(shapes, config, {stack: choice})["stacks"][stack]
         work = expert_work_units(stack, record)
         encoded = []
         for i, unit in enumerate(work):
-            weight = torch.randn(32, 32, generator=torch.Generator().manual_seed(i))
+            weight = torch.randn(unit["rows"], unit["cols"], generator=torch.Generator().manual_seed(i))
             rung = unit.get("q256", record["q256"])
             exported, _unit, _forest = encode_linear_planes(weight, grid=grid, q256=rung)
             encoded.append((unit, exported, pack_fused([
@@ -602,13 +608,14 @@ def substack_hashes() -> dict:
         scheme = {
             "family": record["family"], "grid": grid.name, "body": recipe.body.name,
             "plane": recipe.scale_plane.name, "structure": "routed_moe",
-            "source_layout": record["source_layout"], "experts": 2, "groups": groups}
+            "source_layout": record["source_layout"], "experts": 2, "groups": groups,
+            "expert_ids": record["expert_ids"], "expert_classes": record["expert_classes"]}
         declared = validate_tessera_moe_scheme(scheme, stack)
         out[f"substack-{grid.name}-1024-1088/sidecar"] = hashlib.sha256(
             json.dumps(scheme, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
         for unit, exported, blob in encoded:
             group = declared["groups"][unit["group"]]
-            roles = expert_role_declarations(group, expert=unit["expert"])
+            roles = expert_role_declarations(group, expert=unit["storage_expert"])
             role = next(r for r in roles if r["roles"][0][0] == unit["projection"])
             parsed = parse_tessera_expert_blob(blob, role, unit["tensor"], device="cpu")
             expected = read_unit_artifact(exported.blob)
@@ -621,7 +628,51 @@ def substack_hashes() -> dict:
             out[label + "/bytes"] = hashlib.sha256(blob).hexdigest()
             out[label + "/decode"] = hashlib.sha256(
                 actual.to(torch.float32).contiguous().numpy().tobytes()).hexdigest()
+            if grid.name == BF16_GRID.name:
+                from tessera.decode import materialize_bf16
+
+                values, scale = materialize_bf16(
+                    parsed_unit.unit, parsed_unit.forests, parsed_unit.code)
+                one_hot = torch.eye(values.shape[1], dtype=torch.float32)
+                epilogue = (one_hot @ values.float().t()) * scale[None, :]
+                if not torch.equal(epilogue, expected.t()):
+                    raise AssertionError(f"{unit['tensor']}: T16 pair changed the canonical product")
+                for suffix, tensor in (("raw-values", values), ("row-scale", scale),
+                                       ("epilogue-reference", epilogue)):
+                    out[label + "/" + suffix] = hashlib.sha256(
+                        tensor.contiguous().view(torch.uint8).numpy().tobytes()).hexdigest()
     return out
+
+def _served_window_cases():
+    """Cover each pure paired class with both served recipe selections."""
+    from tessera.structure import STRUCTURES
+    grid = tuple_grid(E2M1_GRID, 2)
+    return [(f"served-{structure}-e2m1x2-{q256}", grid, q256, structure)
+            for structure in STRUCTURES for q256 in range(128, 1025, 128)]
+
+
+def encode_served_window_case(case) -> dict[str, bytes]:
+    """Return the actual unit bytes and decoded float values for one case."""
+    from tessera.export import served_recipe
+    from tessera.unit_artifact import read_unit_artifact
+    label, grid, q256, structure = case
+    recipe = served_recipe(grid, q256, structure)
+    weight = torch.linspace(-0.25, 0.375, 32 * 32).reshape(32, 32)
+    encoded = encode_linear(weight, grid=grid, q256=q256, name=label, verify=False,
+        body=recipe.body, span=recipe.span, scale_plane=recipe.scale_plane,
+        window_bits=recipe.window_bits, window_seed=recipe.window_seed,
+        window_sigma=recipe.window_sigma, channel_sigma=recipe.channel_sigma)
+    return {"bytes": encoded.blob,
+            "decode": read_unit_artifact(encoded.blob).numpy().tobytes()}
+
+
+def served_window_hashes() -> dict:
+    out = {}
+    for case in _served_window_cases():
+        for kind, payload in encode_served_window_case(case).items():
+            out[case[0] + "/" + kind] = hashlib.sha256(payload).hexdigest()
+    return out
+
 
 def resident_hashes() -> dict:
     """Reach the R4 resident relay on real encoded bytes, including a second tile."""
@@ -655,6 +706,136 @@ def resident_hashes() -> dict:
                 "piece_major_words": pm.words.numpy().tobytes(),
                 "restored_words": restored.numpy().tobytes()}
     return {label + "/" + key: hashlib.sha256(value).hexdigest() for key, value in payloads.items()}
+
+
+def fragment_hashes() -> dict:
+    """Preserve encoded BODY bytes and served E4M3 bytes in fragment order."""
+    from tessera.decode import replay_window
+    from tessera.encode import encode_unit
+    from tessera.export import _plan_for
+    from tessera.fragment_wire import decode_fragment, repack_fragment
+    from tessera.trellis import ConvCode
+    from tessera.unit_artifact import build_unit_artifact, parse_unit_artifact
+    from tessera.wire import pack_body
+
+    result = {}
+    for rate in (3, 4):
+        recipe = wire_recipe(E4M3_GRID, rate * 256)
+        rates, forests = _plan_for(E4M3_GRID, rate * 256, 256, recipe.body, recipe.channel_sigma)
+        generator = torch.Generator().manual_seed(rate + 731)
+        unit = encode_unit(torch.randn(256, 256, generator=generator) * 0.02, forests, rates,
+                           completion=0, span=recipe.span, scale_plane=recipe.scale_plane,
+                           body=recipe.body, window_bits=recipe.window_bits,
+                           window_seed=recipe.window_seed, window_sigma=recipe.window_sigma,
+                           channel_sigma=recipe.channel_sigma, scale_refit=2)
+        _m, _r, blob = build_unit_artifact(unit, "fragment-audit", forests, rate * 256, ConvCode())
+        parsed = parse_unit_artifact(blob)
+        native = torch.tensor(E4M3_GRID.native, dtype=torch.uint8)
+        table = native[parsed.unit.window_codes.long()]
+        body = pack_body(parsed.unit.body_bits, rates)
+        state = replay_window(parsed.unit.body_bits, 14, rate)
+        for group, count in (("gate_up", 2), ("down", 1)):
+            label = f"fragment-{group}-r{rate}"
+            fragment = repack_fragment((body,) * count, rates, rows=256, cols=256,
+                                       projection_group=group)
+            decoded = decode_fragment(fragment, table.repeat(count, 1))
+            expected = table[state].repeat(count, 1)
+            # The low R state bits are exactly the current BODY code.
+            identity = (torch.arange(1 << 14) & 255).to(torch.uint8).repeat(count, 1)
+            restored = decode_fragment(fragment, identity) & ((1 << rate) - 1)
+            restored_body = b"".join(pack_body(b, rates) for b in restored.reshape(count, 256, 256))
+            steps = 8 if count == 2 else 4
+            expected_words = steps * 8 * rate + 2 * steps * 8 * 32 * rate
+            if fragment.words.numel() != expected_words:
+                raise AssertionError("fragment footprint differs from data plus compact history")
+            payloads = {"body": body * count, "restored_body": restored_body,
+                        "decode": decoded.numpy().tobytes(), "reference": expected.numpy().tobytes(),
+                        "fragment_words": fragment.words.numpy().tobytes(),
+                        "permutation": fragment.perm.numpy().tobytes()}
+            for key, payload in payloads.items():
+                result[label + "/" + key] = hashlib.sha256(payload).hexdigest()
+    return result
+
+
+class ProjectionCase(NamedTuple):
+    label: str
+    grid: PayloadGrid
+    q256: int
+    condition: str
+
+
+def _projection_cases():
+    return [ProjectionCase(f"projection-{grid.name}-{condition}", grid, rung, condition)
+            for grid, rung in ((E4M3_GRID, 1024), (BF16_GRID, 1792), (tuple_grid(E2M1_GRID, 2), 896))
+            for condition in ("nope", "head", "mla")]
+
+
+def projection_record(case: ProjectionCase) -> dict:
+    """Audit padding and direct buffers with the existing wire and resident owners."""
+    from tessera.export import encode_linear_planes, served_recipe
+    from tessera.export_serving import family_for
+    from tessera.serving.dense_ownership import partition_members, source_padding_rows
+    from tessera.serving.projection_routes import direct_consumer_resident_bytes, direct_consumer_weight
+    from tessera.serving_parts import dense_resident_bytes_resident_mode
+    from tessera.unit_artifact import parse_unit_artifact
+    from tessera.window_geometry import TILE_ROWS
+
+    source = torch.randn(64, 256, generator=torch.Generator().manual_seed(
+        zlib.crc32(case.label.encode()) & 0xFFFF)).bfloat16()
+    original = source.clone()
+    prefix = "model.layers.0.self_attn."
+    padding = 0
+    if case.condition == "nope":
+        owner = prefix + "fused_qkv_a_proj"
+        members = [prefix + "q_a_proj.weight", prefix + "kv_a_proj_with_mqa.weight"]
+        config = {"mla_use_nope": True, "qk_rope_head_dim": 64}
+        pads = source_padding_rows(owner, members, config)
+        parts = partition_members(owner, members, dict.fromkeys(members, 64), [64, 128], padding_rows=pads)
+        padding = parts[1].padding_rows
+        role = parts[1].role
+    elif case.condition == "head":
+        owner, role = prefix + "indexer.wk_weights_proj", "weights_proj"
+    else:
+        owner, role = prefix + "kv_b_proj", "kv_b_proj"
+    weight = torch.nn.functional.pad(source, (0, 0, 0, padding)) if padding else source
+    recipe = served_recipe(case.grid, case.q256, "dense")
+    exported, unit, _forests = encode_linear_planes(
+        weight.float(), grid=case.grid, q256=case.q256, name=case.label,
+        body=recipe.body, span=recipe.span, scale_plane=recipe.scale_plane,
+        window_bits=recipe.window_bits, window_seed=recipe.window_seed,
+        window_sigma=recipe.window_sigma, channel_sigma=recipe.channel_sigma)
+    parsed = parse_unit_artifact(exported.blob)
+    wire = int(parsed.manifest.terminals[0].exact_bytes)
+    if wire != exported.exact_bytes:
+        raise AssertionError("the wire accountant disagrees with the encoded region")
+    family = family_for(case.grid)
+    layout = {"rows": exported.rows, "cols": exported.columns, "rates": unit.rates,
+              "window_bits": unit.window_bits, "tile_rows": TILE_ROWS}
+    if family == "TESSERA_NVFP4":
+        layout.update(arity=parsed.grid.arity, half=unit.half)
+    native = dense_resident_bytes_resident_mode(family, exported.rows, exported.columns,
+                                               native_roles=[layout])
+    direct = 0
+    if case.condition != "nope":
+        costs = direct_consumer_resident_bytes(owner, family, exported.rows, exported.columns,
+                                               [(role, exported.rows)])
+        cache = direct_consumer_weight(exported.blob, owner, role, family)
+        direct = cache.numel() * cache.element_size()
+        if direct != costs["resident_bytes_resident_mode"] or direct != costs["resident_bytes_stock"]:
+            raise AssertionError("the direct byte rule disagrees with the retained buffer")
+    if not torch.equal(source, original):
+        raise AssertionError("the audit changed its source tensor")
+    return {"source_rows": int(source.shape[0]), "source_cols": int(source.shape[1]),
+            "padding_rows": padding, "encoded_rows": exported.rows,
+            "wire_accounted_bytes": wire, "container_bytes": len(exported.blob),
+            "native_resident_bytes": native, "direct_buffer_bytes": direct,
+            "resident_bytes": native + direct, "wire_and_direct_buffer_bytes": wire + direct,
+            "blob_sha256": hashlib.sha256(exported.blob).hexdigest()}
+
+
+def projection_hashes() -> dict:
+    return {case.label: projection_record(case) for case in _projection_cases()}
+
 
 
 def decode_hashes() -> dict:
@@ -707,8 +888,11 @@ def main() -> int:
         "layout": layout_hashes(),
         "release": release_hashes(),
         "resident": resident_hashes(),
+        "fragment": fragment_hashes(),
         "batch": batch_hashes(),
         "substack": substack_hashes(),
+        "served_window": served_window_hashes(),
+        "projection": projection_hashes(),
     }
     if not a.encode_only:
         report["decode"] = decode_hashes()
@@ -729,6 +913,8 @@ def main() -> int:
               f"{len(report['resident'])} resident rows, "
               f"{len(report.get('batch', {}))} batch rows, "
               f"{len(report['substack'])} sub-stack rows, "
+              f"{len(report['served_window'])} served-window rows, "
+              f"{len(report['projection'])} projection rows, "
               f"{len(report.get('decode', {}))} decodes")
     else:
         print(text)

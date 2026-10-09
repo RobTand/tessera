@@ -906,6 +906,167 @@ def phase_shape_problems(records_by_phase, *, phase_regimes, compiled=False,
     return problems
 
 
+def _witness_rank_maps(receipt):
+    """Read the observed world and records keyed by their actual rank."""
+    ranks = receipt.get("ranks") or []
+    world = (receipt.get("topology") or {}).get("observed_world_size")
+    problems = []
+    if world is not None and (type(world) is not int or world < 1):
+        return None, {}, ["observed_world_size must be a positive integer"]
+    if not ranks:
+        world = 1 if world is None else world
+        maps = {0: receipt.get("records") or {}} if world == 1 else {}
+        return world, maps, problems
+    if not isinstance(ranks, list):
+        return world, {}, ["ranks must be a list of rank records"]
+    if world is None:
+        worlds = {row.get("world_size") for row in ranks
+                  if isinstance(row, dict) and type(row.get("world_size")) is int
+                  and row["world_size"] > 0}
+        if len(worlds) != 1:
+            return None, {}, ["rank records must name one observed world_size"]
+        world = next(iter(worlds))
+    maps = {}
+    for row in ranks:
+        if not isinstance(row, dict):
+            problems.append("each rank record must be an object")
+            continue
+        rank = row.get("rank")
+        if type(rank) is not int or not 0 <= rank < world:
+            problems.append(f"rank {rank!r} is outside observed world {world}")
+            continue
+        if type(row.get("world_size")) is not int or row["world_size"] != world:
+            problems.append(f"rank {rank} world_size differs from observed world {world}")
+            continue
+        if rank in maps:
+            problems.append(f"rank {rank} occurs more than once")
+            continue
+        records = row.get("records") or {}
+        if not isinstance(records, dict):
+            problems.append(f"rank {rank} records must be an object")
+            continue
+        maps[rank] = records
+    return world, maps, problems
+
+
+def graph_phase_witness(*, eager_receipt, capture_receipt, graph_launches, phase_regimes):
+    """Which phase facts an eager receipt and a graph capture receipt jointly state.
+
+    Eager and capture observations stay separate: eager shapes can state eager
+    rows, while capture shapes state only what the capture observed, never
+    current graph rows. Equal stale shapes credit nothing. Both ranks of each
+    receipt join under rank scope; a missing rank blocks aggregate claims.
+    Zero launches yield no phase credit. Problems name every gap. The block
+    carries facts, and no admission verdict.
+    """
+    from tessera.serving.scheme import eager_regime_problem
+    batch_phase, decode_phase = driven_phase_pair(phase_regimes)
+    launched = (isinstance(graph_launches, int) and not isinstance(graph_launches, bool)
+                and graph_launches > 0)
+    eager_world, eager_ranks, eager_problems = _witness_rank_maps(eager_receipt)
+    capture_world, capture_ranks, capture_problems = _witness_rank_maps(capture_receipt)
+    phases = {}
+    problems = [f"eager: {problem}" for problem in eager_problems]
+    problems.extend(f"capture: {problem}" for problem in capture_problems)
+    if not launched:
+        problems.append("no graph replay observed; a witness without replayed graphs yields no phase credit")
+    if eager_world != capture_world:
+        problems.append(f"eager world {eager_world} differs from capture world {capture_world}; scopes do not join")
+    world = max(eager_world or 0, capture_world or 0)
+    scope_ok = (launched and eager_world is not None and eager_world == capture_world
+                and not eager_problems and not capture_problems)
+    for rank in range(world):
+        if not eager_ranks.get(rank):
+            problems.append(f"rank {rank} eager evidence missing; aggregate phase claims blocked")
+            scope_ok = False
+        if not capture_ranks.get(rank):
+            problems.append(f"rank {rank} capture evidence missing; aggregate phase claims blocked")
+            scope_ok = False
+    for phase in (batch_phase, decode_phase):
+        entries = {}
+        stated = scope_ok
+        for rank in range(world):
+            eager = eager_ranks.get(rank, {})
+            capture = capture_ranks.get(rank, {})
+            names = sorted(set(eager.get(phase, {}) or {}) | set(capture.get(phase, {}) or {}))
+            if not names:
+                problems.append(f"{phase} rank {rank}: neither side names a module")
+                stated = False
+            for name in names:
+                owner = name if world == 1 else f"rank{rank}/{name}"
+                eshape = ((eager.get(phase, {}) or {}).get(name) or {}).get("shape") or ""
+                cshape = ((capture.get(phase, {}) or {}).get(name) or {}).get("shape") or ""
+                if not eshape:
+                    problems.append(f"{phase} {owner}: eager control states no shape")
+                    eager_ok = False
+                elif eager_regime_problem(eshape, phase_regimes.get(phase)) is not None:
+                    problems.append(f"{phase} {owner}: eager control shape {eshape} misses its regime")
+                    eager_ok = False
+                else:
+                    eager_ok = True
+                if not cshape:
+                    problems.append(f"{phase} {owner}: capture states no shape")
+                stated = stated and eager_ok
+                entries[owner] = {"eager_shape": eshape, "capture_shape": cshape,
+                                  "eager_states_rows": eager_ok and scope_ok,
+                                  "graph_states_rows": False}
+        phases[phase] = {"regime": phase_regimes.get(phase), "owners": entries,
+                         "eager_rows_stated": stated,
+                         "graph_rows_stated": False,
+                         "graph_note": "capture shapes are capture-time; replay runs no Python"}
+    block = {"schema": "tessera.graph-phase-witness/2", "eager_world": eager_world,
+             "capture_world": capture_world, "phases": phases,
+             "graph_launches": graph_launches if launched else 0,
+             "replay_observed": launched}
+    return block, problems
+
+
+_WITNESS_FLAGS = ("--witness-eager-receipt", "--witness-graph-receipt", "--witness-profile-launches")
+
+
+def witness_main(argv=None):
+    """Join two retained receipts into explicit phase facts. Loads no model.
+
+    Exit 0 names complete evidence, never admission.
+    """
+    import argparse
+    ap = argparse.ArgumentParser(
+        description="Join an eager control receipt and a graph capture receipt into explicit "
+                    "phase facts. Loads no model. Starts no engine.")
+    ap.add_argument("--witness-eager-receipt", required=True, metavar="PATH",
+                    help="A served eager receipt path. Its concrete shapes state eager rows only.")
+    ap.add_argument("--witness-graph-receipt", required=True, metavar="PATH",
+                    help="A served graph capture receipt path. Its shapes are capture-time only.")
+    ap.add_argument("--witness-profile-launches", type=int, default=0, metavar="N",
+                    help="Graph replays the profile observed. Zero means unobserved.")
+    ap.add_argument("out", metavar="OUT", help="Witness output path.")
+    args = ap.parse_args(argv)
+    if args.witness_profile_launches < 0:
+        ap.error("--witness-profile-launches must be >= 0")
+    try:
+        with open(args.witness_eager_receipt) as fh:
+            eager = json.load(fh)
+        with open(args.witness_graph_receipt) as fh:
+            capture = json.load(fh)
+    except (OSError, ValueError) as exc:
+        ap.error(f"cannot read a witness receipt: {exc}")
+    from tessera.serving.contract import CENSUS_PHASE_REGIMES
+    block, problems = graph_phase_witness(
+        eager_receipt=eager, capture_receipt=capture,
+        graph_launches=args.witness_profile_launches, phase_regimes=CENSUS_PHASE_REGIMES)
+    with open(args.out, "w") as fh:
+        json.dump({"witness": block, "problems": problems}, fh, indent=1, sort_keys=True)
+    print(json.dumps({"eager_rows_stated": {phase: entry["eager_rows_stated"]
+                                            for phase, entry in block["phases"].items()},
+                      "graph_rows_stated": {phase: entry["graph_rows_stated"]
+                                            for phase, entry in block["phases"].items()},
+                      "replay_observed": block["replay_observed"]}, indent=1))
+    for problem in problems:
+        print("PROBLEM:", problem)
+    print(f"-> {args.out}")
+    return 0 if not problems else 1
+
+
 def _capability_or_none(torch):
     """The device's compute capability, or ``[]`` where it has none.
 
@@ -923,7 +1084,7 @@ def _capability_or_none(torch):
 
 def all_structure_agreement(records_by_phase, *, cells, phase_regimes, platform,
                             declared_rungs, record_owners, families_by_route,
-                            runtime_image=None, execution_mode=None):
+                            runtime_image=None, execution_mode=None, kernel_build=None):
     """Check each observed structure against its own cells, using declared owners.
 
     This aggregates existing per-structure checks; it publishes no new cells.
@@ -938,6 +1099,8 @@ def all_structure_agreement(records_by_phase, *, cells, phase_regimes, platform,
                          for records in records_by_phase.values()
                          for record in records.values()})
     runtime = {"image": runtime_image, "execution_mode": execution_mode}
+    if kernel_build is not None:
+        runtime["kernel_build"] = kernel_build
     blocks, problems = {}, []
     for structure in structures:
         phases, verdicts, unsupported_reasons = {}, [], set()
@@ -951,7 +1114,7 @@ def all_structure_agreement(records_by_phase, *, cells, phase_regimes, platform,
                 {phase: selected}, cells=cells, phase_regimes=phase_regimes,
                 platform=platform, structure=structure, rungs_by_module=rungs,
                 families_by_route=families_by_route,
-                runtime_image=runtime_image, execution_mode=execution_mode,
+                runtime_image=runtime_image, execution_mode=execution_mode, kernel_build=kernel_build,
                 symbol_alias=census_symbol_base if structure == "routed_moe" else None)
             phases.update(block["phases"])
             verdicts.append(block["agrees"])
@@ -1064,6 +1227,23 @@ def compilation_kwargs(args):
     return {"compilation_config": args.compilation_config}
 
 
+def torch_compile_disabled_by_config(config):
+    """True when the named compilation_config disables the Torch trace.
+
+    Mode NONE keeps CUDA graphs but runs no Torch trace. Records keep
+    concrete capture shapes. Replay runs no Python. Such records cannot
+    meet the shape-polymorphic check.
+    """
+    if not isinstance(config, dict):
+        return False
+    mode = config.get("mode")
+    if isinstance(mode, str):
+        return mode.upper() == "NONE"
+    if isinstance(mode, int) and not isinstance(mode, bool):
+        return mode == 0
+    return False
+
+
 def engine_backend_kwargs(args):
     """The engine's backend choices, assembled where a test can read it.
 
@@ -1174,7 +1354,7 @@ def validate_census_observations(*, phases_by_rank, identities, refusals_by_rank
                                  symbol_for, symbol_base, families_by_route, policy_prefixes,
                                  allow_fallback_decoder=False, expect_modules=None,
                                  required_lanes=(), lane_decoders=None, manifest_lanes=(),
-                                 require_decoder=(), draft=None):
+                                 require_decoder=(), draft=None, kernel_build=None):
     """Every check a census makes on what its forwards recorded, without an engine or device.
 
     ``main`` gathers the observations -- per-rank route records per phase,
@@ -1337,7 +1517,7 @@ def validate_census_observations(*, phases_by_rank, identities, refusals_by_rank
         platform=platform,
         declared_rungs=declared_rungs, record_owners=record_owner_world,
         families_by_route=families_by_route,
-        runtime_image=runtime_image, execution_mode=execution_mode)
+        runtime_image=runtime_image, execution_mode=execution_mode, kernel_build=kernel_build)
     problems.extend(agreement_problems)
     draft_receipt = None
     if draft is not None:
@@ -1364,7 +1544,7 @@ def validate_census_observations(*, phases_by_rank, identities, refusals_by_rank
             phase_regimes=phase_regimes, platform=platform,
             declared_rungs=draft_module_rungs, record_owners=draft_phase_owners,
             families_by_route=families_by_route,
-            runtime_image=runtime_image, execution_mode=execution_mode)
+            runtime_image=runtime_image, execution_mode=execution_mode, kernel_build=kernel_build)
         problems.extend(f"draft: {message}" for message in draft_agreement_problems)
         required_draft_decoder = required_draft_native_decoders(
             draft_families, native_decoder=draft["native_decoder"],
@@ -1421,6 +1601,8 @@ def parse_args(argv=None, env=None):
                          "the container itself makes: a host process can export the same "
                          "pair by hand, and the receipt records which mechanism named the "
                          "image")
+    ap.add_argument("--kernel-build", default=(os.environ if env is None else env).get("TESSERA_KERNEL_BUILD"),
+                    help="Use the declared kernel build for cell lookup.")
     ap.add_argument("--expect-modules", type=int, default=None,
                     help="number of Tessera modules the checkpoint declares")
     ap.add_argument("--prompt-tokens", type=int, default=64)
@@ -1448,17 +1630,21 @@ def parse_args(argv=None, env=None):
                     help="pass vLLM's scheduler token cap unchanged; 0 leaves its default. "
                          "A bounded GLM census can reproduce the served batch/memory scope")
     ap.add_argument("--compiled", action="store_true",
-                    help="load with enforce_eager=False (vLLM's default compiled forward + CUDA "
-                         "graphs) instead of eager; the route records then carry M='*' because "
-                         "the record is written from the trace, and a route that cannot be traced "
-                         "fails here with its own traceback instead of an engine-start refusal")
+                    help="load with enforce_eager=False instead of eager. "
+                         "With Torch compilation the route records carry M star. "
+                         "The record comes from the trace. "
+                         "A route that cannot pass the trace fails here. "
+                         "With compilation mode NONE the records stay concrete. "
+                         "That combination is refused.")
     ap.add_argument("--compilation-config", type=_json_object, default=None, metavar="JSON",
-                    help="a JSON object passed unchanged to vLLM as compilation_config; requires "
-                         "--compiled. Without it a compiled GLM-5.3 census stops at engine start "
-                         "(glm53_nope refuses VLLM_COMPILE with any graph mode but "
-                         "FULL_DECODE_ONLY). Recorded in the receipt beside "
-                         "runtime.execution_mode. Compiled records attest routes only: shapes "
-                         "are not attested")
+                    help="a JSON object passed unchanged to vLLM as compilation_config. "
+                         "It requires --compiled. "
+                         "Without it a compiled GLM-5.3 census stops at engine start. "
+                         "The receipt records it beside runtime execution mode. "
+                         "Compiled records attest routes only. Shapes stay unattested. "
+                         "Mode NONE is refused with --compiled. "
+                         "It keeps CUDA graphs but disables the Torch trace. "
+                         "Its records keep capture shapes. Replay runs no Python.")
     ap.add_argument("--allow-fallback-decoder", action="store_true",
                     help="accept a module decoded by the pure-torch fallback instead of the "
                          "native span-2 kernel; without it a fallback serve REFUSES, because a "
@@ -1580,11 +1766,18 @@ def parse_args(argv=None, env=None):
         ap.error(f"--runtime-image {args.runtime_image}: {exc}")
     if args.compilation_config is not None and not args.compiled:
         ap.error("--compilation-config requires --compiled (an eager engine has no compilation)")
+    if args.compiled and torch_compile_disabled_by_config(args.compilation_config):
+        ap.error("--compilation-config mode NONE disables Torch compilation (CUDA graphs only). "
+                 "Concrete capture shapes remain. Graph replay runs no Python. "
+                 "The latest record cannot attest current logical rows. "
+                 "Remove --compilation-config for this config. Name a Torch-compile mode instead.")
     args.execution_mode = "compiled" if args.compiled else "eager"
     return args
 
 
 def main() -> int:
+    if any(flag in sys.argv[1:] for flag in _WITNESS_FLAGS):
+        return witness_main()
     args = parse_args()
 
     # The census function must run in the process that holds the model.
@@ -1881,6 +2074,7 @@ def main() -> int:
         refusals_by_rank=refusals_by_rank, declared=declared, declared_rungs=declared_rungs,
         phase_plan=phase_plan, mode=mode, platform=served_platform,
         runtime_image=args.runtime_image, execution_mode=args.execution_mode,
+        kernel_build=args.kernel_build,
         compiled=args.compiled, cells=load_serving_contract()["lane_eligibility"]["cells"],
         contract_for=contract_for, expected=_expected, symbol_for=symbol_for,
         symbol_base=moe_route.census_symbol_base,
@@ -1980,6 +2174,8 @@ def main() -> int:
         "problems": problems,
         "verdict": "served" if not problems else "REFUSED",
     }
+    if args.kernel_build is not None:
+        receipt["runtime"]["kernel_build"] = args.kernel_build
     if draft_receipt is not None:
         receipt["draft"] = draft_receipt
     if args.draft_routes:

@@ -15,7 +15,7 @@ import subprocess
 
 from safetensors import safe_open
 from tessera.fused import parse_fused
-from tessera.kernel_window_gemv import TILE_ROWS
+from tessera.window_geometry import TILE_ROWS
 from tessera.serving_parts import (dense_resident_bytes_resident_mode, summarize_modules,
                                    write_serving_manifest)
 from tessera.unit_artifact import parse_unit_metadata
@@ -44,7 +44,7 @@ def refresh(source: Path, output: Path):
         after = shard.stat()
         if (before.st_ino, before.st_size, before.st_mtime_ns) != (after.st_ino, after.st_size, after.st_mtime_ns):
             raise ValueError('source checkpoint changed during footprint derivation')
-        roles, trellises = [], set()
+        roles = []
         members = parse_fused(blob)
         if [member.name for member in members] != [role['role'] for role in record['roles']]:
             raise ValueError('wire roles disagree with export manifest')
@@ -53,27 +53,20 @@ def refresh(source: Path, output: Path):
             a4 = record['family'] == 'TESSERA_NVFP4'
             expected_grid = {'TESSERA_BF16': 'BF16', 'TESSERA_FP8': 'E4M3',
                              'TESSERA_NVFP4': 'E2M1x2'}[record['family']]
-            if (metadata.grid.name != expected_grid or metadata.body.name != ('TCQ' if a4 else 'WINDOW')
+            if (metadata.grid.name != expected_grid or metadata.body.name != 'WINDOW'
                     or metadata.rows != declared['rows'] or metadata.columns != declared['cols']
                     or metadata.rows != member.rows):
                 raise ValueError('verified wire geometry/family disagrees with manifest')
-            role = {'rows': metadata.rows, 'cols': metadata.columns, 'rates': metadata.rates}
+            role = {'rows': metadata.rows, 'cols': metadata.columns, 'rates': metadata.rates,
+                    'window_bits': metadata.manifest.window_bits, 'tile_rows': TILE_ROWS}
             if a4:
-                if metadata.span != 2 or metadata.manifest.scale_plane.kind.name != 'LUT':
-                    raise ValueError('native A4 needs a span2 LUT wire')
-                role.update(arity=metadata.grid.arity, memory=metadata.code.memory,
-                            half=metadata.manifest.geometry.half_weights,
-                            lut_entries=int(metadata.scale_lut.numel()))
-                for rate in set(metadata.rates):
-                    trellises.add((metadata.forests[rate], metadata.code))
-            else:
-                role.update(window_bits=metadata.manifest.window_bits, tile_rows=TILE_ROWS)
+                if metadata.span != 1 or metadata.manifest.scale_plane.kind.name != 'LUT':
+                    raise ValueError('native A4 needs a span1 LUT WINDOW wire')
+                role.update(arity=metadata.grid.arity, half=metadata.manifest.geometry.half_weights)
             roles.append(role)
-        from tessera.decode import replay_table_bytes
-        table_bytes = sum(replay_table_bytes(forest, code) for forest, code in trellises)
         old = record['resident_bytes_resident_mode']
         new = dense_resident_bytes_resident_mode(record['family'], record['rows'], record['cols'],
-                                               native_roles=roles, trellis_table_bytes=table_bytes)
+                                               native_roles=roles)
         record['resident_bytes_resident_mode'] = new
         updates[name] = {'before': old, 'after': new}
     totals = manifest['totals']

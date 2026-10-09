@@ -10,7 +10,7 @@ import subprocess
 
 from managed_window import MEMORY_POLICY, NOT_COMPUTED, Refused, dev_mode_enabled, seal_check
 from submit import parse_plan, IMAGE
-from eager_benchmark import EAGER_LEVER_MODE, GRAPH_SHIP_MODE, LEVER_VALUES, PAIRS as BENCHMARK_PAIRS, pair_refusal
+from eager_benchmark import DETERMINISM_MODE, PIECE_MAJOR_MODE, PHASE_MODES, EAGER_LEVER_MODE, GRAPH_SHIP_MODE, MATRIX_MODE, MATRIX_LEVERS_ON, LEVER_VALUES, PAIRS as BENCHMARK_PAIRS, pair_refusal, parse_matrix_cells
 
 CONTROL = "/mnt/shared/tessera-runs/moe/glm53-a8-bf16menu-20260930/release/exported"
 CONFIG_SHA = "3f5c2c7381aae1c02d486c645ec6015cd1a60eb41faa5686541a15f523d79898"
@@ -41,7 +41,9 @@ def src_sha(root: Path) -> str:
 PRODUCER_FILES = ("managed_window.py", "tp2_recipe.py", "rank_window.py", "window_driver.py",
                   "submit.py", "watch_window_queue.py", "arm_tp2.sh", "drive_tp2.sh", "plan-artifact.txt",
                   "eager_benchmark.py", "plan-eager-window4.txt", "plan-eager-ship-8192.txt", "plan-graph-ship.txt",
-                  "plan-eager-levers-4096.txt")
+                  "plan-eager-levers-4096.txt", "eager_determinism.py", "seeded_control_client.py",
+                  "plan-eager-determinism-2048.txt", "plan-eager-piece-major-2048.txt",
+                  "../t8r_speed/pb_staged_store.py", "observer/usercustomize.py")
 
 
 def producer_sha() -> str:
@@ -83,7 +85,7 @@ def require_producer(root: Path, commit: str, expected: str, *, exact_head: bool
                refusal=Refused("producer experiments/graph_attest_702 is not clean"))
     lines = []
     for name in PRODUCER_FILES:
-        relative = "experiments/graph_attest_702/" + name
+        relative = os.path.normpath("experiments/graph_attest_702/" + name)
         blob = git("show", commit + ":" + relative, binary=True)
         seal_check("producer file", name, "current", where="Window4 producer",
                    same=(root / relative).read_bytes() == blob,
@@ -98,7 +100,8 @@ def require_producer(root: Path, commit: str, expected: str, *, exact_head: bool
 def check_control_record(recorded, current, *, where, refusal):
     """Scope/geometry/comparability must still match exactly; only the recorded
     run identity (commits, digests, stamps) is a D32 seal that dev mode stamps."""
-    identity = {"source_commit", "producer_commit", "pq_pin_commit", "artifact_authentication", "ts"}
+    identity = {"source_commit", "producer_commit", "pq_pin_commit", "artifact_authentication", "ts",
+                "data_manifest", "control_root", "profile_manifest"}
     identity.update(key for key in set(recorded) | set(current) if key.endswith("sha256"))
     comparable = (set(recorded) | set(current)) - identity
     if {key: recorded.get(key) for key in comparable} != {key: current.get(key) for key in comparable}:
@@ -112,6 +115,11 @@ def inputs(env: dict, *, live: bool, runner=None) -> dict:
     development = dev_mode_enabled(env)
     if mode != "graph-control" and mode not in BENCHMARK_PAIRS:
         raise Refused("unknown WINDOW_MODE; no inferred benchmark scope")
+    matrix_cells = None
+    if "MATRIX_CELLS" in env:
+        if mode != MATRIX_MODE:
+            raise Refused("MNBT matrix selection requires the matrix window mode")
+        matrix_cells = parse_matrix_cells(env["MATRIX_CELLS"])
     for name in ("TS", "ARTIFACT", "RECEIPTS", "FABRIC"):
         if not env.get(name):
             raise Refused(f"{name} is required; no fabric/source default")
@@ -121,7 +129,8 @@ def inputs(env: dict, *, live: bool, runner=None) -> dict:
     if not (artifact / "config.json").is_file():
         raise Refused(f"ARTIFACT has no config.json: {artifact}")
     chunk_baseline = BENCHMARK_PAIRS[mode][0][1] if mode in BENCHMARK_PAIRS else "2048"
-    for name, expected in {"MAX_NUM_SEQS": "1" if mode in BENCHMARK_PAIRS else "4", "MAX_MODEL_LEN": "8448",
+    max_seqs = "8" if mode == MATRIX_MODE else "1" if mode in BENCHMARK_PAIRS else "4"
+    for name, expected in {"MAX_NUM_SEQS": max_seqs, "MAX_MODEL_LEN": "8448",
                            "KV_BYTES": "2147483648", "FLOOR_GIB": f"{MEMORY_POLICY['abort_below_gib']:g}",
                            "EXPECT_PEAK_GIB": str(MEMORY_POLICY["model_kv_estimate_gib"]), "MAX_BATCHED": chunk_baseline,
                            "GPU_UTIL": "0.5", "MOE_BACKEND": "triton",
@@ -168,9 +177,12 @@ def inputs(env: dict, *, live: bool, runner=None) -> dict:
                 producer_sha256=env.get("PRODUCER_SHA256", NOT_COMPUTED) if development else producer_sha(),
                 hooks_sha256=env.get("HOOKS_SHA256", NOT_COMPUTED) if development else sha(root / "experiments/glm53_508_graph_qual/digest/usercustomize.py"),
                 equal_script_sha256=env.get("EQUAL_SCRIPT_SHA256", NOT_COMPUTED) if development else sha(root / "experiments/glm53_508_graph_qual/equal-508.py"))
+    if matrix_cells is not None:
+        result["matrix_cells"] = matrix_cells
     if mode in BENCHMARK_PAIRS:
         if env["FABRIC"] != "socket":
-            raise Refused("Ship graph is A8S/socket/TP2/c1 only" if mode == GRAPH_SHIP_MODE else
+            raise Refused("Ship graph MNBT matrix is A8S/socket/TP2/c1-8 only" if mode == MATRIX_MODE else
+                          "Ship graph is A8S/socket/TP2/c1 only" if mode == GRAPH_SHIP_MODE else
                           "Window4 is eager A8S/socket/TP2/c1 only")
         if live:
             from eager_benchmark import bindings
@@ -178,35 +190,65 @@ def inputs(env: dict, *, live: bool, runner=None) -> dict:
         else:
             result["window_mode"] = mode
             result["profile_dir"] = str(Path(env["RECEIPTS"]).parent / "profiles")
+        if mode in PHASE_MODES:
+            from eager_determinism import PROTOCOL, PHASE_SECONDS, PHASE_PEER_WAIT_SECONDS, control_baseline
+            result.update(control_protocol=PROTOCOL, artifact_manifest=env.get("ARTIFACT_MANIFEST", ""),
+                          window_seconds=PHASE_SECONDS, peer_wait_seconds=PHASE_PEER_WAIT_SECONDS)
+            result["data_manifest"] = env.get("DATA_MANIFEST", "")
+            if not result["data_manifest"]:
+                raise Refused("bounded resident phases require the actual DATA_MANIFEST for PB staging")
+            if mode == PIECE_MAJOR_MODE:
+                result["control_root"] = env.get("CONTROL_ROOT", "")
+                if not result["control_root"]:
+                    raise Refused("piece-major phase requires the actual completed OFF/OFF CONTROL_ROOT")
+                if live:
+                    control_baseline(Path(result["control_root"]))
+                result["profile_manifest"] = env.get("PROFILE_MANIFEST", "")
+                if not result["profile_manifest"]:
+                    raise Refused("piece-major phase requires the same-instrument L2048 PROFILE_MANIFEST")
     return result
 
 
-def arm_settings(arm: str, env: dict) -> dict:
+def arm_settings(arm: str, env: dict, mode=None) -> dict:
     eager = env.get("EAGER", "1")
     if eager not in ("0", "1"):
         raise Refused("EAGER must be 0 or 1")
     compilation = env.get("COMPILATION_JSON", "")
     if eager == "1" and compilation:
         raise Refused("EAGER=1 takes no COMPILATION_JSON")
-    if json.loads(env.get("SPEC_JSON", "null")) != MTP:
+    spec_raw = env.get("SPEC_JSON", "null")
+    if (mode or env.get("WINDOW_MODE")) == MATRIX_MODE:
+        if json.loads(spec_raw or "null") is not None:
+            raise Refused("the MNBT matrix requires MTP off (SPEC_JSON null)")
+    elif json.loads(spec_raw or "null") != MTP:
         raise Refused("the nominated control requires MTP1 and draft TP2")
     if eager == "0" and json.loads(compilation or "null") != GRAPH:
         raise Refused("the nominated graph arm requires the release graph flags")
-    return dict(arm=arm, eager=eager, compilation=compilation, spec=env["SPEC_JSON"])
+    return dict(arm=arm, eager=eager, compilation=compilation, spec=spec_raw)
 
 
 def pair_arm(name: str, env: dict, mode: str, *, exact_keys=False) -> dict:
     if env.get("MAX_BATCHED") != dict(BENCHMARK_PAIRS[mode]).get(name):
         raise Refused(pair_refusal(mode))
-    arm = arm_settings(name, env)
+    arm = arm_settings(name, env, mode)
     graph_ship = mode == GRAPH_SHIP_MODE
-    lever_pair = mode in (GRAPH_SHIP_MODE, EAGER_LEVER_MODE)
-    label = "Ship graph" if graph_ship else "Ship eager lever"
+    matrix = mode == MATRIX_MODE
+    lever_pair = mode in (GRAPH_SHIP_MODE, EAGER_LEVER_MODE, MATRIX_MODE, *PHASE_MODES)
+    label = "MNBT matrix" if matrix else "Ship graph" if graph_ship else "Ship eager lever"
     fields = {"EAGER", "SPEC_JSON", "FABRIC", "MAX_BATCHED"}
-    if graph_ship:
+    if graph_ship or matrix:
         fields.add("COMPILATION_JSON")
     if lever_pair:
         fields.update(LEVER_VALUES)
+    if matrix:
+        if (arm["eager"] != "0" or env.get("FABRIC") != "socket"
+                or (exact_keys and set(env) != fields)):
+            raise Refused("MNBT matrix plan fixes graph/socket/MTP off and explicit ON lever env with no other override")
+        levers = {key: env.get(key) for key in LEVER_VALUES}
+        if levers != MATRIX_LEVERS_ON:
+            raise Refused("MNBT matrix requires all three levers explicitly ON in both arms")
+        arm["lever_env"] = levers
+        return dict(arm, max_batched=int(env["MAX_BATCHED"]), fabric="socket")
     if (arm["eager"] != ("0" if graph_ship else "1") or env.get("FABRIC") != "socket"
             or (exact_keys and set(env) != fields)):
         raise Refused(f"{label} plan fixes {'graph' if graph_ship else 'eager'}/socket/MTP1 and explicit lever env with no other override" if lever_pair else
@@ -217,19 +259,30 @@ def pair_arm(name: str, env: dict, mode: str, *, exact_keys=False) -> dict:
             if levers[key] not in choices:
                 raise Refused(f"{label} plan requires explicit {key}={'/'.join(choices)}")
         enabled = [levers[key] == choices[1] for key, choices in LEVER_VALUES.items()]
-        if any(enabled) != (name == BENCHMARK_PAIRS[mode][1][0]):
+        if mode in PHASE_MODES:
+            from eager_determinism import FLAGS, NAMES, VALUES
+            if levers != dict(zip(FLAGS, VALUES[NAMES.index(name)])):
+                raise Refused("Seeded phase fixes all-OFF controls or piece-major alone; no other lever")
+        elif any(enabled) != (name == BENCHMARK_PAIRS[mode][1][0]):
             raise Refused(f"{label} pair requires all levers off in the first arm and at least one on in the second")
         arm["lever_env"] = levers
     return dict(arm, max_batched=int(env["MAX_BATCHED"]), fabric="socket")
 
 
-def plan(path: Path, *, mode="graph-control") -> list[dict]:
+def plan(path: Path, *, mode="graph-control", matrix_cells=None) -> list[dict]:
+    selection = parse_matrix_cells(matrix_cells)
+    if selection is not None and mode != MATRIX_MODE:
+        raise Refused("MNBT matrix selection requires the matrix window mode")
     rows = parse_plan(path)
     if mode in BENCHMARK_PAIRS:
         expected = BENCHMARK_PAIRS[mode]
         if [(name, env.get("MAX_BATCHED")) for name, env in rows] != expected:
             raise Refused(pair_refusal(mode))
-        return [pair_arm(name, env, mode, exact_keys=True) for name, env in rows]
+        arms = [pair_arm(name, env, mode, exact_keys=True) for name, env in rows]
+        if selection is not None:
+            selected_mnbts = {row[0] for row in selection}
+            arms = [arm for arm in arms if arm["max_batched"] in selected_mnbts]
+        return arms
     if mode != "graph-control":
         raise Refused("unknown WINDOW_MODE; no inferred benchmark scope")
     if [arm for arm, _ in rows] != ["aE1", "aGR", "aE2"]:
@@ -247,21 +300,26 @@ def plan(path: Path, *, mode="graph-control") -> list[dict]:
 
 def serve(config: dict, arm: dict, rank: int, *, master_port=29541, api_port=8142) -> list[str]:
     benchmark_window = config.get("window_mode") in BENCHMARK_PAIRS
+    matrix = config.get("window_mode") == MATRIX_MODE
     argv = ["vllm", "serve", config["artifact"], "--node-rank", str(rank)]
     argv += ["--headless"] if rank else ["--host", "0.0.0.0", "--port", str(api_port)]
     argv += ["--tensor-parallel-size", "2", "--nnodes", "2", "--master-addr", "10.100.96.2",
              "--master-port", str(master_port), "--distributed-executor-backend", "mp",
              "--kv-cache-dtype", "fp8_ds_mla", "--moe-backend", "triton", "--kernel-config",
              '{"enable_flashinfer_autotune":false}', "--max-model-len", "8448", "--language-model-only",
-             "--max-num-seqs", "1" if benchmark_window else "4", "--max-num-batched-tokens",
+             "--max-num-seqs", "8" if matrix else "1" if benchmark_window else "4", "--max-num-batched-tokens",
              str(arm["max_batched"]) if benchmark_window else "2048", "--enable-chunked-prefill",
              "--no-enable-prefix-caching", "--gpu-memory-utilization", "0.5", "--kv-cache-memory-bytes",
              "2147483648", "--trust-remote-code", "--max-logprobs", "20", "--served-model-name", "glm53-artifact"]
     argv += ["--enforce-eager"] if arm["eager"] == "1" else ["--compilation-config", arm["compilation"]]
-    if benchmark_window:
+    if config.get("window_mode") in PHASE_MODES:
+        argv += ["--seed", str(config["control_protocol"]["server_seed"])]
+    if benchmark_window and config.get("window_mode") != DETERMINISM_MODE:
         argv += ["--profiler-config", json.dumps(dict(profiler="torch",
                  torch_profiler_dir=config["profile_dir"], torch_profiler_with_stack=False,
                  torch_profiler_record_shapes=True, ignore_frontend=True), separators=(",", ":"))]
+    if matrix:
+        return argv
     return argv + ["--speculative-config", arm["spec"]]
 
 
@@ -282,6 +340,8 @@ def container(config: dict, arm: dict, identity: dict, out: Path, ext: Path,
                            (ext, "/ext"), (Path("/mnt/shared"), "/mnt/shared:ro"),
                            (out, "/out"), (root / "experiments/glm53_508_graph_qual/digest", "/digest:ro")]:
         argv += ["-v", f"{source}:{target}"]
+    for source, target in config.get("staged_file_mounts", []):
+        argv += ["-v", f"{source}:{target}:ro"]
     env = dict(NCCL_SOCKET_IFNAME="enp1s0f0np0", GLOO_SOCKET_IFNAME="enp1s0f0np0",
                NCCL_IB_HCA="rocep1s0f0,roceP2p1s0f0", NCCL_IB_DISABLE="1" if config["fabric"] == "socket" else "0",
                NCCL_CUMEM_ENABLE="0", NCCL_CUMEM_HOST_ENABLE="0", NCCL_DMABUF_ENABLE="0",
@@ -293,12 +353,16 @@ def container(config: dict, arm: dict, identity: dict, out: Path, ext: Path,
                OMP_NUM_THREADS="1", MKL_NUM_THREADS="1", OPENBLAS_NUM_THREADS="1", NUMEXPR_NUM_THREADS="1",
                MAX_JOBS="1", VLLM_HOST_IP=("10.100.96.2", "10.100.96.1")[rank],
                T695_GC_BEFORE_DRAFTER="1", TESSERA_FUSED_E4M3_MMA="e4m3", **image_env)
-    if config.get("window_mode") in (GRAPH_SHIP_MODE, EAGER_LEVER_MODE):
+    if config.get("window_mode") in (GRAPH_SHIP_MODE, EAGER_LEVER_MODE, MATRIX_MODE, *PHASE_MODES):
         env.update(arm["lever_env"])
+        if config.get("window_mode") in PHASE_MODES:
+            env["TESSERA_ROUTE_TRACE"] = f"/out/{name}.rank{rank}.route-trace.json"
+            env["PYTHONPATH"] = "/ga702-observer:/digest"
+            argv += ["-v", f"{Path(__file__).parent / 'observer'}:/ga702-observer:ro"]
     for key, value in env.items():
         argv += ["-e", f"{key}={value}"]
     local_config = config
-    if config.get("window_mode") in BENCHMARK_PAIRS:
+    if config.get("window_mode") in BENCHMARK_PAIRS and config.get("window_mode") != DETERMINISM_MODE:
         directory = Path(config["profile_dir"]) / arm["arm"]
         argv += ["-v", f"{directory}:{directory}"]
         local_config = dict(config, profile_dir=str(directory))

@@ -21,9 +21,9 @@ the decoder uses the resulting bits, lookup tables, and scales repeatedly.
 Experimental native T16 activation prefetch (#874) is **off by default**.
 `TESSERA_ROUTED_FUSED_VALUE_A_PREFETCH=4` freezes a separate prefetch4
 native build at first value-library use; only 0 and 4 are accepted. It applies
-only to one-run folded BF16 routed launches (BM64, modes 0/1/2, rates 1–8),
-not dense or two-run launches. The existing ABI, wire layout, BF16 folding,
-accumulation order and resident bytes are unchanged. No T16 speedup, energy
+only to one-run BF16 routed launches (BM64, modes 0/1/2, rates 1–8),
+not dense or two-run launches. T16 now applies row scales in FP32 after
+the dot. The earlier prefetch receipts do not qualify this changed source. No energy
 benefit, serving cell, or PACT price is established by this experimental arm.
 Qualification must use the same frozen T16 wire/calibration and input/routing
 bytes in both arms, retain native ELF/source/image/readset digests, check
@@ -189,19 +189,19 @@ precision differ:
 |---|---|---|---|
 | **Tessera NVFP4** | Span-2 trellis over E2M1 pairs; LUT16 block scales | NVFP4 weights and activations (**W4A4**) | dense `q256=896` (≈4.0 bits/weight with the scale plane); routed experts additionally `128..896` step 128 |
 | **Tessera FP8** | Window trellis; E4M3 table; per-row scales | FP8 weights and activations (**W8A8**) | `q256=1024`: 4 body bits/weight, plus overhead |
-| **Tessera BF16** | Window trellis; BF16 table; per-row scales | BF16 weights and activations (**W16A16**) | `q256=1792`: 7 body bits/weight, plus overhead |
+| **Tessera BF16** | Window trellis; raw BF16 table; separate FP32 row scales | BF16 operands, FP32 dot and row-scale epilogue (**W16A16**) | No served rung attestation after contract v59; new census required |
 
 **W** and **A** describe the compute format of weights and activations, not
 the number of bits stored per weight. Compressing onto a BF16 grid still
 changes the model's weights; it does not recover the original BF16 model
 losslessly.
 
-The FP8 reader accepts root rates from 1 to 8, and the BF16 reader from 1 to
-16, on the q256 grid. Those are format capabilities. The serving evidence is
-narrower: the packaged contract currently attests the rungs above. The
-NVFP4 serving decoder accepts only its listed rungs — routed experts at
-`128..896` step 128, dense only `896` — although the encoder also implements
-other E2M1 constructions.
+The FP8 reader accepts root rates from 1 to 8. The BF16 reader accepts
+root rates from 1 to 16. Both use the q256 grid. These are format capabilities.
+The packaged contract supplies the narrower serving evidence. Contract v59
+withdraws the old BF16 cells, wire stamps and TP2 qualification after the
+row-scale cutover. It does not relabel their historical receipts. New BF16
+serves and changed D41 classes need new evidence before allocation.
 
 The code owns these choices:
 [`wire_recipe`](https://github.com/RobTand/tessera/blob/v0.1.0/src/tessera/export.py)
@@ -218,6 +218,61 @@ them, with no `[rows, columns]` weight tile materialised. `resident` and
 `streamed` prepare the same units; the mode must still be declared explicitly
 (`TESSERA_SERVE_MODE`, no default). Routed mixture-of-experts is **resident,
 eager mode only**.
+
+### Offline residency plan
+
+The offline planner computes each rank memory peak before load. It allocates no tensors and changes no live-load path.
+
+Run the planner with a concrete structure inventory and an allocation plan.
+
+```bash
+PYTHONPATH=src python -m tessera.residency_plan \
+  --structure-spec structure.json --plan residency.json
+```
+
+The structure inventory has a `tensors` object. Each named tensor has a `shape` array and a `dtype` string.
+An empty shape describes a scalar. All dimensions are positive integers. Architecture profiles without concrete shapes cannot supply this inventory alone.
+
+```json
+{"tensors":{"weight":{"shape":[4,8],"dtype":"bfloat16"}}}
+```
+
+The plan has a `ranks` array and an `allocations` array. Rank array positions name the ranks.
+Each rank declares `capacity_bytes` and an optional `reserve_bytes` value. The reserve covers memory outside the allocation inventory.
+
+```json
+{"ranks":[{"capacity_bytes":128,"reserve_bytes":16}],
+ "allocations":[{"id":"weight","tensor":"weight","ranks":[0],"start":0,"stop":null}]}
+```
+
+Each allocation names a tensor, destination ranks, and a lifetime. Different identifiers represent separate copies, even when they name the same tensor.
+All inventory tensors require a placement. Temporary buffers, draft copies, caches, and workspace require explicit allocations or reserve bytes.
+
+Lifetimes use integer steps and the half-open interval `[start, stop)`. A null or absent `stop` keeps the allocation.
+Release a source copy after its destination exists. Use overlapping steps when both copies coexist.
+An absent `shard_axis` replicates the tensor. A declared axis divides that dimension equally across the destination ranks.
+The destination rank order defines contiguous shard order. Nondivisible dimensions refuse unless `padding_multiple` explicitly pads the shard axis.
+Padding also rounds the dimension to equal rank cuts. The planner counts padded bytes.
+
+An absent `storage` uses the tensor shape and data type. Native layouts use the existing `serving_parts` byte accountant.
+Storage kinds `dense_window` and `routed_window` require `family`, `rates`, `window_bits`, and `tile_rows`.
+Dense shapes use `[rows, columns]`. Routed shapes use `[experts, rows, columns]`. Column shards slice the rate array before byte calculation.
+Both layouts use the compact loader row tile size. The planner refuses a different `tile_rows` value before byte calculation.
+The planner also applies the loader window-width and rate checks before byte calculation.
+Native layout checks read shared metadata. They do not load weights or allocate device tensors.
+The native planner path uses only the standard library. The loader and planner read the same geometry owner.
+A routed layout also declares `table_dtype` for its selected native table. The byte accountant prices that explicit entry width.
+It always includes native run pairs and block descriptors. It does not retain raw grids, permutations or run offsets.
+Declare each stack inverse and class-counter tensor as a separate inventory allocation, once per stack.
+The `dense_a4` kind requires `rates`, `arity`, `half`, `window_bits`, and `tile_rows`. It uses the native E2M1 WINDOW accountant.
+It accepts no TCQ `memory` or `lut_entries` fields.
+Native layouts obey the published window-width bound and the shared native shape checks.
+These counts describe prepared tensor storage. They do not qualify a kernel or predict an undeclared runtime allocation.
+
+The report gives peak bytes, the peak step, named peak allocations, final bytes, and headroom for each rank.
+A capacity refusal gives every affected rank and its excess bytes. Invalid fields also produce named refusal reasons.
+The command writes a JSON report to standard output. It exits with zero when the plan fits, or two after refusal.
+
 
 ## A format you can inspect
 

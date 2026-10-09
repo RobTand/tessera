@@ -1,0 +1,79 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "fleet.rung_allowability.index.v2",
+  "title": "Versioned measured rung allowability index",
+  "type": "object",
+  "required": [
+    "schema",
+    "formats"
+  ],
+  "properties": {
+    "schema": {
+      "const": "fleet.rung_allowability.index.v2"
+    },
+    "formats": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "object",
+        "required": [
+          "kernel_builds"
+        ],
+        "properties": {
+          "kernel_builds": {
+            "type": "object",
+            "propertyNames": {
+              "pattern": "^[A-Za-z0-9_.-]+$"
+            },
+            "additionalProperties": {
+              "type": "object",
+              "required": [
+                "current_version",
+                "versions"
+              ],
+              "properties": {
+                "current_version": {
+                  "type": "integer",
+                  "minimum": 1
+                },
+                "versions": {
+                  "type": "object",
+                  "propertyNames": {
+                    "pattern": "^[1-9][0-9]*$"
+                  },
+                  "additionalProperties": {
+                    "type": "object",
+                    "required": [
+                      "path",
+                      "table_schema",
+                      "table_status"
+                    ],
+                    "properties": {
+                      "path": {
+                        "type": "string",
+                        "minLength": 1
+                      },
+                      "table_schema": {
+                        "enum": [
+                          "fleet.rung_allowability.v1",
+                          "fleet.rung_allowability.v2",
+                          "fleet.rung_allowability.v3"
+                        ]
+                      },
+                      "table_status": {
+                        "enum": [
+                          "partial",
+                          "complete"
+                        ]
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "description": "Canonical semantic validation is tessera.rung_allowability.validate_index; current_version must select an existing version and table paths must be safe index-root-relative paths."
+}

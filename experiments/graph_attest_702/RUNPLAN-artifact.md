@@ -546,3 +546,90 @@ CPU failing-before control: action `f585e74f487a11271d07a2ca7d88a2960b1b6cb37ad5
 ran5 tests:4 new named-mode controls failed,1 legacy refusal passed;0 skips,
 torch2.11.0+cpu/noCUDA. Passing controls and actual model evidence are separate
 records, not asserted by this source/documentation change.
+
+## Bounded seeded L2048 control and piece-major phases (2026-10-06, #1002)
+
+These are separate diagnostic scopes, not a relaxed ship comparison.
+`WINDOW_MODE=investigate-eager-control-2048` selects the two-block
+`plan-eager-determinism-2048.txt`. The next scope,
+`WINDOW_MODE=investigate-eager-piece-major-2048`, selects
+`plan-eager-piece-major-2048.txt` with an explicit completed `CONTROL_ROOT`.
+The original ship eager lever scope still requires OFF then at least one
+lever ON and all 33 responses. The earlier failed combined pair stays failed.
+
+The dedicated `seeded_control_client.py` preserves the October 5 prompt order,
+stream options, temperature zero, 128 completions and ignored end-of-sequence.
+Only L2048 at concurrency one is selected, with the original ten timed trials
+plus one warmup: eleven full responses per block rather than thirty-three.
+Server initialization seed zero is an explicit `vllm serve --seed 0` input on
+both ranks; request seeds are explicitly 0 through 10 in matching trial order.
+The old client did not send seeds and remains read-only. The new protocol is
+`tessera.eager_determinism_protocol.v1`; client seed arguments are required.
+Request payloads, prompt hashes, trial and slot identities, complete streaming
+choices, final usage, full decoded text, length finish and their hashes are
+retained. Token IDs and log probabilities are retained if the API already
+returns them; unreturned token IDs, logits and effective internal seeds are
+not inferred. This is not a teacher-forced quality measurement.
+
+`control_off_first` and `control_off_restart` start fresh containers on
+both ranks, all three levers OFF, and finish only after exact owned cleanup.
+Any OFF/OFF difference is recorded as serving nondeterminism. It does not
+stop subsequent lever measurement behind an equality requirement. The next
+gang contains only `control_pm_off` then `control_piece_major`, with
+decode-once and KDA split disabled. Both ranks validate the actual matched
+OFF populations and preregistered observed timing selfvariation before ON.
+Observed paired OFF ranges are finite descriptive evidence, not statistical
+confidence or numerical quality equivalence. The client requests no logits
+or log probabilities, so text/finish/usage cannot derive a quality band.
+If OFF differs, actual matched numerical observations and additional controls
+are needed in further bounded quanta before a quality/default decision.
+
+Each actual gang uses the published native driver at priority -10, with a
+total 1800-second claim-relative budget including the existing 180-second
+cleanup reserve and a 120-second peer admission cap. No arm, rank admission
+or cleanup restarts that budget. CEO 09:50 release removes the obsolete D42
+or campaign handoff wait; ordinary native fencing handles interleaving.
+No other lever precedes the piece-major phase; default remains OFF.
+Preserve the two-rank topology, maximum batched tokens 4096, maximum sequence count one,
+maximum length 8448, resident serving, socket fabric, speculative token one,
+draft parallelism two, fp8_ds_mla KV with two GiB per rank, CPU caps 8/6, host
+cap 104 GiB and GPU subset 102 GiB. The 107 GiB start gate, bounded 900-second
+headroom wait and one-Hertz strictly-below-two-GiB coupled TERM/KILL guard
+with ten-second kill grace are unchanged. Published native driver, completion
+client, broker ownership and independent physical cleanup remain the owners.
+
+Before changed GPU invocation, run the same entry point through PrismaBuild
+on x86 with `--dry-run --preflight-output <fresh JSON>`. It imports the real
+client and frozen generation validator, parses actual seed arguments, validates
+eleven L2048 token-ID prompts and reads at most 64 bytes of every artifact
+file, plus the real model configuration and runtime contract. No full model
+copy or body rehash is performed. This proves CPU argument/input readiness
+only. Parent and independent exact-head code review precede changed GPU work.
+The piece-major phase uses a `PROFILE_MANIFEST` declaring L2048 prefill and
+decode cells through the existing comparison instrument and verifier. Both
+arms retain all eleven seeded output records before separate profile requests
+and collect both-Spark Netdata power over the timing interval. Actual profiles,
+effective paths/counters, peaks, full-population comparison and work per joule
+are required for any performance/default-on recommendation. The ordinary
+ship/quality gates and the serving pin do not change. No historical isolated
+kernel gain is represented as a served receipt.
+
+Both diagnostic native rows require `DATA_MANIFEST`, declaring every complete
+original artifact file through existing PB stage, RAM-auto and shared-residency
+options. PB stages the ranges before native GPU admission. The local rank uses
+the existing `StagedInputs`/public reader lease, opens authenticated complete
+file descriptors and mounts those read-only over the same artifact paths inside
+its owned container. It does not copy a new cache or fall back to bulk origin
+reads. Refs and descriptors remain held across both fresh-server blocks and are
+released only after exact owned physical cleanup. A failed staged-reader
+release is retained as an unproven handoff, not rewritten as success.
+Both modes use the existing eager route-trace histogram. Counter identities
+and profile labels must be reported at their actual scope; flag values alone
+do not prove the piece-major reader executed.
+The bounded observer extends the existing graph histogram/import patcher and
+serving predicate. It records the actual native-forward argument at index 20
+of the unchanged 33-argument interface, plus library/mode/token/block-row
+values, after the native call returns. This counts submitted native forwards,
+not SM utilization or completion-time work; full outputs and profiles still
+govern successful served evidence. No runtime/kernel arithmetic changes.
+

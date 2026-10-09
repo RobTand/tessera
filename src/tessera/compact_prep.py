@@ -45,6 +45,7 @@ from .errors import GrammarError
 from .manifest import BodyKind, RotationState, ScalePlaneKind
 from .planes import NORMATIVE_ELEMENT_BITS, PlaneKind
 from .unit_artifact import ParsedMetadata, parse_unit_metadata
+from .window_geometry import TILE_ROWS, require_window_geometry
 
 #: The highest column rate :func:`prepare_window_compact` admits unless its
 #: caller names another: the routed-expert lanes' 1..8.  The documented window
@@ -634,8 +635,7 @@ def _repack_window_compact(metadata: ParsedMetadata, rows: "tuple[int, int]",
     arity 1 the two are the same.
     """
     from . import kernel_wire as kw
-    from .kernel_window_gemv import Repacked, TILE_ROWS
-    from .lane_planes import require_window_geometry
+    from .kernel_window_gemv import Repacked
 
     arity = int(metadata.grid.arity)
     r0, r1 = (int(r) // arity for r in rows)
@@ -903,3 +903,102 @@ def prepare_window_lut_compact(wire: CompactWire, *, rows=None, cols=None,
         global_scale=float(metadata.manifest.scale_plane.global_scale),
         window_bits=int(metadata.manifest.window_bits), rows=r1 - r0, cols=c1 - c0,
         arity=int(grid.arity), half=half, initial_state=state, row_offset=r0)
+
+
+
+def prepare_a4_wire_compact(wire: CompactWire, *, device="cuda"):
+    """Opt-in whole-unit geometry preparation of actual E2M1 pair wires.
+
+    TCQ retains the validated packed BODY verbatim and uses the existing
+    forest/code owners. WINDOW uses lane_planes.pack_window_planes, including
+    its byte alignment, incoming-state padding and trailing slack. Neither
+    changes stored bytes or introduces a serving route.
+    """
+    from . import lane_planes as lp
+    from .kernel_a4 import build_code_nibbles
+    from .kernel_a4_wire import A4WireUnit
+    from .stock import e2m1_nibbles
+    from .unit_artifact import _window_unit
+
+    md = wire.metadata
+    if md.grid.name != "E2M1x2" or md.grid.arity != 2:
+        raise GrammarError("packed A4 geometry requires the E2M1 pair grid")
+    if md.body not in (BodyKind.TCQ, BodyKind.WINDOW):
+        raise GrammarError("packed A4 geometry requires TCQ or WINDOW")
+    if md.manifest.scale_plane.kind is not ScalePlaneKind.LUT:
+        raise GrammarError("packed A4 geometry requires the LUT scale plane")
+    lp.require_no_post_decode_transforms(release_positions=md.release_positions,
+        diagonals=md.has_diagonals, rotation=md.rotation)
+    require_compact_cut(wire)
+    rows, cols = md.rows, md.columns
+    if rows % 4 or cols % 16 or md.manifest.geometry.half_weights != 16:
+        raise GrammarError("packed A4 geometry requires whole four-row pairs and sixteen-column scale groups")
+    rates = tuple(int(r) for r in md.rates)
+    device = torch.device(device)
+    code_starts = []
+    initial = torch.zeros(cols, dtype=torch.int32, device=device)
+    if md.shard_state is not None:
+        initial = md.shard_state.reshape(-1).to(device=device, dtype=torch.int32)
+    memory = 0
+    if md.body is BodyKind.WINDOW:
+        if int(md.manifest.window_bits) != 12:
+            raise GrammarError("packed A4 geometry requires the actual served twelve bit WINDOW")
+        require_window_geometry(md.manifest.window_bits, rates)
+        # Existing packer is the byte-order, padding, offsets and slack owner.
+        parsed = _window_unit(md, device)
+        body, starts, rate_tensor = lp.pack_window_planes(parsed.unit.body_bits,
+            rates, int(md.manifest.window_bits), initial_state=initial)
+        digits = e2m1_nibbles(_window_codes(md).reshape(-1, 1), md.grid).reshape(-1, 2)
+        codes = (digits[:, 0] | (digits[:, 1] << 4)).to(device=device)
+        labels = torch.empty(0, dtype=torch.int32, device=device)
+        code_starts = [0] * cols
+        ends = [int(starts[c]) + int(md.manifest.window_bits) + (rows // 2) * rates[c] for c in range(cols)]
+        layout_owner = "tessera.lane_planes.pack_window_planes"
+    else:
+        if md.span != 2 or md.code is None or not isinstance(md.forests, dict):
+            raise GrammarError("packed TCQ geometry requires span two and its convolutional code and forests")
+        if not rates or min(rates) < 1 or max(rates) > 7:
+            raise GrammarError("packed TCQ pair fields require rates one through seven")
+        for rate in sorted(set(rates)):
+            lp.require_no_completion_plane(rates=md.rates, rate=rate,
+                cap=md.forests[rate].cap, limit=md.completion_limit)
+        memory = int(md.code.memory)
+        tables, table_starts = [], {}
+        labels = None
+        for rate in sorted(set(rates)):
+            forest = md.forests[rate]
+            label_table, _ = lp.build_span2_luts(forest, md.code, device)
+            if labels is None:
+                labels = label_table
+            elif not torch.equal(labels, label_table):
+                raise GrammarError("mixed TCQ forests disagree about convolutional super-labels")
+            table_starts[rate] = sum(t.numel() for t in tables)
+            tables.append(build_code_nibbles(lp.build_subset_nibbles(forest, md.code, device),
+                                             1 << (rate - 1), 2))
+        codes = torch.cat(tables)
+        starts_list, ends, cursor = [], [], 0
+        for rate in rates:
+            starts_list.append(cursor)
+            cursor += (rows // 4) * (2 * rate + 1)
+            ends.append(cursor)
+            code_starts.append(table_starts[rate])
+        body = _plane_u8(md.chunks[PlaneKind.BODY], device)
+        starts = torch.tensor(starts_list, dtype=torch.int64, device=device)
+        rate_tensor = torch.tensor(rates, dtype=torch.int32, device=device)
+        layout_owner = "tessera.wire.pack_body; tessera.lane_planes.build_span2_luts/build_subset_nibbles"
+    if max(ends) > body.numel() * 8:
+        raise GrammarError("packed column fields run past their own BODY bytes")
+    layout = {"owner": layout_owner, "column_rates": list(rates),
+        "column_bit_starts": starts.cpu().tolist(), "column_field_end_bits": ends,
+        "packed_body_bytes": body.numel(), "byte_order": "MSB-first",
+        "span": int(md.span), "arity": 2, "scale_group": 16,
+        "window_word_ring": "not applicable; direct packed byte fields"}
+    return A4WireUnit(body=body, starts=starts, rates=rate_tensor,
+        code_starts=torch.tensor(code_starts, dtype=torch.int64, device=device),
+        codes=codes, labels=labels, initial=initial,
+        nibbles=_compact_scale_nibbles(md, r0=0, r1=rows, c0=0, c1=cols, device=device),
+        lut_bytes=lp.lut_scale_bytes(md.scale_lut, device), rows=rows, cols=cols,
+        memory=memory, window_bits=int(md.manifest.window_bits),
+        body_kind=md.body.name.lower(), global_scale=float(md.manifest.scale_plane.global_scale),
+        layout=layout)
+

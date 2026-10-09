@@ -226,16 +226,31 @@ class StagedInputs:
         A public pinned FD and pre/post hashes do not establish the immutable
         original tensor-provider contract for mutable native-code file bytes.
         """
-        identity = (str(path),0)
-        entry = self.entries.get(identity)
-        if self.closed or entry is None or not str(path).endswith('.so'):
+        if self.closed or (str(path), 0) not in self.entries or not str(path).endswith('.so'):
             raise ValueError('undeclared native code artifact')
+        return self.pinned_file(path)
+
+    def pinned_file(self, path):
+        """Hold a declared complete file through its consuming process lifetime."""
+        identity = (str(path), 0)
+        entry = self.entries.get(identity)
+        if self.closed or entry is None:
+            raise ValueError('undeclared complete pinned file')
         if self.direct_vllm:
             self._direct_identity(str(path))
-            return os.dup(self.direct_files[str(path)]['fd']),dict(entry),{'transport':'direct-vllm-held-original-fd'}
-        fd,serving = self.sdk.open_pinned(self.queue,self.held['pin'],
-                                        self.held['ref_id'],self.keys[identity])
-        return fd,dict(entry),serving
+            fd = os.dup(self.direct_files[str(path)]['fd'])
+            serving = {'transport': 'direct-vllm-held-original-fd'}
+        else:
+            fd, serving = self.sdk.open_pinned(self.queue, self.held['pin'],
+                                               self.held['ref_id'], self.keys[identity])
+        try:
+            info = os.fstat(fd)
+            if not stat.S_ISREG(info.st_mode) or info.st_size != entry['bytes']:
+                raise ValueError('pinned complete file byte length/type differs')
+        except BaseException:
+            os.close(fd)
+            raise
+        return fd, dict(entry), serving
 
     def close(self):
         if not self.closed:

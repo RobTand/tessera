@@ -11,13 +11,9 @@ Two facts drive every test here:
 1. **The row axis is the BODY's answer, not the tile's.**  A row shard begins
    mid-column, so it carries an INITIAL_STATE plane.  The window body's L-bit
    pad *is* ``state_{-1}``, so the E4M3/FP8 route threads it and cuts rows.
-   The span-2 TCQ decoders the NVFP4 route packs for read step 0's history
-   out of the select plane's ``SELECT_PAD``, and since tessera#492 the packer
-   writes a shard's register into that pad
-   (``lane_planes._thread_start_state``), so that route cuts rows too --
-   ``tests/test_span2_start_state.py`` is the bit-for-bit proof.  The table
-   the routes gate on (``ROUTE_TP_AXES``) therefore refuses nothing today,
-   and it stays, because a fourth body may bring a refusal with it.
+   The NVFP4 route also uses WINDOW. Its row cut preserves the incoming state.
+   The native owner reads that state before it decodes the first chunk.
+   The route axis table owns admission for all ranks.
 2. **A refusal is symmetric across the group.**  Rank 0's row shard starts at
    row 0 and carries no INITIAL_STATE plane, so it would in fact pack.
    Refusing only where it bites would leave rank 0 building a layer while its
@@ -124,7 +120,7 @@ class _BareModule(torch.nn.Module):
 
 def _nvfp4_scheme(roles=None, columns=COLUMNS):
     roles = roles if roles is not None else [["weight", ROWS]]
-    return {"family": TESSERA_NVFP4, "grid": "E2M1x2", "body": "TCQ", "plane": "LUT",
+    return {"family": TESSERA_NVFP4, "grid": "E2M1x2", "body": "WINDOW", "plane": "LUT",
             "q256": 896, "rows": sum(r for _, r in roles), "columns": columns,
             "wire_bytes": 4096, "roles": roles}
 
@@ -265,9 +261,7 @@ def test_a_row_refusal_is_symmetric_across_the_group(monkeypatch):
 
 
 def test_the_nvfp4_route_takes_a_column_cut(monkeypatch):
-    """REGRESSION PIN (passes before and after): a row-parallel Linear
-    (``o_proj``, ``down_proj``) cuts the input axis, which needs no start
-    state, so the span-2 route serves it at any TP."""
+    """A row-parallel Linear cuts the input while it preserves the output rows."""
     layer = _create(monkeypatch, _nvfp4_scheme(), axis=AXIS_COLUMNS, tp_size=2)
     assert layer.tessera_shard_plan.axis == AXIS_COLUMNS
     assert layer.tessera_rows == ROWS and layer.tessera_columns == COLUMNS // 2

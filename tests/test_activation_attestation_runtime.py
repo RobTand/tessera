@@ -1,20 +1,8 @@
-"""Regenerate the fp4 quantizer table and require the runtime to still emit it (#484).
+"""Regress the historical FP4 quantizer receipt against a real runtime.
 
-This module needs the serving runtime itself, so it skips at import wherever
-vLLM is absent -- the ``pure`` job, and any box outside the serve image.  A
-skip is not a pass and this repository already says so out loud: ``conftest``
-prints every skip reason verbatim and counts them, so a run that never reached
-this module says as much in its own summary.  The check that actually runs is
-the one inside the image the platform's cells attest::
-
-    docker run --gpus all -v <checkout>:/tessera:ro --entrypoint python3 \\
-        <the platform's serve_image> -m pytest /tessera/tests/test_activation_attestation_runtime.py
-
-What it asserts is the whole contract of the table: the packaged vectors are
-what THIS runtime emits today.  When the pinned vLLM moves and this fails, the
-answer is to regenerate the table, never to widen anything -- a published code
-that no longer matches the kernel is a stale attestation, and a consumer gate
-reading it would price an activation the runtime does not execute.
+The archive preserves measured outputs from the old T4 serving images.
+These checks do not create a current WINDOW serving attestation.
+The tests skip at import where vLLM is absent. A skip is not a pass.
 """
 from __future__ import annotations
 
@@ -31,6 +19,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "experiments"))
 from tessera.serving.activation_attestation import PROBES
 
 CHECKOUT = Path(__file__).resolve().parents[1]
+ARCHIVE = CHECKOUT / "experiments" / "results" / "t4_activation_quantizers_historical_20261007.json"
 
 
 @pytest.fixture(scope="module")
@@ -44,9 +33,7 @@ def emitted():
 
 def test_the_runtime_still_emits_every_published_vector(emitted):
     import json
-    from tessera.serving.contract import contract_path
-
-    published = json.loads(contract_path().read_text())["activation_quantizers"]
+    published = json.loads(ARCHIVE.read_text())
     entries = published["platforms"]["sm_121"]
     assert isinstance(entries, list) and entries, (
         "sm_121 must publish one attestation per image, not a bare table")
@@ -60,22 +47,19 @@ def test_the_runtime_still_emits_every_published_vector(emitted):
 
 
 def test_the_generated_table_passes_the_packaged_grammar(emitted):
-    """The generator's output is admissible on its own, not only equal."""
+    """The measured operator output must satisfy the historical grammar."""
     from tessera.serving.activation_attestation import validate_activation_quantizers
-    from tessera.serving.contract import contract_path, require_runtime_image
+    from tessera.serving.contract import require_runtime_image
     import json
 
-    raw = json.loads(contract_path().read_text())
-    lane = raw["lane_eligibility"]
-    served: dict = {}
-    for cell in lane["cells"]:
-        served.setdefault(cell["platform"], set()).add(cell["activation_contract"])
-    block = raw["activation_quantizers"]
+    block = json.loads(ARCHIVE.read_text())
     fresh = json.loads(json.dumps(block))
     first = fresh["platforms"]["sm_121"][0]
     first["contracts"]["e2m1_group16_ue4m3_static"]["vectors"] = [
         emitted[row["id"]] for row in
         block["platforms"]["sm_121"][0]["contracts"]["e2m1_group16_ue4m3_static"]["vectors"]]
-    validate_activation_quantizers(fresh, platforms=sorted(lane["platforms"]),
+    platforms = ["sm_121"]
+    served = {"sm_121": {"e2m1_group16_ue4m3_static"}}
+    validate_activation_quantizers(fresh, platforms=platforms,
                                    cell_contracts=served,
                                    require_image=require_runtime_image)

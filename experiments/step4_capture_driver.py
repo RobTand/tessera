@@ -5,20 +5,12 @@ plugin and dropped to the runtime uid, so everything here runs in the image,
 plugin installation and GPU the capture itself runs in.  Three phases, in this
 order, each refusing the whole run rather than continuing:
 
-1. **native preflight** -- a child interpreter (``NATIVE_SMOKE``) reads the
-   runtime's own tables and proves the native code the artifact's families
-   need is buildable here, before an engine exists: ``scheme.route_launches``
-   for every family must name no extension lane (a lane would reintroduce a
-   ``when_unavailable`` substitute the qualifier does not model, so one is a
-   refusal), ``tessera.window_gemm`` must import (it is Triton; the dense FP8
-   and BF16 routes multiply through it and their ``apply`` raises rather than
-   falling back), and for an NVFP4 family ``kernel_a4.require_native_fp4_mma``
-   must pass (the fused span-2 GEMM refuses a Triton that cannot lower
-   block-scaled FP4 MMA rather than emulating it).  The Triton cache's state
-   is recorded so a report can tell a warm run from a cold one: on this tree
-   the kernels compile at first forward INSIDE the engine, so a cold cache
-   charges compilation to the measured ledger.  A child, not this process, so
-   the driver never initialises CUDA.
+1. **native preflight** -- A child interpreter imports the window GEMM.
+   If the artifact needs NVFP4, the child builds the native E2M1 extension and checks its ABI.
+   The child records the library path and SHA256.
+   A family with only extension launches must have one proved extension.
+   The child also records the Triton cache state.
+   The capture must execute the published routes; a build proof does not qualify arithmetic.
 2. **capture** -- ``capture_full_engine_resources`` from the frozen tree, on the
    artifact roster (``--artifact --all-units``).  The census CLI is mutually
    exclusive with ``--artifact`` (``capture_full_engine_resources.main``), so no
@@ -128,16 +120,20 @@ try:
             launches[family][kind] = rows
     record["module_kind_launches"] = launches
     record["dense_launches"] = {f: rows["dense"] for f, rows in launches.items() if "dense" in rows}
-    # A lane-bearing launch is made only where its extension built; the serve
-    # records which published pair each module took and the qualifier accepts
-    # any of them (step4_route_qualification.MOE_LAUNCHES).  This preflight has
-    # no proof for a lane, so it refuses only a family/kind whose EVERY launch
-    # needs one: there a build failure would leave the serve no attested
-    # launch.  Lane-bearing launches beside a lane-free one are recorded.
-    lane_only = sorted(f"{family}/{kind}" for family, by_kind in launches.items()
-                       for kind, ls in by_kind.items() if all(l["lane"] is not None for l in ls))
-    if lane_only:
-        record["refusal"] = (f"every native launch of {lane_only} names an extension lane; "
+    # A mandatory extension must build here. Optional extensions remain observations.
+    proven_lanes = {}
+    if "TESSERA_NVFP4" in families:
+        from tessera import routed_fused_e2m1
+        library = routed_fused_e2m1._ext()
+        path = Path(library.__file__).resolve(strict=True)
+        proven_lanes[routed_fused_e2m1.MODULE_NAME] = {
+            "path": str(path), "sha256": hashlib.sha256(path.read_bytes()).hexdigest()}
+    record["proven_lanes"] = proven_lanes
+    unproved = sorted(f"{family}/{kind}" for family, by_kind in launches.items()
+                      for kind, ls in by_kind.items()
+                      if all(l["lane"] is not None and l["lane"] not in proven_lanes for l in ls))
+    if unproved:
+        record["refusal"] = (f"every native launch of {unproved} names an extension lane; "
                              "this preflight has no proof for a lane")
         finish(4)
     record["lane_launches"] = sorted({l["lane"] for by_kind in launches.values() for ls in by_kind.values()
@@ -148,24 +144,16 @@ try:
     import tessera.window_gemm  # noqa: F401
     record["triton"] = {"module": triton.__name__, "version": getattr(triton, "__version__", None),
                         "file": getattr(triton, "__file__", None)}
-    # 3. The A4 lane: its Triton build and, when the artifact carries an NVFP4
-    #    family, the block-scaled FP4 MMA gate the dense GEMM runs on every call.
-    from tessera import kernel_a4
-    record["fp4_backend"] = kernel_a4.native_fp4_backend()
-    if "TESSERA_NVFP4" in families:
-        kernel_a4.require_native_fp4_mma("the step-4 capture's native preflight")
-        record["fp4_mma_ptx_tokens"] = kernel_a4.native_fp4_mma_ptx_tokens()
+    # The required FP4 extension has already passed its build and ABI checks.
+    record["fp4_backend"] = "native_fused_window_e2m1" if "TESSERA_NVFP4" in families else None
     # 4. Triton cache state, so the report can tell a warm run from a cold one.
     cache = os.environ.get("TRITON_CACHE_DIR")
     listing = (sorted(str(p.relative_to(cache)) for p in Path(cache).rglob("*") if p.is_file())
                if cache and Path(cache).is_dir() else [])
     record["triton_cache"] = {"dir": cache, "files": len(listing),
                               "listing_sha256": hashlib.sha256("\n".join(listing).encode()).hexdigest()}
-    record["scope"] = ("the native lanes the artifact's families dispatch through import and, for "
-                       "NVFP4, pass the FP4 MMA gate in this container before the engine started; the "
-                       "window GEMM kernel itself compiles at first forward inside the engine and has "
-                       "no standalone probe here -- a compile failure raises in apply and the capture "
-                       "phase refuses")
+    record["scope"] = ("The preflight imports the window GEMM and builds each required native FP4 extension. "
+                       "The capture must execute the published launches. This proof does not qualify arithmetic.")
 except SystemExit:
     raise
 except Exception as exc:  # noqa: BLE001 -- every failure is the refusal

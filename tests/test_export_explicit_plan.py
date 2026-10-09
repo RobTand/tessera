@@ -55,6 +55,28 @@ def _write(tmp_path: Path, tensors, architecture="Glm5NextForConditionalGenerati
     return src
 
 
+_FIXTURE_OUTPUT_SIZES = {
+    "language_model.model.layers.*.mlp.down_proj": [32],
+}
+
+
+def _declare_fixture_geometry(monkeypatch):
+    """Use the fixture's own partition list, and nothing else."""
+    import copy
+    from tessera.serving.contract import construction_entry as live_entry
+    real = live_entry
+
+    def _entry(architectures, contract=None):
+        entry = real(architectures) if contract is None else real(architectures, contract)
+        if entry is None or entry.get("architecture") != "Glm5NextForConditionalGeneration":
+            return entry
+        entry = copy.deepcopy(entry)
+        entry.setdefault("output_sizes", {}).update(_FIXTURE_OUTPUT_SIZES)
+        return entry
+
+    monkeypatch.setattr(exporter, "construction_entry", _entry)
+
+
 def _run(tmp_path, monkeypatch, tensors, plan, *extra,
          architecture="Glm5NextForConditionalGeneration"):
     _write(tmp_path, tensors, architecture)
@@ -66,6 +88,7 @@ def _run(tmp_path, monkeypatch, tensors, plan, *extra,
         ["export_tessera_serving.py", str(tmp_path / "src"), str(out),
          "--grid", "E4M3", "--q256", "1024", "--device", "cpu", "--no-verify",
          "--plan-json", str(plan_path), *extra])
+    _declare_fixture_geometry(monkeypatch)
     exporter.main()
     return out
 
@@ -168,7 +191,7 @@ def test_a_fused_group_whose_explicit_members_disagree_on_scheme_is_refused(tmp_
             v: {"grid": "E4M3", "q256": 1024}}
     with pytest.raises(SystemExit) as caught:
         _run(tmp_path, monkeypatch,
-             {name: _tensor(64, 32, i) for i, name in enumerate((q, k, v))}, plan,
+             {name: _tensor(64, 256, i) for i, name in enumerate((q, k, v))}, plan,
              architecture=FUSED_QKV_ARCHITECTURE)
     message = str(caught.value)
     assert BODY + "0.self_attn.qkv_proj" in message

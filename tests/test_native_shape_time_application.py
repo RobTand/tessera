@@ -64,7 +64,7 @@ def test_preparation_uses_public_exact_wire_path(panel, monkeypatch):
             layer.tessera_shard_plan = SimpleNamespace(tp_rank=0, tp_size=1)
             from tessera.serving import native_window
             published=native_window.DENSE_LANES[native_window.LANE_FUSED]
-            layer.tessera_native = SimpleNamespace(rows=16, columns=128, packed_bytes=lambda: 123, lane=native_window.LANE_FUSED, launch_pair=(published[0],published[1]["epilogue"]))
+            layer.tessera_native = SimpleNamespace(rows=16, columns=128, packed_bytes=lambda: 123, lane=native_window.LANE_FUSED, launch_pair=(published[0],published[1][native_window.NATIVE_WINDOW_FAMILY["TESSERA_FP8"]]))
     method = Method()
     monkeypatch.setattr(lane, 'build_tessera_method', lambda *a: (events.append(('build', a)) or method))
     path, request = request_file(panel, monkeypatch);wire = app.tp.read_bound(request['wire'])
@@ -237,7 +237,7 @@ def test_binary_observation_uses_existing_maps_and_never_loader(tmp_path,monkeyp
     from tessera.serving import native_window
     from experiments import bench_native_operator
     published=native_window.DENSE_LANES[native_window.LANE_FUSED]
-    native=SimpleNamespace(lane=native_window.LANE_FUSED,launch_pair=(published[0],published[1]["epilogue"]))
+    native=SimpleNamespace(lane=native_window.LANE_FUSED,launch_pair=(published[0],published[1][native_window.NATIVE_WINDOW_FAMILY["TESSERA_FP8"]]))
     binary=tmp_path/(routed_fused.MODULE_NAME_E4M3+'.so');binary.write_bytes(b'\x7fELF CPU fixture')
     monkeypatch.setattr(routed_fused,'_ext',lambda *a:pytest.fail('observer invoked unused native loader'))
     monkeypatch.setattr(bench_native_operator,'_mapped_shared_libraries',lambda:{binary})

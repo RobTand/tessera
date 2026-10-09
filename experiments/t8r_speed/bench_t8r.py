@@ -75,8 +75,6 @@ def _install_vllm_stubs():
     return True
 
 
-VLLM_STUBBED = _install_vllm_stubs()
-os.environ.setdefault("TESSERA_SERVE_MODE", "resident")
 
 
 def _init_vllm_world1(rdv_dir):
@@ -347,12 +345,11 @@ def build_dense(store, module, kind):
 def build_routed(store, module):
     from tessera.serving.scheme import validate_tessera_moe_scheme
     from tessera.serving.moe_route import _RankLocalPackedIntake
+    from tessera.expert_classes import inverse_expert_ids, storage_expert_ids
     scheme = store.schemes[module]
     declared = validate_tessera_moe_scheme(scheme, module)
     dev = torch.device("cuda")
     intake = _RankLocalPackedIntake(declared, module, dev, TP_RANK, TP_SIZE)
-    if not intake.compact:
-        raise RuntimeError("compact routed lane not published in this build")
     w13_len = torch.zeros(EXPERTS, 2, dtype=torch.long)
     w2_len = torch.zeros(EXPERTS, dtype=torch.long)
     wire_total = 0
@@ -367,6 +364,9 @@ def build_routed(store, module):
                 w2_len[e] = wire.numel()
     packed = intake.finish(w13_len, w2_len)
     native = packed.adapter()
+    # The adapter takes storage IDs. Build the plugin's one device inverse here.
+    inverse = torch.tensor(inverse_expert_ids(declared["expert_ids"]), dtype=torch.int32,
+                           device=packed.device)
     library = getattr(native, "library", None)
     library_path = library_sha = None
     if library is not None:
@@ -396,7 +396,9 @@ def build_routed(store, module):
         return min(EXPERTS, m * TOP_K) * per_expert_rank
 
     def fn(x, ids, w):
-        return native(x, ids, w, swiglu_limit=SWIGLU_LIMIT, apply_router_weight_on_input=False)
+        return native(x, storage_expert_ids(inverse, ids), w, swiglu_limit=SWIGLU_LIMIT,
+                      apply_router_weight_on_input=False)
+    fn.gate_up = lambda x, ids, w: native.gate_up(x, storage_expert_ids(inverse, ids), w)
     fn.native = native  # The finite comparison observes this same serving owner.
     fn.native_adapter = native  # The closed paired mode observes this same owner.
     return fn, info, packed, touched
@@ -551,32 +553,34 @@ def require_single_replay_options(args, *, stubbed=False):
 
 
 def numeric_outputs(fn, xa):
-    """Observe the real frozen adapter's class seam for this one instance."""
+    """Observe the real frozen adapter's load-bound uniform launch for this one instance."""
     import torch
     from tessera import routed_fused as rf
 
     native = fn.native
     if type(native) is not rf.FusedRoutedWindowMoE or native.library != "e4m3mma":
         raise ValueError("comparison requires the actual frozen E4M3 MMA adapter")
-    owner = type(native)
-    original = owner._launch
+    if native.uniform is None:
+        raise ValueError("comparison observes the uniform launch; this owner has several classes")
+    owner = type(native.uniform)
+    original = owner.launch
     captured_outputs = {}
     def bits(tensor):
         return tensor.detach().contiguous().view(torch.uint8).cpu()
-    def observe(instance, mode, *a, **kw):
-        original(instance, mode, *a, **kw)
-        if instance is not native:
+    def observe(kernel, mode, *a, **kw):
+        original(kernel, mode, *a, **kw)
+        if kernel is not native.uniform:
             return
         key = "mode" + str(mode)
         if mode not in (0, 1, 2) or key in captured_outputs:
             raise ValueError("comparison must expose each routed reader mode once")
         captured_outputs[key] = bits(kw["out"])
-    owner._launch = observe
+    owner.launch = observe
     try:
         captured_outputs["forward"] = bits(fn(*xa))
-        captured_outputs["mode1"] = bits(native.gate_up(*xa))
+        captured_outputs["mode1"] = bits(fn.gate_up(*xa))
     finally:
-        owner._launch = original
+        owner.launch = original
     if set(captured_outputs) != {"forward", "mode0", "mode1", "mode2"}:
         raise ValueError("comparison did not observe every routed reader mode")
     return captured_outputs
@@ -811,17 +815,19 @@ def main():
     args = ap.parse_args()
     if args.outputs_only and args.ncu:
         ap.error("--outputs-only cannot be combined with --ncu")
+    vllm_stubbed = _install_vllm_stubs()
+    os.environ.setdefault("TESSERA_SERVE_MODE", "resident")
     comparison = None
     comparison_sha = None
     if getattr(args, "comparison_protocol", None):
         import piece_major_protocol as pp
         comparison, comparison_sha = pp.load(args.comparison_protocol)
-        pp.require_options(args, comparison, stubbed=VLLM_STUBBED)
+        pp.require_options(args, comparison, stubbed=vllm_stubbed)
         if args.comparison_phase != "numeric":
             pp.require_numeric_receipt(args.comparison_numeric_receipt,
                                        args.comparison_numeric_sha256, pp.numeric_protocol_sha256(comparison, comparison_sha))
     else:
-        require_single_replay_options(args, stubbed=VLLM_STUBBED)
+        require_single_replay_options(args, stubbed=vllm_stubbed)
     os.makedirs(args.out, exist_ok=True)
     ms = [int(v) for v in args.ms.split(",")]
     wanted = None if args.groups == "all" else set(args.groups.split(","))
@@ -894,8 +900,8 @@ def main():
             raise SystemExit(f"--routing {args.routing}: no m<M>/*.pt for M in {ms} "
                              "(is the directory mounted into the container?)")
         meta["routing"] = {"root": args.routing, "files": {str(m): len(v) for m, v in recorded.items()}}
-        meta["vllm_stubbed"] = VLLM_STUBBED
-        if not VLLM_STUBBED:
+        meta["vllm_stubbed"] = vllm_stubbed
+        if not vllm_stubbed:
             import vllm
             meta["vllm"] = getattr(vllm, "__version__", None)
         try:
@@ -906,7 +912,7 @@ def main():
         # The closed routed numeric mode supplies TP explicitly to the packed
         # intake and invokes its adapter directly; no vLLM method/config/world
         # is constructed. It still uses the exact stock native FP8 quantizer.
-        ctx = None if VLLM_STUBBED or args.paired_k32_numerics else _init_vllm_world1(args.out)  # noqa: F841 -- held open
+        ctx = None if vllm_stubbed or args.paired_k32_numerics else _init_vllm_world1(args.out)  # noqa: F841 -- held open
         if args.paired_k32_numerics:
             meta['paired_k32'] = {'input_manifest_sha256': inputs.manifest_sha256,
                 'source_sha256': args.paired_k32_source_sha256,

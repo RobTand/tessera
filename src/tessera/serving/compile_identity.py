@@ -73,8 +73,8 @@ import hashlib
 from typing import Any
 
 __all__ = ["TESSERA_KEY", "DISPATCH_FACT", "declare_compile_identity",
-           "declare_compile_identity_in", "note_traced_dispatch",
-           "traced_dispatch", "reset_for_tests"]
+           "declare_compile_identity_in", "declared_forward_is_compiled",
+           "note_traced_dispatch", "traced_dispatch", "reset_for_tests"]
 
 TESSERA_KEY = "tessera"
 
@@ -83,12 +83,10 @@ TESSERA_KEY = "tessera"
 #: Named rather than spelt inline because the tests read it.
 DISPATCH_FACT = "traced_dispatch"
 
-#: The record ``declare_compile_identity_in`` last wrote, and the per-module
-#: dispatch accumulated into it.  Process-global for the same reason the
-#: contradiction check below is: one process serves one model.  Keyed off the
-#: RECORD object so that declaring into a second config (a test, never a
-#: serve) starts a fresh accumulation instead of inheriting the first's.
-_STATE: dict[str, Any] = {"record": None, "dispatch": {}}
+#: The record and compile mode declared during model construction, and the
+#: per-module dispatch accumulated at load. Process-global: one process serves
+#: one model. A different record starts a fresh dispatch accumulation.
+_STATE: dict[str, Any] = {"record": None, "dispatch": {}, "compiled": False}
 
 
 def _plugin_version() -> str:
@@ -114,9 +112,12 @@ def declare_compile_identity_in(config: Any, **facts: str) -> dict | None:
     under a compiled forward, and a fact that contradicts one declared earlier
     in this process: one process serves one residency mode.
     """
+    compiled = _forward_is_compiled(config)
+    # The construction context need not still be current during weight load.
+    _STATE["compiled"] = compiled
     extra = getattr(config, "additional_config", None)
     if not isinstance(extra, dict):
-        if _forward_is_compiled(config):
+        if compiled:
             raise RuntimeError(
                 f"cannot fold the Tessera serving identity {facts!r} into vLLM's "
                 f"compile-cache key: additional_config is a {type(extra).__name__}, not "
@@ -196,13 +197,14 @@ def traced_dispatch() -> dict:
 
 
 def reset_for_tests() -> None:
-    """Forget the remembered record and its dispatch.
+    """Forget the remembered record, compile mode and dispatch.
 
     Only tests need this: a serve builds one model in one process.  Named the
     way ``ext.reset_for_tests`` is, for the same reason.
     """
     _STATE["record"] = None
     _STATE["dispatch"] = {}
+    _STATE["compiled"] = False
 
 
 def _current_vllm_config():
@@ -220,14 +222,14 @@ def _current_vllm_config():
         return None
 
 
-def current_forward_is_compiled() -> bool:
-    """True when vLLM's current config compiles the forward (mode not NONE).
+def declared_forward_is_compiled() -> bool:
+    """The compile mode saved at declaration, without a late config lookup.
 
-    False when vLLM is absent or no config is current, e.g. a method built
-    bare in a test: no compiled forward exists for it.
+    False before any declaration (a bare method has no declared compiled
+    forward). Weight loading reads the construction-time fact even after
+    vLLM has left its current-config context.
     """
-    config = _current_vllm_config()
-    return config is not None and _forward_is_compiled(config)
+    return _STATE["compiled"]
 
 
 def declare_compile_identity(**facts: str) -> dict | None:

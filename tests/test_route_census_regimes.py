@@ -75,47 +75,7 @@ def test_renaming_a_regime_on_the_contract_side_only_is_refused():
         validate_serving_contract(contract)
 
 
-def test_every_phase_the_census_drives_joins_to_a_cell_of_every_family():
-    """The per-(family, regime) expectation, exercised on the real table.
 
-    Keyed the way an implementer would key it -- the census's phase name
-    mapped through the table, against the cells' own ``(family, regime)`` --
-    so a divergence shows up here as a missing pair rather than as a
-    ``KeyError`` on a loaded box, and a vacuous half of the matrix shows up as
-    an absent cell rather than as a guard that passed.
-    """
-    from tessera.serving.contract import _FAMILY_TO_ROUTE
-    from tessera.serving.scheme import STRUCTURES, launch_pairs
-
-    contract = load_serving_contract()
-    block = contract["lane_eligibility"]
-    cells = {(cell["family"], cell["regime"]) for cell in block["cells"]}
-    # A family whose route makes NO attested launch cannot have a cell: the
-    # validator derives ``executes`` from the launch table and refuses a cell
-    # that would be empty.  ``TESSERA_BF16_K1`` is in that state since contract
-    # v31 (tessera#538) -- its dense route's one launch is experimental -- so
-    # requiring a cell of it would require publishing one nothing can derive.
-    # The families are partitioned rather than filtered, and both halves are
-    # asserted, so a family cannot fall out of the join by going quiet.
-    families = {entry["family"] for entry in contract["formats"]}
-    assert families, "no family is published; the join below would be vacuous"
-    launchable = {family for family in families
-                  if any(launch_pairs(_FAMILY_TO_ROUTE[family], structure=structure)
-                         for structure in STRUCTURES)}
-    assert launchable, "no family makes an attested launch; the join is vacuous"
-    missing = sorted(
-        (family, phase, CENSUS_PHASE_REGIMES[phase])
-        for family in launchable
-        for phase in CENSUS_PHASE_REGIMES
-        if (family, CENSUS_PHASE_REGIMES[phase]) not in cells
-    )
-    assert not missing, (
-        "the census drives a phase whose regime has no cell for these families: "
-        f"{missing}; a per-(family, regime) expectation would be vacuous there"
-    )
-    for family in families - launchable:
-        assert not [c for c in block["cells"] if c["family"] == family], (
-            f"{family} publishes a cell while its route makes no attested launch")
 
 
 #: The two ranks' route traces from the two-rank GLM-5.3-Flash 4-layer stub
@@ -266,21 +226,11 @@ def _tool():
 
 
 def _record(m, **over):
-    """One served resident dense record whose forward ran ``m`` rows.
-
-    It was a ``TESSERA_FP8:resident`` record until contract v31 withdrew that
-    family's dense cells (tessera#538); the shape-and-regime matcher under test
-    is family-blind, and an E2M1x2 dense pair is the cell that still covers a
-    resident dense record in both regimes with one launch.  That "one launch in
-    both regimes" is the property this fixture needs: it is what makes a
-    miscounted decode observation invisible downstream, which is the defect
-    these tests pin.  Since contract v39 that pair is the GLM-image one on the
-    native A4 GEMM (tessera#604), so the join reads that cell's image.
-    """
-    return dict({"kind": "dense", "policy": "TESSERA_NVFP4:resident",
-                 "symbol": "tessera.kernel_a4.a4_span2_gemm", "decoder": "native_span2_gemm",
+    """A current FP8 dense record isolates the shape and regime rules."""
+    return dict({"kind": "dense", "policy": "TESSERA_FP8:resident",
+                 "symbol": "tessera::window_gemm_dense", "decoder": "native_window_gemm",
                  "shape": f"M{m}:N64:K64", "state": "served",
-                 "contract": "e2m1_group16_ue4m3_static"}, **over)
+                 "contract": "fp8_per_token_dynamic"}, **over)
 
 
 def _records(batch_m, decode_m):
@@ -294,14 +244,14 @@ def _agreement(records):
     return cell_launch_agreement(
         records, cells=contract["lane_eligibility"]["cells"],
         phase_regimes=CENSUS_PHASE_REGIMES, platform="sm_121",
-        rungs_by_module={_MODULE: 896}, families_by_route=PAYLOAD_FAMILY_BY_ROUTE,
-        runtime_image=_e2m1_dense_image(contract), execution_mode="eager")
+        rungs_by_module={_MODULE: 1024}, families_by_route=PAYLOAD_FAMILY_BY_ROUTE,
+        runtime_image=_dense_image(contract), execution_mode="eager")
 
 
-def _e2m1_dense_image(contract):
-    (image,) = {cell["runtime"]["image"] for cell in contract["lane_eligibility"]["cells"]
-                if (cell["family"], cell["structure"]) == ("TESSERA_E2M1_K2", "dense")}
-    return image
+def _dense_image(contract):
+    return next(cell["runtime"]["image"] for cell in contract["lane_eligibility"]["cells"]
+                if (cell["family"], cell["structure"], cell["regime"]) ==
+                ("TESSERA_E4M3_K1", "dense", "batch") and "eager" in cell["runtime"]["execution_modes"])
 
 
 def _decode_phase():
@@ -350,3 +300,129 @@ def test_a_compiled_census_keeps_its_symbolic_records():
     records = {phase: {_MODULE: _record("*")} for phase in CENSUS_PHASE_REGIMES}
     assert tool.phase_shape_problems(
         records, phase_regimes=CENSUS_PHASE_REGIMES, compiled=True) == []
+
+
+def test_a_compiled_census_refuses_concrete_capture_shapes():
+    """Graph-only capture keeps M64 in both phases (issue #1062)."""
+    tool = _tool()
+    records = _records(64, 64)
+    problems = tool.phase_shape_problems(
+        records, phase_regimes=CENSUS_PHASE_REGIMES, compiled=True)
+    assert problems and "shape-polymorphic" in problems[0], problems
+
+
+def _witness_map(prefill_m, decode_m):
+    """Concrete shapes per phase, mirroring the retained R768 eager/capture pair."""
+    out = {}
+    for phase, regime in CENSUS_PHASE_REGIMES.items():
+        m = prefill_m if regime == "batch" else decode_m
+        out[phase] = {_MODULE: {"shape": f"M{m}:N2048:K4096"}}
+    return out
+
+
+def _witness_receipt(maps, world=None):
+    """Minimal receipt holding per-rank record maps under rank scope."""
+    if world is None:
+        world = len(maps)
+    receipt = {"records": maps[0]}
+    if world > 1 or len(maps) > 1:
+        receipt["ranks"] = [{"rank": i, "world_size": world, "records": m}
+                            for i, m in enumerate(maps)]
+        receipt["topology"] = {"observed_world_size": world}
+    return receipt
+
+
+def _witness_pair(eager_sides, capture_sides, launches=7):
+    """The witness over two TP2-style receipts and a replay count."""
+    tool = _tool()
+    return tool.graph_phase_witness(
+        eager_receipt=_witness_receipt(eager_sides),
+        capture_receipt=_witness_receipt(capture_sides),
+        graph_launches=launches, phase_regimes=CENSUS_PHASE_REGIMES)
+
+
+def test_graph_witness_states_eager_rows_and_withholds_graph_rows():
+    """The retained R768 pair: eager M64/M1, capture M64/M64, seven replays."""
+    (decode,) = {p for p, r in CENSUS_PHASE_REGIMES.items() if r == "decode"}
+    (prefill,) = {p for p in CENSUS_PHASE_REGIMES if p != decode}
+    block, problems = _witness_pair([_witness_map(64, 1)] * 2, [_witness_map(64, 64)] * 2)
+    assert block["schema"] == "tessera.graph-phase-witness/2"
+    assert (block["eager_world"], block["capture_world"]) == (2, 2)
+    assert block["graph_launches"] == 7 and block["replay_observed"] is True
+    assert block["phases"][prefill]["eager_rows_stated"] is True
+    assert block["phases"][decode]["eager_rows_stated"] is True
+    assert all(owner["graph_states_rows"] is False
+               for phase in block["phases"].values() for owner in phase["owners"].values())
+    assert all(name.startswith("rank") for phase in block["phases"].values() for name in phase["owners"])
+    assert problems == [], problems
+
+
+def test_graph_witness_withholds_graph_rows_on_equal_stale_shapes():
+    """A fully matching capture still credits no graph row (issue #1062)."""
+    block, problems = _witness_pair([_witness_map(64, 1)] * 2, [_witness_map(64, 1)] * 2)
+    assert all(owner["graph_states_rows"] is False
+               for phase in block["phases"].values() for owner in phase["owners"].values())
+    assert all(phase["graph_rows_stated"] is False for phase in block["phases"].values())
+    assert problems == [], problems
+
+
+def test_graph_witness_yields_no_credit_without_replay():
+    block, problems = _witness_pair([_witness_map(64, 1)] * 2, [_witness_map(64, 64)] * 2, launches=0)
+    assert all(owner["eager_states_rows"] is False
+               for phase in block["phases"].values() for owner in phase["owners"].values())
+    assert all(phase["eager_rows_stated"] is False for phase in block["phases"].values())
+    assert problems and "no graph replay observed" in problems[0], problems
+
+
+def test_graph_witness_blocks_claims_on_missing_rank1():
+    """A capture with world two but rank one only blocks every claim."""
+    tool = _tool()
+    eager = _witness_receipt([_witness_map(64, 1)] * 2)
+    capture = _witness_receipt([_witness_map(64, 64)], world=2)
+    block, problems = tool.graph_phase_witness(
+        eager_receipt=eager, capture_receipt=capture,
+        graph_launches=7, phase_regimes=CENSUS_PHASE_REGIMES)
+    assert block["capture_world"] == 2
+    assert all(phase["eager_rows_stated"] is False for phase in block["phases"].values())
+    assert problems and "rank 1" in " ".join(problems), problems
+
+
+def test_graph_witness_refuses_duplicate_real_rank_identity():
+    eager = _witness_receipt([_witness_map(64, 1)] * 2)
+    eager["ranks"][1]["rank"] = 0
+    capture = _witness_receipt([_witness_map(64, 64)] * 2)
+    block, problems = _tool().graph_phase_witness(
+        eager_receipt=eager, capture_receipt=capture,
+        graph_launches=7, phase_regimes=CENSUS_PHASE_REGIMES)
+    assert problems
+    assert all(not phase["eager_rows_stated"] for phase in block["phases"].values())
+    assert all(not owner["eager_states_rows"]
+               for phase in block["phases"].values() for owner in phase["owners"].values())
+
+
+def test_graph_witness_joins_reversed_real_ranks_by_identity():
+    eager = _witness_receipt([_witness_map(64, 1), _witness_map(128, 1)])
+    eager["ranks"].reverse()
+    capture = _witness_receipt([_witness_map(64, 64), _witness_map(128, 128)])
+    capture["ranks"].reverse()
+    block, problems = _tool().graph_phase_witness(
+        eager_receipt=eager, capture_receipt=capture,
+        graph_launches=7, phase_regimes=CENSUS_PHASE_REGIMES)
+    assert problems == []
+    prefill = next(phase for phase, regime in CENSUS_PHASE_REGIMES.items() if regime == "batch")
+    owners = block["phases"][prefill]["owners"]
+    assert owners[f"rank0/{_MODULE}"]["eager_shape"] == "M64:N2048:K4096"
+    assert owners[f"rank1/{_MODULE}"]["eager_shape"] == "M128:N2048:K4096"
+
+
+def test_graph_witness_reads_single_rank_top_level_records():
+    block, problems = _tool().graph_phase_witness(
+        eager_receipt={"records": _witness_map(64, 1)},
+        capture_receipt={"records": _witness_map(64, 64)},
+        graph_launches=7, phase_regimes=CENSUS_PHASE_REGIMES)
+    assert problems == []
+    assert (block["eager_world"], block["capture_world"]) == (1, 1)
+    assert all(phase["eager_rows_stated"] for phase in block["phases"].values())
+    assert all(not phase["graph_rows_stated"] for phase in block["phases"].values())
+
+

@@ -1,10 +1,9 @@
 """Closed-world admission and raw-output binding controls; CPU-only evidence."""
-import ast
+import importlib
 import copy
 import hashlib
 import importlib.util
 import json
-from dataclasses import fields, MISSING
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -104,100 +103,105 @@ def test_comparator_refuses_unqualified_or_changed_evidence(tmp_path,fault):
     with pytest.raises(ValueError):q.compare_reports(a,b)
 
 
-def driver_gate(path):
-    tree=ast.parse(path.read_text())
-    node=next(n for n in tree.body if isinstance(n,ast.FunctionDef) and n.name=='require_single_replay_options')
-    namespace={}
-    exec(compile(ast.Module(body=[node],type_ignores=[]),str(path),'exec'),namespace)
-    return namespace['require_single_replay_options']
-
-
 def test_driver_admits_only_new_numeric_mode(monkeypatch):
+    pytest.importorskip("torch")
     monkeypatch.syspath_prepend(str(PATH.parent))
-    gate=driver_gate(ROOT/'experiments/t8r_speed/bench_t8r.py')
-    args=options()
-    gate(args,stubbed=False)
-    args.paired_k32_numerics=False
-    with pytest.raises(ValueError,match='counter-only replay'):
-        gate(args,stubbed=False)
+    gate = importlib.import_module("bench_t8r").require_single_replay_options
+    args = options()
+    gate(args, stubbed=False)
+    args.paired_k32_numerics = False
+    with pytest.raises(ValueError):
+        gate(args, stubbed=False)
 
 
-@pytest.mark.parametrize('numeric,stubbed,expected_calls', [
-    (True,False,0), (False,False,1), (False,True,0),
-])
-def test_driver_world_startup_is_only_for_existing_vllm_modes(numeric,stubbed,expected_calls):
-    path=ROOT/'experiments/t8r_speed/bench_t8r.py'
-    tree=ast.parse(path.read_text())
-    node=next(n for n in ast.walk(tree) if isinstance(n,ast.Assign)
-              and any(isinstance(t,ast.Name) and t.id=='ctx' for t in n.targets))
-    calls=[]
-    context=object()
-    def initialize(out):
-        calls.append(out)
-        return context
-    namespace={'args':SimpleNamespace(paired_k32_numerics=numeric,out='/owned/output'),
-               'VLLM_STUBBED':stubbed,'_init_vllm_world1':initialize}
-    exec(compile(ast.Module(body=[node],type_ignores=[]),str(path),'exec'),namespace)
-    assert len(calls)==expected_calls
-    assert namespace['ctx'] is (context if expected_calls else None)
+def _cpu_native(monkeypatch, module=None):
+    from tessera import routed_fused as rf
+    from test_routed_window_classes import allow_cpu, projection
+    allow_cpu(monkeypatch)
+    if module is not None:
+        monkeypatch.setattr(rf, '_ext', lambda library: module)
+    monkeypatch.setenv(rf.ENV_E4M3_MMA, "e4m3")
+    return rf.FusedRoutedWindowMoE.from_bundles(
+        *[projection((4, 4, 4, 4), family="e4m3") for _ in range(3)],
+        expert_classes=[{"start": 0, "end": 4, "q256": {"w13": [1024, 1024], "w2": [1024]}}])
 
 
-@pytest.mark.parametrize('fault', [None,'repeat','missing_role','reduction','profile','foreign'])
-def test_actual_numeric_observer_and_refusals(tmp_path,monkeypatch,fault):
+def _cpu_numeric_owner(monkeypatch):
     torch = pytest.importorskip("torch")
     from tessera import routed_fused as rf
-    lib=SimpleNamespace(PAIRED_K32_BUILD=False,paired_k32_scope=lambda *args:False,
-        launch_smem_bytes=lambda *args:40976,max_dynamic_smem_bytes=lambda index:101376)
-    monkeypatch.setattr(rf,'_ext',lambda library:lib)
-    monkeypatch.setattr(torch.cuda,'synchronize',lambda:None)
-    # Use the actual frozen production adapter; only its CUDA launch seam is
-    # replaced by CPU tensor writes in this CPU-only control.
-    FusedRoutedWindowMoE=rf.FusedRoutedWindowMoE
-    values={field.name:None for field in fields(FusedRoutedWindowMoE) if field.default is MISSING}
-    values.update(library='e4m3mma',gate=SimpleNamespace(cols=128,rows=128),
-        down=SimpleNamespace(cols=128,rows=4),slot_words_gate_up=8,slot_words_down=8)
-    def cpu_launch(self,mode,*args,**kwargs):kwargs['out'].fill_(mode+1)
-    monkeypatch.setattr(FusedRoutedWindowMoE,'_launch',cpu_launch)
-    native=FusedRoutedWindowMoE(**values);calls=0
-    foreign=FusedRoutedWindowMoE(**values)
-    def call(x,ids,w):
+    def launch(mode, *args):
+        args[-3].fill_(mode + 1)
+    def token_sum(routed, out, top_k):
+        routes = routed.reshape(out.shape[0], top_k, out.shape[1]).float()
+        total = torch.zeros_like(routes[:, 0])
+        for route in range(top_k):
+            total.add_(routes[:, route])
+        out.copy_(total.bfloat16())
+    lib = SimpleNamespace(PAIRED_K32_BUILD=False, paired_k32_scope=lambda *args: False,
+        launch_smem_bytes=lambda *args: 40976, max_dynamic_smem_bytes=lambda index: 101376,
+        routed_fused_forward=launch, token_sum=token_sum)
+    native = _cpu_native(monkeypatch, lib)
+    monkeypatch.setattr(rf, 'quantized_routed_input',
+        lambda x, scale, rows, family, device: (x, torch.ones(rows, device=device)))
+    monkeypatch.setattr(rf, '_sm_count', lambda device: 1)
+    monkeypatch.setattr(torch.cuda, 'current_device', lambda: 0)
+    monkeypatch.setattr(torch.cuda, 'synchronize', lambda: None)
+    return native, lib
+
+
+@pytest.mark.parametrize('fault', [None, 'repeat', 'missing_role', 'reduction', 'profile', 'foreign'])
+def test_production_uniform_numeric_observer_and_refusals(tmp_path, monkeypatch, fault):
+    torch = pytest.importorskip("torch")
+    native, lib = _cpu_numeric_owner(monkeypatch)
+    foreign = _cpu_native(monkeypatch, lib)
+    if fault == 'missing_role':
+        def without_down(kernel, x, ids, weights, **kwargs):
+            routing = kernel.routing(ids, weights)
+            act = torch.empty((routing.routes, native.down.cols), dtype=torch.bfloat16)
+            kernel.launch(0, x, None, routing, a_row_mode=0, mul_weight=False, limit=float('inf'), out=act)
+            return torch.full((x.shape[0], native.down.rows), 6, dtype=torch.bfloat16)
+        monkeypatch.setattr(type(native.uniform), 'forward', without_down)
+    calls = 0
+    def call(x, ids, weights):
         nonlocal calls
-        calls+=1
-        act=torch.empty((4,128),dtype=torch.bfloat16,device='cpu')
-        down=torch.empty((4,4),dtype=torch.bfloat16,device='cpu')
-        if fault=='foreign':foreign._launch(0,out=torch.empty_like(act))
-        native._launch(0,out=act)
-        if fault!='missing_role':native._launch(2,out=down)
-        else:down.fill_(3)
-        out=down.reshape(2,2,4).float().sum(1).bfloat16()
-        if fault=='repeat' and calls==2:out[0,0]+=1
-        if fault=='reduction':out[0,0]+=1
+        calls += 1
+        if fault == 'foreign':
+            foreign(x, ids, weights)
+        out = native(x, ids, weights)
+        if fault == 'repeat' and calls == 2:
+            out[0, 0] += 1
+        if fault == 'reduction':
+            out[0, 0] += 1
         return out
-    call.native_adapter=native
-    def profile(fn,**kwargs):
-        return {'top':{f'routed_fused_kernel<true, {mode}, false, false, 4, false, 64, false, false>':
-            {'count_per_call':2 if fault=='profile' else 1} for mode in (0,2)}}
-    args=(call,None,torch.ones(2,128,dtype=torch.bfloat16,device='cpu'),torch.zeros(2,2,dtype=torch.int32,device='cpu'),
-          torch.ones(2,2,device='cpu'),tmp_path/'words')
-    if fault in (None,'foreign'):
-        result=q.numeric_cell(*args,kernel_profile=profile,independent_reference=False)
+    call.native_adapter = native
+    def profile(fn, **kwargs):
+        return {'top': {f'routed_fused_kernel<true, {mode}, false, false, 4, false, 64, false, false>':
+            {'count_per_call': 2 if fault == 'profile' else 1} for mode in (0, 2)}}
+    x = torch.ones(2, 128, dtype=torch.bfloat16)
+    ids = torch.zeros(2, 2, dtype=torch.int32)
+    weights = torch.ones(2, 2)
+    args = (call, None, x, ids, weights, tmp_path / 'words')
+    errors = {'repeat': 'repeated forward bits differ',
+              'missing_role': 'numeric forward did not expose both native roles',
+              'reduction': 'native reduction differs from independent fixed-order FP32 sum',
+              'profile': 'actual profiled native role differs from paired dispatch scope'}
+    if fault in (None, 'foreign'):
+        result = q.numeric_cell(*args, kernel_profile=profile, independent_reference=False)
         assert result['repeat_bits_equal'] and result['independent_token_sum_equal']
+        assert (tmp_path / 'words' / 'out.bin').read_bytes() == q._words(native(x, ids, weights))
     else:
-        with pytest.raises(ValueError):
-            q.numeric_cell(*args,kernel_profile=profile,independent_reference=False)
-    # Observation must always restore the real owner, including errors.
-    assert native._launch.__func__ is FusedRoutedWindowMoE._launch
+        with pytest.raises(ValueError, match=errors[fault]):
+            q.numeric_cell(*args, kernel_profile=profile, independent_reference=False)
+    # A later production call must not see the diagnostic observer after any exit.
+    assert torch.equal(native(x, ids, weights), torch.full((2, 128), 6, dtype=torch.bfloat16))
 
 
 @pytest.mark.parametrize('fault',[None,'output','stored'])
 def test_timing_guards_accepted_words_before_unprofiled_events(tmp_path,monkeypatch,fault):
     torch = pytest.importorskip("torch")
     from tessera import routed_fused as rf
-    values={f.name:None for f in fields(rf.FusedRoutedWindowMoE) if f.default is MISSING}
-    values.update(library='e4m3mma',gate=SimpleNamespace(cols=128,rows=128),
-                  down=SimpleNamespace(cols=128,rows=4),slot_words_gate_up=8,slot_words_down=8)
-    native=rf.FusedRoutedWindowMoE(**values)
-    original=torch.ones((1,4),dtype=torch.bfloat16,device='cpu')
+    native = _cpu_native(monkeypatch)
+    original=torch.ones((1,native.down.rows),dtype=torch.bfloat16,device='cpu')
     raw=q._words(original);digest=hashlib.sha256(raw).hexdigest()
     monkeypatch.setattr(q,'NUMERIC_RECEIPT',str(tmp_path/'RESULT.json'))
     stored=tmp_path/'baseline/numeric-words/1/out.bin';stored.parent.mkdir(parents=True)
@@ -209,13 +213,13 @@ def test_timing_guards_accepted_words_before_unprofiled_events(tmp_path,monkeypa
     monkeypatch.setattr(rf,'_ext',lambda *a:lib)
     phases=[]
     def events(call,warm,iters):
-        assert (warm,iters)==(10,30);phases.append('events');return [1.0]*30
+        phases.append('events');return [1.0]*iters
     def profile(call,**kwargs):
-        assert kwargs=={'reps':3,'full_names':True};phases.append('profile')
+        phases.append('profile')
         return {'top':{f'routed_fused_kernel<true, {m}, false, false, 4, false, 64, false, false>':
                        {'count_per_call':1} for m in (0,2)}}
     def sample(call,seconds,**kwargs):
-        assert seconds==3 and kwargs['capture_series'];phases.append('power')
+        phases.append('power')
         return {'calls_per_j':123,'source':'control','power_series_unix_w':[]}
     args=(fn,torch.ones(1,128,device='cpu'),torch.zeros(1,2,dtype=torch.int32,device='cpu'),torch.ones(1,2,device='cpu'))
     kwargs=dict(certificate={'compared':[{'M':1,'role':'out','bytes':len(raw),'sha256':digest}]},

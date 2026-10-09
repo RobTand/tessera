@@ -26,7 +26,9 @@ PY
 fi
 IMAGE=${ORACLE_IMAGE:?actual immutable measurement image}
 source experiments/runtime_image.sh
-runtime_image_require "$IMAGE"
+RUNTIME_IMAGE_JSON=$(PYTHONPATH="$PWD/src" "$RUNTIME_IMAGE_PY" experiments/t4_code/geometry_runtime_image.py --image "$IMAGE")
+RUNTIME_IMAGE_CONTAINER_ENV=$(printf "%s" "$RUNTIME_IMAGE_JSON" | _runtime_image_cli container-env)
+printf "%s\n" "$RUNTIME_IMAGE_JSON"
 IMAGE_ENV=()
 while IFS= read -r line; do
     [[ -z "$line" ]] || IMAGE_ENV+=(-e "$line")

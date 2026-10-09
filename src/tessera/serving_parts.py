@@ -441,29 +441,34 @@ def dense_resident_bytes_resident_mode(family: str, rows: int, cols: int,
             return rows * cols // 2 + rows * cols // 16 + 4 + trellis_table_bytes
         if decoder != "native" or not native_roles:
             raise ValueError("native A4 resident accounting requires per-role layout")
-        total, role_rows = 4 + trellis_table_bytes, 0
+        if trellis_table_bytes:
+            raise ValueError("native E2M1 WINDOW roles retain no TCQ trellis tables")
+        from .serving.scheme import e2m1_shape_reason
+
+        total, role_rows = 4, 0  # the static activation global is shared
         for role in native_roles:
             count, width = int(role["rows"]), int(role["cols"])
             rates = tuple(int(rate) for rate in role["rates"])
-            arity, memory, half = (int(role[key]) for key in ("arity", "memory", "half"))
-            if (arity != 2 or half != 16 or count <= 0 or count % (2 * arity * 8)
-                    or width != cols or width % half or len(rates) != width
-                    or len(set(rates)) != 1 or not 1 <= rates[0] <= 8 or memory < 1):
-                raise ValueError("invalid native A4 role layout")
-            steps, pairs = count // arity, count // (2 * arity)
-            points = 1 << (rates[0] - 1)
-            select = width * (pairs // 8 + 1) + 8
-            label = width * (pairs // 4)
-            point = width * (steps * (rates[0] - 1) // 8)
-            nibbles = count * width // (half * 2)
-            lut = int(role["lut_entries"]) if len(native_roles) > 1 else 16
-            if not 1 <= lut <= 16:
-                raise ValueError("invalid native A4 scale table")
-            tables = lut + (1 << (memory + 1)) * 4 + 4 * points * (arity + 1)
-            total += select + label + point + nibbles + tables + 4  # per-role epilogue
+            arity, half = int(role["arity"]), int(role["half"])
+            bits, tile = int(role["window_bits"]), int(role["tile_rows"])
+            reason = e2m1_shape_reason(count, width)
+            if (reason is not None or arity != 2 or half != 16 or width != cols
+                    or len(rates) != width or bits != 14 or tile != 512
+                    or any(rate < 1 or rate > 8 for rate in rates)
+                    or max(rates) - min(rates) > 1):
+                raise ValueError(f"invalid native E2M1 WINDOW role layout: {reason}")
+            padded_steps = -(-(count // arity) // tile) * tile
+            words = padded_steps * sum(rates) // 8
+            table = 1 << bits
+            scale_plane = count * width // (half * 2)
+            # DenseE2M1Role retains only these inputs. The original column
+            # permutation and run table are not retained after preparation.
+            initial_state = width * 4
+            descriptors = (width // 64) * 4 * 4
+            total += words + table + scale_plane + 16 + initial_state + descriptors + 4 + 4 + 32
             role_rows += count
         if role_rows != rows:
-            raise ValueError("native A4 role rows do not cover the fused module")
+            raise ValueError("native E2M1 WINDOW role rows do not cover the fused module")
         return total
     if family not in ("TESSERA_BF16", "TESSERA_FP8"):
         raise ValueError(f"no resident-mode accounting for family {family!r}")
@@ -497,57 +502,48 @@ def dense_resident_bytes_resident_mode(family: str, rows: int, cols: int,
 
 def routed_window_unit_resident_bytes(family: str, rows: int, cols: int, rates,
                                       *, window_bits: int, tile_rows: int) -> int:
-    """One expert projection's slot in the compact routed lane (tessera#624).
+    """Retained native words, weight scales, init and has_init for one unit.
 
-    The runtime's compact window lane (``serving.moe_route`` with
-    ``compact_window_lane`` true, every TESSERA_FP8/TESSERA_BF16 stack) never
-    allocates a decoded tile: ``native_window_moe.WindowUnitAxis._alloc``
-    holds, per part and per expert, the repacked BODY words (rows padded to
-    the 512-row tile, ``sum(rates)`` bits per padded row), one ``[rate, col0,
-    n, word0]`` int32 run per distinct rate, the fp32 row scales, the int32
-    column permutation and initial-state register (``cols`` each), the
-    family's state table (bf16 ``2^L`` values for the value family; uint8
-    ``2^L`` codes plus the 256-byte native grid for e4m3), and four int32
-    per-expert scalars (``tile_words``, ``total_words``, ``has_init`` and
-    ``finish``'s ``word_off``).  This prices exactly those tensors from the
-    unit's own verified manifest (rates, window bits, geometry); the
-    per-part ``run_off`` is :func:`routed_window_part_resident_bytes` and
-    the fused lane's tables :func:`routed_fused_unit_bytes`.
-
-    Whole unit at TP1: a tensor-parallel cut prices the rank-local rows
-    (w13) or columns and their rate slice (w2) through the same function.
+    Packed words use the existing padded-tile layout. Raw run tables,
+    permutations, offsets, grid codes and native-grid planes are load-time
+    inputs only and are retired by the sole class dispatcher. Its composed
+    table and launch descriptors are priced by routed_fused_unit_bytes.
+    Tensor-parallel cuts price the rank-local rows or columns as before.
     """
-    if family not in ("TESSERA_BF16", "TESSERA_FP8"):
-        raise ValueError(f"no compact routed accounting for family {family!r}")
+    if family not in ("TESSERA_BF16", "TESSERA_FP8", "TESSERA_NVFP4"):
+        raise ValueError(f"no native routed accounting for family {family!r}")
     rows, cols, bits, tile = int(rows), int(cols), int(window_bits), int(tile_rows)
     rates = tuple(int(rate) for rate in rates)
     if rows <= 0 or cols <= 0 or len(rates) != cols or tile <= 0 or tile % 8:
-        raise ValueError("invalid compact routed unit geometry")
+        raise ValueError("invalid native routed unit geometry")
     if bits <= 0 or any(rate < 1 or rate > 8 for rate in rates):
-        raise ValueError("invalid compact routed window layout")
+        raise ValueError("invalid native routed window layout")
+    if family == "TESSERA_NVFP4":
+        if bits != 14 or tile != 512 or rows % 2 or cols % 16:
+            raise ValueError("invalid paired LUT window layout")
+        padded = -(-(rows // 2) // tile) * tile
+        words = padded * sum(rates) // 8
+        return (words + (1 << bits) + rows * cols // 32 + 16 + 4
+                + len(set(rates)) * 16 + cols * 8 + 16)
     padded = -(-rows // tile) * tile
     words = padded * sum(rates) // 8
-    tables = (1 << bits) * 2 if family == "TESSERA_BF16" else (1 << bits) + 256
-    runs = len(set(rates)) * 16
-    per_expert_scalars = 4 * 4  # tile_words, total_words, has_init, word_off (int32)
-    return words + tables + rows * 4 + runs + cols * 8 + per_expert_scalars
+    return words + rows * 4 + cols * 4 + 4  # weight scales, init, has_init
 
 
 def routed_window_part_resident_bytes(experts: int) -> int:
-    """The per-part ``run_off`` the axis adds at ``finish``: ``[E + 1]``
-    int64, since ``torch.cumsum`` promotes the int32 run counts it sums
-    (``WindowUnitAxis.finish`` and ``prepare_grouped_window_gemm`` alike)."""
+    """The per-part ``run_off`` the E2M1 lane retains: ``[E + 1]`` int64,
+    since ``torch.cumsum`` promotes the int32 run counts it sums
+    (``WindowUnitAxis.finish``).  The FP8/BF16 class dispatcher retires it."""
     if int(experts) <= 0:
         raise ValueError("a routed stack needs at least one expert")
     return 8 * (int(experts) + 1)
 
 
-def routed_fused_table_bytes(window_bits: int) -> int:
-    """One composed 16-bit lookup table the fused routed lane (tessera#685)
-    holds per expert projection beside the bundle's planes, as the runtime's
-    ``FusedRoutedWindowMoE.resident_bytes`` publishes it (both families; the
-    value family's table is a view the self-report still counts)."""
-    return 2 * (1 << int(window_bits))
+def routed_fused_table_bytes(window_bits: int, *, element_bytes: int) -> int:
+    """Price the selected native table without a tensor-runtime dependency."""
+    if type(element_bytes) is not int or element_bytes not in (1, 2):
+        raise ValueError("native routed table element_bytes must be 1 or 2")
+    return element_bytes * (1 << int(window_bits))
 
 
 #: The dense loader's column-rate bound (tessera#750 item 4: every rate a
@@ -567,18 +563,27 @@ ROUTED_FUSED_BLOCK_COLS = 32
 ROUTED_FUSED_BDESC_INTS = 12
 
 
-def routed_fused_unit_bytes(window_bits: int, cols: int) -> int:
-    """What the fused routed lane holds per expert projection beside the
-    bundle's planes, as ``FusedRoutedWindowMoE.resident_bytes`` publishes it:
-    the composed table (:func:`routed_fused_table_bytes`, tessera#685) and,
-    since contract v45 (tessera#694), the projection's run pair and its
-    block descriptors (``routed_fused.projection_tables``).  ``cols`` is the
-    unit's rank-local column count, which sets the descriptor count."""
+def routed_fused_unit_bytes(window_bits: int, cols: int, *, family: str = "TESSERA_FP8",
+                            table_element_bytes: "int | None" = None) -> int:
+    """Price native launch tables beside one projection bundle.
+
+    FP8 and BF16: what ``FusedRoutedWindowMoE.resident_bytes`` publishes per
+    expert projection, the selected composed table
+    (:func:`routed_fused_table_bytes` at ``table_element_bytes``), the run
+    pair and the block descriptors (``routed_fused.projection_tables``).
+    ``cols`` is the rank-local column count, which sets the descriptor count.
+    E2M1 uses the bundle code table directly. It adds a run pair, one
+    descriptor per 64 columns and one FP32 epilogue ratio.
+    """
     cols = int(cols)
+    if family == "TESSERA_NVFP4":
+        if int(window_bits) != 14 or cols < 256 or cols % 64:
+            raise ValueError("invalid fused E2M1 window geometry")
+        return 32 + 16 * (cols // 64) + 4
     if cols <= 0 or cols % ROUTED_FUSED_BLOCK_COLS:
         raise ValueError(f"the fused routed lane reads whole {ROUTED_FUSED_BLOCK_COLS}-column "
                          f"blocks; {cols} columns are not")
-    return (routed_fused_table_bytes(window_bits) + 4 * ROUTED_FUSED_RUN_PAIR_INTS
+    return (routed_fused_table_bytes(window_bits, element_bytes=table_element_bytes) + 4 * ROUTED_FUSED_RUN_PAIR_INTS
             + 4 * ROUTED_FUSED_BDESC_INTS * (cols // ROUTED_FUSED_BLOCK_COLS))
 
 
@@ -614,7 +619,7 @@ def per_rank_fit_items(*, tp_size: int, routed_bytes_by_rank, mtp_duplicate_byte
 
     Every item is one named line whose sum is ``total_bytes``; a reader adding
     a budget adds an item rather than folding it into another.  Only the
-    compact routed stacks and the MTP draft duplicate are priced here; dense
+    native routed stacks and the MTP draft duplicate are priced here; dense
     modules and passthrough tensors are not, and the note says so.
     """
     tp_size = int(tp_size)
@@ -630,8 +635,8 @@ def per_rank_fit_items(*, tp_size: int, routed_bytes_by_rank, mtp_duplicate_byte
         "ranks": ranks,
         "mtp_draft_layers": int(mtp_layers),
         "note": ("routed_moe_resident_mode_bytes is each rank's cut of every routed stack "
-                 "(packed planes, tables, per-expert bookkeeping and the fused lane's "
-                 "composed tables where its shape admits the stack); "
+                 "(native packed words, scales, init, selected composed tables, launch "
+                 "descriptors, the expert inverse and class counters); "
                  "mtp_draft_embed_head_duplicate_bytes is the MTP draft's own rank-local "
                  "embed_tokens + lm_head (0 when the config declares no draft layers). "
                  "Dense modules and passthrough tensors are not priced per rank here."),
@@ -670,7 +675,7 @@ def summarize_modules(modules: dict, passthrough_bytes: int, checkpoint_bytes: i
             "on_disk_bytes": containers, "on_disk_bpp": containers * 8 / params if params else None,
             "resident_mode_bytes": resident,
             "resident_mode_bpp": resident * 8 / params if params else None,
-            "streamed_mode_note": "the prepared planes (~wire bytes + per-unit tables) plus one transient decoded tile per forward",
+            "streamed_mode_note": "dense streamed working storage is reader-specific; routed native WINDOW classes require resident mode and do not materialize expert tiles",
             "by_family": families, "passthrough_bytes": passthrough_bytes,
             "checkpoint_bytes": checkpoint_bytes}
 
@@ -791,6 +796,12 @@ def validate_explicit_plan(plan, modules: dict, config_groups: dict, *, source_t
             roles = record.get("roles", ())
             declared = validate_tessera_moe_scheme(scheme, f"explicit plan {name}")
             experts = declared["experts"]
+            from .expert_classes import inverse_expert_ids
+
+            inverse = inverse_expert_ids(declared["expert_ids"])
+            if any(record.get(field) != declared[field]
+                   for field in ("expert_ids", "expert_classes")):
+                raise ValueError(f"explicit plan stack {name}: manifest expert metadata differs from config")
             expected_roles = {(expert, projection) for expert in range(experts)
                               for projections in MOE_GROUP_PROJECTIONS.values()
                               for projection in projections}
@@ -814,7 +825,7 @@ def validate_explicit_plan(plan, modules: dict, config_groups: dict, *, source_t
             if unknown:
                 raise ValueError(f"explicit plan stack {name}: unknown projected units {unknown[:5]}")
             declared_rungs = {
-                (expert, role["roles"][0][0]): role["q256"]
+                (declared["expert_ids"][expert], role["roles"][0][0]): role["q256"]
                 for expert in range(experts) for group in declared["groups"].values()
                 for role in expert_role_declarations(group, expert=expert)}
             selected_rungs = {by_unit.get(r["tensor"].removesuffix(".weight"), wanted_rung)
@@ -823,6 +834,19 @@ def validate_explicit_plan(plan, modules: dict, config_groups: dict, *, source_t
             if record.get("q256") != manifest_baseline:
                 raise ValueError(f"explicit plan stack {name}: manifest baseline rung differs from plan")
             for role in roles:
+                original = role["expert"]
+                storage = role.get("storage_expert")
+                if type(storage) is not int or storage != inverse[original]:
+                    raise ValueError(f"explicit plan {name}: storage_expert disagrees with expert_ids")
+                prefix = f"{name}.{original}."
+                tensor = role.get("tensor", "")
+                if not tensor.startswith(prefix) or not tensor.endswith(".weight"):
+                    raise ValueError(f"explicit plan {name}: tensor must retain its original expert id")
+                wire = f"{name}.{storage}.{tensor.removeprefix(prefix).removesuffix('.weight')}.wire"
+                if role.get("wire") != wire:
+                    raise ValueError(f"explicit plan {name}: wire must name its storage expert id")
+                if role.get("source_slice", {}).get("expert", original) != original:
+                    raise ValueError(f"explicit plan {name}: source_slice must retain its original expert id")
                 want = (by_unit.get(role["tensor"].removesuffix(".weight"), wanted_rung)
                         if by_unit else wanted_rung)
                 if role.get("q256") != want:
