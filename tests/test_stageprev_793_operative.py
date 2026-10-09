@@ -246,6 +246,29 @@ def test_required_api_check_names_incompatible_signatures():
     assert "ResourceLedger.capacity_census()" in claim_contract.required_api_problems(module, ledger)
 
 
+def test_required_api_check_refuses_extra_required_arguments():
+    module, ledger = _client_double(ledger=staticmethod(lambda host, region: None))
+    assert "PoolQueue.ledger(host)" in claim_contract.required_api_problems(module, ledger)
+    module, ledger = _client_double(latest_denials=staticmethod(lambda keys, scope, *, include_local=False: {}))
+    assert "PoolQueue.latest_denials(keys,include_local)" in claim_contract.required_api_problems(module, ledger)
+    module, ledger = _client_double(offers=staticmethod(lambda *, max_age_s, limit: []))
+    assert "PoolQueue.offers(max_age_s)" in claim_contract.required_api_problems(module, ledger)
+    ledger = type("ResourceLedger", (), {
+        "available": lambda self, unreadable: {},
+        "capacity_census": lambda self: ({}, []),
+    })
+    module, _ = _client_double()
+    assert "ResourceLedger.available()" in claim_contract.required_api_problems(module, ledger)
+
+
+def test_required_api_check_refuses_denials_keyword_collision():
+    module, ledger = _client_double(
+        latest_denials=staticmethod(lambda include_local, keys: {}))
+    assert "PoolQueue.latest_denials(keys,include_local)" in claim_contract.required_api_problems(module, ledger)
+    module, ledger = _client_double(offers=staticmethod(lambda max_age_s: []))
+    assert claim_contract.required_api_problems(module, ledger) == []
+
+
 def test_evaluator_refuses_a_contract_with_api_problems(packet):
     record = metadata(packet)
     record["public_claim_contract"]["api_verified"] = False

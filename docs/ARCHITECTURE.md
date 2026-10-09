@@ -829,12 +829,12 @@ NCU or repeated720-event population can stand for changed-source proof. These
 CPU schema/refusal controls are not CUDA numerical/performance/energy authority.
 
 Re-stamped 2026-10-09 for the stageprev 793 operative gate (tessera#1078).
-The gate checks the public claim names and call shapes the proof uses,
+The gate checks the public claim names and exact consumer calls the proof uses,
 not the SDK version number. `stageprev_793_claim_contract.required_api_problems`
-names each absent PoolQueue or ledger call and each incompatible shape.
-`observe_current_claim_contract` records that verdict beside the pool digest.
-`stageprev_793_prerequisites` refuses a contract with open API problems.
-The version number stays in the record as provenance only.
+binds each `PoolQueue` or ledger signature against the exact call `collect` makes,
+so an extra required argument or a keyword collision refuses. `observe_current_claim_contract`
+records that verdict beside the pool digest. `stageprev_793_prerequisites` refuses a
+contract with open API problems. The version number stays in the record as provenance only.
 
 Re-stamped 2026-10-04 (`v6/ts696-stock-runner-guard-20261004`, #696):
 the GLM53 NoPE runner-identity owner rejects the known stock V2 runner in

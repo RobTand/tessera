@@ -23,16 +23,36 @@ def _signature_of(owner, name):
         return None
 
 
+def _consumer_call_binds(signature, args, kwargs):
+    """Check one exact proof consumer call binds with no missing argument.
+
+    The leading ``self`` names the receiver, not a caller argument, so the
+    check drops it before it binds. Extra required arguments and keyword
+    collisions then refuse, while extra optional arguments still pass.
+    """
+    parameters = list(signature.parameters.values())
+    if (parameters and parameters[0].name == "self"
+            and parameters[0].kind in (inspect.Parameter.POSITIONAL_ONLY,
+                                       inspect.Parameter.POSITIONAL_OR_KEYWORD)):
+        signature = inspect.Signature(parameters[1:])
+    try:
+        signature.bind(*args, **kwargs)
+    except TypeError:
+        return False
+    return True
+
+
 def required_api_problems(client_module, ledger_cls=None):
     """Name required public-claim API entries the loaded client misses.
 
-    The proof reads the ledger through ``PoolQueue.ledger(host)``,
-    ``capacity_census()``, ``available()``,
+    The proof reads the ledger through exactly these consumer calls:
+    ``PoolQueue.ledger(host)``, ``capacity_census()``, ``available()``,
     ``latest_denials(keys, include_local=False)`` and
-    ``offers(max_age_s=...)``, and inspects the
+    ``offers(max_age_s=...)``. It also inspects the
     ``claim``/``_claim``/``_claim_pass`` source chain. Each returned entry
-    names a missing call or an incompatible signature. An empty list means
-    the loaded client serves the contract the proof uses, at any version.
+    names a missing call or a signature that refuses the exact call the
+    proof makes. An empty list means the loaded client serves the contract
+    the proof uses, at any version.
     """
     problems = []
     queue_cls = getattr(client_module, "PoolQueue", None)
@@ -56,32 +76,21 @@ def required_api_problems(client_module, ledger_cls=None):
     ledger_signature = _signature_of(queue_cls, "ledger") if "ledger" not in missing_queue else None
     if "ledger" not in missing_queue and ledger_signature is None:
         problems.append("PoolQueue.ledger(signature)")
-    elif ledger_signature is not None:
-        host = ledger_signature.parameters.get("host")
-        if host is None or host.kind not in (inspect.Parameter.POSITIONAL_ONLY,
-                                             inspect.Parameter.POSITIONAL_OR_KEYWORD):
-            problems.append("PoolQueue.ledger(host)")
+    elif ledger_signature is not None and not _consumer_call_binds(
+            ledger_signature, ("sparky",), {}):
+        problems.append("PoolQueue.ledger(host)")
     denials_signature = _signature_of(queue_cls, "latest_denials") if "latest_denials" not in missing_queue else None
     if "latest_denials" not in missing_queue and denials_signature is None:
         problems.append("PoolQueue.latest_denials(signature)")
-    elif denials_signature is not None:
-        entries = [(name, parameter) for name, parameter in denials_signature.parameters.items() if name != "self"]
-        include_local = dict(entries).get("include_local")
-        positional = [parameter for _, parameter in entries
-                      if parameter.kind in (inspect.Parameter.POSITIONAL_ONLY,
-                                            inspect.Parameter.POSITIONAL_OR_KEYWORD)]
-        if (include_local is None or include_local.kind not in (
-                inspect.Parameter.POSITIONAL_OR_KEYWORD, inspect.Parameter.KEYWORD_ONLY)
-                or not positional):
-            problems.append("PoolQueue.latest_denials(keys,include_local)")
+    elif denials_signature is not None and not _consumer_call_binds(
+            denials_signature, (set(),), {"include_local": False}):
+        problems.append("PoolQueue.latest_denials(keys,include_local)")
     offers_signature = _signature_of(queue_cls, "offers") if "offers" not in missing_queue else None
     if "offers" not in missing_queue and offers_signature is None:
         problems.append("PoolQueue.offers(signature)")
-    elif offers_signature is not None:
-        window = offers_signature.parameters.get("max_age_s")
-        if window is None or window.kind not in (inspect.Parameter.POSITIONAL_OR_KEYWORD,
-                                                 inspect.Parameter.KEYWORD_ONLY):
-            problems.append("PoolQueue.offers(max_age_s)")
+    elif offers_signature is not None and not _consumer_call_binds(
+            offers_signature, (), {"max_age_s": 120.0}):
+        problems.append("PoolQueue.offers(max_age_s)")
     if ledger_cls is not None:
         for name in REQUIRED_LEDGER_METHODS:
             if name in missing_ledger:
@@ -89,11 +98,7 @@ def required_api_problems(client_module, ledger_cls=None):
             census_signature = _signature_of(ledger_cls, name)
             if census_signature is None:
                 problems.append("ResourceLedger." + name + "(signature)")
-                continue
-            required = [parameter for parameter in list(census_signature.parameters.values())[1:]
-                        if parameter.default is inspect.Parameter.empty and parameter.kind not in (
-                            inspect.Parameter.VAR_POSITIONAL, inspect.Parameter.VAR_KEYWORD)]
-            if required:
+            elif not _consumer_call_binds(census_signature, (), {}):
                 problems.append("ResourceLedger." + name + "()")
     return problems
 
