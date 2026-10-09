@@ -92,6 +92,16 @@ Issue prismaquant#2511 tracks that reader. The PrismaQuant pin stays at v11 unti
 Historical pairs retain their original scope. Runtime twins, kernels, decoders, pins, and defaults stay unchanged.
 R640 and R1280-R2048 remain refused. No D41 receipt allowance, KL result, or speed result follows.
 
+## 2026-10-09 — record the T4 menu GPU validation (issue #1133)
+
+Add the PrismaBuild receipt for the T4 performant menu validation (parent issue #1103).
+The policy checks pass on x86 and on a GB10 worker. The dense and routed menus stay [896].
+The 21 native A4 execution tests pass on a GB10 worker in a PrismaBuild-local container image.
+The legacy pool GPU venv still cannot lower block-scaled FP4 MMA for sm_121, so its native tests error.
+The receipt keeps metadata checks, native execution coverage and the limits apart.
+No test, tool, source, wire, recipe, gate or serving change follows.
+No performance, serving or approved-cell measurement claim follows.
+
 ## 2026-10-08 — canonical class publication (issue #1018)
 
 Extend the existing producer with immutable class timing records and exact declared-cell scope matrices.
