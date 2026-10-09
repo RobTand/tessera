@@ -1,234 +1,386 @@
-"""The serving-owned half of the task endpoint runtime witness (tessera#1056).
+"""Observe successful vLLM loader inputs and the live worker's resident bytes.
 
-The D50 task adapter needs the runtime facts a serve OBSERVED: the listener
-endpoint and served alias, the launch attempt and the complete rank set,
-the loaded artifact bytes each rank observed, and the server tokenizer
-facts. :mod:`tessera.endpoint_observer` reads what an outside process can
-read (an HTTP reply, file bytes). This module reads what only the serving
-process can read: the rank identity the distributed group established,
-the model path the worker loaded, the wire bytes each loaded module holds,
-and the tokenizer the engine initialized.
-
-BOUNDARIES. The producer lives here, inside ``tessera.serving``: it may
-import torch and vLLM, and it runs inside the worker (see
-``tools/tessera_route_census.py`` for the collective pattern). The consumer
--- the D50 task adapter and ``tools/verify_endpoint_witness.py`` -- reads
-JSON only and never imports this module. :mod:`tessera.endpoint_witness`
-owns the join and its refusals; this module owns the runtime reads.
-
-WHAT EACH READ ESTABLISHES. :func:`observe_worker_identity` returns the
-rank and world size from vLLM's own world group (``torch.distributed``
-fallback), never a defaulted zero: an uninitialized group refuses, because
-a defaulted rank is indistinguishable from a genuine rank 0 (tessera#509).
-:func:`observe_worker_model` returns the model path and served names from
-the worker's own ``model_config``, and the tokenizer path and vocabulary
-length from the engine's initialized tokenizer when one exists. The served
-alias the listener reports must equal one of those served names, or the
-listener is not this serve's. :func:`observe_loaded_wires` walks the
-loaded model, reads each Tessera module's resident wire state, and hashes
-it: the bytes the rank serves, not the files beside them.
-
-LIFETIME. All three reads carry the same ``observed_unix`` stamp and the
-caller's ``lifetime_id``. The join refuses observations from different
-lifetimes. The probe takes all three while the listener still answers, so
-a stopped or replaced listener refuses instead of joining stale bytes to
-a live alias.
+The optional producer uses the public endpoint-plugin and engine-RPC boundaries.
+It accepts no worker files. The loader hook preserves the original callback,
+return value, and correctness checks. Unsupported loaders supply no witness.
 """
 from __future__ import annotations
 
+import contextvars
+import functools
 import hashlib
-from typing import Any, Callable, Mapping
+import json
+import os
+import socket
+import time
+from pathlib import Path
 
-__all__ = [
-    "observe_loaded_wires",
-    "observe_worker_identity",
-    "observe_worker_model",
-]
+from tessera import endpoint_witness as ew
 
-
-def _stamp(clock: Callable[[], float] | None) -> float:
-    import time
-
-    observed = clock() if clock is not None else time.time()
-    if not isinstance(observed, (int, float)) or not observed > 0:
-        raise ValueError("observation clock returned no positive time")
-    return observed
+_CAPTURE = contextvars.ContextVar("tessera_endpoint_load_capture", default=None)
 
 
-def _text(value: str, what: str) -> str:
-    if not isinstance(value, str) or not value:
-        raise ValueError(f"{what} is not a non-empty string")
-    return value
+def _kernel_text(path):
+    """Read a kernel process interface, not a checkout source dependency."""
+    with os.fdopen(os.open(path, os.O_RDONLY), "r") as handle:
+        return handle.read()
 
 
-def observe_worker_identity(worker: Any, *, lifetime_id: str,
-                            clock: Callable[[], float] | None = None) -> dict:
-    """The rank and world size this worker serves, from its own group.
-
-    Runs inside the worker. Reads vLLM's world group first and
-    ``torch.distributed`` second; refuses when neither is initialized,
-    because a defaulted rank 0 is indistinguishable from a genuine one.
-    """
-    _text(lifetime_id, "worker lifetime_id")
-    rank = world_size = source = None
-    try:
-        from vllm.distributed.parallel_state import get_world_group
-
-        group = get_world_group()
-        rank, world_size = int(group.rank), int(group.world_size)
-        source = "vllm.world_group"
-    except Exception:  # noqa: BLE001 -- the fallback below is the same question
-        try:
-            import torch.distributed as dist
-
-            if dist.is_available() and dist.is_initialized():
-                rank, world_size = int(dist.get_rank()), int(dist.get_world_size())
-                source = "torch.distributed"
-        except Exception:  # noqa: BLE001 -- uninitialized reads as unavailable
-            pass
-    if rank is None or world_size is None:
-        raise ValueError("the worker's distributed group is not initialized; "
-                         "rank identity is unavailable, never defaulted")
-    if rank < 0 or world_size <= 0 or rank >= world_size:
-        raise ValueError(f"the worker reports rank {rank} of {world_size}, "
-                         "which is not a rank of its world")
-    local_rank = getattr(worker, "local_rank", None)
-    if local_rank is None:
-        try:
-            from vllm.distributed.parallel_state import get_world_group
-
-            local_rank = int(getattr(get_world_group(), "local_rank", 0))
-        except Exception:  # noqa: BLE001 -- the attribute may not exist
-            local_rank = 0
-    return {"rank": rank, "local_rank": int(local_rank), "world_size": world_size,
-            "rank_source": source, "lifetime_id": lifetime_id,
-            "observed_unix": _stamp(clock)}
+def process_owner():
+    stat = _kernel_text("/proc/self/stat")
+    ticks = int(stat[stat.rfind(")") + 2:].split()[19])
+    boot_time = next(int(line.split()[1]) for line in _kernel_text("/proc/stat").splitlines()
+                     if line.startswith("btime "))
+    return {"host": socket.gethostname(), "boot_id": _kernel_text("/proc/sys/kernel/random/boot_id").strip(),
+            "pid": os.getpid(), "start_ticks": ticks,
+            "started_unix": boot_time + ticks / os.sysconf("SC_CLK_TCK")}
 
 
-def observe_worker_model(worker: Any, *, lifetime_id: str,
-                         clock: Callable[[], float] | None = None,
-                         tokenizer: Any = None) -> dict:
-    """The model path, served names, tokenizer path and vocabulary this worker serves.
+_READ_BYTES = 8 * 1024 * 1024
 
-    Runs inside the worker. ``model`` and ``served_model_name`` come from
-    the worker's own ``model_config`` -- the table the engine itself
-    dispatches on -- never from an argument the probe was given. The
-    tokenizer facts come from the engine's initialized tokenizer when the
-    caller hands it over (``LLM.get_tokenizer()`` on the driver reads the
-    same object the serve tokenizes with); without one the observation
-    refuses, because client metadata is not server state.
-    """
-    _text(lifetime_id, "model lifetime_id")
-    config = getattr(worker, "model_config", None)
-    if config is None:
-        config = getattr(getattr(worker, "vllm_config", None), "model_config", None)
-    if config is None:
-        raise ValueError("the worker carries no model_config to observe")
-    model = getattr(config, "model", None)
-    _text(model, "worker model_config.model")
-    served = getattr(config, "served_model_name", None)
-    if served is None:
-        served_names = [model]
-    elif isinstance(served, str):
-        served_names = [served] if served else [model]
+
+def _tensor_blocks(tensor):
+    import torch
+
+    tensor = tensor.detach()
+    if tensor.is_contiguous():
+        raw = tensor.reshape(-1).view(torch.uint8)
+        for start in range(0, raw.numel(), _READ_BYTES):
+            yield memoryview(raw[start:start + _READ_BYTES].cpu().numpy())
+    elif tensor.ndim == 1:
+        elements = max(1, _READ_BYTES // tensor.element_size())
+        for start in range(0, tensor.numel(), elements):
+            yield from _tensor_blocks(tensor[start:start + elements].contiguous())
     else:
-        served_names = [name for name in served if isinstance(name, str) and name]
-        if not served_names:
-            served_names = [model]
-    tokenizer_path = getattr(config, "tokenizer", None) or model
-    if tokenizer is None:
-        raise ValueError("the server tokenizer was not handed over; "
-                         "client metadata never establishes server state")
-    try:
-        vocab_size = len(tokenizer)
-    except TypeError as exc:
-        raise ValueError("the server tokenizer states no vocabulary length") from exc
-    if type(vocab_size) is not int or vocab_size <= 0:
-        raise ValueError("the server tokenizer states no vocabulary length")
-    return {"model": model, "served_names": served_names,
-            "tokenizer_path": tokenizer_path, "vocab_size": vocab_size,
-            "vocab_source": "server-tokenizer",
-            "lifetime_id": lifetime_id, "observed_unix": _stamp(clock)}
+        for row in tensor:
+            yield from _tensor_blocks(row)
 
 
-def _wire_state(module: Any) -> bytes | None:
-    """The loaded wire bytes a Tessera module serves, or None when it holds none.
-
-    Reads the module's own ``resident_tensors`` declaration -- the same
-    references the residency observer charges -- and hashes every declared
-    tensor's bytes. A module whose method declares nothing contributes
-    nothing, and the caller refuses the gap by name instead of hashing an
-    absence.
-    """
-    method = getattr(module, "quant_method", None)
-    resident = getattr(method, "resident_tensors", None)
-    if not callable(resident):
-        return None
-    try:
-        declared = list(resident(module))
-    except Exception:  # noqa: BLE001 -- an unreadable declaration refuses below
-        return None
-    if not declared:
-        return None
+def tensor_fact(tensor):
     digest = hashlib.sha256()
-    for name, tensor in sorted(declared, key=lambda item: str(item[0])):
-        try:
-            raw = tensor.detach().cpu().contiguous().numpy().tobytes()
-        except Exception:  # noqa: BLE001 -- an unreadable tensor refuses below
-            return None
-        digest.update(str(name).encode("utf-8") + b"\0")
-        digest.update(len(raw).to_bytes(8, "big"))
-        digest.update(raw)
-    return digest.digest()
+    for block in _tensor_blocks(tensor):
+        digest.update(block)
+    return {"sha256": digest.hexdigest(), "bytes": tensor.numel() * tensor.element_size(),
+            "dtype": str(tensor.dtype), "shape": list(tensor.shape)}
 
 
-def _is_tessera_module(module: Any) -> bool:
-    """Whether the loader prepared this module as a Tessera module."""
-    if getattr(module, "tessera_native", None) is not None:
-        return True
-    if getattr(module, "tessera_a4_roles", None) is not None:
-        return True
-    if getattr(module, "tessera_routed_fused", None) is not None:
-        return True
-    method = getattr(module, "quant_method", None)
-    return type(method).__module__.startswith("tessera.serving.")
-
-
-def observe_loaded_wires(model: Any, *, lifetime_id: str,
-                         clock: Callable[[], float] | None = None) -> dict:
-    """The wire digests each loaded Tessera module of this worker serves.
-
-    Runs inside the worker. Walks ``named_modules()``, reads each Tessera
-    module's resident wire bytes with its layer TP coordinates, and hashes
-    them. The coordinates come from the layer's own shard plan -- the same
-    table the loader cut the module by -- never from the process rank, so a
-    one-rank layer inside a four-rank process reports its own identity
-    (tessera#303). Refuses a model with no loaded Tessera module: an empty
-    roster is not evidence about an empty serve, it is evidence about
-    nothing.
-    """
-    _text(lifetime_id, "wires lifetime_id")
-    named = getattr(model, "named_modules", None)
-    if not callable(named):
-        raise ValueError("the worker model exposes no named_modules to observe")
-    wires: dict[str, str] = {}
-    coords: dict[str, list[int]] = {}
-    for name, module in named():
-        prefix = getattr(module, "prefix", "") or name
-        if not _is_tessera_module(module):
+def resident_bytes(model):
+    result = {}
+    for name, tensor in model.named_parameters():
+        if tensor.numel():
+            result["parameter:" + name] = tensor_fact(tensor)
+    for prefix, module in model.named_modules():
+        method = getattr(module, "quant_method", None)
+        resident = getattr(method, "resident_tensors", None)
+        if not callable(resident):
             continue
-        state = _wire_state(module)
-        if state is None:
-            raise ValueError(f"loaded module {prefix!r} holds no readable wire state")
-        plan = getattr(module, "tessera_shard_plan", None)
-        rank = getattr(plan, "tp_rank", getattr(module, "tp_rank", None))
-        size = getattr(plan, "tp_size", getattr(module, "tp_size", None))
-        if type(rank) is not int or type(size) is not int or size < 1 or not 0 <= rank < size:
-            raise ValueError(f"loaded module {prefix!r} carries no layer TP coordinates")
-        wires[prefix] = hashlib.sha256(state).hexdigest()
-        coords[prefix] = [rank, size]
-    if not wires:
-        raise ValueError("the worker model holds no loaded Tessera module")
-    total = sum(len(name) + 32 for name in wires)
-    return {"wires": wires, "coords": coords, "modules": len(wires), "bytes": total,
-            "lifetime_id": lifetime_id, "observed_unix": _stamp(clock)}
+        for name, tensor in resident(module):
+            ew.require(tensor.numel(), f"resident tensor {prefix}:{name} is empty")
+            key = "resident:" + prefix + ":" + name
+            ew.require(key not in result, f"resident tensor {key} repeats")
+            result[key] = tensor_fact(tensor)
+    ew.require(result, "loaded model has no resident bytes")
+    return result
+
+
+class LoadCapture:
+    """Join source-file ranges to inputs that successful weight callbacks consume."""
+
+    def __init__(self, model_path):
+        self.root = Path(model_path).resolve()
+        self.errors = []
+        self.started = time.time()
+        self.files = {}
+        self.paths = {}
+        self.inputs = []
+        self.active = None
+    def note_error(self, exc):
+        self.errors.append(f"{type(exc).__name__}: {exc}")
+
+
+    def prepare(self, paths, use_safetensors):
+        ew.require(use_safetensors, "runtime byte observations require safetensors")
+        for raw_path in paths:
+            path = Path(raw_path).resolve()
+            ew.require(path.is_relative_to(self.root), "loaded source is outside the model directory")
+            name = path.relative_to(self.root).as_posix()
+            file_hash = hashlib.sha256()
+            with path.open("rb") as handle:
+                for block in iter(lambda: handle.read(8 * 1024 * 1024), b""):
+                    file_hash.update(block)
+                size = handle.tell()
+                handle.seek(0)
+                length = int.from_bytes(handle.read(8), "little")
+                ew.require(0 < length < size - 8, "loaded safetensors header size is invalid")
+                tensors = json.loads(handle.read(length))
+            tensors.pop("__metadata__", None)
+            fact = {"sha256": file_hash.hexdigest(), "bytes": size, "data_start": length + 8, "tensors": tensors}
+            ew.require(name not in self.files or self.files[name] == fact, "loaded source file changed during the load")
+            self.files[name], self.paths[name] = fact, path
+
+    def activate(self, name, tensor, prefix=""):
+        source_name = name[len(prefix):] if prefix else name
+        matches = [(file, fact["tensors"][source_name]) for file, fact in self.files.items()
+                   if source_name in fact["tensors"]]
+        ew.require(len(matches) == 1, f"loaded tensor {name!r} has no unique source byte range")
+        file, descriptor = matches[0]
+        start, end = descriptor["data_offsets"]
+        ew.require(tensor.is_contiguous() and tensor.numel() * tensor.element_size() == end - start,
+                   f"loaded tensor {name!r} differs from its source byte bounds")
+        self.active = (file, source_name, tensor, start, end)
+
+    def input_fact(self, loaded, target):
+        ew.require(self.active is not None, "weight callback has no active source tensor")
+        file, name, source_tensor, tensor_start, tensor_end = self.active
+        ew.require(loaded.is_contiguous() and loaded.untyped_storage().data_ptr()
+                   == source_tensor.untyped_storage().data_ptr(),
+                   "weight callback input has no observed source byte range")
+        offset = loaded.data_ptr() - source_tensor.data_ptr()
+        start = tensor_start + offset
+        loaded_fact = tensor_fact(loaded)
+        end = start + loaded_fact["bytes"]
+        ew.require(tensor_start <= start < end <= tensor_end, "weight callback input exceeds its source tensor")
+        fact = self.files[file]
+        source_hash = hashlib.sha256()
+        remaining = loaded_fact["bytes"]
+        with self.paths[file].open("rb") as handle:
+            handle.seek(fact["data_start"] + start)
+            while remaining:
+                block = handle.read(min(remaining, _READ_BYTES))
+                ew.require(block, "artifact tensor bytes ended before the loaded input")
+                source_hash.update(block)
+                remaining -= len(block)
+        loaded_digest = loaded_fact["sha256"]
+        source_digest = source_hash.hexdigest()
+        ew.require(loaded_digest == source_digest, "loaded input bytes differ from artifact tensor bytes")
+        return {"file": file, "tensor": name, "start": start, "end": end,
+                "sha256": loaded_digest, "source_sha256": source_digest,
+                "target": target}
+
+    def record(self, model):
+        return {"model_path": str(self.root), "load_started_unix": self.started,
+                "load_finished_unix": time.time(), "files": self.files, "inputs": self.inputs,
+                "resident": resident_bytes(model)}
+
+
+def capture_load_weights(loader, model, model_config, operation):
+    """Call the real loader with byte observers around its existing callbacks."""
+    from vllm.model_executor.model_loader.weight_utils import default_weight_loader
+
+    capture = _CAPTURE.get()
+    if capture is None:
+        model.__dict__.pop("_tessera_endpoint_load", None)
+        model._tessera_endpoint_error = "weight reload has no complete post-load runtime observation"
+        return operation()
+    originals = []
+    for name, parameter in model.named_parameters():
+        previous = getattr(parameter, "weight_loader", None)
+        original = previous if previous is not None else default_weight_loader
+
+        def observed(param, loaded_weight, *args, _original=original, _target=name, **kwargs):
+            try:
+                fact = capture.input_fact(loaded_weight, _target)
+            except Exception as exc:
+                capture.note_error(exc)
+                fact = None
+            result = _original(param, loaded_weight, *args, **kwargs)
+            if result is not False and fact is not None:
+                capture.inputs.append({**fact, "loaded_unix": time.time()})
+            return result
+
+        originals.append((parameter, previous))
+        parameter.weight_loader = observed
+    try:
+        return operation()
+    finally:
+        for parameter, previous in originals:
+            if previous is None:
+                del parameter.weight_loader
+            else:
+                parameter.weight_loader = previous
+
+
+def install_loader_hooks(base_class, default_class):
+    """Install observers once; retain every original loader operation."""
+    if getattr(base_class, "_tessera_endpoint_observer", False):
+        return
+    original_model = base_class.load_model
+    original_weights = default_class.load_weights
+    original_prepare = default_class._prepare_weights
+    original_iterator = default_class._get_weights_iterator
+
+    @functools.wraps(original_model)
+    def load_model(self, vllm_config, model_config, *args, **kwargs):
+        capture = LoadCapture(model_config.model)
+        token = _CAPTURE.set(capture)
+        try:
+            model = original_model(self, vllm_config, model_config, *args, **kwargs)
+            try:
+                ew.require(not capture.errors, "; ".join(capture.errors))
+                model._tessera_endpoint_load = capture.record(model)
+            except Exception as exc:
+                model._tessera_endpoint_error = f"{type(exc).__name__}: {exc}"
+            return model
+        finally:
+            _CAPTURE.reset(token)
+
+    @functools.wraps(original_weights)
+    def load_weights(self, model, model_config, *args, **kwargs):
+        return capture_load_weights(self, model, model_config,
+                                    lambda: original_weights(self, model, model_config, *args, **kwargs))
+
+    @functools.wraps(original_prepare)
+    def prepare(self, *args, **kwargs):
+        result = original_prepare(self, *args, **kwargs)
+        capture = _CAPTURE.get()
+        if capture is not None:
+            try:
+                root = Path(result[0]).resolve()
+                ew.require(not capture.files or root == capture.root, "load has multiple source roots")
+                capture.root = root
+                capture.prepare(result[1], result[2])
+            except Exception as exc:
+                capture.note_error(exc)
+        return result
+
+    @functools.wraps(original_iterator)
+    def iterator(self, source):
+        capture = _CAPTURE.get()
+        for name, tensor in original_iterator(self, source):
+            if capture is not None:
+                try:
+                    capture.activate(name, tensor, source.prefix)
+                except Exception as exc:
+                    capture.note_error(exc)
+                    capture.active = None
+            try:
+                yield name, tensor
+            finally:
+                if capture is not None:
+                    capture.active = None
+
+    base_class.load_model = load_model
+    default_class.load_weights = load_weights
+    default_class._prepare_weights = prepare
+    default_class._get_weights_iterator = iterator
+    base_class._tessera_endpoint_observer = True
+
+
+def observe_worker(worker, request_id):
+    """Read the current worker through the serving engine's collective RPC."""
+    from vllm.distributed.parallel_state import get_world_group
+
+    group = get_world_group()
+    rank, world = group.rank, group.world_size
+    ew.require(type(rank) is int and type(world) is int and 0 <= rank < world,
+               "worker rank has no initialized world")
+    models = [worker.get_model()]
+    draft = worker.get_draft_model()
+    if draft is not None and draft is not models[0]:
+        models.append(draft)
+    records = []
+    for model in models:
+        record = getattr(model, "_tessera_endpoint_load", None)
+        ew.require(record is not None, "loaded model has no runtime loader byte observations: "
+                   + getattr(model, "_tessera_endpoint_error", "unsupported loader"))
+        ew.require(resident_bytes(model) == record["resident"], "resident model bytes changed after the observed load")
+        records.append(record)
+    return {"rank": rank, "world_size": world, "owner": process_owner(), "request_id": request_id,
+            "observed_unix": time.time(), "models": records}
+
+
+def install():
+    """Connect the general plugin to the supported vLLM loader and worker RPC."""
+    if not os.environ.get("TESSERA_ENDPOINT_WITNESS_ROOT"):
+        return
+    from vllm.model_executor.model_loader.base_loader import BaseModelLoader
+    from vllm.model_executor.model_loader.default_loader import DefaultModelLoader
+    from vllm.v1.worker.worker_base import WorkerBase
+
+    install_loader_hooks(BaseModelLoader, DefaultModelLoader)
+    WorkerBase.tessera_endpoint_observation = observe_worker
+
+
+def observe_tokenizer(tokenizer, request_id):
+    """Read the initialized server tokenizer, its mapping, and its local source bytes."""
+    backend = getattr(tokenizer, "backend_tokenizer", None)
+    ew.require(backend is not None, "server tokenizer exposes no loaded backend mapping")
+    loaded = json.loads(backend.to_str())
+    root = Path(tokenizer.name_or_path).resolve()
+    ew.require(root.is_dir(), "server tokenizer source is not a local directory")
+    files = {}
+    for name in ew.TOKENIZER_NAMES:
+        path = root / name
+        if not path.exists():
+            continue
+        ew.require(not path.is_symlink(), "tokenizer source file is a symlink")
+        raw = path.read_bytes()
+        files[name] = {"sha256": hashlib.sha256(raw).hexdigest(), "bytes": len(raw),
+                       "content": json.loads(raw) if name.endswith(".json") else raw.decode()}
+    return {"path": str(root), "request_id": request_id, "observed_unix": time.time(),
+            "files": files, "backend": loaded, "vocab": tokenizer.get_vocab(),
+            "special_ids": {label: getattr(tokenizer, label + "_token_id", None)
+                            for label in ("bos", "eos", "pad", "unk", "sep", "cls", "mask")}}
+
+
+async def observe_endpoint(engine, models, endpoint, *, request_id):
+    """Join one listener request to fresh observations from its actual engine."""
+    ew.text(request_id, "fresh runtime request")
+    started = time.time()
+    available = await models.show_available_models()
+    names = [entry.id for entry in available.data]
+    ew.require(len(names) == 1, "listener must expose exactly one served alias")
+    ranks = await engine.collective_rpc("tessera_endpoint_observation", args=(request_id,))
+    ranks = sorted(ranks, key=lambda record: record["rank"])
+    tokenizer = observe_tokenizer(engine.get_tokenizer(), request_id)
+    listener_owner = process_owner()
+    files = {name: source for model in ranks[0]["models"] for name, source in model["files"].items()}
+    receipt = {"schema": ew.SCHEMA, "listener": {"endpoint": endpoint, "served_alias": names[0], "owner": listener_owner},
+               "launch": {"attempt_id": ew.attempt_id(listener_owner), "ranks": [record["rank"] for record in ranks]},
+               "lifetime": {"request_id": request_id, "started_unix": started, "finished_unix": time.time()},
+               "artifacts": ranks, "tokenizer": tokenizer,
+               "byte_coverage": {"kind": ew.COVERAGE, "files": sorted(files),
+                                 "tensor_payload_bytes": sum(s["bytes"] - s["data_start"] for s in files.values())},
+               "qualification_scope": ew.QUALIFICATION_SCOPE}
+    receipt["fingerprint"] = ew.fingerprint(receipt)
+    ew.check_join(receipt)
+    return receipt
+
+
+class EndpointWitnessPlugin:
+    """Expose the producer through vLLM's opt-in HTTP plugin interface."""
+
+    name = "tessera_endpoint_witness"
+    required_tasks = ("generate",)
+
+    def attach_router(self, app):
+        from fastapi import Request
+        from fastapi.responses import JSONResponse
+
+        async def witness(request: Request):
+            try:
+                state = request.app.state
+                ew.require(getattr(state, "tessera_endpoint_enabled", False), "runtime witness producer is not enabled")
+                host, port = request.scope["server"]
+                address = f"[{host}]" if ":" in host else host
+                endpoint = f"{request.scope['scheme']}://{address}:{port}"
+                receipt = await observe_endpoint(state.engine_client, state.openai_serving_models, endpoint,
+                                                 request_id=request.query_params.get("request_id"))
+                public_path = None
+                if request.method == "POST":
+                    from tessera.endpoint_observer import publish_witness
+
+                    public_path = str(publish_witness(state.tessera_endpoint_root, witness=receipt))
+                return JSONResponse(content={"receipt": receipt, "public_receipt_path": public_path},
+                                    headers={"Cache-Control": "no-store"})
+            except Exception as exc:
+                return JSONResponse(status_code=503, content={"runtime_evidence": "incomplete", "reason": str(exc)})
+
+        # The runtime annotation avoids a postponed local name that FastAPI cannot resolve.
+        witness.__annotations__["request"] = Request
+        app.add_api_route("/tessera/endpoint-witness", witness, methods=["GET", "POST"])
+
+    async def init_state(self, engine_client, state, args):
+        root = os.environ.get("TESSERA_ENDPOINT_WITNESS_ROOT")
+        state.tessera_endpoint_enabled = bool(root and engine_client is not None)
+        state.tessera_endpoint_root = root

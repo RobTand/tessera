@@ -1,5 +1,19 @@
 # Changelog
 
+## 2026-10-09 — bind task endpoints to actual serving observations (issue #1056)
+
+Connect the producer to vLLM's loader, worker RPC, and opt-in HTTP plugin.
+Replace detached worker files and caller launch identities with actual runtime observations.
+Bind successful loader inputs to source tensor ranges and resulting resident state.
+Bind the loaded tokenizer backend, vocabulary mapping, and special IDs to their source bytes.
+Reject cached replies, incomplete coverage, mixed requests, changed state, and replacement listeners.
+Keep original load callbacks and correctness checks unchanged.
+An unobserved in-place reload invalidates the witness, not the valid serve.
+Publish complete immutable JSON receipts through the accepted publication boundary.
+The standalone verifier needs no serving imports or rank lifecycle work.
+The structured scope is runtime byte binding only.
+No identity seal, supplier-table change, scientific qualification, or D50 consumer release follows.
+
 ## 2026-10-08 — retain deadline failures after a delayed process reap
 
 Record the final bounded reap timeout without replacement of the original work error (#1053).
