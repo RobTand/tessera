@@ -645,12 +645,13 @@ def _container_spec(command):
 #: The population's ``counts`` buckets, and the words pytest's summary line
 #: spells the same ``terminalreporter.stats`` buckets with.  ``warnings`` and
 #: ``deselected`` are on the line and not in the population, so they are not
-#: compared.
+#: compared.  ``N subtests passed`` is a two-word term on the same line and is
+#: read the same way: it names no population bucket, so it is not compared.
 _COMPARED_COUNTS = ("passed", "failed", "error", "skipped", "xfailed", "xpassed")
 _SUMMARY_WORDS = {"passed": "passed", "failed": "failed", "error": "error",
                   "errors": "error", "skipped": "skipped",
                   "xfailed": "xfailed", "xpassed": "xpassed"}
-_SUMMARY_TERM = re.compile(r"^(\d+) ([a-z]+)$")
+_SUMMARY_TERM = re.compile(r"^(\d+) ([a-z]+(?: [a-z]+)?)$")
 _SUMMARY_TAIL = re.compile(r" in \d+\.\d+s( \(\d+:\d\d:\d\d\))?$")
 
 
