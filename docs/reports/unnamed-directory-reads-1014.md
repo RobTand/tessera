@@ -499,3 +499,39 @@ The CAS receipt digest is `eb5b0dae579dbbfc207fd4102a6179b72392cb2a99d702d15c416
 The retained payload digest is `e87a8ab051349acc167906bdf0999cfe01c0fef120e43214a01c8f0ba6ba21fe`.
 The controller population digest is `427f8eaeab0294aaa7f7f317e454cd79286364023c56a1c1ebc048b5c9805425`.
 
+## Rebase request verification, 2026-10-09
+
+The fetched master remains `572539ad224c9ca3f36b9754051f73aed9ca99b4`.
+Merge commit `3e2515a20f281c25ed953890ab0fa1d6c178d264` already contains that base and the accepted conflict resolution.
+The requested `git merge origin/master` returned `Already up to date.`
+This attempt retains the selector correction, both guard limits, all regression assertions, and both changelog entries.
+Only this report changes after the new verification.
+
+PrismaBuild action `73eb7518b338f8d28d6f0266307f70fc7c308c5cc76df1ff6f6e98a4b5904094` completed the census smoke with exit code zero on `dl380g10`.
+It verified all 168 remaining site locations against the 169 classified baseline rows.
+The census still has 114 modules, 103 runtime bases, 28 external box reads, and 37 temporary test reads.
+All 35 runtime-module rows retain their reverse module and test counts.
+The actual selector CLI returned `narrowed` and selected 398 files against the exact fetched base.
+Its declared source verifier excluded only the verified closure metadata.
+
+PrismaBuild action `9dd3aba7a1ad48e1a31357d76b61f9a37b7bbe9c37153d8be1aebb38dd4f00a2` passed all 464 tests in the same six selector contract files.
+The action completed with exit code zero on `dl380g10`.
+It used four xdist workers, `--dist worksteal`, `--durations=20`, and one native math thread per worker.
+The retained payload has 464 passed call outcomes and no collection, setup, or teardown failures.
+Torch `2.11.0+cpu` reported no CUDA device.
+The population has zero skips, zero uncollected modules, and zero device allocations.
+This result does not qualify the CUDA surface.
+
+The selector-test receipt digest is `e2391744e08e44aefae229b308aaf84025a104df2ab39e4d1f90668e83809f6b`.
+Its payload digest is `85083edb62684a1ef4a960d947c6ee34c1bcf35b4c6949b84452282d202df5b9`.
+Its controller population digest is `b6a3c6569cf431c40dcf008ff541e6baa0d9039d1ad2c46da60265e0e48286ad`.
+The census receipt digest is `ab683ff53ba53cb414747d3169817b4502873b4bbecc842c5c50d8cffe3ad318`.
+Its payload digest is `14010389ac593a710a57720717d0b0e15a85b46fa18eac57584ce36d22392c85`.
+
+Diagnostic action `12aa558e5eeaf861500cd765d671848704b140731839afa2e3b3059988ece115` failed at the temporary smoke's comparison assertion.
+The smoke incorrectly required a parentless comparison, although the advertised base preserved ancestry.
+The corrected smoke permits either valid exact-base comparison; no repository assertion changed.
+The first submission also refused `--snapshot-ref origin/master` before it created an action.
+The successful submission declares a local branch at the exact fetched base.
+The temporary smoke was removed after the actions captured its source.
+
