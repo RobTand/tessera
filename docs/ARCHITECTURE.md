@@ -695,6 +695,18 @@ SHA into the submitted inputs; each rank emits
 baseline, minimum, raw samples and counters kept so a future window can measure
 the 6 GiB allowance, not a measured RSS decomposition — and the Envelope
 outcome carries the termination list with container termination evidence.
+
+`Envelope._terminate` retains the original work failure when its final
+`Popen.wait` times out after SIGKILL (#1053).
+Each termination record includes `reap_timeout_seconds`, `reap_timed_out`,
+`returncode` and `ended_unix`, including a delayed reap.
+The existing reap bound remains 0.01 to one second, limited by the absolute deadline.
+A null return code does not prove process exit.
+Signals still target only the process group that the Envelope created.
+The PB worker retains final responsibility for physical scope cleanup.
+
+The real-child regression awaits asynchronous death within its unchanged 9.5-second elapsed limit.
+
 Protected sysctl, ARC, cache and service settings are untouched. This mints no
 performance, fit or pin claim; old producer approvals do not transfer, and pool
 review must check both the derivation and the guard against the exact new
