@@ -306,3 +306,25 @@ def test_a_dry_run_prints_each_shards_command_and_creates_nothing(tmp_path, monk
         assert f"--surface-json {out_dir}/surface.shard-" in line
         assert "-n 2 --dist worksteal" in line
         assert "--cpus 2" in line
+
+
+def test_every_shard_runs_under_the_interpreter_the_run_names(tmp_path, monkeypatch, capsys):
+    """The arm's default interpreter may lack what the suite imports.
+
+    merge_suite's x86 arm names ``pb-cpu``, which has no ``jsonschema``, so a
+    test that needs it fails there for want of the package and not for any
+    defect.  The run names its interpreter, and the selection records it so
+    ``--resume`` reads the same one.
+    """
+
+    arm = sp.shard_arm("shard-00", ["tests/test_a.py"], python="/opt/venv/bin/python")
+    assert arm["python"] == "/opt/venv/bin/python"
+    assert sp.shard_arm("shard-00", ["tests/test_a.py"])["python"] == sp.merge_suite.ARMS["x86"]["python"]
+    selection = {"base": "origin/master", "verdict": "narrowed", "forces_full": [],
+                 "excluded_tests": [], "tests": sorted(sum(SHARDS.values(), [])), "shards": SHARDS}
+    monkeypatch.setattr(sp, "choose", lambda checkout, base, count: dict(selection))
+    status = sp.main(["--dry-run", "--checkout", str(_checkout(tmp_path)),
+                      "--out", str(tmp_path / "never"), "--python", "/opt/venv/bin/python"])
+    lines = [line for line in capsys.readouterr().out.splitlines() if "pbrun.py" in line]
+    assert status == 0 and len(lines) == 2
+    assert all("/opt/venv/bin/python -m pytest" in line for line in lines)
