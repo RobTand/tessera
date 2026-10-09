@@ -298,7 +298,7 @@ def _command(arm: dict, surface_json: Path, extra: list[str],
     """
 
     cpus = _arm_cpus(arm, cpus)
-    command = [arm["python"], "-m", "pytest", "tests", "-q",
+    command = [arm["python"], "-m", "pytest", *arm.get("targets", ["tests"]), "-q",
                "-p", "no:cacheprovider",
                "--surface-json", str(surface_json)]
     if cpus > 1:
@@ -586,6 +586,24 @@ def _pytest_argv(command: list) -> tuple[list[str] | None, str | None]:
         return _pytest_argv(parts[parts.index("--", 2) + 1:])
     ran = " ".join([program, *parts[1:3]])
     return None, f"`{ran}` is not a pytest invocation this tool parses"
+
+
+def _targets_of(argv: list) -> list[str]:
+    """The test paths ``_command`` put before its first option.
+
+    ``_command`` seals ``<python> -m pytest <targets> -q ...``, so the targets
+    are the tokens between ``pytest`` and the first option.  Composing and
+    reading them live side by side so the two cannot drift.
+    """
+
+    parts = [str(part) for part in argv]
+    start = parts.index("pytest") + 1 if "pytest" in parts else len(parts)
+    targets = []
+    for part in parts[start:]:
+        if part.startswith("-"):
+            break
+        targets.append(part)
+    return targets
 
 
 def _effective_surface_json(command: list) -> tuple[str | None, str | None]:
@@ -1534,6 +1552,52 @@ def _keep_any_previous(path: Path):
     return kept
 
 
+def use_pool_root(pool_root) -> None:
+    """Point the readers at this pool.
+
+    Module-level because that is where the readers look, and because a test
+    that monkeypatches them is doing the same thing this does.  A tool that
+    reads arms of its own calls this instead of restating the two paths.
+    """
+
+    global POOL_QUEUE, POOL_CAS_REQUESTS
+    root = Path(pool_root).resolve()
+    POOL_QUEUE = root / "pb-queue"
+    POOL_CAS_REQUESTS = root / "cas" / "requests"
+
+
+def _assemble_receipt(arms: list[dict], checkout: Path, *, assembled_by: str) -> dict:
+    """The receipt for these arm records: one owner for what a receipt says.
+
+    ``main`` and every tool that submits arms of its own read the same fields
+    the same way, so the verdict, the per-arm results and the reading note are
+    written here and nowhere else.
+    """
+
+    commits = _commits_measured(arms)
+    return {
+        "schema": "tessera.merge_suite.v1",
+        "generated_utc": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+        "submitted_from": os.uname().nodename,
+        "assembled_by": assembled_by,
+        "population": _population_of(checkout),
+        "commits_measured": commits,
+        "verdict": _verdict(arms, commits),
+        # Each arm's own result, kept separate from the merge verdict on
+        # purpose: an arm can be green while the run is not a merge success,
+        # and only the verdict decides the exit status.
+        "arm_results": _arm_results(arms),
+        "arms": arms,
+        "reading_note": (
+            "Each arm's counts belong to that arm's device population and to "
+            "no other. A pass count quoted without the device beside it is the "
+            "misreading tessera#112 is about. Snapshot commit IDs are preserved; "
+            "commits_measured.effective_source.agree separately establishes "
+            "whether the populations exercised equivalent verified source."
+        ),
+    }
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -1613,12 +1677,7 @@ def main() -> int:
         except (OSError, ValueError) as exc:
             ap.error(str(exc))
 
-    # Module-level because that is where the readers look, and because a test
-    # that monkeypatches them is doing the same thing this flag does.
-    global POOL_QUEUE, POOL_CAS_REQUESTS
-    pool_root = Path(args.pool_root).resolve()
-    POOL_QUEUE = pool_root / "pb-queue"
-    POOL_CAS_REQUESTS = pool_root / "cas" / "requests"
+    use_pool_root(args.pool_root)
 
     args.checkout = Path(args.checkout).resolve()
     wanted = args.arm or sorted(ARMS)
@@ -1666,28 +1725,8 @@ def main() -> int:
                        for name in wanted}
             arms = [futures[name].result() for name in wanted]
 
-    commits = _commits_measured(arms)
-    receipt = {
-        "schema": "tessera.merge_suite.v1",
-        "generated_utc": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
-        "submitted_from": os.uname().nodename,
-        "assembled_by": "resume" if args.resume else "submit",
-        "population": _population_of(args.checkout),
-        "commits_measured": commits,
-        "verdict": _verdict(arms, commits),
-        # Each arm's own result, kept separate from the merge verdict on
-        # purpose: an arm can be green while the run is not a merge success,
-        # and only the verdict decides the exit status.
-        "arm_results": _arm_results(arms),
-        "arms": arms,
-        "reading_note": (
-            "Each arm's counts belong to that arm's device population and to "
-            "no other. A pass count quoted without the device beside it is the "
-            "misreading tessera#112 is about. Snapshot commit IDs are preserved; "
-            "commits_measured.effective_source.agree separately establishes "
-            "whether the populations exercised equivalent verified source."
-        ),
-    }
+    receipt = _assemble_receipt(arms, args.checkout,
+                                assembled_by="resume" if args.resume else "submit")
     out.parent.mkdir(parents=True, exist_ok=True)
     kept = _keep_any_previous(out)
     out.write_text(json.dumps(receipt, indent=2) + "\n")
