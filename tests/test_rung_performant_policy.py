@@ -369,3 +369,28 @@ class SupplierRevision(unittest.TestCase):
                                     cwd=SRC.parent, env=CHILD_ENV, capture_output=True, text=True)
             self.assertEqual(result.returncode, 0, result.stderr)
 
+    def test_routed_release_unit_never_matches_dense_cell(self):
+        from tessera.rung_allowability import publication_scope
+        table = v3_fixture()
+        unit = {'name': 'expert.gate', 'kernel_kind': 'routed', 'category': 'routed_moe',
+                'tensor_parallel_shapes': {'2': [512, 256]}}
+        inventory = {'units': [unit]}
+        unmatched = publication_scope(table, unit_inventory=inventory)['release_unit_coverage'][0]['coverage'][0]
+        self.assertEqual(unmatched['status'], 'wait')
+        self.assertEqual(unmatched['cell_ids'], [])
+        table['scope']['required_cells'].append({'cell_id': 'routed:o:M1', 'kernel_kind': 'routed', 'shape_id': 'o', 'M': 1})
+        table['scope']['shapes'].append({'kernel_kind': 'routed', 'shape_id': 'o', 'rows': 512, 'columns': 256, 'mode': 2})
+        for row in table['rungs']:
+            cell = copy.deepcopy(row['measurements'][0])
+            cell.update(cell_id='routed:o:M1', kernel_kind='routed')
+            cell['evidence'].update(routing='balanced', epilogue='route-weighted BF16 down')
+            row['measurements'].append(cell)
+        table['geometry_classes'] = measured_geometry_classes(table)
+        matched = publication_scope(table, unit_inventory=inventory)['release_unit_coverage'][0]['coverage'][0]
+        self.assertEqual(matched['cell_ids'], ['routed:o:M1'])
+        unit.pop('kernel_kind')
+        unit['structure'] = 'routed_moe'
+        mapped = publication_scope(table, unit_inventory=inventory)['release_unit_coverage'][0]['coverage'][0]
+        self.assertEqual(mapped['cell_ids'], ['routed:o:M1'])
+
+

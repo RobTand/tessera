@@ -731,9 +731,15 @@ def publication_scope(table, *, unit_inventory=None):
         result['release_config'] = unit_inventory.get('config')
         result['release_unit_coverage'] = []
         for unit in unit_inventory['units']:
+            from .structure import STRUCTURE_DENSE, STRUCTURE_ROUTED_MOE
+            kind = unit.get('kernel_kind')
+            if kind is None:
+                structure = unit.get('structure', unit.get('category'))
+                kind = {STRUCTURE_DENSE: 'dense', STRUCTURE_ROUTED_MOE: 'routed',
+                        'dense_mlp': 'dense', 'shared': 'dense', 'attention': 'dense'}.get(structure)
             coverage = []
             for tensor_parallel, shape in unit['tensor_parallel_shapes'].items():
-                matched = [cell for cell in cells if cell['cell']['kernel_kind'] == 'dense'
+                matched = [cell for cell in cells if cell['cell']['kernel_kind'] == kind
                            and cell['shape'] is not None
                            and [cell['shape']['rows'], cell['shape']['columns']] == shape]
                 coverage.append({'tensor_parallel': int(tensor_parallel), 'shape': shape,

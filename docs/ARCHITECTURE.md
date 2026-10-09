@@ -1,5 +1,10 @@
 # Tessera plan-to-serve architecture
 
+Re-stamped 2026-10-09 for structure-scoped release coverage (issue #1018).
+Release units match only their actual kernel kind or existing structure mapping.
+Routed units never borrow dense timing cells. Legacy shared and dense units keep their dense scope.
+Unknown structures retain missing-geometry waits.
+
 Re-stamped 2026-10-09 for the pure metadata boundary correction (issue #1018).
 Version two and version three input-table metadata use the alphabet's pure grid owner.
 The existing version one conversion and actual raw-input normalization retain their owner paths.

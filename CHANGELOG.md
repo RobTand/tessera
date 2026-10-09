@@ -1,5 +1,11 @@
 # Changelog
 
+## 2026-10-09 — structure-scoped release coverage (issue #1018)
+
+Coverage uses each unit's kernel kind or the existing structure names.
+Routed units cannot borrow dense cells. Legacy dense, shared, and attention categories keep their owner mapping.
+Unknown structures wait for geometry.
+
 ## 2026-10-09 — pure class publication metadata (issue #1018)
 
 The input-table metadata path resolves grids through the alphabet, not the tensor-backed control.
