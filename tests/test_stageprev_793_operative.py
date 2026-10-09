@@ -220,6 +220,33 @@ def test_required_api_check_passes_on_full_contract():
     assert claim_contract.required_api_problems(module, ledger) == []
 
 
+def test_required_api_check_binds_receiver_whatever_name_it_uses():
+    queue = type("PoolQueue", (), {
+        "claim": staticmethod(lambda **kwargs: None),
+        "_claim": staticmethod(lambda **kwargs: None),
+        "_claim_pass": staticmethod(lambda **kwargs: None),
+        "ledger": lambda this, host=None: None,
+        "latest_denials": lambda this, keys, *, include_local=True: {},
+        "offers": lambda this, *, max_age_s=120.0: [],
+    })
+    ledger = type("ResourceLedger", (), {
+        "capacity_census": lambda this: ({}, []),
+        "available": lambda this: {},
+    })
+    module = type("client", (), {"PoolQueue": queue})
+    assert claim_contract.required_api_problems(module, ledger) == []
+
+
+def test_required_api_check_binds_classmethod_receiver():
+    module, ledger = _client_double(ledger=classmethod(lambda cls, host=None: None))
+    assert claim_contract.required_api_problems(module, ledger) == []
+
+
+def test_required_api_check_refuses_static_receiver_left_in_signature():
+    module, ledger = _client_double(offers=staticmethod(lambda self, *, max_age_s=120.0: []))
+    assert "PoolQueue.offers(max_age_s)" in claim_contract.required_api_problems(module, ledger)
+
+
 def test_required_api_check_names_each_absent_call():
     for name in claim_contract.REQUIRED_QUEUE_METHODS:
         module, ledger = _client_double(**{name: None})
@@ -275,3 +302,42 @@ def test_evaluator_refuses_a_contract_with_api_problems(packet):
     record["public_claim_contract"]["api_problems"] = ["PoolQueue.offers"]
     result = prerequisites.evaluate(record, packet, now=NOW)
     assert result["status"] == "HOLD" and result["control_ready"] is False
+
+
+def test_observer_reports_receiver_name_variants_without_false_refusal(monkeypatch):
+    pytest.importorskip("prismabuild.client")
+    import prismabuild.client as published_client
+    real_queue = published_client.PoolQueue
+
+    class RenamedQueue(real_queue):
+        def ledger(this, host=None):
+            return super().ledger(host)
+
+        def latest_denials(this, keys, *, include_local=True):
+            return super().latest_denials(keys, include_local=include_local)
+
+        def offers(this, *, max_age_s=120.0):
+            return super().offers(max_age_s=max_age_s)
+
+    monkeypatch.setattr(published_client, "PoolQueue", RenamedQueue)
+    import stageprev_793_prepare as prepare_module
+    monkeypatch.setattr(prepare_module, "PB_ROOT", "/mnt/shared/prismabuild-fleet/repo")
+    probe = claim_contract.observe_current_claim_contract(
+        {"generation": "renamed-receiver-probe", "files": {"src/prismabuild/pool.py": "0" * 64}})
+    manifest = {"generation": "renamed-receiver-probe",
+                "files": {"src/prismabuild/pool.py": probe["pool_sha256"]}}
+    observed = claim_contract.observe_current_claim_contract(manifest)
+    assert observed["api_problems"] == [] and observed["api_verified"] is True
+
+
+def test_collector_refuses_static_receiver_left_in_signature(monkeypatch, packet):
+    pytest.importorskip("prismabuild.client")
+    import prismabuild.client as published_client
+    real_queue = published_client.PoolQueue
+
+    class StaticQueue(real_queue):
+        offers = staticmethod(lambda self, *, max_age_s=120.0: [])
+
+    monkeypatch.setattr(published_client, "PoolQueue", StaticQueue)
+    with __import__("pytest").raises(ValueError, match="PoolQueue.offers"):
+        prerequisites.collect(packet, "")

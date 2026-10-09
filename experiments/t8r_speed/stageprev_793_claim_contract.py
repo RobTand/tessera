@@ -16,25 +16,49 @@ REQUIRED_QUEUE_METHODS = ("claim", "_claim", "_claim_pass", "ledger", "latest_de
 REQUIRED_LEDGER_METHODS = ("capacity_census", "available")
 
 
-def _signature_of(owner, name):
+def _consumer_signature(owner, name):
+    """Return the signature of one required call bound as the proof makes it.
+
+    The check binds through a blank owner instance, so the descriptor
+    protocol removes the receiver whatever name it uses. ``staticmethod``
+    and ``classmethod`` bind the same way, and a receiver named anything
+    other than ``self`` binds too. Construction runs no owner code beyond
+    blank instance creation, so the check performs no claim or read.
+    A raw signature means no blank instance binds the attribute; the
+    caller then refuses it. ``None`` means the attribute has no call
+    signature at all.
+    """
     try:
-        return inspect.signature(getattr(owner, name))
+        raw = inspect.getattr_static(owner, name)
+    except AttributeError:
+        return None
+    try:
+        probe = object.__new__(owner)
+    except Exception:
+        probe = None
+    if probe is not None:
+        try:
+            return inspect.signature(getattr(probe, name)), False
+        except (AttributeError, TypeError, ValueError):
+            pass
+    try:
+        return inspect.signature(raw), True
     except (TypeError, ValueError):
         return None
 
 
-def _consumer_call_binds(signature, args, kwargs):
+def _consumer_call_binds(entry, args, kwargs):
     """Check one exact proof consumer call binds with no missing argument.
 
-    The leading ``self`` names the receiver, not a caller argument, so the
-    check drops it before it binds. Extra required arguments and keyword
-    collisions then refuse, while extra optional arguments still pass.
+    A raw entry keeps the receiver in the signature, so an exact call
+    that needs the receiver still refuses. Extra required arguments and
+    keyword collisions then refuse, while extra optional arguments pass.
     """
-    parameters = list(signature.parameters.values())
-    if (parameters and parameters[0].name == "self"
-            and parameters[0].kind in (inspect.Parameter.POSITIONAL_ONLY,
-                                       inspect.Parameter.POSITIONAL_OR_KEYWORD)):
-        signature = inspect.Signature(parameters[1:])
+    if entry is None:
+        return False
+    signature, raw = entry
+    if raw:
+        return False
     try:
         signature.bind(*args, **kwargs)
     except TypeError:
@@ -73,32 +97,32 @@ def required_api_problems(client_module, ledger_cls=None):
         missing_ledger = {name for name in REQUIRED_LEDGER_METHODS
                           if not callable(getattr(ledger_cls, name, None))}
         problems.extend("ResourceLedger." + name for name in REQUIRED_LEDGER_METHODS if name in missing_ledger)
-    ledger_signature = _signature_of(queue_cls, "ledger") if "ledger" not in missing_queue else None
-    if "ledger" not in missing_queue and ledger_signature is None:
+    ledger_entry = _consumer_signature(queue_cls, "ledger") if "ledger" not in missing_queue else None
+    if "ledger" not in missing_queue and ledger_entry is None:
         problems.append("PoolQueue.ledger(signature)")
-    elif ledger_signature is not None and not _consumer_call_binds(
-            ledger_signature, ("sparky",), {}):
+    elif ledger_entry is not None and not _consumer_call_binds(
+            ledger_entry, ("sparky",), {}):
         problems.append("PoolQueue.ledger(host)")
-    denials_signature = _signature_of(queue_cls, "latest_denials") if "latest_denials" not in missing_queue else None
-    if "latest_denials" not in missing_queue and denials_signature is None:
+    denials_entry = _consumer_signature(queue_cls, "latest_denials") if "latest_denials" not in missing_queue else None
+    if "latest_denials" not in missing_queue and denials_entry is None:
         problems.append("PoolQueue.latest_denials(signature)")
-    elif denials_signature is not None and not _consumer_call_binds(
-            denials_signature, (set(),), {"include_local": False}):
+    elif denials_entry is not None and not _consumer_call_binds(
+            denials_entry, (set(),), {"include_local": False}):
         problems.append("PoolQueue.latest_denials(keys,include_local)")
-    offers_signature = _signature_of(queue_cls, "offers") if "offers" not in missing_queue else None
-    if "offers" not in missing_queue and offers_signature is None:
+    offers_entry = _consumer_signature(queue_cls, "offers") if "offers" not in missing_queue else None
+    if "offers" not in missing_queue and offers_entry is None:
         problems.append("PoolQueue.offers(signature)")
-    elif offers_signature is not None and not _consumer_call_binds(
-            offers_signature, (), {"max_age_s": 120.0}):
+    elif offers_entry is not None and not _consumer_call_binds(
+            offers_entry, (), {"max_age_s": 120.0}):
         problems.append("PoolQueue.offers(max_age_s)")
     if ledger_cls is not None:
         for name in REQUIRED_LEDGER_METHODS:
             if name in missing_ledger:
                 continue
-            census_signature = _signature_of(ledger_cls, name)
-            if census_signature is None:
+            census_entry = _consumer_signature(ledger_cls, name)
+            if census_entry is None:
                 problems.append("ResourceLedger." + name + "(signature)")
-            elif not _consumer_call_binds(census_signature, (), {}):
+            elif not _consumer_call_binds(census_entry, (), {}):
                 problems.append("ResourceLedger." + name + "()")
     return problems
 
