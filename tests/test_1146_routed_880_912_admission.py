@@ -1,6 +1,5 @@
 """tessera#1146: routed E4M3 880/912 through the true admission path.
-
-Replaces stopped tessera#689. Contract v51 admits run-table cover, so 880 and 912 resolve through held 896 and oracle [3, 4]. This file drives each rung solo through the true path: derived cover, scoped decoders, lane solo, export gate, run table, held receipt match, oracle match, pact rows, producer replay. No new image exists. Image X stays f8dbe1a0. No contract change exists in this branch.
+Replaces stopped tessera#689. Record #689 as parent tie. Note #689 state. State stays OPEN with ig:stopped label. Author is RobTand with no assignee. Claim no owner beyond issues-ts CPU slice and T-8 GPU handoff. Accept PR #734 as taken-over work. Merge commit is 6a7b7616848df1c6722962a12f3ab31dd4089f07. Head is afe6547f76d117e4437ebb8d09928468405d6eba. PR adds planning tools only. It adds no cells and no ranges. Cite pact rows from #689 body. Rows are 768 at 880 and 736 at 912. File pact/gamut/CELL-COVERAGE-2026-09-28.md is absent in this checkout. Record no pact digest. Record no close proof. Issue stays OPEN and stopped. Prove 880 and 912 through derived cover on contract v66. Use held 896 and oracle [3, 4]. Match image X digest f8dbe1a0. Claim no new digest. Add no source change. Hold this file as regression pin only. Base is 69aae020048458a168296ef534ad29938299cf83. Diff base to head shows test file only.
 """
 
 from __future__ import annotations
@@ -46,7 +45,8 @@ MAIN_DECODERS = (
 CLASS_DECODER = "native_routed_window_classes_e4m3mma"
 COMPACT_SYMBOL = "tessera.native_window_moe.NativeWindowMoE.__call__"
 FUSED_SYMBOL = "tessera.routed_fused.FusedRoutedWindowMoE.__call__"
-# Priced rows from pact audit CELL-COVERAGE-2026-09-28: 768 at 880, 736 at 912.
+# Rows 768 at 880 and 736 at 912 come from #689 body Severity line.
+# File pact/gamut/CELL-COVERAGE-2026-09-28.md is absent here. Record no digest.
 PACT_ROWS = {880: 768, 912: 736}
 ROOT = Path(__file__).resolve().parents[1]
 HELD_RECEIPT = ROOT / "experiments" / "results" / "glm53_x_stub_tp1_eager_census.json"
@@ -75,6 +75,21 @@ def test_observed_image_is_held_launch_image(cell_id):
     cell = _cell(_contract(), cell_id)
     assert cell["runtime"]["image"] == IMAGE_X
     assert list(cell["runtime"]["execution_modes"]) == ["eager"]
+
+@pytest.mark.parametrize("cell_id", BASE_IDS)
+@pytest.mark.parametrize("q", TARGETS)
+def test_device_fit_holds_for_each_rung_solo(cell_id, q):
+    """Each native cell fits the device for 880 and 912."""
+    contract = _contract()
+    cell = _cell(contract, cell_id)
+    row = _row(contract)
+    assert cell["platform"] == "sm_121"
+    assert cell["qualification"] == "device_qualified"
+    assert cell["route_status"] == "backed_with_serve_flag"
+    assert cell["activation_contract"] == "fp8_per_token_dynamic"
+    assert cell["runtime"]["image"] == IMAGE_X
+    assert _held_receipt()["device"]["platform_token"] == cell["platform"]
+    assert cell_covers_rung(cell, q, row)
 
 
 @pytest.mark.parametrize("cell_id", BASE_IDS)
@@ -201,8 +216,8 @@ def test_oracle_attests_table_3_4_on_image_x():
 
 @pytest.mark.parametrize("q", TARGETS)
 def test_pact_rows_resolve_on_image_x(q):
-    """Priced rows from pact audit now resolve on image X."""
-    assert PACT_ROWS[q] > 0
+    """Priced rows from #689 body now resolve on image X."""
+    assert PACT_ROWS == {880: 768, 912: 736}
     contract = _contract()
     for cell_id in BASE_IDS:
         assert cell_covers_rung(_cell(contract, cell_id), q, _row(contract))
@@ -222,7 +237,7 @@ def test_pact_rows_resolve_on_image_x(q):
 
 
 def test_producer_answers_hold_outside_routed_880_912_scope():
-    """Same queries give same answers; scope is test-only so all hold."""
+    """Producer answers match pinned base answers for all eight queries."""
     contract = _contract()
     queries = [
         ("E4M3", 880, "WINDOW", "CHANNEL", "TESSERA_FP8", 1, "stack.probe",
@@ -242,10 +257,20 @@ def test_producer_answers_hold_outside_routed_880_912_scope():
         ("BF16", 1024, "WINDOW", "CHANNEL", "TESSERA_BF16", 1, "stack.probe",
          STRUCTURE_ROUTED_MOE),
     ]
-    first = [_answer(contract, *a) for a in queries]
-    second = [_answer(load_serving_contract(), *a) for a in queries]
-    assert first == second
-    assert first[0] == first[1] == "TESSERA_FP8"
+    # Pinned answers at base 69aae02004. Diff base to head shows no src change.
+    # Head answers must equal these base answers. Scope adds no producer change.
+    expected = [
+        "TESSERA_FP8",
+        "TESSERA_FP8",
+        "TESSERA_FP8",
+        "TESSERA_FP8",
+        "TESSERA_FP8",
+        "TESSERA_FP8",
+        "refused:tessera export 'stack.probe': TESSERA_NVFP4 decodes the LUT scale plane to its n",
+        "refused:tessera export 'stack.probe': no lane_eligibility cell in runtime_contract.json ",
+    ]
+    answers = [_answer(contract, *a) for a in queries]
+    assert answers == expected
     assert contract["contract_version"] == 66
 
 
