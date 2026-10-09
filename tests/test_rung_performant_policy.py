@@ -4,7 +4,7 @@ import unittest
 
 from test_rung_allowability import fixture_v2
 from tessera.rung_allowability import (
-    E2M1_K2_PERFORMANT_MENU, PERFORMANT_POLICY, admit_rung, geometry_class_identity, measured_geometry_classes,
+    PERFORMANT_POLICY, admit_rung, geometry_class_identity, measured_geometry_classes,
     performant_rungs, publication_scope, rung_quality, rung_speed, scope_cell_ids, validate_table,
 )
 
@@ -261,6 +261,7 @@ class TimingPublication(unittest.TestCase):
 
     def test_approved_scope_admits_exact_cells_and_waits_elsewhere(self):
         import copy
+        from tessera.rung_allowability import E2M1_K2_PERFORMANT_MENU
         table = fixture_v2('tcq', 'native_tcq')
         table['schema'] = 'fleet.rung_allowability.v3'
         table['performant_policy'] = dict(PERFORMANT_POLICY)
