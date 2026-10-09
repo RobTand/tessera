@@ -5,9 +5,9 @@ Rung 768 is D41-measured, not receipt-served: the staged evidence is the
 committed D41 slice experiments/results/t8_d41_r768_census.json (status
 measured, supported, 20 of 20 cells). That file admits nothing. The served
 TP2 census at 768 gates any admission. Rung 640 sits below the sweep range
-and stays refused too, as do all rungs above 1152, which carry no D41 speed
-row (audit matrix section 2a). The runtime twins stay pinned: no image
-census ran at 768 there.
+and stays refused too, as do rungs 1280 through 2048, which carry no D41 speed
+row. Table [4,5] covers 1153 through 1279. The runtime twins stay pinned: no
+image census ran at 768 there.
 """
 from __future__ import annotations
 

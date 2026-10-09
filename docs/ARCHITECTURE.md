@@ -1,5 +1,10 @@
 # Tessera plan-to-serve architecture
 
+Re-stamped 2026-10-09 for staged R768 evidence without admission (contract v65, tessera#1080).
+The D41 slice experiments/results/t8_d41_r768_census.json carries row 768 as measured and supported.
+The base routed cells keep run tables [[3, 4], [4], [4, 5]] and refuse rung 768.
+The served TP2 census at 768 gates any admission. No kernel, decoder, pin, or default moves.
+
 Re-stamped 2026-10-08 for the grouped arithmetic consumer cutover.
 The grouped owner has one FP32 row-scale epilogue and no arithmetic selector.
 Register-direct consumers read row scales from scale_all and keep the family, window and table checks.
