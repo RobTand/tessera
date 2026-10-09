@@ -4,8 +4,8 @@ import unittest
 
 from test_rung_allowability import fixture_v2
 from tessera.rung_allowability import (
-    PERFORMANT_POLICY, admit_rung, geometry_class_identity, measured_geometry_classes,
-    performant_rungs, rung_quality, rung_speed, scope_cell_ids, validate_table,
+    E2M1_K2_PERFORMANT_MENU, PERFORMANT_POLICY, admit_rung, geometry_class_identity, measured_geometry_classes,
+    performant_rungs, publication_scope, rung_quality, rung_speed, scope_cell_ids, validate_table,
 )
 
 
@@ -34,7 +34,8 @@ class PerformantPolicy(unittest.TestCase):
         self.assertEqual(performant_rungs('TESSERA_E4M3_K1', 'dense'), (768, 896, 1024))
         self.assertEqual(performant_rungs('TESSERA_BF16_K1', 'routed'), tuple(sorted((*range(256, 2049, 256), 896))))
         self.assertEqual(performant_rungs('TESSERA_BF16_K1', 'dense'), tuple(sorted((*range(256, 3585, 256), 896))))
-        self.assertEqual(performant_rungs('TESSERA_E2M1_K2', 'routed'), ())
+        self.assertEqual(performant_rungs('TESSERA_E2M1_K2', 'dense'), (896,))
+        self.assertEqual(performant_rungs('TESSERA_E2M1_K2', 'routed'), (896,))
 
     def test_diagnostic_measurement_is_not_admission(self):
         table = v3_fixture()
@@ -242,7 +243,7 @@ class TimingPublication(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, 'class identity'):
             validate_table(table)
 
-    def test_pair_publication_has_no_qualified_menu(self):
+    def test_pair_publication_binds_only_the_approved_build(self):
         from tessera.rung_allowability import publication_scope
         table = fixture_v2('tcq', 'native_tcq')
         table['schema'] = 'fleet.rung_allowability.v3'
@@ -255,6 +256,68 @@ class TimingPublication(unittest.TestCase):
         self.assertEqual(scope['qualified_menu'], {'dense': [], 'routed': []})
         self.assertEqual(scope['rate_semantics']['scalar_weights_per_code'], 2)
         self.assertEqual(scope['rate_semantics']['code_bits_per_symbol_denominator'], 128)
+        self.assertEqual(scope['rate_semantics']['body_bits_per_scalar_denominator'], 256)
+        self.assertFalse(scope['rate_semantics']['metadata_fees_included'])
+
+    def test_approved_scope_admits_exact_cells_and_waits_elsewhere(self):
+        import copy
+        table = fixture_v2('tcq', 'native_tcq')
+        table['schema'] = 'fleet.rung_allowability.v3'
+        table['performant_policy'] = dict(PERFORMANT_POLICY)
+        cells = [{'cell_id': cell_id, 'kernel_kind': 'routed' if cell_id.startswith('routed') else 'dense',
+                  'shape_id': cell_id.split(':')[1], 'M': int(cell_id.split(':')[2][1:])}
+                 if not cell_id.endswith(':recorded') else
+                 {'cell_id': cell_id, 'kernel_kind': 'routed', 'shape_id': cell_id.split(':')[1],
+                  'M': int(cell_id.split(':')[2][1:]), 'routing': 'recorded'}
+                 for cell_id in E2M1_K2_PERFORMANT_MENU['cell_ids']]
+        table['scope']['required_cells'] = cells
+        table['scope']['shapes'] = [{'kernel_kind': 'dense', 'shape_id': 'o_proj', 'rows': 4096, 'columns': 4096, 'mode': 2},
+                                    {'kernel_kind': 'dense', 'shape_id': 'q_b', 'rows': 8192, 'columns': 1536, 'mode': 2},
+                                    {'kernel_kind': 'routed', 'shape_id': 'gate_up', 'rows': 1024, 'columns': 4096, 'mode': 0},
+                                    {'kernel_kind': 'routed', 'shape_id': 'down', 'rows': 4096, 'columns': 1024, 'mode': 2}]
+        table['kernel_build']['id'] = E2M1_K2_PERFORMANT_MENU['kernel_build_id']
+        table['kernel_build']['activation_contract'] = E2M1_K2_PERFORMANT_MENU['activation_contract']
+        base = table['rungs'][0]['measurements'][0]
+        row = table['rungs'][0]
+        row['measurements'] = []
+        for cell in cells:
+            measurement = copy.deepcopy(base)
+            measurement.update(cell_id=cell['cell_id'], kernel_kind=cell['kernel_kind'],
+                               shape_id=cell['shape_id'], M=cell['M'],
+                               measurement_build_id=E2M1_K2_PERFORMANT_MENU['kernel_build_id'])
+            dims = next(shape for shape in table['scope']['shapes']
+                        if shape['kernel_kind'] == cell['kernel_kind'] and shape['shape_id'] == cell['shape_id'])
+            measurement['evidence'].update(rows=dims['rows'], columns=dims['columns'])
+            row['measurements'].append(measurement)
+        table['geometry_classes'] = measured_geometry_classes(table)
+        scope = publication_scope(table)
+        self.assertEqual(scope['qualified_menu'], {'dense': [896], 'routed': [896]})
+        allowed = decide(table, 896)
+        self.assertEqual(allowed['status'], 'allow')
+        self.assertTrue(all(cell['status'] == 'allow' for cell in allowed['cells']))
+        self.assertEqual(len(allowed['cells']), 20)
+        foreign = copy.deepcopy(table)
+        foreign['kernel_build']['id'] = 'other-build'
+        for measurement in foreign['rungs'][0]['measurements']:
+            measurement['measurement_build_id'] = 'other-build'
+        foreign['geometry_classes'] = measured_geometry_classes(foreign)
+        refused = decide(foreign, 896)
+        self.assertEqual(refused['status'], 'wait')
+        self.assertTrue(all(cell['reason'] == 'performance_admission_not_established' for cell in refused['cells']))
+        other_recipe = copy.deepcopy(table)
+        other_recipe['rungs'][0]['measurements'][0]['geometry']['recipe'] = dict(E2M1_K2_PERFORMANT_MENU['recipe'], body='window')
+        other_recipe['geometry_classes'] = measured_geometry_classes(other_recipe)
+        recipe_wait = decide(other_recipe, 896, cell_ids=[other_recipe['rungs'][0]['measurements'][0]['cell_id']])
+        self.assertEqual(recipe_wait['cells'][0]['status'], 'wait')
+        self.assertEqual(recipe_wait['cells'][0]['reason'], 'unmeasured_recipe_scope')
+        self.assertEqual(decide(table, 768)['cells'][0]['reason'], 'performance_admission_not_established')
+        held = copy.deepcopy(table)
+        held['rungs'][0]['anomaly_flags'] = held['rungs'][0]['quality']['anomaly_flags'] = ['reader_bounds']
+        self.assertEqual(decide(held, 896)['status'], 'hold')
+        failed = copy.deepcopy(table)
+        failed['rungs'][0].update(measurement_status='failed', supported=None, measurements=[], quality={})
+        failed['geometry_classes'] = measured_geometry_classes(failed)
+        self.assertEqual(decide(failed, 896)['status'], 'wait')
 
     def test_release_units_link_exact_rank_shapes_without_qualification(self):
         from tessera.rung_allowability import publication_scope
@@ -330,8 +393,10 @@ class TimingPublication(unittest.TestCase):
         for row in table['rungs']:
             row['measurements'][0]['evidence'].update(rows=512, columns=256)
         packet = {'canonical_producer': 'paired-value-owner',
-                  'paired_value_semantics': {'arity': 2, 'one_code': 'One code encodes two scalar weights.'},
-                  'qualified_class_menu': {'dense': [], 'routed': []}, 'missing_evidence': {}}
+                  'paired_value_semantics': {'arity': 2, 'one_code': 'One code encodes two scalar weights.',
+                                             'code_bits_per_symbol': 7, 'body_bits_per_scalar_weight': 3.5,
+                                             'metadata_fees_included': False},
+                  'qualified_class_menu': {'dense': [896], 'routed': [896]}, 'missing_evidence': {}}
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             (root/'table.json').write_text(json.dumps(table))

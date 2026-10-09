@@ -477,6 +477,46 @@ INDEX_SCHEMAS={'fleet.rung_allowability.index.v1':INDEX_SCHEMA,'fleet.rung_allow
 PERFORMANT_POLICY = {"kind": "whole_bit_per_structure", "authority": "D41 whole-bit and measured half-bit authority, 2026-10-06",
                      "qualification_scope": "Performance evidence does not replace independent export, numerical, or serving gates."}
 
+# CEO decision dec-1009-095820-aebb approves dense [896] and routed [896] as
+# performance-only TCQ menus for build native_span2-sm_121-f01b61f906b7d7fe
+# table v0003 (tessera#1106). Seven bits apply to each paired code; the body
+# rate is 3.5 bits per scalar weight, before metadata fees. The scope below
+# binds only that build, activation contract, recipe and cell roster. No
+# WINDOW L12 or L14 admission follows from this approval. Independent
+# numerical, native and serving gates stay in force. The old build
+# native_span2-sm_121-92e1315ad1b173b0 keeps its reader-bounds hold and
+# failed cells and receives no admission from this approval.
+E2M1_K2_PERFORMANT_MENU = {"dense": (896,), "routed": (896,),
+                           "kernel_build_id": "native_span2-sm_121-f01b61f906b7d7fe",
+                           "table_path": "/mnt/shared/fleet-ceo/rung-allowability/TESSERA_E2M1_K2/native_span2-sm_121-f01b61f906b7d7fe/v0003.json",
+                           "table_sha256": "35e1f82998f92116bba30af77161d7c7b1092b368723113ede99ce7a74dad3c6",
+                           "activation_contract": "e2m1_group16_ue4m3_static; BF16 inputs, fixed static global448*6/3, native quantizer",
+                           "recipe": {"body": "tcq", "span": 2, "plane": "lut16", "window_bits": 0, "seed": 0, "sigma": None, "channel_sigma": None},
+                           "approval": "dec-1009-095820-aebb",
+                           "cell_ids": ("routed:gate_up:M1", "routed:gate_up:M16", "routed:gate_up:M2048", "routed:gate_up:M4096",
+                                        "routed:down:M1", "routed:down:M16", "routed:down:M2048", "routed:down:M4096",
+                                        "dense:o_proj:M1", "dense:o_proj:M16", "dense:o_proj:M2048", "dense:o_proj:M4096",
+                                        "dense:q_b:M1", "dense:q_b:M16", "dense:q_b:M2048", "dense:q_b:M4096",
+                                        "routed:gate_up:M2048:recorded", "routed:gate_up:M4096:recorded",
+                                        "routed:down:M2048:recorded", "routed:down:M4096:recorded")}
+
+
+def _e2m1_k2_approved_scope(table):
+    """True only for the exact approved build, activation, and cell roster."""
+    if table["format"] != "TESSERA_E2M1_K2":
+        return False
+    if table["kernel_build"]["id"] != E2M1_K2_PERFORMANT_MENU["kernel_build_id"]:
+        return False
+    if table["kernel_build"]["activation_contract"] != E2M1_K2_PERFORMANT_MENU["activation_contract"]:
+        return False
+    return {cell["cell_id"] for cell in table["scope"]["required_cells"]} == set(E2M1_K2_PERFORMANT_MENU["cell_ids"])
+
+
+def _e2m1_k2_approved_recipe(measurement):
+    """True only for the approved TCQ span2 lut16 recipe, seed 0, no sigma."""
+    recipe = (measurement.get("geometry") or {}).get("recipe")
+    return recipe == E2M1_K2_PERFORMANT_MENU["recipe"]
+
 
 def performant_rungs(format, kernel_kind):
     """The owning menu, not a consumer-side copy or an encoder-capacity guess."""
@@ -486,7 +526,7 @@ def performant_rungs(format, kernel_kind):
     if format == "TESSERA_BF16_K1":
         return tuple(sorted((*range(256, (3584 if kernel_kind == "dense" else 2048) + 1, 256), 896)))
     if format == "TESSERA_E2M1_K2":
-        return ()
+        return E2M1_K2_PERFORMANT_MENU[kernel_kind]
     return ()
 
 
@@ -596,7 +636,13 @@ def _admit_performance_scope(table, row, rung, cell_ids, activation_contract, re
             status = 'wait' if table['format'] == 'TESSERA_E2M1_K2' else 'excluded'
             results.append({'cell_id': cell_id, 'status': status, 'reason': 'performance_admission_not_established' if status == 'wait' else 'outside_performant_menu'})
             continue
+        if table['format'] == 'TESSERA_E2M1_K2' and not _e2m1_k2_approved_scope(table):
+            results.append({'cell_id': cell_id, 'status': 'wait', 'reason': 'performance_admission_not_established'})
+            continue
         measurement = cells.get(cell_id)
+        if table['format'] == 'TESSERA_E2M1_K2' and measurement is not None and measurement['measurement_status'] == 'measured' and not _e2m1_k2_approved_recipe(measurement):
+            results.append({'cell_id': cell_id, 'status': 'wait', 'reason': 'unmeasured_recipe_scope'})
+            continue
         if measurement is None or measurement['measurement_status'] == 'pending':
             results.append({'cell_id': cell_id, 'status': 'wait', 'reason': 'missing_actual_measurement'})
         elif measurement['measurement_status'] != 'measured':
