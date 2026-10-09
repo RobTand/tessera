@@ -1,5 +1,10 @@
 # Changelog
 
+## 2026-10-09 — absent rank-shape coverage (issue #1018)
+
+A release unit without tensor_parallel_shapes returns a geometry wait instead of KeyError.
+Existing declared shapes and their timing records remain unchanged.
+
 ## 2026-10-09 — structure-scoped release coverage (issue #1018)
 
 Coverage uses each unit's kernel kind or the existing structure names.

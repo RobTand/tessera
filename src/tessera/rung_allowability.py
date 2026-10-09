@@ -738,7 +738,7 @@ def publication_scope(table, *, unit_inventory=None):
                 kind = {STRUCTURE_DENSE: 'dense', STRUCTURE_ROUTED_MOE: 'routed',
                         'dense_mlp': 'dense', 'shared': 'dense', 'attention': 'dense'}.get(structure)
             coverage = []
-            for tensor_parallel, shape in unit['tensor_parallel_shapes'].items():
+            for tensor_parallel, shape in (unit.get('tensor_parallel_shapes') or {}).items():
                 matched = [cell for cell in cells if cell['cell']['kernel_kind'] == kind
                            and cell['shape'] is not None
                            and [cell['shape']['rows'], cell['shape']['columns']] == shape]

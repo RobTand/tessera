@@ -393,4 +393,11 @@ class SupplierRevision(unittest.TestCase):
         mapped = publication_scope(table, unit_inventory=inventory)['release_unit_coverage'][0]['coverage'][0]
         self.assertEqual(mapped['cell_ids'], ['routed:o:M1'])
 
+    def test_missing_rank_shape_field_returns_wait(self):
+        from tessera.rung_allowability import publication_scope
+        unit = {'name': 'shared.gate', 'kernel_kind': 'dense'}
+        result = publication_scope(v3_fixture(), unit_inventory={'units': [unit]})['release_unit_coverage'][0]
+        self.assertEqual(result['geometry_status'], 'wait')
+        self.assertEqual(result['coverage'], [])
+        self.assertEqual(result['unavailable_reason'], 'The retained inventory supplies no tensor-parallel shape.')
 

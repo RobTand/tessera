@@ -1,5 +1,9 @@
 # Tessera plan-to-serve architecture
 
+Re-stamped 2026-10-09 for absent rank-shape coverage (issue #1018).
+A release unit without tensor_parallel_shapes returns an explicit geometry wait.
+No shape, rank cut, timing, or qualification is invented for an absent field.
+
 Re-stamped 2026-10-09 for structure-scoped release coverage (issue #1018).
 Release units match only their actual kernel kind or existing structure mapping.
 Routed units never borrow dense timing cells. Legacy shared and dense units keep their dense scope.
