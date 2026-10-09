@@ -519,7 +519,7 @@ def main():
             packet_bytes = Path(args.paired_value_packet).read_bytes()
             packet = json.loads(packet_bytes)
             semantics = packet['paired_value_semantics']
-            if semantics['arity'] != 2 or semantics['one_code'] != 'One code represents two scalar weights.':
+            if semantics['arity'] != 2:
                 raise ValueError('Paired-value packet contradicts the actual scalar arity')
             if any(packet['qualified_class_menu'].values()):
                 raise ValueError('This publication preserves the empty qualified T4 menu')

@@ -310,3 +310,32 @@ class TimingPublication(unittest.TestCase):
                 producer.activate_published_index(path, 'index.v3-candidate.json')
             self.assertEqual((path/'index.json').read_text(), active)
 
+    def test_supplier_prose_is_not_a_new_identity_gate(self):
+        import tempfile
+        import json
+        import subprocess
+        import sys
+        from pathlib import Path
+        from test_rung_allowability import CHILD_ENV
+        repo = Path(__file__).resolve().parents[1]
+        # The native pair fixture already carries the physical two-scalar grammar.
+        table = fixture_v2('tcq', 'native_tcq')
+        table['evidence'] = {}
+        table['scope']['shapes'] = [{'kernel_kind': 'dense', 'shape_id': 'o', 'rows': 512, 'columns': 256, 'mode': 2}]
+        for row in table['rungs']:
+            row['measurements'][0]['evidence'].update(rows=512, columns=256)
+        packet = {'canonical_producer': 'paired-value-owner',
+                  'paired_value_semantics': {'arity': 2, 'one_code': 'One code encodes two scalar weights.'},
+                  'qualified_class_menu': {'dense': [], 'routed': []}, 'missing_evidence': {}}
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root/'table.json').write_text(json.dumps(table))
+            (root/'packet.json').write_text(json.dumps(packet))
+            command = [sys.executable, str(repo/'experiments/t8r_speed/rung_allowability_table.py'),
+                       '--input-table', str(root/'table.json'), '--paired-value-packet', str(root/'packet.json'),
+                       '--root', str(root), '--out', str(root/'out'), '--version', '2',
+                       '--schema', str(repo/'docs/schema/allowable-rung-table.v3.schema.json'),
+                       '--index-schema', str(repo/'docs/schema/index.v2.schema.json')]
+            result = subprocess.run(command, env=CHILD_ENV, capture_output=True, text=True)
+            self.assertEqual(result.returncode, 0, result.stderr)
+
