@@ -20,10 +20,12 @@ NIGHTLY_RUNTIME = {"image": NIGHTLY_IMAGE, "execution_modes": ["eager"],
 NIGHTLY_SUFFIX = "_runtime_" + hashlib.sha256(json.dumps(
     {"image": NIGHTLY_IMAGE, "execution_modes": NIGHTLY_RUNTIME["execution_modes"]},
     sort_keys=True, separators=(",", ":")).encode("utf-8")).hexdigest()
-#: (family, structure) -> the rungs the nightly stub-B census carried.
+#: (family, structure) -> the rungs the nightly receipts carried: stub B for
+#: dense, stub B plus the R768 TP2 stub for routed (contract v65,
+#: docs/measurements/2026-10-09-r768-tp2-census.md).
 NIGHTLY_RUNGS = {("TESSERA_E4M3_K1", "dense"): [832, 960, 1024, 1088],
                  ("TESSERA_BF16_K1", "dense"): [832, 880, 960, 1024, 1088],
-                 ("TESSERA_E4M3_K1", "routed_moe"): [896, 928, 1024, 1088],
+                 ("TESSERA_E4M3_K1", "routed_moe"): [768, 896, 928, 1024, 1088],
                  ("TESSERA_BF16_K1", "routed_moe"): [1024]}
 
 
