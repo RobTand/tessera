@@ -7,6 +7,21 @@ Branches with `ig/` or `release` prefixes are exempt. Pull requests created befo
 The workflow checks new commits and body edits. The cutoff itself requires the check.
 The script uses only the Python standard library and never treats pull request fields as shell source.
 
+Re-stamped 2026-10-09 for the served WINDOW L14 packed reader (tessera#1005).
+`compact_prep.prepare_a4_wire_compact` now prepares the fourteen-bit served
+E2M1x2 WINDOW wire beside the twelve-bit research subcap wire and span-two
+TCQ, through the existing `lane_planes.pack_window_planes` owner. The
+`kernel_a4_wire` decoder needs no change: it is generic over the window width.
+`bench_geometry_e2m1.py --packed-reader` measures served L14 dense and routed
+units, including mixed column rates, with code and scale bytes identical to
+`materialize_stock` on whole units and row cuts. Correctness checks the dense
+and grouped arithmetic against the attested stock contract
+(`tessera.fp4_arithmetic`, issue #1007); the conditional diagnostic alone
+qualifies nothing. Historical span-two TCQ timings stay separate from served
+allowability evidence. No encoded byte, serving default, pin, recipe,
+admission gate, or kernel changes. GPU geometry and canonical publication
+follow independent review of this source increment.
+
 Re-stamped 2026-10-09 for the migrated GB and D1 producer caller (tessera#944).
 Re-stamped 2026-10-09 for the canonical T4 performant menu (issue #1103).
 CEO decision dec-1009-095820-aebb approves dense [896] and routed [896] as performance-only TCQ menus.

@@ -1,4 +1,4 @@
-"""Opt-in geometry reader for actual mixed TCQ and LUT WINDOW E2M1 pairs.
+"""Opt-in geometry reader for actual mixed TCQ and LUT WINDOW E2M1 pairs (research L12, served L14).
 
 Preparation lives in compact_prep and existing lane_planes owners. This module
 is not imported by serving and changes no default. Packed BODY, rate and bit

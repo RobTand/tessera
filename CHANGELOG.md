@@ -1,5 +1,18 @@
 # Changelog
 
+## 2026-10-09 — prepare the served WINDOW L14 packed E2M1 wire (#1005)
+
+The opt-in packed reader accepts the fourteen-bit served E2M1x2 WINDOW wire
+beside the twelve-bit research subcap wire and span-two TCQ, without changing
+stored bytes. The decoder is generic over the window width and needs no change.
+The D41 adapter measures served L14 dense and routed units through the same
+packed reader, including mixed column rates. New CPU tests prove code and scale
+bytes identical to materialize_stock on whole units and row cuts, and pin the
+attested stock contract and packed reader gates on the correctness path.
+Unmeasured window widths stay refused by name. No serving default, pin, recipe,
+admission gate, or kernel changes. GPU geometry and canonical publication wait
+for independent review of this source increment.
+
 ## 2026-10-09 — pull request branch rule 12
 
 The hosted `pure` check requires a branch issue number that matches an issue link in the pull request body (#1125).

@@ -910,11 +910,13 @@ def prepare_a4_wire_compact(wire: CompactWire, *, device="cuda"):
     """Opt-in whole-unit geometry preparation of actual E2M1 pair wires.
 
     TCQ retains the validated packed BODY verbatim and uses the existing
-    forest/code owners. WINDOW uses lane_planes.pack_window_planes, including
-    its byte alignment, incoming-state padding and trailing slack. Neither
-    changes stored bytes or introduces a serving route.
+    forest/code owners. WINDOW covers the twelve-bit research subcap wire and
+    the fourteen-bit served wire through lane_planes.pack_window_planes,
+    including its byte alignment, incoming-state padding and trailing slack.
+    Neither changes stored bytes or introduces a serving route.
     """
     from . import lane_planes as lp
+    from .export import E2M1X2_SERVED_WINDOW_BITS, E2M1X2_SUBCAP_WINDOW_BITS
     from .kernel_a4 import build_code_nibbles
     from .kernel_a4_wire import A4WireUnit
     from .stock import e2m1_nibbles
@@ -941,8 +943,11 @@ def prepare_a4_wire_compact(wire: CompactWire, *, device="cuda"):
         initial = md.shard_state.reshape(-1).to(device=device, dtype=torch.int32)
     memory = 0
     if md.body is BodyKind.WINDOW:
-        if int(md.manifest.window_bits) != 12:
-            raise GrammarError("packed A4 geometry requires the actual served twelve bit WINDOW")
+        measured = (int(E2M1X2_SUBCAP_WINDOW_BITS), int(E2M1X2_SERVED_WINDOW_BITS))
+        if int(md.manifest.window_bits) not in measured:
+            raise GrammarError(
+                f"packed A4 geometry requires WINDOW L{measured[0]} (research) or "
+                f"L{measured[1]} (served); this unit has L{int(md.manifest.window_bits)}")
         require_window_geometry(md.manifest.window_bits, rates)
         # Existing packer is the byte-order, padding, offsets and slack owner.
         parsed = _window_unit(md, device)

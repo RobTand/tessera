@@ -40,9 +40,75 @@ def test_actual_wire_codes_and_scales(q, structure):
         assert unit.body.numel() == len(wire.metadata.chunks[PlaneKind.BODY])
 
 
+@pytest.mark.parametrize("q", (129, 255, 257, 383, 385, 511, 513, 639, 641, 767, 769, 895, 896))
+@pytest.mark.parametrize("structure", [STRUCTURE_ROUTED_MOE, STRUCTURE_DENSE])
+def test_served_window_codes_and_scales(q, structure):
+    from tessera.compact_prep import prepare_a4_wire_compact
+    from tessera.kernel_a4_wire import decode_wire_codes
+    from tessera.unit_artifact import parse_unit_artifact
+    from tessera.stock import materialize_stock
+    grid = grid_for_name("E2M1x2")
+    recipe = served_recipe(grid, q, structure)
+    assert recipe.window_bits == 14
+    source = torch.linspace(-0.2, 0.2, 32 * 256).reshape(32, 256).to(torch.bfloat16)
+    encoded = encode_linear(source, grid=grid, q256=q, body=recipe.body,
+                            span=recipe.span, scale_plane=recipe.scale_plane,
+                            window_bits=recipe.window_bits, window_seed=recipe.window_seed)
+    wire = parse_compact_wire(encoded.blob, device="cpu")
+    unit = prepare_a4_wire_compact(wire, device="cpu")
+    parsed = parse_unit_artifact(encoded.blob, device="cpu")
+    reference = materialize_stock(parsed.unit, parsed.forests, parsed.code)
+    codes, scales = decode_wire_codes(unit)
+    assert torch.equal(codes, reference["weight_packed"])
+    assert torch.equal(scales, reference["weight_scale"].view(torch.uint8))
+    assert max(unit.layout["column_field_end_bits"]) <= unit.body.numel() * 8
 
-@pytest.mark.parametrize("window_bits", [14, 16])
-def test_legacy_diagnostic_reader_refuses_windows_other_than_twelve_bits(window_bits):
+
+@pytest.mark.parametrize("structure", [STRUCTURE_ROUTED_MOE, STRUCTURE_DENSE])
+def test_served_row_cut_keeps_incoming_history(structure):
+    from tessera.compact_prep import prepare_a4_wire_compact
+    from tessera.kernel_a4_wire import decode_wire_codes
+    from tessera.slicing import slice_unit
+    from tessera.stock import materialize_stock
+    from tessera.unit_artifact import build_unit_artifact, parse_unit_artifact
+    grid = grid_for_name("E2M1x2")
+    recipe = served_recipe(grid, 895, structure)
+    assert recipe.window_bits == 14
+    source = (torch.randn(64, 256, generator=torch.Generator().manual_seed(13)) * 0.04).to(torch.bfloat16)
+    encoded = encode_linear(source, grid=grid, q256=895, body=recipe.body,
+        span=recipe.span, scale_plane=recipe.scale_plane, window_bits=recipe.window_bits,
+        window_seed=recipe.window_seed)
+    parent = parse_unit_artifact(encoded.blob, device="cpu")
+    shard = slice_unit(parent, rows=(32, 64))
+    _, _, blob = build_unit_artifact(shard, "history", parent.forests, 895 * grid.arity, parent.code)
+    parsed = parse_unit_artifact(blob, device="cpu")
+    reference = materialize_stock(parsed.unit, parsed.forests, parsed.code)
+    unit = prepare_a4_wire_compact(parse_compact_wire(blob, device="cpu"), device="cpu")
+    assert bool(unit.initial.any()), "the canonical row cut carries actual nonzero history"
+    codes, scales = decode_wire_codes(unit)
+    assert torch.equal(codes, reference["weight_packed"])
+    assert torch.equal(scales, reference["weight_scale"].view(torch.uint8))
+
+
+def test_correctness_requires_the_attested_contract_and_the_packed_reader(tmp_path, monkeypatch):
+    from types import SimpleNamespace
+    adapter = _load_geometry_adapter()
+    grid = grid_for_name("E2M1x2")
+    monkeypatch.setenv("HOST_NAME", "cpu-preflight")
+    unattested = SimpleNamespace(grid="E2M1x2", qs=[896], part="routed",
+        out=str(tmp_path / "unattested"), packed_reader=True, arithmetic_attestation="")
+    with pytest.raises(ValueError, match="arithmetic-attestation"):
+        adapter.run_correctness(unattested, grid, {})
+    attestation = tmp_path / "attestation.json"
+    attestation.write_text("{}")
+    unpacked = SimpleNamespace(grid="E2M1x2", qs=[896], part="routed",
+        out=str(tmp_path / "unpacked"), packed_reader=False, arithmetic_attestation=str(attestation))
+    with pytest.raises(ValueError, match="packed E2M1 pair reader"):
+        adapter.run_correctness(unpacked, grid, {})
+
+
+@pytest.mark.parametrize("window_bits", [11, 13, 15, 16])
+def test_packed_reader_refuses_unmeasured_window_widths(window_bits):
     from tessera.compact_prep import prepare_a4_wire_compact
     from tessera.errors import GrammarError
     from tessera.manifest import BodyKind, ScalePlaneKind
@@ -50,7 +116,7 @@ def test_legacy_diagnostic_reader_refuses_windows_other_than_twelve_bits(window_
     encoded = encode_linear(source, grid=grid_for_name("E2M1x2"), q256=640,
         body=BodyKind.WINDOW, span=1, scale_plane=ScalePlaneKind.LUT, window_bits=window_bits)
     wire = parse_compact_wire(encoded.blob, device="cpu")
-    with pytest.raises(GrammarError, match="twelve bit WINDOW"):
+    with pytest.raises(GrammarError, match=r"requires WINDOW L12 \(research\) or L14 \(served\)"):
         prepare_a4_wire_compact(wire, device="cpu")
 
 
