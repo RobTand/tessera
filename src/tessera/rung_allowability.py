@@ -501,6 +501,44 @@ def scope_cell_ids(table, *, kernel_kind, rows, columns, M, routing=None):
                  and (routing is None or cell.get('routing', 'balanced' if kernel_kind == 'routed' else 'none') == routing))
 
 
+TIMING_PUBLICATION = {
+    'schema': 'tessera.class_timing.v1',
+    'sample_scope': 'Retained samples describe each timed pass, not independent paired repetitions.',
+    'qualification_scope': 'Timing does not confer numerical, native, or serving qualification.',
+}
+
+
+def timing_evidence(measurement):
+    """Report retained variability. Do not manufacture a confidence interval."""
+    import statistics
+    passes = {}
+    evidence = measurement['evidence']
+    for name, median_us in zip(('F', 'R'), measurement['pass_times_us']):
+        recorded = evidence.get(name) or {}
+        samples = recorded.get('samples_ms')
+        if samples is None or samples == []:
+            passes[name] = {'status': 'unavailable', 'sample_count': 0,
+                            'median_us': median_us, 'reason': 'No retained raw samples.'}
+            continue
+        _require(isinstance(samples, list) and all(_number(value) and value > 0 for value in samples), 'invalid retained timing samples')
+        actual = statistics.median(samples) * 1000
+        _require(_number(actual) and abs(actual - median_us) <= math.ulp(actual) + math.ulp(median_us), 'retained sample median differs from paired pass')
+        values = [value * 1000 for value in samples]
+        passes[name] = {'status': 'measured', 'sample_count': len(values), 'median_us': median_us,
+                        'sample_range_us': [min(values), max(values)],
+                        'sample_stddev_us': statistics.stdev(values) if len(values) > 1 else None,
+                        'unix': recorded.get('unix'), 'clock': recorded.get('clock')}
+    a, b = measurement['pass_times_us']
+    return {'passes': passes, 'paired_median_range_us': [min(a, b), max(a, b)],
+            'paired_relative_spread': abs(a - b) / measurement['kernel_time_us'],
+            'confidence_interval': {'status': 'unavailable', 'reason': 'No retained confidence estimate for independent paired repetitions.'},
+            'sample_scope': TIMING_PUBLICATION['sample_scope'],
+            'source': {key: evidence.get(key) for key in (
+                'action_key', 'comparison_id', 'geometry_file', 'paired_seed_contract', 'timing_statistic',
+                'timer', 'quantum_window_unix', 'loaded_library_sha256', 'kernel_source_sha256',
+                'observed_measurement_build_id')}}
+
+
 def geometry_class_identity(table, rung, measurement):
     """Classify the actual decoder. Tuple arity is symbol rate, not scalar rate."""
     match = re.fullmatch(r'TESSERA_([A-Z0-9]+)_K(\d+)', table['format'])
@@ -537,6 +575,9 @@ def measured_geometry_classes(table):
             key = json.dumps(identity, sort_keys=True, separators=(',', ':'))
             group = groups.setdefault(key, {'identity': identity, 'observed_rungs': []})
             group['observed_rungs'].append(row['rung'])
+            if table.get('timing_publication') is not None:
+                group.setdefault('timings', []).append({'rung': row['rung'], 'value_kind': 'measured',
+                    'kernel_time_us': measurement['kernel_time_us'], 'timing': timing_evidence(measurement)})
     return [groups[key] for key in sorted(groups)]
 
 
@@ -578,6 +619,10 @@ def _admit_performance_scope(table, row, rung, cell_ids, activation_contract, re
 def rung_speed(table, *, rung, cell_id=None, class_identity=None):
     """Return actual or safe class-derived times without inherited admission."""
     validate_table(table)
+    return _rung_speed(table, rung=rung, cell_id=cell_id, class_identity=class_identity)
+
+
+def _rung_speed(table, *, rung, cell_id=None, class_identity=None):
     if not _integer(rung) or not table["scope"]["rung_min"] <= rung <= table["scope"]["rung_max"]:
         return {"status": "wait", "reason": "outside_declared_rate_scope"}
     row = next((row for row in table['rungs'] if row['rung'] == rung), None)
@@ -596,9 +641,11 @@ def rung_speed(table, *, rung, cell_id=None, class_identity=None):
     if measurement is not None:
         if class_identity is not None and geometry_class_identity(table, rung, measurement) != class_identity:
             return {"status": "wait", "reason": "different_geometry_class"}
-        return {'status': 'measured', 'rung': rung, 'measurement': measurement,
+        return {'status': 'measured', 'value_kind': 'measured', 'rung': rung, 'measurement': measurement,
+                'kernel_time_us': measurement['kernel_time_us'], 'timing': timing_evidence(measurement),
                 'menu_admitted': rung in performant_rungs(table['format'], measurement['kernel_kind']),
-                'numerical_qualification_inherited': False, 'serving_qualification_inherited': False}
+                'numerical_qualification_inherited': False, 'native_qualification_inherited': False,
+                'serving_qualification_inherited': False}
     if class_identity is None:
         return {'status': 'wait', 'reason': 'missing_actual_measurement'}
     low, remainder = divmod(rung * class_identity.get('arity', 0), 256)
@@ -622,14 +669,90 @@ def rung_speed(table, *, rung, cell_id=None, class_identity=None):
     if len(eligible) < 2:
         return {'status': 'hold' if held else 'wait',
                 'reason': 'recorded_donor_correctness_hold' if held else 'missing_eligible_class_spots'}
-    observed = sorted(eligible)
-    anchors = sorted(set((observed[0], observed[len(observed) // 2], observed[-1])))
+    anchors = sorted(eligible)
     cells = [eligible[q] for q in anchors]
     times = [cell['kernel_time_us'] for cell in cells]
-    return {'status': 'inherited', 'rung': rung, 'kernel_time_us': max(times),
+    return {'status': 'inherited', 'value_kind': 'derived', 'rung': rung, 'kernel_time_us': max(times),
             'observed_range_us': [min(times), max(times)], 'anchors': anchors,
+            'derivation': 'Maximum of all eligible observed spots in this exact mixed class.',
+            'timing_sources': [{'rung': q, 'timing': timing_evidence(eligible[q])} for q in anchors],
+            'confidence_interval': {'status': 'unavailable', 'reason': 'A class spot range is not a confidence interval.'},
             'action_keys': [cell['evidence'].get('action_key') for cell in cells], 'menu_admitted': False,
-            'numerical_qualification_inherited': False, 'serving_qualification_inherited': False}
+            'numerical_qualification_inherited': False, 'native_qualification_inherited': False,
+            'serving_qualification_inherited': False}
+
+
+def publication_scope(table, *, unit_inventory=None):
+    """Publish every declared cell and its actual performance decisions."""
+    validate_table(table)
+    by_rung = {row['rung']: row for row in table['rungs']}
+    shapes = {(shape['kernel_kind'], shape['shape_id']): shape for shape in table['scope'].get('shapes', [])}
+    cells, qualified = [], {'dense': set(), 'routed': set()}
+    for cell in table['scope']['required_cells']:
+        rates = []
+        for rung in performant_rungs(table['format'], cell['kernel_kind']):
+            admission = _admit_performance_scope(table, by_rung.get(rung), rung, [cell['cell_id']], None, None)
+            if (table['kernel_build'].get('metadata') or {}).get('serving_qualified') is False:
+                admission = {'status': 'wait', 'reason': 'kernel_not_serving_qualified', 'rung': rung}
+            if admission['status'] == 'allow':
+                qualified[cell['kernel_kind']].add(rung)
+            rates.append({'rung': rung, 'admission': admission,
+                          'timing': _rung_speed(table, rung=rung, cell_id=cell['cell_id'])})
+        observed = [{'rung': row['rung'], 'status': measurement['measurement_status']}
+                    for row in table['rungs'] for measurement in row['measurements']
+                    if measurement['cell_id'] == cell['cell_id']]
+        cells.append({'cell': cell, 'shape': shapes.get((cell['kernel_kind'], cell['shape_id'])),
+                      'rates': rates, 'observed_rates': observed})
+    arity = int(table['format'].rsplit('_K', 1)[1])
+    result = {'schema': 'tessera.class_publication_scope.v1', 'format': table['format'],
+            'kernel_build': table['kernel_build'], 'table_version': table['table_version'],
+            'rate_semantics': {'scalar_weights_per_code': arity, 'body_bits_per_scalar_denominator': 256,
+                               'code_bits_per_symbol_denominator': 256 // arity,
+                               'metadata_fees_included': False},
+            'qualified_menu': {kind: sorted(rungs) for kind, rungs in qualified.items()},
+            'qualification_scope': 'Performance only. Independent numerical, native, and serving gates remain required.',
+            'cells': cells,
+            'quality_observations': [{'rung': row['rung'], 'blocking': False, 'exclusion_basis': False,
+                'kind': 'historical_sample_variation', 'source_kind': row['quality'].get('source_kind'),
+                'adjacent_higher_raw_error_ratios': row['quality']['adjacent_higher_raw_error_ratios']}
+                for row in table['rungs'] if 'adjacent_higher_raw_error_ratios' in row['quality']],
+            'correctness_holds': [{'rung': row['rung'], 'flags': row['anomaly_flags']}
+                                  for row in table['rungs'] if row['anomaly_flags']],
+            'unavailable_rates': [{'rung': 640, 'status': 'wait', 'reason': 'No supported canonical T8 scope.'}]
+                                 if table['format'] == 'TESSERA_E4M3_K1' else [],
+            'pricing_anchors': [{'rung': 1280, 'role': 'pricing_anchor_only', 'performance_admitted': False,
+                                 'timing_status': 'unavailable' if 1280 not in by_rung else by_rung[1280]['measurement_status']}]
+                               if table['format'] == 'TESSERA_E4M3_K1' else [],
+            'numerical_qualification_inherited': False, 'native_qualification_inherited': False,
+            'serving_qualification_inherited': False}
+    if unit_inventory is not None:
+        _require(isinstance(unit_inventory.get('units'), list), 'release unit inventory missing')
+        result['release'] = unit_inventory.get('release')
+        result['release_config'] = unit_inventory.get('config')
+        result['release_unit_coverage'] = []
+        for unit in unit_inventory['units']:
+            from .structure import STRUCTURE_DENSE, STRUCTURE_ROUTED_MOE
+            kind = unit.get('kernel_kind')
+            if kind is None:
+                structure = unit.get('structure', unit.get('category'))
+                kind = {STRUCTURE_DENSE: 'dense', STRUCTURE_ROUTED_MOE: 'routed',
+                        'dense_mlp': 'dense', 'shared': 'dense', 'attention': 'dense'}.get(structure)
+            coverage = []
+            for tensor_parallel, shape in (unit.get('tensor_parallel_shapes') or {}).items():
+                matched = [cell for cell in cells if cell['cell']['kernel_kind'] == kind
+                           and cell['shape'] is not None
+                           and [cell['shape']['rows'], cell['shape']['columns']] == shape]
+                coverage.append({'tensor_parallel': int(tensor_parallel), 'shape': shape,
+                    'status': 'declared_geometry' if matched else 'wait',
+                    'reason': 'Rank-local scope only; inspect each cell rate for actual timing and admission.' if matched else 'Missing actual geometry.',
+                    'measured_cell_ids': [cell['cell']['cell_id'] for cell in matched
+                                          if any(rate['status'] == 'measured' for rate in cell['observed_rates'])],
+                    'cell_ids': [cell['cell']['cell_id'] for cell in matched]})
+            result['release_unit_coverage'].append({
+                **{key: unit.get(key) for key in ('name', 'category', 'role', 'shape', 'dtype', 'source_shard', 'plan')},
+                'coverage': coverage, 'geometry_status': 'declared' if coverage else 'wait',
+                'unavailable_reason': None if coverage else 'The retained inventory supplies no tensor-parallel shape.'})
+    return result
 
 
 
@@ -641,6 +764,15 @@ TABLE_SCHEMA_V3['properties']['performant_policy'] = {'type': 'object', 'require
 TABLE_SCHEMA_V3['properties']['geometry_classes'] = {'type': 'array', 'items': {'type': 'object', 'required': ['identity', 'observed_rungs'], 'properties': {'identity': {'type': 'object'}, 'observed_rungs': {'type': 'array', 'items': {'type': 'integer', 'minimum': 1}}}}}
 TABLE_SCHEMAS['fleet.rung_allowability.v3'] = TABLE_SCHEMA_V3
 _version_schema['properties']['table_schema']['enum'].append('fleet.rung_allowability.v3')
+TABLE_SCHEMA_V3['properties']['timing_publication'] = {
+    'type': 'object', 'required': ['schema', 'sample_scope', 'qualification_scope'],
+    'properties': {'schema': {'const': 'tessera.class_timing.v1'},
+                   'sample_scope': {'type': 'string'}, 'qualification_scope': {'type': 'string'}}}
+TABLE_SCHEMA_V3['properties']['geometry_classes']['items']['properties']['timings'] = {
+    'type': 'array', 'items': {'type': 'object', 'required': ['rung', 'value_kind', 'kernel_time_us', 'timing'],
+    'properties': {'rung': {'type': 'integer', 'minimum': 1}, 'value_kind': {'const': 'measured'},
+                   'kernel_time_us': {'type': 'number', 'minimum': 0}, 'timing': {'type': 'object'}}}}
+_version_schema['properties']['sha256'] = {'type': 'string', 'pattern': '^[0-9a-f]{64}$'}
 
 
 
