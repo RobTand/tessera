@@ -36,22 +36,10 @@ print("files:", len(proj.get("source", {}).get("files", {})))
 r = proj.get("source_digest_cache")
 print("producer-receipt:", json.dumps({k: r.get(k) for k in ("cached_shards", "hashed_shards", "mode")}) if r else "ABSENT")
 print("caller-use:", json.dumps(proj.get("source_digest_cache_use")) if proj.get("source_digest_cache_use") else "ABSENT")
-# Caller-side independent byte verification: re-read projected units
-# through caller-held descriptors and hash the bytes.
-entry = proj["stacks"][STACK]
-units = entry["units"][:4]
-tensors = proj["source"]["tensors"]
-from safetensors import safe_open
-total = 0
-for rec in units:
-    p = os.path.join(SRC, tensors[rec["source_tensor"]])
-    with safe_open(p, framework="pt", device="cpu") as h:
-        t = h.get_tensor(rec["source_tensor"])
-        assert list(t.shape) == [rec["rows"], rec["cols"]], (list(t.shape), rec["rows"], rec["cols"])
-        b = bytes(t.untyped_storage())
-        total += len(b)
-        print("VERIFY", rec["tensor"], "bytes", len(b), "sha256", hashlib.sha256(b).hexdigest()[:16])
-print("CALLER-VERIFY units=4 tensor_bytes=%d" % total)
+# Keep the descriptor verification logic separate from row telemetry.
+sys.path.insert(0, str(Path.cwd() / "tools"))
+from ig790_verify import verify_projected_units
+verify_projected_units(SRC, proj, STACK)
 PYEOF
 CHILD=$!
 echo "CHILD-PID $CHILD"
