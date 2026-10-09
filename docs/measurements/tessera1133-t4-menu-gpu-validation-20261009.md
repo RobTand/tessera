@@ -53,7 +53,7 @@ This run does not claim that their shapes equal the shapes of the approved cells
 
 ## Source
 
-Every action of this attempt ran master `69aae020048458a168296ef534ad29938299cf83`.
+Every validation action of this attempt ran master `69aae020048458a168296ef534ad29938299cf83`.
 That commit is the merge of PR 1131.
 Each action was submitted from a clean worktree, so the snapshot has no local delta.
 PrismaBuild seals that commit as the snapshot parent.
@@ -76,7 +76,7 @@ Its results are the same, and the CPU row above replaces it.
 ## Actions
 
 All seven actions ran at priority 10, with one attempt each.
-The five actions of this attempt were published from celestia.
+The five validation actions of this attempt were published from celestia.
 The times below are UTC on 2026-10-09. They run from publication to finish.
 
 | Role | Key | Host | Device | Elapsed | PB status / exit | Result |
@@ -99,13 +99,14 @@ Full action keys:
 - `15685e3628e24603a3aae647679fcf8c8941aa9313633f916d9acc5b1a3715d3` (pool venv, 21:48:42 to 21:48:57)
 - `3b59b3bca1ed7c48a5aaf1bc90cfa4445f3e048e623c3e167a9b4ecd09c9e00f` (pool venv inventory, 21:58:16 to 21:58:39)
 
-The CAS receipts of the three executed actions of this attempt:
+The CAS receipts of the four executed validation actions of this attempt:
 
 | Action | Receipt sha256 |
 |--------|----------------|
 | `4aa13e926f4e` | `732162e03fe6870ed7f61f17dddbcd900292af3dd2b0ad5c017f99dd25a8dc03` |
 | `d65fa0ffe74a` | `505043a05401d84dbb9f60e42361cb19de881095d9d975326ac796cd57210200` |
 | `2230cd9647df` | `7fea33fa9e4973e49268cbfb0477adb49e5cf865e1b141c9ddd89a7da7752c37` |
+| `8241a594d333` (superseded) | `53d31efa5f6ceb2285459d05094ce3e7960b7631a73742d728c451d209bad248` |
 
 The failed two-test slice has no CAS receipt.
 PrismaBuild published none for it.
@@ -172,7 +173,7 @@ That is the integrity path of the loader.
 
 ## CUDA allocation, skips and collection
 
-The controller wrote one population per action.
+The controller wrote one population per validation pytest action.
 Each file lives in `/mnt/shared/tessera-suite-receipts/ts1133-20261009/`.
 
 | Population | sha256 | Device | `--strict-cuda` | Passed | Failed | Error | Skipped | Not collected | Tests that allocated |
