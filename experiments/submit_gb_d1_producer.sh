@@ -78,6 +78,7 @@ from tessera.export_serving import authenticate_producer_python
 print(json.dumps(authenticate_producer_python()))' 2>"$AUTH_ERR") || {
   refuse "TESSERA_PRODUCER_PYTHON=$PY failed producer authentication against $SOURCE (stderr kept at $AUTH_ERR): $(tail -n 3 "$AUTH_ERR" | tr '\n' ' ')"
 }
+rm -f "$AUTH_ERR"
 PRODUCER_SHA=$(python3 -c 'import json,sys
 r = json.loads(sys.argv[1])
 print(r.get("package_sha256") or "")' "$AUTH_RECEIPT") || refuse "producer authentication receipt is not JSON: $AUTH_RECEIPT"

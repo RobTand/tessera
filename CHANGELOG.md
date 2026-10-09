@@ -1,5 +1,11 @@
 # Changelog
 
+## 2026-10-09 — remove successful caller authentication files
+
+Remove the temporary stderr file after successful producer authentication.
+Retain the stderr file when authentication fails.
+The real CPU caller smoke exposed one retained file per successful call before this correction.
+
 ## 2026-10-09 — issue 790 measurement corrections
 
 Both measurement launchers return the child exit status after final diagnostics.
