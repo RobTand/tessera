@@ -432,19 +432,26 @@ cells. The terminal WINDOW recipe is not replaced with a BF16 passthrough
 reference. Missing timings, compiler resources or actual sampled expert
 quality leave the versioned table rows pending; no T8 timings are inherited.
 
-Re-stamped 2026-10-06 for PB1496 (unnameable base): the impacted-test selector's
-documented limit is unchanged -- a directory read whose base nothing names, in a
-module that executes nothing, states no dependency and selects no test (#148;
-treating it as an unplaced read selected 424 of 424 test files for any change).
-The result now lists each such read under `unnamed_directory_reads` and the
-text receipt prints it, so a reader of this shape is seen instead of silently
-unselected. `tests/test_impacted_tests.py` holds the count at what the tree had
-when this was added (115 modules, 168 sites, most taking the directory as a
-parameter or calling the standard library's `glob.glob(pattern)`) and fails if
-it rises. The count was 114 modules and 167 sites on 2026-10-07 and the ceiling
-now holds there (#1014). Selector infrastructure only: no wire, recipe
-table, serving lane, plugin contract, numerical path, residency or performance
-default moves.
+Re-stamped 2026-10-08 for issue #1014: the impacted-test selector retains the
+accepted unnamed-base limit (#148).
+A directory read with no nameable base states no dependency when its module executes no source.
+The selector reports each such site under `unnamed_directory_reads`.
+The text receipt prints the same sites.
+
+`docs/reports/unnamed-directory-reads-1014.md` classifies all 169 sites that
+`select()` reported in 115 modules on base `83a1f38c4965`.
+The classes contain one nameable base, 103 runtime bases, 28 external box reads,
+37 temporary test reads, and no recognizer false positives.
+The report records reverse module and test counts for all 35 runtime-base modules with test consumers.
+An imported module's source path remains runtime state, not proof of this checkout's path.
+
+Literal tuple, list, and set elements now supply separate loop-variable alternatives.
+This correction names the conftest's three import roots without a parameter guess or a scalar sequence conversion.
+`select()` now reports 114 modules and 168 sites.
+`tests/test_impacted_tests.py` holds both ceilings at those measured counts.
+Refused bases and source loaders retain their conservative selection.
+External box globs and temporary test fixtures do not gain unrelated tests.
+No wire, recipe, serving contract, numerical rule, or performance default changes.
 
 Re-stamped 2026-10-06 for PB1496: the impacted-test selector no longer treats a
 `.md`, `.txt` or `.rst` change as proof that an unknown loader did not read it.

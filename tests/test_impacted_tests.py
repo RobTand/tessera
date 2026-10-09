@@ -2174,23 +2174,15 @@ def test_only_the_silent_directory_read_is_listed(tmp_path, reader, why):
     assert result["unnamed_directory_reads"] == {}, (why, result)
 
 
-# What the real tree held when this guard was added: modules with a directory
-# read whose base nothing names, in a module that executes nothing, and the
-# read sites in them.  Most take the directory as a parameter or are test
-# scaffolding, and some are the standard library's glob.glob(pattern), whose
-# base sits in the pattern string; the count is a ceiling, not a verdict on any
-# of them (it was 46 and 58 before Path.glob became an enumeration, and 117 and 178
-# before a function the file defines stopped being read as os.walk).  A new one
-# should name its base; if it cannot, raise these numbers in the same commit
-# and say why (PB1496).  Measured again on master 30418c445 (2026-10-07): 114 and
-# 167, one below the 115 and 168 pinned before, so the ceiling follows it down
-# (#1014).
-# The FP4 audit experiments/t4_code/fp4_corrective_audit.py reads dense-*.pt and
-# grouped-*.pt from external --retained-outputs evidence, not from tracked source
-# directories.  Its two reads raise the count to 115 and 169, measured on the tree
-# that holds the audit.  Numerical gates stay unchanged.
-_UNNAMED_DIRECTORY_READ_MODULES = 115
-_UNNAMED_DIRECTORY_READ_SITES = 169
+# Issue 1014 classifies every site in docs/reports/unnamed-directory-reads-1014.md.
+# select() measured 115 modules and 169 sites on base 83a1f38c4965.
+# Literal loop alternatives name the conftest's three import roots, so the
+# measured ceiling now holds at 114 modules and 168 sites.
+# Runtime parameters, external box paths, and temporary test fixtures retain
+# the accepted unnamed-base limit. A new read must name its base or raise
+# both relevant limits here with its reason (PB1496).
+_UNNAMED_DIRECTORY_READ_MODULES = 114
+_UNNAMED_DIRECTORY_READ_SITES = 168
 
 
 def _exceeds_unnamed_directory_read_ceiling(modules: int, sites: int) -> bool:
@@ -2615,6 +2607,35 @@ def test_an_outside_alternative_does_not_hide_an_in_tree_module_glob(tmp_path, o
     result = _selector(repo, f"{base}...HEAD")
 
     assert "tests/test_lister.py" in result["tests"], result
+
+
+@pytest.mark.parametrize("opening, closing", [("(", ")"), ("[", "]"), ("{", "}")],
+                         ids=["tuple", "list", "set"])
+def test_literal_loop_directory_reads_select_all_named_bases(tmp_path, opening, closing):
+    """#1014: finite loop alternatives retain directory membership dependencies."""
+    directories = opening + "ROOT / 'left', ROOT / 'right'" + closing
+    repo, _ = _dynamic_repo(tmp_path, "def test_unrelated(): pass\n", {
+        "tests/test_reader.py": _ROOT_ANCHOR + (
+            "\n\ndef test_reads():\n"
+            f"    for directory in {directories}:\n"
+            "        assert list(directory.iterdir())\n"),
+        "left/seed.md": "x\n", "right/seed.md": "x\n", "elsewhere/seed.md": "x\n"})
+
+    for changed in ("left/added.md", "right/deleted.md"):
+        result = impacted.select(repo, [changed])
+        assert result["tests"] == ["tests/test_reader.py"], result
+        assert result["verdict"] == "narrowed", result
+        assert result["unplaced_data_reads"] == [], result
+        assert result["unnamed_directory_reads"] == {}, result
+    elsewhere = impacted.select(repo, ["elsewhere/added.md"])
+    assert elsewhere["tests"] == [], elsewhere
+
+    # A tuple passed as one scalar argument is not its iterated alternatives.
+    (repo / "tests/test_reader.py").write_text(
+        _ROOT_ANCHOR + "\n\ndef test_reads():\n"
+        f"    assert list(Path({directories}).iterdir())\n", encoding="utf-8")
+    scalar = impacted.select(repo, ["left/added.md"])
+    assert scalar["tests"] == [], scalar
 
 
 def test_this_repository_does_not_gain_an_unnamed_directory_read():
