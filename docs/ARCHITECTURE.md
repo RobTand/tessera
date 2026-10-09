@@ -9209,8 +9209,8 @@ serves never join. Rank bytes agree across ranks over one file set, or the
 join refuses. `tools/verify_endpoint_witness.py` is the standalone verifier.
 It reads one witness file and re-derives the join. It needs no Tessera
 serving import. Input manifests, aliases, leases, launch arguments, and
-publication receipts establish no loaded fact. Byte checks use parsed
-artifact metadata. Scientific comparability needs matched bytes. No
+publication receipts establish no loaded fact. Byte coverage compares loaded
+file digests across ranks. Scientific comparability needs matched bytes. No
 recorded-identity seal exists here.
 
 ### 5.1.3 GLM-5.3 prefill overrides
