@@ -26,6 +26,11 @@ def test_gate_names_qualification_adoption_and_tuple():
     assert "exact_tuple" in text
 
 
+def test_gate_status_closed():
+    text = _gate_text()
+    assert "Status: CLOSED" in text
+
+
 def test_gate_cites_runtime_pin_verbatim():
     text = _gate_text()
     contract = json.loads(CONTRACT.read_text(encoding="utf-8"))
@@ -36,17 +41,19 @@ def test_gate_cites_runtime_pin_verbatim():
     assert str(contract["contract_version"]) in text
 
 
-def test_gate_keeps_v6_cell_runtime_leads():
+def test_gate_keeps_all_routed_cell_images():
     text = _gate_text()
     for lead in ("tessera.lane-eligibility.v12", "execution_modes", "kernel_build"):
         assert lead in text
     contract = json.loads(CONTRACT.read_text(encoding="utf-8"))
-    cell = next(
-        c
+    images = {
+        c["runtime"]["image"]
         for c in contract["lane_eligibility"]["cells"]
         if c.get("structure") == "routed_moe"
-    )
-    assert cell["runtime"]["image"] in text
+    }
+    assert len(images) >= 2
+    for image in images:
+        assert image in text
 
 
 def test_e2m1_source_stays_parked():
