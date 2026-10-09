@@ -172,8 +172,9 @@ def test_two_shards_that_measured_different_source_are_not_green(tmp_path, monke
 
 def test_a_nonzero_pbrun_code_is_not_hidden_by_a_clean_pool_record(tmp_path, monkeypatch):
     world = _world(tmp_path, monkeypatch)
-    submitted = {"shard-00": {"returncode": 0}, "shard-01": {"returncode": 1}}
-    receipt = _receipt(world, submitted=submitted)
+    sp.write_client_result(world.receipt_dir, "shard-00", {"returncode": 0})
+    sp.write_client_result(world.receipt_dir, "shard-01", {"returncode": 1})
+    receipt = _receipt(world)
     assert receipt["verdict"].startswith("incomplete:"), receipt["verdict"]
     assert "shard-01: pbrun returned 1" in receipt["population_problems"]
 

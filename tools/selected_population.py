@@ -50,6 +50,11 @@ from tessera._dev.suite_source import measured_source  # noqa: E402
 #: claim it supports is re-checked against the pool's sealed commands.
 SELECTION = "selection.json"
 RECEIPT = "receipt.json"
+#: What each pbrun client reported when it exited, written then, so a resume
+#: after the submitter dies reads the client's own result and not only the
+#: pool's.  The pool's record of an action can be clean while pbrun returned 1.
+CLIENT = "client.{name}.json"
+_CLIENT_FIELDS = ("returncode", "elapsed_s", "stderr_tail", "pbrun")
 SELECTOR = Path(__file__).resolve().parent / "impacted_tests.py"
 DEFAULT_RECEIPT_ROOT = merge_suite.SHARED_ROOT / "tessera-selected-populations"
 #: D21: one agent keeps at most eight PrismaBuild clients at once, because each
@@ -128,6 +133,29 @@ def shard_arm(name: str, files: list[str], python: str | None = None) -> dict:
     return arm
 
 
+def write_client_result(receipt_dir: Path, name: str, sent: dict) -> None:
+    """Record one client's result atomically, the moment it is known."""
+
+    path = receipt_dir / CLIENT.format(name=name)
+    scratch = path.with_suffix(".tmp")
+    scratch.write_text(json.dumps({key: sent.get(key) for key in _CLIENT_FIELDS}))
+    scratch.replace(path)
+
+
+def read_client_result(receipt_dir: Path, name: str) -> dict | None:
+    """The client's recorded result, or ``None`` where none was recorded.
+
+    ``None`` is an unknown result, stated as such on the record.  It is not a
+    zero exit.
+    """
+
+    try:
+        recorded = json.loads((receipt_dir / CLIENT.format(name=name)).read_text())
+    except (OSError, ValueError):
+        return None
+    return recorded if isinstance(recorded, dict) else None
+
+
 def submit_all(selection: dict, args, receipt_dir: Path) -> dict[str, dict]:
     """Submit every shard, at most ``MAX_CLIENTS`` at once; each answer is merge_suite's record."""
 
@@ -136,11 +164,16 @@ def submit_all(selection: dict, args, receipt_dir: Path) -> dict[str, dict]:
         timeout_s=args.timeout_s, wait_s=args.wait_s, checkout=args.checkout,
         dry_run=args.dry_run, artifact_root=args.artifact_root)
     shards = selection["shards"]
+
+    def client(name: str, files: list[str]) -> dict:
+        sent = merge_suite._submit(name, shard_arm(name, files, selection.get("python")),
+                                   submission, receipt_dir)
+        if not args.dry_run:
+            write_client_result(receipt_dir, name, sent)
+        return sent
+
     with ThreadPoolExecutor(max_workers=min(MAX_CLIENTS, len(shards))) as pool:
-        futures = {name: pool.submit(merge_suite._submit, name,
-                                     shard_arm(name, files, selection.get("python")),
-                                     submission, receipt_dir)
-                   for name, files in shards.items()}
+        futures = {name: pool.submit(client, name, files) for name, files in shards.items()}
         return {name: future.result() for name, future in futures.items()}
 
 
@@ -203,34 +236,38 @@ def population_problems(selection: dict, records: list[dict], head_source: dict)
 
 
 def assemble(selection: dict, receipt_dir: Path, checkout: Path, *,
-             submitted: dict[str, dict] | None = None) -> dict:
+             assembled_by: str = "resume") -> dict:
     """The one receipt for this population.
 
     Each shard's record is merge_suite's resumed reading of its published
     population: the pool's own outcome record supplies the exit status, bound
-    to the population by its producer stamp.  That holds for a run this
-    process watched as well, because pbrun's return code is not that record.
+    to the population by its producer stamp.  pbrun's return code is not that
+    record, so each client's own result is read back from the file it wrote
+    when it exited.  A run this process watched and a resume read the same
+    files; a shard with none says ``not recorded``.
     """
 
     records = []
     for name, files in selection["shards"].items():
         record = merge_suite._resume(
             name, shard_arm(name, files, selection.get("python")), receipt_dir)
-        if submitted:
-            sent = submitted[name]
+        sent = read_client_result(receipt_dir, name)
+        record["client_result"] = "recorded" if sent is not None else "not recorded"
+        if sent is not None:
             record["submit_returncode"] = sent.get("returncode")
             record["submit_elapsed_s"] = sent.get("elapsed_s")
             record["submit_stderr_tail"] = sent.get("stderr_tail")
             record["pbrun"] = sent.get("pbrun")
         records.append(record)
     head_source = measured_source(checkout, verifier=None)
-    receipt = merge_suite._assemble_receipt(
-        records, checkout, assembled_by="submit" if submitted else "resume")
+    receipt = merge_suite._assemble_receipt(records, checkout, assembled_by=assembled_by)
     problems = population_problems(selection, records, head_source)
     receipt["schema"] = "tessera.selected_population.v1"
     receipt["selection"] = selection
     receipt["checkout_source"] = head_source
     receipt["population_problems"] = problems
+    receipt["clients_not_recorded"] = [record["arm"] for record in records
+                                       if record["client_result"] == "not recorded"]
     if problems and receipt["verdict"].startswith("green on"):
         receipt["verdict"] = "incomplete: " + problems[0]
     return receipt
@@ -245,6 +282,10 @@ def report_lines(receipt: dict) -> list[str]:
              f"selector verdict {selection['verdict']} against {selection['base']}"]
     for problem in receipt["population_problems"]:
         lines.append(f"  PROBLEM: {problem}")
+    if receipt["clients_not_recorded"]:
+        lines.append("  client result not recorded for: "
+                     + ", ".join(receipt["clients_not_recorded"])
+                     + "; the pool's records decide those shards alone")
     for record in receipt["arms"]:
         surface = record.get("surface") or {}
         counts = surface.get("counts") or {}
@@ -288,7 +329,6 @@ def main(argv: list[str] | None = None) -> int:
     if args.resume:
         receipt_dir = Path(args.resume).resolve()
         selection = json.loads((receipt_dir / SELECTION).read_text())
-        submitted = None
     else:
         if not str(args.checkout).startswith(str(merge_suite.SHARED_ROOT)) and not args.dry_run:
             print(f"selected_population: the checkout must be under {merge_suite.SHARED_ROOT}",
@@ -316,7 +356,8 @@ def main(argv: list[str] | None = None) -> int:
                 print(record["pbrun"])
             return 0
 
-    receipt = assemble(selection, receipt_dir, args.checkout, submitted=submitted)
+    receipt = assemble(selection, receipt_dir, args.checkout,
+                       assembled_by="resume" if args.resume else "submit")
     (receipt_dir / RECEIPT).write_text(json.dumps(receipt, indent=2) + "\n")
     print("\n".join(report_lines(receipt)))
     print(f"selected_population: receipt {receipt_dir / RECEIPT}")
