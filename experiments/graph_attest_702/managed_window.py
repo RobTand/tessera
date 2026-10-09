@@ -205,8 +205,15 @@ class Envelope:
             if alive():
                 record["deadline_shortened_grace"] = stop_at == self.end
                 send(signal.SIGKILL)
-        process.wait(timeout=max(.01, min(1, self.end - time.monotonic())))
-        record.update(returncode=process.returncode, ended_unix=time.time())
+        reap_timeout = max(.01, min(1, self.end - time.monotonic()))
+        record.update(reap_timeout_seconds=reap_timeout, reap_timed_out=False)
+        try:
+            process.wait(timeout=reap_timeout)
+        except subprocess.TimeoutExpired:
+            # A delayed reap is cleanup evidence, not a replacement work failure.
+            record["reap_timed_out"] = True
+        finally:
+            record.update(returncode=process.returncode, ended_unix=time.time())
 
 
 class Rendezvous:

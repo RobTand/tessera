@@ -736,6 +736,18 @@ SHA into the submitted inputs; each rank emits
 baseline, minimum, raw samples and counters kept so a future window can measure
 the 6 GiB allowance, not a measured RSS decomposition — and the Envelope
 outcome carries the termination list with container termination evidence.
+
+`Envelope._terminate` retains the original work failure when its final
+`Popen.wait` times out after SIGKILL (#1053).
+Each termination record includes `reap_timeout_seconds`, `reap_timed_out`,
+`returncode` and `ended_unix`, including a delayed reap.
+The existing reap bound remains 0.01 to one second, limited by the absolute deadline.
+A null return code does not prove process exit.
+Signals still target only the process group that the Envelope created.
+The PB worker retains final responsibility for physical scope cleanup.
+
+The real-child regression awaits asynchronous death within its unchanged 9.5-second elapsed limit.
+
 Protected sysctl, ARC, cache and service settings are untouched. This mints no
 performance, fit or pin claim; old producer approvals do not transfer, and pool
 review must check both the derivation and the guard against the exact new
@@ -1717,8 +1729,16 @@ T4 activation-prefetch experiment (2026-10-02, #875):
   checks, exact hashes, fp64 dtype bounds and graph/eager identity. Native
   consumer execution additionally requires all48 GPU cases (42 FP4 cases and
   six terminal patterns); skipped or changed populations fail qualification.
+  The qualification container does not ship pytest. Its wrapper uses the existing
+  routed-fused test-runner convention: `TEST_RUNNER_SP` supplies only pytest,
+  `_pytest`, pluggy, iniconfig, packaging and `py.py`, copied under the action
+  output and appended to `PYTHONPATH`. Torch, Triton and vLLM remain the image
+  versions. Native-arm CPU mapping checks the pytest import before mapping the
+  retained banks; portable x86 dry runs and the actual arm64 container smoke
+  are separate evidence, neither a GPU or serving qualification.
   Nonfinite outputs/references/bounds refuse (actual false-pass RED: PB62e3e5ee).
-* Before GPU qualification, root must authorize the resource/readset. Use the
+* GPU qualification uses normal PrismaBuild admission after fresh D1 disk
+  checks; no separate root-authorization gate remains. Use the
   same real captured/calibrated T4 bundle bank, input/global scales, residency,
   recorded routing and quantizer in both arms. Full matrix: modes0/1/2 and
   chain, all admitted uniform/adjacent rates, TP1 and each legal TP2 cut with

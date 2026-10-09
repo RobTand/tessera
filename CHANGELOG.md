@@ -34,6 +34,17 @@ Supplier prose does not control admission. Physical arity and the empty menu rem
 Preserve unavailable T8 rates and the R1280 pricing anchor.
 Bind new table bytes in the candidate index. Leave the active index unchanged.
 
+## 2026-10-08 — retain deadline failures after a delayed process reap
+
+Record the final bounded reap timeout without replacement of the original work error (#1053).
+Keep the absolute deadline, TERM grace, signal ownership and reap bounds unchanged.
+Await asynchronous child death within the existing elapsed limit.
+
+The deterministic regression exposed the expired 0.01-second wait before the fix.
+The real-child case passes alone and in twelve shards with two workers each.
+Twenty-four CPU burners shared four admitted CPUs with those shards.
+These CPU-only checks do not qualify the CUDA surface.
+
 ## 2026-10-08 — retire arithmetic attributes from register-direct consumers
 
 The grouped owner now has one FP32 row-scale epilogue.
