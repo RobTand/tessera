@@ -5,6 +5,7 @@
 Extend the existing producer with immutable class timing records and exact declared-cell scope matrices.
 Retain original samples, action bindings, build identities, failures, and quality observations.
 Report measured sample variability and explicit unavailable confidence intervals.
+Non-finite time conversions refuse.
 Keep hard correctness refusals separate from historical sample variation.
 Keep the T4 menus empty and bind the producer's paired-value semantics.
 Supplier prose does not control admission. Physical arity and the empty menu remain correctness checks.

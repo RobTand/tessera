@@ -210,11 +210,12 @@ class TimingPublication(unittest.TestCase):
         self.assertEqual(result['timing']['confidence_interval']['status'], 'unavailable')
 
     def test_measured_samples_must_agree_with_their_pass_median(self):
-        table = v3_fixture()
-        cell = table['rungs'][0]['measurements'][0]
-        cell['evidence']['F'] = {'samples_ms': [1, 2, 3], 'median_ms': 2}
-        with self.assertRaisesRegex(ValueError, 'sample median'):
-            rung_speed(table, rung=768, cell_id=cell['cell_id'])
+        for samples in ([1, 2, 3], [1e308]):
+            table = v3_fixture()
+            cell = table['rungs'][0]['measurements'][0]
+            cell['evidence']['F'] = {'samples_ms': samples}
+            with self.assertRaisesRegex(ValueError, 'sample median'):
+                rung_speed(table, rung=768, cell_id=cell['cell_id'])
 
     def test_publication_preserves_noise_observations_and_hard_refusals(self):
         from tessera.rung_allowability import publication_scope

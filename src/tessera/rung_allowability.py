@@ -522,7 +522,7 @@ def timing_evidence(measurement):
             continue
         _require(isinstance(samples, list) and all(_number(value) and value > 0 for value in samples), 'invalid retained timing samples')
         actual = statistics.median(samples) * 1000
-        _require(abs(actual - median_us) <= math.ulp(actual) + math.ulp(median_us), 'retained sample median differs from paired pass')
+        _require(_number(actual) and abs(actual - median_us) <= math.ulp(actual) + math.ulp(median_us), 'retained sample median differs from paired pass')
         values = [value * 1000 for value in samples]
         passes[name] = {'status': 'measured', 'sample_count': len(values), 'median_us': median_us,
                         'sample_range_us': [min(values), max(values)],
