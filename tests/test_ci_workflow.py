@@ -16,7 +16,9 @@ from __future__ import annotations
 
 import os
 import re
+import json
 import subprocess
+import sys
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -254,3 +256,96 @@ def test_a_branch_that_does_not_exist_is_refused(origin_and_clone):
         "the refusal must name the branch it could not read; any non-zero "
         "exit passes this test otherwise, including the script being absent"
     )
+
+
+BRANCH_SCRIPT = ROOT / ".github" / "scripts" / "require_pr_branch.py"
+
+
+def _run_branch_check(tmp_path, branch, body, created_at="2026-10-09T17:00:00Z",
+                      action="opened"):
+    event = tmp_path / "event.json"
+    event.write_text(json.dumps({
+        "action": action,
+        "pull_request": {
+            "head": {"ref": branch},
+            "body": body,
+            "created_at": created_at,
+        },
+    }), encoding="utf-8")
+    return subprocess.run(
+        [sys.executable, "-I", str(BRANCH_SCRIPT), str(event), "RobTand/tessera"],
+        capture_output=True, text=True,
+    )
+
+
+@pytest.mark.parametrize("branch", ["tessera-123", "tessera-123-gpu", "tessera-123-gpu-2"])
+@pytest.mark.parametrize("body", [
+    "Closes #123.",
+    "Fixes tessera#123.",
+    "Resolves RobTand/tessera#123.",
+    "Fixes https://github.com/RobTand/tessera/issues/123.",
+    "See [the issue](https://github.com/RobTand/tessera/issues/123).",
+    "Related: #124 and #123.",
+])
+def test_pr_branch_matches_a_linked_issue(tmp_path, branch, body):
+    done = _run_branch_check(tmp_path, branch, body)
+    assert done.returncode == 0, done.stdout + done.stderr
+
+
+@pytest.mark.parametrize("branch", [
+    "fix/something", "tessera-124", "tessera-123-", "tessera-123--gpu",
+    "tessera-123-GPU", "tessera-123-gpu_test", "tessera-123-gpu/test",
+    "tessera-123\n", "tessera-0123",
+])
+def test_pr_branch_refusal_names_the_rule_and_expected_branch(tmp_path, branch):
+    done = _run_branch_check(tmp_path, branch, "Closes #123.")
+    assert done.returncode == 1, done.stdout + done.stderr
+    assert "rule 12" in done.stderr
+    assert "tessera-<issue>" in done.stderr
+    assert "tessera-123" in done.stderr
+
+
+@pytest.mark.parametrize("branch", ["ig/train/x-9", "ig/old-work", "release", "release-1.0"])
+def test_pr_branch_prefix_exemptions_need_no_issue(tmp_path, branch):
+    done = _run_branch_check(tmp_path, branch, None)
+    assert done.returncode == 0, done.stdout + done.stderr
+
+
+def test_pr_branch_cutoff_is_inclusive(tmp_path):
+    before = _run_branch_check(
+        tmp_path, "fix/something", None, "2026-10-09T16:59:59Z",
+    )
+    assert before.returncode == 0, before.stdout + before.stderr
+    for created_at in ("2026-10-09T17:00:00Z", "2026-10-10T00:00:00Z"):
+        done = _run_branch_check(tmp_path, "fix/something", "Closes #123.", created_at)
+        assert done.returncode == 1, done.stdout + done.stderr
+        assert "rule 12" in done.stderr
+
+
+@pytest.mark.parametrize("body", [
+    None, "", "Fixes other#123.", "Fixes OtherOwner/tessera#123.",
+    "Fixes RobTand/other#123.", "See https://github.com/RobTand/other/issues/123.",
+    "See https://github.com/OtherOwner/tessera/issues/123.",
+    "An identifier: abc#123.", "Not an issue: #123abc.",
+    "A different issue: #1234.",
+])
+def test_pr_branch_requires_an_issue_link_in_this_repository(tmp_path, body):
+    done = _run_branch_check(tmp_path, "tessera-123", body)
+    assert done.returncode == 1, done.stdout + done.stderr
+    assert "tessera-<issue>" in done.stderr
+
+
+def test_pr_branch_rechecks_the_edited_body(tmp_path):
+    before = _run_branch_check(tmp_path, "tessera-123", "Closes #123.")
+    assert before.returncode == 0, before.stdout + before.stderr
+    after = _run_branch_check(tmp_path, "tessera-123", "Closes #124.", action="edited")
+    assert after.returncode == 1, after.stdout + after.stderr
+    assert "tessera-124" in after.stderr
+
+
+def test_pr_branch_reads_shell_syntax_as_data(tmp_path):
+    marker = tmp_path / "must-not-exist"
+    body = f"Closes #123.\n$(touch {marker})\n'; touch {marker}; #"
+    done = _run_branch_check(tmp_path, "tessera-123", body)
+    assert done.returncode == 0, done.stdout + done.stderr
+    assert not marker.exists()
