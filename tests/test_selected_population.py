@@ -364,3 +364,49 @@ def test_no_more_than_eight_pbrun_clients_run_at_once(tmp_path, monkeypatch):
     assert sorted(results) == sorted(shards)
     assert sp.MAX_CLIENTS == 8
     assert state["peak"] == 8
+
+
+def test_a_nonzero_client_result_survives_a_resume(tmp_path, monkeypatch, capsys):
+    """A population rejected for a pbrun code must stay rejected after the submitter dies.
+
+    The pool's record of the action can be clean while pbrun returned 1, and a
+    resume that read only the pool would turn that rejected run green.
+    """
+
+    world = _world(tmp_path, monkeypatch)
+    sp.write_client_result(world.receipt_dir, "shard-01", {"returncode": 1, "elapsed_s": 3.0})
+    status = sp.main(["--resume", str(world.receipt_dir), "--checkout", str(world.checkout),
+                      "--pool-root", str(world.pool)])
+    receipt = json.loads((world.receipt_dir / sp.RECEIPT).read_text())
+    assert status == 1, capsys.readouterr().out
+    assert "shard-01: pbrun returned 1" in receipt["population_problems"]
+    assert receipt["verdict"].startswith("incomplete:"), receipt["verdict"]
+
+
+def test_a_resume_names_the_shards_whose_client_result_was_never_recorded(tmp_path, monkeypatch, capsys):
+    """An unknown client result is stated, and the pool's own records still decide."""
+
+    world = _world(tmp_path, monkeypatch)
+    sp.write_client_result(world.receipt_dir, "shard-00", {"returncode": 0})
+    status = sp.main(["--resume", str(world.receipt_dir), "--checkout", str(world.checkout),
+                      "--pool-root", str(world.pool)])
+    out = capsys.readouterr().out
+    receipt = json.loads((world.receipt_dir / sp.RECEIPT).read_text())
+    assert status == 0, out
+    assert receipt["clients_not_recorded"] == ["shard-01"]
+    states = {record["arm"]: record["client_result"] for record in receipt["arms"]}
+    assert states == {"shard-00": "recorded", "shard-01": "not recorded"}
+    assert "client result not recorded for: shard-01" in out
+
+
+def test_each_clients_result_is_written_when_that_client_exits(tmp_path, monkeypatch):
+    selection = {"shards": SHARDS}
+    answers = {"shard-00": {"returncode": 0, "elapsed_s": 1.5, "stderr_tail": ["ok"], "pbrun": "pbrun a"},
+               "shard-01": {"returncode": 1, "elapsed_s": 2.5, "stderr_tail": ["boom"], "pbrun": "pbrun b"}}
+    monkeypatch.setattr(sp.merge_suite, "_submit", lambda name, arm, args, receipt_dir: answers[name])
+    args = SimpleNamespace(cpus=2, mem_gb=4, pytest_arg=[], timeout_s=1.0, wait_s=1.0,
+                           checkout=tmp_path, dry_run=False, artifact_root=[])
+    sp.submit_all(selection, args, tmp_path)
+    for name, answer in answers.items():
+        assert sp.read_client_result(tmp_path, name) == answer
+    assert sp.read_client_result(tmp_path, "shard-02") is None
