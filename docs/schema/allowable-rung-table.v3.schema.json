@@ -118,7 +118,7 @@
           }
         }
       },
-      "description": "The scalar q256 domain and exact cell roster are derived from their owners. Initial T-8 scope is R768 through R1152 inclusive, true grid step 1, M 1/16/2048/4096 and 2-3 representative GLM shapes."
+      "description": "The scope states the scalar rate grid and exact required cells. Missing declared geometry waits."
     },
     "rungs": {
       "type": "array",
@@ -158,9 +158,58 @@
               "type": "integer",
               "minimum": 1
             }
+          },
+          "timings": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": [
+                "rung",
+                "value_kind",
+                "kernel_time_us",
+                "timing"
+              ],
+              "properties": {
+                "rung": {
+                  "type": "integer",
+                  "minimum": 1
+                },
+                "value_kind": {
+                  "const": "measured"
+                },
+                "kernel_time_us": {
+                  "type": "number",
+                  "minimum": 0
+                },
+                "timing": {
+                  "type": "object"
+                }
+              }
+            }
           }
         }
-      }
+      },
+      "description": "Each class retains its exact decoder identity and observed rungs. Published timings bind retained values and variability to their original evidence. Derived values confer no qualification."
+    },
+    "timing_publication": {
+      "type": "object",
+      "required": [
+        "schema",
+        "sample_scope",
+        "qualification_scope"
+      ],
+      "properties": {
+        "schema": {
+          "const": "tessera.class_timing.v1"
+        },
+        "sample_scope": {
+          "type": "string"
+        },
+        "qualification_scope": {
+          "type": "string"
+        }
+      },
+      "description": "This optional publication keeps older immutable version three tables readable. Pass variability is descriptive. Missing samples and confidence intervals remain explicit."
     }
   },
   "$defs": {
@@ -543,7 +592,8 @@
           }
         }
       ],
-      "description": "Each scalar q256 rung has one row. A measured aggregate row requires every required cell and its actual geometry. Scoped queries admit measured menu cells with no source refusal or correctness hold. Missing scope evidence waits. Class-derived times never establish numerical or serving qualification. Historical quality samples do not control performance admission. Independent export, numerical, byte, and serving gates still apply."
+      "description": "Historical row status stays separate from per-cell performance admission. Sample variation does not establish a correctness anomaly. Hard flags remain refusals."
     }
   }
 }
+

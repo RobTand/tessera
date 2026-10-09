@@ -9,6 +9,46 @@ No kernel, decoder, pin, or default changes.
 Receipt: `experiments/results/glm53_r768_stub_base_tp2_eager_census.json`.
 Configuration: `experiments/results/glm53_r768_stub_base_config.json`.
 
+Re-stamped 2026-10-09 for the hosted producer dependency (issue #1018).
+Hosted pure installs the existing jsonschema dependency required by the real producer.
+Torch stays absent. The producer keeps its structural and semantic validation.
+
+Re-stamped 2026-10-09 for absent rank-shape coverage (issue #1018).
+A release unit without tensor_parallel_shapes returns an explicit geometry wait.
+No shape, rank cut, timing, or qualification is invented for an absent field.
+
+Re-stamped 2026-10-09 for structure-scoped release coverage (issue #1018).
+Release units match only their actual kernel kind or existing structure mapping.
+Routed units never borrow dense timing cells. Legacy shared and dense units keep their dense scope.
+Unknown structures retain missing-geometry waits.
+
+Re-stamped 2026-10-09 for the pure metadata boundary correction (issue #1018).
+Version two and version three input-table metadata use the alphabet's pure grid owner.
+The existing version one conversion and actual raw-input normalization retain their owner paths.
+The meaningful hosted pure test stays active. No measurement or qualification changes.
+
+Re-stamped 2026-10-08 for the canonical class publication (issue #1018).
+
+The existing class interface publishes retained timing samples and exact performance scope.
+Each measured value names its original action, source, binary, paired seed, and clock window.
+Pass ranges, sample standard deviations, and paired drift describe the retained samples.
+No confidence interval exists without a retained independent estimate.
+Raw samples must agree with finite paired-pass times.
+Class-derived values name every eligible donor and do not become measured values.
+
+The immutable producer adds class timing records and a complete declared-cell scope matrix.
+Historical sample variation stays separate from hard correctness flags.
+Missing shapes, recipes, activations, and token rows still wait.
+An absent tensor-parallel shape has an explicit wait marker, not an empty successful population.
+T4 uses one code for two scalar weights. Its qualified dense and routed menus stay empty.
+Supplier prose does not control admission. The producer checks physical arity and the empty menu.
+T8 R640 has no supported publication. R1280 stays a pricing anchor, not a performance option.
+Older T16 timings retain their actual build and do not qualify the new decoded-weight epilogue.
+
+New index entries bind each immutable table to its byte digest.
+The producer stages the candidate index without a change to the active index.
+Timing supplies no numerical, native, or serving qualification.
+
 Re-stamped 2026-10-08 for the grouped arithmetic consumer cutover.
 The grouped owner has one FP32 row-scale epilogue and no arithmetic selector.
 Register-direct consumers read row scales from scale_all and keep the family, window and table checks.
@@ -22,6 +62,7 @@ Dense and grouped kernels accumulate the raw-value dot in FP32, then apply
 the row scale before the output conversion. Routed gate/up outputs, the
 activation and each weighted route preserve their BF16 conversion boundaries.
 The token reducer adds routes in a fixed order. The runner owns shared output.
+
 Re-stamped 2026-10-08 for the graph witness rank correction (issue #1062).
 
 The witness joins the explicit rank and world size from each receipt row.
@@ -1697,8 +1738,16 @@ T4 activation-prefetch experiment (2026-10-02, #875):
   checks, exact hashes, fp64 dtype bounds and graph/eager identity. Native
   consumer execution additionally requires all48 GPU cases (42 FP4 cases and
   six terminal patterns); skipped or changed populations fail qualification.
+  The qualification container does not ship pytest. Its wrapper uses the existing
+  routed-fused test-runner convention: `TEST_RUNNER_SP` supplies only pytest,
+  `_pytest`, pluggy, iniconfig, packaging and `py.py`, copied under the action
+  output and appended to `PYTHONPATH`. Torch, Triton and vLLM remain the image
+  versions. Native-arm CPU mapping checks the pytest import before mapping the
+  retained banks; portable x86 dry runs and the actual arm64 container smoke
+  are separate evidence, neither a GPU or serving qualification.
   Nonfinite outputs/references/bounds refuse (actual false-pass RED: PB62e3e5ee).
-* Before GPU qualification, root must authorize the resource/readset. Use the
+* GPU qualification uses normal PrismaBuild admission after fresh D1 disk
+  checks; no separate root-authorization gate remains. Use the
   same real captured/calibrated T4 bundle bank, input/global scales, residency,
   recorded routing and quantizer in both arms. Full matrix: modes0/1/2 and
   chain, all admitted uniform/adjacent rates, TP1 and each legal TP2 cut with

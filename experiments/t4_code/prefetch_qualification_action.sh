@@ -1,5 +1,7 @@
 #!/usr/bin/env bash
-# Admitted PB payload only. GPU modes require separate root authorization.
+# Admitted PB payload only; correctness work uses ordinary fleet admission.
+# Native consumers borrow only the pure-Python runner, never host Torch/vLLM.
+# TEST_RUNNER_SP names a scoped, pinned Python 3.12 runner installation.
 set -euo pipefail
 OUT=${1:?output}; MODE=${2:?staged-read/cpu-map/numeric/native/sanitize}; MANIFEST=${3:?validated staged readset}; shift 3
 IMAGE=${ORACLE_IMAGE:?immutable image required}
@@ -28,6 +30,16 @@ done
 STAGE_ROOT=$(PYTHONPATH="$PB_CLIENT_ROOT/src" python3 -c 'import os; from prismabuild.client import read_residency_map; print(read_residency_map(os.environ["PRISMABUILD_RESIDENCY_MAP"])["stage_root"])')
 CPUS=$(python3 -c 'import os; print(",".join(map(str,sorted(os.sched_getaffinity(0)))))')
 mkdir -p "$OUT"
+RUNNER_PATH=
+if [[ "$MODE" == native || "$MODE" == sanitize || -n "${TEST_RUNNER_SP:-}" ]]; then
+  SP=${TEST_RUNNER_SP:?set TEST_RUNNER_SP to the scoped Python 3.12 test runner}
+  mkdir -p "$OUT/runner-sp"
+  for pkg in pytest _pytest pluggy iniconfig packaging py.py; do
+    [[ -e "$SP/$pkg" ]] || { echo "missing $SP/$pkg" >&2; exit 2; }
+    cp -r "$SP/$pkg" "$OUT/runner-sp/$pkg"
+  done
+  RUNNER_PATH=":$OUT/runner-sp"
+fi
 # The SDK reader helper and executable map proof require the admitted PID view;
 # every child stays in PB's container scope and its assigned CPU affinity.
 docker run --rm "${GPU_ARGS[@]}" "${VISIBILITY[@]}" --network=none --ipc=host --pid=host --cpuset-cpus "$CPUS" \
@@ -36,7 +48,7 @@ docker run --rm "${GPU_ARGS[@]}" "${VISIBILITY[@]}" --network=none --ipc=host --
   -v /mnt/shared/tessera-measurements/t4-875-composed-qual-20261004:/mnt/shared/tessera-measurements/t4-875-composed-qual-20261004:ro \
   -v /mnt/shared/prismabuild-fleet:/mnt/shared/prismabuild-fleet \
   -v "$STAGE_ROOT":"$STAGE_ROOT" -e HOME="$OUT" -e PYTHONDONTWRITEBYTECODE=1 \
-  -e PYTHONPATH="/work/src:/work/tests:/work/experiments/t4_code:/work/experiments/t8r_speed:$PB_CLIENT_ROOT/src" \
+  -e PYTHONPATH="/work/src:/work/tests:/work/experiments/t4_code:/work/experiments/t8r_speed:$PB_CLIENT_ROOT/src$RUNNER_PATH" \
   -e ORACLE_IMAGE="$IMAGE" -e TORCH_EXTENSIONS_DIR="$OUT/owner-build" -e MAX_JOBS=1 \
   -e OMP_NUM_THREADS=1 -e MKL_NUM_THREADS=1 -e OPENBLAS_NUM_THREADS=1 \
   "${CTX[@]}" "${IMAGE_ENV[@]}" --entrypoint python3 -w /work "$IMAGE" \
