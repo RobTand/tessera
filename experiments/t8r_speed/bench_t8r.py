@@ -75,8 +75,6 @@ def _install_vllm_stubs():
     return True
 
 
-VLLM_STUBBED = _install_vllm_stubs()
-os.environ.setdefault("TESSERA_SERVE_MODE", "resident")
 
 
 def _init_vllm_world1(rdv_dir):
@@ -817,17 +815,19 @@ def main():
     args = ap.parse_args()
     if args.outputs_only and args.ncu:
         ap.error("--outputs-only cannot be combined with --ncu")
+    vllm_stubbed = _install_vllm_stubs()
+    os.environ.setdefault("TESSERA_SERVE_MODE", "resident")
     comparison = None
     comparison_sha = None
     if getattr(args, "comparison_protocol", None):
         import piece_major_protocol as pp
         comparison, comparison_sha = pp.load(args.comparison_protocol)
-        pp.require_options(args, comparison, stubbed=VLLM_STUBBED)
+        pp.require_options(args, comparison, stubbed=vllm_stubbed)
         if args.comparison_phase != "numeric":
             pp.require_numeric_receipt(args.comparison_numeric_receipt,
                                        args.comparison_numeric_sha256, pp.numeric_protocol_sha256(comparison, comparison_sha))
     else:
-        require_single_replay_options(args, stubbed=VLLM_STUBBED)
+        require_single_replay_options(args, stubbed=vllm_stubbed)
     os.makedirs(args.out, exist_ok=True)
     ms = [int(v) for v in args.ms.split(",")]
     wanted = None if args.groups == "all" else set(args.groups.split(","))
@@ -900,8 +900,8 @@ def main():
             raise SystemExit(f"--routing {args.routing}: no m<M>/*.pt for M in {ms} "
                              "(is the directory mounted into the container?)")
         meta["routing"] = {"root": args.routing, "files": {str(m): len(v) for m, v in recorded.items()}}
-        meta["vllm_stubbed"] = VLLM_STUBBED
-        if not VLLM_STUBBED:
+        meta["vllm_stubbed"] = vllm_stubbed
+        if not vllm_stubbed:
             import vllm
             meta["vllm"] = getattr(vllm, "__version__", None)
         try:
@@ -912,7 +912,7 @@ def main():
         # The closed routed numeric mode supplies TP explicitly to the packed
         # intake and invokes its adapter directly; no vLLM method/config/world
         # is constructed. It still uses the exact stock native FP8 quantizer.
-        ctx = None if VLLM_STUBBED or args.paired_k32_numerics else _init_vllm_world1(args.out)  # noqa: F841 -- held open
+        ctx = None if vllm_stubbed or args.paired_k32_numerics else _init_vllm_world1(args.out)  # noqa: F841 -- held open
         if args.paired_k32_numerics:
             meta['paired_k32'] = {'input_manifest_sha256': inputs.manifest_sha256,
                 'source_sha256': args.paired_k32_source_sha256,

@@ -1,4 +1,4 @@
-"""The routed WINDOW class plugin for E4M3 and folded BF16.
+"""The routed WINDOW class plugin for E4M3 and raw BF16 epilogue math.
 
 Every routed scheme declares storage-to-global expert IDs and a contiguous class
 partition. Load callbacks place storage-named projection wires directly into the
@@ -171,11 +171,27 @@ class PreparedTesseraPackedMoeExperts:
             self.__second.row_scale(expert_ids).unsqueeze(-1))
 
 
-class PreparedTesseraFoldedBf16MoeExperts:
-    """Selected stock BF16 tiles matching the joint screen's PWC render."""
+class PreparedTesseraSelectedBf16MoeExperts:
+    """Selected raw BF16 tiles with their separate fp32 row scales.
 
-    def __init__(self, w13_weight, w2_weight):
-        self.w13_weight, self.w2_weight = w13_weight, w2_weight
+    ``w13_weight [S, 2N, K]`` and ``w2_weight [S, K, N]`` are the reference
+    pair's raw bf16 values (``materialize_bf16``'s tile); ``w13_weight_scale``
+    and ``w2_weight_scale`` are the matching fp32 row scales with a trailing
+    singleton dimension.  Nothing is folded: the served arithmetic multiplies
+    each row scale on the fp32 accumulator after its dot.
+    """
+
+    __slots__ = ("w13_weight", "w2_weight", "w13_weight_scale", "w2_weight_scale")
+
+    def __init__(self, w13_weight, w2_weight, w13_weight_scale, w2_weight_scale):
+        self.w13_weight = w13_weight
+        self.w2_weight = w2_weight
+        self.w13_weight_scale = w13_weight_scale
+        self.w2_weight_scale = w2_weight_scale
+
+    @property
+    def experts(self) -> int:
+        return int(self.w13_weight.shape[0])
 
 
 class PreparedTesseraPackedBf16MoeExperts:
@@ -188,12 +204,20 @@ class PreparedTesseraPackedBf16MoeExperts:
     def resident_bytes(self) -> int:
         return self.__first.resident_bytes() + self.__second.resident_bytes()
 
-    def decode_folded(self, expert_ids, *, max_experts_per_chunk, backend="torch"):
-        return PreparedTesseraFoldedBf16MoeExperts(
-            self.__first.decode_folded(expert_ids, max_experts_per_chunk=max_experts_per_chunk,
-                                       backend=backend),
-            self.__second.decode_folded(expert_ids, max_experts_per_chunk=max_experts_per_chunk,
-                                        backend=backend))
+    def decode(self, expert_ids, *, max_experts_per_chunk, backend="torch"):
+        """Selected raw tiles plus their fp32 row scales, in global-ID order.
+
+        ``expert_ids`` selects whole experts; the caller maps its routing ids
+        to these slots.  Chunked like the FP8 ``decode`` so a whole-selection
+        float copy never dominates TP2 prefill memory.
+        """
+        return PreparedTesseraSelectedBf16MoeExperts(
+            self.__first.decode(expert_ids, max_experts_per_chunk=max_experts_per_chunk,
+                                backend=backend),
+            self.__second.decode(expert_ids, max_experts_per_chunk=max_experts_per_chunk,
+                                 backend=backend),
+            self.__first.row_scale(expert_ids).unsqueeze(-1),
+            self.__second.row_scale(expert_ids).unsqueeze(-1))
 
 
 def _parsed_experts(blobs, declared_group, target, device):
@@ -312,9 +336,11 @@ def prepare_tessera_packed_bf16_moe_experts(blobs, declared, target, device=None
                                             *, tp_rank=0, tp_size=1):
     """Research-only selected BF16 owner over original verified expert wires.
 
-    The selected folded tile matches ``read_unit_artifact(...).to(bfloat16)``,
-    the current PrismaQuant joint screen. It is distinct from Tessera's dense
-    BF16 route, which applies row scale after the GEMM instead.
+    The selected ``decode`` returns raw bf16 tiles with separate fp32 row
+    scales -- the same pair the dense BF16 route serves, scale applied after
+    the dot.  The joint screen's folded PWC render lives only in
+    ``stock.materialize_stock``'s derived plain BF16 cast; no serving path
+    computes it.
     """
     from .bf16_route import PreparedTesseraBf16Module, prepare_tessera_bf16_module
     from .sharding import shard_parsed_roles
@@ -517,7 +543,6 @@ class _RankLocalPackedIntake:
             stride13=self.declared['groups']['w13']['wire_stride'],
             stride2=self.declared['groups']['w2']['wire_stride'])
         family = "value" if self.family == TESSERA_BF16 else "e4m3"
-        arithmetic = "folded" if self.family == TESSERA_BF16 else "epilogue"
         soa = {g: self.axis[g].finish() for g in MOE_GROUPS}
         self._scratch.clear()
         names = {g: [str(role['roles'][0][0]) for role in self.roles[g]] for g in MOE_GROUPS}
@@ -533,7 +558,7 @@ class _RankLocalPackedIntake:
                 total_words=slot["total_words"], run_off=slot["run_off"],
                 perm_all=slot["perm"], rows=slot["rows"], cols=slot["cols"],
                 experts=int(self.declared['experts']), window_bits=slot["window_bits"],
-                family=family, arithmetic=arithmetic,
+                family=family,
                 word_layout=str(slot.get("word_layout", "legacy")))
 
         self.axis = {}
@@ -603,6 +628,7 @@ def _bind_module_prefix(layer, prefix: str) -> bool:
 
 
 
+
 def _require_eager_selected_context(config, prefix):
     """Keep model and explicit standalone operator eager evidence distinct."""
     model=getattr(config,"model_config",None)
@@ -618,6 +644,63 @@ def _require_eager_selected_context(config, prefix):
     if (compilation is None or getattr(compilation,"mode",None) is not CompilationMode.NONE
             or getattr(compilation,"cudagraph_mode",None) is not CUDAGraphMode.NONE):
         raise ValueError(f"{prefix}: standalone research selected experts require explicit eager compilation and no CUDA graphs")
+
+
+def _selected_bf16_apply(x, selected, weights, ids, expert_map, *, layer, prefix):
+    """Torch grouped MoE over raw BF16 tiles with separate fp32 row scales.
+
+    ``selected`` is ``PreparedTesseraSelectedBf16MoeExperts``: raw bf16
+    ``w13_weight [S, 2N, K]`` / ``w2_weight [S, K, N]`` with fp32
+    ``w13_weight_scale [S, 2N, 1]`` / ``w2_weight_scale [S, K, 1]``.  Each
+    dot runs over the exact bf16 values (the bf16->fp32 upcast is exact) and
+    accumulates in fp32; each row scale multiplies its row of the fp32
+    accumulator BEFORE the SwiGLU boundary (w13) or the output (w2).  The
+    stock unquantized kernel carries no per-row weight scale, so this route
+    owns its dot rather than calling it.  Pure torch: runs on CPU and GPU.
+
+    The runner owns the shared-expert output. This method returns only
+    the routed output and does not call the shared-expert coordinator.
+    """
+    from ..native_window_moe import checked_swiglu_limit
+
+    for field in ('swiglu_alpha', 'swiglu_beta'):
+        if getattr(layer, field, None) is not None:
+            raise ValueError(
+                f"{prefix}: {field} is set; the selected BF16 torch path refuses to "
+                "approximate it")
+    try:
+        limit = checked_swiglu_limit(getattr(layer, 'swiglu_limit', None), where=f"{prefix}: ")
+    except GrammarError as exc:
+        raise ValueError(str(exc)) from exc
+    on_input = bool(getattr(layer, 'apply_router_weight_on_input', False))
+    slots = expert_map[ids.long()]
+    x2 = x.reshape(-1, x.shape[-1])
+    wf = weights.reshape(-1, weights.shape[-1]).float()
+    routed = torch.empty((x2.shape[0], wf.shape[1], selected.w2_weight.shape[1]),
+                         dtype=torch.bfloat16, device=x.device)
+    for s in range(selected.experts):
+        rows, routes = torch.where(slots == s)
+        if rows.numel() == 0:
+            continue
+        xs = x2[rows]
+        rw = wf[rows, routes].unsqueeze(-1)
+        if on_input:
+            xs = (xs.float() * rw).to(torch.bfloat16)
+        h = (xs.float() @ selected.w13_weight[s].float().t()) * selected.w13_weight_scale[s].t()
+        gate, up = h.to(torch.bfloat16).float().chunk(2, dim=-1)
+        if limit is not None:
+            gate = torch.clamp(gate, max=limit)
+            up = torch.clamp(up, min=-limit, max=limit)
+        act = (torch.nn.functional.silu(gate) * up).to(torch.bfloat16)
+        y = (act.float() @ selected.w2_weight[s].float().t()) * selected.w2_weight_scale[s].t()
+        if not on_input:
+            y = y * rw
+        routed[rows, routes] = y.to(torch.bfloat16)
+    out = torch.zeros((x2.shape[0], selected.w2_weight.shape[1]),
+                      dtype=torch.float32, device=x.device)
+    for route in range(wf.shape[1]):
+        out += routed[:, route].float()
+    return out.to(x.dtype)
 
 
 def build_tessera_moe_method(scheme: Mapping, prefix: str, mode: str, layer, *,

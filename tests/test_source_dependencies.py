@@ -1178,12 +1178,11 @@ def test_a_wildcard_over_an_ordinary_directory_adds_nothing(tmp_path, monkeypatc
     ("import glob\n" + _HERE + "x = glob.glob(str(HERE / 'docs' / '*' / '*.md'))\n", "docs/out"),
 ], ids=["wildcard", "literal-after-wildcard", "module"])
 def test_a_link_leaving_the_tree_keeps_the_read_unplaced_and_is_never_approached(
-        tmp_path, monkeypatch, source, link):
+        tmp_path, tmp_path_factory, monkeypatch, source, link):
     # An outside bridge may lead straight back into the tree, so the read cannot be
     # attributed to any file.  The guard declines to look; the answer is the #338
     # uncertainty (select the reader's consumers), not a silent success (#1011 review).
-    outside = tmp_path / "outside"
-    outside.mkdir()
+    outside = tmp_path_factory.mktemp("outside")
     root = tmp_path / "repo"
     (root / "docs" / "plain").mkdir(parents=True)
     (root / link).symlink_to(outside, target_is_directory=True)

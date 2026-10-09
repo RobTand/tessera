@@ -64,14 +64,13 @@ def _panel_fixture():
               "q256": 1792, "rows": 128, "columns": 256, "wire_bytes": 4096,
               "roles": [["weight", 128]], "role_q256": [1792]}
     # The launch the BF16 dense route makes: the packed native window GEMM on
-    # the folded arithmetic (tessera#614).  It was ``torch.mm``/``torch_window``
+    # raw values with the FP32 row-scale epilogue. It was ``torch.mm``/``torch_window``
     # until ``scheme.ROUTE_LAUNCHES`` stopped carrying the retired window-GEMV
-    # lane's rows (tessera#538), then ``native_window_gemm`` (the epilogue
-    # arithmetic) until #614; the bench resolves this pair from that table, so
-    # the expectation moves with it.
+    # lane's rows (tessera#538); the bench resolves this pair from that table, so
+    # the expectation moves with it. The BF16 pair has no served census for this source.
     route = {"kind": "dense", "policy": "TESSERA_BF16:resident",
              "symbol": "tessera::window_gemm_dense",
-             "decoder": "native_window_gemm_folded", "contract": "bf16_unquantized"}
+             "decoder": "native_window_gemm_bf16", "contract": "bf16_unquantized"}
     native = {"weight": _tensor_identity(weight)}
     observed_operator = {"wire_sha256": blob_sha, "wire_record_sha256": _json_sha(record),
                          "source_weight": _tensor_identity(weight),
@@ -535,7 +534,7 @@ def _fake_preparation(monkeypatch):
             # dense route admits two launches, so a fixture that declared
             # nothing would leave the bench unable to name one.
             layer.tessera_symbol = "tessera::window_gemm_dense"
-            layer.tessera_decoder = "native_window_gemm_folded"
+            layer.tessera_decoder = "native_window_gemm_bf16"
             trace.append("process loaded original wire")
 
         return SimpleNamespace(create_weights=create_weights,
@@ -768,8 +767,7 @@ def test_packed_native_owner_tensors_are_frozen_beside_registered_buffers():
     from tessera.serving.native_window import PreparedDenseNativeModule
     layer=torch.nn.Module();layer.register_buffer('scale_b',torch.ones(4))
     names=('words','table','codes','native','scale','runs','init_perm','perm')
-    bundle=SimpleNamespace(**{name:torch.arange(8,dtype=torch.int32) for name in names},cols=8,
-                           arithmetic='epilogue')
+    bundle=SimpleNamespace(**{name:torch.arange(8,dtype=torch.int32) for name in names},cols=8)
     owner=PreparedDenseNativeModule([SimpleNamespace(name='weight',rows=4,bundle=bundle)],
         rows=4,columns=8,device=torch.device('cpu'),family='e4m3')
     layer.tessera_native=owner

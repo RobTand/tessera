@@ -18,14 +18,10 @@
 # rung, so read the census JSON and add the cell deliberately, with the receipt
 # path in the changelog.
 #
-# THE TWIN IS THE CONTROL, AND IT IS NOT AN EQUAL ARM.  ``--stock-twin`` writes
-# a plain BF16 safetensors of ``materialize_bf16_folded`` -- the SAME encode,
-# with the row scale folded into the tile because a one-tensor checkpoint has
-# no way to carry it separately.  Vanilla vLLM serves it with no plugin.  So
-# twin-vs-route isolates exactly one thing: the fold.  The route should be the
-# BETTER arm (the fold costs 0.0011-0.0022 absolute relative output error at
-# any rate, ~16% of the total at R=7), and a route that merely TIES the twin is
-# a finding -- it would mean the epilogue is rounding where it should not.
+# The stock twin is a derived BF16 checkpoint over the same encode.
+# It has one BF16 conversion per effective weight. The Tessera route keeps
+# raw values and row scales separate through the dot. This comparison tests
+# that arithmetic difference. It does not establish a quality winner.
 #
 # usage: bf16_route_served.sh [q256 ...]        # default 1792 (R=7)
 #
@@ -94,10 +90,8 @@ for Q in "${@:-1792}"; do
   TWIN=$WIRE-twin
   PLUG=$WIRE-plugin
 
-  # 1. Export the wire and its twin, and verify every twin tensor IS
-  #    materialize_bf16_folded of the wire.  Skipped if it is already there:
-  #    the encode is deterministic, and re-exporting under a serve is how a
-  #    box runs out of memory.
+  # Export the wire and its derived stock twin. Verify every stock tensor.
+  # Keep an existing encode unchanged while a serve can read it.
   if [ ! -f "$WIRE/config.json" ]; then
     echo "=== export R=$R  $(date -Is)"
     WT="$WT" SRC="$SRC" OUT="$OUT" PY="$PY" experiments/bf16_export_qwen.sh "$Q"

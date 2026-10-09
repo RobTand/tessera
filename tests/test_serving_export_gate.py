@@ -366,22 +366,17 @@ def test_a_structure_no_cell_attests_is_refused_by_name(monkeypatch):
                                     family="TESSERA_BF16", span=recipe.span,
                                     target="bf16.stack", structure=STRUCTURE_ROUTED_MOE)
     assert "MOE_BUILDERS" in str(caught.value), str(caught.value)
-    # With its builder, a BF16 stack reaches the cell check.  Since contract
-    # v38 (tessera#604) a routed_moe cell names BF16 at q256 1024, so 1024 is
-    # admitted and 1792 is refused against that cell's rungs.  v59 restores
-    # this pin after review: no rung joins without a served receipt.
-    # Fail-before on the widened contract: 1792 admitted against refused.
-    at_1024 = wire_recipe(GRIDS["BF16"], 1024)
-    assert refuse_unserveable_wire("BF16", 1024, at_1024.body.name, at_1024.scale_plane.name,
-                                   family="TESSERA_BF16", span=at_1024.span,
-                                   target="bf16.stack",
-                                   structure=STRUCTURE_ROUTED_MOE) == "TESSERA_BF16"
-    with pytest.raises(ValueError) as caught:
-        refuse_unserveable_wire("BF16", 1792, recipe.body.name, recipe.scale_plane.name,
-                                family="TESSERA_BF16", span=recipe.span,
-                                target="bf16.stack", structure=STRUCTURE_ROUTED_MOE)
-    assert "tessera_bf16_k1_routed_moe_sm121_decode_resident" in str(caught.value), \
-        str(caught.value)
+    # With its builder, a BF16 stack reaches the cell check. Contract v62
+    # withdraws every BF16 cell, so no rung is admitted: 1024 and 1792 are
+    # both refused as unattested, by the structure's name.
+    for rung in (1024, 1792):
+        probe = wire_recipe(GRIDS["BF16"], rung)
+        with pytest.raises(ValueError) as caught:
+            refuse_unserveable_wire("BF16", rung, probe.body.name, probe.scale_plane.name,
+                                    family="TESSERA_BF16", span=probe.span,
+                                    target="bf16.stack", structure=STRUCTURE_ROUTED_MOE)
+        assert "no lane_eligibility cell" in str(caught.value), str(caught.value)
+        assert "routed_moe" in str(caught.value), str(caught.value)
 
     without = copy.deepcopy(load_serving_contract())
     without["lane_eligibility"]["cells"] = [
@@ -437,8 +432,7 @@ def _with_the_weaker_fact(contract: dict, *, structure: str) -> dict:
 
 def _routed_cell_plan(cell: dict) -> tuple[str, int]:
     """``(grid, q256)`` a stack of this cell's family is planned on."""
-    grid = {"TESSERA_E2M1_K2": "E2M1x2", "TESSERA_E4M3_K1": "E4M3",
-            "TESSERA_BF16_K1": "BF16"}[cell["family"]]
+    grid = {"TESSERA_E2M1_K2": "E2M1x2", "TESSERA_E4M3_K1": "E4M3"}[cell["family"]]
     return grid, int(cell["rungs_q256"][0])
 
 
@@ -590,7 +584,8 @@ def test_the_packaged_table_still_admits_every_device_qualified_rung():
     from tessera.serving.scheme import STRUCTURE_ROUTED_MOE, attested_cells
 
     packaged = load_serving_contract()
-    for family in ("TESSERA_E4M3_K1", "TESSERA_BF16_K1"):
+    for family in sorted({cell["family"] for cell in packaged["lane_eligibility"]["cells"]
+                          if cell["structure"] == "routed_moe"}):
         declared = [cell for cell in packaged["lane_eligibility"]["cells"]
                     if (cell["family"], cell["structure"]) == (family, STRUCTURE_ROUTED_MOE)]
         assert declared and all(cell["qualification"] == "device_qualified"
@@ -605,6 +600,8 @@ def test_the_packaged_table_still_admits_every_device_qualified_rung():
                 family=route_for_grid(grid_name), span=served.span, target="stack.probe",
                 structure=STRUCTURE_ROUTED_MOE, contract=packaged) == \
                 route_for_grid(grid_name)
+    assert [cell for cell in packaged["lane_eligibility"]["cells"]
+            if cell["family"] == "TESSERA_BF16_K1"] == []
 
 
 def test_a_cell_whose_facts_cannot_be_read_is_refused_not_assumed(monkeypatch):

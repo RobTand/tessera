@@ -98,6 +98,7 @@ def owner_wire(shape):
 
 
 
+
 def owner_needs_selected(wire, world):
     """Does this operator harness require explicit research topology?
 
@@ -155,7 +156,7 @@ def owner_research_selected(shape, wire, request_block):
     if family == "TESSERA_BF16":
         raise ValueError(
             "a TESSERA_BF16 routed owner is priced on its production builder (the compact "
-            "native lane, folded arithmetic), which is the served owner; drop the "
+            "native lane, FP32 row-scale epilogue), which is the served owner; drop the "
             "research_selected_moe block from this request")
     selected = ResearchSelectedMoeConfig.from_checkpoint(request_block)
     if not ResearchSelectedMoeConfig.applies_to(wire):

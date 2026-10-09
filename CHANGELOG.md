@@ -29,6 +29,244 @@ Supplier prose does not control admission. Physical arity and the empty menu rem
 Preserve unavailable T8 rates and the R1280 pricing anchor.
 Bind new table bytes in the candidate index. Leave the active index unchanged.
 
+## 2026-10-08 — retire arithmetic attributes from register-direct consumers
+
+The grouped owner now has one FP32 row-scale epilogue.
+Register-direct consumers no longer read or pass the removed arithmetic field.
+The e4m3 family, 14-bit window, byte-table and rate guards stay unchanged.
+The four caller regressions and actual checkpoint-backed hook construction pass.
+No CUDA source, numerical rule or table changes.
+
+## 2026-10-08 — keep the projection fixture inside the FP32 domain
+
+Map synthetic BF16 table words into the normal unit binade.
+Keep all sign and fraction bits; production grids stay unchanged.
+The derived domain regression failed before the fix.
+Both eager and graph device forwards pass on the finite bank.
+
+## 2026-10-08 — use canonical factors in the projection oracle
+
+Use the current BF16 native decoder and keep its exact launch-pair check.
+Decode raw values and FP32 row scales through one factor owner.
+Form the FP64 dense reference without a per-weight BF16 or FP32 cast.
+Keep the exact indexer reference on the canonical FP32 product.
+Only the explicit stock control casts a derived BF16 tensor.
+The three dtype-sensitive regressions failed before the correction.
+
+## 2026-10-08 — isolate the final real pricing-shape case
+
+Request the existing import-isolation fixture for the one missed real-root pricing case.
+Preserve exact charged shape checks and the strict foreign-source refusal.
+The actual foreign-cache smoke and all seven changed controls passed.
+Keep the pristine-master failed-file baseline separate from the corrected source.
+
+## 2026-10-08 — cite the actual BF16 withdrawal version
+
+Correct the contract docstring from v59 to the separate T16 v62 withdrawal.
+The published table, executable controls and tensor arithmetic stay unchanged.
+
+## 2026-10-08 — describe the raw BF16 native owner
+
+Remove the stale folded label from the current native-owner paragraph.
+Keep dated historical prefetch receipts unchanged.
+This prose correction changes no runtime, byte price, default or qualification.
+
+## 2026-10-08 — combine released defaults and kernel-build scope with T16 epilogues
+
+Retain the approved eligible piece-major and decode-once E4M3 defaults.
+Keep raw BF16 values and FP32 row-scale epilogues unchanged.
+Preserve adopted v61 history beside T16 v62 withdrawal under active v64.
+No old BF16 cell, receipt or qualification returns.
+Delete the obsolete historical whole-contract copy pin; key, build, id, launch and overlap controls remain.
+The current serving and MoE status header cites v62.
+
+## 2026-10-08 — keep TP2 fixture proofs on the native class owner
+
+Use native-valid geometry and the current intake contract.
+Remove retired decoder, load-plane shape and cumulative-allocation pins.
+Preserve the real rank-local numerical and integrity checks.
+Prove the zero-copy handoff through exact BODY storage identity.
+Do not restore compact or materializing serving fallbacks.
+
+## 2026-10-08 — read installed-export geometry from the fixture owner
+
+Call the authoritative fixture geometry function for the real installed exporter.
+Remove the stale constant reference.
+Keep the production geometry gate unchanged.
+
+## 2026-10-08 — use the current decoder owner in historical census replay
+
+Read the unqualified native decoder from the serving owner.
+Refuse historical folded BF16 records without a missing-qualified-pair error.
+Keep the historical receipts and current admission gates unchanged.
+
+## 2026-10-08 — migrate released class callers to the canonical table API
+
+Remove the retired arithmetic keyword from the released class fixtures and experiment builders.
+Keep raw BF16 lookup values separate from FP32 row scales.
+The class parity and changed-route controls use the same native owner.
+No serving default or qualification changes.
+
+## 2026-10-08 — keep benchmark imports free of runtime state
+
+Initialize the optional vLLM stand-ins and serving-mode default inside the benchmark entrypoint.
+Benchmark imports do not publish a false runtime or change the caller environment.
+Keep a local stub flag for every existing admission and metadata check.
+The import-boundary regression failed before the fix and passed after it.
+No serving default, qualifier or timing rule changes.
+
+## 2026-10-08 — preserve the T16 cutover in native class dispatch
+
+Merge the released mandatory native class owner without a compact serving fallback.
+Keep raw BF16 values separate from FP32 row scales through each dot.
+Remove the newly merged arithmetic selectors and use the BF16 class decoder identity.
+The census reads actual retained class tensors instead of retired compact planes.
+All current BF16 operations remain unqualified. Historical receipts stay unchanged.
+
+## 2026-10-08 — keep one owner for fixture geometry
+
+Read the miniature geometry from the caller configuration.
+Use the same geometry for export and its declared runtime partitions.
+Remove the second census from the routed pricing fixture.
+The production geometry gate stays unchanged.
+
+## 2026-10-08 — compare native scalar retention bytes
+
+Flatten scalar and nonscalar retained tensors before their uint8 views.
+Keep the bit-exact comparison across repeated real forwards.
+The native owner and its retained buffers stay unchanged.
+
+## 2026-10-08 — declare the research span-two boundary wire
+
+Use the explicit TCQ recipe for the span-two numerical boundary bank.
+Keep the native serving WINDOW default unchanged.
+The actual serialized-wire oracle passes all seven TCQ rates.
+
+## 2026-10-08 — remove the historical phase-error wording pin
+
+Remove the comparison with a retained list of error sentences.
+Keep the functional phase-shape and historical receipt checks.
+The phase plan and production refusal rules stay unchanged.
+
+## 2026-10-08 — combine the T4 and T16 serving withdrawals
+
+Keep the released v64 contract and the T16 v62 history entry.
+Retain native T4 WINDOW identities and raw BF16 decoder names.
+Both old serving cell sets stay withdrawn.
+All historical receipt bytes stay unchanged.
+
+## 2026-10-08 — declare miniature export geometry
+
+Reuse the shared fixture size generator in exporter tests.
+Declare the tiny attention and MLP partitions instead of the real model dimensions.
+Keep the same geometry in the installed exporter fixture.
+The production geometry gate stays unchanged.
+
+## 2026-10-08 — isolate the portable preflight test
+
+Run the portable construction preflight through its real CLI in a fresh process.
+Keep the refusal for an initialized CUDA process unchanged.
+The test retains its configuration and KDA geometry checks.
+
+## 2026-10-08 — remove a document-position test
+
+Remove the test that treats the first architecture paragraph as a fixed residency section.
+Keep the residency planner behavior tests and the general issue-reference audit.
+No planner behavior or document citation is changed.
+
+## 2026-10-08 — complete the routed T16 experiment callers
+
+Use raw BF16 values and separate FP32 row scales in the routed oracle.
+Read both current decoder names from their telemetry owner.
+Keep the historical stock control outside the numerical reference.
+The census reports compact facts or the fused owner’s retained facts.
+Pass that owner from the actual census consumer instead of reading retired planes.
+The numerical regression shows the old reference failure on real serialized wires.
+
+## 2026-10-08 — migrate direct BF16 projection buffers
+
+Read canonical FP32 value-scale products for direct consumers.
+Keep the indexer cache in FP32 and cast the MLA cache once to BF16.
+Remove the retired folded decoder and arithmetic selector.
+The resident-byte rule and the consumer buffer shapes remain unchanged.
+
+## 2026-10-07 — isolate explicit pricing roots in tests
+
+Reuse the existing package isolation rule for both real pricing roots.
+The affected tests restore the previous module graph after each test.
+Keep the runtime foreign-source refusal and all byte-accounting assertions unchanged.
+
+## 2026-10-07 — initialize real IR providers in vLLM hash tests
+
+Use the vLLM priority owner before the real configuration hash. It imports
+the platform kernels and restores the prior context after each check.
+The tests keep actual provider UUIDs and do not mock registry entries.
+
+## 2026-10-07 — use the public dense bundle view
+
+Make the BF16 epilogue test read the public prepared-bundle view. The test
+keeps its derived numerical bound and no longer reads an obsolete part field.
+
+## 2026-10-07 — remove a LUT refusal wording pin
+
+Keep the mixed-layout refusal test and its error class. Remove the message
+fragment assertion. The layout check and its diagnostic remain unchanged.
+
+## 2026-10-07 — use canonical BF16 serving oracles
+
+Replace the remaining folded dense reference with raw values and separate
+row scales. Reuse the shared FP64 definition and derived bounds. Remove
+obsolete arithmetic-field assertions and restore the missing reader import.
+The retained GEMV bound also uses the shared owner. Product code is unchanged.
+
+## 2026-10-07 — finish the T16 API callers
+
+Remove the obsolete family keyword from the independent FP8 stock call.
+Make E4M3 decode-once use its existing bundle family without the removed
+arithmetic field. The numerical rules and family refusal remain unchanged.
+CPU smoke covers the caller contract. GPU verification remains separate.
+
+## 2026-10-07 — remove a redundant BF16 coverage assertion
+
+Keep the direct BF16 cell withdrawal check. Remove the empty-loop assertion
+that follows it. Clarify that the rung rule describes capability, not
+served-cell attestation. No product code or numerical expectation changes.
+
+## 2026-10-07 — require the real vLLM configuration module in hash tests
+
+Check the configuration module before tests call its runtime API. A root
+stub module does not prove that the runtime dependency is available.
+The tests still compare actual vLLM hashes when that dependency is present.
+
+## 2026-10-07 — isolate the external-path test fixture
+
+Create the external directory through the pytest factory. The directory
+stays outside the scanned tree and receives a unique test-owned path.
+This prevents collisions when pytest removes successful temporary paths.
+The source dependency scanner and its safety rule do not change.
+
+## 2026-10-07 — T16 FP32 row-scale epilogue cutover
+
+Replace folded per-weight BF16 math with raw BF16 values and separate
+FP32 row scales. Dense and grouped kernels apply each row scale after
+the FP32 dot. Routed gate/up, activation and weighted-route boundaries
+retain their BF16 conversions. The token reducer uses a fixed route order.
+The runner owns shared output.
+
+Remove folded materializers, arithmetic selectors and decoder aliases.
+Migrate serving adapters, selected research math and numerical oracles.
+Remove obsolete folded BF16 stock controls. Current numerical oracles
+retain raw values and row scales through each dot.
+The canonical encoder and reader already use the FP32 effective-weight
+product; their profile and wire bytes do not change. The plain BF16
+stock checkpoint remains a derived control.
+
+Contract v62 withdraws eight old BF16 cells, their rung/wire attestations
+and the BF16 TP2 qualification. Historical receipts remain unchanged.
+The new BF16 decoder identities need a new served census. Changed T16
+D41 classes need measurements on the merged build before allocation.
+Preserve external paths through their active measurement lifetimes.
+
 ## 2026-10-08 — rank identity in the graph witness (issue #1062)
 
 The witness reads each rank and world size from the real receipt fields.
@@ -82,7 +320,6 @@ measurement, quality and admission field, ignoring only timestamps and explicit
 provenance fields. An altered dimension and a mismatched mode each leave the
 affected cells out of the table while the unrelated valid cells stay joined.
 Production code, parser controls, defaults, pins and wire bytes stay unchanged.
-
 ## 2026-10-08 — explicit A8S graph MNBT matrix harness
 
 The opt-in `ship-graph-mnbt-matrix` mode measures the authorized 18-cell matrix.
@@ -110,7 +347,6 @@ Explicit decode-once requests still refuse compiled forwards. Explicit 0 opts ou
 
 Byte checks, reader guards, arithmetic, residency accounting and serving qualification holds remain unchanged.
 Maximum batched tokens remain 2048. KDA defaults, runtime pins and current measurement source remain unchanged.
-
 ## 2026-10-08 — T4 route tests declare their Torch dependency
 
 The CPU route-admission tests use export and telemetry code that requires Torch.
@@ -272,7 +508,6 @@ proof and a production dynamic-routing D41 entry with honest pure comparators.
 CPU export/read and source approval do not qualify GPU serving or quality.
 No serving pin, allowable-rung/contract row or seal moves, and ongoing
 measurement source/artifact pins are not replaced.
-
 ## 2026-10-08 — position-independent issue reference checks
 
 Remove the residency test that assumes a fixed architecture paragraph position.

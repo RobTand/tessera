@@ -11,15 +11,15 @@ consumes.
 
 HOW IT LOADS AND RUNS NOW.  The compact reader validates the container and
 the sidecar facts (`scheme.parse_compact_blob_for_scheme`) and expands no
-weight plane; each role is cut to this rank off the layer's ``ShardPlan`` and
-frozen into ``window_gemm.PreparedWindowGemm``, whose table gather, row-scale
-fold and bf16 ``tl.dot`` run in registers/shared memory -- there is no
-materialised bf16 tile in either residency.  The route stamps
-``(tessera::window_gemm_dense, native_window_gemm_folded)``.
+frozen into ``window_gemm.PreparedWindowGemm``, whose table gather and bf16
+``tl.dot`` run in registers/shared memory -- there is no materialised bf16
+tile in either residency.  The fp32 accumulator is multiplied by the wire's
+fp32 row scale after the dot.  The route stamps
+``(tessera::window_gemm_dense, native_window_gemm_bf16)``.
 ``prepare_tessera_bf16_module`` and the torch window decode stay as reference
-decoders (``tessera.decode.materialize_bf16``, the unfolded pair), no longer
-reached from a serve; the served arithmetic's oracle is
-``tessera.decode.materialize_bf16_folded``.
+decoders (``tessera.decode.materialize_bf16``, the raw pair), no longer
+reached from a serve; the served arithmetic's oracle is that same pair
+applied after the dot.
 
 WHY THE FAMILY EXISTS.  The window body's error over the E4M3 alphabet
 saturates at ~0.022 out-space from R = 6 upward -- the floor is the
@@ -29,42 +29,20 @@ bf16 keeps halving at ~1.93x per bit through R = 7
 an 8-bit tile has nothing left to buy, so the route that lets an allocator
 spend 7 bits usefully is the one whose alphabet is not the constraint.
 
-THE ROW SCALE IS FOLDED INTO THE TILE, ONCE (tessera#606, #614).  Each served
-weight is ``bf16(t_ik * s_i)``: the table value times its row's fp32 scale,
-rounded to bf16 once, in registers, before the dot, and no scale on the
-output.  That is ``tessera.decode.materialize_bf16_folded``'s tile --
-``reconstruct_unit``'s fp32 product with one round-to-nearest-even -- and it is
-the arithmetic this route serves for dense modules and for routed experts
-alike (the routed stack, ``scheme.MOE_BUILDERS[TESSERA_BF16]``, serves the
-compact window MoE lane on ``window_gemm_grouped``'s ``arithmetic="folded"``).
+THE ROW SCALE APPLIES AFTER THE DOT.  Each served output row is
+``s_i * sum_k t_ik x_k``: raw bf16 table values through the dot, one fp32
+multiply by the row's scale on the accumulator, one bf16 cast.  That is
+``reconstruct_unit``'s fp32 product with the reference pair's scale applied
+after it -- and it is the arithmetic this route serves for dense modules and
+for routed experts alike (the routed stack,
+``scheme.MOE_BUILDERS[TESSERA_BF16]``, serves the compact window MoE lane
+with the same epilogue).
 
-WHY FOLDED, AND WHAT IT COSTS.  The decision is pricing identity, not
-accuracy.  A consumer that prices a BF16 rung prices the decoded tile rounded
-once to bf16; a route that served the scale on the fp32 epilogue instead
-computed a different function of the same wire, so the priced number and the
-served number described two functions.  The route now serves the priced one.
-
-The cost was measured before the decision and is kept here because it is the
-reason the choice is cheap.  Folding adds one bf16 rounding of ``s_i * t_ik``
-(relative error ``<= 2^-9``): ~0.0011-0.0022 absolute on GLM expert rows at
-*any* rate, because it is a property of bf16's 7-bit mantissa rather than of
-the coder (``tessera16-alphabet-floor`` B).  Its *share* of the error grows as
-the coding error shrinks underneath it -- 15.4% at R = 7 -- but a share
-composes in quadrature, so that is a 1.2% error gap and a 2.4% squared-error
-gap, and served at R = 7 the folded twin's KL is 1.0011x the epilogue route's
-on ``all`` and 0.9961x on ``confident``: the signs disagree, i.e. below what
-the corpus resolves (``tessera-bf16-route`` §7b as corrected,
-``tessera-bf16-route-served`` §3, #45).  Neither arithmetic is claimed to win
-on quality; the fold is chosen because it is the one that is priced.
-
-The epilogue form is still exact algebra -- a CHANNEL scale is one factor per
-**output row**, so ``x (s * W)^T = (x W^T) * s`` -- and it remains what
-``materialize_bf16`` returns (the pair), what the retained window-GEMV
-reference lane below applies (``y_i = s_i * sum_k t_ik x_k``), and what the
-FP8 family serves beside its per-token A scale.  ``window_gemm``'s
-``arithmetic="epilogue"`` keeps it callable.  It is not what this route
-serves, and the route stamps a decoder per arithmetic so no receipt can
-confuse the two.
+PAST RECEIPTS NAMED THE FOLDED FORM (tessera#606, #614).  A route that served
+``bf16(t_ik * s_i)`` -- one bf16 rounding of value times scale in registers,
+before the dot -- computed a different function of the same wire, and every
+cell that census'd it is withdrawn with this change, not relabelled.  The
+new pairs stay experimental until a served census proves them.
 """
 from __future__ import annotations
 
@@ -81,8 +59,8 @@ from .scheme import (FUSED_WINDOW_DENSE_SYMBOL, ROUTES, TESSERA_BF16, WINDOW_GEM
                      WINDOW_GEMV_SYMBOL, launch_pairs, parse_compact_blob_for_scheme,
                      validate_tessera_scheme)
 from .sharding import plan_shard_for_layer, require_axis_supported
-from .telemetry import (DECODER_NATIVE_FUSED_WINDOW_DENSE_FOLDED,
-                        DECODER_NATIVE_WINDOW_GEMM_FOLDED, DECODER_TORCH_WINDOW,
+from .telemetry import (DECODER_NATIVE_FUSED_WINDOW_DENSE_BF16,
+                        DECODER_NATIVE_WINDOW_GEMM_BF16, DECODER_TORCH_WINDOW,
                         DECODER_WINDOW_GEMV, emit_route, route_shape)
 from .window import (PreparedModuleAxis, PreparedWindow, _fingerprint, prepare_window,
                      require_expert_ids)
@@ -122,7 +100,7 @@ GEMM_SYMBOL = ROUTES[TESSERA_BF16]["gemm_symbol"]
 
 #: THE dense launches this route makes, owned where the dispatch is; the BF16
 #: counterpart of ``fp8_route.DENSE_LAUNCHES`` and documented there (#538):
-#: the same symbols, on the folded arithmetic's own decoders (tessera#614).
+#: the same symbols, on the family's own decoders.
 #: ``apply`` stamps the prepared module's ``launch_pair`` at its one
 #: ``emit_route`` call, ``process_weights_after_loading`` refuses a prepared
 #: module whose pair is not in this tuple, and ``tests/test_serving_contract.py``
@@ -130,8 +108,8 @@ GEMM_SYMBOL = ROUTES[TESSERA_BF16]["gemm_symbol"]
 #: exactly this set.  ``DENSE_FUSED_LAUNCH`` is the fused window kernel's
 #: dense identity (contract v43), taken for every module whose roles
 #: ``routed_fused.fused_dense_window_supported`` admits.
-DENSE_LAUNCH = (WINDOW_GEMM_SYMBOL, DECODER_NATIVE_WINDOW_GEMM_FOLDED)
-DENSE_FUSED_LAUNCH = (FUSED_WINDOW_DENSE_SYMBOL, DECODER_NATIVE_FUSED_WINDOW_DENSE_FOLDED)
+DENSE_LAUNCH = (WINDOW_GEMM_SYMBOL, DECODER_NATIVE_WINDOW_GEMM_BF16)
+DENSE_FUSED_LAUNCH = (FUSED_WINDOW_DENSE_SYMBOL, DECODER_NATIVE_FUSED_WINDOW_DENSE_BF16)
 DENSE_LAUNCHES = (DENSE_LAUNCH, DENSE_FUSED_LAUNCH)
 
 #: The JIT module name the GEMV load path asks for -- ``ext``'s constant, so the
@@ -209,9 +187,9 @@ class PreparedTesseraBf16Module:
         """A fresh ``bfloat16 [rows, columns]`` of table VALUES: the forward's entry.
 
         The row scale is deliberately absent: this is the reference pair's
-        tile, ``materialize_bf16``'s, not the weight the encoder scored.
-        ``bf16(value * scale[:, None])`` is that weight, and it is what the
-        served dense GEMM forms in registers (see the module docstring).
+        tile, ``materialize_bf16``'s, not the weight the encoder scored.  The
+        served dense GEMM applies that scale after the dot (see the module
+        docstring); no path folds it into the tile.
         """
         if len(self.__roles) == 1:
             return self.__roles[0].window.decode()
@@ -293,34 +271,6 @@ class PreparedTesseraBf16Batch:
                           backend=backend)
                  for w in self.__windows]
         return parts[0] if len(parts) == 1 else torch.cat(parts, 1)
-
-    def decode_folded(self, expert_ids, *, max_experts_per_chunk, backend="torch"):
-        """One BF16 rounding of the scaled tile, matching read_unit_artifact.
-
-        This is the joint quality screen's canonical PWC weight, and the
-        arithmetic both native BF16 serving launches run in registers (the
-        dense window GEMM and the routed compact lane, tessera#614).  This
-        method materialises it as a tile, which only the separately named
-        research-selected owner consumes.
-        """
-        require_expert_ids(expert_ids, self.device)
-        if type(max_experts_per_chunk) is not int or max_experts_per_chunk <= 0:
-            raise ValueError("max_experts_per_chunk must be a positive integer")
-        if backend not in ("torch", "triton"):
-            raise ValueError(f"unknown selected window backend {backend!r}")
-        # The final selected BF16 stack is unavoidable. Keep raw decoded tiles
-        # and their fp32 folding intermediates bounded by the declared chunk;
-        # a whole-selection float copy would dominate TP2 prefill memory.
-        folded = torch.empty((expert_ids.numel(), self.rows, self.columns),
-                             dtype=torch.bfloat16, device=self.device)
-        for start in range(0, expert_ids.numel(), max_experts_per_chunk):
-            stop = min(start + max_experts_per_chunk, expert_ids.numel())
-            chunk_ids = expert_ids[start:stop]
-            values = self.decode(chunk_ids, max_experts_per_chunk=max_experts_per_chunk,
-                                 backend=backend)
-            scale = self.row_scale(chunk_ids)
-            folded[start:stop] = (values.float() * scale[:, :, None]).to(torch.bfloat16)
-        return folded
 
 
 def prepare_tessera_bf16_module(parsed_roles, device=None) -> PreparedTesseraBf16Module:
@@ -846,7 +796,8 @@ def build_tessera_bf16_method(scheme, prefix: str, mode: str):
             through the same helpers as the materialising one and expands no
             weight plane; each role is cut to this rank off the layer's plan
             and frozen into a ``PreparedWindowGemm`` (the value family: a bf16
-            table, the fp32 row scale folded into each weight).  No reference decode
+            table, the fp32 row scale applied on the fp32 accumulator after
+            the dot).  No reference decode
             runs here -- the retained ``prepare_tessera_bf16_module`` path
             stays as the test oracle.
             """
@@ -875,8 +826,8 @@ def build_tessera_bf16_method(scheme, prefix: str, mode: str):
             layer.tessera_roles = prepared.role_names
             # The row factor, ``[rows]`` fp32: the same fp32 expression the
             # reference decoder applies, kept for the route record and the
-            # reference checks.  The served GEMM folds it into each weight
-            # inside the bundle (see the module docstring); this buffer is not
+            # reference checks.  The served GEMM applies it after the dot
+            # (see the module docstring); this buffer is not
             # read by the forward.
             layer.register_buffer("row_scale", prepared.row_scale().contiguous(),
                                   persistent=False)
@@ -896,9 +847,9 @@ def build_tessera_bf16_method(scheme, prefix: str, mode: str):
             x2 = x.reshape(-1, orig[-1])
             if x2.dtype != torch.bfloat16:
                 x2 = x2.to(torch.bfloat16)
-            # The packed native GEMM: bf16 x, each weight folded with its row
-            # scale (one bf16 rounding) before the dot, fp32 accumulate, one
-            # bf16 cast and no epilogue scale.  ``tessera_native``
+            # The packed native GEMM: bf16 x, raw bf16 weights through the dot,
+            # fp32 accumulate, one multiply by the row's fp32 scale, one bf16
+            # cast.  ``tessera_native``
             # is set by ``process_weights_after_loading`` or the module does
             # not serve; the materialised/decode-per-forward branches this
             # replaced are retired with the decode-to-global paths (the

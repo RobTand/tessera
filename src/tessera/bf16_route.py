@@ -25,31 +25,20 @@ spend 7 bits usefully is the one whose alphabet is not the constraint.
   runs.  That is the product mode; :func:`stream_bf16` is the call,
   for the reason below.
 
-Both are the **same bytes**: the streamed decode is checked against
+Both are the **same artifact**: the streamed pair is checked against
 ``decode``'s at load and the two are bit-identical by construction --
-they share ``dequantize``'s expression and the single round-to-nearest-even
-that ``materialize_bf16_folded`` documents.  Pure torch throughout, no Triton: a
+they share the table gather and the scale product ``decode`` documents.
+Pure torch throughout, no Triton: a
 runtime that must not import Triton (Gridbook) imports this module.
 
-**Do not fold the row scale if you do not have to.**  A one-tensor BF16
-checkpoint must: it ships a weight and no scale, so ``bf16(code * s)`` is all
-it can carry, and that rounding is ~0.0015 in relative output error on GLM
-expert rows *whatever* the coder (``docs/measurements/tessera16-alphabet-floor-2026-09-02.md``
-§B).  Its *share* of the error grows as the coding error shrinks underneath
-it -- 15.4% at R=7 -- but a share composes in quadrature, so that is a 1.2%
-error gap and a 2.4% squared-error gap, and served at R=7 the twin's KL is
-1.0011x the route's on ``all`` and 0.9961x on ``confident``: below what the
-corpus resolves, so no fold win is claimed (``tessera-bf16-route`` §7b as
-corrected, ``tessera-bf16-route-served`` §3, #45).  A lane
-holding the wire is not stuck with it: a CHANNEL scale is one factor per
-**output row**, so it commutes with the matmul, and the lane runs the stock
-BF16 GEMM on the *code tile* -- exactly bf16 already, since every table entry
-is a bf16 value -- and applies the row scale in fp32 as an epilogue, the same
-epilogue ``lane_planes`` builds for this plane on the kernel lane.  Measured
-on random activations that is 2.8e-7 relative against the fold's 1.7e-3.
-:func:`stream_bf16` is that path and it is what a lane should call;
-:func:`stream_bf16_folded` is the twin's rendering, kept because the twin has
-to be reproducible bit for bit.
+The row scale stays out of the tile. The encoder scores the FP32 product
+without a per-weight BF16 conversion. Each table value is an exact BF16 word.
+A kernel accumulates the dot in FP32, then applies the row scale before
+the final BF16 conversion. ``stream_bf16`` returns that pair.
+
+The plain BF16 checkpoint holds one tensor without a separate scale.
+``stock.materialize_stock`` produces that derived checkpoint with one BF16
+conversion per effective weight. No Tessera lane computes through that tensor.
 """
 from __future__ import annotations
 
@@ -70,7 +59,6 @@ __all__ = [
     "unpack_window_body",
     "window_pad_state",
     "stream_bf16",
-    "stream_bf16_folded",
 ]
 
 #: The name Gridbook's ``tessera_scheme`` gives this family, and the name the
@@ -109,7 +97,7 @@ class StreamedBF16Unit:
     stored start state for a TP row shard), the per-column bit offsets and
     rates, the ``2^L`` bf16 table, and one fp16 word per output row times an
     fp32 global.  Nothing is
-    expanded until :func:`stream_bf16_folded` is asked for a tile.
+    expanded until :func:`stream_bf16` decodes a pair.
     """
 
     __slots__ = ("plane", "offsets", "rates", "table", "row_scale",
@@ -166,7 +154,7 @@ def prepare_bf16_unit(
         )
     if ScalePlaneKind(unit.scale_plane) is not ScalePlaneKind.CHANNEL:
         raise GrammarError(
-            "the 16-bit route folds one scale per output row into the value; "
+            "the 16-bit route carries one scale per output row beside the tile; "
             f"this unit carries a {ScalePlaneKind(unit.scale_plane).name} plane"
         )
     if unit.release_index.numel():
@@ -279,16 +267,11 @@ def window_pad_state(
 def stream_bf16(
     streamed: StreamedBF16Unit,
 ) -> "tuple[torch.Tensor, torch.Tensor]":
-    """The streamed **no-fold** pair: ``(code tile bf16, row scale fp32)``.
+    """The streamed canonical pair: ``(code tile bf16, row scale fp32)``.
 
-    What a lane should call.  ``stream_bf16_folded`` folds the row scale in and
-    rounds, because that is what a one-tensor BF16 checkpoint must do; a lane
-    holding the wire can instead run the stock BF16 GEMM on the code tile and
-    scale the output rows in fp32, since a CHANNEL scale is an output-row
-    factor and commutes with the matmul.  The code tile is exact -- every
-    table entry is a bf16 value -- so this path rounds the weight nowhere,
-    and it avoids the ~0.0015 output-error floor the fold costs at any rate
-    (``decode.materialize_bf16``).
+    Each table entry is an exact BF16 word. The kernel accumulates the dot
+    in FP32 and applies the row scale before the final BF16 conversion.
+    This pair matches ``decode.materialize_bf16`` bit for bit.
     """
     body = unpack_window_body(
         streamed.plane, streamed.offsets, streamed.rates,
@@ -314,21 +297,3 @@ def stream_bf16(
     )
 
 
-def stream_bf16_folded(streamed: StreamedBF16Unit) -> torch.Tensor:
-    """The **twin's** rendering from a resident wire: one folded bf16 tile.
-
-    Packed window stream -> states -> table gather -> row scale -> one
-    round-to-nearest-even.  The expression is
-    ``decode.materialize_bf16_folded``'s and the result is bit-identical to
-    it: the code value comes off the *same* table the reader's
-    ``grid_vector_table`` gather produces, the scale off the same
-    ``stored.float() * global`` product broadcast down the row, and the
-    rounding is that function's single ``.to(torch.bfloat16)``.
-
-    A serving lane wants :func:`stream_bf16` instead -- this exists so that a
-    twin can be reproduced from the wire and checked against the checkpoint,
-    which is what makes a served comparison between them a comparison of one
-    encode.  The fold's cost is the twin's, not the route's.
-    """
-    values, scale = stream_bf16(streamed)
-    return (values.float() * scale[:, None]).to(torch.bfloat16)

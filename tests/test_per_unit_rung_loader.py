@@ -97,7 +97,7 @@ def _encode_bf16(rows, cols, name, seed, q256):
         w.contiguous(), grid=alphabet.BF16_GRID, q256=q256, name=name,
         window_bits=8, verify=False)
     blob = fused.pack_fused([(name, rows, written.blob)])
-    return blob, read_unit_artifact(written.blob).to(torch.bfloat16)
+    return blob, read_unit_artifact(written.blob)
 
 
 def _tessera():
@@ -222,14 +222,15 @@ def test_a_mixed_bf16_stack_tp2_rank_cuts_match_standalone_uniform_tiles():
         owner = moe_route.prepare_tessera_packed_bf16_moe_experts(
             {"w13": w13_blobs, "w2": w2_blobs}, declared, "m", device="cpu",
             tp_rank=rank, tp_size=2)
-        selected = owner.decode_folded(ids, max_experts_per_chunk=2)
+        selected = owner.decode(ids, max_experts_per_chunk=2)
         lo, hi = rank * (inter // 2), (rank + 1) * (inter // 2)
         for slot, expert in enumerate(ids.tolist()):
             gate, up, down = (reference[expert][k] for k in ("gate", "up", "down"))
             full13 = torch.cat([gate, up])
-            assert torch.equal(selected.w13_weight[slot],
-                               torch.cat([full13[lo:hi], full13[inter + lo:inter + hi]]))
-            assert torch.equal(selected.w2_weight[slot], down[:, lo:hi])
+            w13 = selected.w13_weight[slot].float() * selected.w13_weight_scale[slot].reshape(-1, 1)
+            w2 = selected.w2_weight[slot].float() * selected.w2_weight_scale[slot].reshape(-1, 1)
+            assert torch.equal(w13, torch.cat([full13[lo:hi], full13[inter + lo:inter + hi]]))
+            assert torch.equal(w2, down[:, lo:hi])
 
 
 def test_a_mixed_fp8_stack_tp2_rank_cuts_match_standalone_uniform_tiles():
@@ -368,7 +369,7 @@ def test_a_window_axis_holds_mixed_units_in_exact_flat_storage_matching_the_unit
             axis.put("gate_proj", e, unit)
         soa = axis.finish()["gate_proj"]
         # Only packed constants are compared; CPU preparation needs no vLLM A quantizer.
-        reference = prepare_grouped_window_gemm(units, arithmetic="epilogue", quantizer=None)
+        reference = prepare_grouped_window_gemm(units, quantizer=None)
         assert torch.equal(soa["words"].reshape(-1), reference.words_all)
         assert torch.equal(soa["runs"].reshape(-1, 4), reference.runs_all)
         # word_off is an int32 [E] here (the priced per-unit scalar); the
@@ -448,26 +449,22 @@ def test_grouped_soa_accepts_the_mixed_flat_stack_and_refuses_broken_offsets():
     for e, unit in enumerate(units):
         axis.put("gate_proj", e, unit)
     soa = axis.finish()["gate_proj"]
-    bundle = prepare_grouped_window_gemm_from_soa(
-        words_all=soa["words"], table_all=soa["table"], codes_all=soa["codes"],
-        native_all=soa["native"], scale_all=soa["scale"], runs_all=soa["runs"],
-        init_all=soa["init"], has_init=soa["has_init"], word_off=soa["word_off"],
-        tile_words=soa["tile_words"], total_words=soa["total_words"],
-        run_off=soa["run_off"], perm_all=soa["perm"], rows=64, cols=16,
-        experts=EXPERTS, window_bits=14, family="value", arithmetic="epilogue",
-        word_layout="legacy")
+    bundle = prepare_grouped_window_gemm_from_soa(words_all=soa["words"], table_all=soa["table"], codes_all=soa["codes"],
+    native_all=soa["native"], scale_all=soa["scale"], runs_all=soa["runs"],
+    init_all=soa["init"], has_init=soa["has_init"], word_off=soa["word_off"],
+    tile_words=soa["tile_words"], total_words=soa["total_words"],
+    run_off=soa["run_off"], perm_all=soa["perm"], rows=64, cols=16,
+    experts=EXPERTS, window_bits=14, family="value", word_layout="legacy")
     assert bundle.experts == EXPERTS
     broken = dict(soa)
     broken["word_off"] = soa["word_off"].clone()
     broken["word_off"][1] += 3
     with pytest.raises(GrammarError, match="word_off"):
-        prepare_grouped_window_gemm_from_soa(
-            words_all=broken["words"], table_all=broken["table"],
-            codes_all=broken["codes"], native_all=broken["native"],
-            scale_all=broken["scale"], runs_all=broken["runs"],
-            init_all=broken["init"], has_init=broken["has_init"],
-            word_off=broken["word_off"], tile_words=broken["tile_words"],
-            total_words=broken["total_words"], run_off=broken["run_off"],
-            perm_all=broken["perm"], rows=64, cols=16, experts=EXPERTS,
-            window_bits=14, family="value", arithmetic="epilogue",
-            word_layout="legacy")
+        prepare_grouped_window_gemm_from_soa(words_all=broken["words"], table_all=broken["table"],
+        codes_all=broken["codes"], native_all=broken["native"],
+        scale_all=broken["scale"], runs_all=broken["runs"],
+        init_all=broken["init"], has_init=broken["has_init"],
+        word_off=broken["word_off"], tile_words=broken["tile_words"],
+        total_words=broken["total_words"], run_off=broken["run_off"],
+        perm_all=broken["perm"], rows=64, cols=16, experts=EXPERTS,
+        window_bits=14, family="value", word_layout="legacy")

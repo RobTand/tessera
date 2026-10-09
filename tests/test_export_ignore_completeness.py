@@ -43,6 +43,8 @@ import pytest
 torch = pytest.importorskip("torch")
 safetensors_torch = pytest.importorskip("safetensors.torch")
 
+from test_export_serving import _declare_fixture_geometry
+
 export = importlib.import_module("tessera.export_serving")
 
 HIDDEN, VIS = 128, 64
@@ -95,6 +97,7 @@ def _write(tmp_path: Path) -> Path:
 
 
 def _export(tmp_path, monkeypatch, *extra):
+    _declare_fixture_geometry(monkeypatch, hidden=HIDDEN, mlp_inter=2 * HIDDEN)
     src = _write(tmp_path)
     out = tmp_path / "out"
     monkeypatch.setattr("sys.argv", ["export", str(src), str(out),

@@ -1,9 +1,9 @@
 """Byte and decode baselines for the 2026-09-02 math-audit fix passes.
 
-Fifteen checkpoints exist and the wire is a compatibility surface, so every
-audit fix has to say -- and prove -- whether it changes the bytes an encoder
-emits or the tensor a reader decodes.  This is the proof harness both halves
-of that claim are made with.
+The harness records serialized bytes and decoded tensors before and after
+a source change. A difference is a measured result, not an automatic
+compatibility refusal. Preserve each baseline path while an active comparison
+can read it.
 
     python experiments/audit_byte_baseline.py before.json     # at HEAD
     ...apply the fix...
@@ -16,10 +16,9 @@ of that claim are made with.
 exercise a partial trailing superblock.  The **value** matrix (``_value_cases``)
 encodes a real weight slice against a real Hessian through ``ActivationSource``,
 which is the only way the encoder's activation-aware arithmetic is reachable at
-all.  ``decode`` hashes the tensor every ``.tessera`` file on this box decodes
-to, which is the half that matters for the artifacts already written: a fix may
-legitimately change future bytes, but it may never change what today's bytes
-mean.
+all. ``decode`` hashes the tensor each stored file decodes to. The diff
+reports semantic changes explicitly. D46 permits a clean cutover after each
+active baseline user ends.
 
 **Why the second matrix exists** (issue #39).  The shape matrix alone reported
 ``0 changed of 36`` for the CHANNEL-refit collapse fix (merge ``2b8ffe9``), and
@@ -42,6 +41,11 @@ needs a reach floor above fp16's range over the unit's global scale, which no
 real slice produces, and ``shared_lut_global``'s subnormal range check lives in
 the fused lane, which ``encode_linear`` never calls.  Both are pinned by unit
 tests instead.
+
+The BF16 substack condition also hashes raw values, FP32 row scales and a
+one-hot epilogue reference. The reference must equal the canonical reader.
+This condition covers the pair that a T16 dot consumes, not a derived
+plain BF16 checkpoint.
 
 ``release`` is the third matrix, and it exists because the first two are blind
 to the RELEASE plane: ``export.encode_linear`` has no ``released_positions``
@@ -624,6 +628,19 @@ def substack_hashes() -> dict:
             out[label + "/bytes"] = hashlib.sha256(blob).hexdigest()
             out[label + "/decode"] = hashlib.sha256(
                 actual.to(torch.float32).contiguous().numpy().tobytes()).hexdigest()
+            if grid.name == BF16_GRID.name:
+                from tessera.decode import materialize_bf16
+
+                values, scale = materialize_bf16(
+                    parsed_unit.unit, parsed_unit.forests, parsed_unit.code)
+                one_hot = torch.eye(values.shape[1], dtype=torch.float32)
+                epilogue = (one_hot @ values.float().t()) * scale[None, :]
+                if not torch.equal(epilogue, expected.t()):
+                    raise AssertionError(f"{unit['tensor']}: T16 pair changed the canonical product")
+                for suffix, tensor in (("raw-values", values), ("row-scale", scale),
+                                       ("epilogue-reference", epilogue)):
+                    out[label + "/" + suffix] = hashlib.sha256(
+                        tensor.contiguous().view(torch.uint8).numpy().tobytes()).hexdigest()
     return out
 
 def _served_window_cases():

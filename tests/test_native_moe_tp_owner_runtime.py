@@ -547,6 +547,7 @@ def test_the_owner_route_set_comes_from_the_plugins_own_launch_table():
                 moe.validate_panel(panel)
 
 
+
 def test_an_fp8_owner_never_declares_the_materialising_launch():
     """WINDOW owner panels reject retired selected-reference launches at every cut."""
     for world in (1, 2):
@@ -791,7 +792,7 @@ def test_a_bf16_panel_on_the_selected_owners_route_is_refused(backend):
     """Since #613 a BF16 owner is priced on its production builder, so a panel
     declaring the selected owner's route is a route this owner does not take."""
     panel = _owner_panel(1, A16, "vllm.fused_moe.modular_kernel:TRITON_REF",
-                         f"research_selected_{backend}_window_folded_bf16")
+                         f"research_selected_{backend}_window_bf16")
     with pytest.raises(ValueError):
         moe.validate_panel(panel)
 
