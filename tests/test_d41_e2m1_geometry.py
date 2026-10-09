@@ -278,7 +278,7 @@ def test_family_catalog_enumerates_every_serializable_e2m1_rung():
             assert row["served_recipes"]["dense"] == served_recipe(grid, q, STRUCTURE_DENSE).to_config()
 
 
-def test_mixed_and_window_refusals_are_actual_preparer_refusals():
+def test_served_window_refusals_are_actual_preparer_refusals():
     adapter = _load_geometry_adapter()
     grid = grid_for_name("E2M1x2")
     source = torch.linspace(-0.2, 0.2, 32 * 256).reshape(32, 256).to(torch.bfloat16)

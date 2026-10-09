@@ -1,5 +1,14 @@
 # Changelog
 
+## 2026-10-09 — state the E2M1 adapter evidence scope
+
+Restore four adapter contract tests beside the current master regressions (#1082).
+Describe the current served E2M1x2 recipe as WINDOW L14 over LUT16.
+Keep historical span-two TCQ measurements separate from D41 allowability evidence for that served recipe.
+Correct the adapter's stale L12 and served-TCQ descriptions.
+Name the preparer-refusal test for the served WINDOW cases it checks.
+No decoder, CUDA source, wire, recipe default, gate or serving pin changes.
+
 ## 2026-10-08 — retain deadline failures after a delayed process reap
 
 Record the final bounded reap timeout without replacement of the original work error (#1053).
