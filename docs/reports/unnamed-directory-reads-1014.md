@@ -273,6 +273,10 @@ Torch `2.11.0+cpu` reported no CUDA device.
 The population had zero skips and zero uncollected modules.
 The run did not cover the CUDA surface.
 
+The result record uses `kind: repro` and `outcome: fail` for this observed failure.
+The schema permits only `pass` or `fail`; the `repro` kind identifies the pre-fix run.
+The passing selector run remains a separate `pbtest` entry.
+
 ## Measured correction and CLI smoke
 
 PrismaBuild action `67a31871666e5984b7bafff70614475994f403f2292649a8802d4a2578af117a` completed with exit code zero on `dl380g10`.
