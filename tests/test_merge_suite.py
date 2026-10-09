@@ -108,6 +108,36 @@ def test_the_declared_cores_are_the_cores_the_command_uses():
         assert merge_suite._arm_cpus(merge_suite.ARMS[name], 6) == 6
 
 
+@pytest.mark.parametrize("targets", [None, ["tests/test_a.py", "tests/test_b.py"]])
+def test_the_targets_an_arm_runs_are_the_targets_read_back_from_its_sealed_command(targets):
+    """An arm may run named test files, and the pool's record says which.
+
+    A tool that submits arms of selected files has to check afterwards that the
+    sealed commands cover the selection, so composing the targets and reading
+    them back are tested as one pair.  The default stays the whole tree.
+    """
+
+    merge_suite = _module()
+    arm = {**merge_suite.ARMS["x86"], **({"targets": targets} if targets else {})}
+    command = merge_suite._command(arm, Path("/tmp/surface.json"), ["--durations=5"], 2)
+    sealed = merge_suite._timed_command(command, 600.0)
+    argv, why = merge_suite._pytest_argv(sealed)
+    assert why is None
+    assert merge_suite._targets_of(argv) == (targets or ["tests"])
+
+
+def test_one_receipt_owner_writes_the_verdict_for_any_set_of_arms():
+    """``main`` and tools that submit arms of their own share one receipt shape."""
+
+    merge_suite = _module()
+    receipt = merge_suite._assemble_receipt(
+        [_population("x86")], ROOT, assembled_by="test")
+    assert receipt["schema"] == "tessera.merge_suite.v1"
+    assert receipt["assembled_by"] == "test"
+    assert receipt["verdict"] == merge_suite._verdict(receipt["arms"], receipt["commits_measured"])
+    assert receipt["arm_results"] == merge_suite._arm_results(receipt["arms"])
+
+
 def test_one_submission_fans_out_the_x86_arm_and_keeps_the_gpu_arm_serial(tmp_path):
     """One ``--cpus`` for two arms that cannot spend it the same way.
 
@@ -2588,3 +2618,36 @@ def test_each_arm_declares_the_source_verifier_its_population_binds_on(tmp_path,
     assert declared == [f"{merge_suite.VERIFIER_ENV}={shlex.join(merge_suite.SOURCE_VERIFIER)}"]
     assert record["source_verifier"] == shlex.join(merge_suite.SOURCE_VERIFIER)
     assert merge_suite.SOURCE_VERIFIER[-1] == "verify"
+
+
+@pytest.mark.parametrize("line, expected", [
+    ("516 passed, 70 skipped, 28 subtests passed in 115.84s (0:01:55)",
+     {"passed": 516, "skipped": 70}),
+    ("1 failed, 515 passed, 3 subtests passed in 9.00s", {"failed": 1, "passed": 515}),
+    ("516 passed, 70 skipped in 115.84s (0:01:55)", {"passed": 516, "skipped": 70}),
+])
+def test_a_summary_line_that_counts_subtests_is_still_a_terminal_summary(line, expected):
+    """pytest prints ``N subtests passed`` beside the test buckets, and the line is whole.
+
+    The term has two words, and a parser that read only ``N word`` refused the
+    entire line, so an attempt whose tests used subtests printed "no terminal
+    summary" and its exit status could never be bound.  Subtests are not a
+    population bucket, so they are read and not compared, as warnings are.
+    """
+
+    merge_suite = _module()
+    counts, read = merge_suite._summary_counts("....\n" + line + "\n")
+    assert read == line
+    assert {key: value for key, value in counts.items() if value} == expected
+
+
+def test_an_attempt_whose_summary_counts_subtests_still_binds_to_its_population(tmp_path):
+    """The whole join, not the parser alone: the exit status is adopted."""
+
+    surface = tmp_path / "receipt" / "surface.gpu.json"
+    stdout = _attempt_stdout(surface).replace("1827 passed, 10 skipped",
+                                              "1827 passed, 10 skipped, 28 subtests passed")
+    assert "28 subtests passed" in stdout
+    _, record = _resumed_with(tmp_path, detail={"stdout": stdout})
+    assert record["exit_status_observed"] is True, record.get("pool_actions_refused")
+    assert record["returncode"] == 0

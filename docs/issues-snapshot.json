@@ -1,6 +1,6 @@
 {
  "default_repo": "RobTand/tessera",
- "generated": "2026-10-08T17:36:00Z",
+ "generated": "2026-10-09T00:31:34Z",
  "repos": {
   "RobTand/prismaquant": {
    "1": {
@@ -5748,24 +5748,24 @@
     "title": "[P2] Cover paired-trade refusal in measured-runtime allocation acceptance"
    },
    "2291": {
-    "state": "OPEN",
-    "title": "Paired-trade reports store per-probe arrays for every unit and option: unbounded report/memory on routed MoE (#2285 follow-up)"
+    "state": "CLOSED",
+    "title": "[P2] Bound paired-trade report memory on routed MoE (#2285 follow-up)"
    },
    "2292": {
     "state": "OPEN",
     "title": "Paired rate-trade menu: a real fused group may exceed the enumerated-combination cap (#2285 follow-up)"
    },
    "2293": {
-    "state": "OPEN",
-    "title": "Paired rate-trade menu-time dominance is judged per packed group, not whole layer: may drop acceptable options (#2285 follow-up)"
+    "state": "CLOSED",
+    "title": "[P3] Apply paired menu dominance at the complete-layer scope (#2285 follow-up)"
    },
    "2294": {
-    "state": "OPEN",
-    "title": "Paired UCB: joint rows stored under a format alias are refused because the check uses the requested name, not the resolved one (#2285 follow-up)"
+    "state": "CLOSED",
+    "title": "[P2] Bind paired joint rows to the resolved format alias (#2285 follow-up)"
    },
    "2295": {
-    "state": "OPEN",
-    "title": "Test gap: measured-runtime acceptance path has no test where a paired trade is refused (#2285 follow-up)"
+    "state": "CLOSED",
+    "title": "[P3] Cover paired refusal in measured-runtime allocation acceptance (#2285 follow-up)"
    },
    "2296": {
     "state": "CLOSED",
@@ -6104,7 +6104,7 @@
     "title": "[P1] Reuse E2M1 values in RTN and MXFP4 source decode"
    },
    "2371": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "[P1] Declare explicit GLM projection source owners"
    },
    "2372": {
@@ -6420,12 +6420,28 @@
     "title": "Integration vehicle: PR 2439 at 672755be (batch94)"
    },
    "2442": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "Integration vehicle: PR 2371 at a47c6c45 (batch95)"
    },
    "2443": {
+    "state": "CLOSED",
+    "title": "[P1] Fused-mapping lookup failure is swallowed in artifact completeness and native export (GLM lane lookup)"
+   },
+   "2444": {
+    "state": "CLOSED",
+    "title": "Integration vehicle: PR 2371 at 7798fff4 (batch96)"
+   },
+   "2445": {
+    "state": "CLOSED",
+    "title": "Stop the export and the completeness check when the fused-mapping lookup fails (#2443)"
+   },
+   "2446": {
     "state": "OPEN",
-    "title": "[P2] Fused-mapping lookup failure is swallowed in artifact completeness and native export (GLM lane lookup)"
+    "title": "[P1] Bind D44 retained adoption and catalogue resume to the current scientific scope"
+   },
+   "2447": {
+    "state": "OPEN",
+    "title": "[P2] D44 guard reports scientific publication for a dry run"
    },
    "245": {
     "state": "CLOSED",
@@ -10066,7 +10082,7 @@
     "title": "[P1] Distinguish R768 CUDA graph capture from polymorphic compilation"
    },
    "1063": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "Refuse graph-only mode as compiled census"
    },
    "1064": {
@@ -10078,12 +10094,28 @@
     "title": "[P2] Guard four vllm tests on the submodule they import, so the bench stub cannot break collection"
    },
    "1066": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "[P2] Fail the hessian FIFO test on no CPU progress, not on elapsed time"
+   },
+   "1067": {
+    "state": "CLOSED",
+    "title": "[P2] Count a process reaped mid-read as gone in four test helpers"
+   },
+   "1068": {
+    "state": "OPEN",
+    "title": "[P3] Prevent: Before timing, compare every role extent with the pinned runtime construction contract"
+   },
+   "1069": {
+    "state": "OPEN",
+    "title": "[P1] Require shard exit statuses and error counts before integration population acceptance"
    },
    "107": {
     "state": "CLOSED",
     "title": "refit_gauss_seidel is per-source where refit_objective is per-plane, so it refuses every mixed-plane export"
+   },
+   "1070": {
+    "state": "OPEN",
+    "title": "[P1] Publish canonical class timing and complete supplier scope"
    },
    "108": {
     "state": "CLOSED",

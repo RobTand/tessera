@@ -3909,6 +3909,31 @@ lose them. `tests/test_merge_suite.py` drives one real
 `pytest --surface-json` run's stdout through the reader, so the join is
 exercised by output no test wrote.
 
+**A selected population of shards** (tessera#1069). `tools/selected_population.py`
+runs the test files `tools/impacted_tests.py` selects as shards, each one a
+`merge_suite.py` x86 arm that runs named files and publishes its own
+`--surface-json`. It owns no verdict. Each shard is read through `_resume`
+(the published population, its source identity, and the exit status the pool
+recorded for the action its producer stamp names), and the receipt comes from
+`merge_suite._assemble_receipt`. The set adds four checks that a single arm
+cannot make. The sealed commands must run the selected files exactly, each
+once. No pbrun return code may be non-zero. Each client writes its result to
+`client.<shard>.json` when it exits, and `--resume` reads those files back, so a
+population rejected for a pbrun code stays rejected; a shard with no file says
+`not recorded` and the pool's records decide it alone. No shard may leave a
+module uncollected. These checks refuse in both modes. The comparison of the
+shards' effective source with the checkout's own is a seal (D32), so it goes
+through `tessera.dev_mode.seal_check`. In dev mode, the default, it stamps one
+`[DEV-MODE]` line, computes no digest of the checkout and does not refuse. In
+certified mode (`PRISMAQUANT_DEV_MODE=0`) it measures the checkout with no
+verifier, and a population over another tree is not green. At most eight pbrun
+clients run at once (D21); more shards queue behind them. The report keeps one
+block per shard and every skip reason verbatim, from the surface's own
+histogram. `--resume` rebuilds the receipt without submitting. An aggregate that
+reads a shard's last summary line alone, drops the exit status, or counts a
+missing summary as zero is the defect #1069 records, and this tool is its
+replacement.
+
 **One publication, read once** (tessera#340). A pathname is not a publication:
 it is a name a pool retry can point at different bytes at two instants, and a
 resume read it twice -- `_attach_surface` parsed the population the verdict
