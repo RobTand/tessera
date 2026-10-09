@@ -75,6 +75,41 @@ RUNTIME_MODULES = ("tessera", "tessera.serving.backend", "tessera.serving.ext", 
 NETDATA_CONTEXTS = {"nvidia_smi.gpu_power_draw", "system.cpu", "system.load",
                     "mem.swapio", "mem.available"}
 
+#: The panel's admitted (structure, TP) set. Dense modules serve TP1 and TP2;
+#: routed expert stacks serve TP2 only, through the production intake. Every
+#: other combination refuses by name in admitted_panel_scope, the one home.
+ADMITTED_SCOPE_TP = frozenset({("dense", 1), ("dense", 2), ("routed_moe", 2)})
+#: The file the evidence "wire" binding holds for a routed stack: per-group,
+#: per-expert, per-shard file bindings in the runtime's row order.
+MOE_WIRE_INDEX_SCHEMA = "tessera.shape_time_moe_wire_index.v1"
+
+
+def admitted_panel_scope(scope, runtime):
+    """Admit dense TP1/TP2 and routed TP2 scopes; refuse all others by name."""
+    structure, tp_degree = scope["structure"], scope["tp_degree"]
+    if (structure, tp_degree) not in ADMITTED_SCOPE_TP:
+        raise ValueError(
+            f"shape panel admits dense TP1/TP2 and routed_moe TP2 only, "
+            f"not {structure} TP{tp_degree}")
+    if scope["route"] not in scheme.ROUTES:
+        raise ValueError(f"shape panel route {scope['route']!r} is not in the dispatch registry")
+    if structure == scheme.STRUCTURE_ROUTED_MOE:
+        scheme.refuse_a_family_with_no_expert_route(scope["route"], "shape-panel")
+    if scope["mode"] != "resident" or scope["execution_mode"] != "eager":
+        raise ValueError("shape panel supports eager/resident only, "
+                         f"not {scope['execution_mode']}/{scope['mode']}")
+    if tp_degree != runtime["tp_degree"]:
+        raise ValueError("scope TP degree differs from the runtime context")
+    if scope["requested_platform"] != runtime["platform"]:
+        raise ValueError("scope platform differs from the runtime context")
+    return scope
+
+
+def moe_builder_names():
+    """The production routed builders, derived from scheme.MOE_BUILDERS."""
+    return {f"{module}.{builder}" for module, builder in scheme.MOE_BUILDERS.values()}
+
+
 
 def canonical(value):
     return census_plan._canonical(value)
@@ -167,8 +202,10 @@ def runtime_context(value):
             raise ValueError("runtime." + field + ": requires observed nonempty string")
     if value["execution_mode"] != "eager" or value["residency"] != "resident":
         raise ValueError("first slice supports eager/resident only")
-    if type(value["tp_degree"]) is not int or value["tp_degree"] != 1 or type(value["tp_rank"]) is not int or value["tp_rank"] != 0:
-        raise ValueError("first slice supports an explicit TP1 rank0 layer only")
+    if type(value["tp_degree"]) is not int or value["tp_degree"] not in (1, 2):
+        raise ValueError("shape panel supports TP1 and TP2 contexts only")
+    if type(value["tp_rank"]) is not int or not 0 <= value["tp_rank"] < value["tp_degree"]:
+        raise ValueError("runtime.tp_rank is not a rank of its TP degree")
     if not isinstance(value["serve_flags"], dict) or any(not isinstance(k, str) or not isinstance(v, str) for k, v in value["serve_flags"].items()):
         raise ValueError("runtime.serve_flags: requires observed string values")
     return dict(value)
@@ -176,6 +213,8 @@ def runtime_context(value):
 
 def wire_facts(blob, declaration):
     """Canonical byte structure, without importing the tensor grid decoder."""
+    if isinstance(declaration, Mapping) and declaration.get("structure") == scheme.STRUCTURE_ROUTED_MOE:
+        return routed_wire_facts(blob, declaration)
     _object(declaration, {"family", "structure", "grid", "body", "plane", "q256",
                           "rows", "columns", "roles", "wire_bytes"}, "dense scheme")
     declared = scheme.validate_tessera_scheme(declaration, "shape-panel")
@@ -204,15 +243,55 @@ def wire_facts(blob, declaration):
                     scheme.ROUTES[declared["family"]]["span"])
         if actual != expected:
             raise ValueError(f"canonical wire geometry/rung/recipe differs: {member.name}")
-        counts = dict(zip((kind.name for kind in m.plane_order), parsed.terminal.plane_elements))
-        facts = {"rates": list(m.rates), "window_bits": m.window_bits, "body": m.body.name,
-                 "plane": m.scale_plane.kind.name, "release_overrides": counts.get("RELEASE", 0),
-                 # CHANNEL's DIAG_SV is its row scale, not a rotation diagonal.
-                 "diagonals": bool(counts.get("DIAG_SU", 0)),
-                 "start_state": bool(m.shard and m.shard.has_initial_state),
-                 "rotation": m.branch.rotation.name, "grid_arity": 1, "structure": "dense"}
+        facts = _unit_facts(parsed, "dense")
         roles.append({"name": member.name, "rows": member.rows, "facts": facts,
                       "unit_sha256": hashlib.sha256(member.blob).hexdigest()})
+    return declared, roles
+
+
+def _unit_facts(parsed, structure):
+    """The byte-side facts a lane predicate is decided against, off one unit."""
+    m = parsed.manifest
+    counts = dict(zip((kind.name for kind in m.plane_order), parsed.terminal.plane_elements))
+    return {"rates": list(m.rates), "window_bits": m.window_bits, "body": m.body.name,
+            "plane": m.scale_plane.kind.name, "release_overrides": counts.get("RELEASE", 0),
+            # CHANNEL's DIAG_SV is its row scale, not a rotation diagonal.
+            "diagonals": bool(counts.get("DIAG_SU", 0)),
+            "start_state": bool(m.shard and m.shard.has_initial_state),
+            "rotation": m.branch.rotation.name, "grid_arity": 1, "structure": structure}
+
+
+def routed_wire_facts(blob, declaration):
+    """Canonical byte structure of one routed expert stack, without a decoder."""
+    declared = scheme.validate_tessera_moe_scheme(declaration, "shape-panel")
+    if declared["family"] != scheme.TESSERA_FP8 or declared["grid"] != "E4M3":
+        raise ValueError("shape panel supports E4M3 FP8 stacks only")
+    index = json_bytes(blob)
+    _object(index, {"schema", "groups"}, "routed wire index")
+    if index["schema"] != MOE_WIRE_INDEX_SCHEMA:
+        raise ValueError("unknown routed wire index schema")
+    groups = index["groups"]
+    _object(groups, set(scheme.MOE_GROUPS), "routed wire groups")
+    roles = []
+    for group in scheme.MOE_GROUPS:
+        entries = groups[group]
+        if not isinstance(entries, list) or len(entries) != declared["experts"]:
+            raise ValueError(f"routed wire group {group!r} holds no blob per expert")
+        for expert, shards in enumerate(entries):
+            if not isinstance(shards, list) or len(shards) != scheme.MOE_GROUP_ROLES[group]:
+                raise ValueError(f"routed wire {group}[{expert}] holds no blob per shard")
+            for position, entry in enumerate(shards):
+                member = read_bound(entry)
+                role_decl = scheme.expert_role_declarations(
+                    declared["groups"][group], expert=expert)[position]
+                parsed = scheme.parse_tessera_expert_blob(
+                    member, role_decl, f"shape-panel {group}[{expert}]")
+                if len(parsed) != 1:
+                    raise ValueError(f"expert wire is not one unit: {group}[{expert}]")
+                name = f"{group}[{expert}].{role_decl['roles'][0][0]}"
+                roles.append({"name": name, "rows": role_decl["roles"][0][1],
+                              "facts": _unit_facts(parsed[0], scheme.STRUCTURE_ROUTED_MOE),
+                              "unit_sha256": hashlib.sha256(member).hexdigest()})
     return declared, roles
 
 
@@ -222,7 +301,7 @@ def admitted_cell(contract, scope, runtime, pair, roles):
     fmt = next(f for f in contract["formats"] if f["family"] == family)
     candidates = []
     for cell in contract["lane_eligibility"]["cells"]:
-        if (cell["platform"], cell["family"], cell["structure"], cell["regime"]) != (runtime["platform"], family, "dense", scope["regime"]):
+        if (cell["platform"], cell["family"], cell["structure"], cell["regime"]) != (runtime["platform"], family, scope["structure"], scope["regime"]):
             continue
         image, modes = cell_runtime_scope(cell)
         if image != runtime["image"] or "eager" not in modes or "resident" not in cell_residency_modes(cell):
@@ -245,15 +324,61 @@ def admitted_cell(contract, scope, runtime, pair, roles):
         candidates.append(cell)
     if len(candidates) != 1:
         raise ValueError("requires exactly one positively matching backed native cell")
-    launches = [v for v in scheme.route_launches(scope["route"], structure="dense", regime=scope["regime"], mode="resident")
+    launches = [v for v in scheme.route_launches(scope["route"], structure=scope["structure"], regime=scope["regime"], mode="resident")
                 if (v["symbol"], v["decoder"]) == tuple(pair)]
     if len(launches) != 1 or not launches[0]["lane"]:
-        raise ValueError("first slice requires a named native extension lane")
+        raise ValueError("shape panel requires a named native extension lane")
     for role in roles:
         report = scheme.lane_wire_report(launches[0]["lane"], role["facts"], contract)
         if not report["readable"]:
             raise ValueError("native lane refuses canonical wire: " + str(report["refusals"]))
     return candidates[0], launches[0]["lane"]
+
+
+def _expected_record_shape(scope, declared):
+    """The rank-local route record shape this scope serves."""
+    shape = scope["shape"]
+    if scope["structure"] == scheme.STRUCTURE_ROUTED_MOE:
+        local = declared["intermediate_size"] // scope["tp_degree"]
+        return f"M{shape['M']}:N{2 * local}:K{declared['hidden_size']}"
+    if scope["tp_degree"] == 1:
+        return f"M{shape['M']}:N{shape['N']}:K{shape['K']}"
+    return f"M{shape['M']}:N{shape['N'] // scope['tp_degree']}:K{shape['K']}"
+
+
+def _validate_preparation(prep, scope, runtime, declared, roles, evidence):
+    """The actual native preparation against the requested scope and wire."""
+    shape = scope["shape"]
+    if scope["structure"] == scheme.STRUCTURE_ROUTED_MOE:
+        _object(prep, {"builder", "wire_sha256", "roles", "shape", "topk", "tp_rank",
+                       "tp_degree", "grid", "local_shape", "native_packed_bytes"}, "preparation")
+        if declared["intermediate_size"] % scope["tp_degree"]:
+            raise ValueError("actual native preparation differs")
+        local = declared["intermediate_size"] // scope["tp_degree"]
+        if (prep["builder"] not in moe_builder_names()
+                or prep["wire_sha256"] != evidence["wire"]["sha256"]
+                or prep["roles"] != roles or prep["shape"] != shape
+                or prep["topk"] != shape["topk"] or prep["grid"] != "E4M3"
+                or prep["local_shape"] != {"N": 2 * local, "K": declared["hidden_size"]}
+                or (type(prep["tp_rank"]), prep["tp_rank"],
+                    type(prep["tp_degree"]), prep["tp_degree"]) != (int, runtime["tp_rank"], int, 2)):
+            raise ValueError("actual native preparation differs")
+    else:
+        fields = {"builder", "wire_sha256", "roles", "shape", "tp_rank",
+                  "tp_degree", "grid", "native_packed_bytes"}
+        if scope["tp_degree"] > 1:
+            fields |= {"axis"}
+        _object(prep, fields, "preparation")
+        if (prep["builder"] != "tessera.serving.lane.build_tessera_method"
+                or prep["wire_sha256"] != evidence["wire"]["sha256"]
+                or prep["roles"] != roles or prep["shape"] != shape
+                or prep["grid"] != "E4M3"
+                or (type(prep["tp_rank"]), prep["tp_rank"],
+                    type(prep["tp_degree"]), prep["tp_degree"]) != (int, runtime["tp_rank"], int, scope["tp_degree"])):
+            raise ValueError("actual native preparation differs")
+        if scope["tp_degree"] > 1 and (prep["axis"] != "row" or shape["N"] % scope["tp_degree"]):
+            raise ValueError("actual native preparation differs")
+    _integer(prep["native_packed_bytes"], "native packed tensor bytes")
 
 
 _VALIDATION_ISSUER=object()
@@ -468,7 +593,7 @@ def _validate_panel(panel, *, expected_runtime, runtime_validation=None):
     if producer["schema"] != "tessera.native_panel_producer_identity.v1" or producer["commit_source"] != "sealed_checkout":
         raise ValueError("producer source must be independently host-attested")
     if not isinstance(panel["rows"], list) or len(panel["rows"]) != 1:
-        raise ValueError("first slice requires exactly one dense row; duplicates refuse")
+        raise ValueError("shape panel requires exactly one row; duplicates refuse")
     row = _object(panel["rows"][0], {"scope_id", "prefix", "scheme", "timing", "cell_id"}, "row")
     if not isinstance(row["prefix"], str) or not row["prefix"]:
         raise ValueError("row.prefix requires an explicit module name")
@@ -481,16 +606,15 @@ def _validate_panel(panel, *, expected_runtime, runtime_validation=None):
                census_plan._build_validated_census_plan([scope],raw_contract=raw["contract"],contract=contract))
     if canonical(rebuilt) != canonical(plan) or row["scope_id"] != rebuilt["rows"][0]["id"]:
         raise ValueError("plan/scope identity differs")
-    if (scope["structure"], scope["route"], scope["mode"], scope["execution_mode"], scope["tp_degree"]) != ("dense", scheme.TESSERA_FP8, "resident", "eager", 1) or scope["requested_platform"] != runtime["platform"]:
-        raise ValueError("unsupported dense scope or observed platform")
+    admitted_panel_scope(scope, runtime)
     declared, roles = wire_facts(raw["wire"], row["scheme"])
     shape = scope["shape"]
-    if (declared["rows"], declared["columns"], declared["q256"]) != (shape["N"], shape["K"], scope["q256"]):
+    if scope["structure"] == scheme.STRUCTURE_ROUTED_MOE:
+        if (declared["hidden_size"], declared["intermediate_size"], declared["experts"]) != (shape["K"], shape["N"], shape["experts"]):
+            raise ValueError("native stack geometry differs from the requested scope")
+    elif (declared["rows"], declared["columns"], declared["q256"]) != (shape["N"], shape["K"], scope["q256"]):
         raise ValueError("native wire differs from requested rank-local shape/rung")
-    prep = _object(json_bytes(raw["preparation"]), {"builder", "wire_sha256", "roles", "shape", "tp_rank", "tp_degree", "grid", "native_packed_bytes"}, "preparation")
-    if prep["builder"] != "tessera.serving.lane.build_tessera_method" or prep["wire_sha256"] != evidence["wire"]["sha256"] or prep["roles"] != roles or prep["shape"] != shape or prep["grid"] != "E4M3" or (type(prep["tp_rank"]), prep["tp_rank"], type(prep["tp_degree"]), prep["tp_degree"]) != (int, 0, int, 1):
-        raise ValueError("actual native preparation differs")
-    _integer(prep["native_packed_bytes"], "native packed tensor bytes")
+    _validate_preparation(json_bytes(raw["preparation"]), scope, runtime, declared, roles, evidence)
     samples = _object(json_bytes(raw["samples"]), {"samples_ms", "warmup_iterations", "interval_unix"}, "samples")
     _integer(samples["warmup_iterations"], "warmup iterations")
     if canonical(row["timing"]) != canonical(timing_summary(samples["samples_ms"])):
@@ -503,8 +627,10 @@ def _validate_panel(panel, *, expected_runtime, runtime_validation=None):
     if not isinstance(records, list) or len(records) != len(samples["samples_ms"]):
         raise ValueError("requires a fresh actual route record for each timed call")
     pairs = set()
+    expected_shape = _expected_record_shape(scope, declared)
+    expected_kind = "moe" if scope["structure"] == scheme.STRUCTURE_ROUTED_MOE else "dense"
     for record in records:
-        if not isinstance(record, dict) or record.get("state") != "served" or record.get("kind") != "dense" or record.get("policy") != scheme.TESSERA_FP8 + ":resident" or record.get("platform") != runtime["platform"] or record.get("shape") != f"M{shape['M']}:N{shape['N']}:K{shape['K']}" or record.get("contract") != scheme.ROUTES[scheme.TESSERA_FP8]["activation_contract"]:
+        if not isinstance(record, dict) or record.get("state") != "served" or record.get("kind") != expected_kind or record.get("policy") != scope["route"] + ":resident" or record.get("platform") != runtime["platform"] or record.get("shape") != expected_shape or record.get("contract") != scheme.ROUTES[scope["route"]]["activation_contract"]:
             raise ValueError("missing/error/stale or mismatched observed route")
         pairs.add((record.get("symbol"), record.get("decoder")))
     if len(pairs) != 1:

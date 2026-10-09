@@ -276,37 +276,50 @@ def require_fused_preparation(native, family):
     return pair
 
 
-def loaded_fused_binary(native, family, raw_contract):
+def loaded_fused_binary(native, family, raw_contract, lane=None):
     """Observe existing process mappings; never invoke a native library loader."""
     import fnmatch
     from tessera import routed_fused
     from experiments.bench_native_operator import _mapped_shared_libraries
-    require_fused_preparation(native,family)
-    prefix=routed_fused.MODULE_NAME_E4M3
-    contracts=[row for row in json_bytes(raw_contract)["native_extensions"] if row["module_name_prefix"]==prefix]
-    if len(contracts)!=1:raise ValueError("actual fused owner lacks one native binary declaration")
+    if lane is None:
+        require_fused_preparation(native,family)
+        lane = routed_fused.MODULE_NAME_E4M3
+    contracts=[row for row in json_bytes(raw_contract)["native_extensions"] if row["module_name_prefix"]==lane]
+    if len(contracts)!=1:raise ValueError("actual native owner lacks one native binary declaration")
     paths=[path for path in _mapped_shared_libraries() if fnmatch.fnmatch(path.name,contracts[0]["filename_glob"])]
-    if len(paths)!=1:raise ValueError("actual fused call has no unique already-loaded native ELF")
+    if len(paths)!=1:raise ValueError("actual native call has no unique already-loaded native ELF")
     if not paths[0].read_bytes().startswith(b"\x7fELF"):raise ValueError("loaded native object is not ELF")
     return file_binding(paths[0])
 
 
 def prepare_dense(request, wire):
-    """The public plugin's create/load/finalize path, with explicit TP1 coordinates."""
+    """The public plugin's create/load/finalize path, with explicit TP coordinates."""
     import torch
     from tessera.serving.lane import build_tessera_method
 
     scope = request["scope"]
+    runtime = request["expected_runtime"]
+    tp_degree = scope["tp_degree"]
+    tp_rank = runtime["tp_rank"]
+    if tp_degree not in (1, 2):
+        raise ValueError("native dense application supports TP1 and TP2 only")
+    if type(tp_rank) is not int or not 0 <= tp_rank < tp_degree or runtime["tp_degree"] != tp_degree:
+        raise ValueError("native dense application requires a rank of its TP degree")
     from tessera.serving import scheme
     declaration = scheme.validate_tessera_scheme(request["scheme"], request["prefix"])
     roles = request.pop("_wire_roles")
     layer = torch.nn.Module()
-    layer.tp_rank, layer.tp_size = 0, scope["tp_degree"]
-    if layer.tp_size != 1:
-        raise ValueError("native dense application supports explicit TP1 only")
+    layer.tp_rank, layer.tp_size = tp_rank, tp_degree
     method = build_tessera_method(request["scheme"], request["prefix"], "resident")
-    method.create_weights(layer, input_size_per_partition=declaration["columns"],
-                          output_partition_sizes=[r for _, r in declaration["roles"]],
+    if tp_degree == 1:
+        input_partition, output_partitions = declaration["columns"], [r for _, r in declaration["roles"]]
+    else:
+        # The harness cuts rows (column-parallel): one artifact, cut at load.
+        if declaration["rows"] % tp_degree:
+            raise ValueError("TP2 dense harness requires an even row extent")
+        input_partition, output_partitions = declaration["columns"], [declaration["rows"] // tp_degree]
+    method.create_weights(layer, input_size_per_partition=input_partition,
+                          output_partition_sizes=output_partitions,
                           input_size=declaration["columns"], output_size=declaration["rows"],
                           params_dtype=torch.bfloat16, weight_loader=None)
     # Copy the exact hash-checked owned byte buffer into the plugin's parameter.
@@ -316,13 +329,98 @@ def prepare_dense(request, wire):
     native = layer.tessera_native
     require_fused_preparation(native,request["scheme"]["family"])
     shape = {"M": scope["shape"]["M"], "N": native.rows, "K": native.columns}
-    if shape != scope["shape"] or (layer.tessera_shard_plan.tp_rank, layer.tessera_shard_plan.tp_size) != (0, 1):
+    if tp_degree == 1:
+        if shape != scope["shape"] or (layer.tessera_shard_plan.tp_rank, layer.tessera_shard_plan.tp_size) != (0, 1):
+            raise ValueError("actual native preparation differs from explicit shape/partition")
+    elif ((shape["M"], shape["N"] * tp_degree, shape["K"]) != (scope["shape"]["M"], scope["shape"]["N"], scope["shape"]["K"])
+            or (layer.tessera_shard_plan.tp_rank, layer.tessera_shard_plan.tp_size) != (tp_rank, tp_degree)):
         raise ValueError("actual native preparation differs from explicit shape/partition")
     prep = {"builder": "tessera.serving.lane.build_tessera_method",
-            "wire_sha256": hashlib.sha256(wire).hexdigest(), "roles": roles, "shape": shape,
+            "wire_sha256": hashlib.sha256(wire).hexdigest(), "roles": roles, "shape": dict(scope["shape"]),
             "tp_rank": layer.tp_rank, "tp_degree": layer.tp_size, "grid": declaration["grid"],
             "native_packed_bytes": native.packed_bytes()}
+    if tp_degree > 1:
+        prep["axis"] = "row"
     return layer, method, prep
+
+
+def prepare_routed(request, wire_index):
+    """The production routed intake at TP2, off scheme.MOE_BUILDERS."""
+    import torch
+    from types import SimpleNamespace
+    from tessera.serving import scheme
+
+    scope = request["scope"]
+    runtime = request["expected_runtime"]
+    prefix = request["prefix"]
+    tp_rank = runtime["tp_rank"]
+    if scope["tp_degree"] != 2 or runtime["tp_degree"] != 2:
+        raise ValueError("native routed application supports TP2 only")
+    if type(tp_rank) is not int or not 0 <= tp_rank < 2:
+        raise ValueError("native routed application requires a rank of TP2")
+    declared = scheme.validate_tessera_moe_scheme(request["scheme"], prefix)
+    if declared["family"] != scheme.TESSERA_FP8 or declared["grid"] != "E4M3":
+        raise ValueError("shape panel supports E4M3 FP8 stacks only")
+    try:
+        module_name, builder_name = scheme.MOE_BUILDERS[declared["family"]]
+    except KeyError as exc:
+        raise ValueError(f"shape panel route {declared['family']!r} names no production expert builder") from exc
+    from importlib import import_module
+    production_builder = getattr(import_module(module_name), builder_name)
+    if production_builder.__module__ != module_name or production_builder.__name__ != builder_name:
+        raise ValueError("routed intake is not the production route builder")
+    roles = request.pop("_wire_roles")
+    layer = torch.nn.Module()
+    layer.moe_config = SimpleNamespace(
+        moe_parallel_config=SimpleNamespace(tp_rank=tp_rank, tp_size=2, ep_size=1, dp_size=1,
+                                            pcp_size=1, sp_size=1, use_ep=False, enable_eplb=False),
+        is_act_and_mul=True)
+    method = production_builder(request["scheme"], prefix, "resident", layer)
+    method.create_weights(layer, num_experts=declared["experts"], hidden_size=declared["hidden_size"],
+                          intermediate_size_per_partition=declared["intermediate_size"] // 2,
+                          params_dtype=torch.bfloat16)
+    # Feed each hash-checked expert projection through the production loader.
+    for group in scheme.MOE_GROUPS:
+        param = layer.w13_wire if group == "w13" else layer.w2_wire
+        for expert, shards in enumerate(_indexed_expert_blobs(wire_index, declared)[group]):
+            for shard_id, blob in zip(scheme.MOE_GROUP_SHARDS[group], shards):
+                source = torch.frombuffer(bytearray(blob), dtype=torch.uint8)
+                method._load_wire(param, source, shard_id, shard_id, expert)
+    method.process_weights_after_loading(layer)
+    shape = dict(scope["shape"])
+    local = {"N": layer.tessera_rows, "K": layer.tessera_columns}
+    if ((shape["M"], shape["N"], shape["K"]) != (scope["shape"]["M"], declared["intermediate_size"], declared["hidden_size"])
+            or local != {"N": 2 * (declared["intermediate_size"] // 2), "K": declared["hidden_size"]}
+            or declared["experts"] != scope["shape"]["experts"]):
+        raise ValueError("actual native preparation differs from explicit shape/partition")
+    prep = {"builder": f"{module_name}.{builder_name}",
+            "wire_sha256": hashlib.sha256(wire_index).hexdigest(), "roles": roles, "shape": shape,
+            "topk": scope["shape"]["topk"], "tp_rank": tp_rank, "tp_degree": 2,
+            "grid": declared["grid"], "local_shape": local,
+            "native_packed_bytes": method._packed.resident_bytes()}
+    return layer, method, prep
+
+
+def _indexed_expert_blobs(wire_index, declared):
+    """Per-group, per-expert, per-shard owned bytes in the runtime row order."""
+    from tessera.serving import scheme
+    index = json_bytes(wire_index)
+    if set(index) != {"schema", "groups"} or index["schema"] != "tessera.shape_time_moe_wire_index.v1":
+        raise ValueError("unknown routed wire index schema")
+    groups = index["groups"]
+    if set(groups) != set(scheme.MOE_GROUPS):
+        raise ValueError("routed wire index holds no group per tile")
+    out = {}
+    for group in scheme.MOE_GROUPS:
+        entries = groups[group]
+        if len(entries) != declared["experts"]:
+            raise ValueError(f"routed wire group {group!r} holds no blob per expert")
+        out[group] = []
+        for expert, shards in enumerate(entries):
+            if len(shards) != len(scheme.MOE_GROUP_SHARDS[group]):
+                raise ValueError(f"routed wire {group}[{expert}] holds no blob per shard")
+            out[group].append([read_bound(entry) for entry in shards])
+    return out
 
 
 def fresh_call(layer, method, x):
@@ -334,6 +432,36 @@ def fresh_call(layer, method, x):
     if record is None or record.get("state") != "served":
         raise ValueError("native call emitted no fresh served route")
     return output, record
+
+
+def fresh_routed_call(layer, method, x, topk_weights, topk_ids):
+    """A latest-route record is evidence only if this call actually emitted it."""
+    from tessera.serving import telemetry
+    setattr(layer, telemetry.ATTR_PREFIX + "state", None)
+    output = method.apply(layer, x, topk_weights, topk_ids, None, None)
+    record = telemetry.read_route(layer)
+    if record is None or record.get("state") != "served":
+        raise ValueError("native call emitted no fresh served route")
+    return output, record
+
+
+def _lane_of_pair(request, pair):
+    """The one named extension lane the observed pair runs on."""
+    from tessera.serving import scheme
+    scope = request["scope"]
+    lanes = [v["lane"] for v in scheme.route_launches(
+        scope["route"], structure=scope["structure"], regime=scope["regime"], mode="resident")
+        if (v["symbol"], v["decoder"]) == tuple(pair)]
+    if len(lanes) != 1 or not lanes[0]:
+        raise ValueError("observed pair runs on no named native extension lane")
+    return lanes[0]
+
+
+def _native_fingerprints(structure, layer, method):
+    """Identity of the prepared weights, for a load-time/after-forward check."""
+    if structure == "dense":
+        return layer.tessera_native.fingerprints()
+    return method._packed.resident_bytes()
 
 
 def raw_netdata(host, t0, t1):
@@ -383,13 +511,33 @@ def _native_measure(job, output, job_source):
         raise ValueError("native measurement requires an actual CUDA device")
     output = Path(output).resolve()
     if not output.is_dir():raise ValueError("parent must own the fresh output directory")
-    layer, method, prep = prepare_dense(request, wire)
+    structure = request["scope"]["structure"]
+    if structure == "dense":
+        layer, method, prep = prepare_dense(request, wire)
+        native = layer.tessera_native
+        lane = None
+    elif structure == "routed_moe":
+        layer, method, prep = prepare_routed(request, wire)
+        native = method._native
+        lane = _lane_of_pair(request, native.launch_pair)
+    else:
+        raise ValueError(f"native application admits no {structure!r} scope")
     gen = torch.Generator(device="cuda").manual_seed(request["sampling"]["seed"])
-    x = torch.randn(request["scope"]["shape"]["M"], layer.tessera_columns, device="cuda", generator=gen).bfloat16()
+    if structure == "dense":
+        x = torch.randn(request["scope"]["shape"]["M"], layer.tessera_columns, device="cuda", generator=gen).bfloat16()
+    else:
+        from tessera.serving import scheme as _scheme
+        topk = request["scope"]["shape"]["topk"]
+        x = torch.randn(request["scope"]["shape"]["M"], layer.tessera_columns, device="cuda", generator=gen).bfloat16()
+        topk_ids = torch.randint(0, _scheme.validate_tessera_moe_scheme(request["scheme"], request["prefix"])["experts"],
+                                 (request["scope"]["shape"]["M"], topk), device="cuda", generator=gen)
+        weights = torch.rand(request["scope"]["shape"]["M"], topk, device="cuda", generator=gen).bfloat16()
+        topk_weights = weights / weights.sum(-1, keepdim=True)
     records = []
-    fingerprints = layer.tessera_native.fingerprints()
+    fingerprints = _native_fingerprints(structure, layer, method)
     def call(verify=False):
-        y, record = fresh_call(layer, method, x)
+        y, record = (fresh_call(layer, method, x) if structure == "dense"
+                     else fresh_routed_call(layer, method, x, topk_weights, topk_ids))
         if tuple(y.shape) != (request["scope"]["shape"]["M"], layer.tessera_rows):
             raise ValueError("actual output geometry differs")
         if verify and not bool(torch.isfinite(y).all()):
@@ -397,9 +545,9 @@ def _native_measure(job, output, job_source):
         return record
     call(verify=True);torch.cuda.synchronize()
     actual_contract = contract.contract_path().read_bytes()
-    pair = list(layer.tessera_native.launch_pair)
+    pair = list(native.launch_pair)
     if hashlib.sha256(actual_contract).hexdigest()!=request["expected_runtime"]["contract_sha256"]:raise ValueError("runtime contract changed before native call")
-    native_binary=loaded_fused_binary(layer.tessera_native,request["scheme"]["family"],actual_contract)
+    native_binary=loaded_fused_binary(native,request["scheme"]["family"],actual_contract,lane)
     trace = profile_call(call, output / "profile.trace.json.gz")
     sampler = PowerSampler();sampler.start()
     t0 = time.time()
@@ -419,7 +567,7 @@ def _native_measure(job, output, job_source):
         pending = {box: pool.submit(raw_netdata, host, t0, t1) for box, host in request["netdata_hosts"].items()}
         telemetry = {"interval_unix": [t0, t1], "fast_power_samples": [[t, w] for t, w in sampler.samples if t0 <= t <= t1],
                      "netdata": {box: future.result() for box, future in pending.items()}}
-    if loaded_fused_binary(layer.tessera_native,request["scheme"]["family"],actual_contract)!=native_binary:
+    if loaded_fused_binary(native,request["scheme"]["family"],actual_contract,lane)!=native_binary:
         raise ValueError("actual loaded native ELF changed during measurement")
     evidence = {"trace": trace, "native_binary": native_binary}
     documents = {"runtime": runtime, "runtime_origins": origins, "producer": producer, "preparation": prep,
@@ -431,7 +579,7 @@ def _native_measure(job, output, job_source):
         with path.open("xb") as handle:
             handle.write(data);handle.flush();os.fsync(handle.fileno())
         fsync_path(path.parent);evidence[name] = file_binding(path)
-    if layer.tessera_native.fingerprints() != fingerprints:
+    if _native_fingerprints(structure, layer, method) != fingerprints:
         raise ValueError("prepared native weights changed during measurement")
     after,after_origins=observe_runtime(request["expected_runtime"],request["record_verifier"])
     if after!=runtime or after_origins!=origins or file_binding(__file__)!=worker_source:

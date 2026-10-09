@@ -1293,12 +1293,17 @@ bytes equal the current published verifier, under bounded stable reads;
 execution uses those held bytes and rechecks them afterwards. No fleet alias,
 original input rewrite, serving pin change or new GPU measurement is involved.
 
-Re-stamped 2026-10-02 for the first Tessera #688 native timing receipt
-slice. `serving.timing_panel` is a passive stdlib validator for one E4M3
-dense TP1 eager/resident operator, requiring canonical wire/container
-checks, independent runtime identity, a positively matching backed cell,
-its named native launch and wire predicate, and bound raw measurement
-evidence. It shares `fused_frame` framing with the existing fused reader.
+Re-stamped 2026-10-09 for tessera#1136: the #688 panel admits dense TP1/TP2
+and routed TP2 scopes, and refuses all other scopes by name.
+`serving.timing_panel` is a passive stdlib validator for one E4M3 FP8
+eager/resident operator or expert stack per receipt, requiring canonical
+wire/container checks (a per-shard wire index for a routed stack),
+independent runtime identity with an explicit TP rank, a positively matching
+backed cell, its named native extension lane and wire predicate, and bound
+raw measurement evidence. Dense wires build through
+`serving.lane.build_tessera_method`; routed stacks build through the
+production route named by `scheme.MOE_BUILDERS` at TP2, never the research
+packed path. It shares `fused_frame` framing with the existing fused reader.
 Samples determine a true median and inclusive quartiles; energy remains
 HOLD while cross-host clocks are unqualified. New package source changes
 its source digest if deployed as a runtime. The repository producer owns
