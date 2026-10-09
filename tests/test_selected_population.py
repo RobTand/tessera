@@ -150,6 +150,7 @@ def test_the_sealed_commands_must_run_the_selected_files_exactly(tmp_path, monke
 
 
 def test_shards_of_another_tree_than_the_checkouts_are_not_green(tmp_path, monkeypatch):
+    _dev_mode(monkeypatch, certified=True)
     world = _world(tmp_path, monkeypatch, source="e" * 64)
     receipt = _receipt(world)
     assert receipt["verdict"].startswith("incomplete:"), receipt["verdict"]
@@ -157,6 +158,7 @@ def test_shards_of_another_tree_than_the_checkouts_are_not_green(tmp_path, monke
 
 
 def test_a_dirty_checkout_cannot_vouch_for_the_shards(tmp_path, monkeypatch):
+    _dev_mode(monkeypatch, certified=True)
     world = _world(tmp_path, monkeypatch)
     (world.checkout / "stray.py").write_text("x = 1\n")
     receipt = _receipt(world)

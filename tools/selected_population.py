@@ -12,8 +12,10 @@ needs and a single arm does not:
 
 * the sealed commands of the shards must run the selected files exactly, each
   file once;
-* the shards' effective source must be the source of the checkout that chose
-  the files, not only the same source as each other;
+* in certified mode the shards' effective source must be the source of the
+  checkout that chose the files, not only the same source as each other; in
+  dev mode (D32, the default) that comparison is a seal, so it is stamped and
+  not computed;
 * no pbrun return code may be non-zero, and no shard may leave a module
   uncollected.
 
@@ -44,6 +46,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import merge_suite  # noqa: E402
 from tessera._dev.suite_source import measured_source  # noqa: E402
+from tessera.dev_mode import NOT_COMPUTED, dev_mode_enabled, seal_check  # noqa: E402
 
 #: The selection, saved beside the shard populations so ``--resume`` knows
 #: which files each shard was given.  It is data this tool wrote, and every
@@ -177,13 +180,49 @@ def submit_all(selection: dict, args, receipt_dir: Path) -> dict[str, dict]:
         return {name: future.result() for name, future in futures.items()}
 
 
-def population_problems(selection: dict, records: list[dict], head_source: dict) -> list[str]:
+class SourceMismatch(RuntimeError):
+    """The shards' effective source is not the checkout's (certified mode only)."""
+
+
+def checkout_source(records: list[dict], checkout: Path) -> tuple[dict, list[str]]:
+    """The tie between the shards' source and the checkout's, as a seal (D32).
+
+    It compares a stored run identity with the live checkout, so it goes
+    through ``seal_check``.  Dev mode prints one ``[DEV-MODE]`` line and
+    continues, and it computes no digest of the checkout for this alone.
+    Certified mode (``PRISMAQUANT_DEV_MODE=0``) measures the checkout and
+    refuses a tree that is unverified or different.
+    """
+
+    seen = sorted({record["surface"]["source_identity"].get("sha256") for record in records
+                   if (record.get("surface") or {}).get("source_identity", {}).get("verification")
+                   == "verified"} - {None})
+    if dev_mode_enabled():
+        seal_check("effective source of the shards", seen, NOT_COMPUTED, where=__name__)
+        return {"verification": "not computed",
+                "reason": "dev mode (D32): the checkout's digest is not computed for this comparison"}, []
+    head = measured_source(checkout, verifier=None)
+    if head.get("verification") != "verified":
+        return head, ["the checkout's own source identity is not verified "
+                      f"({head.get('reason')}), so the shards cannot be tied to it"]
+    try:
+        seal_check("effective source of the shards", [head["sha256"]], seen, where=__name__,
+                   refusal=SourceMismatch)
+    except SourceMismatch:
+        return head, ["the shards' effective source is not the checkout's: "
+                      f"checkout {head['sha256'][:12]}, shards "
+                      f"{[digest[:12] for digest in seen] or 'none verified'}"]
+    return head, []
+
+
+def population_problems(selection: dict, records: list[dict]) -> list[str]:
     """What the shards together fail to establish, beyond what each one did.
 
     merge_suite judges each shard.  Four things belong to the set: the files
-    the sealed commands ran, the tree the selector read, the exit codes pbrun
-    gave, and the modules a shard did not collect (a pass count never shows
-    them).  Every problem is named; none is a warning.
+    the sealed commands ran, the exit codes pbrun gave, the modules a shard did
+    not collect (a pass count never shows them), and, as a seal,
+    the tree the selector read (``checkout_source``).  Every problem is named;
+    none is a warning.
     """
 
     problems: list[str] = []
@@ -223,15 +262,6 @@ def population_problems(selection: dict, records: list[dict], head_source: dict)
         if paths:
             problems.append(f"{len(paths)} file(s) {label}: {', '.join(paths[:5])}"
                             + (" ..." if len(paths) > 5 else ""))
-    source = [record["surface"]["source_identity"].get("sha256") for record in records
-              if (record.get("surface") or {}).get("source_identity", {}).get("verification") == "verified"]
-    if head_source.get("verification") != "verified":
-        problems.append("the checkout's own source identity is not verified "
-                        f"({head_source.get('reason')}), so the shards cannot be tied to it")
-    elif set(source) != {head_source["sha256"]}:
-        problems.append("the shards' effective source is not the checkout's: "
-                        f"checkout {head_source['sha256'][:12]}, shards "
-                        f"{sorted(s[:12] for s in source if s) or 'none verified'}")
     return problems
 
 
@@ -259,9 +289,9 @@ def assemble(selection: dict, receipt_dir: Path, checkout: Path, *,
             record["submit_stderr_tail"] = sent.get("stderr_tail")
             record["pbrun"] = sent.get("pbrun")
         records.append(record)
-    head_source = measured_source(checkout, verifier=None)
     receipt = merge_suite._assemble_receipt(records, checkout, assembled_by=assembled_by)
-    problems = population_problems(selection, records, head_source)
+    head_source, source_problems = checkout_source(records, checkout)
+    problems = population_problems(selection, records) + source_problems
     receipt["schema"] = "tessera.selected_population.v1"
     receipt["selection"] = selection
     receipt["checkout_source"] = head_source
