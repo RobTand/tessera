@@ -12,6 +12,120 @@ import textwrap
 OWNER = "prismabuild.client.PoolQueue.claim"
 CHAIN = ["PoolQueue.claim", "PoolQueue._claim", "PoolQueue._claim_pass"]
 
+REQUIRED_QUEUE_METHODS = ("claim", "_claim", "_claim_pass", "ledger", "latest_denials", "offers")
+REQUIRED_LEDGER_METHODS = ("capacity_census", "available")
+
+
+def _consumer_signature(owner, name):
+    """Return the signature of one required call bound as the proof makes it.
+
+    The check binds through a blank owner instance, so the descriptor
+    protocol removes the receiver whatever name it uses. ``staticmethod``
+    and ``classmethod`` bind the same way, and a receiver named anything
+    other than ``self`` binds too. Construction runs no owner code beyond
+    blank instance creation, so the check performs no claim or read.
+    A raw signature means no blank instance binds the attribute; the
+    caller then refuses it. ``None`` means the attribute has no call
+    signature at all.
+    """
+    try:
+        raw = inspect.getattr_static(owner, name)
+    except AttributeError:
+        return None
+    try:
+        probe = object.__new__(owner)
+    except Exception:
+        probe = None
+    if probe is not None:
+        try:
+            return inspect.signature(getattr(probe, name)), False
+        except (AttributeError, TypeError, ValueError):
+            pass
+    try:
+        return inspect.signature(raw), True
+    except (TypeError, ValueError):
+        return None
+
+
+def _consumer_call_binds(entry, args, kwargs):
+    """Check one exact proof consumer call binds with no missing argument.
+
+    A raw entry keeps the receiver in the signature, so an exact call
+    that needs the receiver still refuses. Extra required arguments and
+    keyword collisions then refuse, while extra optional arguments pass.
+    """
+    if entry is None:
+        return False
+    signature, raw = entry
+    if raw:
+        return False
+    try:
+        signature.bind(*args, **kwargs)
+    except TypeError:
+        return False
+    return True
+
+
+def required_api_problems(client_module, ledger_cls=None):
+    """Name required public-claim API entries the loaded client misses.
+
+    The proof reads the ledger through exactly these consumer calls:
+    ``PoolQueue.ledger(host)``, ``capacity_census()``, ``available()``,
+    ``latest_denials(keys, include_local=False)`` and
+    ``offers(max_age_s=...)``. It also inspects the
+    ``claim``/``_claim``/``_claim_pass`` source chain. Each returned entry
+    names a missing call or a signature that refuses the exact call the
+    proof makes. An empty list means the loaded client serves the contract
+    the proof uses, at any version.
+    """
+    problems = []
+    queue_cls = getattr(client_module, "PoolQueue", None)
+    if queue_cls is None:
+        return ["PoolQueue"]
+    missing_queue = {name for name in REQUIRED_QUEUE_METHODS
+                     if not callable(getattr(queue_cls, name, None))}
+    problems.extend("PoolQueue." + name for name in REQUIRED_QUEUE_METHODS if name in missing_queue)
+    if ledger_cls is None:
+        try:
+            from prismabuild.pool import ResourceLedger as ledger_cls
+        except Exception:
+            ledger_cls = None
+    if ledger_cls is None:
+        problems.append("ResourceLedger")
+        missing_ledger = set(REQUIRED_LEDGER_METHODS)
+    else:
+        missing_ledger = {name for name in REQUIRED_LEDGER_METHODS
+                          if not callable(getattr(ledger_cls, name, None))}
+        problems.extend("ResourceLedger." + name for name in REQUIRED_LEDGER_METHODS if name in missing_ledger)
+    ledger_entry = _consumer_signature(queue_cls, "ledger") if "ledger" not in missing_queue else None
+    if "ledger" not in missing_queue and ledger_entry is None:
+        problems.append("PoolQueue.ledger(signature)")
+    elif ledger_entry is not None and not _consumer_call_binds(
+            ledger_entry, ("sparky",), {}):
+        problems.append("PoolQueue.ledger(host)")
+    denials_entry = _consumer_signature(queue_cls, "latest_denials") if "latest_denials" not in missing_queue else None
+    if "latest_denials" not in missing_queue and denials_entry is None:
+        problems.append("PoolQueue.latest_denials(signature)")
+    elif denials_entry is not None and not _consumer_call_binds(
+            denials_entry, (set(),), {"include_local": False}):
+        problems.append("PoolQueue.latest_denials(keys,include_local)")
+    offers_entry = _consumer_signature(queue_cls, "offers") if "offers" not in missing_queue else None
+    if "offers" not in missing_queue and offers_entry is None:
+        problems.append("PoolQueue.offers(signature)")
+    elif offers_entry is not None and not _consumer_call_binds(
+            offers_entry, (), {"max_age_s": 120.0}):
+        problems.append("PoolQueue.offers(max_age_s)")
+    if ledger_cls is not None:
+        for name in REQUIRED_LEDGER_METHODS:
+            if name in missing_ledger:
+                continue
+            census_entry = _consumer_signature(ledger_cls, name)
+            if census_entry is None:
+                problems.append("ResourceLedger." + name + "(signature)")
+            elif not _consumer_call_binds(census_entry, (), {}):
+                problems.append("ResourceLedger." + name + "()")
+    return problems
+
 
 def _calls_self(tree, name):
     return any(isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
@@ -71,6 +185,7 @@ def positive_kind_refusal_branch(source):
 
 
 def observe_current_claim_contract(runtime_manifest):
+    from prismabuild import client
     from prismabuild.client import PoolQueue, SDK_VERSION
     from stageprev_793_prepare import PB_ROOT
     expected = (Path(PB_ROOT) / "src/prismabuild/pool.py").resolve(strict=True)
@@ -85,14 +200,17 @@ def observe_current_claim_contract(runtime_manifest):
     chain_verified = (_calls_self(ast.parse(textwrap.dedent(claim_source)), "_claim")
                       and _calls_self(ast.parse(textwrap.dedent(wrapper_source)), "_claim_pass"))
     predicate_verified = positive_kind_refusal_branch(decision_source)
-    identity_verified = (SDK_VERSION == 4 and source_file == expected and before == after
+    api_problems = required_api_problems(client)
+    api_verified = api_problems == []
+    identity_verified = (api_verified and source_file == expected and before == after
                          and digest == manifest_digest
                          and all(method.__module__ == "prismabuild.pool" for method in
                                  (PoolQueue.claim, PoolQueue._claim, PoolQueue._claim_pass)))
     return {"owner": OWNER, "chain": CHAIN, "source_file": str(source_file),
             "pool_sha256": digest, "published_pool_sha256": manifest_digest,
             "generation": runtime_manifest.get("generation"),
-            "sdk_version": SDK_VERSION, "identity_verified": identity_verified,
+            "sdk_version": SDK_VERSION, "api_verified": api_verified, "api_problems": api_problems,
+            "identity_verified": identity_verified,
             "chain_verified": chain_verified,
             "positive_reservation_refusal_verified": predicate_verified,
             "verified": identity_verified and chain_verified and predicate_verified,

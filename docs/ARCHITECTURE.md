@@ -489,19 +489,28 @@ cells. The terminal WINDOW recipe is not replaced with a BF16 passthrough
 reference. Missing timings, compiler resources or actual sampled expert
 quality leave the versioned table rows pending; no T8 timings are inherited.
 
-Re-stamped 2026-10-06 for PB1496 (unnameable base): the impacted-test selector's
-documented limit is unchanged -- a directory read whose base nothing names, in a
-module that executes nothing, states no dependency and selects no test (#148;
-treating it as an unplaced read selected 424 of 424 test files for any change).
-The result now lists each such read under `unnamed_directory_reads` and the
-text receipt prints it, so a reader of this shape is seen instead of silently
-unselected. `tests/test_impacted_tests.py` holds the count at what the tree had
-when this was added (115 modules, 168 sites, most taking the directory as a
-parameter or calling the standard library's `glob.glob(pattern)`) and fails if
-it rises. The count was 114 modules and 167 sites on 2026-10-07 and the ceiling
-now holds there (#1014). Selector infrastructure only: no wire, recipe
-table, serving lane, plugin contract, numerical path, residency or performance
-default moves.
+Re-stamped 2026-10-08 for issue #1014: the impacted-test selector retains the
+accepted unnamed-base limit (#148).
+A directory read with no nameable base states no dependency when its module executes no source.
+The selector reports each such site under `unnamed_directory_reads`.
+The text receipt prints the same sites.
+
+`docs/reports/unnamed-directory-reads-1014.md` classifies all 169 sites that
+`select()` reported in 115 modules on base `83a1f38c4965`.
+The classes contain one nameable base, 103 runtime bases, 28 external box reads,
+37 temporary test reads, and no recognizer false positives.
+The report records reverse module and test counts for all 35 runtime-base modules with test consumers.
+An imported module's source path remains runtime state, not proof of this checkout's path.
+
+Literal tuple, list, and set elements now supply separate loop-variable alternatives.
+This correction names the conftest's three import roots without a parameter guess or a scalar sequence conversion.
+`select()` now reports 114 modules and 168 sites.
+`tests/test_impacted_tests.py` holds both ceilings at those measured counts.
+The merge-base smoke on master `572539ad224c` confirmed the same census and all 35 runtime-module consumer counts.
+The report records its PrismaBuild action and source evidence.
+Refused bases and source loaders retain their conservative selection.
+External box globs and temporary test fixtures do not gain unrelated tests.
+No wire, recipe, serving contract, numerical rule, or performance default changes.
 
 Re-stamped 2026-10-06 for PB1496: the impacted-test selector no longer treats a
 `.md`, `.txt` or `.rst` change as proof that an unknown loader did not read it.
@@ -884,6 +893,18 @@ root; the actual frozen Python/native choice must match before arm preparation.
 Only the numeric phase is admitted: no old numericV4 receipt, timing/profile,
 NCU or repeated720-event population can stand for changed-source proof. These
 CPU schema/refusal controls are not CUDA numerical/performance/energy authority.
+
+Re-stamped 2026-10-09 for the stageprev 793 operative gate (tessera#1078).
+The gate checks the public claim names and exact consumer calls the proof uses,
+not the SDK version number. `stageprev_793_claim_contract.required_api_problems`
+binds each `PoolQueue` or ledger call through a blank owner instance, so the
+descriptor protocol removes the receiver whatever name it uses. A static entry
+that keeps its receiver refuses, as do an extra required argument and a keyword
+collision. `observe_current_claim_contract` records that verdict beside the pool
+digest. `stageprev_793_prerequisites` refuses a contract with open API problems.
+The version number stays in the record as provenance only.
+CPU refusal controls remove `PoolQueue.offers` and supply an incompatible signature.
+They exercise the observer and collector without a claim or GPU submission.
 
 Re-stamped 2026-10-04 (`v6/ts696-stock-runner-guard-20261004`, #696):
 the GLM53 NoPE runner-identity owner rejects the known stock V2 runner in
