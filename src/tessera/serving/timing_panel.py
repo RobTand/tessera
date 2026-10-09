@@ -325,9 +325,10 @@ def admitted_cell(contract, scope, runtime, pair, roles):
     """Positive coverage, named launch, runtime code and the actual wire predicate."""
     family = PAYLOAD_FAMILY_BY_ROUTE[scope["route"]]
     fmt = next(f for f in contract["formats"] if f["family"] == family)
+    structure = scope.get("structure", "dense")
     candidates = []
     for cell in contract["lane_eligibility"]["cells"]:
-        if (cell["platform"], cell["family"], cell["structure"], cell["regime"]) != (runtime["platform"], family, scope["structure"], scope["regime"]):
+        if (cell["platform"], cell["family"], cell["structure"], cell["regime"]) != (runtime["platform"], family, structure, scope["regime"]):
             continue
         image, modes = cell_runtime_scope(cell)
         if image != runtime["image"] or "eager" not in modes or "resident" not in cell_residency_modes(cell):
@@ -350,7 +351,7 @@ def admitted_cell(contract, scope, runtime, pair, roles):
         candidates.append(cell)
     if len(candidates) != 1:
         raise ValueError("requires exactly one positively matching backed native cell")
-    launches = [v for v in candidate_launches(scope["route"], scope["structure"], scope["regime"])
+    launches = [v for v in candidate_launches(scope["route"], structure, scope["regime"])
                 if (v["symbol"], v["decoder"]) == tuple(pair)]
     if len(launches) != 1 or not launches[0]["lane"]:
         raise ValueError("shape panel requires a named native extension lane")
