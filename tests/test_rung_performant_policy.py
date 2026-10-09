@@ -265,6 +265,10 @@ class TimingPublication(unittest.TestCase):
         self.assertEqual(coverage[0]['status'], 'wait')
         self.assertEqual(coverage[1]['cell_ids'], ['dense:o:M1'])
         self.assertFalse(scope['native_qualification_inherited'])
+        units['units'][0]['tensor_parallel_shapes'] = {}
+        missing = publication_scope(v3_fixture(), unit_inventory=units)['release_unit_coverage'][0]
+        self.assertEqual(missing['geometry_status'], 'wait')
+        self.assertEqual(missing['coverage'], [])
 
     def test_all_class_spots_bound_the_derived_value(self):
         table = v3_fixture()

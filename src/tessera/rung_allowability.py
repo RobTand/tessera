@@ -744,7 +744,8 @@ def publication_scope(table, *, unit_inventory=None):
                     'cell_ids': [cell['cell']['cell_id'] for cell in matched]})
             result['release_unit_coverage'].append({
                 **{key: unit.get(key) for key in ('name', 'category', 'role', 'shape', 'dtype', 'source_shard', 'plan')},
-                'coverage': coverage})
+                'coverage': coverage, 'geometry_status': 'declared' if coverage else 'wait',
+                'unavailable_reason': None if coverage else 'The retained inventory supplies no tensor-parallel shape.'})
     return result
 
 

@@ -6,8 +6,8 @@ Extend the existing producer with immutable class timing records and exact decla
 Retain original samples, action bindings, build identities, failures, and quality observations.
 Report measured sample variability and explicit unavailable confidence intervals.
 Keep hard correctness refusals separate from historical sample variation.
+Keep the T4 menus empty and bind the producer's paired-value semantics.
 Supplier prose does not control admission. Physical arity and the empty menu remain correctness checks.
-Preserve unavailable T8 rates and the R1280 pricing anchor.
 Preserve unavailable T8 rates and the R1280 pricing anchor.
 Bind new table bytes in the candidate index. Leave the active index unchanged.
 

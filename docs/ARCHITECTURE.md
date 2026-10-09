@@ -11,6 +11,7 @@ Class-derived values name every eligible donor and do not become measured values
 The immutable producer adds class timing records and a complete declared-cell scope matrix.
 Historical sample variation stays separate from hard correctness flags.
 Missing shapes, recipes, activations, and token rows still wait.
+An absent tensor-parallel shape has an explicit wait marker, not an empty successful population.
 T4 uses one code for two scalar weights. Its qualified dense and routed menus stay empty.
 Supplier prose does not control admission. The producer checks physical arity and the empty menu.
 T8 R640 has no supported publication. R1280 stays a pricing anchor, not a performance option.
