@@ -63,6 +63,10 @@ def register() -> None:
         # Already registered.
         pass
 
+    from .endpoint_runtime import install as install_endpoint_observer
+
+    install_endpoint_observer()
+
     from .projection_routes import install as install_projection_routes
 
     install_projection_routes()
