@@ -185,6 +185,10 @@ def test_runtime_variants_have_disjoint_scopes_and_unique_ids():
     first["runtime"]["execution_modes"] = ["eager"]
     other_mode = copy.deepcopy(first)
     other_mode["runtime"]["execution_modes"] = ["compiled"]
+    # The decode cell cites the open graph gap with eager scope (tessera#1152).
+    # A compiled variant covers no eager mode, so it carries no eager record.
+    other_mode["evidence"]["kl"] = []
+    other_mode["evidence"]["grade"] = "route_only"
     other_mode["id"] += runtime_contract.cell_runtime_id_suffix(other_mode)
     other_image = copy.deepcopy(first)
     other_image["runtime"]["image"] = OTHER_IMAGE
