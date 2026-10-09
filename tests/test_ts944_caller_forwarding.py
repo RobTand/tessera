@@ -136,15 +136,19 @@ def test_caller_preserves_selectors_in_all_submissions(tmp_path):
     source.mkdir(parents=True)
     producer.write_text(
         f"#!{sys.executable}\n"
-        "import json, os, sys\n"
+        "import json, os, sys, types\n"
         "assert sys.argv[1] == '-c'\n"
-        "assert 'from tessera.export_serving import authenticate_producer_python' in sys.argv[2]\n"
-        "assert 'authenticate_producer_python()' in sys.argv[2]\n"
-        "with open(os.environ['CALLER_CAPTURE'], 'a') as stream:\n"
-        "    stream.write(json.dumps({'event': 'authenticate', "
+        "def authenticate_producer_python():\n"
+        "    with open(os.environ['CALLER_CAPTURE'], 'a') as stream:\n"
+        "        stream.write(json.dumps({'event': 'authenticate', "
         "'python': os.environ['TESSERA_PRODUCER_PYTHON'], "
         "'source': os.environ['TESSERA_PRODUCER_SOURCE']}) + '\\n')\n"
-        "print(json.dumps({'package_sha256': 'ab' * 32}))\n"
+        "    return {'package_sha256': 'ab' * 32}\n"
+        "sys.modules['tessera'] = types.ModuleType('tessera')\n"
+        "owner = types.ModuleType('tessera.export_serving')\n"
+        "owner.authenticate_producer_python = authenticate_producer_python\n"
+        "sys.modules[owner.__name__] = owner\n"
+        "exec(sys.argv[2])\n"
     )
     producer.chmod(0o755)
     pbrun = tmp_path / "stub pbrun.py"
