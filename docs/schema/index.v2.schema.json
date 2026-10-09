@@ -64,6 +64,11 @@
                           "partial",
                           "complete"
                         ]
+                      },
+                      "sha256": {
+                        "type": "string",
+                        "pattern": "^[0-9a-f]{64}$",
+                        "description": "The digest binds immutable table bytes. A mismatch is a byte integrity refusal, not an identity seal."
                       }
                     }
                   }
