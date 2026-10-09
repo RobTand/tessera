@@ -108,6 +108,36 @@ def test_the_declared_cores_are_the_cores_the_command_uses():
         assert merge_suite._arm_cpus(merge_suite.ARMS[name], 6) == 6
 
 
+@pytest.mark.parametrize("targets", [None, ["tests/test_a.py", "tests/test_b.py"]])
+def test_the_targets_an_arm_runs_are_the_targets_read_back_from_its_sealed_command(targets):
+    """An arm may run named test files, and the pool's record says which.
+
+    A tool that submits arms of selected files has to check afterwards that the
+    sealed commands cover the selection, so composing the targets and reading
+    them back are tested as one pair.  The default stays the whole tree.
+    """
+
+    merge_suite = _module()
+    arm = {**merge_suite.ARMS["x86"], **({"targets": targets} if targets else {})}
+    command = merge_suite._command(arm, Path("/tmp/surface.json"), ["--durations=5"], 2)
+    sealed = merge_suite._timed_command(command, 600.0)
+    argv, why = merge_suite._pytest_argv(sealed)
+    assert why is None
+    assert merge_suite._targets_of(argv) == (targets or ["tests"])
+
+
+def test_one_receipt_owner_writes_the_verdict_for_any_set_of_arms():
+    """``main`` and tools that submit arms of their own share one receipt shape."""
+
+    merge_suite = _module()
+    receipt = merge_suite._assemble_receipt(
+        [_population("x86")], ROOT, assembled_by="test")
+    assert receipt["schema"] == "tessera.merge_suite.v1"
+    assert receipt["assembled_by"] == "test"
+    assert receipt["verdict"] == merge_suite._verdict(receipt["arms"], receipt["commits_measured"])
+    assert receipt["arm_results"] == merge_suite._arm_results(receipt["arms"])
+
+
 def test_one_submission_fans_out_the_x86_arm_and_keeps_the_gpu_arm_serial(tmp_path):
     """One ``--cpus`` for two arms that cannot spend it the same way.
 
