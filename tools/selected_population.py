@@ -52,6 +52,10 @@ SELECTION = "selection.json"
 RECEIPT = "receipt.json"
 SELECTOR = Path(__file__).resolve().parent / "impacted_tests.py"
 DEFAULT_RECEIPT_ROOT = merge_suite.SHARED_ROOT / "tessera-selected-populations"
+#: D21: one agent keeps at most eight PrismaBuild clients at once, because each
+#: client snapshots and hashes its checkout on the control seat.  The shard
+#: count is a separate number: shards past this many queue behind the clients.
+MAX_CLIENTS = 8
 #: pytest's slowest-test report, so a slow shard is visible in its own stdout.
 PYTEST_ARGS = ["--durations=5"]
 
@@ -125,14 +129,14 @@ def shard_arm(name: str, files: list[str], python: str | None = None) -> dict:
 
 
 def submit_all(selection: dict, args, receipt_dir: Path) -> dict[str, dict]:
-    """Submit every shard together; each answer is merge_suite's record for it."""
+    """Submit every shard, at most ``MAX_CLIENTS`` at once; each answer is merge_suite's record."""
 
     submission = SimpleNamespace(
         cpus=args.cpus, mem_gb=args.mem_gb, pytest_arg=[*PYTEST_ARGS, *args.pytest_arg],
         timeout_s=args.timeout_s, wait_s=args.wait_s, checkout=args.checkout,
         dry_run=args.dry_run, artifact_root=args.artifact_root)
     shards = selection["shards"]
-    with ThreadPoolExecutor(max_workers=len(shards)) as pool:
+    with ThreadPoolExecutor(max_workers=min(MAX_CLIENTS, len(shards))) as pool:
         futures = {name: pool.submit(merge_suite._submit, name,
                                      shard_arm(name, files, selection.get("python")),
                                      submission, receipt_dir)
