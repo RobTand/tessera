@@ -268,9 +268,9 @@ def observe_runtime(expected, record_verifier=None):
 def require_fused_preparation(native, family):
     """The first receipt slice observes only an actual ELF-backed fused owner."""
     from tessera.serving import native_window
-    arithmetic=native_window.NATIVE_WINDOW_ARITHMETIC[family]
+    window_family=native_window.NATIVE_WINDOW_FAMILY[family]
     published=native_window.DENSE_LANES[native_window.LANE_FUSED]
-    pair=(published[0],published[1][arithmetic])
+    pair=(published[0],published[1][window_family])
     if native.lane!=native_window.LANE_FUSED or tuple(native.launch_pair)!=pair:
         raise ValueError("first timing slice requires the prepared ELF-backed fused lane")
     return pair

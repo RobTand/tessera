@@ -88,7 +88,7 @@ def test_real_installed_python_m_entrypoint(tmp_path, selected, frozen_source):
     plan.write_text(json.dumps({selected.STACK: {'grid': 'E4M3', 'q256': 896}}))
     out = tmp_path / 'out'
     env = selected._selected_export_env(site, repo)
-    shim = _fixture_geometry_path(tmp_path, selected._FIXTURE_OUTPUT_SIZES)
+    shim = _fixture_geometry_path(tmp_path, selected._fixture_output_sizes())
     env['PYTHONPATH'] = str(shim) + os.pathsep + env['PYTHONPATH']
     done = subprocess.run([sys.executable, '-m', 'tessera.export_serving',
         *selected._selected_export_argv(source, out, plan)], cwd=tmp_path,

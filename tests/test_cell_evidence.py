@@ -732,6 +732,7 @@ def test_a_control_tells_a_shared_symptom_from_a_route_specific_one(contract):
     routed_without_record = sorted(
         cell["id"] for cell in contract["lane_eligibility"]["cells"]
         if cell["structure"] == "routed_moe" and cell["evidence"]["smoke"]["record"] is None)
+
     for cell in _WITHDRAWN_V38.values():
         smoke = cell["evidence"]["smoke"]
         assert smoke["status"] == "recorded", cell["id"]

@@ -315,7 +315,8 @@ def test_the_route_holds_packed_units_and_no_decoded_tile(monkeypatch, mode):
     second = method.apply(layer, x)
     assert torch.equal(first.view(torch.int16), second.view(torch.int16))
     for name, tensor in method.resident_tensors(layer):
-        assert torch.equal(before[name].view(torch.uint8), tensor.view(torch.uint8)), name
+        assert torch.equal(before[name].reshape(-1).view(torch.uint8),
+                           tensor.reshape(-1).view(torch.uint8)), name
 
 
 @requires_cuda

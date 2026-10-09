@@ -6,7 +6,9 @@ exercise row-cut gate/up and column-cut down on one GPU; this is not a two-node
 result.  The two-node run is a separate milestone.
 
 What is checked here:
-* FP8 and folded BF16 arithmetic, TP1 and both TP2 ranks;
+* FP8 ordinary route (no research config), TP1;
+* FP8 ordinary route at TP2, rank 0 and rank 1, row-cut w13 and column-cut w2;
+* BF16 through the research route and the production stack at TP1 and both TP2 ranks;
 * actual routing and the nonlinear activation against a stock-arithmetic
   reference built from the same reference tensors the wire decodes to;
 * shared-expert ownership: the method returns ROUTED output only and never
@@ -219,7 +221,7 @@ def test_fp8_native_method_tp2_shard_shapes_are_rank_local(tp_rank):
 
 
 def bf16_wires_native_data():
-    """Folded BF16 reference wires at the native WINDOW width."""
+    """Canonical BF16 reference wires at the native WINDOW width."""
     from tessera.alphabet import BF16_GRID
     from tessera.export import encode_linear_planes
     from tessera.fused import pack_fused
@@ -237,7 +239,7 @@ def bf16_wires_native_data():
                 weight, grid=BF16_GRID, q256=512, name=projection,
                 window_bits=14, verify=False)
             parts[projection] = (pack_fused([(projection, rows, written.blob)]),
-                                 read_unit_artifact(written.blob).to(torch.bfloat16))
+                                 read_unit_artifact(written.blob))
         w13_blobs.append([parts['gate_proj'][0], parts['up_proj'][0]])
         w2_blobs.append([parts['down_proj'][0]])
         expected.append((torch.cat([parts['gate_proj'][1], parts['up_proj'][1]]),
@@ -264,7 +266,7 @@ def bf16_wires_native():
 
 
 @cuda
-def test_bf16_folded_native_route_matches_folded_reference(bf16_wires_native):
+def test_bf16_native_research_route_matches_the_canonical_reference(bf16_wires_native):
     w13_blobs, w2_blobs, scheme, expected = bf16_wires_native
     layer = _native_layer(tp_rank=0, tp_size=2)
     layer.global_num_experts = 2
@@ -288,7 +290,7 @@ def test_bf16_folded_native_route_matches_folded_reference(bf16_wires_native):
     out = method.apply(layer, x, weights, ids, _SharedSpy(), None)
     assert out.dtype == torch.bfloat16 and out.shape == (8, HIDDEN)
 
-    # folded reference: bf16(values * scale) tiles, exactly decode_folded
+    # The canonical effective weights have no per-weight BF16 conversion.
     ref = torch.zeros(8, HIDDEN, dtype=torch.float32, device='cuda')
     for token in range(8):
         for choice in range(2):
@@ -309,9 +311,9 @@ def test_bf16_folded_native_route_matches_folded_reference(bf16_wires_native):
 
 @cuda
 @pytest.mark.parametrize('tp_rank,tp_size', [(0, 1), (0, 2), (1, 2)])
-def test_bf16_native_route_matches_the_folded_reference(
+def test_bf16_production_route_matches_the_canonical_reference(
         bf16_wires_native, tp_rank, tp_size):
-    """Routed-only folded BF16 math over actual TP1/TP2 loaded wire slices."""
+    """Exercise the real native owner on canonical BF16 weights at each TP cut."""
 
     w13_blobs, w2_blobs, scheme, expected = bf16_wires_native
     layer = _native_layer(tp_rank=tp_rank, tp_size=tp_size)
@@ -327,6 +329,7 @@ def test_bf16_native_route_matches_the_folded_reference(
     assert method._native is not None and method.moe_kernel is None
     assert not dict(layer.named_parameters()), "only packed constants stay resident"
 
+
     local = INTER // tp_size
     lo, hi = tp_rank * local, (tp_rank + 1) * local
     x = (torch.randn(8, HIDDEN, generator=torch.Generator().manual_seed(41)) * 0.5
@@ -338,6 +341,7 @@ def test_bf16_native_route_matches_the_folded_reference(
     out = method.apply(layer, x, weights, ids, shared, None)
     assert shared.calls == 0
     assert out.dtype == torch.bfloat16 and out.shape == (8, HIDDEN)
+
 
     ref = torch.zeros(8, HIDDEN, dtype=torch.float32, device='cuda')
     for token in range(8):
@@ -355,6 +359,7 @@ def test_bf16_native_route_matches_the_folded_reference(
     diff = (out.float() - ref.float()).abs()
     assert float(diff.max()) < 5e-2 + 2e-2 * float(ref.float().abs().max()), \
         f"TP{tp_size} rank {tp_rank}: max abs diff {float(diff.max())}"
+
 
 
 
@@ -390,7 +395,7 @@ def test_router_weight_on_input_matches_actual_stock_placement():
     w2 = torch.stack([r["down"]["weight"] for r in reference]).cuda().contiguous()
     s2 = torch.stack([r["down"]["weight_scale"] for r in reference]).cuda().contiguous()
     stock = _stock_modular_reference(
-        x, w1, w2, weights, ids, family="TESSERA_FP8", clamp=None,
+        x, w1, w2, weights, ids, clamp=None,
         experts=EXPERTS, apply_router_weight_on_input=True,
         w1_scale=s1, w2_scale=s2, moe_config=method.moe)
     diff = (native.float() - stock.float()).abs()

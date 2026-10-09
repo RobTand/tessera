@@ -45,7 +45,7 @@ def build_owner(arm, q256, device, *, experts, hidden, inter, seed):
             word_off=offsets, tile_words=torch.full_like(widths, p["tile_words"]), total_words=widths,
             run_off=torch.arange(experts + 1, dtype=torch.int32, device=device), perm_all=p["perm"],
             rows=rows, cols=cols, experts=experts, window_bits=p["window_bits"],
-            family="e4m3", arithmetic="epilogue")
+            family="e4m3")
         for field in ("words_all", "codes_all", "native_all", "scale_all", "runs_all", "init_all",
                       "has_init", "word_off", "tile_words", "total_words", "run_off", "perm_all"):
             hashes[f"role{role}.{field}"] = digest_tensor(getattr(bundle, field))

@@ -63,7 +63,7 @@ def packed_constants(rates, *, experts, hidden, inter, device, seed):
             word_off=offsets, tile_words=tile_words, total_words=widths,
             run_off=torch.arange(experts + 1, dtype=torch.int32, device=device),
             perm_all=torch.cat([p["perm"] for p in pieces]), rows=rows, cols=cols,
-            experts=experts, window_bits=rf.WINDOW_BITS, family="e4m3", arithmetic="epilogue"))
+            experts=experts, window_bits=rf.WINDOW_BITS, family="e4m3"))
     packed = PackedWindowMoeBundles(*bundles, family="e4m3", expert_classes=meta["expert_classes"])
     inverse = torch.tensor(inverse_expert_ids(meta["expert_ids"]), dtype=torch.int32, device=device)
     return packed, meta, inverse
