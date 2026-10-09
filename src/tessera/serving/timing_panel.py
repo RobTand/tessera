@@ -261,6 +261,19 @@ def _unit_facts(parsed, structure):
             "rotation": m.branch.rotation.name, "grid_arity": 1, "structure": structure}
 
 
+def candidate_launches(route, structure, regime):
+    """Launches the dispatch makes, including receipt-qualified current ones.
+
+    The cell stays the attestation authority: this view resolves an observed
+    pair to its lane, while admitted_cell still requires exactly one strictly
+    validated cell that attests the pair. Without the experimental members a
+    receipt-qualified current pair (a scoped census receipt, never a historical
+    one) could not join its lane, and the panel could not record it.
+    """
+    return scheme.route_launches(route, structure=structure, regime=regime,
+                                 mode="resident", include_experimental=True)
+
+
 def routed_wire_facts(blob, declaration):
     """Canonical byte structure of one routed expert stack, without a decoder."""
     declared = scheme.validate_tessera_moe_scheme(declaration, "shape-panel")
@@ -337,7 +350,7 @@ def admitted_cell(contract, scope, runtime, pair, roles):
         candidates.append(cell)
     if len(candidates) != 1:
         raise ValueError("requires exactly one positively matching backed native cell")
-    launches = [v for v in scheme.route_launches(scope["route"], structure=scope["structure"], regime=scope["regime"], mode="resident")
+    launches = [v for v in candidate_launches(scope["route"], scope["structure"], scope["regime"])
                 if (v["symbol"], v["decoder"]) == tuple(pair)]
     if len(launches) != 1 or not launches[0]["lane"]:
         raise ValueError("shape panel requires a named native extension lane")

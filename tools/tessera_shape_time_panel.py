@@ -147,7 +147,7 @@ def read_request(path, *, expected_sha256=None, producer_root=ROOT):
         raise ValueError("request wire geometry/rung differs")
     doc = tp.json_bytes(raw_contract)
     possible = []
-    for launch in tp.scheme.route_launches(scope["route"], structure=scope["structure"], regime=scope["regime"], mode="resident"):
+    for launch in tp.candidate_launches(scope["route"], scope["structure"], scope["regime"]):
         try:
             tp.admitted_cell(doc, scope, runtime, (launch["symbol"], launch["decoder"]), roles)
         except ValueError:

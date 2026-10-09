@@ -450,7 +450,8 @@ def _lane_of_pair(request, pair):
     from tessera.serving import scheme
     scope = request["scope"]
     lanes = [v["lane"] for v in scheme.route_launches(
-        scope["route"], structure=scope["structure"], regime=scope["regime"], mode="resident")
+        scope["route"], structure=scope["structure"], regime=scope["regime"], mode="resident",
+        include_experimental=True)
         if (v["symbol"], v["decoder"]) == tuple(pair)]
     if len(lanes) != 1 or not lanes[0]:
         raise ValueError("observed pair runs on no named native extension lane")

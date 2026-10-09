@@ -63,20 +63,59 @@ def test_request_accepts_dense_tp1_and_tp2(panel, monkeypatch, tp_degree):
     assert app.main(["check-request", str(path)]) == 0
 
 
+ROUTED_EXPERTS = 2
+ROUTED_TOPK = 2
+ROUTED_Q256 = 768
+ROUTED_HIDDEN = 256
+ROUTED_INTERMEDIATE = 512
+#: The receipt-qualified current pair this fixture serves. The packaged
+#: contract's scoped TP2 census receipt qualifies exactly this pair at r768.
+ROUTED_PAIR = ("tessera.routed_fused.FusedRoutedWindowMoE.__call__",
+               "native_routed_window_classes_e4m3mma")
+
+
 def _routed_stack(tmp_path):
-    from _routed_classes_plugin_fixture import wire_fixture
-    scheme_decl, wires = wire_fixture("e4m3", "uniform")
+    import torch
+    from tessera.alphabet import E4M3_GRID
+    from tessera.export import encode_linear_planes
+    from tessera.fused_frame import pack_fused
+    projections = (("w13", "gate_proj", ROUTED_INTERMEDIATE, ROUTED_HIDDEN),
+                   ("w13", "up_proj", ROUTED_INTERMEDIATE, ROUTED_HIDDEN),
+                   ("w2", "down_proj", ROUTED_HIDDEN, ROUTED_INTERMEDIATE))
+    blobs = {}
+    for storage in range(ROUTED_EXPERTS):
+        for index, (group, name, rows, columns) in enumerate(projections):
+            generator = torch.Generator().manual_seed(1136 + 101 * storage + index)
+            weight = torch.randn(rows, columns, generator=generator) * 0.02
+            exported, _, _ = encode_linear_planes(weight, grid=E4M3_GRID, q256=ROUTED_Q256,
+                                                  name=name, verify=False)
+            blobs[(storage, group, name)] = pack_fused([(name, rows, exported.blob)])
     groups = {}
     for group in scheme.MOE_GROUPS:
         entries = []
-        for storage in range(scheme_decl["experts"]):
+        for storage in range(ROUTED_EXPERTS):
             shards = []
-            for shard in scheme.MOE_GROUP_SHARDS[group]:
-                blob = wires[(storage, shard)]
+            for shard, name in zip(scheme.MOE_GROUP_SHARDS[group],
+                                   scheme.MOE_GROUP_PROJECTIONS[group]):
+                blob = blobs[(storage, group, name)]
                 bound = tp.file_binding(_save(tmp_path, f"{group}.{storage}.{shard}.wire", blob, raw=True))
                 shards.append(bound)
             entries.append(shards)
         groups[group] = entries
+    roles = [[["gate_proj", ROUTED_INTERMEDIATE], ["up_proj", ROUTED_INTERMEDIATE]],
+             [["down_proj", ROUTED_HIDDEN]]]
+    stride = max(len(blobs[(storage, group, name)]) for storage in range(ROUTED_EXPERTS)
+                 for group, name in (("w13", "gate_proj"), ("w13", "up_proj"), ("w2", "down_proj")))
+    scheme_decl = {"family": scheme.TESSERA_FP8, "structure": "routed_moe", "grid": "E4M3",
+                   "body": "WINDOW", "plane": "CHANNEL", "experts": ROUTED_EXPERTS,
+                   "expert_ids": list(range(ROUTED_EXPERTS)),
+                   "expert_classes": [{"start": 0, "end": ROUTED_EXPERTS,
+                                       "q256": {"w13": [ROUTED_Q256, ROUTED_Q256], "w2": [ROUTED_Q256]}}],
+                   "groups": {
+                       "w13": {"rows": 2 * ROUTED_INTERMEDIATE, "columns": ROUTED_HIDDEN,
+                               "roles": roles[0], "q256": ROUTED_Q256, "wire_stride": stride},
+                       "w2": {"rows": ROUTED_HIDDEN, "columns": ROUTED_INTERMEDIATE,
+                              "roles": roles[1], "q256": ROUTED_Q256, "wire_stride": stride}}}
     index = {"schema": tp.MOE_WIRE_INDEX_SCHEMA, "groups": groups}
     index_path = tmp_path / "moe-wire-index.json"
     index_path.write_bytes(tp.canonical(index))
@@ -91,17 +130,17 @@ def _routed_cell_contract():
                 and "resident" in contract.cell_residency_modes(c)
                 and "eager" in contract.cell_runtime_scope(c)[1]
                 and contract.cell_is_device_backed(c)
-                and contract.cell_covers_rung(c, 1024, next(f for f in doc["formats"] if f["family"] == family)))
-    cell["runtime"].update(tessera_commit="1" * 40, serving_source_sha256="2" * 64)
+                and contract.cell_covers_rung(c, ROUTED_Q256, next(f for f in doc["formats"] if f["family"] == family)))
     packed = tp.canonical(doc)
     return doc, cell, packed
 
 
 def _routed_scope_and_runtime(cell, packed):
-    scope = {"route": scheme.TESSERA_FP8, "grid": "E4M3", "q256": 1024, "structure": "routed_moe",
+    scope = {"route": scheme.TESSERA_FP8, "grid": "E4M3", "q256": ROUTED_Q256, "structure": "routed_moe",
              "mode": "resident", "execution_mode": "eager", "regime": "batch", "tp_degree": 2,
              "requested_platform": "sm_121",
-             "shape": {"M": 64, "N": 512, "K": 256, "experts": 8, "topk": 8}}
+             "shape": {"M": 64, "N": ROUTED_INTERMEDIATE, "K": ROUTED_HIDDEN,
+                       "experts": ROUTED_EXPERTS, "topk": ROUTED_TOPK}}
     runtime = {"image": cell["runtime"]["image"], "tessera_commit": "1" * 40,
                "serving_source_sha256": "2" * 64, "contract_sha256": hashlib.sha256(packed).hexdigest(),
                "platform": "sm_121", "torch": cell["runtime"]["torch"], "vllm": cell["runtime"]["vllm"],
@@ -171,20 +210,11 @@ def test_request_refuses_routed_geometry_mismatch(panel, monkeypatch, tmp_path):
         app.read_request(path)
 
 
-def _pick_routed_launch(doc, cell, scope, runtime, roles):
-    for launch in scheme.route_launches(scope["route"], structure="routed_moe",
-                                        regime=scope["regime"], mode="resident"):
-        if not launch["lane"]:
-            continue
-        if (launch["symbol"], launch["decoder"]) not in {
-                tuple(entry[:2]) for entry in cell["executes"]}:
-            continue
-        try:
-            tp.admitted_cell(doc, scope, runtime, (launch["symbol"], launch["decoder"]), roles)
-        except ValueError:
-            continue
-        return launch
-    raise AssertionError("no positively backed routed lane for the fixture stack")
+def _pick_routed_launch(doc, scope, runtime, roles):
+    """Join the receipt-qualified pair; the strictly validated cell attests it."""
+    _, lane = tp.admitted_cell(doc, scope, runtime, ROUTED_PAIR, roles)
+    return next(v for v in tp.candidate_launches(scope["route"], "routed_moe", scope["regime"])
+                if (v["symbol"], v["decoder"]) == ROUTED_PAIR and v["lane"] == lane)
 
 
 def _routed_panel(tmp_path, monkeypatch):
@@ -195,7 +225,7 @@ def _routed_panel(tmp_path, monkeypatch):
                         lambda: _save(tmp_path, "contract.json", packed, raw=True))
     plan = census_plan.build_census_plan([scope], raw_contract=packed)
     declared, roles = tp.wire_facts(tp.read_bound(wire_binding), scheme_decl)
-    launch = _pick_routed_launch(doc, cell, scope, runtime, roles)
+    launch = _pick_routed_launch(doc, scope, runtime, roles)
     record = {"kind": "moe", "policy": scheme.TESSERA_FP8 + ":resident", "state": "served",
               "symbol": launch["symbol"], "decoder": launch["decoder"], "shape": "M64:N512:K256",
               "contract": scheme.ROUTES[scheme.TESSERA_FP8]["activation_contract"], "platform": "sm_121"}
@@ -228,8 +258,8 @@ def _routed_panel(tmp_path, monkeypatch):
         "preparation": tp.file_binding(_save(tmp_path, "preparation.json", {
             "builder": "tessera.serving.moe_route.build_tessera_moe_method",
             "wire_sha256": wire_binding["sha256"], "roles": roles, "shape": scope["shape"],
-            "topk": 8, "tp_rank": 0, "tp_degree": 2, "grid": "E4M3",
-            "local_shape": {"N": 512, "K": 256}, "native_packed_bytes": 1})),
+            "topk": ROUTED_TOPK, "tp_rank": 0, "tp_degree": 2, "grid": "E4M3",
+            "local_shape": {"N": ROUTED_INTERMEDIATE, "K": ROUTED_HIDDEN}, "native_packed_bytes": 1})),
         "samples": tp.file_binding(_save(tmp_path, "samples.json", {"samples_ms": samples,
                                                                     "warmup_iterations": 1,
                                                                     "interval_unix": [10.0, 11.0]})),
@@ -377,13 +407,13 @@ def test_worker_routed_tp2_uses_production_builder(panel, monkeypatch, tmp_path)
     assert isinstance(got, FakeMethod)
     assert calls[0] == ("build", "test.routed", "resident")
     assert calls[1][1]["intermediate_size_per_partition"] == 256
-    assert calls[1][1]["num_experts"] == 8 and calls[1][1]["hidden_size"] == 256
+    assert calls[1][1]["num_experts"] == ROUTED_EXPERTS and calls[1][1]["hidden_size"] == ROUTED_HIDDEN
     loads = [c for c in calls if c[0] == "load"]
-    assert len(loads) == 8 * 3
+    assert len(loads) == ROUTED_EXPERTS * 3
     assert {(shard, expert) for _, shard, expert, _ in loads} == {
-        (shard, expert) for expert in range(8) for shard in ("w1", "w3", "w2")}
+        (shard, expert) for expert in range(ROUTED_EXPERTS) for shard in ("w1", "w3", "w2")}
     assert prep["builder"] == "shape_time_fake_moe.build_fake_moe_method"
-    assert prep["local_shape"] == {"N": 512, "K": 256} and prep["topk"] == 8
+    assert prep["local_shape"] == {"N": ROUTED_INTERMEDIATE, "K": ROUTED_HIDDEN} and prep["topk"] == ROUTED_TOPK
     assert (prep["tp_rank"], prep["tp_degree"]) == (0, 2)
     assert prep["native_packed_bytes"] == 77
 
