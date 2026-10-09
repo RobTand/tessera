@@ -136,11 +136,13 @@ def test_actual_published_pbrun_class_scope_is_not_submitter_pin():
         from stageprev_793_prepare import SL_COORDINATOR
         owner.require_host_class_scope(measurement=True, host_class="gb10", transport="pool")
         for hostname in ("sparky", "sparklina"):
-            assert owner.placement_tags(Path(SL_COORDINATOR), explicit=["gb10"],
+            placement, _, _, _ = owner.placement_contract(Path(SL_COORDINATOR), explicit=["gb10"],
                                         here=False, hostname=hostname, portable_checkout=True,
-                                        command=["bash", "experiments/t8r_speed/ab_arms.sh"]) == ["gb10"]
-            assert owner.placement_tags(Path(SL_COORDINATOR), explicit=["gb10"],
-                                        here=True, hostname=hostname) == ["gb10", hostname]
+                                        command=["bash", "experiments/t8r_speed/ab_arms.sh"])
+            assert placement == ["gb10"]
+            placement, _, _, _ = owner.placement_contract(Path(SL_COORDINATOR), explicit=["gb10"],
+                                        here=True, hostname=hostname)
+            assert placement == ["gb10", hostname]
         with pytest.raises(SystemExit, match="drop --anywhere"):
             owner.require_host_class_scope(measurement=True, host_class="gb10", transport="pool", anywhere=True)
     """)
