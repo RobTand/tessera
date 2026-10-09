@@ -335,7 +335,6 @@ class TimingPublication(unittest.TestCase):
         self.assertEqual(publication_scope(table)['qualified_menu'], {'dense': [896], 'routed': [896]})
         cell_id = 'dense:o_proj:M1'
         cases = [
-            ('dims', {'rows': 1, 'columns': 1}, 'unmeasured_shape_or_M_scope'),
             ('routing', {'routing': 'shuffled'}, 'unmeasured_shape_or_M_scope'),
             ('mode', {'mode': 99}, 'unmeasured_execution_scope'),
             ('epilogue', {'epilogue': 'other epilogue'}, 'unmeasured_execution_scope'),
@@ -358,6 +357,16 @@ class TimingPublication(unittest.TestCase):
                 result = decide(mutated, 896, cell_ids=[cell_id])
                 self.assertEqual(result['cells'][0]['status'], 'wait', name)
                 self.assertEqual(result['cells'][0]['reason'], reason, name)
+        with self.subTest(field='dims'):
+            mutated = copy.deepcopy(table)
+            target = next(m for m in mutated['rungs'][0]['measurements'] if m['cell_id'] == cell_id)
+            shape = next(s for s in mutated['scope']['shapes'] if s['shape_id'] == target['shape_id'])
+            shape.update(rows=1, columns=1)
+            target['evidence'].update(rows=1, columns=1)
+            mutated['geometry_classes'] = measured_geometry_classes(mutated)
+            result = decide(mutated, 896, cell_ids=[cell_id])
+            self.assertEqual(result['cells'][0]['status'], 'wait')
+            self.assertEqual(result['cells'][0]['reason'], 'unmeasured_shape_or_M_scope')
         with self.subTest(field='decoder'):
             mutated = copy.deepcopy(table)
             target = next(m for m in mutated['rungs'][0]['measurements'] if m['cell_id'] == cell_id)
@@ -366,7 +375,8 @@ class TimingPublication(unittest.TestCase):
                 validate_table(mutated)
         with self.subTest(field='extra_M'):
             mutated = copy.deepcopy(table)
-            extra = copy.deepcopy(mutated['rungs'][0]['measurements'][0])
+            template = next(m for m in mutated['rungs'][0]['measurements'] if m['cell_id'] == cell_id)
+            extra = copy.deepcopy(template)
             extra.update(cell_id='dense:o_proj:M7', M=7, measurement_build_id=menu['kernel_build_id'])
             mutated['scope']['required_cells'].append(
                 {'cell_id': 'dense:o_proj:M7', 'kernel_kind': 'dense', 'shape_id': 'o_proj', 'M': 7})
