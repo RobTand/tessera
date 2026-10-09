@@ -109,11 +109,19 @@ def choose(checkout: Path, base: str, count: int) -> dict:
     }
 
 
-def shard_arm(name: str, files: list[str]) -> dict:
-    """merge_suite's x86 arm, running these files under the declared ``-n`` mode."""
+def shard_arm(name: str, files: list[str], python: str | None = None) -> dict:
+    """merge_suite's x86 arm, running these files under the declared ``-n`` mode.
 
-    return {**merge_suite.ARMS["x86"], "targets": list(files), "dist": "worksteal",
-            "why": f"{name}: {len(files)} selected test file(s) on the device-less population"}
+    The arm's own interpreter is used unless the run names one: the arm's
+    default has no ``jsonschema``, so a test that imports it fails there for
+    want of the package.
+    """
+
+    arm = {**merge_suite.ARMS["x86"], "targets": list(files), "dist": "worksteal",
+           "why": f"{name}: {len(files)} selected test file(s) on the device-less population"}
+    if python:
+        arm["python"] = python
+    return arm
 
 
 def submit_all(selection: dict, args, receipt_dir: Path) -> dict[str, dict]:
@@ -125,7 +133,8 @@ def submit_all(selection: dict, args, receipt_dir: Path) -> dict[str, dict]:
         dry_run=args.dry_run, artifact_root=args.artifact_root)
     shards = selection["shards"]
     with ThreadPoolExecutor(max_workers=len(shards)) as pool:
-        futures = {name: pool.submit(merge_suite._submit, name, shard_arm(name, files),
+        futures = {name: pool.submit(merge_suite._submit, name,
+                                     shard_arm(name, files, selection.get("python")),
                                      submission, receipt_dir)
                    for name, files in shards.items()}
         return {name: future.result() for name, future in futures.items()}
@@ -201,7 +210,8 @@ def assemble(selection: dict, receipt_dir: Path, checkout: Path, *,
 
     records = []
     for name, files in selection["shards"].items():
-        record = merge_suite._resume(name, shard_arm(name, files), receipt_dir)
+        record = merge_suite._resume(
+            name, shard_arm(name, files, selection.get("python")), receipt_dir)
         if submitted:
             sent = submitted[name]
             record["submit_returncode"] = sent.get("returncode")
@@ -253,6 +263,8 @@ def main(argv: list[str] | None = None) -> int:
                     help="the tree to test; it must be clean and under /mnt/shared")
     ap.add_argument("--base", default="origin/master", help="the left endpoint of base...HEAD")
     ap.add_argument("--shards", type=int, default=12)
+    ap.add_argument("--python", default="",
+                    help="interpreter every shard runs under; the x86 arm's own when omitted")
     ap.add_argument("--cpus", type=int, default=2, help="cores per shard, also pytest's -n")
     ap.add_argument("--mem-gb", type=int, default=4)
     ap.add_argument("--timeout-s", type=float, default=2400.0)
@@ -283,6 +295,8 @@ def main(argv: list[str] | None = None) -> int:
         except ValueError as error:
             print(f"selected_population: {error}", file=sys.stderr)
             return 2
+        if args.python:
+            selection["python"] = args.python
         if not selection["tests"]:
             print("selected_population: the selector selected no test files; nothing to run")
             return 3
