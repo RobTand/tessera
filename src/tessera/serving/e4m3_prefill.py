@@ -68,9 +68,8 @@ class DecodedE4M3:
 
 def _decode_role(bundle, chunk: int) -> torch.Tensor:
     """One role's ``[rows, cols]`` E4M3 bytes through its own Triton decoder."""
-    if bundle.family != "e4m3" or bundle.arithmetic != "epilogue":
-        raise ValueError(f"decode-once serves the E4M3 epilogue contract, not "
-                         f"{bundle.family}/{bundle.arithmetic}")
+    if bundle.family != "e4m3":
+        raise ValueError(f"decode-once serves the E4M3 family, not {bundle.family!r}")
     unit = dataclasses.replace(bundle, scale=torch.ones_like(bundle.scale))
     cols, device = int(bundle.cols), bundle.scale.device
     weight = torch.empty(int(bundle.rows), cols, dtype=E4M3, device=device)

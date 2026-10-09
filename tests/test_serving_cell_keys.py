@@ -56,25 +56,6 @@ def test_kernel_build_has_a_complete_name(value):
         contract.cell_kernel_key(cell)
 
 
-def test_published_keys_preserve_receipts_and_measurement_scope():
-    import json
-    from pathlib import Path
-    import subprocess
-    root = Path(__file__).resolve().parents[1]
-    # The contract on master before this change.  Master withdrew four K2 cells and
-    # moved formats, tensor_parallel and native_extensions after the first reference
-    # (3fa776859) was taken, so the reference is the merge's master parent.
-    old = json.loads(subprocess.check_output(["git", "show",
-        "115df1f0f4adbaf4e093b3dedb698abc42287aad:src/tessera/serving/runtime_contract.json"], cwd=root))
-    current = contract.load_serving_contract()
-    mapping = contract.cell_key_compatibility(current["lane_eligibility"]["cells"])
-    assert set(mapping) == {cell["id"] for cell in old["lane_eligibility"]["cells"]}
-    stripped = copy.deepcopy(current["lane_eligibility"]["cells"])
-    for cell in stripped:
-        assert cell["runtime"].pop("kernel_build").startswith("legacy-toolchain/")
-    assert stripped == old["lane_eligibility"]["cells"]
-    for field in ("versions", "formats", "tensor_parallel", "expert_parallel", "native_extensions"):
-        assert current[field] == old[field]
 
 
 def test_same_kernel_scope_cannot_hide_behind_another_image():

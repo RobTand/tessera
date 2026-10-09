@@ -56,7 +56,7 @@ def _bundle(name, rates_per_expert, seed):
         tile_words=torch.tensor([r.tile_words for r in reps], dtype=torch.int32),
         total_words=torch.tensor([r.words.numel() for r in reps], dtype=torch.int32), run_off=run_off,
         perm_all=torch.stack([r.perm for r in reps]), rows=rows, cols=cols, experts=E, window_bits=14,
-        family="e4m3", block_m=64, block_n=64, block_k=64, arithmetic="epilogue")
+        family="e4m3", block_m=64, block_n=64, block_k=64)
     return bundle, codes, starts
 
 

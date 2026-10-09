@@ -1,16 +1,10 @@
-"""The folded native BF16 dense route and retained window-GEMV references.
+"""The native BF16 epilogue route and retained window-GEMV references.
 
-The serve now prepares one packed native window GEMM for both residencies
-and every M; it folds each weight's row scale before the bf16 dot. The CPU
-eligibility tests describe the retained GEMV module, not the current serve.
-Its precision, host-metadata and graph-capture checks prepare a reference
-holder directly from the wire, preserving the older operator's unfolded
-arithmetic without pretending that the serving route still creates it.
-
-STUBBED: vLLM's ``LinearMethodBase`` and parameters, as in
-``test_serving_bf16_route``.  There is no A-side quantiser to stub -- the A
-side is bf16 as it arrives, which is the whole of this route's activation
-contract.
+The serve prepares packed raw BF16 values and FP32 row scales for both
+residencies. It applies each row scale after the FP32 dot.
+The eligibility tests describe the retained GEMV module, not the serve.
+Its precision and graph checks prepare an independent holder from the wire.
+The tests use vLLM parameter stand-ins. BF16 activations remain unquantized.
 """
 from __future__ import annotations
 
@@ -188,42 +182,6 @@ def test_gemv_symbol_and_module_name_are_the_kernel_and_contract_values():
     assert route.GEMV_SYMBOL == "tessera_window_gemv::gemv"
 
 
-def test_the_census_expectations_come_from_the_route():
-    """What each REGIME may report, and since tessera#538 it is ONE launch.
-
-    ``decode`` is the one-row forward and ``batch`` is every M > 1
-    (``contract.CENSUS_PHASE_REGIMES``), which is the vocabulary a census
-    record is stamped in.  This function derives its answer from
-    ``scheme.ROUTE_LAUNCHES``, and that table used to carry the window-GEMV
-    lane's three dense rows: the lane's own ``gemv`` in both regimes, the torch
-    window decode in both, and the kernel-decoded tile under the stock GEMM in
-    ``batch`` alone.
-
-    ``1b767a207`` left ``bf16_route.apply`` making one launch -- the packed native window
-    GEMM, at every M and in both residencies -- and contract v31 dropped the
-    retired rows from the table, so the expectation a census compares a served
-    record against became that one pair.  Contract v43 added the fused window
-    kernel's dense identity (``native_fused_window_dense_folded``) as a second
-    launch the route decides per module at weight load, so the expectation is
-    now exactly the route's own ``DENSE_LAUNCHES`` -- two pairs, of which any
-    one module stamps one.  Asserted as EQUALITY, because the defect this whole
-    file is about was an expectation wider than the dispatch.
-
-    A note on where this function lives, which the equality makes visible: it
-    still belongs to ``bf16_route``, and ``bf16_route.apply`` does not import it.  The census tool
-    reads it all the same, so it is right about the serve and housed in the
-    wrong module; moving it is follow-up, not part of the withdrawal.
-    """
-    # On the folded arithmetic's own decoder since tessera#614.
-    assert route.DENSE_LAUNCH == (WINDOW_GEMM_SYMBOL, telemetry.DECODER_NATIVE_WINDOW_GEMM_FOLDED)
-    expected = set(route.DENSE_LAUNCHES)
-    go = route.census_expected(compiled=False)
-    assert go["decode"] == expected
-    assert go["batch"] == expected
-    gc = route.census_expected(compiled=True)
-    assert gc["decode"] == expected
-    assert gc["batch"] == expected
-    assert route.GEMM_SYMBOL == "torch.mm"
 
 
 def test_m_tile_is_the_kernel_build_rule():
@@ -397,25 +355,23 @@ def _drive(monkeypatch, mode, roles=(("weight", 64),), cols=256, m=4, seed=0,
 
 
 def _fp32_bound(tile_f32, scale, x):
-    """A deterministic fp32 accumulation bound: ``2K * 2^-23 * sum_j |w_ij x_j|``
-    (each of the K partial sums is rounded once, in either order; the factor 2
-    covers the reference's own rounding of the same size).  The kernel's own
-    GEMV tests derive this same bound; it is not a picked tolerance."""
-    K = x.shape[1]
-    mag = (tile_f32 * scale[:, None]).abs().double() @ x.abs().double().t()
-    return (2 * K * 2.0 ** -23) * mag.t() + 1e-30
+    """Use the shared dense bound without the final BF16 conversion."""
+    import fused_bound as fb
+
+    weights = tile_f32.to(x.device).double() * scale.to(x.device).double()[:, None]
+    return fb.dense_bound("value", x.double(), weights, x.shape[1], rounded=False)[1]
 
 
 def _dense_reference(values, scale, x):
-    """The served weight is bf16(value * scale), rounded once before the dot."""
-    folded = (values.float().to(x.device) * scale.float().to(x.device)[:, None]).bfloat16().float()
-    exact = x.float() @ folded.t()
-    bound = _fp32_bound(folded, torch.ones(folded.shape[0], device=x.device), x)
-    return exact, bound + 2.0 ** -8 * exact.abs()
+    """Keep raw values and row scales separate in the FP64 definition."""
+    import fused_bound as fb
+
+    weights = values.to(x.device).double() * scale.to(x.device).double()[:, None]
+    return fb.dense_bound("value", x.double(), weights, x.shape[1])
 
 
 @requires_cuda
-def test_streamed_prepares_folded_native_without_materialized_planes(monkeypatch):
+def test_streamed_keeps_packed_values_and_row_scales(monkeypatch):
     _g, layer, _m, _x, (_values, scale) = _drive(monkeypatch, MODE_STREAMED, q256=1024)
     assert layer.tessera_native is not None
     for name in ("tessera_gemv", "tessera_prepared", "weight_bf16", "wire_bytes"):

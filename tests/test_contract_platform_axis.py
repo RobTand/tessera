@@ -227,7 +227,7 @@ def test_the_packaged_contract_validates_at_v33(contract):
     fused = "tessera.routed_fused.FusedRoutedWindowMoE.__call__"
     for cell in contract["lane_eligibility"]["cells"]:
         window_routed = (cell["structure"] == "routed_moe"
-                         and cell["family"] in ("TESSERA_E4M3_K1", "TESSERA_BF16_K1"))
+                         and cell["family"] == "TESSERA_E4M3_K1")
         assert "TESSERA_ROUTED_FUSED=0" not in cell["requires_serve_flags"], cell["id"]
         assert any(e["symbol"] == fused for e in cell["executes"]) == window_routed, cell["id"]
     assert not any(set(cell["runtime"]) & {"tessera_commit", "serving_source_sha256"}
@@ -579,3 +579,22 @@ def test_v56_publishes_the_decode_once_prefill_lane_unattested(contract):
     assert rows[0]["modes"] == ("resident",) and rows[0]["lane"] is None
     for cell in contract["lane_eligibility"]["cells"]:
         assert pair not in {(e["symbol"], e["decoder"]) for e in cell["executes"]}, cell["id"]
+
+
+def test_t16_cutover_withdraws_the_bf16_cells_and_their_attestation(contract):
+    """Historical folded receipts do not qualify the new BF16 decoder identities."""
+    cells = contract["lane_eligibility"]["cells"]
+    assert [c["id"] for c in cells if c["family"] == "TESSERA_BF16_K1"] == []
+    row = next(e for e in contract["formats"] if e["family"] == "TESSERA_BF16_K1")
+    assert row["attested_rungs_q256"] == []
+    assert row["attested_wire"] == []
+    assert row["candidate_rungs_q256"] == []
+    unit = next(u for u in contract["tensor_parallel"]["units"]
+                if u["unit"] == "TESSERA_BF16_K1")
+    assert unit["max_world_size"] == 1
+    assert "world_size_receipt" not in unit
+    from tessera.serving.scheme import STRUCTURES, TESSERA_BF16, launch_pairs
+
+    for structure in STRUCTURES:
+        assert not launch_pairs(TESSERA_BF16, structure=structure)
+        assert launch_pairs(TESSERA_BF16, structure=structure, include_experimental=True)

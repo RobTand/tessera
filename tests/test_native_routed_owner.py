@@ -164,10 +164,9 @@ def test_owner_bytes_charge_selected_storage_once_and_include_counters(
     family = 'value' if library == 'value' else 'e4m3'
     roles = [projection() for _ in range(3)]
     if family == 'value':
-        roles = [dataclasses.replace(role, family='value', arithmetic='folded',
-                 table_all=torch.zeros(role.experts, rf.TABLE_ENTRIES, dtype=torch.bfloat16),
-                 codes_all=torch.empty(0, dtype=torch.uint8),
-                 native_all=torch.empty(0, dtype=torch.uint8)) for role in roles]
+        roles = [dataclasses.replace(role, family='value', table_all=torch.zeros(role.experts, rf.TABLE_ENTRIES, dtype=torch.bfloat16),
+        codes_all=torch.empty(0, dtype=torch.uint8),
+        native_all=torch.empty(0, dtype=torch.uint8)) for role in roles]
     monkeypatch.setattr(rf, 'library_for', lambda family: library)
     packed = nwm.PackedWindowMoeBundles(*roles, family=family, expert_classes=[{"start": 0, "end": 2, "q256": {"w13": [1024, 1024], "w2": [1024]}}])
     adapter = packed.adapter()

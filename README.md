@@ -21,9 +21,9 @@ the decoder uses the resulting bits, lookup tables, and scales repeatedly.
 Experimental native T16 activation prefetch (#874) is **off by default**.
 `TESSERA_ROUTED_FUSED_VALUE_A_PREFETCH=4` freezes a separate prefetch4
 native build at first value-library use; only 0 and 4 are accepted. It applies
-only to one-run folded BF16 routed launches (BM64, modes 0/1/2, rates 1–8),
-not dense or two-run launches. The existing ABI, wire layout, BF16 folding,
-accumulation order and resident bytes are unchanged. No T16 speedup, energy
+only to one-run BF16 routed launches (BM64, modes 0/1/2, rates 1–8),
+not dense or two-run launches. T16 now applies row scales in FP32 after
+the dot. The earlier prefetch receipts do not qualify this changed source. No energy
 benefit, serving cell, or PACT price is established by this experimental arm.
 Qualification must use the same frozen T16 wire/calibration and input/routing
 bytes in both arms, retain native ELF/source/image/readset digests, check
@@ -189,19 +189,19 @@ precision differ:
 |---|---|---|---|
 | **Tessera NVFP4** | Span-2 trellis over E2M1 pairs; LUT16 block scales | NVFP4 weights and activations (**W4A4**) | dense `q256=896` (≈4.0 bits/weight with the scale plane); routed experts additionally `128..896` step 128 |
 | **Tessera FP8** | Window trellis; E4M3 table; per-row scales | FP8 weights and activations (**W8A8**) | `q256=1024`: 4 body bits/weight, plus overhead |
-| **Tessera BF16** | Window trellis; BF16 table; per-row scales | BF16 weights and activations (**W16A16**) | `q256=1792`: 7 body bits/weight, plus overhead |
+| **Tessera BF16** | Window trellis; raw BF16 table; separate FP32 row scales | BF16 operands, FP32 dot and row-scale epilogue (**W16A16**) | No served rung attestation after contract v59; new census required |
 
 **W** and **A** describe the compute format of weights and activations, not
 the number of bits stored per weight. Compressing onto a BF16 grid still
 changes the model's weights; it does not recover the original BF16 model
 losslessly.
 
-The FP8 reader accepts root rates from 1 to 8, and the BF16 reader from 1 to
-16, on the q256 grid. Those are format capabilities. The serving evidence is
-narrower: the packaged contract currently attests the rungs above. The
-NVFP4 serving decoder accepts only its listed rungs — routed experts at
-`128..896` step 128, dense only `896` — although the encoder also implements
-other E2M1 constructions.
+The FP8 reader accepts root rates from 1 to 8. The BF16 reader accepts
+root rates from 1 to 16. Both use the q256 grid. These are format capabilities.
+The packaged contract supplies the narrower serving evidence. Contract v59
+withdraws the old BF16 cells, wire stamps and TP2 qualification after the
+row-scale cutover. It does not relabel their historical receipts. New BF16
+serves and changed D41 classes need new evidence before allocation.
 
 The code owns these choices:
 [`wire_recipe`](https://github.com/RobTand/tessera/blob/v0.1.0/src/tessera/export.py)

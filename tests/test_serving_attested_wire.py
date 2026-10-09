@@ -153,34 +153,6 @@ def test_every_allowable_rung_is_served_on_the_rules_wire(contract):
     assert checked >= 1793, checked
 
 
-def test_the_bf16_attestation_is_cut_on_the_pinned_wire(contract):
-    """The v5 receipt behind ``TESSERA_BF16_K1 @ 1792`` is the pinned wire.
-
-    That serve ran before any reach term existed: ``window_sigma`` unset, reach
-    ratio 1 at every rung.  Until the served A/B at R=7 (#48 gate) re-cuts the
-    attestation on reach-term bytes, the honest reading of the BF16 row is
-    "route attested at 1792; KL receipt on the pinned wire" -- and this pins
-    the second half of that sentence to the stamped value, so a reach term
-    that starts moving fresh-export bytes trips here first.
-    """
-    row = next(e for e in contract["formats"] if e["family"] == "TESSERA_BF16_K1")
-    # Contract v38 (tessera#604) added 832/1024/1088 from the GLM-image census
-    # and v39 864/880/896/928/960 from the u1 stub censuses, all cut on the
-    # same pinned wire; 1792 is still the v5 receipt's rung.  Contract v52
-    # adds the two T-16 dense census stubs' rungs, one of every run table
-    # [1]..[14] and the pairs between them, on the same wire (sigma unset:
-    # window_bits stays 14 up to 3584).
-    assert row["attested_rungs_q256"] == [
-        256, 384, 512, 640, 768, 832, 864, 880, 896, 928, 960, 1024, 1088, 1152, 1280,
-        1408, 1536, 1664, 1792, 1920, 2048, 2176, 2304, 2432, 2560, 2688, 2816, 2944,
-        3072, 3200, 3328, 3456, 3584]
-    (stamped,) = [w for w in row["attested_wire"] if w["q256"] == 1792]
-    assert all(w["sigma"] is None for w in row["attested_wire"])
-    assert stamped["sigma"] is None, (
-        f"TESSERA_BF16_K1 @ 1792 is stamped with sigma={stamped['sigma']!r}; the served "
-        "receipt it cites was cut on the pinned wire (sigma unset)")
-
-
 def _mutated(contract):
     return copy.deepcopy(contract)
 
@@ -233,8 +205,8 @@ def test_a_stamp_naming_a_rung_the_family_does_not_attest_is_refused(contract):
 
 def test_a_stamp_whose_body_the_route_does_not_decode_is_refused(contract):
     bad = _mutated(contract)
-    stamped = bad["formats"][2]["attested_wire"]
-    assert stamped, "test premise moved: the BF16 family stamps nothing"
+    stamped = next(e for e in bad["formats"] if e["family"] == "TESSERA_E4M3_K1")["attested_wire"]
+    assert stamped, "test premise moved: the E4M3 family stamps nothing"
     stamped[0] = {**stamped[0], "body": "tcq", "span": 2}
     with pytest.raises(ValueError, match="does not decode"):
         validate_serving_contract(bad)
@@ -242,8 +214,8 @@ def test_a_stamp_whose_body_the_route_does_not_decode_is_refused(contract):
 
 def test_a_stamp_with_an_unspellable_sigma_is_refused(contract):
     bad = _mutated(contract)
-    stamped = bad["formats"][2]["attested_wire"]
-    assert stamped, "test premise moved: the BF16 family stamps nothing"
+    stamped = next(e for e in bad["formats"] if e["family"] == "TESSERA_E4M3_K1")["attested_wire"]
+    assert stamped, "test premise moved: the E4M3 family stamps nothing"
     stamped[0] = {**stamped[0], "sigma": "wide"}
     with pytest.raises(ValueError, match="sigma"):
         validate_serving_contract(bad)

@@ -13,6 +13,7 @@ new serving contract row. Unsupported classes and unavailable native builds
 refuse; no feature switch selects a second routed implementation.
 
 
+
 THE DENSE CASE (contract v43).  A dense window Linear is the E = 1, top_k = 1,
 unweighted case of the down projection, and the same kernel serves it: one
 launch per role of a merged Linear (``routed_fused_kernel<FP8, 2, DENSE>``),
@@ -24,8 +25,8 @@ fixed-order reduce sums before the one epilogue (:func:`dense_k_split` states
 the model that picks ``S``).  It is
 its own launch identity, ``tessera::fused_window_dense`` (the functional
 custom op in ``serving.native_window``) with the decoders
-``native_fused_window_dense`` (E4M3, epilogue) and
-``native_fused_window_dense_folded`` (BF16, folded), lane-bearing rows on the
+``native_fused_window_dense`` (E4M3) and
+``native_fused_window_dense_bf16`` (BF16), lane-bearing rows on the
 same two extensions.  :func:`fused_dense_window_supported` is the per-role
 predicate; the Triton ``tessera::window_gemm_dense`` stays the dispatch for
 every module it refuses and for ``TESSERA_DENSE_FUSED=0``.
@@ -912,8 +913,8 @@ def fused_routed_window_supported(gate, up, down) -> "str | None":
     The kernel reads the window wire as the packer lays it out: window bits
     14, one or two column-rate runs per expert (the two rates bracketing the
     stack's root, rates 1..8), the packer's column order (low-rate columns
-    ascending, then high-rate ascending), and the family's published
-    arithmetic (folded for value, epilogue for e4m3).  One run table and one
+    ascending, then high-rate ascending), with raw values through the dot
+    and FP32 row scales on the accumulator epilogue. One run table and one
     ``tile_words`` per class: the kernel takes a single tile stride for all
     experts in that class and for both gate and up. Unsupported classes
     refuse with this reason; there is no compact runtime substitute.
@@ -922,15 +923,12 @@ def fused_routed_window_supported(gate, up, down) -> "str | None":
     fam = down.family
     if fam not in ("value", "e4m3"):
         return f"family {fam!r} is not a window family"
-    want_arith = "folded" if fam == "value" else "epilogue"
     e = int(down.experts)
     for name, b in bundles.items():
         if getattr(b, "perm_all", ...) is None:
             return f"{name} compact planes were retired; use its already-prepared fused owner"
         if b.family != fam:
             return f"{name} family {b.family!r} differs from down's {fam!r}"
-        if b.arithmetic != want_arith:
-            return f"{name} arithmetic {b.arithmetic!r}; the fused lane serves {want_arith!r} for {fam}"
         if b.device.type != "cuda":
             return f"{name} lives on {b.device}; the lane is CUDA"
         if b.window_bits != WINDOW_BITS:
@@ -1146,6 +1144,7 @@ class _WindowClass:
     gate: object
     up: object
     down: object
+
     table_gate: torch.Tensor
     table_up: torch.Tensor
     table_down: torch.Tensor
@@ -1341,7 +1340,6 @@ class FusedRoutedWindowMoE:
     up: object
     down: object
     family: str
-    arithmetic: str
     library: str
     expert_classes: list
     classes: tuple
@@ -1424,7 +1422,7 @@ class FusedRoutedWindowMoE:
             resources = _make_dispatch_resources(down.device, _LutClassKernel(library, module))
             resource_key = _retain_dispatch_resources(resources)
         return cls(*(_native_view(b, t) for b, t in zip((gate, up, down), tables)),
-            family=down.family, arithmetic=down.arithmetic, library=library,
+            family=down.family, library=library,
             expert_classes=descriptors, classes=tuple(classes), table_gate=tables[0],
             table_up=tables[1], table_down=tables[2], counters=counters,
             operands=operands, class_issue_order=tuple(range(len(classes))),
@@ -1589,8 +1587,8 @@ def fused_dense_window_supported(bundle) -> "str | None":
     Triton dense GEMM runs).  The kernel reads the routed lane's wire shape --
     one or two column-rate runs (the two bracketing the root, at rates up to
     the family's :data:`DENSE_RATE_MAX`: 14 on the value family, 8 on E4M3),
-    window bits 14, the packer's column order, the family's published
-    arithmetic (folded for value, epilogue for e4m3) -- plus the dense tile:
+    window bits 14, the packer's column order, and the row scale on the fp32
+    accumulator after the dot on both families -- plus the dense tile:
     rows a multiple of ``DENSE_ROW_QUANTUM`` (one 128-column B block per item,
     the last one partial when 128 does not divide the rows) and columns a
     multiple of 32 and at least 128.  A role outside it keeps
@@ -1608,9 +1606,6 @@ def fused_dense_window_supported(bundle) -> "str | None":
     fam = bundle.family
     if fam not in ("value", "e4m3"):
         return f"family {fam!r} is not a window family"
-    want_arith = "folded" if fam == "value" else "epilogue"
-    if bundle.arithmetic != want_arith:
-        return f"arithmetic {bundle.arithmetic!r}; the fused identity serves {want_arith!r} for {fam}"
     if bundle.device.type != "cuda":
         return f"the role lives on {bundle.device}; the kernel is CUDA"
     if bundle.window_bits != WINDOW_BITS:

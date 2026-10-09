@@ -58,7 +58,7 @@ def bundles(art, layer, rank, experts, device, tp=2):
             scale_all=s["scale"], runs_all=s["runs"], init_all=s["init"], has_init=s["has_init"],
             word_off=s["word_off"], tile_words=s["tile_words"], total_words=s["total_words"],
             run_off=s["run_off"], perm_all=s["perm"], rows=s["rows"], cols=s["cols"], experts=experts,
-            window_bits=s["window_bits"], family="e4m3", block_m=32, block_n=64, block_k=64, arithmetic="epilogue"))
+            window_bits=s["window_bits"], family="e4m3", block_m=32, block_n=64, block_k=64))
     return out
 
 

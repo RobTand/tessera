@@ -104,6 +104,8 @@ def test_no_current_config_declares_nothing():
     assert declare_compile_identity(serve_mode="resident") is None
 
 
+
+
 def _real_vllm_hash_check(code):
     # A fresh interpreter cannot read another test's fake vLLM package.
     import subprocess

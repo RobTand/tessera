@@ -77,6 +77,7 @@ def test_renaming_a_regime_on_the_contract_side_only_is_refused():
 
 
 
+
 #: The two ranks' route traces from the two-rank GLM-5.3-Flash 4-layer stub
 #: serve (#506), committed byte for byte from the serve's log directory.
 TP2_STUB_TRACES = (ROOT / "experiments/results/glm53_a4_stub_tp2_route_trace_rank0.json",

@@ -26,8 +26,7 @@ import torch
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE.parent / "t8r_speed"))
 from tessera.alphabet import grid_for_name
-from tessera.export import encode_linear, served_recipe
-from tessera.structure import STRUCTURE_ROUTED_MOE
+from tessera.export import TCQ_RECIPE, encode_linear
 from tessera.unit_artifact import parse_unit_artifact
 from tessera.lane_planes import prepare_span2_planes
 from tessera.stock import materialize_stock
@@ -48,7 +47,7 @@ def prepare(out):
     weights = ((torch.arange(256 * 128).reshape(256, 128) % 511 - 255).float() / 1024).to(torch.bfloat16)
     entries = []
     for rate in range(1, grid.rate_cap + 1):
-        recipe = served_recipe(grid, rate * 128, STRUCTURE_ROUTED_MOE)
+        recipe = TCQ_RECIPE
         unit = encode_linear(weights, grid=grid, q256=rate * 128,
                              body=recipe.body, span=recipe.span,
                              scale_plane=recipe.scale_plane, window_bits=recipe.window_bits)

@@ -70,37 +70,30 @@ def tensor_facts(t, values=8):
 # wires
 # ---------------------------------------------------------------------------
 
-def window_bundle_facts(bundle):
-    """A ``PreparedGroupedWindowGemm``: the SoA the grouped kernel reads."""
-    E = int(bundle.experts)
-    cols = int(bundle.cols)
-    run_off = bundle.run_off.cpu()
-    runs = bundle.runs_all.cpu().reshape(-1, 4)
-    per_expert_runs = {}
-    for e in range(E):
-        r = runs[int(run_off[e]):int(run_off[e + 1])].tolist()
-        key = json.dumps(r)
-        per_expert_runs.setdefault(key, []).append(e)
-    perm = bundle.perm_all.cpu()
-    ident = torch.arange(cols, dtype=perm.dtype)
-    perm_identity = [bool((perm[e] == ident).all()) for e in range(E)]
-    init = bundle.init_all.cpu()
+def window_bundle_facts(bundle, *, owner, projection):
+    """Read only the retained native class representation."""
+    classes = []
+    for item in owner.classes:
+        part = getattr(item, projection)
+        down = projection == "down"
+        classes.append({
+            "start": int(item.start), "end": int(item.end),
+            "words": tensor_facts(getattr(item, "words_" + projection)),
+            "table": tensor_facts(getattr(item, "table_" + projection)),
+            "scale": tensor_facts(part.scale_all),
+            "initial_states": tensor_facts(part.init_all),
+            "has_init": tensor_facts(part.has_init),
+            "run_pairs": tensor_facts(getattr(item, "runs_" + projection)),
+            "block_descriptors": tensor_facts(getattr(item, "bdesc_" + projection)),
+            "tile_words": int(item.tile_words_down if down else item.tile_words_gate_up),
+            "slot_words": int(item.slot_words_down if down else item.slot_words_gate_up),
+        })
     return {
-        "family": bundle.family, "arithmetic": bundle.arithmetic, "quantizer": bundle.quantizer,
-        "rows": int(bundle.rows), "cols": cols, "experts": E,
-        "window_bits": int(bundle.window_bits),
-        "block": [int(bundle.block_m), int(bundle.block_n), int(bundle.block_k)],
-        "words_all": tensor_facts(bundle.words_all),
-        "table_all": tensor_facts(bundle.table_all), "codes_all": tensor_facts(bundle.codes_all),
-        "native_all": tensor_facts(bundle.native_all), "scale_all": tensor_facts(bundle.scale_all),
-        "tile_words": tensor_facts(bundle.tile_words), "total_words": tensor_facts(bundle.total_words),
-        "word_off": tensor_facts(bundle.word_off),
-        "has_init": tensor_facts(bundle.has_init),
-        "init_nonzero_per_expert": [int((init[e] != 0).sum()) for e in range(E)],
-        "perm_identity_per_expert": perm_identity,
-        "distinct_run_tables": {k: {"experts": v if len(v) <= 8 else f"{len(v)} experts"}
-                                for k, v in per_expert_runs.items()},
-        "n_distinct_run_tables": len(per_expert_runs),
+        "representation": "native_classes",
+        "family": bundle.family, "quantizer": bundle.quantizer,
+        "rows": int(bundle.rows), "cols": int(bundle.cols),
+        "experts": int(bundle.experts), "window_bits": int(bundle.window_bits),
+        "library": owner.library, "classes": classes,
     }
 
 
@@ -156,7 +149,8 @@ def tp1_wire_facts(args):
             else:
                 nat = method._native
                 for name in ("gate", "up", "down"):
-                    entry[name] = window_bundle_facts(getattr(nat, name))
+                    entry[name] = window_bundle_facts(
+                        getattr(nat, name), owner=nat, projection=name)
             del layer, method
             torch.cuda.empty_cache()
         except Exception as exc:  # noqa: BLE001
