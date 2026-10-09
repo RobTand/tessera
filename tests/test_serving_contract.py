@@ -587,9 +587,9 @@ def test_the_table_adds_only_the_measured_moe_scope_without_expert_parallelism(c
     the materialising E2M1 pair at v39.  v48 (tessera#702) adds FP8 and BF16 on
     the nightly, on stub B's rungs.  v59 restores the served-census pin
     after review: both BF16 routed pairs census only R1024 until new
-    served receipts support more.  v65 (tessera#1080) adds R768 to the
-    nightly E4M3 routed pair from its own TP2 served census.  Each pair is
-    resident and eager.
+    served receipts support more. Contract v65 preserves the runtime twins.
+    The additional R768 receipts do not qualify the historical base cells.
+    Each pair is resident and eager.
     """
     block = contract["lane_eligibility"]
     assert block["structures"] == ["dense", "routed_moe"]
@@ -603,7 +603,7 @@ def test_the_table_adds_only_the_measured_moe_scope_without_expert_parallelism(c
     assert sorted((family, rungs, image) for family, rungs, image in by_family) == sorted([
         ("TESSERA_E4M3_K1", (832, 864, 896, 928, 944, 960, 1024, 1088),
          _GLM_X_RUNTIME["image"]),
-        ("TESSERA_E4M3_K1", (768, 896, 928, 1024, 1088), NIGHTLY_RUNTIME["image"])])
+        ("TESSERA_E4M3_K1", (896, 928, 1024, 1088), NIGHTLY_RUNTIME["image"])])
     assert all(regimes == {"decode", "batch"} for regimes in by_family.values())
     assert contract["expert_parallel"]["units"] == []
 

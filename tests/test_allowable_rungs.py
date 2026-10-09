@@ -253,11 +253,10 @@ def test_a_run_table_no_rung_of_the_range_reaches_is_refused(contract):
 
 
 def test_the_routed_export_gate_admits_every_rung_the_cells_cover(contract):
-    """The gate reads ``cell_covers_rung`` over every device-backed routed
-    cell: a routed E4M3 stack at q256 1100 (run table [4, 5], census rung
-    1088) is admitted, 1300 ([5, 6], no census) is refused by the cells'
-    ids, and 768 ([3]) is admitted through the twin cells' own served
-    census (tests/test_r768_tp2_census.py)."""
+    """The gate admits covered run tables. It refuses R768 and R1300.
+
+    The R768 receipts do not qualify the historical base cells.
+    """
     from tessera.serving.scheme import STRUCTURE_ROUTED_MOE, refuse_unserveable_wire
 
     def gate(q):
@@ -265,9 +264,9 @@ def test_the_routed_export_gate_admits_every_rung_the_cells_cover(contract):
                                        span=1, target="stack.probe",
                                        structure=STRUCTURE_ROUTED_MOE, contract=contract)
 
-    for q in (768, 769, 1000, 1100, 1279):
+    for q in (769, 1000, 1100, 1279):
         assert gate(q) == "TESSERA_FP8", q
-    for q in (1300,):
+    for q in (768, 1300):
         with pytest.raises(ValueError) as caught:
             gate(q)
         assert ROUTED in str(caught.value) and "run tables" in str(caught.value)

@@ -1,9 +1,13 @@
 # Tessera plan-to-serve architecture
 
-Re-stamped 2026-10-09 for twin R768 admission from a served TP2 census (contract v65, tessera#1080).
-The receipt experiments/results/glm53_r768_stub_tp2_eager_census.json serves one E4M3 routed stack at q256 768 on both ranks in both phases.
-The twin routed cells gain census rung 768 and run table [3]. The base routed cells keep run tables [[3, 4], [4], [4, 5]] and refuse 768.
-Rung 640 and rungs 1280 through 2048 stay refused on every routed cell. No kernel, decoder, pin, or default moves.
+Contract v65 retains R768 TP2 evidence without admission (tessera#1080, PR #1045).
+The base-image receipt records both ranks in decode and batch with decoder `native_routed_window_classes_e4m3mma`.
+The current execution registry marks this decoder experimental. Historical cells cannot qualify it.
+Both base cells refuse R768 and table [3] until a separate change qualifies the current operation.
+The runtime twins retain their master scope. R640 and R1280-R2048 remain refused.
+No kernel, decoder, pin, or default changes.
+Receipt: `experiments/results/glm53_r768_stub_base_tp2_eager_census.json`.
+Configuration: `experiments/results/glm53_r768_stub_base_config.json`.
 
 Re-stamped 2026-10-08 for the grouped arithmetic consumer cutover.
 The grouped owner has one FP32 row-scale epilogue and no arithmetic selector.

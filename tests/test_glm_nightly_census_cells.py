@@ -8,11 +8,9 @@ CUSTOM attention), so a serve on the nightly resolved every Tessera module to
 no cell. The first receipt is one TP1 eager route census of u1 stub B on the
 nightly with the NoPE plugin off and the image's own attention
 (``FLASHINFER_MLA_SPARSE_SM120``), committed byte for byte with its serve log
-under ``experiments/results/``. Contract v65 (tessera#1080) adds a second:
-the R768 TP2 eager census on the same image, one routed stack at q256 768
-(``docs/measurements/2026-10-09-r768-tp2-census.md``). This module replays
-the census tool's own join over each receipt's records against the PACKAGED
-table.
+under ``experiments/results/``. This module replays the census tool's join
+against the packaged table. The additional R768 TP2 receipt remains
+historical evidence. It does not expand the runtime twins (tessera#1080).
 
 What it pins:
 
@@ -55,8 +53,6 @@ RECEIPT = RESULTS / "glm53_u1_stub_b_nightly_tp1_eager_census.json"
 RECEIPT_SHA256 = "a5f1a4a198ef77ae77c86b4eccae28179621667e68d6577c6d4e0fc4b66d0c19"
 SERVE_LOG = RESULTS / "glm53_u1_stub_b_nightly_tp1_eager_census.log"
 CONFIG = RESULTS / "glm53_u1_stub_b_config.json"
-R768_RECEIPT = RESULTS / "glm53_r768_stub_tp2_eager_census.json"
-R768_CONFIG = RESULTS / "glm53_r768_stub_config.json"
 #: The f8dbe1a0 receipt of the same stub on the E4M3 instruction (contract v47).
 TWIN = RESULTS / "glm53_u1_stub_b_e4m3mma_tp1_eager_census.json"
 MEASUREMENT = "docs/measurements/2026-09-30-glm-nightly-cells-and-graph-equivalence.md"
@@ -197,7 +193,7 @@ def test_every_module_ran_its_f8dbe1a0_twins_launch_and_the_cells_name_it():
 def test_the_nightly_cells_cover_exactly_the_rungs_the_receipts_carried():
     tool = _tool()
     carried: dict = {}
-    for receipt_path, config_path in ((RECEIPT, CONFIG), (R768_RECEIPT, R768_CONFIG)):
+    for receipt_path, config_path in ((RECEIPT, CONFIG),):
         receipt = _load(receipt_path)
         rungs = _declared_rungs(tool, receipt, config_path)
         for phase, records in receipt["records"].items():

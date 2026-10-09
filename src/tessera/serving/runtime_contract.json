@@ -1583,16 +1583,12 @@
     "structure": "routed_moe",
     "regime": "decode",
     "rungs_q256": [
-     768,
      896,
      928,
      1024,
      1088
     ],
     "run_tables": [
-     [
-      3
-     ],
      [
       3,
       4
@@ -1656,16 +1652,12 @@
     "structure": "routed_moe",
     "regime": "batch",
     "rungs_q256": [
-     768,
      896,
      928,
      1024,
      1088
     ],
     "run_tables": [
-     [
-      3
-     ],
      [
       3,
       4
@@ -2421,7 +2413,7 @@
   {
    "contract_version": 65,
    "date": "2026-10-09",
-   "change": "Admit run table [3] on the twin routed cells from a served TP2 census (tessera#1080, PR #1045). THE RECEIPT: experiments/results/glm53_r768_stub_tp2_eager_census.json with experiments/results/glm53_r768_stub_config.json (docs/measurements/2026-10-09-r768-tp2-census.md). A two-layer GLM-5.3-Flash stub with one routed stack (288 E4M3 experts at q256 768) served at tensor parallel 2 on the twin image; both ranks record the stack on the E4M3 fused pair in both phases. The twin routed cells gain census rung 768 and run table [3]. The base routed cells keep run tables [[3, 4], [4], [4, 5]] and refuse 768: they name another image the receipt did not serve. Rung 640 and rungs 1280 through 2048 stay refused on every routed cell."
+   "change": "Retain R768 TP2 receipts without admission (tessera#1080, PR #1045). Restore the runtime twins to their master scope. The base-image receipt records native_routed_window_classes_e4m3mma, which has no qualified cell. Keep R768 and table [3] outside both base cells until current decoder qualification exists. Preserve kernels, decoders, pins, defaults, and refusal of R640 and R1280-R2048."
   },
   {
    "contract_version": 64,
