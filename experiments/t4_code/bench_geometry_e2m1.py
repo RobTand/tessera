@@ -1,13 +1,14 @@
-"""D41 E2M1 measurement adapter; never substitutes an E4M3 or BF16 reader.
+"""D41 E2M1 measurement adapter; research diagnostics do not qualify serving.
 
 The serializable scalar and tuple grids are enumerated at q256 step one.
-Current serving uses uniform E2M1x2 span-two TCQ, not the experimental
-routed_fused_e2m1 WINDOW/LUT16 library (L14). Research tuple subcap wires
-have L12; routed served_recipe promotes them to TCQ, while dense keeps L12.
+Current dense and routed E2M1x2 serving uses WINDOW L14 over LUT16.
+wire_recipe retains sub-cap WINDOW L12 and cap TCQ research recipes.
+Historical span-two TCQ timings do not measure the served WINDOW L14 recipe.
+They are not D41 allowability evidence for served E2M1x2.
 Owner refusals remain missing measurements, not a family-wide exclusion.
---packed-reader explicitly enables actual mixed TCQ and dense L12 WINDOW
-geometry without changing a serving default. --correctness checks its code
-and scale bytes against stock and its native arithmetic on bounded shapes.
+--packed-reader selects the diagnostic TCQ and L12 WINDOW reader.
+That reader does not accept the served WINDOW L14 recipe.
+--correctness checks code bytes, scale bytes and conditional arithmetic diagnostics.
 --quality-structure binds the CPU screen to the actual routed or dense recipe.
 
 --prepare-inputs extracts the real layer-three expert-zero BF16 source tiles.
@@ -114,7 +115,7 @@ def owner_refusal(grid, q, kind, cols=256):
                 "prepare_span2_compact takes a TCQ unit; this one has no forest",
                 "experimental_owner": "tessera.routed_fused_e2m1 dense/routed readers require WINDOW_BITS=14",
                 "actual_window_bits": recipe.window_bits,
-                "missing_evidence": "current L12 WINDOW is not the L14 fused specialization or the served TCQ path"}
+                "missing_evidence": "span-two TCQ measurements do not measure the served WINDOW recipe; no D41 allowability or arithmetic qualification is implied"}
     if len(set(rates)) != 1:
         return {"owner": "tessera.compact_prep.prepare_span2_compact", "reason":
                 f"the span-2 planes take one forest per unit; rates {sorted(set(rates))}",
