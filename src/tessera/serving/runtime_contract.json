@@ -1,6 +1,6 @@
 {
  "schema": "tessera.runtime-contract.v1",
- "contract_version": 64,
+ "contract_version": 66,
  "quant_method": {
   "canonical": "tessera",
   "accepted": [
@@ -867,7 +867,7 @@
   }
  ],
  "lane_eligibility": {
-  "schema": "tessera.lane-eligibility.v11",
+  "schema": "tessera.lane-eligibility.v12",
   "platforms": {
    "sm_121": {
     "backend": "cuda",
@@ -1297,6 +1297,7 @@
     "structure": "routed_moe",
     "regime": "decode",
     "rungs_q256": [
+     768,
      832,
      864,
      896,
@@ -1307,6 +1308,9 @@
      1088
     ],
     "run_tables": [
+     [
+      3
+     ],
      [
       3,
       4
@@ -1323,15 +1327,23 @@
     "executes": [
      {
       "symbol": "tessera.native_window_moe.NativeWindowMoE.__call__",
-      "decoder": "native_window_moe_compact"
+      "decoder": "native_window_moe_compact",
+      "rungs_q256": [832, 864, 896, 928, 944, 960, 1024, 1088]
      },
      {
       "symbol": "tessera.routed_fused.FusedRoutedWindowMoE.__call__",
-      "decoder": "native_routed_fused_window"
+      "decoder": "native_routed_fused_window",
+      "rungs_q256": [832, 864, 896, 928, 944, 960, 1024, 1088]
      },
      {
       "symbol": "tessera.routed_fused.FusedRoutedWindowMoE.__call__",
-      "decoder": "native_routed_fused_window_e4m3mma"
+      "decoder": "native_routed_fused_window_e4m3mma",
+      "rungs_q256": [832, 864, 896, 928, 944, 960, 1024, 1088]
+     },
+     {
+      "symbol": "tessera.routed_fused.FusedRoutedWindowMoE.__call__",
+      "decoder": "native_routed_window_classes_e4m3mma",
+      "rungs_q256": [768]
      }
     ],
     "route_status": "backed_with_serve_flag",
@@ -1370,6 +1382,7 @@
     "structure": "routed_moe",
     "regime": "batch",
     "rungs_q256": [
+     768,
      832,
      864,
      896,
@@ -1380,6 +1393,9 @@
      1088
     ],
     "run_tables": [
+     [
+      3
+     ],
      [
       3,
       4
@@ -1396,15 +1412,23 @@
     "executes": [
      {
       "symbol": "tessera.native_window_moe.NativeWindowMoE.__call__",
-      "decoder": "native_window_moe_compact"
+      "decoder": "native_window_moe_compact",
+      "rungs_q256": [832, 864, 896, 928, 944, 960, 1024, 1088]
      },
      {
       "symbol": "tessera.routed_fused.FusedRoutedWindowMoE.__call__",
-      "decoder": "native_routed_fused_window"
+      "decoder": "native_routed_fused_window",
+      "rungs_q256": [832, 864, 896, 928, 944, 960, 1024, 1088]
      },
      {
       "symbol": "tessera.routed_fused.FusedRoutedWindowMoE.__call__",
-      "decoder": "native_routed_fused_window_e4m3mma"
+      "decoder": "native_routed_fused_window_e4m3mma",
+      "rungs_q256": [832, 864, 896, 928, 944, 960, 1024, 1088]
+     },
+     {
+      "symbol": "tessera.routed_fused.FusedRoutedWindowMoE.__call__",
+      "decoder": "native_routed_window_classes_e4m3mma",
+      "rungs_q256": [768]
      }
     ],
     "route_status": "backed_with_serve_flag",
@@ -2410,6 +2434,16 @@
   }
  },
  "changelog": [
+  {
+   "contract_version": 66,
+   "date": "2026-10-09",
+   "change": "Qualify R768 on the two base routed E4M3 cells from the committed TP2 census. Both ranks served native_routed_window_classes_e4m3mma in decode and batch on the base image. Lane schema v12 adds per-launch census rungs. Historical pairs retain their original tables. The class pair covers only R768. Runtime twins, kernels, decoders, pins, defaults, R640 refusal, and R1280-R2048 refusal remain unchanged. No D41 allowance, KL claim, or speed claim follows."
+  },
+  {
+   "contract_version": 65,
+   "date": "2026-10-09",
+   "change": "Retain R768 TP2 receipts without admission (tessera#1080, PR #1045). Restore the runtime twins to their master scope. The base-image receipt records native_routed_window_classes_e4m3mma, which has no qualified cell. Keep R768 and table [3] outside both base cells until current decoder qualification exists. Preserve kernels, decoders, pins, defaults, and refusal of R640 and R1280-R2048."
+  },
   {
    "contract_version": 64,
    "date": "2026-10-07",

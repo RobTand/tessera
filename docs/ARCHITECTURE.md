@@ -1,5 +1,17 @@
 # Tessera plan-to-serve architecture
 
+Re-stamped 2026-10-09 for the canonical T4 performant menu (issue #1103).
+CEO decision dec-1009-095820-aebb approves dense [896] and routed [896] as performance-only TCQ menus.
+The menu binds build native_span2-sm_121-f01b61f906b7d7fe and table v0003 (SHA-256 35e1f829...dad3c6).
+The recipe is TCQ span2 lut16 with seed 0 and no sigma value. The activation contract is e2m1_group16_ue4m3_static.
+Seven bits apply to each paired code. The body rate is 3.5 bits per scalar weight, before metadata fees.
+`performant_rungs` returns (896,) for both T4 structures and keeps T8 and T16 menus unchanged.
+`admit_rung` allows only measured q896 cells in the exact twenty-cell scope with approved shapes and M values.
+Admission also binds routing, mode, epilogue, kernel path, decoder, execution scope, and input distribution.
+Other builds, rungs, recipes, shapes, routes, modes, epilogues, paths, or cell rosters wait.
+A wrong scope field waits with its own reason. An unknown scope waits with performance_admission_not_established.
+Correctness holds, source refusals, and the kernel_not_serving_qualified refusal stay in force.
+The old build keeps its reader-bounds hold and failed cells. No WINDOW L12 or L14 admission follows.
 Re-stamped 2026-10-09 for the hosted producer dependency (issue #1018).
 Hosted pure installs the existing jsonschema dependency required by the real producer.
 Torch stays absent. The producer keeps its structural and semantic validation.
@@ -18,6 +30,24 @@ Version two and version three input-table metadata use the alphabet's pure grid 
 The existing version one conversion and actual raw-input normalization retain their owner paths.
 The meaningful hosted pure test stays active. No measurement or qualification changes.
 
+Contract v66 admits R768 and table [3] on the two base routed E4M3 cells (tessera#1080, PR #1045).
+The base-image TP2 receipt proves decoder `native_routed_window_classes_e4m3mma` on both ranks in decode M1 and batch M64.
+Qualification covers only `sm_121`, the base image, eager execution, resident service, and R768.
+The current execution registry remains experimental outside that receipt scope.
+Historical decoder identities keep their original census rungs and run tables.
+Lane schema v12 adds optional `executes[].rungs_q256`. Absence means the cell's full scope.
+Each launch covers its census rungs and the allowable rungs of their derived run tables.
+The validator derives each launch scope from its execution receipts. The census checks the record's actual rung.
+PrismaQuant refuses lane schema v12 by name until its reader admits the schema.
+That reader must also apply `executes[].rungs_q256`. A reader that ignores the key reads the class pair at every rung and the historical pairs at R768.
+Issue [prismaquant#2511](https://github.com/RobTand/prismaquant/issues/2511) tracks that reader. Rob and the CEO approved lane schema v12 on 2026-10-09 (tessera#1080).
+The PrismaQuant serving and export pin names an exact Tessera commit and contract digest. It stays at lane schema v11 until that reader lands and its tests pass.
+This contract reaches serving and export only when a later pin bump adopts it.
+The runtime twins retain their master scope and refuse R768. R640 and R1280-R2048 remain refused.
+No kernel, decoder implementation, pin, or default changes. This receipt proves no KL or speed.
+Receipt: `experiments/results/glm53_r768_stub_base_tp2_eager_census.json`.
+Configuration: `experiments/results/glm53_r768_stub_base_config.json`.
+
 Re-stamped 2026-10-08 for the canonical class publication (issue #1018).
 
 The existing class interface publishes retained timing samples and exact performance scope.
@@ -31,8 +61,8 @@ The immutable producer adds class timing records and a complete declared-cell sc
 Historical sample variation stays separate from hard correctness flags.
 Missing shapes, recipes, activations, and token rows still wait.
 An absent tensor-parallel shape has an explicit wait marker, not an empty successful population.
-T4 uses one code for two scalar weights. Its qualified dense and routed menus stay empty.
-Supplier prose does not control admission. The producer checks physical arity and the empty menu.
+T4 uses one code for two scalar weights. Its qualified dense and routed menus hold only approved q896.
+Supplier prose does not control admission. The producer checks physical arity and the approved menu.
 T8 R640 has no supported publication. R1280 stays a pricing anchor, not a performance option.
 Older T16 timings retain their actual build and do not qualify the new decoded-weight epilogue.
 

@@ -207,8 +207,8 @@ def cell_launch_agreement(records_by_phase, *, cells, phase_regimes, platform,
     reason ``all_required_engaged`` is: ``None`` when no record was covered by
     any cell, so a gate can tell "nothing to check" from "everything checked".
     """
-    from .contract import (cached_serving_contract, cell_covers_rung, cell_matches_runtime,
-                           refuse_unevaluated_predicates)
+    from .contract import (cached_serving_contract, cell_covers_rung, cell_executes,
+                           cell_matches_runtime, refuse_unevaluated_predicates)
 
     if formats is None:
         formats = cached_serving_contract()["formats"]
@@ -282,8 +282,9 @@ def cell_launch_agreement(records_by_phase, *, cells, phase_regimes, platform,
                 unattested += 1
                 continue
             pair = (str(record.get("symbol")), str(record.get("decoder")))
+            allowed = cell_executes(cell, q256=int(rung), entry=entries.get(family))
             if execution_mode == "compiled" and (
-                    len(cell["executes"]) != 1 or any("+" in item for item in pair)):
+                    len(allowed) != 1 or any("+" in item for item in pair)):
                 # Only the routed single-launch observation can be joined to
                 # a phase cell. A combined trace does not identify which of
                 # its branches the driven phase executed.
@@ -328,7 +329,6 @@ def cell_launch_agreement(records_by_phase, *, cells, phase_regimes, platform,
                     "hardware no cell in this contract covers.")
                 continue
             covered += 1
-            allowed = {(str(e["symbol"]), str(e["decoder"])) for e in cell["executes"]}
             counts[cell["id"]] += 1
             # The route may carry an observed backend suffix while a cell
             # publishes the runtime entry point. Preserve exact matching too:

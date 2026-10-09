@@ -515,17 +515,32 @@ def main():
         if args.paired_value_packet:
             if table['format'] != 'TESSERA_E2M1_K2':
                 raise ValueError('Paired-value packet is only valid for TESSERA_E2M1_K2')
+            from tessera.rung_allowability import E2M1_K2_PERFORMANT_MENU
             packet_bytes = Path(args.paired_value_packet).read_bytes()
             packet = json.loads(packet_bytes)
             semantics = packet['paired_value_semantics']
             if semantics['arity'] != 2:
                 raise ValueError('Paired-value packet contradicts the actual scalar arity')
-            if any(packet['qualified_class_menu'].values()):
-                raise ValueError('This publication preserves the empty qualified T4 menu')
+            if semantics.get('code_bits_per_symbol') != 7:
+                raise ValueError('Paired-value packet contradicts the approved seven bits per code')
+            if semantics.get('body_bits_per_scalar_weight') != 3.5:
+                raise ValueError('Paired-value packet contradicts the approved 3.5 body bits per scalar weight')
+            if semantics.get('metadata_fees_included') is not False:
+                raise ValueError('Paired-value packet folds metadata fees into the body rate')
+            menu = packet['qualified_class_menu']
+            if sorted(menu.get('dense', [])) != [896] or sorted(menu.get('routed', [])) != [896]:
+                raise ValueError('Paired-value packet menu differs from the approved dense [896] routed [896] menu')
+            if set(menu) != {'dense', 'routed'}:
+                raise ValueError('Paired-value packet menu must name exactly dense and routed')
+            approved = {'dense': list(E2M1_K2_PERFORMANT_MENU['dense']), 'routed': list(E2M1_K2_PERFORMANT_MENU['routed'])}
+            if menu != approved:
+                raise ValueError('Paired-value packet menu differs from the approved menu owner record')
             table['evidence']['paired_value_supplier'] = {
                 'path': args.paired_value_packet, 'sha256': hashlib.sha256(packet_bytes).hexdigest(),
                 'producer': packet['canonical_producer'], 'paired_value_semantics': semantics,
-                'qualified_class_menu': packet['qualified_class_menu'], 'missing_evidence': packet['missing_evidence']}
+                'qualified_class_menu': packet['qualified_class_menu'], 'missing_evidence': packet['missing_evidence'],
+                'approval': E2M1_K2_PERFORMANT_MENU['approval'], 'kernel_build_id': E2M1_K2_PERFORMANT_MENU['kernel_build_id'],
+                'table_sha256': E2M1_K2_PERFORMANT_MENU['table_sha256']}
         publish_table(table, args)
         return
     root=Path(args.root)

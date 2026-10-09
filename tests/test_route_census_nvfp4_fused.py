@@ -101,19 +101,33 @@ def test_route_census_tool_accepts_the_fused_nvfp4_pairs():
         assert (ROUTED_FUSED_WINDOW_E2M1_SYMBOL, DECODER_NATIVE_ROUTED_FUSED_WINDOW_E2M1) in moe_want
 
 
-def test_no_packaged_cell_attests_an_experimental_launch():
-    """Pin guard, torch-free: no cell names a launch no receipt has earned.
-
-    The fused pairs leave ``EXPERIMENTAL_LAUNCHES`` when a served census earns
-    them cells (#545 step 2), and the pin bump (step 3) follows the cells --
-    never precedes them.  A cell naming a fused pair while this test still
-    asserts absence is the signal to update the test beside the attestation,
-    not to bump the pin past it.
-    """
+def test_experimental_launches_require_their_own_runtime_and_rung_receipt():
+    """A scoped receipt must not qualify an operation on another runtime or table."""
+    from tessera.serving.contract import CENSUS_PHASE_REGIMES, cell_executes, format_entry
     from tessera.serving.scheme import EXPERIMENTAL_LAUNCHES
 
     contract = json.loads(CONTRACT.read_text(encoding="utf-8"))
+    results = CONTRACT.parents[3] / "experiments/results"
+    receipt = json.loads((results / "glm53_r768_stub_base_tp2_eager_census.json").read_text())
+    config = json.loads((results / "glm53_r768_stub_base_config.json").read_text())
+    tool = _tool()
+    rungs = {tool.declared_rung(group["scheme"])
+             for group in config["quantization_config"]["config_groups"].values()}
     experimental = set(EXPERIMENTAL_LAUNCHES)
     for cell in contract["lane_eligibility"]["cells"]:
-        pairs = {(entry["symbol"], entry["decoder"]) for entry in cell["executes"]}
-        assert not (pairs & experimental), cell["id"]
+        entry = format_entry(cell["family"], contract)
+        phase = next(phase for phase, regime in CENSUS_PHASE_REGIMES.items()
+                     if regime == cell["regime"])
+        recorded = {(record["symbol"], record["decoder"])
+                    for record in receipt["ranks"][0]["records"][phase].values()}
+        for rung in cell["rungs_q256"]:
+            scope_matches = (
+                cell["platform"] == receipt["device"]["platform_token"]
+                and cell["runtime"]["image"] == receipt["runtime"]["image"]
+                and cell["runtime"]["execution_modes"] == [receipt["runtime"]["execution_mode"]]
+                and cell["structure"] == "routed_moe" and cell["family"] == "TESSERA_E4M3_K1"
+                and cell["requires_serve_flags"] == ["TESSERA_SERVE_MODE=resident"]
+                and rung in rungs)
+            observed = cell_executes(cell, q256=rung, entry=entry) & experimental
+            assert observed == (recorded & experimental if scope_matches else set()), (
+                cell["id"], rung, observed)

@@ -165,6 +165,16 @@ for _family, _structure, _rungs, _contract, _launches in _GLM_X_CELLS:
             "requires_plugin": "tessera", "requires_serve_flags": ["TESSERA_SERVE_MODE=resident"],
             "predicates": [], "runtime": _GLM_X_RUNTIME}
 
+# Contract v66 qualifies the base-image class decoder only at R768.
+for _regime in ("decode", "batch"):
+    _law = _CELL_LAWS[f"tessera_e4m3_k1_routed_moe_sm121_{_regime}_resident"]
+    _old_rungs = _law["rungs_q256"]
+    _law["rungs_q256"] = [768, *_old_rungs]
+    _law["executes"] = [
+        {**launch, "rungs_q256": _old_rungs} for launch in _law["executes"]
+    ] + [{"symbol": _FUSED_MOE, "decoder": "native_routed_window_classes_e4m3mma",
+          "rungs_q256": [768]}]
+
 #: MINTED at contract v48 (tessera#702): the four E4M3/BF16 dense and routed
 #: GLM-image scopes again, on the vLLM NIGHTLY image the GLM-5.3 release
 #: serves on (eugr 155ce16b with the nccl230 layer), from one TP1 eager route
@@ -578,16 +588,10 @@ def test_every_cell_is_backed_with_a_serve_flag_and_plugin_gated(contract):
 
 
 def test_the_table_adds_only_the_measured_moe_scope_without_expert_parallelism(contract):
-    """Three (family, rungs) pairs of regimes on the GLM serving image, two on
-    the vLLM nightly, and no more.
+    """The base and nightly E4M3 scopes remain resident and eager.
 
-    The TP1 GLM census (v38, tessera#604) added FP8 and BF16 on the GLM serving
-    image; the u1 stub censuses (v39) widened FP8 and added the E2M1x2 wire on
-    the grouped A4 launch.  The LFM FP8 pair at q1024 was withdrawn at v38 and
-    the materialising E2M1 pair at v39.  v48 (tessera#702) adds FP8 and BF16 on
-    the nightly, on stub B's rungs.  v59 restores the served-census pin
-    after review: both BF16 routed pairs census only R1024 until new
-    served receipts support more.  Each pair is resident and eager.
+    Contract v66 adds R768 only on the base image.
+    Historical BF16 and E2M1 cells remain withdrawn.
     """
     block = contract["lane_eligibility"]
     assert block["structures"] == ["dense", "routed_moe"]
@@ -599,7 +603,7 @@ def test_the_table_adds_only_the_measured_moe_scope_without_expert_parallelism(c
         assert cell["requires_serve_flags"] == ["TESSERA_SERVE_MODE=resident"]
         assert cell["runtime"]["execution_modes"] == ["eager"]
     assert sorted((family, rungs, image) for family, rungs, image in by_family) == sorted([
-        ("TESSERA_E4M3_K1", (832, 864, 896, 928, 944, 960, 1024, 1088),
+        ("TESSERA_E4M3_K1", (768, 832, 864, 896, 928, 944, 960, 1024, 1088),
          _GLM_X_RUNTIME["image"]),
         ("TESSERA_E4M3_K1", (896, 928, 1024, 1088), NIGHTLY_RUNTIME["image"])])
     assert all(regimes == {"decode", "batch"} for regimes in by_family.values())
@@ -866,7 +870,9 @@ def test_no_withdrawn_cell_has_come_back_with_its_withdrawn_claim(contract):
             assert (ROOT / DENSE_FUSED_RECEIPT).is_file(), cell["id"]
         if cell["family"] == "TESSERA_E4M3_K1":
             assert (ROOT / E4M3MMA_RECEIPT).is_file(), cell["id"]
-        pairs = {(e["symbol"], e["decoder"]) for e in cell["executes"]}
+        from tessera.serving.contract import cell_executes, format_entry
+        pairs = cell_executes(cell, q256=896, entry=format_entry(cell["family"], contract)) \
+            if cell["structure"] == "routed_moe" else cell_executes(cell)
         assert pairs == launch, cell["id"]
         assert not (pairs & _WITHDRAWN_CLAIMS[cell["id"]]), cell["id"]
 
@@ -918,7 +924,14 @@ def test_every_cell_retains_its_attested_launch_identity(contract):
         for mode in cell_residency_modes(cell):
             admissible |= qualification_launch_pairs(route, structure=cell["structure"],
                                        regime=cell["regime"], mode=mode)
-        assert cell_executes(cell) <= admissible, cell["id"]
+        for launch in cell["executes"]:
+            pair = (launch["symbol"], launch["decoder"])
+            if pair not in admissible:
+                assert cell["id"] in {
+                    "tessera_e4m3_k1_routed_moe_sm121_decode_resident",
+                    "tessera_e4m3_k1_routed_moe_sm121_batch_resident"}
+                assert pair == (_FUSED_MOE, "native_routed_window_classes_e4m3mma")
+                assert launch["rungs_q256"] == [768]
 
 
 

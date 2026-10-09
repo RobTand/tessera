@@ -477,6 +477,148 @@ INDEX_SCHEMAS={'fleet.rung_allowability.index.v1':INDEX_SCHEMA,'fleet.rung_allow
 PERFORMANT_POLICY = {"kind": "whole_bit_per_structure", "authority": "D41 whole-bit and measured half-bit authority, 2026-10-06",
                      "qualification_scope": "Performance evidence does not replace independent export, numerical, or serving gates."}
 
+## CEO decision dec-1009-095820-aebb approves dense [896] and routed [896] as
+## performance-only TCQ menus for build native_span2-sm_121-f01b61f906b7d7fe
+## table v0003 (tessera#1106). Seven bits apply to each paired code; the body
+## rate is 3.5 bits per scalar weight, before metadata fees. The scope below
+## binds the build, activation contract, recipe, shapes, M values, routing,
+## mode, epilogue, kernel path, decoder and input distribution read from
+## that table. No WINDOW L12 or L14 admission follows from this approval.
+## Independent numerical, native and serving gates stay in force. The old
+## build native_span2-sm_121-92e1315ad1b173b0 keeps its reader-bounds hold
+## and failed cells and receives no admission from this approval.
+E2M1_K2_PERFORMANT_MENU = {"dense": (896,), "routed": (896,),
+                           "kernel_build_id": "native_span2-sm_121-f01b61f906b7d7fe",
+                           "table_path": "/mnt/shared/fleet-ceo/rung-allowability/TESSERA_E2M1_K2/native_span2-sm_121-f01b61f906b7d7fe/v0003.json",
+                           "table_sha256": "35e1f82998f92116bba30af77161d7c7b1092b368723113ede99ce7a74dad3c6",
+                           "activation_contract": "e2m1_group16_ue4m3_static; BF16 inputs, fixed static global448*6/3, native quantizer",
+                           "recipe": {"body": "tcq", "span": 2, "plane": "lut16", "window_bits": 0, "seed": 0, "sigma": None, "channel_sigma": None},
+                           "approval": "dec-1009-095820-aebb",
+                           "cell_ids": ("routed:gate_up:M1", "routed:gate_up:M16", "routed:gate_up:M2048", "routed:gate_up:M4096",
+                                        "routed:down:M1", "routed:down:M16", "routed:down:M2048", "routed:down:M4096",
+                                        "dense:o_proj:M1", "dense:o_proj:M16", "dense:o_proj:M2048", "dense:o_proj:M4096",
+                                        "dense:q_b:M1", "dense:q_b:M16", "dense:q_b:M2048", "dense:q_b:M4096",
+                                        "routed:gate_up:M2048:recorded", "routed:gate_up:M4096:recorded",
+                                        "routed:down:M2048:recorded", "routed:down:M4096:recorded"),
+                           "shapes": {"gate_up": {"kernel_kind": "routed", "rows": 1024, "columns": 4096, "mode": 0},
+                                      "down": {"kernel_kind": "routed", "rows": 4096, "columns": 1024, "mode": 2},
+                                      "o_proj": {"kernel_kind": "dense", "rows": 4096, "columns": 4096, "mode": 2},
+                                      "q_b": {"kernel_kind": "dense", "rows": 8192, "columns": 1536, "mode": 2}},
+                           "M": (1, 16, 2048, 4096),
+                           "routing": {"routed": "balanced", "dense": "none", "recorded": "recorded"},
+                           "epilogues": {"gate_up": "SwiGLU clipped at 10", "down": "route-weighted BF16 down",
+                                         "o_proj": "BF16 linear output", "q_b": "BF16 linear output"},
+                           "execution": {"body_kind": "tcq", "decoder_kind": "native_tcq", "decoder_owner": "tessera.kernel_a4",
+                                         "execution_scope": "native_tcq_decode_gemm",
+                                         "kernel_path": {"routed": "tessera.kernel_a4.a4_span2_grouped_gemm",
+                                                         "dense": "tessera.kernel_a4.a4_span2_gemm"}},
+                           "input_distribution": "e2m1_group16_ue4m3_static; BF16 inputs, fixed static global448*6/3, native quantizer"}
+
+
+def _e2m1_k2_parse_cell_id(cell_id):
+    """Parse an approved cell ID into its immutable parts."""
+    if not isinstance(cell_id, str):
+        return None
+    parts = cell_id.split(":")
+    if len(parts) not in (3, 4):
+        return None
+    kind, shape_id, m_part = parts[0], parts[1], parts[2]
+    if kind not in ("routed", "dense") or not shape_id or not m_part.startswith("M"):
+        return None
+    try:
+        m_value = int(m_part[1:])
+    except ValueError:
+        return None
+    if m_value <= 0:
+        return None
+    if len(parts) == 4:
+        if parts[3] != "recorded":
+            return None
+        recorded = True
+    else:
+        recorded = False
+    return {"kernel_kind": kind, "shape_id": shape_id, "M": m_value, "recorded": recorded}
+
+
+def _e2m1_k2_approved_cell_record(table, cell_id):
+    """Return the approved semantic record for one cell, or None."""
+    menu = E2M1_K2_PERFORMANT_MENU
+    if cell_id not in menu["cell_ids"]:
+        return None
+    parsed = _e2m1_k2_parse_cell_id(cell_id)
+    if parsed is None or parsed["M"] not in menu["M"]:
+        return None
+    required = {cell["cell_id"]: cell for cell in table["scope"]["required_cells"]}
+    declared = required.get(cell_id)
+    if declared is None or declared.get("cell_id") != cell_id:
+        return None
+    if (declared.get("kernel_kind"), declared.get("shape_id"), declared.get("M")) != (
+            parsed["kernel_kind"], parsed["shape_id"], parsed["M"]):
+        return None
+    shape = menu["shapes"].get(parsed["shape_id"])
+    if shape is None or shape["kernel_kind"] != parsed["kernel_kind"]:
+        return None
+    routing = menu["routing"]["recorded"] if parsed["recorded"] else menu["routing"][parsed["kernel_kind"]]
+    if declared.get("routing", routing) != routing:
+        return None
+    return {"cell_id": cell_id, "kernel_kind": parsed["kernel_kind"], "shape_id": parsed["shape_id"],
+            "M": parsed["M"], "shape": shape, "routing": routing,
+            "epilogue": menu["epilogues"][parsed["shape_id"]],
+            "kernel_path": menu["execution"]["kernel_path"][parsed["kernel_kind"]]}
+
+
+def _e2m1_k2_approved_measurement(record, measurement):
+    """Name the first approved semantic field a measured cell breaks."""
+    menu = E2M1_K2_PERFORMANT_MENU
+    if measurement.get("cell_id") != record["cell_id"]:
+        return "unmeasured_shape_or_M_scope"
+    if (measurement.get("kernel_kind"), measurement.get("shape_id"), measurement.get("M")) != (
+            record["kernel_kind"], record["shape_id"], record["M"]):
+        return "unmeasured_shape_or_M_scope"
+    evidence = measurement.get("evidence") or {}
+    geometry = measurement.get("geometry") or {}
+    if (evidence.get("rows"), evidence.get("columns")) != (record["shape"]["rows"], record["shape"]["columns"]):
+        return "unmeasured_shape_or_M_scope"
+    if evidence.get("routing") != record["routing"]:
+        return "unmeasured_shape_or_M_scope"
+    if evidence.get("input_distribution") != menu["input_distribution"]:
+        return "unmeasured_activation_scope"
+    if evidence.get("mode") != record["shape"]["mode"] or evidence.get("epilogue") != record["epilogue"]:
+        return "unmeasured_execution_scope"
+    if measurement.get("kernel_path") != record["kernel_path"]:
+        return "unmeasured_execution_scope"
+    if (geometry.get("body_kind"), geometry.get("decoder_kind"), geometry.get("decoder_owner"),
+            geometry.get("execution_scope")) != (menu["execution"]["body_kind"], menu["execution"]["decoder_kind"],
+                                                menu["execution"]["decoder_owner"], menu["execution"]["execution_scope"]):
+        return "unmeasured_execution_scope"
+    if geometry.get("recipe") != menu["recipe"]:
+        return "unmeasured_recipe_scope"
+    return None
+
+
+def _e2m1_k2_approved_scope(table):
+    """True only for the exact approved build, activation, shapes, and roster."""
+    menu = E2M1_K2_PERFORMANT_MENU
+    if table["format"] != "TESSERA_E2M1_K2":
+        return False
+    if table["kernel_build"]["id"] != menu["kernel_build_id"]:
+        return False
+    if table["kernel_build"]["activation_contract"] != menu["activation_contract"]:
+        return False
+    required = table["scope"]["required_cells"]
+    if {cell["cell_id"] for cell in required} != set(menu["cell_ids"]):
+        return False
+    declared_shapes = {(shape["kernel_kind"], shape["shape_id"]): shape for shape in table["scope"].get("shapes", [])}
+    for shape_id, spec in menu["shapes"].items():
+        declared = declared_shapes.get((spec["kernel_kind"], shape_id))
+        if declared is None:
+            return False
+        if (declared["rows"], declared["columns"], declared.get("mode")) != (spec["rows"], spec["columns"], spec["mode"]):
+            return False
+    if len(declared_shapes) != len(menu["shapes"]):
+        return False
+    return all(_e2m1_k2_approved_cell_record(table, cell["cell_id"]) is not None for cell in required)
+
 
 def performant_rungs(format, kernel_kind):
     """The owning menu, not a consumer-side copy or an encoder-capacity guess."""
@@ -486,7 +628,7 @@ def performant_rungs(format, kernel_kind):
     if format == "TESSERA_BF16_K1":
         return tuple(sorted((*range(256, (3584 if kernel_kind == "dense" else 2048) + 1, 256), 896)))
     if format == "TESSERA_E2M1_K2":
-        return ()
+        return E2M1_K2_PERFORMANT_MENU[kernel_kind]
     return ()
 
 
@@ -596,7 +738,20 @@ def _admit_performance_scope(table, row, rung, cell_ids, activation_contract, re
             status = 'wait' if table['format'] == 'TESSERA_E2M1_K2' else 'excluded'
             results.append({'cell_id': cell_id, 'status': status, 'reason': 'performance_admission_not_established' if status == 'wait' else 'outside_performant_menu'})
             continue
+        if table['format'] == 'TESSERA_E2M1_K2' and not _e2m1_k2_approved_scope(table):
+            results.append({'cell_id': cell_id, 'status': 'wait', 'reason': 'performance_admission_not_established'})
+            continue
         measurement = cells.get(cell_id)
+        if table['format'] == 'TESSERA_E2M1_K2':
+            record = _e2m1_k2_approved_cell_record(table, cell_id)
+            if record is None:
+                results.append({'cell_id': cell_id, 'status': 'wait', 'reason': 'performance_admission_not_established'})
+                continue
+            if measurement is not None and measurement['measurement_status'] == 'measured':
+                broken = _e2m1_k2_approved_measurement(record, measurement)
+                if broken is not None:
+                    results.append({'cell_id': cell_id, 'status': 'wait', 'reason': broken})
+                    continue
         if measurement is None or measurement['measurement_status'] == 'pending':
             results.append({'cell_id': cell_id, 'status': 'wait', 'reason': 'missing_actual_measurement'})
         elif measurement['measurement_status'] != 'measured':
