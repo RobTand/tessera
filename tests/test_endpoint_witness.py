@@ -2,6 +2,8 @@
 from __future__ import annotations
 
 import copy
+import hashlib
+import json
 
 import pytest
 
@@ -179,6 +181,59 @@ def test_client_or_inconsistent_tokenizer_facts_are_refused(sample, change):
     else:
         value["tokenizer"] = {"vocab_size": 2, "source": "client"}
     assert verify(root, resign(value)) is not None
+
+
+def byte_level(**flags):
+    return {"type": "ByteLevel", "add_prefix_space": False, "trim_offsets": False, "use_regex": False, **flags}
+
+
+def with_byte_level_tokenizer(root, value, *, loaded):
+    """Serve a tokenizer.json with ByteLevel components; `loaded` edits the backend a loader returns."""
+    backend = copy.deepcopy(value["tokenizer"]["backend"])
+    backend["pre_tokenizer"] = {"type": "Sequence", "pretokenizers": [
+        {"type": "Split", "pattern": {"Regex": "x"}, "behavior": "Isolated", "invert": False},
+        byte_level(use_regex=False)]}
+    backend["decoder"] = byte_level()
+    raw = json.dumps(backend).encode()
+    (root / "tokenizer.json").write_bytes(raw)
+    value["tokenizer"]["files"]["tokenizer.json"] = {"sha256": hashlib.sha256(raw).hexdigest(), "bytes": len(raw),
+                                                     "content": backend}
+    value["tokenizer"]["backend"] = loaded(copy.deepcopy(backend))
+    return resign(value)
+
+
+def live_normalization(backend):
+    """The four flags the pinned vLLM image's loaded backend differs in from the same tokenizer.json bytes."""
+    backend["decoder"].update(add_prefix_space=True, trim_offsets=True, use_regex=True)
+    backend["pre_tokenizer"]["pretokenizers"][1]["trim_offsets"] = True
+    return backend
+
+
+def test_loader_normalized_byte_level_flags_that_never_change_token_ids_are_accepted(sample):
+    root, value = sample
+    assert verify(root, with_byte_level_tokenizer(root, value, loaded=live_normalization)) is None
+
+
+@pytest.mark.parametrize("change", ["pre_tokenizer_add_prefix_space", "pre_tokenizer_use_regex",
+                                    "pre_tokenizer_regex", "decoder_type", "model"])
+def test_loader_changes_that_can_change_token_ids_are_refused(sample, change):
+    root, value = sample
+
+    def loaded(backend):
+        live_normalization(backend)
+        if change == "pre_tokenizer_add_prefix_space":
+            backend["pre_tokenizer"]["pretokenizers"][1]["add_prefix_space"] = True
+        elif change == "pre_tokenizer_use_regex":
+            backend["pre_tokenizer"]["pretokenizers"][1]["use_regex"] = True
+        elif change == "pre_tokenizer_regex":
+            backend["pre_tokenizer"]["pretokenizers"][0]["pattern"] = {"Regex": "y"}
+        elif change == "decoder_type":
+            backend["decoder"]["type"] = "Metaspace"
+        else:
+            backend["model"]["unk_token"] = "a"
+        return backend
+
+    assert "loaded tokenizer backend differs" in verify(root, with_byte_level_tokenizer(root, value, loaded=loaded))
 
 
 @pytest.mark.parametrize("name", ["model.safetensors", "tokenizer.json", "tokenizer_config.json"])
