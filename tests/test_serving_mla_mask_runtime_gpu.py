@@ -4,7 +4,7 @@ from pathlib import Path
 import importlib.util
 import pytest
 import torch
-pytest.importorskip('vllm')
+pytest.importorskip('vllm.v1.attention.backends.mla.flashinfer_mla_sparse')
 from tessera.serving import mla_sparse_sm120 as module
 from tessera.serving import mla_prefill
 
