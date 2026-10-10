@@ -9,6 +9,7 @@ import math
 from fractions import Fraction
 
 INSTRUCTION = "mma.sync.aligned.kind::mxf4nvf4.block_scale.scale_vec::4X.m16n8k64.row.col.f32.e2m1.e2m1.f32.ue4m3"
+PACKED_STOCK_BOUND_SCHEMA = "tessera.packed_stock_arithmetic_bound.v1"
 PROPERTIES = ("product_exactness", "scale_application_order", "accumulation_alignment_width", "rounding_mode", "subnormal_handling", "intermediate_domain")
 EPSILON = Fraction(1, 1 << 23)
 # The cancellation probes retain exponent gaps through 35 and discard gap 36.
@@ -299,7 +300,7 @@ def derive_packed_stock_bound(magnitude_upper, *, k, global_scale, report, devic
         raise ValueError("the native output multiplication can overflow")
     bound = coefficient * m
     return {"atol": _outward_float(bound), "rtol": 0.0}, {
-        "schema": "tessera.packed_stock_arithmetic_bound.v1", "status": "attested_contract_pending_reviews",
+        "schema": PACKED_STOCK_BOUND_SCHEMA, "status": "attested_contract_pending_reviews",
         "arithmetic_qualified": False, "native_arithmetic_qualified": False,
         "bound": "[((1+rho_ratio)*(1+eta)^L*(1+u32)-1+rho_div)/(1-rho_div)+gamma(2K,epsilon32)]*M_upper",
         "exact_bound": str(bound), "exact_coefficient": str(coefficient),
@@ -311,9 +312,31 @@ def derive_packed_stock_bound(magnitude_upper, *, k, global_scale, report, devic
         "magnitude_block_contract": stock["magnitude_fp64_contract"],
         "weight_formation_error": "0: exact normal power-of-two stock weight formation",
         "output_multiplication_roundoff": str(u), "subnormal_allowance": "0: the supported lattice keeps every nonzero intermediate normal",
-        "weight_global_exponent": exponent, "physical_device": physical_device,
+        "weight_global_exponent": exponent, "device": device, "physical_device": physical_device,
         "supported_comparison": "float32_stock_reference", "operand_magnitude_upper": _outward_float(m),
     }
+
+def require_derived_stock_qualification(bound, *, device, physical_device):
+    """Refuse a qualification allowance outside a derived packed-stock bound.
+
+    The allowance must be a ``derive_packed_stock_bound`` receipt for this
+    device and physical device, with its exact derivation terms present. A
+    fixed tolerance carries none of these and never qualifies. Each gap
+    refuses by name.
+    """
+    prefix = f"T4 refused on {device}: "
+    if not isinstance(bound, dict) or bound.get("schema") != PACKED_STOCK_BOUND_SCHEMA:
+        raise FP4QualificationError(prefix + "packed stock arithmetic bound is absent; "
+                                    "a fixed tolerance never qualifies")
+    if bound.get("device") != device:
+        raise FP4QualificationError(prefix + "bound device evidence differs from this device")
+    if bound.get("physical_device") != physical_device:
+        raise FP4QualificationError(prefix + "bound physical-device evidence differs")
+    for field in ("operand_magnitude_upper", "exact_bound", "exact_coefficient",
+                  "native_atoms", "reference_steps", "magnitude_block_contract"):
+        if field not in bound:
+            raise FP4QualificationError(prefix + f"derived bound lacks {field}")
+    return bound
 
 
 def check_packed_stock_arithmetic(actual, expected, magnitude_upper, *, k, global_scale, report, physical_device, input_global_scale=896):
@@ -326,6 +349,8 @@ def check_packed_stock_arithmetic(actual, expected, magnitude_upper, *, k, globa
     allowance, receipt = derive_packed_stock_bound(magnitude_upper, k=k, global_scale=global_scale,
         report=report, device=report["device"]["device"], physical_device=physical_device,
         shape=shape, input_global_scale=input_global_scale)
+    require_derived_stock_qualification(receipt, device=report["device"]["device"],
+                                        physical_device=physical_device)
     if not torch.isfinite(actual).all() or not torch.isfinite(expected).all():
         raise ValueError("the packed stock comparison requires finite outputs")
     measured_error = float((actual.double() - expected.double()).abs().max())

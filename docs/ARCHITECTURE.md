@@ -405,6 +405,13 @@ Arithmetic qualification remains false before both required reviews.
 Complete fused-network and two-device arithmetic qualification remain outside this claim.
 Section 17.8 gives the normative derivation, corrective controls, and retained device receipts.
 
+Re-stamped 2026-10-10 for issue #1182 and the packed-stock acceptance gate.
+`tessera.fp4_arithmetic.require_derived_stock_qualification` refuses any allowance
+outside a derived packed-stock bound receipt for the measured device. A fixed
+tolerance carries no bound schema or device evidence and never qualifies.
+`check_packed_stock_arithmetic` runs this gate on its derived receipt before it
+compares. The receipt now stamps the measured device beside the physical device.
+
 Re-stamped 2026-10-06 for issue #1002 and the CEO 09:50 bounded diagnostic
 directive. Two explicit opt-in scopes extend the existing managed rank
 lifecycle: `WINDOW_MODE=investigate-eager-control-2048` runs only two fresh
@@ -1677,6 +1684,18 @@ most 128 rows at small M, is tracked in tessera#805.
 `routed_fused.dense_k_split` is the dispatcher every launch asks, so a forced
 split still binds. No route, rung, cell, served byte or contract field
 changes.
+
+Re-stamped 2026-10-10 for issues #1020 and #1182 and the bench geometry preflight.
+`bench_dense_module.require_module_geometry` refuses a module outside its pinned
+contract before timing. The KDA floor (128 rows per replicated role) and the
+local total (12576 rows) come from the pinned construction census
+(`docs/measurements/construction/2026-10-07/glm53-flash-4layer-selected-t8.json`:
+`output_sizes` with `replicated_shard_ids` [4, 5], halved over TP2 except the
+replicated pair), never the table under test. `require_pinned_kda_contract`
+refuses a `MODULES['kda_in']` entry outside that census, so a short table
+cannot approve itself. `bench_geometry.py` derives its dense totals from the
+same contract and refuses aliased short totals. The short KDA proxy shape is
+removed.
 
 Re-stamped 2026-10-01 for the GLM-5.3 release serve's compilation mode
 (tessera#774). The T-8 release serve passes
@@ -4793,6 +4812,13 @@ module and charges shared storage once. This observer adds no model buffers,
 device movement, or tensor copy.
 The native operator receipt uses the same route interface.
 It hashes resident tensor contents before and after each measurement.
+
+Re-stamped 2026-10-10 for issue #1182 and the measurement acceptance gate.
+`bench_native_operator.accept_measurement` accepts a timing-admissible receipt only
+with every phase measured, every tensor digest present, and every transfer byte
+count tracked. The bench runs this gate before it publishes a timing-admissible
+receipt. Each gap refuses by name.
+
 Storage alias conflicts retain the existing refusal. An object a route does
 not declare (the research per-expert `PackedWindowUnits`) is not walked, so its
 bytes stay uncharged in the report rather than attributed by guess. Dense export
