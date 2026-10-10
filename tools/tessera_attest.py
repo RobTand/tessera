@@ -653,6 +653,148 @@ def ingest_receipt(path: str, kind: str, *, reads=()) -> dict:
     return step(STATUS_RAN, None, receipt=os.path.abspath(path), sha256=digest, read=read)
 
 
+# --- mask-skip trace audit (tessera#1177) ------------------------------------
+
+#: The dispatch words the audit below accepts. Pinned to the words in
+#: ``src/tessera/serving/mla_sparse_sm120.py`` by
+#: ``tests/test_attest_mask_skip_traces.py``: a renamed emit word breaks
+#: that test instead of slipping past this audit.
+MASK_SKIP_VOCABULARY = {
+    "MASK_SKIP_POLICY": "mla_mask_skip_eager_dispatch",
+    "MASK_SKIP_KIND": "attention_backend",
+    "MASK_SKIP_CONTRACT": "stock_kernel_overrides",
+    "NATIVE_DECODER": "native_mg_mask_skip",
+    "STOCK_DECODER": "stock",
+    "NATIVE_SYMBOL": "tessera_mla_prefill_mg_l0",
+    "STOCK_SYMBOL": "stock",
+    "NATIVE_SCHEDULE": "mg_mask_skip_pass_buffers",
+    "STOCK_SCHEDULE": "stock_mg",
+}
+
+MASK_SKIP_AUDIT_SCHEMA = "tessera.mask-skip-audit/1"
+MASK_SKIP_TRACE_SCHEMA = "tessera.route_trace/1"
+
+
+def audit_mla_mask_skip_traces(paths, *, world_size) -> dict:
+    """Audit per-rank eager traces for the mask-skip override (tessera#1177).
+
+    ``paths`` names one route-trace file per rank of a serve that ran with
+    ``TESSERA_RESEARCH_MLA_MASK_SKIP=1``. The record passes only when every
+    rank shows the override active on eager prefill (a ``native_mg_mask_skip``
+    launch) and the stock fallback observed (a ``stock`` launch, the eager
+    decode path). Anything else -- an unreadable file, a foreign schema, a
+    rank the header does not name, a world that is not ``world_size``, an
+    unknown decoder, a trace that counts graph replays -- is a problem, and
+    any problem fails the record. The audit never raises: a broken input
+    is a failed record, not a traceback.
+    """
+    vocab = MASK_SKIP_VOCABULARY
+    policy = vocab["MASK_SKIP_POLICY"]
+    kind = vocab["MASK_SKIP_KIND"]
+    contract = vocab["MASK_SKIP_CONTRACT"]
+    native = vocab["NATIVE_DECODER"]
+    stock = vocab["STOCK_DECODER"]
+    native_symbol = vocab["NATIVE_SYMBOL"]
+    stock_symbol = vocab["STOCK_SYMBOL"]
+    problems = []
+    ranks = []
+    seen = set()
+    for path in paths:
+        try:
+            with open(path) as handle:
+                payload = json.load(handle)
+        except (OSError, ValueError) as exc:
+            problems.append(f"{path}: unreadable trace: {exc}")
+            continue
+        if not isinstance(payload, dict):
+            problems.append(f"{path}: trace is not a JSON object")
+            continue
+        if payload.get("schema") != MASK_SKIP_TRACE_SCHEMA:
+            problems.append(f"{path}: schema {payload.get('schema')!r} is not "
+                            f"{MASK_SKIP_TRACE_SCHEMA}")
+            continue
+        rank = payload.get("rank")
+        served_world = payload.get("world_size")
+        if rank is None or served_world is None:
+            problems.append(f"{path}: trace names no rank; a rank read off a "
+                            "path is a guess, so the audit refuses it")
+            continue
+        if served_world != world_size:
+            problems.append(f"{path}: world_size {served_world} is not the "
+                            f"expected world {world_size}")
+            continue
+        if rank in seen:
+            problems.append(f"{path}: rank {rank} is already audited; each "
+                            "rank writes its own trace")
+            continue
+        seen.add(rank)
+        coverage = payload.get("dispatch_coverage")
+        if not isinstance(coverage, dict):
+            problems.append(f"{path}: trace names no dispatch coverage")
+            continue
+        if coverage.get("cuda_graph_replays_counted"):
+            problems.append(f"{path}: trace counts graph replays; an "
+                            "eager-only audit refuses it")
+            continue
+        if coverage.get("torch_compile_tracing_counted"):
+            problems.append(f"{path}: trace counts compile tracing; an "
+                            "eager-only audit refuses it")
+            continue
+        entries = payload.get("entries")
+        if not isinstance(entries, list):
+            problems.append(f"{path}: trace holds no entry list")
+            continue
+        native_launches = 0
+        stock_launches = 0
+        for entry in entries:
+            if not isinstance(entry, dict):
+                problems.append(f"{path}: a trace entry is not an object")
+                continue
+            if entry.get("policy") != policy or entry.get("kind") != kind:
+                continue
+            decoder = entry.get("decoder")
+            if decoder not in (native, stock):
+                problems.append(f"{path}: decoder {decoder!r} under {policy}; "
+                                f"only {native!r} and {stock!r} may serve it")
+                continue
+            if entry.get("contract") != contract:
+                problems.append(f"{path}: contract {entry.get('contract')!r} "
+                                f"under {policy}; only {contract!r} may serve it")
+                continue
+            launches = entry.get("launches")
+            if type(launches) is not int or launches < 0:
+                problems.append(f"{path}: launches {launches!r} under "
+                                f"{policy} is not a count")
+                continue
+            symbol = entry.get("symbol")
+            if decoder == native:
+                if symbol != native_symbol:
+                    problems.append(f"{path}: native entry names symbol "
+                                    f"{symbol!r}, not {native_symbol!r}")
+                    continue
+                native_launches += launches
+            else:
+                if symbol != stock_symbol:
+                    problems.append(f"{path}: stock entry names symbol "
+                                    f"{symbol!r}, not {stock_symbol!r}")
+                    continue
+                stock_launches += launches
+        if native_launches == 0:
+            problems.append(f"{path}: no {native} launch; the override never "
+                            f"ran eagerly on rank {rank}")
+        if stock_launches == 0:
+            problems.append(f"{path}: no {stock} fallback launch; the decode "
+                            f"path stayed unobserved on rank {rank}")
+        ranks.append({"rank": rank, "path": os.path.abspath(path),
+                      "native_launches": native_launches,
+                      "stock_launches": stock_launches})
+    if len(seen) != world_size:
+        problems.append(f"audited {len(seen)} distinct ranks against world "
+                        f"{world_size}; one trace per rank is required")
+    ranks.sort(key=lambda row: row["rank"])
+    return {"schema": MASK_SKIP_AUDIT_SCHEMA, "world_size": world_size,
+            "passed": not problems, "problems": problems, "ranks": ranks}
+
 # --- the served half: tok/s over an endpoint the tester serves -------------
 
 def _completion(endpoint: str, model: str, prompt, max_tokens: int, timeout: float) -> dict:
@@ -825,7 +967,35 @@ def main(argv=None) -> int:
                     help="TESSERA_SERVE_MODE the serve ran under")
     ap.add_argument("--power-interval", type=float, default=1.0)
     ap.add_argument("--no-power", action="store_true", help="do not sample package power at all")
+    ap.add_argument("--mask-skip-traces", action="append", default=None,
+                    help="per-rank route-trace files the mask-skip audit reads; "
+                         "repeats per rank, each use also accepts comma-separated paths; "
+                         "with --expect-world-size and --audit-out it writes only the audit record")
+    ap.add_argument("--expect-world-size", type=int, default=None,
+                    help="ranks the mask-skip audit requires, one trace each")
+    ap.add_argument("--audit-out", default=None,
+                    help="where the mask-skip audit writes its JSON record")
     args = ap.parse_args(argv)
+
+    if args.mask_skip_traces is not None:
+        if not args.audit_out or args.expect_world_size is None:
+            print("refusing: --mask-skip-traces needs --audit-out and "
+                  "--expect-world-size", file=sys.stderr)
+            return 2
+        trace_paths = [entry for group in args.mask_skip_traces
+                       for entry in group.split(",") if entry]
+        record = audit_mla_mask_skip_traces(trace_paths,
+                                            world_size=args.expect_world_size)
+        out = os.path.abspath(args.audit_out)
+        os.makedirs(os.path.dirname(out) or ".", exist_ok=True)
+        with open(out, "w") as handle:
+            json.dump(record, handle, indent=2, sort_keys=False)
+            handle.write("\n")
+        print(f"{out}\nmask-skip audit passed={record['passed']} "
+              f"ranks={len(record['ranks'])}")
+        for problem in record["problems"]:
+            print(f"  problem: {problem}")
+        return 0 if record["passed"] else 1
 
     identity = probe_identity()
     measured = identity.get("platform")
