@@ -8,6 +8,16 @@ The eager tr3_batch, speed_batch, and speed_decode entry points name every permi
 PrismaBuild CPU preflight verifies the actual parsers, sealed token reads, fixture geometry, and scorer imports.
 The dense supplement encodes eleven actual source tensors on CUDA under the accepted 9eef9fea6 producer source.
 
+## 2026-10-09 — complete the endpoint verifier contract (issue #1128)
+
+Require explicit endpoint, alias, artifact bytes, tokenizer facts, launch attempt, and complete rank expectations in the public CPU CLI.
+Return one JSON verdict for success or refusal, with a nonzero refusal status.
+Add a separate offline operation that proves recorded observations against actual source bytes.
+Keep the live API and its listener ownership checks unchanged.
+Offline success makes no claim about the current endpoint.
+Preserve byte integrity, lane gates, and D32.
+Reuse the accepted issue 1056 producer and its published GPU witness.
+
 ## 2026-10-09 — pull request branch rule 12
 
 The hosted `pure` check requires a branch issue number that matches an issue link in the pull request body (#1125).
@@ -99,6 +109,16 @@ PrismaQuant refuses v12 by name until its reader admits the schema and applies t
 Issue prismaquant#2511 tracks that reader. The PrismaQuant pin stays at v11 until the reader lands.
 Historical pairs retain their original scope. Runtime twins, kernels, decoders, pins, and defaults stay unchanged.
 R640 and R1280-R2048 remain refused. No D41 receipt allowance, KL result, or speed result follows.
+
+## 2026-10-09 — record the T4 menu GPU validation (issue #1133)
+
+Add the PrismaBuild receipt for the T4 performant menu validation (parent issue #1103).
+The policy checks pass on x86 and on a GB10 worker. The dense and routed menus stay [896].
+The 21 native A4 execution tests pass on a GB10 worker in a PrismaBuild-local container image.
+The legacy pool GPU venv still cannot lower block-scaled FP4 MMA for sm_121, so its native tests error.
+The receipt keeps metadata checks, native execution coverage and the limits apart.
+No test, tool, source, wire, recipe, gate or serving change follows.
+No performance, serving or approved-cell measurement claim follows.
 
 ## 2026-10-08 — canonical class publication (issue #1018)
 
