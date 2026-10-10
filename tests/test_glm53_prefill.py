@@ -172,24 +172,33 @@ def test_pinned_interface_names_every_module():
 # ----------------------------------------------------------------------- threshold
 
 
-def _row(t, saving, cost):
-    return {"tokens": t, "saving_ms_per_layer": saving, "cost_ms_per_layer": cost}
+def _row(t, saving):
+    return {"tokens": t, "saving_ms_per_layer": saving}
 
 
 def test_t_star_is_the_start_of_the_winning_tail():
-    rows = [_row(16, 0.01, 0.05), _row(64, 0.04, 0.05), _row(256, 0.2, 0.06),
-            _row(1024, 0.8, 0.07), _row(2048, 1.6, 0.08)]
+    rows = [_row(16, -0.04), _row(64, -0.01), _row(256, 0.14),
+            _row(1024, 0.73), _row(2048, 1.52)]
     assert gp.choose_t_star(rows) == 256
 
 
 def test_t_star_ignores_an_isolated_early_win():
-    rows = [_row(16, 0.2, 0.05), _row(64, 0.01, 0.05), _row(256, 0.2, 0.06)]
+    rows = [_row(16, 0.15), _row(64, -0.04), _row(256, 0.14)]
     assert gp.choose_t_star(rows) == 256
 
 
 def test_t_star_infinite_when_sp_never_pays():
-    assert math.isinf(gp.choose_t_star([_row(64, 0.0, 0.1), _row(2048, 0.05, 0.1)]))
+    assert math.isinf(gp.choose_t_star([_row(64, -0.1), _row(2048, -0.05)]))
     assert math.isinf(gp.choose_t_star([]))
+
+
+def test_grid_and_choice_bracket_the_served_crossover():
+    """Window u4-TSTAR puts the A8S crossover in (512, 768]: force loses at 512
+    tokens and wins from 768, so ``auto`` must answer 768, never 32 or 512."""
+    assert tuple(t for t in gp.T_GRID if 512 <= t <= 1024) == (512, 640, 768, 1024)
+    rows = [_row(32, -0.40), _row(256, -0.10), _row(512, -0.28), _row(640, -0.05),
+            _row(768, 0.35), _row(1024, 0.73), _row(2048, 1.10)]
+    assert gp.choose_t_star(rows) == 768
 
 
 def test_state_decisions():
@@ -460,7 +469,8 @@ def _ops(ranks, exact=lambda t, hidden, n: True):
     return NS(sp_shard=ranks.sp_shard, sp_all_gather=ranks.sp_all_gather,
               sp_reduce_scatter=ranks.sp_reduce_scatter, all_reduce=ranks.all_reduce,
               hc_expand=_hc_expand, hc_contract=_hc_contract, max_across_tp=ranks.max_across_tp,
-              sp_exact=exact, sp_available=lambda: True, full_split=full_split)
+              sp_exact=exact, sp_available=lambda: True, barrier=lambda: None,
+              full_split=full_split)
 
 
 class _NoCuda:
@@ -597,9 +607,9 @@ def test_measurement_picks_and_agrees_on_t_star(monkeypatch):
     ranks = TwoRanks()
     layer = _layer_for_prepare()
     monkeypatch.setattr(gp, "T_GRID", (8, 16))
-    # Per grid count: mhc(T), mhc(T/2), all_reduce, all_gather, reduce_scatter.
-    per_rank = {0: [1.0, 0.5, 0.1, 0.1, 0.1, 2.0, 1.0, 0.1, 0.1, 0.1],   # wins at 8 and 16
-                1: [1.0, 0.99, 0.1, 0.1, 0.1, 2.0, 1.0, 0.1, 0.1, 0.1]}  # wins at 16 only
+    # Per grid count: stock-branch ms, SP-branch ms.
+    per_rank = {0: [1.0, 0.5, 2.0, 1.0],   # SP wins at 8 and 16
+                1: [1.0, 1.5, 2.0, 1.0]}   # SP wins at 16 only
     states, errors = [None, None], []
 
     def worker(rank):
@@ -628,6 +638,8 @@ def test_measurement_picks_and_agrees_on_t_star(monkeypatch):
     assert not errors, errors
     assert [len(s.table) for s in states] == [2, 2]
     assert states[0].t_star == states[1].t_star == 16
+    assert all(set(row) >= {"tokens", "stock_ms_per_layer", "sp_ms_per_layer",
+                            "saving_ms_per_layer"} for s in states for row in s.table)
 
 
 # ------------------------------------------------------------------------ exact SP
@@ -737,21 +749,38 @@ def test_measurement_skips_inexact_sizes_and_times_the_shard_at_the_full_split(m
     ranks = TwoRanks()
     layer = _layer_for_prepare()
     monkeypatch.setattr(gp, "T_GRID", (8, 16, 32))
-    timed = []
+    entered, barriers = [], []
 
     def fake_median(fn, torch_mod):
-        timed.append(getattr(ranks.local, "forced", None))
+        fn()
         return 1.0
 
     monkeypatch.setattr(gp, "_median_ms", fake_median)
     ranks.local.rank = 0
     ops = _ops(ranks, exact=lambda t, hidden, n: t >= 16)
     ops.max_across_tp = lambda v: v
+    ops.barrier = lambda: barriers.append(1)
+    # Deadlock-free stand-ins: the branches run, collectives stay local.
+    ops.all_reduce = lambda x: x
+    ops.sp_all_gather = lambda x: torch.cat([x, x], 0)
+    ops.sp_reduce_scatter = lambda x: x[:x.shape[0] // 2]
+    ops.sp_shard = lambda x: x[:-(-x.shape[0] // 2)]
+    real_full_split = ops.full_split
+
+    @contextlib.contextmanager
+    def recording_full_split(tokens):
+        entered.append(tokens)
+        with real_full_split(tokens):
+            yield
+
+    ops.full_split = recording_full_split
     state = gp.SpState("auto", 32, 2)
     gp.measure_t_star(layer, state, ops, _CpuTorch, "cpu")
     assert [row["tokens"] for row in state.table] == [16, 32]
-    # Per row: mhc(T), mhc(T/2) inside full_split(T), all_reduce, all_gather, reduce_scatter.
-    assert timed == [None, 16, None, None, None, None, 32, None, None, None]
+    # Each exact count times one stock branch (never forced) and one SP branch whose
+    # two mHC calls both run at the full batch's split; each branch is barrier-synced.
+    assert entered == [16, 16, 32, 32]
+    assert len(barriers) == 2 * len(state.table)
 
 
 # ------------------------------------------------------------------ KDA conv per slice
