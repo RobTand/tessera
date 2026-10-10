@@ -1244,6 +1244,18 @@ def torch_compile_disabled_by_config(config):
     return False
 
 
+def torch_trace_active(*, compiled, compilation_config):
+    """True when a non-eager engine ran a Torch trace (issue #1062).
+
+    ``--compiled`` alone names the engine mode (enforce_eager=False), not the
+    trace. With compilation_config mode NONE the engine keeps CUDA graphs but
+    runs no Torch trace. Its records keep concrete capture shapes. Such records
+    can never meet the shape-polymorphic check, and they state capture time
+    only. Replay runs no Python.
+    """
+    return bool(compiled) and not torch_compile_disabled_by_config(compilation_config)
+
+
 def engine_backend_kwargs(args):
     """The engine's backend choices, assembled where a test can read it.
 
@@ -1350,7 +1362,8 @@ def expected_pairs(family, regime, kind, *, compiled, platform):
 
 def validate_census_observations(*, phases_by_rank, identities, refusals_by_rank, declared,
                                  declared_rungs, phase_plan, mode, platform, runtime_image,
-                                 execution_mode, compiled, cells, contract_for, expected,
+                                 execution_mode, compiled, compilation_config=None,
+                                 cells, contract_for, expected,
                                  symbol_for, symbol_base, families_by_route, policy_prefixes,
                                  allow_fallback_decoder=False, expect_modules=None,
                                  required_lanes=(), lane_decoders=None, manifest_lanes=(),
@@ -1364,6 +1377,9 @@ def validate_census_observations(*, phases_by_rank, identities, refusals_by_rank
     the problems a stored receipt carries must be the problems its own records
     produce, and a fix to a check can be shown on the records that exposed it.
     ``phase_plan`` is ``census_phase_plan``'s table for the run.
+    ``compilation_config`` separates the Torch trace from CUDA-graph-only
+    capture: only a real trace takes the shape-polymorphic arm, while a
+    graph-only run keeps concrete shapes and states capture time only.
     """
     from tessera.serving.census import join_rank_histograms, lane_engagement, phase_histogram
     from tessera.serving.scheme import eager_regime_problem
@@ -1475,9 +1491,14 @@ def validate_census_observations(*, phases_by_rank, identities, refusals_by_rank
                 for rank, by_phase in enumerate(record_owner_by_rank)
                 for n, owner in by_phase[phase].items()}
         for phase in phases_by_rank}
+    trace = torch_trace_active(compiled=compiled, compilation_config=compilation_config)
     problems.extend(phase_shape_problems(
-        tessera_by_phase, phase_regimes=phase_regimes, compiled=compiled,
+        tessera_by_phase, phase_regimes=phase_regimes, compiled=trace,
         phase_plan=phase_plan))
+    if compiled and not trace:
+        problems.append(
+            "cuda-graph-only capture states capture time only: replay runs no Python, "
+            "so concrete shapes grant no logical row credit")
 
     # LANE ENGAGEMENT.  The per-module check above is a check on AGREEMENT, and
     # the decode regime legitimately admits both the GEMV pair and the
@@ -1634,17 +1655,19 @@ def parse_args(argv=None, env=None):
                          "With Torch compilation the route records carry M star. "
                          "The record comes from the trace. "
                          "A route that cannot pass the trace fails here. "
-                         "With compilation mode NONE the records stay concrete. "
-                         "That combination is refused.")
+                         "With compilation mode NONE the engine keeps CUDA graphs but runs "
+                         "no Torch trace. Records keep concrete capture shapes. "
+                         "The census checks them as concrete and states capture time only.")
     ap.add_argument("--compilation-config", type=_json_object, default=None, metavar="JSON",
                     help="a JSON object passed unchanged to vLLM as compilation_config. "
                          "It requires --compiled. "
                          "Without it a compiled GLM-5.3 census stops at engine start. "
                          "The receipt records it beside runtime execution mode. "
                          "Compiled records attest routes only. Shapes stay unattested. "
-                         "Mode NONE is refused with --compiled. "
+                         "Mode NONE with --compiled means CUDA graphs only. "
                          "It keeps CUDA graphs but disables the Torch trace. "
-                         "Its records keep capture shapes. Replay runs no Python.")
+                         "Its records keep capture shapes. Replay runs no Python. "
+                         "The census states capture time only.")
     ap.add_argument("--allow-fallback-decoder", action="store_true",
                     help="accept a module decoded by the pure-torch fallback instead of the "
                          "native span-2 kernel; without it a fallback serve REFUSES, because a "
@@ -1766,11 +1789,9 @@ def parse_args(argv=None, env=None):
         ap.error(f"--runtime-image {args.runtime_image}: {exc}")
     if args.compilation_config is not None and not args.compiled:
         ap.error("--compilation-config requires --compiled (an eager engine has no compilation)")
-    if args.compiled and torch_compile_disabled_by_config(args.compilation_config):
-        ap.error("--compilation-config mode NONE disables Torch compilation (CUDA graphs only). "
-                 "Concrete capture shapes remain. Graph replay runs no Python. "
-                 "The latest record cannot attest current logical rows. "
-                 "Remove --compilation-config for this config. Name a Torch-compile mode instead.")
+    # No refusal for mode NONE here: a CUDA-graph-only run loads and measures,
+    # and the census below states capture time only (issue #1062). The refusal
+    # lives where the bytes are decided, as a problem, never as a parse error.
     args.execution_mode = "compiled" if args.compiled else "eager"
     return args
 
@@ -1863,7 +1884,10 @@ def main() -> int:
     # the native pairs yet.  ``expected_pairs`` (module level, tested) holds
     # this routing; the closure below only binds this serve's arguments.
     def _expected(family, regime, kind):
-        return expected_pairs(family, regime, kind, compiled=args.compiled,
+        return expected_pairs(family, regime, kind,
+                              compiled=torch_trace_active(
+                                  compiled=args.compiled,
+                                  compilation_config=args.compilation_config),
                               platform=served_platform)
     missing = sorted(set(TESSERA_FAMILIES) - (set(contract_for) & set(decoder_for)))
     if missing:
@@ -2075,7 +2099,8 @@ def main() -> int:
         phase_plan=phase_plan, mode=mode, platform=served_platform,
         runtime_image=args.runtime_image, execution_mode=args.execution_mode,
         kernel_build=args.kernel_build,
-        compiled=args.compiled, cells=load_serving_contract()["lane_eligibility"]["cells"],
+        compiled=args.compiled, compilation_config=args.compilation_config,
+        cells=load_serving_contract()["lane_eligibility"]["cells"],
         contract_for=contract_for, expected=_expected, symbol_for=symbol_for,
         symbol_base=moe_route.census_symbol_base,
         families_by_route=PAYLOAD_FAMILY_BY_ROUTE, policy_prefixes=prefixes,
@@ -2106,13 +2131,18 @@ def main() -> int:
         "compiled": bool(args.compiled),
         "runtime": {"image": args.runtime_image, "execution_mode": args.execution_mode},
         # The compilation config the engine was told to use (null: vLLM's
-        # default), and the limit of what a compiled observation attests: it
-        # names the routes that ran, not the regime each launch served
-        # (census.py marks compiled dense records unsupported and joins a
-        # compiled routed record only to a single-launch cell).
+        # default), and the limit of what a non-eager observation attests. A
+        # Torch trace names the routes that ran, not the regime each launch
+        # served (census.py marks compiled dense records unsupported and joins
+        # a compiled routed record only to a single-launch cell). A graph-only
+        # observation (mode NONE) attests capture time only: replay runs no
+        # Python, so its shapes state no logical rows.
         "compilation_config": args.compilation_config,
-        "compiled_attestation": ("routes_only_shapes_unattested"
-                                 if args.compiled else None),
+        "compiled_attestation": (
+            "routes_only_shapes_unattested"
+            if torch_trace_active(compiled=args.compiled,
+                                  compilation_config=args.compilation_config)
+            else ("capture_time_shapes_unattested" if args.compiled else None)),
         # WHAT THE ENGINE WAS ALLOWED TO SPEND, and whether the KV cache was
         # bounded separately from the fraction that leaves room for it.  A
         # receipt whose budget is inferred from whoever typed the command is
