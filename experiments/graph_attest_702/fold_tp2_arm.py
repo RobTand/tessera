@@ -297,6 +297,8 @@ def main() -> int:
         raise Refused("model rank has no admitted GPU evidence")  # noqa: EM101
     owned = dict(rank=args.rank, action_key=key, nonce=nonce, scope_id=scope,
                  host=HOSTS[args.rank], run_id=setup["run_id"],
+                 container_owner=os.environ["PRISMABUILD_CONTAINER_OWNER"],
+                 claimed_unix=row["claimed_unix"],
                  input_sha256=hashlib.sha256((run / "inputs.json").read_bytes()).hexdigest())
     require_claim(owned, queue)
     check_memory_policy(read_json(run / "memory-policy.json"), where="fold1204 rank")
