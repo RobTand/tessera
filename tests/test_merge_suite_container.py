@@ -76,6 +76,26 @@ def test_container_command_shadows_are_refused(mutation):
     output, refusal = merge_module()._effective_surface_json(argv)
     assert output is None and refusal
 
+def test_lane_ignores_repeat_and_stay_inside_the_suite():
+    """tessera#938: the NoPE lane excludes the MLA lane's files by ``--ignore``.
+
+    The container grammar admits the exclusion exactly when it repeats only
+    for suite files: a foreign ignore is a foreign source by another name.
+    """
+
+    argv = command()
+    at = argv.index("--strict-cuda")
+    argv[at:at] = ["--ignore=tests/test_serving_mla_mask_registration.py",
+                   "--ignore=tests/test_serving_mla_mask_runtime_gpu.py"]
+    assert owner.parse(argv[2:])["inner"].count("--ignore=tests/test_serving_mla_mask_registration.py") == 1
+
+    for bad in ("/foreign/test.py", "tests/../foreign.py", "tests"):
+        argv = command()
+        at = argv.index("--strict-cuda")
+        argv[at:at] = [f"--ignore={bad}"]
+        with pytest.raises(ValueError, match="ignore escapes the suite"):
+            owner.parse(argv[2:])
+
 
 @pytest.mark.parametrize("path", ["other/suite_container.py", "./tools/suite_container.py", "/foreign/tools/suite_container.py", "tools/../tools/suite_container.py"])
 def test_a_runner_basename_establishes_no_authority(path):

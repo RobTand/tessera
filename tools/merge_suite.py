@@ -40,6 +40,15 @@ refuses a session that has no CUDA device instead of skipping the surface it
 was submitted to cover.  A placement that lands the GPU arm on a box without a
 device now fails loudly; before, it would have returned a green tick.
 
+*The strict-CUDA arm is two lanes.*  tessera#938: no one sealed image serves
+the whole CUDA surface.  The ``gpu`` lane runs the NoPE files in the image the
+graph gates pin (``GPU_NOPE_IMAGE``), minus the MLA lane's files, which that
+image cannot collect.  The ``gpu-mla`` lane runs only those files in the
+nightly that provides them (``GPU_MLA_IMAGE``).  The receipt holds both lane
+populations side by side.  At the next serving-pin bump one newer image
+carrying both rejoins the lanes.
+
+
 *The receipt must outlive the terminal.*  ``--record`` appends one row per arm
 to ``docs/status/suite-populations.md``, which is where a reader of the repo
 looks; and if the submitting session dies while the pool carries on -- which is
@@ -162,17 +171,55 @@ POOL_CAS_REQUESTS = POOL_ROOT / "cas" / "requests"
 #: ``fans_out`` is a property of the ARM, not of the submission.  ``--cpus`` is
 #: one number for a run and the two arms cannot spend it the same way, so an
 #: arm that must run serially says so here and clamps its own share.
+#: The strict-CUDA lanes (tessera#938, CEO decision D47).  No one sealed image
+#: serves the whole CUDA surface: the image the NoPE graph gates pin carries
+#: the kpool-tail backport but no ``index_group``, while the nightly the MLA
+#: lane needs carries ``index_group`` but not the measured graph runner.  So
+#: the GPU arm is two lanes.  ``gpu`` is the NoPE lane: inside its image it
+#: runs the suite minus exactly the MLA lane's files (see ``_submit``).
+#: ``gpu-mla`` runs only the MLA lane's files, in the image that provides
+#: them.  The receipt holds both lane populations side by side, as it already
+#: does for populations.  At the next serving-pin bump one newer image
+#: carrying both rejoins the lanes; until then this split is the definition
+#: of the strict-CUDA arm.
+GPU_NOPE_IMAGE = ("localhost/prismaquant/spark-vllm-nccl230@sha256:"
+                  "c2e75e03cfc52c15489b40fe58e65acb7347f6fa3ddf2e81afda86760698147b")
+GPU_MLA_IMAGE = ("localhost/prismaquant/spark-vllm-nccl230@sha256:"
+                 "5be13705acaecc7b4aaf342a84f80d67844c9970ff8375bf9fbeecc9c98ce84a")
+#: The MLA lane's files: the only tests importing ``index_group``
+#: (``tessera.serving.mla_sparse_sm120`` at module scope in the runtime-gpu
+#: file, per-test in the registration file).  One home: the ``gpu`` lane
+#: ignores exactly this list inside its image, and ``gpu-mla`` targets it.
+MLA_LANE_TARGETS = [
+    "tests/test_serving_mla_mask_registration.py",
+    "tests/test_serving_mla_mask_runtime_gpu.py",
+]
 ARMS = {
     "gpu": {
-        "why": "the CUDA-gated surface; nothing else exercises it",
+        "why": "the NoPE lane of the CUDA-gated surface; nothing else exercises it",
         "python": "/home/rob/dq-runs/venvs/prismaquant-cu130/bin/python",
         "pbrun_flags": ["--gpu", "--exclusive"],
         "strict_cuda": True,
         "fans_out": False,
+        "lane": "nope",
         "serial_because": (
             "this legacy wrapper selects serial GPU execution whatever "
             "--cpus says; direct PrismaBuild submissions may use xdist "
             "when the tests have independent process state"
+        ),
+    },
+    "gpu-mla": {
+        "why": "the MLA lane of the CUDA-gated surface: the two files only "
+               "the 5be13705 nightly can serve",
+        "python": "/home/rob/dq-runs/venvs/prismaquant-cu130/bin/python",
+        "pbrun_flags": ["--gpu", "--exclusive"],
+        "strict_cuda": True,
+        "fans_out": False,
+        "lane": "mla",
+        "targets": list(MLA_LANE_TARGETS),
+        "serial_because": (
+            "this lane's native interpreter is the same venv without xdist; "
+            "a container submission fans out under its own contract"
         ),
     },
     "x86": {
@@ -301,6 +348,10 @@ def _command(arm: dict, surface_json: Path, extra: list[str],
     command = [arm["python"], "-m", "pytest", *arm.get("targets", ["tests"]), "-q",
                "-p", "no:cacheprovider",
                "--surface-json", str(surface_json)]
+    # A lane exclusion, not a second selection: the targets still name what the
+    # arm covers, and ``_targets_of`` still reads them back, because an
+    # ``--ignore`` is an option, never a positional.
+    command += ["--ignore=" + target for target in arm.get("ignores", [])]
     if cpus > 1:
         # The retained native mode is loadfile. The explicit container arm
         # uses independent process state and worksteal under its own contract.
@@ -321,17 +372,38 @@ def _timed_command(command: list[str], timeout_s: float) -> list[str]:
             "--kill-after-s", str(grace), "--", *command]
 
 
+def _lane_image(name: str, arm: dict, args) -> str:
+    """The sealed image this arm runs inside, or ``""`` for a native run.
+
+    Each strict-CUDA lane has its own image flag because the lanes run in
+    different images by definition (tessera#938): one flag cannot name both.
+    """
+
+    if name == "gpu-mla":
+        return getattr(args, "gpu_mla_image", "")
+    if name == "gpu":
+        return getattr(args, "gpu_image", "")
+    return ""
+
+
 def _submit(name: str, arm: dict, args, receipt_dir: Path) -> dict:
     surface_json = receipt_dir / f"surface.{name}.json"
-    image = getattr(args, "gpu_image", "") if name == "gpu" else ""
+    image = _lane_image(name, arm, args)
     if image:
         arm = {**arm, "python": "/usr/bin/python3", "fans_out": True,
                "dist": "worksteal", "container": True}
+        if name == "gpu":
+            # The NoPE lane inside its own image: c2e75e03 cannot collect the
+            # MLA lane's files (tessera#938), so this lane runs the suite
+            # minus exactly those files.  Native runs keep the whole tree:
+            # the split exists because the images differ, and natively there
+            # is one venv.
+            arm = {**arm, "ignores": [*arm.get("ignores", []), *MLA_LANE_TARGETS]}
     # The reservation is this ARM's, not the run's: an arm clamped to serial
     # must not hold the cores it was told to spend, or the ledger says the box
     # is busy while seven of its cores idle.
-    requested_cpus = (getattr(args, "gpu_cpus", None) or args.cpus) if name == "gpu" else args.cpus
-    mem_gb = (getattr(args, "gpu_mem_gb", None) or args.mem_gb) if name == "gpu" else args.mem_gb
+    requested_cpus = (getattr(args, "gpu_cpus", None) or args.cpus) if name in ("gpu", "gpu-mla") else args.cpus
+    mem_gb = (getattr(args, "gpu_mem_gb", None) or args.mem_gb) if name in ("gpu", "gpu-mla") else args.mem_gb
     cpus = _arm_cpus(arm, requested_cpus)
     command = _command(arm, surface_json, args.pytest_arg, cpus)
     artifact_roots = getattr(args, "artifact_root", [])
@@ -347,7 +419,7 @@ def _submit(name: str, arm: dict, args, receipt_dir: Path) -> dict:
         command = ["/usr/bin/python3", suite_container.RUNNER, *runner, "--", *command]
     command = _timed_command(command, args.timeout_s)
     flags = list(arm["pbrun_flags"])
-    if name == "gpu" and args.gpu_tag:
+    if name in ("gpu", "gpu-mla") and args.gpu_tag:
         flags += ["--tag", args.gpu_tag]
     invocation = [
         sys.executable, str(PBRUN),
@@ -369,6 +441,7 @@ def _submit(name: str, arm: dict, args, receipt_dir: Path) -> dict:
     record = {
         "arm": name,
         "why": arm["why"],
+        "lane": arm.get("lane", ""),
         "python": arm["python"],
         # What this arm was SUBMITTED to cover, carried on the record so the
         # verdict can check the population against it without reaching back
@@ -1377,7 +1450,7 @@ an arm the run did not submit is written as `not submitted in this run` rather
 than left out. A pass count means nothing without the device population it was
 measured on, and a lone row is a result quoted without its counterpart --
 exactly the misreading tessera#112 is about. So the rows of a run always name
-both populations, even when only one was measured.
+every population, even when only one was measured.
 
 Rows above 2026-09-04T08:11 predate that rule and can be lone: a run submitted
 with `--arm x86` wrote one row and said nothing about the GPU population. Read
@@ -1503,7 +1576,7 @@ def _record_markdown(path: Path, receipt: dict) -> None:
             f"{len(surface.get('not_collected', []))} | {exit_text} |"
         )
     # An arm this run did not submit still gets a row, saying so.  The header
-    # promises the two populations side by side; three of the first four rows
+    # promises every population side by side; three of the first four rows
     # this tool ever wrote were lone `--arm x86` rows with no GPU counterpart,
     # so the promise was true of the prose and false of the artefact.  A reader
     # of a lone row cannot tell "the other arm was not asked for" from "the
@@ -1622,7 +1695,13 @@ def main() -> int:
     ap.add_argument("--mem-gb", type=int, default=16)
     ap.add_argument("--gpu-cpus", type=int, default=None, help="GPU arm process reservation; defaults to --cpus")
     ap.add_argument("--gpu-mem-gb", type=int, default=None, help="GPU aggregate host memory; defaults to --mem-gb")
-    ap.add_argument("--gpu-image", default="", help="immutable PB-local image; enables GPU xdist")
+    ap.add_argument("--gpu-image", default="",
+                    help="NoPE-lane container image (tessera#938: GPU_NOPE_IMAGE); "
+                         "the lane then runs the suite minus the MLA lane's files; "
+                         "enables GPU xdist")
+    ap.add_argument("--gpu-mla-image", default="",
+                    help="MLA-lane container image (tessera#938: GPU_MLA_IMAGE); "
+                         "the lane runs only the MLA lane's files; enables GPU xdist")
     ap.add_argument("--gpu-deps-site", default="", help="readonly scoped pytest/xdist site")
     ap.add_argument("--gpu-deps-sha256", default="", help="suite_dependencies.v1 content seal")
     ap.add_argument("--gpu-cache-dir", default="",
@@ -1667,11 +1746,12 @@ def main() -> int:
     if args.cpus < 1 or args.mem_gb < 1 or any(value is not None and value < 1
                                               for value in (args.gpu_cpus, args.gpu_mem_gb)):
         ap.error("CPU and memory reservations must be positive")
-    if args.gpu_image:
+    lane_container = bool(args.gpu_image or args.gpu_mla_image)
+    if lane_container:
         if not all((args.gpu_deps_site, args.gpu_deps_sha256, args.gpu_cache_dir)):
-            ap.error("--gpu-image requires --gpu-deps-site, --gpu-deps-sha256 and --gpu-cache-dir")
+            ap.error("--gpu-image and --gpu-mla-image require --gpu-deps-site, --gpu-deps-sha256 and --gpu-cache-dir")
     elif any((args.gpu_deps_site, args.gpu_deps_sha256, args.gpu_cache_dir)):
-        ap.error("container dependencies/cache require --gpu-image")
+        ap.error("container dependencies/cache require --gpu-image or --gpu-mla-image")
     if args.gpu_cache_dir and not args.resume:
         try:
             suite_container.require_local_cache(args.gpu_cache_dir)
@@ -1682,7 +1762,7 @@ def main() -> int:
 
     args.checkout = Path(args.checkout).resolve()
     wanted = args.arm or sorted(ARMS)
-    if "gpu" in wanted and not args.gpu_tag and not (args.resume or args.dry_run):
+    if ("gpu" in wanted or "gpu-mla" in wanted) and not args.gpu_tag and not (args.resume or args.dry_run):
         print("merge_suite: live GPU submission requires --gpu-tag to select "
               "the worker whose full GPU capacity pbrun reserves", file=sys.stderr)
         return 2

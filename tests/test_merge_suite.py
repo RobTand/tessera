@@ -180,7 +180,9 @@ def test_one_submission_fans_out_the_x86_arm_and_keeps_the_gpu_arm_serial(tmp_pa
         capture_output=True, text=True, timeout=180, check=False,
     )
     arms = {record["arm"]: record for record in json.loads(out.read_text())["arms"]}
-    assert set(arms) == {"gpu", "x86"}, sorted(arms)
+    # tessera#938: the strict-CUDA arm is two lanes, so one invocation submits
+    # three populations: the NoPE lane, the MLA lane and the device-less one.
+    assert set(arms) == {"gpu", "gpu-mla", "x86"}, sorted(arms)
 
     gpu = arms["gpu"]["pbrun"]
     assert " -n " not in gpu, (
@@ -198,6 +200,14 @@ def test_one_submission_fans_out_the_x86_arm_and_keeps_the_gpu_arm_serial(tmp_pa
     assert " -n 8 " in x86, x86
     assert "--cpus 8" in x86, x86
     assert arms["x86"]["cpus_used"] == 8
+
+    # The MLA lane's native interpreter is the same venv without xdist, so it
+    # clamps like the NoPE lane and runs only its own files.
+    mla = arms["gpu-mla"]["pbrun"]
+    assert " -n " not in mla, mla
+    assert "--cpus 1" in mla, mla
+    assert arms["gpu-mla"]["lane"] == "mla"
+    assert "test_serving_mla_mask_runtime_gpu.py" in mla, mla
 
 
 def test_the_default_submission_declares_one_core(tmp_path):
@@ -662,7 +672,7 @@ def test_resume_submits_nothing_and_needs_no_shared_checkout(tmp_path):
 
     surfaces = tmp_path / "surfaces"
     surfaces.mkdir()
-    for arm in ("gpu", "x86"):
+    for arm in ("gpu", "gpu-mla", "x86"):
         (surfaces / f"surface.{arm}.json").write_text(
             json.dumps(_population(arm)["surface"]))
     out = tmp_path / "receipt.json"
@@ -677,9 +687,9 @@ def test_resume_submits_nothing_and_needs_no_shared_checkout(tmp_path):
     assert result.returncode == 1, result.stdout + result.stderr
     receipt = json.loads(out.read_text())
     assert receipt["assembled_by"] == "resume"
-    assert [arm["arm"] for arm in receipt["arms"]] == ["gpu", "x86"]
+    assert [arm["arm"] for arm in receipt["arms"]] == ["gpu", "gpu-mla", "x86"]
     assert "exit status not observed" in receipt["verdict"]
-    # Both populations still land side by side in the ledger, which is the
+    # Every population still lands side by side in the ledger, which is the
     # whole reason to assemble a receipt at all.
     text = ledger.read_text()
     assert "NVIDIA GB10" in text and "no CUDA device" in text
@@ -1232,7 +1242,7 @@ def test_the_gpu_arms_green_has_two_legs_not_one(tmp_path):
 
 
 def test_an_arm_the_run_did_not_submit_is_named_in_the_ledger(tmp_path):
-    """The header promises two populations per run; the artefact must keep it.
+    """The header promises every population per run; the artefact must keep it.
 
     Three of the first four rows this tool wrote were lone `--arm x86` rows
     under a header that says "the two arms of a run are adjacent on purpose".
@@ -1277,17 +1287,18 @@ def test_an_arm_the_run_did_not_submit_is_named_in_the_ledger(tmp_path):
     columns = merge_suite.LEDGER_HEADER.strip().splitlines()[-2].count("|")
     assert x86[0].count("|") == columns, x86[0]
 
-    # A run that submitted both arms adds no such row -- both were asked for,
+    # A run that submitted every arm adds no such row -- all were asked for,
     # and "published nothing" is the other sentence.
     before = ledger.read_text()
     merge_suite._record_markdown(ledger, {
         "generated_utc": "2026-09-04T10:00:00Z",
         "population": {"commit": "a" * 40, "is_master_head": True},
         "arms": [{"arm": "gpu", "returncode": 0, "surface": None},
+                 {"arm": "gpu-mla", "returncode": 0, "surface": None},
                  {"arm": "x86", "returncode": 0, "surface": None}]})
     appended = ledger.read_text()[len(before):]
     assert "not submitted in this run" not in appended, appended
-    assert appended.count("no population published") == 2, appended
+    assert appended.count("no population published") == 3, appended
 
 
 def _attempt_stdout(surface_json, counts=None, published=True, digest=None):
@@ -1735,7 +1746,7 @@ def _population(arm="gpu", *, source="c" * 64, commit="a" * 40, **overrides):
     states the gap as an override.
     """
 
-    cuda = arm == "gpu"
+    cuda = arm in ("gpu", "gpu-mla")
     surface = {
         "schema": "tessera.test_surface.v3",
         "role": "population",
@@ -2651,3 +2662,100 @@ def test_an_attempt_whose_summary_counts_subtests_still_binds_to_its_population(
     _, record = _resumed_with(tmp_path, detail={"stdout": stdout})
     assert record["exit_status_observed"] is True, record.get("pool_actions_refused")
     assert record["returncode"] == 0
+
+
+def test_the_strict_cuda_surface_splits_into_a_nope_lane_and_an_mla_lane():
+    """tessera#938: no one sealed image serves the whole CUDA surface.
+
+    The NoPE graph gates pin the kpool-tail image (c2e75e03), which has no
+    ``index_group``; the MLA files import it, which only the 5be13705 nightly
+    provides.  So the GPU arm is two lanes, and the receipt holds both
+    populations the way it already holds populations side by side.
+
+    Before this split::
+
+        >       assert "gpu-mla" in merge_suite.ARMS
+        E       AssertionError: assert 'gpu-mla' in {'gpu': ..., 'x86': ...}
+    """
+
+    merge_suite = _module()
+    assert merge_suite.MLA_LANE_TARGETS == [
+        "tests/test_serving_mla_mask_registration.py",
+        "tests/test_serving_mla_mask_runtime_gpu.py",
+    ]
+    assert merge_suite.GPU_NOPE_IMAGE == (
+        "localhost/prismaquant/spark-vllm-nccl230@sha256:"
+        "c2e75e03cfc52c15489b40fe58e65acb7347f6fa3ddf2e81afda86760698147b")
+    assert merge_suite.GPU_MLA_IMAGE == (
+        "localhost/prismaquant/spark-vllm-nccl230@sha256:"
+        "5be13705acaecc7b4aaf342a84f80d67844c9970ff8375bf9fbeecc9c98ce84a")
+    assert "gpu-mla" in merge_suite.ARMS
+    mla = merge_suite.ARMS["gpu-mla"]
+    assert mla["strict_cuda"] is True
+    assert mla["lane"] == "mla"
+    assert mla["targets"] == merge_suite.MLA_LANE_TARGETS
+    assert merge_suite.ARMS["gpu"]["strict_cuda"] is True
+    assert merge_suite.ARMS["gpu"]["lane"] == "nope"
+    assert "--strict-cuda" in merge_suite._command(mla, Path("/dev/null"), [])
+
+
+def _lane_args(tmp_path, **overrides):
+    from types import SimpleNamespace
+
+    args = dict(cpus=2, pytest_arg=[], gpu_tag="gb10", mem_gb=32,
+                checkout=tmp_path, timeout_s=300, wait_s=300, dry_run=True,
+                gpu_image="", gpu_mla_image="",
+                gpu_deps_site="/deps/site", gpu_deps_sha256="b" * 64,
+                gpu_cache_dir="/cache/run", gpu_data_root=[], artifact_root=[])
+    args.update(overrides)
+    return SimpleNamespace(**args)
+
+
+def test_the_nope_lane_ignores_the_mla_lane_inside_its_own_image(tmp_path):
+    """The c2e75e03 image cannot collect the MLA lane's files (tessera#938).
+
+    A NoPE-lane container submission therefore runs the suite minus exactly
+    those files.  The native arm keeps its existing whole-tree behaviour: the
+    split exists because the images differ, and natively there is one venv.
+    """
+
+    merge_suite = _module()
+    record = merge_suite._submit(
+        "gpu", merge_suite.ARMS["gpu"],
+        _lane_args(tmp_path, gpu_image=merge_suite.GPU_NOPE_IMAGE),
+        tmp_path / "receipt")
+    assert record["container_image"] == merge_suite.GPU_NOPE_IMAGE
+    import shlex
+    argv, refusal = merge_suite._pytest_argv(
+        shlex.split(record["pbrun"])[shlex.split(record["pbrun"]).index("--") + 1:])
+    assert refusal is None
+    assert merge_suite._targets_of(argv) == ["tests"]
+    for target in merge_suite.MLA_LANE_TARGETS:
+        assert f"--ignore={target}" in argv
+
+    native = merge_suite._submit(
+        "gpu", merge_suite.ARMS["gpu"], _lane_args(tmp_path), tmp_path / "native")
+    assert "container_image" not in native
+    argv, refusal = merge_suite._pytest_argv(
+        shlex.split(native["pbrun"])[shlex.split(native["pbrun"]).index("--") + 1:])
+    assert refusal is None
+    assert not [part for part in argv if part.startswith("--ignore=")]
+
+
+def test_the_mla_lane_runs_its_files_in_its_own_image(tmp_path):
+    """The MLA lane runs its two files, in the image that provides them."""
+
+    merge_suite = _module()
+    record = merge_suite._submit(
+        "gpu-mla", merge_suite.ARMS["gpu-mla"],
+        _lane_args(tmp_path, gpu_mla_image=merge_suite.GPU_MLA_IMAGE),
+        tmp_path / "receipt")
+    assert record["container_image"] == merge_suite.GPU_MLA_IMAGE
+    assert record["lane"] == "mla"
+    import shlex
+    argv, refusal = merge_suite._pytest_argv(
+        shlex.split(record["pbrun"])[shlex.split(record["pbrun"]).index("--") + 1:])
+    assert refusal is None
+    assert merge_suite._targets_of(argv) == merge_suite.MLA_LANE_TARGETS
+    assert "--strict-cuda" in argv
+    assert not [part for part in argv if part.startswith("--ignore=")]
