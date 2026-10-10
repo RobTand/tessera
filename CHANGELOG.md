@@ -1,4 +1,18 @@
 # Changelog
+## 2026-10-10 — pure-check correction for PQ2459 fixtures (issue #1124)
+
+Name the pinned serve image through the contract field in scope.json, not a copied digest.
+Qualify the authorization note references as RobTand/prismaquant#2459 and rebind the packet scope digest.
+Wire bytes, cells, entry points, and qualification state stay unchanged.
+
+## 2026-10-09 — additive PQ2459 fixture inputs (issue #1124)
+
+Publish the eight-cell fixture input packet for PrismaQuant #2459.
+The packet binds actual wire bytes from three additive artifacts to family, structure, q256 rung, and rank-local shape.
+The A8S release artifact stays unchanged, and CPU fixtures qualify no cell.
+The eager tr3_batch, speed_batch, and speed_decode entry points name every permitted M value and c1/c4 concurrency.
+PrismaBuild CPU preflight verifies the actual parsers, sealed token reads, fixture geometry, and scorer imports.
+The dense supplement encodes eleven actual source tensors on CUDA under the accepted 9eef9fea6 producer source.
 
 ## 2026-10-09 — complete the endpoint verifier contract (issue #1128)
 
