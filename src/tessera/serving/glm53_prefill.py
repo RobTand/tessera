@@ -62,18 +62,21 @@ not change.
 
 ``T*`` is measured, per serve, at the first forward that is not a graph
 capture (vLLM's profile run, which runs even with ``kv_cache_memory_bytes``),
-on tensors of its own up to ``max_num_batched_tokens``: per token count on a
-power-of-two grid where SP is exact, the mHC saving (two
-``hc_fused_post_pre`` calls on ``T`` tokens against two on ``T/2`` at the
-``T``-token split) against the extra collective time (an all-gather plus a
-reduce-scatter against an all-reduce, twice per layer), each the median of
-CUDA-event timings on this serve's TP group.  ``T*`` is the smallest grid count from which the saving
-exceeds the cost at every larger grid count, agreed across ranks by a MAX
-reduction, and logged with the table.  No threshold is a constant here.
-The measurement is known to be wrong at small ``T``: isolated medians read the
-all-gather plus reduce-scatter as cheaper than the all-reduce from 32 to 1024
-tokens and chose ``T*`` 32, while the same serve's profile at 512 tokens
-showed SP 10 ms per step slower than stock (window u4-R1-20261001T0058Z).
+on tensors of its own up to ``max_num_batched_tokens``. Per token count on a
+grid where SP is exact, two branches run back to back: stock (two
+``hc_fused_post_pre`` calls on ``T`` tokens with two all-reduces) and SP (two
+calls on ``T/2`` at the ``T``-token split with two all-gathers, two
+reduce-scatters, the shard and the slice). Each branch is timed as one span,
+with a barrier across ranks before each span, as the median of CUDA-event
+timings on this serve's stream. ``T*`` is the smallest grid count from which
+the SP branch beats stock at every larger grid count, agreed across ranks by
+a MAX reduction, and logged with the table. No threshold is a constant here.
+The grid holds 512, 640, 768 and 1024, so it brackets the served crossover in
+(512, 768]: window u4-TSTAR-20261001T0536Z runs force slower than stock at 512
+tokens and faster from 768, and ``auto`` answers 768 there. The former sum of
+isolated medians is gone: it read the all-gather plus reduce-scatter as
+cheaper than the all-reduce from 32 to 1024 tokens and chose ``T*`` 32, while
+the same serve ran SP slower than stock at 512 tokens (u4-R1-20261001T0058Z).
 
 **The KDA prefill conv, per q/k/v slice.**  The pinned KDA layer runs one
 short causal conv over the merged q|k|v channels and splits its token-major
@@ -210,7 +213,9 @@ _INTERFACES = (
 )
 
 #: Token counts the ``T*`` measurement visits (capped at max_num_batched_tokens).
-T_GRID = (8, 16, 32, 64, 128, 256, 512, 1024, 2048, 4096, 8192)
+#: The 640 and 768 points bracket the served crossover in (512, 768]: the best a
+#: power-of-two grid can report is 1024 (window u4-TSTAR-20261001T0536Z).
+T_GRID = (8, 16, 32, 64, 128, 256, 512, 640, 768, 1024, 2048, 4096, 8192)
 _WARMUP, _REPS = 3, 7
 
 _INSTALL_LOCK = threading.Lock()
@@ -427,10 +432,14 @@ class SpState:
 
 
 def choose_t_star(rows: list[dict]) -> float:
-    """Smallest grid count from which the saving beats the cost at every larger count."""
+    """Smallest grid count from which the SP branch beats stock at every larger count.
+
+    Each row carries ``saving_ms_per_layer`` (stock minus SP, end to end): positive
+    when SP wins that count.  The tail rule keeps an isolated early win from deciding.
+    """
     t_star = math.inf
     for row in sorted(rows, key=lambda r: -r["tokens"]):
-        if row["saving_ms_per_layer"] > row["cost_ms_per_layer"]:
+        if row["saving_ms_per_layer"] > 0:
             t_star = row["tokens"]
         else:
             break
@@ -475,6 +484,18 @@ def prepare_layer(layer: Any) -> None:
     layer._tessera_sp_ready = True
 
 
+def _barrier(ops: Any, torch: Any) -> None:
+    """Align both ranks before a timed branch; without one, only sync this stream."""
+    barrier = getattr(ops, "barrier", None)
+    if barrier is not None:
+        barrier()
+        return
+    synchronize = getattr(getattr(torch, "cuda", None), "synchronize", None)
+    if synchronize is not None:
+        with contextlib.suppress(Exception):
+            synchronize()
+
+
 def _median_ms(fn: Callable[[], Any], torch: Any) -> float:
     for _ in range(_WARMUP):
         fn()
@@ -502,28 +523,51 @@ def measure_t_star(layer: Any, state: SpState, ops: Any, torch: Any, device: Any
             continue  # no pass of this size takes SP (the shard would take the fused small-batch kernel)
         half = -(-t // state.tp_size)
 
-        def mhc(tokens):
+        def site(tokens):
             x = torch.randn(tokens, hidden, device=device, dtype=torch.bfloat16)
             res = torch.randn(tokens, n, hidden, device=device, dtype=torch.bfloat16)
             post = torch.full((tokens, n, 1), 1.0, device=device, dtype=torch.float32)
             comb = torch.full((tokens, n, n), 1.0 / n, device=device, dtype=torch.float32)
-            return lambda: layer.hc_fused_post_pre(
-                x, res, post, comb, layer.hc_ffn_fn, layer.hc_ffn_scale, layer.hc_ffn_base,
-                norm_weight=layer.post_attention_layernorm.weight.data,
-                norm_eps=layer.post_attention_layernorm.variance_epsilon)
+            return x, res, post, comb
 
+        x_full, res_full, post_full, comb_full = site(t)
+        x_half, res_half, post_half, comb_half = site(half)
         full = torch.randn(t, hidden, device=device, dtype=torch.bfloat16)
         shard = full[:half].contiguous()
-        m_full = _median_ms(mhc(t), torch)
-        with ops.full_split(t):  # the shard's call as an SP pass runs it: at the full batch's split
-            m_half = _median_ms(mhc(half), torch)
-        ar = _median_ms(lambda: ops.all_reduce(full), torch)
-        ag = _median_ms(lambda: ops.sp_all_gather(shard), torch)
-        rs = _median_ms(lambda: ops.sp_reduce_scatter(full), torch)
-        rows.append({"tokens": t, "mhc_ms": m_full, "mhc_half_ms": m_half, "all_reduce_ms": ar,
-                     "all_gather_ms": ag, "reduce_scatter_ms": rs,
-                     "saving_ms_per_layer": 2 * (m_full - m_half),
-                     "cost_ms_per_layer": 2 * (ag + rs - ar)})
+        norm_weight = layer.post_attention_layernorm.weight.data
+        norm_eps = layer.post_attention_layernorm.variance_epsilon
+
+        def stock_branch():
+            layer.hc_fused_post_pre(
+                x_full, res_full, post_full, comb_full, layer.hc_ffn_fn, layer.hc_ffn_scale,
+                layer.hc_ffn_base, norm_weight=norm_weight, norm_eps=norm_eps)
+            ops.all_reduce(full)
+            layer.hc_fused_post_pre(
+                x_full, res_full, post_full, comb_full, layer.hc_ffn_fn, layer.hc_ffn_scale,
+                layer.hc_ffn_base, norm_weight=norm_weight, norm_eps=norm_eps)
+            ops.all_reduce(full)
+
+        def sp_branch():
+            ops.sp_shard(full)
+            with ops.full_split(t):  # the shard's calls as an SP pass runs them: at the full batch's split
+                layer.hc_fused_post_pre(
+                    x_half, res_half, post_half, comb_half, layer.hc_ffn_fn, layer.hc_ffn_scale,
+                    layer.hc_ffn_base, norm_weight=norm_weight, norm_eps=norm_eps)
+            ops.sp_all_gather(shard)[:t]
+            ops.sp_reduce_scatter(full)
+            with ops.full_split(t):
+                layer.hc_fused_post_pre(
+                    x_half, res_half, post_half, comb_half, layer.hc_ffn_fn, layer.hc_ffn_scale,
+                    layer.hc_ffn_base, norm_weight=norm_weight, norm_eps=norm_eps)
+            ops.sp_all_gather(shard)[:t]
+            ops.sp_reduce_scatter(full)
+
+        _barrier(ops, torch)
+        stock_ms = _median_ms(stock_branch, torch)
+        _barrier(ops, torch)
+        sp_ms = _median_ms(sp_branch, torch)
+        rows.append({"tokens": t, "stock_ms_per_layer": stock_ms, "sp_ms_per_layer": sp_ms,
+                     "saving_ms_per_layer": stock_ms - sp_ms})
     local = choose_t_star(rows)
     agreed = ops.max_across_tp(local)
     state.table = rows
@@ -739,6 +783,13 @@ def _vllm_ops(modules: tuple[Any, ...], tp_size: int) -> Any:
     def sp_exact(num_tokens: int, hidden: int, n: int) -> bool:
         return shard_split_exact(kernels, deep_gemm, tp_size, num_tokens, hidden, n)
 
+    def barrier() -> None:
+        """Align both ranks before a timed branch, on the existing TP CPU group."""
+        group = get_tp_group()
+        torch.cuda.synchronize()
+        torch.distributed.barrier(group=group.cpu_group)
+        torch.cuda.synchronize()
+
     def max_across_tp(value: float) -> float:
         group = get_tp_group()
         big = float(2 ** 62)
@@ -755,7 +806,7 @@ def _vllm_ops(modules: tuple[Any, ...], tp_size: int) -> Any:
         all_reduce=comm.tensor_model_parallel_all_reduce,
         hc_expand=model.hc_expand, hc_contract=model.hc_contract,
         max_across_tp=max_across_tp, sp_exact=sp_exact, sp_available=guard.available,
-        full_split=forcer.full_batch)
+        barrier=barrier, full_split=forcer.full_batch)
 
 
 _INSTALLED: dict[str, Any] = {}
