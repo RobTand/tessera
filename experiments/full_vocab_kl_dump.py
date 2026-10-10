@@ -65,24 +65,38 @@ def sha256_file(path: str | Path) -> str:
     return h.hexdigest()
 
 
+def _open_payload_memmap(stem: str | Path, positions: int, vocab: int):
+    """The one memmap both writers open, so the file contract has one home."""
+    stem = Path(stem)
+    stem.parent.mkdir(parents=True, exist_ok=True)
+    arr_path = stem.parent / (stem.name + ".logprobs.f32.npy")
+    writer = np.lib.format.open_memmap(
+        str(arr_path), mode="w+", dtype=np.float32,
+        shape=(int(positions), int(vocab)))
+    return arr_path, writer
+
+
+def _write_meta_file(stem: str | Path, meta: dict) -> Path:
+    """The one meta write both writers use."""
+    stem = Path(stem)
+    meta_path = stem.parent / (stem.name + ".meta.json")
+    meta_path.write_text(json.dumps(meta, indent=1) + "\n")
+    return meta_path
+
+
 def write_full_vocab_payload(stem: str | Path, meta: dict,
                              logprobs: np.ndarray) -> None:
     """The file ``kl_tool.read_full_vocab_payload`` opens, by construction."""
-    stem = Path(stem)
-    stem.parent.mkdir(parents=True, exist_ok=True)
     arr = np.ascontiguousarray(logprobs, dtype=np.float32)
     positions, vocab = arr.shape
-    arr_path = stem.parent / (stem.name + ".logprobs.f32.npy")
-    out = np.lib.format.open_memmap(str(arr_path), mode="w+",
-                                    dtype=np.float32, shape=(positions, vocab))
-    out[:] = arr[:]
-    out.flush()
+    arr_path, writer = _open_payload_memmap(stem, positions, vocab)
+    writer[:] = arr[:]
+    writer.flush()
     meta = dict(meta)
     meta["schema"] = DUMP_SCHEMA
     meta["payload"] = {"array": arr_path.name, "positions": int(positions),
                        "vocab_size": int(vocab), "dtype": "float32"}
-    meta_path = stem.parent / (stem.name + ".meta.json")
-    meta_path.write_text(json.dumps(meta, indent=1) + "\n")
+    _write_meta_file(stem, meta)
 
 
 def read_full_vocab_payload(meta_path: str | Path) -> tuple[dict, np.ndarray]:
@@ -103,13 +117,39 @@ def histories_and_masks(meta_a: dict, meta_b: dict) -> bool:
     """Whether two payloads score the same inputs under the same mask."""
     ca, cb = meta_a.get("corpus") or {}, meta_b.get("corpus") or {}
     ta, tb = meta_a.get("tokenizer") or {}, meta_b.get("tokenizer") or {}
-    return (ca.get("contract_sha256") == cb.get("contract_sha256")
-            and ca.get("source_sha256") == cb.get("source_sha256")
-            and (ta.get("identity_sha256") == tb.get("identity_sha256"))
-            and meta_a.get("payload", {}).get("positions")
-            == meta_b.get("payload", {}).get("positions")
-            and meta_a.get("payload", {}).get("vocab_size")
-            == meta_b.get("payload", {}).get("vocab_size"))
+    pa, pb = meta_a.get("payload") or {}, meta_b.get("payload") or {}
+    ids_a = (ca.get("contract_sha256"), ca.get("source_sha256"),
+             ta.get("identity_sha256"), pa.get("positions"),
+             pa.get("vocab_size"))
+    ids_b = (cb.get("contract_sha256"), cb.get("source_sha256"),
+             tb.get("identity_sha256"), pb.get("positions"),
+             pb.get("vocab_size"))
+    # A missing identity never matches, not even another missing one: this
+    # compare exists to refuse mismatches, so absence refuses too.
+    return (all(v is not None for v in ids_a)
+            and all(v is not None for v in ids_b)
+            and tuple(ids_a) == tuple(ids_b))
+
+
+def _first_identity_mismatch(meta_a: dict, meta_b: dict) -> str:
+    """Name the first identity field that differs, for the refusal."""
+    ca, cb = meta_a.get("corpus") or {}, meta_b.get("corpus") or {}
+    ta, tb = meta_a.get("tokenizer") or {}, meta_b.get("tokenizer") or {}
+    pa, pb = meta_a.get("payload") or {}, meta_b.get("payload") or {}
+    for name, a, b in (
+            ("contract_sha256", ca.get("contract_sha256"),
+             cb.get("contract_sha256")),
+            ("source_sha256", ca.get("source_sha256"),
+             cb.get("source_sha256")),
+            ("tokenizer identity_sha256", ta.get("identity_sha256"),
+             tb.get("identity_sha256")),
+            ("positions", pa.get("positions"), pb.get("positions")),
+            ("vocab_size", pa.get("vocab_size"), pb.get("vocab_size"))):
+        if a is None or b is None:
+            return f"{name} is missing on one side ({a!r} vs {b!r})"
+        if a != b:
+            return f"{name} differs ({a!r} vs {b!r})"
+    return "no field differs"
 
 
 def _load_model(checkpoint: str, dtype: str):
@@ -149,11 +189,7 @@ def dump_payload(args: argparse.Namespace, model=None) -> int:
                 else getattr(getattr(model.config, "text_config",
                                      model.config), "vocab_size"))
     stem = Path(args.out)
-    arr_path = stem.parent / (stem.name + ".logprobs.f32.npy")
-    stem.parent.mkdir(parents=True, exist_ok=True)
-    writer = np.lib.format.open_memmap(
-        str(arr_path), mode="w+", dtype=np.float32,
-        shape=(positions, vocab))
+    arr_path, writer = _open_payload_memmap(stem, positions, vocab)
     forwards = 0
     peak = 0
     with torch.inference_mode():
@@ -216,8 +252,7 @@ def dump_payload(args: argparse.Namespace, model=None) -> int:
             raise SystemExit("a teacher dump needs --teacher-label: the "
                              "metric name is 'KL-vs-<label>'")
         meta["teacher_label"] = args.teacher_label
-    meta_path = stem.parent / (stem.name + ".meta.json")
-    meta_path.write_text(json.dumps(meta, indent=1) + "\n")
+    _write_meta_file(stem, meta)
     print(f"regime={args.regime} positions={positions} vocab={vocab} "
           f"forwards={forwards} -> {arr_path}")
     return 0
@@ -235,14 +270,10 @@ def cmd_compare(args: argparse.Namespace) -> int:
             f"    student {Path(args.student).name} regime={s_reg}\n"
             "  Re-dump the reference in the student's regime.")
     if not histories_and_masks(teacher_meta, student_meta):
+        why = _first_identity_mismatch(teacher_meta, student_meta)
         raise SystemExit(
             "REFUSED: histories, masks and vocab differ.\n"
-            f"    teacher contract "
-            f"{(teacher_meta.get('corpus') or {}).get('contract_sha256')} "
-            f"vocab {(teacher_meta.get('payload') or {}).get('vocab_size')}\n"
-            f"    student contract "
-            f"{(student_meta.get('corpus') or {}).get('contract_sha256')} "
-            f"vocab {(student_meta.get('payload') or {}).get('vocab_size')}\n"
+            f"    {why}\n"
             "  An exact number over mismatched inputs is a plausible wrong "
             "number with no error.")
     n, vocab = t_arr.shape
