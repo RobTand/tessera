@@ -27,8 +27,8 @@ inc="$(python3 -c "import glob; p=sorted(glob.glob(\"/usr/local/lib/python3*/dis
 dst=/usr/local/cuda/include
 for src in "$inc"/*; do n="$(basename "$src")"; [ -e "$dst/$n" ] || ln -s "$src" "$dst/$n"; done
 pip install --no-deps --no-build-isolation -q -e /tessera
-pip install -q pytest
 cd /tessera
 python3 experiments/sweep_window_gemm_decode.py --out /out/sweep.json --commit "$TESSERA_HEAD"
+python3 -c "import json; d = json.load(open(\"/out/sweep.json\")); print(json.dumps({k: v for k, v in d.items() if k != \"records\"}))"
 python3 -m pytest -q tests/test_window_gemm.py tests/test_window_gemm_decode_schedule.py
 '
