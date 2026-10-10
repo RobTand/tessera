@@ -30,7 +30,7 @@ Actions (priority 0 throughout):
 |------|--------|-----|--------|
 | CPU preflight | `cf71898395...` | dl380g10 | imports, parse, torch CPU shapes pass in 3 s |
 | Shared capture | `f6b51f65...` | sparklina | 90.0 s, fast mean 82.53 W |
-| Exclusive capture (primary) | `175c22af...` | sparklina | 90.0 s, fast mean 81.27 W |
+| Exclusive capture (primary) | `175c22af...` | sparklina | 90.0 s, fast mean 81.34 W |
 
 CPU preflight could not resolve `sparky`/`sparklina`. Those names
 resolve only on the Sparks. Worker requests use the same names, so
@@ -65,9 +65,12 @@ resample of 10 s collections. Four effects follow:
    Netdata groups (12, 20, 28, 36 W). Fast samples show the true step.
 2. Ripple loss: sub-10 s structure (0.5 s NVML update blocks,
    plus or minus 2-3 W ripple) never appears in Netdata.
-3. Endpoint shift: the returned view reads `[1791606909, 1791607000]`,
-   not the requested `[1791606911, 1791607002]`. Pair on the
-   intersection. Never interpolate a straddler (`bounded_groups`).
+3. Endpoint alignment: the returned view reads `[1791606909, 1791607000]`,
+   not the requested `[1791606911, 1791607002]`. Cut each comparison at
+   integer seconds: steady `A = ceil(t0 + 10 s)`, full `A0 = ceil(t0)`,
+   `B = last returned stamp`. Sum whole groups with `A < t <= B`
+   (a stamp ends its 1 s group); trapz fast samples over `[A, B]`.
+   Never interpolate a straddler (`bounded_groups`).
 4. Tail lag: at immediate readback the newest Netdata group ends
    12 s before `t1` (last group 1791606990). Re-query later, or cut
    the window at the last returned group.
@@ -79,41 +82,48 @@ placement contaminates. The primary run is exclusive.
 
 ## Work-per-joule numbers
 
-Primary run, sparklina, intersected window `[t0, last Netdata group]`:
+Primary run, sparklina, whole groups within `(A, B]` (a stamp ends
+its 1 s group; fast trapz covers `[A, B]`):
 
 | Window | Fast energy | Netdata energy | Bias |
 |--------|-------------|----------------|------|
-| Full intersect | 6366.5 J | 6155.0 J | -3.32 % |
-| Steady (`t0+10 s` on) | 5591.4 J | 5603.5 J | +0.22 % |
+| Full `(1791606912, 1791606990]` | 6365.5 J | 6135.0 J | -3.62 % |
+| Steady `(1791606922, 1791606990]` | 5567.8 J | 5520.5 J | -0.85 % |
 
-Shift sensitivity of the steady bias: +0.31 % at -1 s,
--1.27 % at +1 s. Shift convention: a shift of plus s pairs a
-Netdata group at stamp t as true time t minus s. Plus s models
-a Netdata clock ahead of true time by s. The test recomputes
-each shift value from the raw series with this rule.
+Shift sensitivity of the steady bias: -0.72 % at -1 s,
+-0.85 % at +1 s. Shift convention: a shift of plus s puts the fixed
+stamp set at true time minus s, so fast energy covers `[A-s, B-s]`
+while Netdata energy stays fixed. Both series span the same true
+seconds at every shift, so clock sensitivity is about 0.1 pp and not
+an edge-count artifact. The test recomputes each shift value from
+the raw series with this rule.
 
 ## Bound for work-per-joule use
 
 Observed worst case on the qualifying capture: steady bias
-+0.22 %, +0.31 % at -1 s shift, -1.27 % at +1 s shift. Maximum
-absolute value is 1.27 %. The bound is plus or minus 1.5 %:
-ceiling of 1.27 plus margin for 1 s `Date` header quantization
+-0.85 %, -0.72 % at -1 s shift, -0.85 % at +1 s shift. Maximum
+absolute value is 0.85 %. The bound is plus or minus 1.5 %:
+ceiling of 0.85 plus margin for 1 s `Date` header quantization
 and 10 s Netdata collection.
 
 Scope: exclusive capture of 60 s or more, thermally steady load,
-tail cut at the last Netdata group, clock shift applied.
+whole groups within `(A, B]`, clock shift applied.
 Steadiness gate: fast head mean (`t0+10 s` to `t0+25 s`) versus
-tail mean (last 15 s) drift within 3 %. Primary drift is -2.39 %
+tail mean (last 15 s) drift within 3 %. The 3 % value is a declared
+scope rule for this receipt, not a fit: two runs cannot fit a
+population threshold. Primary drift is -2.39 %
 and passes. The shared run drift is -5.30 % and fails: it started
-hot at 90 W after prior load and cooled through the run. Its +1 s
-shift bias of -2.62 % exceeds the bound and shows the cost of
-unsteady use. Transient edges stay outside any joule claim.
+hot at 90 W after prior load and cooled through the run. Its steady
+bias of -1.63 % exceeds the bound by only 0.13 pp, so the gate and
+the bound agree at the boundary instead of showing a large
+exceedance. Transient edges stay outside any joule claim.
 This keeps the `timing_panel.py` HOLD: no rank reads raw
 Netdata means without this window rule and this bound.
 
 Limit: one qualifying capture supports this bound. It is an
 observed maximum plus margin, not a population statistic.
-A second exclusive capture should confirm it before rank use.
+The unsteady run sits 0.13 pp outside the bound, so the margin is
+thin. A second exclusive capture should confirm it before rank use.
 
 ## Rerun
 

@@ -25,7 +25,8 @@ def trapz(samples):
     return total
 
 
-def window_energy(fast, a, b):
+def fast_window_energy(fast, a, b):
+    """Trapezoid fast energy over exactly [a, b]."""
     pts = [(t, w) for t, w in sorted(fast) if a - 0.2 <= t <= b + 0.2]
     total = 0.0
     for (x, wx), (y, wy) in zip(pts, pts[1:]):
@@ -33,6 +34,20 @@ def window_energy(fast, a, b):
         if yy > xx:
             total += (wx + wy) / 2.0 * (yy - xx)
     return total
+
+
+def aligned_bias_pct(fast, netdata_rows, a, b, shift_s):
+    """Bias over one true window at clock shift s.
+
+    Netdata stamp t ends its 1 s group (bounded_groups), so whole
+    groups within (a, b] span (a, b]. A shift of plus s puts that
+    span at true time (a-s, b-s]; fast energy covers [a-s, b-s].
+    Both series span the same true seconds at every shift.
+    """
+    rows = sorted(netdata_rows)
+    en = float(sum(v[0] for t, v in rows if a < t <= b))
+    ef = fast_window_energy(fast, a - shift_s, b - shift_s)
+    return en, ef, 100.0 * (en - ef) / ef
 
 
 def median(xs):
@@ -91,17 +106,20 @@ def test_derived_block_recomputes_from_raw():
                 ["result"]["data"])
     last = nd[-1][0]
     assert derived["netdata_span"] == [nd[0][0], last]
-    ef = window_energy(fast, t0, last)
-    en = float(sum(r[1][0] for r in nd if t0 <= r[0] <= last))
-    assert abs(derived["intersect_energy_fast_j"] - ef) < 1e-6
-    assert abs(derived["intersect_energy_netdata_j"] - en) < 1e-9
-    want = 100.0 * (en - ef) / ef
-    assert abs(derived["intersect_bias_pct"] - want) < 1e-9
-    a2 = t0 + 10
-    ef2 = window_energy(fast, a2, last)
-    en2 = float(sum(r[1][0] for r in nd if a2 <= r[0] <= last))
-    assert abs(derived["steady_bias_pct"]
-               - 100.0 * (en2 - ef2) / ef2) < 1e-9
+    import math
+    full_a = math.ceil(t0)
+    steady_a = math.ceil(t0 + 10)
+    assert derived["intersect_window"] == [full_a, last]
+    assert derived["steady_window"] == [steady_a, last]
+    en_full, ef_full, want_full = aligned_bias_pct(fast, nd, full_a,
+                                                   last, 0.0)
+    assert abs(derived["intersect_energy_fast_j"] - ef_full) < 1e-6
+    assert abs(derived["intersect_energy_netdata_j"] - en_full) < 1e-9
+    assert abs(derived["intersect_bias_pct"] - want_full) < 1e-9
+    en, ef, want = aligned_bias_pct(fast, nd, steady_a, last, 0.0)
+    assert abs(derived["steady_bias_pct"] - want) < 1e-9
+    mean = en_full / (last - full_a)
+    assert abs(derived["netdata_in_window_mean_w"] - mean) < 1e-9
     for box in ("sparky", "sparklina"):
         for tag in ("clock_delta_pre", "clock_delta_post"):
             probes = [p["server_minus_client_s"]
@@ -119,19 +137,6 @@ def test_steady_bias_fits_declared_joule_bound():
 STEADINESS_GATE_PCT = 3.0
 
 
-def shift_bias_pct(fast, netdata_rows, a, b, shift_s):
-    """Bias when a Netdata group at stamp t pairs as t minus s."""
-    pts = [(t, w) for t, w in sorted(fast) if a - 0.2 <= t <= b + 0.2]
-    ef = 0.0
-    for (x, wx), (y, wy) in zip(pts, pts[1:]):
-        xx, yy = max(x, a), min(y, b)
-        if yy > xx:
-            ef += (wx + wy) / 2.0 * (yy - xx)
-    en = float(sum(v[0] for t, v in sorted(netdata_rows)
-                   if a <= t - shift_s <= b))
-    return 100.0 * (en - ef) / ef
-
-
 def head_tail_drift_pct(fast, t0, t1):
     """Head mean and tail mean drift over the fast series."""
     ordered = sorted(fast)
@@ -147,16 +152,18 @@ def sparklina_rows(raw):
 
 
 def test_shift_sensitivity_recomputes_from_raw():
+    import math
     for name in ("primary", "supporting_shared_run"):
         block = load()[name]
         raw, derived = block["raw"], block["derived"]
         t0, _ = raw["interval_unix"]
         rows = sparklina_rows(raw)
         last = sorted(rows)[-1][0]
-        a = t0 + 10
+        a = math.ceil(t0 + 10)
+        assert derived["steady_window"] == [a, last]
         for shift, value in derived["shift_sensitivity_pct"].items():
-            want = shift_bias_pct(raw["fast_power_samples"], rows,
-                                  a, last, float(shift))
+            _, _, want = aligned_bias_pct(raw["fast_power_samples"],
+                                          rows, a, last, float(shift))
             assert abs(value - want) < 1e-9, (name, shift)
 
 
@@ -199,10 +206,18 @@ def test_bound_derivation_covers_primary_shifts():
     seen = [abs(derived["steady_bias_pct"])]
     seen += [abs(v) for v in derived["shift_sensitivity_pct"].values()]
     assert max(seen) < JOULE_BOUND_PCT
-    assert abs(max(seen) - 1.2688285917382995) < 1e-9
+    assert abs(max(seen) - 0.850070778042077) < 1e-9
 
 
-def test_shared_shift_exceeds_bound_outside_gate():
+def test_shared_steady_bias_outside_bound():
+    """Unsteady shared run lands just outside the bound.
+
+    The drift gate (-5.30 % vs 3 % scope rule) and the joule bound
+    agree at the boundary: steady bias -1.63 % exceeds 1.5 % by
+    only 0.13 pp. The margin is thin, so the receipt requires a
+    second exclusive capture before rank use.
+    """
     shared = load()["supporting_shared_run"]["derived"]
-    assert abs(shared["shift_sensitivity_pct"]["1.0"]) > JOULE_BOUND_PCT
+    assert abs(shared["steady_bias_pct"]) > JOULE_BOUND_PCT
+    assert abs(shared["steady_bias_pct"] - 1.6269294732745554) < 1e-9
 

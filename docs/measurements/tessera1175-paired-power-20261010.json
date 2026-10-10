@@ -39,14 +39,23 @@
     1791606909,
     1791606990
    ],
-   "netdata_in_window_mean_w": 77.9113924050633,
-   "intersect_energy_fast_j": 6366.453771611928,
-   "intersect_energy_netdata_j": 6155.0,
-   "intersect_bias_pct": -3.3213744919471773,
-   "steady_bias_pct": 0.21558173828356825,
+   "window_rule": "whole Netdata groups within (A, B]; a stamp ends its 1 s group (experiments/box_power_window.py bounded_groups); fast trapz energy covers [A, B] at shift 0 and [A-s, B-s] at shift s, so both series span the same true seconds",
+   "intersect_window": [
+    1791606912,
+    1791606990
+   ],
+   "steady_window": [
+    1791606922,
+    1791606990
+   ],
+   "netdata_in_window_mean_w": 78.65384615384616,
+   "intersect_energy_fast_j": 6365.491149023532,
+   "intersect_energy_netdata_j": 6135.0,
+   "intersect_bias_pct": -3.620948386031283,
+   "steady_bias_pct": -0.850070778042077,
    "shift_sensitivity_pct": {
-    "-1.0": 0.3139462782247764,
-    "1.0": -1.2688285917382995
+    "-1.0": -0.7185423344244523,
+    "1.0": -0.8459341070625169
    },
    "clock_delta": {
     "sparky_clock_delta_pre_median_s": -0.43067479133605957,
@@ -6119,14 +6128,23 @@
     1791606716,
     1791606800
    ],
-   "netdata_in_window_mean_w": 82.22560975609755,
-   "intersect_energy_fast_j": 6747.607292829864,
-   "intersect_energy_netdata_j": 6742.5,
-   "intersect_bias_pct": -0.07569042785419194,
-   "steady_bias_pct": -1.214781099457813,
+   "window_rule": "whole Netdata groups within (A, B]; a stamp ends its 1 s group (experiments/box_power_window.py bounded_groups); fast trapz energy covers [A, B] at shift 0 and [A-s, B-s] at shift s, so both series span the same true seconds",
+   "intersect_window": [
+    1791606719,
+    1791606800
+   ],
+   "steady_window": [
+    1791606729,
+    1791606800
+   ],
+   "netdata_in_window_mean_w": 82.12962962962963,
+   "intersect_energy_fast_j": 6737.358194550865,
+   "intersect_energy_netdata_j": 6652.5,
+   "intersect_bias_pct": -1.2595173375151367,
+   "steady_bias_pct": -1.6269294732745554,
    "shift_sensitivity_pct": {
-    "-1.0": -1.2248823540107505,
-    "1.0": -2.623906109593874
+    "-1.0": -1.503485367859596,
+    "1.0": -1.7099081581707969
    },
    "clock_delta": {
     "sparky_clock_delta_pre_median_s": -0.9470877647399902,
