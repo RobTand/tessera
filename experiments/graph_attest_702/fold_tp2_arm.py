@@ -105,6 +105,17 @@ def docker(argv, out: Path, env: Envelope, tag: str) -> subprocess.CompletedProc
         raise Refused(f"docker {tag} rc={proc.returncode}: see {out}")
 
 
+def wait_url(base: str, env: Envelope, deadline_s: float = 1800.0) -> None:
+    t0 = time.time()
+    while time.time() - t0 < min(deadline_s, env.remaining() - CLEANUP_SECONDS):
+        try:
+            with urllib.request.urlopen(base + "/v1/models", timeout=5) as resp:
+                if resp.status == 200:
+                    return
+        except Exception:
+            pass
+        time.sleep(10)
+    raise Refused("serve readiness deadline")
 def post(base: str, path: str) -> int:
     req = urllib.request.Request(base + path, data=b"{}", method="POST",
                                  headers={"Content-Type": "application/json"})
