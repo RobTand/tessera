@@ -23,6 +23,15 @@ PY="${TESSERA_KL_PY:-/home/rob/dq-runs/venvs/prismaquant-cu130/bin/python}"
 STATUS="$OUT/exit_status.txt"
 : > "$STATUS"
 note() { echo "$1=$2" >> "$STATUS"; }
+# A step records its own status before set -e can hide it: a bare
+# `cmd; note name $?` never writes a failure, because the shell exits first.
+step() {  # <name> <command...>
+  local name="$1"; shift
+  local rc=0
+  "$@" || rc=$?
+  note "$name" "$rc"
+  return "$rc"
+}
 commit() {  # <units>; durable progress so a quiet serve is not a stall
   [ -n "${PRISMABUILD_ACTION_PROGRESS_HELPER:-}" ] && python3 \
     "$PRISMABUILD_ACTION_PROGRESS_HELPER" --phase serve --units "$1" || true
@@ -39,39 +48,38 @@ export TESSERA_KL_PY="$PY" TESSERA_KL_KL="$KL"
 [ -x "$PY" ] || { echo "REFUSED: no $PY" >&2; exit 2; }
 [ -f "$KL" ] || { echo "REFUSED: no $KL" >&2; exit 2; }
 
-"$WT/experiments/serve_and_dump_kl.sh" "$TEACHER" \
+step topk_teacher_prefill "$WT/experiments/serve_and_dump_kl.sh" "$TEACHER" \
   "$OUT/topk_teacher_prefill.json" teacher BF16
-note topk_teacher_prefill $?
 commit 1
-TESSERA_KL_REGIME=decode "$WT/experiments/serve_and_dump_kl.sh" "$TEACHER" \
+step topk_teacher_decode env TESSERA_KL_REGIME=decode \
+  "$WT/experiments/serve_and_dump_kl.sh" "$TEACHER" \
   "$OUT/topk_teacher_decode.json" teacher BF16
-note topk_teacher_decode $?
 commit 2
-"$WT/experiments/serve_and_dump_kl.sh" "$STUDENT" \
+step topk_student_prefill "$WT/experiments/serve_and_dump_kl.sh" "$STUDENT" \
   "$OUT/topk_student_prefill.json" student
-note topk_student_prefill $?
 commit 3
-TESSERA_KL_REGIME=decode "$WT/experiments/serve_and_dump_kl.sh" "$STUDENT" \
+step topk_student_decode env TESSERA_KL_REGIME=decode \
+  "$WT/experiments/serve_and_dump_kl.sh" "$STUDENT" \
   "$OUT/topk_student_decode.json" student
-note topk_student_decode $?
 commit 4
 
-"$PY" "$KL" compare "$OUT/topk_teacher_prefill.json.npz" \
+step topk_compare_prefill "$PY" "$KL" compare \
+  "$OUT/topk_teacher_prefill.json.npz" \
   "$OUT/topk_student_prefill.json.npz" \
   --out "$OUT/topk_compare_prefill.json"
-note topk_compare_prefill $?
-"$PY" "$KL" compare "$OUT/topk_teacher_decode.json.npz" \
+step topk_compare_decode "$PY" "$KL" compare \
+  "$OUT/topk_teacher_decode.json.npz" \
   "$OUT/topk_student_decode.json.npz" \
   --out "$OUT/topk_compare_decode.json"
-note topk_compare_decode $?
 commit 5
 
 # ---- prompts: seven short raw prompts plus one long-context smoke ---------
-# The long prompt decodes held-out corpus chunks 4..7 (2048 tokens) and
-# truncates to 2000, so it is WikiText-2 test text the KL never scores for
-# quality; at --max-model-len 4096 the full 32k native window stays a bare
-# area and the report labels it.
-"$PY" - "$CORPUS" "$TEACHER" "$OUT/smoke_prompts.json" <<'EOF'
+# The long prompt reuses WikiText-2 test text from corpus chunks 4..7 (2048
+# tokens, truncated to 2000). The KL scores those same chunks for quality,
+# so PLONG is a smoke over scored text, not a disjoint probe and not a
+# quality measurement; at --max-model-len 4096 the full 32k native window
+# stays a bare area and the report labels it.
+step smoke_prompts "$PY" - "$CORPUS" "$TEACHER" "$OUT/smoke_prompts.json" <<'EOF'
 import json, sys
 corpus = json.loads(open(sys.argv[1]).read())
 from tokenizers import Tokenizer
@@ -94,7 +102,6 @@ prompts = [
 prompts.append({"id": "PLONG", "prompt": text, "max_tokens": 64})
 json.dump({"prompts": prompts}, open(sys.argv[3], "w"), indent=1)
 EOF
-note smoke_prompts $?
 commit 6
 
 # ---- smoke serves, one arm at a time under the shared serve lock -----------
@@ -102,7 +109,7 @@ commit 6
 source "$WT/experiments/serve_lock.sh"
 serve_arm() {  # <model-dir> <arm>
   local model="$1" arm="$2"
-  local mount log
+  local mount log rc=0
   mount="$(cd "$(dirname "$model")" && pwd)"
   log="$OUT/logs/serve_smoke_$arm.log"
   SERVE_LOCK_OWNER="$0 smoke-$arm"; serve_lock_acquire
@@ -128,8 +135,9 @@ serve_arm() {  # <model-dir> <arm>
   "$PY" "$WT/experiments/moe_greedy_smoke.py" run \
     --url "http://127.0.0.1:${PORT}/v1/completions" \
     --tokenizer "$TEACHER" --prompts "$OUT/smoke_prompts.json" \
-    --arm "$arm" --out "$OUT/smoke_$arm.json"
-  echo "smoke_$arm=$?" >>"$STATUS"
+    --arm "$arm" --out "$OUT/smoke_$arm.json" || rc=$?
+  echo "smoke_$arm=$rc" >>"$STATUS"
+  [ "$rc" -eq 0 ] || return "$rc"
   curl -sf "http://127.0.0.1:${PORT}/metrics" -o "$OUT/metrics_$arm.txt" || true
   echo "serve_smoke_${arm}_log=$log" >>"$STATUS"
 }
@@ -137,11 +145,10 @@ serve_arm "$TEACHER" teacher_bf16
 serve_arm "$STUDENT" student_fp8rtn
 commit 7
 
-"$PY" "$WT/experiments/moe_greedy_smoke.py" compare \
+step smoke_compare "$PY" "$WT/experiments/moe_greedy_smoke.py" compare \
   "$OUT/smoke_student_fp8rtn.json" "$OUT/smoke_teacher_bf16.json" \
   --out "$OUT/smoke_pair.json" \
   --subject student_fp8rtn --reference bf16_source
-note smoke_compare $?
 commit 8
 
 echo "=== smoke pair ==="
