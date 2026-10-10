@@ -52,12 +52,13 @@ import triton.language as tl
 
 from .errors import GrammarError
 from .kernel_window_gemv import WindowGemvUnit
-from .window_geometry import TILE_ROWS
+from .window_geometry import MIN_M_BLOCK, TILE_ROWS, decode_schedule
 
 __all__ = ["window_gemm", "prepare_window_gemm", "PreparedWindowGemm", "MIN_BLOCK"]
 
 #: ``tl.dot`` needs a 16-row minimum operand; any M is served by masking.
-MIN_BLOCK = 16
+#: The value lives in ``window_geometry`` beside the schedule that reads it.
+MIN_BLOCK = MIN_M_BLOCK
 
 
 @triton.jit
@@ -166,7 +167,9 @@ def _window_gemm_kernel(
 @dataclasses.dataclass(frozen=True)
 class PreparedWindowGemm:
     """The frozen bundle: constants, geometry, launch shape.  ``__call__``
-    is the hot path and performs no tensor-content validation."""
+    is the hot path and performs no tensor-content validation.  The stored
+    blocks are the prefill schedule; at or below ``DECODE_MAX_M`` rows the
+    call runs ``window_geometry.decode_schedule`` instead (tessera#617)."""
 
     words: torch.Tensor
     table: torch.Tensor
@@ -256,14 +259,15 @@ class PreparedWindowGemm:
             raise GrammarError(f"out must be bf16 [{m}, {self.rows}] on {self.device}")
         if not y.is_contiguous():
             raise GrammarError("out must be contiguous; the kernel writes row-major")
-        grid = (triton.cdiv(self.rows, self.block_n), triton.cdiv(m, self.block_m))
+        bm, bn, bk = decode_schedule(m, self.block_m, self.block_n, self.block_k)
+        grid = (triton.cdiv(self.rows, bn), triton.cdiv(m, bm))
         _window_gemm_kernel[grid](
             self.words, self.table, self.codes, self.native, x_perm, y,
             self.scale, a, self.runs, self.init_perm,
             int(self.runs.shape[0]), self.tile_words, self.total_words,
             m, self.rows, self.cols,
             L=self.window_bits, TILE=TILE_ROWS,
-            BM=self.block_m, BN=self.block_n, BK=self.block_k,
+            BM=bm, BN=bn, BK=bk,
             HAS_INIT=self.has_init, FP8=fp8,
             num_warps=8,
         )
