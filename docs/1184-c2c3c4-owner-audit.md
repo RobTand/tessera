@@ -85,31 +85,44 @@ Post this as a comment on tessera#1184. Master lines were read on master (`4c0fd
   with `tools/comparison_arm_identity.py`, or add a sibling intake module.
   It binds every finding, correction, review and receipt to the exact
   source. It refuses a stale title, body or receipt after a rebase.
-- C4: owner repository not found. Searched: RobTand/tessera master (`tools`,
-  `src`, `tests`, `experiments`; no merge-disposition code) and a read-only
-  search of the `/home/rob/prismabuild` and `/home/rob/prismaquant` checkouts
-  (no gate; only task logs and scheduler prose). This seat has no access to
-  the private fleetgraph and prisma-exec repositories, so it names no file
-  there and guesses none. Decomposer scope k5 is a new tessera gate unless a
-  person routes it elsewhere. No owning issue exists yet: this writer must
-  not open issues, so the pipeline or Rob must file the k5 `[P]`-prefix
-  issue carrying the failing test below, or leave criterion 4 open. The test
-  that must fail first: a dropped branch-only test without a disposition is
-  refused, and a removal with a recorded disposition passes.
+- C4: RobTand/tessera must change. No owner exists in RobTand/tessera
+  (searched `tools`, `src`, `tests` and `experiments`: no merge-disposition
+  code). A read-only search of the `/home/rob/prismabuild` and
+  `/home/rob/prismaquant` checkouts also finds no gate (only task logs and
+  scheduler prose). This seat cannot read the private fleetgraph and
+  prisma-exec repositories, so it names no file there and guesses none.
+  The parent clause and its owning issue #1196 are in RobTand/tessera, so
+  k5 adds the gate there, in a new module. No issue in another repository
+  is needed. The test that must fail first: a dropped branch-only test
+  without a disposition is refused, and a removal with a recorded
+  disposition passes.
+
+## Owning issues (all in RobTand/tessera, each carries a `[P2]` title)
+
+- C2: tessera#1194 `[P2] Retained-trace evidence: refuse empty, duplicate,
+  mismatched or out-of-root traces; shared files pass`. Test that must fail
+  first: an empty retained-trace list passes after zero hashes.
+- C3: tessera#1195 `[P2] Intake binding: refuse a stale finding, correction,
+  review, title, body or receipt after a rebase`. Test that must fail first:
+  a record bound to another source, or a stale title, body or receipt after
+  a source change, still qualifies.
+- C4: tessera#1196 `[P2] Conflict merge: refuse a dropped branch-only
+  contract test without a recorded disposition`. Test that must fail first:
+  the dropped branch-only test without a disposition is accepted.
 
 ## Decomposer scope for k3, k4 and k5, and file sharing
 
-- k3 (C2): scope is landing the retained corrected source above. Its files
+- k3 (C2, tessera#1194): scope is landing the retained corrected source above. Its files
   are `experiments/graph_attest_702/tp2_recipe.py`,
   `experiments/graph_attest_702/eager_benchmark.py` and
   `tests/test_graph_attest_mnbt_matrix.py`.
-- k4 (C3): scope is the intake binding above. Its files are
+- k4 (C3, tessera#1195): scope is the intake binding above. Its files are
   `tools/comparison_input_intake.py`, `tools/comparison_arm_identity.py`
   and `tests/test_comparison_intake.py`, with `docs/ARCHITECTURE.md` when
   a gate moves.
-- k5 (C4): scope is the conflict-merge refusal above. Its file is new (name
-  unknown) in RobTand/tessera, unless a person routes it to the merge-gate
-  repository.
+- k5 (C4, tessera#1196): scope is the conflict-merge refusal above. No
+  owner file exists, so k5 adds a new module and its test in RobTand/tessera.
+  The k5 author chooses the name. k5 must not edit `tools/merge_suite.py`.
 - Sharing: k3, k4 and k5 share no file with each other. k3 files are now
   known. Only k4 extends existing gate files; k3 lands retained source into
-  existing experiment files; k5 needs a new file or a routed repository.
+  existing experiment files; k5 adds a new file.
