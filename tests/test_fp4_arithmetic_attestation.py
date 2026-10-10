@@ -304,3 +304,79 @@ def test_corrective_fp64_unknown_kernel_model_refuses():
     with pytest.raises(FP4QualificationError, match="unsupported double-precision kernel"):
         stock_magnitude_upper(1, k=256, shape=(1, 64, 256), report=report, device="CPU test fixture", physical_device="fixture-device")
 
+
+
+def packed_shapes_fixture_report(*shapes):
+    """The stock fixture plus profiles and reference shapes for ``shapes``."""
+    report = stock_fixture_report()
+    stock = report["stock_reference"]
+    for shape in shapes:
+        if list(shape) not in stock["reference_shapes"]:
+            stock["reference_shapes"].append(list(shape))
+        stock["profiles"].append({"operation": "magnitude_fp64", "shape": list(shape),
+            "kernels": ["void cutlass::Kernel2<cutlass_80_tensorop_d884gemm_32x32_16x5_tn_align1>()"]})
+    return report
+
+
+def test_fixed_tolerance_refuses_a_correct_cancellation_result():
+    import torch
+    from tessera.fp4_arithmetic import check_packed_stock_arithmetic, derive_packed_stock_bound
+    report = packed_shapes_fixture_report((2, 8, 4096))
+    kwargs = dict(k=4096, global_scale=1, report=report, device="CPU test fixture",
+                  physical_device="fixture-device", shape=(2, 8, 4096))
+    allowance, _ = derive_packed_stock_bound(64.0, **kwargs)
+    fixed_tolerance = 1e-4
+    measured_error = 0.01
+    assert allowance["atol"] > measured_error > fixed_tolerance
+    check_kwargs = {key: value for key, value in kwargs.items() if key not in ("device", "shape")}
+    actual = torch.full((2, 8), measured_error, dtype=torch.float32)
+    expected = torch.zeros((2, 8), dtype=torch.float32)
+    receipt = check_packed_stock_arithmetic(actual, expected, 64.0, **check_kwargs)
+    assert receipt["max_abs_error"] > fixed_tolerance
+
+
+def test_fixed_tolerance_accepts_a_wrong_tiny_output():
+    import torch
+    from tessera.fp4_arithmetic import FP4QualificationError as Refusal
+    from tessera.fp4_arithmetic import check_packed_stock_arithmetic, derive_packed_stock_bound
+    report = packed_shapes_fixture_report((1, 4, 256))
+    kwargs = dict(k=256, global_scale=1, report=report, device="CPU test fixture",
+                  physical_device="fixture-device", shape=(1, 4, 256))
+    allowance, _ = derive_packed_stock_bound(1e-7, **kwargs)
+    assert allowance["atol"] < 1e-6 < 1e-3
+    check_kwargs = {key: value for key, value in kwargs.items() if key not in ("device", "shape")}
+    actual = torch.full((1, 4), 1e-6, dtype=torch.float32)
+    expected = torch.zeros((1, 4), dtype=torch.float32)
+    with pytest.raises(Refusal, match="exceeds"):
+        check_packed_stock_arithmetic(actual, expected, 1e-7, **check_kwargs)
+
+
+def test_fixed_allowance_never_qualifies_without_a_derived_bound():
+    from tessera.fp4_arithmetic import FP4QualificationError as Refusal
+    from tessera.fp4_arithmetic import require_derived_stock_qualification
+    with pytest.raises(Refusal, match="arithmetic bound is absent"):
+        require_derived_stock_qualification({"atol": 1e-3, "rtol": 0.0},
+            device="CPU test fixture", physical_device="fixture-device")
+
+
+def test_derived_bound_for_another_device_never_qualifies():
+    from tessera.fp4_arithmetic import FP4QualificationError as Refusal
+    from tessera.fp4_arithmetic import derive_packed_stock_bound, require_derived_stock_qualification
+    report = packed_shapes_fixture_report((1, 4, 256))
+    _, receipt = derive_packed_stock_bound(1e-7, k=256, global_scale=1, report=report,
+        device="CPU test fixture", physical_device="fixture-device", shape=(1, 4, 256))
+    with pytest.raises(Refusal, match="device evidence differs"):
+        require_derived_stock_qualification(receipt, device="unmeasured device",
+            physical_device="fixture-device")
+    broken = dict(receipt)
+    del broken["physical_device"]
+    with pytest.raises(Refusal, match="physical-device evidence"):
+        require_derived_stock_qualification(broken, device="CPU test fixture",
+            physical_device="fixture-device")
+
+
+def test_packed_stock_qualification_without_device_evidence_refuses():
+    from tessera.fp4_arithmetic import derive_packed_stock_bound
+    with pytest.raises(FP4QualificationError, match="no measured arithmetic evidence"):
+        derive_packed_stock_bound(1, k=256, global_scale=1, report=stock_fixture_report(),
+            device="unmeasured device", physical_device="fixture-device", shape=(1, 64, 256))

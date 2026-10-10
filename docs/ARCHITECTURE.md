@@ -405,6 +405,13 @@ Arithmetic qualification remains false before both required reviews.
 Complete fused-network and two-device arithmetic qualification remain outside this claim.
 Section 17.8 gives the normative derivation, corrective controls, and retained device receipts.
 
+Re-stamped 2026-10-10 for issue #1182 and the packed-stock acceptance gate.
+`tessera.fp4_arithmetic.require_derived_stock_qualification` refuses any allowance
+outside a derived packed-stock bound receipt for the measured device. A fixed
+tolerance carries no bound schema or device evidence and never qualifies.
+`check_packed_stock_arithmetic` runs this gate on its derived receipt before it
+compares. The receipt now stamps the measured device beside the physical device.
+
 Re-stamped 2026-10-06 for issue #1002 and the CEO 09:50 bounded diagnostic
 directive. Two explicit opt-in scopes extend the existing managed rank
 lifecycle: `WINDOW_MODE=investigate-eager-control-2048` runs only two fresh
