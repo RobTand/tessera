@@ -1,0 +1,646 @@
+"""Conservative, non-executing discovery of Python file-consumer dependencies.
+
+The supported expressions are finite Path constructions, not arbitrary Python.
+A resolved target inside the tree is an exact edge whatever its suffix: a
+``.py`` file is a module dependency, anything else is the data dependency it
+is.  A resolved target outside the tree is neither -- this repository's diff
+cannot change it.  An unresolved target is a wildcard edge instead of no edge.
+
+**An unresolved target is a wildcard over Python only when the reader can run
+Python.**  A loader always can, by definition.  A plain read cannot: bytes are
+a Python dependency only once something parses or executes them, so a module
+that never does is reading data, and calling its unnameable path "any module
+in the tree" made the whole tree depend on the whole tree.  ``_SOURCE_*`` is
+the recognition set for that -- the standard library's source-execution API,
+which this repository does not own and cannot derive from its own code, and
+which is deliberately matched by resolved symbol rather than by bare
+attribute name (``re.compile`` and ``model.eval()`` are not source
+execution).  What it misses is a source read this module never sees at all,
+``subprocess.run([sys.executable, path])`` above all; that was never an edge
+here and this does not change it.
+
+**A target this resolver could not NAME and one it named and then declined to
+PLACE are different facts, and only the first is silence.**  A read whose
+filename is runtime state states no dependency, and reading that as "any
+module in the tree" is what held every verdict at ``full`` (#148).  But the
+boundary guard refuses a path this module named exactly -- an absolute
+spelling outside the tree, which a local alias directory can carry straight
+back into it -- and refusing to resolve it does not make the file it names
+stop changing.  That refusal is reported as its own kind of uncertainty, a
+data read with no placeable target, so a caller can keep the reader coupled
+to the diff without promoting a plain reader into an unknown Python importer
+(#338).
+"""
+from __future__ import annotations
+
+import ast
+import os.path
+from collections import defaultdict
+from pathlib import Path
+
+#: The node an unknown *module* dependency edges to: this reader can run
+#: Python it cannot name, so it may import anything in the tree.
+WILDCARD = "*"
+#: The node an unplaceable *data* read edges to.  Not the same claim: the
+#: reader executes nothing, so it imports nothing, but it does read a file
+#: this resolver named and refused to place, and that file may be in the
+#: diff.  Kept apart from ``WILDCARD`` so preserving the dependency does not
+#: re-import #148's "every reader depends on every module".
+DATA_WILDCARD = "*data"
+_LOADERS = {"spec_from_file_location": (1, "location"),
+            "SourceFileLoader": (1, "path"), "run_path": (0, "path_name")}
+_SYMBOLS = {"spec_from_file_location": "importlib.util.spec_from_file_location",
+            "SourceFileLoader": "importlib.machinery.SourceFileLoader",
+            "run_path": "runpy.run_path"}
+_READ_METHODS = {"read_text", "read_bytes", "open"}
+_KINDS = set(_LOADERS) | _READ_METHODS
+
+
+class _Scope:
+    def __init__(self, parent=None, *, class_body=False):
+        self.parent = parent
+        self.class_body = class_body
+        self.bindings = defaultdict(list)
+
+    def bind(self, target, value):
+        for node in ast.walk(target):
+            if isinstance(node, ast.Name) and isinstance(node.ctx, ast.Store):
+                self.bindings[node.id].append(value)
+
+
+class _Scanner(ast.NodeVisitor):
+    def __init__(self, path):
+        self.scope = _Scope()
+        self.scope.bindings["__file__"].append(ast.Constant(str(path)))
+        self.calls = []
+
+    def visit_Import(self, node):
+        for alias in node.names:
+            self.scope.bindings[alias.asname or alias.name.split(".")[0]].append(
+                ("symbol", alias.name if alias.asname else alias.name.split(".")[0]))
+
+    def visit_ImportFrom(self, node):
+        for alias in node.names:
+            self.scope.bindings[alias.asname or alias.name].append(
+                ("symbol", f"{node.module}.{alias.name}") if not node.level else None)
+
+    def visit_Assign(self, node):
+        for target in node.targets:
+            self.scope.bind(target, node.value)
+        self.visit(node.value)
+
+    def visit_AnnAssign(self, node):
+        self.scope.bind(node.target, node.value)
+        self.visit(node.annotation)
+        if node.value:
+            self.visit(node.value)
+
+    def visit_AugAssign(self, node):
+        self.scope.bind(node.target, None)
+        self.visit(node.value)
+
+    def visit_NamedExpr(self, node):
+        self.scope.bind(node.target, node.value)
+        self.visit(node.value)
+
+    def visit_For(self, node):
+        self.scope.bind(node.target, node.iter if isinstance(node.target, ast.Name) else None)
+        self.generic_visit(node)
+
+    visit_AsyncFor = visit_For
+
+    def visit_With(self, node):
+        for item in node.items:
+            if item.optional_vars:
+                self.scope.bind(item.optional_vars, None)
+        self.generic_visit(node)
+
+    visit_AsyncWith = visit_With
+
+    def visit_ExceptHandler(self, node):
+        if node.name:
+            self.scope.bindings[node.name].append(None)
+        self.generic_visit(node)
+
+    def visit_Global(self, node):
+        for name in node.names:
+            self.scope.bindings[name].append(None)
+            parent = self.scope.parent
+            while parent:
+                if name in parent.bindings or parent.parent is None:
+                    parent.bindings[name].append(None)
+                parent = parent.parent
+
+    visit_Nonlocal = visit_Global
+
+    def visit_Delete(self, node):
+        for target in node.targets:
+            for name in ast.walk(target):
+                if isinstance(name, ast.Name):
+                    self.scope.bindings[name.id].append(None)
+
+    def visit_match_case(self, node):
+        for pattern in ast.walk(node.pattern):
+            if isinstance(pattern, (ast.MatchAs, ast.MatchStar)) and pattern.name:
+                self.scope.bindings[pattern.name].append(None)
+            elif isinstance(pattern, ast.MatchMapping) and pattern.rest:
+                self.scope.bindings[pattern.rest].append(None)
+        self.generic_visit(node)
+
+    def _nested(self, node, *, class_body=False):
+        prior = self.scope
+        # Decorators, defaults and class bases execute in the enclosing scope.
+        for expression in getattr(node, "decorator_list", []):
+            self.visit(expression)
+        if hasattr(node, "args"):
+            for expression in node.args.defaults + node.args.kw_defaults:
+                if expression:
+                    self.visit(expression)
+            # Annotations are potential dependencies even when evaluation is
+            # deferred. Value parameters do not bind in their annotation's
+            # defining scope; generic type parameters may shadow outer names.
+            annotation_scope = _Scope(prior)
+            for parameter in getattr(node, "type_params", []):
+                annotation_scope.bindings[parameter.name].append(None)
+            self.scope = annotation_scope
+            parameters = (node.args.posonlyargs + node.args.args + node.args.kwonlyargs
+                          + [node.args.vararg, node.args.kwarg])
+            for parameter in parameters:
+                if parameter is not None and parameter.annotation is not None:
+                    self.visit(parameter.annotation)
+            if getattr(node, "returns", None) is not None:
+                self.visit(node.returns)
+            self.scope = prior
+        for expression in getattr(node, "bases", []):
+            self.visit(expression)
+        for keyword in getattr(node, "keywords", []):
+            self.visit(keyword.value)
+        if hasattr(node, "name"):
+            prior.bindings[node.name].append(None)
+        parent = prior.parent if prior.class_body and not class_body else prior
+        self.scope = _Scope(parent, class_body=class_body)
+        if hasattr(node, "args"):
+            for arg in ast.walk(node.args):
+                if isinstance(arg, ast.arg):
+                    self.scope.bindings[arg.arg].append(None)
+        body = node.body if isinstance(node.body, list) else [node.body]
+        for statement in body:
+            self.visit(statement)
+        self.scope = prior
+
+    def visit_FunctionDef(self, node):
+        self._nested(node)
+
+    visit_AsyncFunctionDef = visit_FunctionDef
+    visit_Lambda = visit_FunctionDef
+
+    def visit_ClassDef(self, node):
+        self._nested(node, class_body=True)
+
+    def visit_Call(self, node):
+        self.calls.append((node, self.scope))
+        self.generic_visit(node)
+
+    def visit_ListComp(self, node):
+        prior = self.scope
+        self.scope = _Scope(prior)
+        for generator in node.generators:
+            self.scope.bind(generator.target, None)
+        self.generic_visit(node)
+        self.scope = prior
+
+    visit_SetComp = visit_ListComp
+    visit_DictComp = visit_ListComp
+    visit_GeneratorExp = visit_ListComp
+
+
+#: Calls that turn bytes into running Python.  Bare names only for the
+#: builtins -- ``model.eval()`` and ``re.compile()`` are attributes and are not
+#: this.  Attribute names only where the name itself is the API.
+_SOURCE_BUILTINS = {"exec", "eval", "compile", "execfile", "__import__"}
+_SOURCE_ATTRIBUTES = {"run_path", "run_module", "spec_from_file_location",
+                      "SourceFileLoader", "SourcelessFileLoader", "exec_module",
+                      "source_to_code", "get_code", "compile_command"}
+#: ``module: attribute`` pairs whose attribute is too common to match alone.
+_SOURCE_QUALIFIED = {"ast": {"parse"}, "py_compile": {"compile"}}
+
+
+def _executes_python_source(tree):
+    """Whether this module can turn file bytes into Python it runs or parses."""
+    direct, modules = set(), {}
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            for alias in node.names:
+                if alias.name in _SOURCE_QUALIFIED:
+                    modules[alias.asname or alias.name] = alias.name
+        elif isinstance(node, ast.ImportFrom) and not node.level:
+            owned = _SOURCE_QUALIFIED.get(node.module or "", set())
+            for alias in node.names:
+                if alias.name in owned or alias.name in _SOURCE_ATTRIBUTES:
+                    direct.add(alias.asname or alias.name)
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call):
+            continue
+        function = node.func
+        if isinstance(function, ast.Name):
+            if function.id in _SOURCE_BUILTINS or function.id in direct:
+                return True
+        elif isinstance(function, ast.Attribute):
+            if function.attr in _SOURCE_ATTRIBUTES:
+                return True
+            owner = function.value
+            if (isinstance(owner, ast.Name)
+                    and function.attr in _SOURCE_QUALIFIED.get(
+                        modules.get(owner.id, ""), set())):
+                return True
+    return False
+
+
+#: A symlink chain longer than this is a loop for our purposes, and the walk
+#: below ends it the way the kernel's own ``ELOOP`` does rather than
+#: recursing forever.
+_MAX_LINK_DEPTH = 40
+
+
+def _resolve_within_root(path, root, budget=None, links=None):
+    """Resolve *path* without ever naming a location outside *root*.
+
+    Returns the resolved absolute path, or ``None`` when the spelling or the
+    walk would leave the tree.  ``None`` is the same refusal a literal
+    outside root already gets: unknown, decided without a syscall out there.
+
+    **Membership of the destination is not a bound on the resolution.**
+    ``Path.resolve`` walks the spelling as written, so a sibling-relative
+    spelling like ``.../outside/../repo/driver.py`` -- which normalizes to
+    a path inside the tree -- still ``lstat``s ``outside`` on the way, and that is
+    the uninterruptible RPC #325 was about.  Collapsing ``..`` lexically
+    first is no answer either: ``link/..`` is the parent of the *link's
+    target*, so the string answer and the filesystem answer differ exactly
+    where a symlink is involved, and an in-root link to an outside directory
+    is followed before anyone can ask whether its target is in the tree.
+    Both are one defect -- a normalized final membership says nothing about
+    the steps taken to reach it (#339).
+
+    So this walks instead.  *root* is the approved tree and is taken as
+    canonical.  A spelling whose leading components are not *root*'s is
+    refused before any filesystem call at all.  After that every component is
+    examined only once the prefix it extends is known to be inside root;
+    ``..`` is applied to a prefix already free of symlinks, so it means what
+    the filesystem means by it; and a symlink whose target leaves the tree
+    ends the walk -- the link itself is in-root and readable, its target is
+    never approached.
+
+    ``links`` collects the in-root link entries actually traversed. Repointing
+    one changes the read even when its old and new targets are both in-root,
+    so these entries are dependencies alongside the resolved destination.
+    """
+    base = Path(os.path.normpath(str(root)))
+    absolute = path if path.is_absolute() else base / path
+    parts = absolute.parts
+    prefix = base.parts
+    if parts[:len(prefix)] != prefix:
+        # Not even spelled from inside the tree.  Whatever ``..`` would do to
+        # it later, walking it means stat'ing outside root first.
+        return None
+    return _walk_within_root(
+        base, parts[len(prefix):], base, [_MAX_LINK_DEPTH] if budget is None else budget, links)
+
+
+def _walk_within_root(current, parts, base, budget, links=None):
+    """One component at a time from *current*, which is already inside *base*."""
+    for part in parts:
+        if not part or part == ".":
+            continue
+        if part == "..":
+            if current == base:
+                return None                 # one step above the approved tree
+            current = current.parent
+            continue
+        candidate = current / part
+        try:
+            # ``readlink`` on an in-root path: the only filesystem question
+            # this walk ever asks, and never about a location outside root.
+            link = os.readlink(candidate)
+        except OSError:
+            # Not a link, or nothing there to be one.  The name stands, which
+            # is what ``resolve(strict=False)`` does with it too.
+            current = candidate
+            continue
+        if links is not None:
+            links.add(candidate)
+        # One budget covers every link, including absolute targets and later
+        # components after a recursive target walk returns (#353).
+        if budget[0] == 0:
+            return None
+        budget[0] -= 1
+        target = Path(link)
+        if target.is_absolute():
+            current = _resolve_within_root(target, base, budget, links)
+        else:
+            current = _walk_within_root(current, target.parts, base, budget, links)
+        if current is None:
+            return None
+    return current
+
+
+def _place(paths, root, refused, links=None):
+    """The paths the boundary guard will not let us place, resolved if it will.
+
+    Returns ``None`` when any of *paths* is refused -- recorded in *refused*
+    rather than merely returned, because the caller's two unknowns are not the
+    same fact: an expression this resolver cannot evaluate names no file,
+    while a path it evaluated exactly and then refused to touch names one file
+    it declines to identify (#338).  Only the second keeps a data dependency
+    alive.
+    """
+    resolved = set()
+    for path in paths:
+        within = _resolve_within_root(path, root, links=links)
+        if within is None:
+            if refused is not None:
+                refused.append(path)
+            return None
+        resolved.add(within)
+    return resolved
+
+
+def _values(node, scope, root, visiting=frozenset(), refused=None, links=None):
+    """All statically established values; None means some alternative is unknown.
+
+    ``refused``, when given, collects the paths a boundary guard declined to
+    place, so a ``None`` return caused by the guard can be told from a
+    ``None`` return caused by an unnameable expression.
+    """
+    if isinstance(node, tuple):
+        return {node}
+    if isinstance(node, ast.Constant) and isinstance(node.value, (str, int)):
+        return {node.value}
+    if isinstance(node, ast.Name):
+        here = scope
+        while here and node.id not in here.bindings:
+            here = here.parent
+        if here is None:
+            return {("symbol", "builtins." + node.id)} if node.id in {
+                "str", "sorted", "list", "tuple", "set", "open"} else None
+        key = (id(here), node.id)
+        if key in visiting:
+            return None
+        result = set()
+        for expression in here.bindings[node.id]:
+            value = _values(expression, here, root, visiting | {key}, refused, links)
+            if value is None:
+                return None
+            result.update(value)
+        return result
+    if isinstance(node, ast.Attribute):
+        values = _values(node.value, scope, root, visiting, refused, links)
+        if values is None:
+            return None
+        result = set()
+        for value in values:
+            if isinstance(value, tuple) and value[0] == "symbol":
+                result.add(("symbol", value[1] + "." + node.attr))
+            elif isinstance(value, Path) and node.attr == "parent":
+                result.add(value.parent)
+            elif isinstance(value, Path) and node.attr in _READ_METHODS:
+                result.add(("file_reader", value))
+            else:
+                return None
+        return result
+    if isinstance(node, ast.Subscript) and isinstance(node.value, ast.Attribute) and node.value.attr == "parents":
+        paths = _values(node.value.value, scope, root, visiting, refused, links)
+        indices = _values(node.slice, scope, root, visiting, refused, links)
+        if paths is not None and indices is not None:
+            if not all(isinstance(path, Path) for path in paths) or not all(
+                    isinstance(index, int) for index in indices):
+                return None
+            try:
+                return {path.parents[index] for path in paths for index in indices}
+            except IndexError:
+                return None
+    if isinstance(node, ast.BinOp):
+        left = _values(node.left, scope, root, visiting, refused, links)
+        right = _values(node.right, scope, root, visiting, refused, links)
+        if left is None or right is None:
+            return None
+        result = set()
+        for a in left:
+            for b in right:
+                if isinstance(node.op, ast.Div) and isinstance(a, Path) and isinstance(b, (str, Path)):
+                    result.add(a / b)
+                elif isinstance(node.op, ast.Add) and isinstance(a, str) and isinstance(b, str):
+                    result.add(a + b)
+                else:
+                    return None
+        return result
+    if isinstance(node, ast.Call):
+        if isinstance(node.func, ast.Attribute) and node.func.attr in {"resolve", "glob", "rglob", "joinpath"}:
+            paths = _values(node.func.value, scope, root, visiting, refused, links)
+            if paths is None or not all(isinstance(path, Path) for path in paths):
+                return None
+            if node.func.attr == "resolve" and not node.args and not node.keywords:
+                # A literal ``.resolve()`` on a path outside root is the
+                # same escape a crawling glob would be: unknown, and never
+                # stat'ed to find out (rule 4; was :308).  ``_place`` is the
+                # resolve, so this expression never reaches ``Path.resolve``
+                # and never walks a step outside the tree (#339).
+                return _place(paths, root, refused, links)
+            if len(node.args) == 1 and not node.keywords:
+                args = _values(node.args[0], scope, root, visiting, refused, links)
+                if args is None or not all(isinstance(arg, str) for arg in args):
+                    return None
+                if node.func.attr == "joinpath":
+                    return {path / arg for path in paths for arg in args}
+                # Only one-directory globs are finite within the checked tree.
+                # Recursive/escaping patterns remain an unknown dependency;
+                # they must not trigger a filesystem crawl outside this root.
+                # Nor may the base itself be resolved from outside root --
+                # an absolute literal base is the identical escape (rule 4;
+                # was :318), refused before any stat out there.  A base that
+                # ``_place`` returns is inside root by construction, so the
+                # membership re-check this used to make is gone with the
+                # ``Path.resolve`` that needed it (#339); a relative base is
+                # now joined to root rather than to the process's cwd, which
+                # is what the guard above already assumed of it.
+                bases = _place(paths, root, refused, links)
+                if bases is None:
+                    return None
+                # pathlib's trailing-separator filter follows DirEntry links
+                # before we can place its matches. Refuse the named pattern
+                # without enumerating it, retaining data-read uncertainty.
+                if any(arg.endswith(tuple(sep for sep in (os.sep, os.altsep) if sep))
+                       for arg in args):
+                    if refused is not None:
+                        refused.extend(bases)
+                    return None
+                if (node.func.attr == "glob"
+                        and all(len(Path(arg).parts) == 1 and arg not in {".", ".."}
+                                and "**" not in arg for arg in args)):
+                    return {item for base in bases for arg in args
+                            for item in base.glob(arg)}
+            return None
+        functions = _values(node.func, scope, root, visiting, refused, links)
+        if functions is None or len(node.args) != 1 or node.keywords:
+            return None
+        args = _values(node.args[0], scope, root, visiting, refused, links)
+        if args is None:
+            return None
+        result = set()
+        for function in functions:
+            if function == ("symbol", "pathlib.Path") and all(isinstance(arg, (str, Path)) for arg in args):
+                result.update(Path(arg) for arg in args)
+            elif function == ("symbol", "builtins.str"):
+                result.update(str(arg) for arg in args)
+            elif function in {("symbol", "builtins." + name) for name in ("sorted", "list", "tuple", "set")}:
+                result.update(args)
+            else:
+                return None
+        return result
+    return None
+
+
+def file_imports(tree, path, root):
+    """Return in-tree dependencies, an unknown-loader flag, and an unplaced-read flag.
+
+    The third value is the one #338 exists for.  ``unknown`` says this module
+    may import Python it cannot name; ``unplaced`` says it reads a file it
+    named exactly and this resolver refused to place -- an outside spelling
+    that an alias directory can carry back into the tree.  A caller that
+    collapsed the two either lost the dependency (a plain reader is not an
+    unknown importer, so it recorded nothing at all) or lost #148 (an
+    unnameable read is not "every module in the tree").
+    """
+    scanner = _Scanner(path)
+    scanner.visit(tree)
+    aliases = {name: {name} for name in _KINDS}
+    assignments = []
+    for node in ast.walk(tree):
+        if isinstance(node, ast.ImportFrom):
+            for alias in node.names:
+                if alias.name in _KINDS:
+                    aliases.setdefault(alias.asname or alias.name, set()).add(alias.name)
+        elif isinstance(node, (ast.Assign, ast.AnnAssign)):
+            assignments.append(node)
+    def kind(expression):
+        if isinstance(expression, ast.Attribute) and expression.attr in _KINDS:
+            return {expression.attr}
+        if isinstance(expression, ast.Name):
+            return aliases.get(expression.id, set())
+        return set()
+    # Aliases are an over-approximation for recognition only. Lexical value
+    # resolution below still refuses parameter/reassignment uncertainty.
+    while True:
+        before = {name: set(kinds) for name, kinds in aliases.items()}
+        for assignment in assignments:
+            loader = kind(assignment.value)
+            if loader:
+                targets = assignment.targets if isinstance(assignment, ast.Assign) else [assignment.target]
+                for target in targets:
+                    if isinstance(target, ast.Name):
+                        aliases.setdefault(target.id, set()).update(loader)
+        if aliases == before:
+            break
+    executes = _executes_python_source(tree)
+
+    def wildcard(reading):
+        """An unnameable target is an unknown *module* only if it can run."""
+        return executes or not reading
+
+    found, unknown, unplaced = set(), False, False
+
+    def refuse(reading):
+        """Record a target this resolver named and then declined to place.
+
+        A loader, or any module that can execute source, still edges to the
+        whole tree: it may run what it read.  A plain reader does not -- that
+        reading is #148 -- but the file it named can still be in the diff, so
+        the dependency is kept as its own uncertainty rather than dropped
+        (#338).  ``wildcard`` decides which of the two this is, exactly as it
+        does for a target that was never nameable.
+        """
+        nonlocal unknown, unplaced
+        if wildcard(reading):
+            unknown = True
+        else:
+            unplaced = True
+
+    for call, scope in scanner.calls:
+        loaders = kind(call.func)
+        if not loaders:
+            continue
+        reading = loaders <= _READ_METHODS
+        if len(loaders) != 1:
+            unknown = unknown or wildcard(reading)
+            continue
+        loader = next(iter(loaders))
+        # Refusals by the boundary guard anywhere inside this call's
+        # expressions, so the ``values is None`` below can tell "no target
+        # was nameable" from "a named target was not placeable".
+        refused = []
+        links = set()
+        try:
+            functions = _values(call.func, scope, root, refused=refused, links=links)
+            if loader in _READ_METHODS:
+                # Reading source bytes is already a dependency, whether the
+                # consumer later ast.parse/execs them or asserts on the text.
+                # No execution/data-flow guess or hardcoded consumer roster.
+                if functions is not None and all(
+                        isinstance(function, tuple) and function[0] == "file_reader"
+                        for function in functions):
+                    values = {function[1] for function in functions}
+                elif loader == "open" and functions is not None and functions <= {
+                        ("symbol", "builtins.open"), ("symbol", "io.open")}:
+                    expression = call.args[0] if call.args else next(
+                        (arg.value for arg in call.keywords if arg.arg == "file"), None)
+                    values = _values(expression, scope, root, refused=refused, links=links)
+                else:
+                    values = None
+            else:
+                position, keyword = _LOADERS[loader]
+                expression = call.args[position] if len(call.args) > position else next(
+                    (arg.value for arg in call.keywords if arg.arg == keyword), None)
+                if functions != {("symbol", _SYMBOLS[loader])}:
+                    unknown = True
+                values = _values(expression, scope, root, refused=refused, links=links)
+        except (OSError, ValueError, TypeError, RecursionError):
+            values = None
+        if values is None or not all(isinstance(value, (str, Path)) for value in values):
+            # A guard refusal is a named file; anything else named none.
+            if refused:
+                refuse(reading)
+            else:
+                unknown = unknown or wildcard(reading)
+            continue
+        # A resolved glob base is a dependency even when it yields no files.
+        found.update(links)
+        for value in values:
+            try:
+                target = Path(value)
+            except (OSError, ValueError):
+                unknown = unknown or wildcard(reading)
+                continue
+            # An absolute (or ``..``-escaping) literal outside root is the
+            # same escape the glob and resolve() guards above refuse:
+            # unknown rather than resolved, so a stalled mount under the
+            # literal's real location never blocks the selector (rule 4; was
+            # :426).  ``_place`` decides the whole question -- spelling,
+            # every resolution step and the destination -- and it is the only
+            # thing here that touches the filesystem (#339).  The refusal is
+            # not the same as independence: an outside spelling can be a
+            # local alias for a tracked file, and the alias is environment
+            # state this repository never sees, so the dependency survives it
+            # as an unplaced read (#338).
+            try:
+                placed = _place({target}, root, None, links)
+            except (OSError, ValueError):
+                placed = None
+            if placed is None:
+                refuse(reading)
+                continue
+            # Named and inside the tree: an exact edge, ``.py`` or not.  There
+            # is no third outcome left here -- a target that resolved outside
+            # the tree used to be dropped in silence, and it is now the same
+            # refusal as any other step that leaves root.
+            found.update(placed)
+            found.update(links)
+    return found, unknown, unplaced

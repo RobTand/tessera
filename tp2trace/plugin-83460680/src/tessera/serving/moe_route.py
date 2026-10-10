@@ -1,0 +1,1425 @@
+"""Tessera routed-MoE: production FP8 and BF16, and explicit selected research owners.
+
+THE COMPACT LANE COMES FIRST.  Where this build publishes the shared compact
+reader (``scheme.parse_compact_tessera_expert_blob``), both window families
+serve on the compact native window lane (``tessera.native_window_moe``): each
+projection container is validated and packed during its own load callback,
+no expert tile is ever decoded, and the grouped window GEMM decodes the wire
+in registers every forward.  FP8 runs the epilogue arithmetic there and BF16
+the FOLDED one (tessera#609).  The materialising description below is the FP8
+stack's branch on a build without that reader.
+
+WHAT IT SERVES. One ``tessera.fused`` container per expert per projection,
+assembled into ``w13`` (gate then up, the row order
+``RoutedExperts._load_w13`` narrows to) and ``w2`` (down), then decoded at
+load into exactly the parameters vLLM's own fused-MoE kernels
+read for a per-channel FP8 checkpoint: ``w13_weight [E, 2N, K]`` and
+``w2_weight [E, K, N]`` in ``float8_e4m3fn``, with ``w13_weight_scale
+[E, 2N, 1]`` and ``w2_weight_scale [E, K, 1]`` in fp32.  From
+``process_weights_after_loading`` onward this route IS
+``CompressedTensorsW8A8Fp8MoEMethod`` at ``strategy: channel``: the same
+``convert_to_fp8_moe_kernel_format``, the same ``make_fp8_moe_quant_config``
+(``per_out_ch_quant`` and ``per_act_token_quant`` both true), the same
+``make_fp8_moe_kernel``, and an ``apply`` that hands the runtime's modular
+kernel the runtime's own tensors.  Nothing here writes a kernel.
+
+WHY PER-CHANNEL.  The CHANNEL scale plane is the wire's column structure and
+it is not decoration: deleting it costs 0.77-0.84x, and folding 2N row scales
+into one per expert is deleting it.  That the runtime's fused-MoE kernels
+ACCEPT a per-channel weight scale on this hardware is not asserted here -- it
+is read off the runtime's own ``is_supported_config`` predicate
+(``experiments/moe_decode_target_probe.py`` /
+``experiments/results/moe_decode_target_probe.json``: MARLIN, HUMMING, TRITON
+and BATCHED_TRITON accept ``(kFp8StaticChannelSym, kFp8DynamicTokenSym)`` on
+sm_121), and the backend is selected by the runtime's own
+``select_fp8_moe_backend`` rather than pinned here.
+
+THE WIRE PARAMETER, AND WHY IT HAS ITS OWN LOADER.  ``RoutedExperts``'
+expert-parameter mapping is suffix-agnostic -- ``experts.{e}.gate_proj.wire``
+routes to the ``w13_wire`` parameter with ``shard_id="w1"`` -- but its own
+``weight_loader`` dispatches on the substrings "weight"/"scale" and returns
+``False`` for anything else, writing nothing and saying nothing
+(``docs/measurements/tessera-moe-wire-loader-2026-09-03.md``).  What
+``load_weights`` actually calls is ``param.weight_loader``, so a wire
+parameter carrying its own loader is the mechanism, and this route registers
+one.
+
+THE ORDINARY ROWS ARE PADDED AND THE LENGTHS RIDE BESIDE THEM.  A checkpoint stores one
+tensor per expert projection at that blob's exact length; the PARAMETER is
+rectangular, so ``create_weights`` allocates the group's declared
+``wire_stride`` and the loader records each blob's true length.  What comes
+back out is ``tessera.moe_layout.unpack_moe_wires``, whose refusals are the
+integrity gate: a length past its row, a length tensor that disagrees with the
+expert count, and -- the one that catches a mis-declared sidecar -- a stride
+that is not the maximum its lengths imply.
+
+WHAT THE PRODUCTION ROUTE REFUSES. Expert
+parallelism and tensor parallelism inside an expert (the stride invariant
+needs every expert's blob, and no expert slicer has been run); a residency
+mode other than ``resident`` (a per-forward expert decode is a different
+kernel story with no measurement); a family with no expert route
+(``scheme.MOE_BUILDERS`` says which); an
+expert count, hidden size or intermediate size that disagrees with the
+sidecar; and a non-gated MoE, whose ``w13`` is one shard rather than the pair
+this route's groups describe.
+
+The explicit ``ResearchSelectedMoeConfig`` separately permits eager
+TP1 or TP2 selected decode. TP2 constructs zero-byte loader parameters and
+validates each whole original wire during its load callback, then invokes
+the existing role slicer and retains only local packed roles; it preserves global expert IDs and
+leaves output reduction to stock vLLM. It is not a qualified runtime cell.
+
+THE BF16 EXPERT ARITHMETIC IS FOLDED (tessera#609): one bf16 rounding of
+``value * row_scale`` per weight before the dot, with no scale in the
+epilogue.  That is what a consumer pricing the decoded tile rounded once to
+bf16 prices, and the production compact lane, the research compact lane and
+the research materialising branch (which folds each selected tile once and
+hands it to stock unquantized Triton MoE) all compute it.  The compact launch
+stamps ``native_window_moe_compact_folded`` so a census and a cell can say
+which arithmetic ran; it is never reported under the FP8 stack's decoder.
+
+WHAT IS ATTESTED. The packaged contract publishes exactly two ``routed_moe`` cells:
+E4M3/q1024, resident/eager on sm_121, for decode and batch on the exact EUGR
+image named by each cell. The complete LFM artifact's census and source-bound
+prefill KL comparison are recorded in
+``docs/measurements/tessera-lfm-campaign-2026-09-04.md``. Other rungs/images,
+compiled/streamed MoE and multi-rank execution remain unattested.
+
+The earlier load-and-execute measurement
+(``docs/measurements/tessera-moe-route-load-2026-09-04.md``) was taken twice --
+once on the pin, once on the build that registers ``Glm5Next`` -- and every
+recorded field, backend selection and error number is identical, so the route
+does not depend on which of the two loads it. Later served GLM census
+receipts cover 16-expert stacks, and the exact EUGR LFM construction receipt
+(``docs/measurements/tessera-lfm-construction-2026-09-04.md``) covers model-level
+wire delegation into a 32-expert stack without a forward. These receipts do
+not establish full-model LFM served quality or a compiled MoE forward.
+"""
+from __future__ import annotations
+
+from dataclasses import dataclass
+from typing import Mapping, Sequence
+
+import torch
+
+from ..errors import GrammarError
+from ..moe_execution import ResearchSelectedMoeConfig
+from ..moe_layout import (W13_PROJECTIONS, MoePacked, unpack_moe_wires,
+                          validate_moe_wire_lengths)
+from .lane import MODE_RESIDENT, MODES
+from .residency import named_resident_tensors
+from .scheme import (MOE_GEMM_SYMBOL, MOE_GROUP_SHARDS, MOE_GROUPS, ROUTES,
+                     STRUCTURE_ROUTED_MOE, TESSERA_BF16, TESSERA_FP8, launch_pairs, route_launches,
+                     moe_census_symbol_base as census_symbol_base,
+                     expert_role_declarations, parse_tessera_expert_blob,
+                     WINDOW_MOE_COMPACT_SYMBOL,
+                     validate_tessera_moe_scheme)
+from .telemetry import (DECODER_NATIVE_WINDOW_MOE_COMPACT,
+                        DECODER_NATIVE_WINDOW_MOE_COMPACT_FOLDED, DECODER_TORCH_STOCK,
+                        emit_route, route_shape)
+
+__all__ = [
+    "ACTIVATION_CONTRACT",
+    "GEMM_SYMBOL",
+    "SHARD_TO_GROUP",
+    "PreparedTesseraMoeExperts",
+    "PreparedTesseraPackedMoeExperts",
+    "PreparedTesseraPackedBf16MoeExperts",
+    "ResearchSelectedMoeConfig",
+    "census_expected",
+    "census_symbol_base",
+    "prepare_tessera_moe_experts",
+    "prepare_tessera_packed_moe_experts",
+    "prepare_tessera_packed_bf16_moe_experts",
+    "build_tessera_moe_method",
+]
+
+ACTIVATION_CONTRACT = ROUTES[TESSERA_FP8]["activation_contract"]
+GEMM_SYMBOL = MOE_GEMM_SYMBOL
+
+
+
+
+#: The payload family each window expert route's census expectation is read
+#: under, keyed by route: the contract's ``executes`` table and
+#: ``census.platform_expectation`` speak payload families.
+_CENSUS_PAYLOAD_FAMILY = {TESSERA_FP8: "TESSERA_E4M3_K1", TESSERA_BF16: "TESSERA_BF16_K1"}
+
+
+def native_decoder(family: str) -> str:
+    """The decoder the compact window lane stamps for ``family``'s stack.
+
+    One home for the rule that the arithmetic is part of the launch: the FP8
+    stack runs the epilogue contract, the BF16 stack the folded one
+    (``window_gemm_grouped``'s ``arithmetic``), and the two are different
+    functions of their wires, so they are never reported under one name.
+    """
+    if family == TESSERA_BF16:
+        return DECODER_NATIVE_WINDOW_MOE_COMPACT_FOLDED
+    return DECODER_NATIVE_WINDOW_MOE_COMPACT
+
+
+def _profiler_label(adapter) -> str:
+    """The ``torch.profiler`` range a routed forward runs under.
+
+    One label per adapter identity (tessera#640): the compact adapter's
+    forward is ``tessera_native_window_moe`` as it always was, and an adapter
+    that publishes ``PROFILER_LABEL`` -- the fused routed window lane -- is
+    ranged under its own name, so a profile of a fused serve does not read as
+    the compact kernel's.  A new identity under an old name is a disguise.
+    """
+    return str(getattr(adapter, "PROFILER_LABEL", "tessera_native_window_moe"))
+
+
+def census_expected(*, compiled: bool = False, platform=None,
+                    family: str = TESSERA_FP8) -> dict:
+    """The ``(symbol, decoder)`` pairs an expert stack may report, by regime.
+
+    Owned here for the same reason ``fp8_gemv.census_expected`` is owned there:
+    the dispatch is in this module, so a new path updates the expectation where
+    the path was added rather than in a second spelling inside the census tool.
+    Two things about this route are NOT the dense routes' shape.
+
+    ONE LAUNCH PER STACK, BOTH REGIMES.  There is no GEMV lane.  A stack
+    either takes the compact native window lane (the packed wire decoded
+    inside the grouped GEMM, every forward, at any M) or -- FP8 only, and only
+    on a build that publishes no compact reader -- is materialised once at
+    load for the runtime's modular fused-MoE kernel.  Either way ``decode`` and
+    ``batch`` admit the same pairs, where the dense window routes' two regimes
+    admit different ones.  ``compiled`` therefore changes nothing: the
+    combined ``a+b`` symbol those routes stamp under a traced forward exists
+    because their dispatch BRANCHES inside the graph, and one launch has
+    nothing to combine.  ``family`` selects the stack's family: FP8 (the
+    default) or BF16, whose only launch is the compact lane's folded pair.
+
+    THE SYMBOL CARRIES A SUFFIX THIS ROUTE DOES NOT CHOOSE.  ``_record`` stamps
+    ``vllm.fused_moe.modular_kernel:<backend>`` because which backend ran is a
+    fact about the serve a receipt must not lose -- but the backend is
+    ``select_fp8_moe_backend``'s answer, the RUNTIME's predicate over the
+    kernels it finds on this box, not a promise this route makes.  So the pair
+    below carries the entry point alone and a census compares
+    :func:`census_symbol_base`, keeping the exact string in its histogram.
+    Enumerating the backends we would accept would be a claim about vLLM's
+    kernel roster written in our own prose, which the runtime-attestation rule forbids;
+    pinning one would refuse a box whose runtime picked another.
+
+    DERIVATION IS NOT ATTESTATION. The shared ``scheme.ROUTE_LAUNCHES`` table
+    separates this expert structure from the dense FP8 launch set. Reading
+    that table keeps the census and contract derivations together. It does
+    not itself publish a served cell. The packaged contract's routed E4M3
+    (q256 896) and BF16 (q256 1024) resident/eager cells name their exact
+    image, toolchain and sm_121 scope (contract v38); returning the same
+    expected launch for compiled execution does not attest it.  Since v38 the
+    table carries no materialising launch for FP8 either: this build always
+    publishes the compact reader, so that branch cannot run.
+    """
+    del compiled  # documented above: one launch has nothing to combine
+    if family not in _CENSUS_PAYLOAD_FAMILY:
+        raise KeyError(
+            f"{family!r} has no expert stack on this route ({sorted(_CENSUS_PAYLOAD_FAMILY)}); "
+            "the NVFP4 stack's expectation is nvfp4_moe_route's")
+    # WHAT THE BUILD CAN REALLY LAUNCH, experimental pairs included -- the
+    # rule ``scheme.EXPERIMENTAL_LAUNCHES`` states for every route owner's
+    # census expectation, and the one the dense routes already follow.  This
+    # route used to read the attested view only, which made its expectation
+    # the materialising launch while the dispatch took the compact lane on
+    # every build that publishes the compact reader (tessera#604): a served
+    # compact record could never match, and an expectation that no dispatch
+    # produces is not a comparison.  ATTESTATION IS NOT DECIDED HERE: a record
+    # on an experimental pair is expected by the census and still covered by
+    # no cell (``census.cell_launch_agreement`` joins records to cells, and
+    # ``_validate_cell_executes`` derives a cell's launches from the attested
+    # view only).  The BF16 stack (tessera#609) has exactly one launch, the
+    # compact adapter's FOLDED pair, so its expectation is that pair alone.
+    pairs = {}
+    for launch in route_launches(family, structure=STRUCTURE_ROUTED_MOE,
+                                 mode=MODE_RESIDENT, include_experimental=True):
+        for regime in launch["regimes"]:
+            pairs.setdefault(regime, set()).add((launch["symbol"], launch["decoder"]))
+    # PER ``(platform, family)`` (#457).  The expert stack's payload family is
+    # its dense route's -- same wire, same activation contract -- so a
+    # platform that executes no such route executes none for the experts
+    # either, and ``build_tessera_moe_method`` refuses such a stack at
+    # construction.  ``platform=None`` is unchanged.
+    from .census import platform_expectation
+
+    return platform_expectation(_CENSUS_PAYLOAD_FAMILY[family], platform, pairs)
+
+
+#: The runtime's shard name -> (group, row block).  DERIVED from
+#: ``MOE_GROUP_SHARDS``, so the loader's dispatch and the sidecar's group
+#: vocabulary are one table: ``w1`` is block 0 of ``w13`` because ``w1`` is
+#: first in that group's shard tuple, which is the order
+#: ``RoutedExperts._load_w13`` narrows to.
+SHARD_TO_GROUP: dict[str, tuple[str, int]] = {
+    shard: (group, index)
+    for group, shards in MOE_GROUP_SHARDS.items()
+    for index, shard in enumerate(shards)
+}
+
+
+class PreparedTesseraMoeExperts:
+    """The four stock tensors an expert stack's wires decode to."""
+
+    __slots__ = ("w13_weight", "w2_weight", "w13_weight_scale", "w2_weight_scale")
+
+    def __init__(self, w13_weight, w2_weight, w13_weight_scale, w2_weight_scale):
+        self.w13_weight = w13_weight
+        self.w2_weight = w2_weight
+        self.w13_weight_scale = w13_weight_scale
+        self.w2_weight_scale = w2_weight_scale
+
+    @property
+    def experts(self) -> int:
+        return int(self.w13_weight.shape[0])
+
+
+class PreparedTesseraPackedMoeExperts:
+    """The shared FP8/window owners for both groups, without decoded weights."""
+
+    def __init__(self, first, second):
+        self.__first, self.__second = first, second
+        self.experts, self.device = first.experts, first.device
+
+    def resident_bytes(self) -> int:
+        return self.__first.resident_bytes() + self.__second.resident_bytes()
+
+    def decode(self, expert_ids, *, max_experts_per_chunk, backend="torch") -> PreparedTesseraMoeExperts:
+        return PreparedTesseraMoeExperts(
+            self.__first.decode(expert_ids, max_experts_per_chunk=max_experts_per_chunk, backend=backend).view(torch.float8_e4m3fn),
+            self.__second.decode(expert_ids, max_experts_per_chunk=max_experts_per_chunk, backend=backend).view(torch.float8_e4m3fn),
+            self.__first.row_scale(expert_ids).unsqueeze(-1),
+            self.__second.row_scale(expert_ids).unsqueeze(-1))
+
+
+class PreparedTesseraFoldedBf16MoeExperts:
+    """Selected stock BF16 tiles matching the joint screen's PWC render."""
+
+    def __init__(self, w13_weight, w2_weight):
+        self.w13_weight, self.w2_weight = w13_weight, w2_weight
+
+
+class PreparedTesseraPackedBf16MoeExperts:
+    """Two selected compressed BF16 groups; no resident decoded expert pool."""
+
+    def __init__(self, first, second):
+        self.__first, self.__second = first, second
+        self.experts, self.device = first.experts, first.device
+
+    def resident_bytes(self) -> int:
+        return self.__first.resident_bytes() + self.__second.resident_bytes()
+
+    def decode_folded(self, expert_ids, *, max_experts_per_chunk, backend="torch"):
+        return PreparedTesseraFoldedBf16MoeExperts(
+            self.__first.decode_folded(expert_ids, max_experts_per_chunk=max_experts_per_chunk,
+                                       backend=backend),
+            self.__second.decode_folded(expert_ids, max_experts_per_chunk=max_experts_per_chunk,
+                                        backend=backend))
+
+
+def _parsed_experts(blobs, declared_group, target, device):
+    """One parsing/role-validation seam for resident and research owners."""
+    role_declarations = expert_role_declarations(declared_group)
+    for expert, expert_blobs in enumerate(blobs):
+        if len(expert_blobs) != len(role_declarations):
+            raise ValueError(
+                f"{target} expert {expert}: {len(expert_blobs)} container(s) for "
+                f"{len(role_declarations)} declared projection(s) "
+                f"{[r['roles'][0][0] for r in role_declarations]}")
+        roles = []
+        for blob, role in zip(expert_blobs, role_declarations):
+            roles.extend(parse_tessera_expert_blob(blob, role, f"{target} expert {expert}", device=device))
+        yield roles
+
+
+def _decode_group(blobs: Sequence[Sequence[bytes]], declared_group: Mapping, target: str,
+                  device) -> "tuple[torch.Tensor, torch.Tensor]":
+    """One group's E x P containers -> ``([E, rows, cols] uint8, [E, rows, 1] fp32)``.
+
+    ``blobs[e]`` is that expert's containers in the group's ROW order -- gate
+    then up for ``w13``, down alone for ``w2`` -- which is the order
+    ``RoutedExperts._load_w13`` narrows to, so the stack lands where the
+    kernel reads it.
+
+    The reference decoder (``tessera.decode.materialize_fp8``) is what produces
+    the served bytes here, so -- unlike the dense route, whose forward runs a
+    second, packed-window decoder and must therefore cross-check the two --
+    there is no second decoder to disagree with.  What guards the bytes is the
+    reader: ``parse_unit_artifact`` verifies the manifest and the payload
+    digest from the blob alone before anything is decoded.
+    """
+    from tessera.decode import materialize_fp8
+
+    rows, columns = int(declared_group["rows"]), int(declared_group["columns"])
+    weights, scales = [], []
+    for expert, roles in enumerate(_parsed_experts(blobs, declared_group, target, device)):
+        role_w, role_s = [], []
+        for _name, parsed in roles:
+            tile, scale = materialize_fp8(parsed.unit, parsed.forests, parsed.code)
+            role_w.append(tile.to(device))
+            role_s.append(scale.to(device, torch.float32).reshape(-1))
+        weight = torch.cat(role_w, 0) if len(role_w) > 1 else role_w[0]
+        scale = torch.cat(role_s, 0) if len(role_s) > 1 else role_s[0]
+        if tuple(weight.shape) != (rows, columns):
+            raise ValueError(
+                f"{target} expert {expert}: the group's roles decode to {tuple(weight.shape)}, "
+                f"the sidecar declares ({rows}, {columns})")
+        weights.append(weight)
+        scales.append(scale)
+    return torch.stack(weights, 0), torch.stack(scales, 0).unsqueeze(-1)
+
+
+def _require_expert_groups(blobs, declared, target):
+    experts = int(declared["experts"])
+    for group in MOE_GROUPS:
+        if len(blobs[group]) != experts:
+            raise ValueError(
+                f"{target}: group {group!r} carries {len(blobs[group])} expert row(s) for "
+                f"{experts} experts; every expert must have its own row of projection containers")
+
+
+def _packed_group_shard_plan(declared, group, target, tp_rank, tp_size):
+    from .sharding import plan_shard
+
+    hidden, inter = int(declared['hidden_size']), int(declared['intermediate_size'])
+    local_inter = inter // tp_size
+    declaration = declared['groups'][group]
+    first = group == 'w13'
+    return plan_shard(f"{target}.{group}", roles=declaration['roles'],
+            columns=int(declaration['columns']),
+            out_partitions=[local_inter, local_inter] if first else [hidden],
+            in_size=hidden if first else local_inter, tp_rank=tp_rank, tp_size=tp_size,
+            input_size=hidden if first else inter, output_size=2 * inter if first else hidden)
+
+
+def prepare_tessera_packed_moe_experts(blobs, declared, target, device=None, *, tp_rank=0, tp_size=1):
+    """Research load: validate original containers into existing packed owners.
+
+    Each expert is placed on its group's expert axis as soon as it is
+    prepared, and the axis checks layout compatibility as ``stack`` does.
+    Per-expert bodies/scales/alphabets may differ; heterogeneous gather
+    layouts refuse. TP2 validates each original full container before the
+    existing dense shard planner/slicer derives rank-local roles. Global
+    expert IDs are unchanged. Only a transient per-role FP8 reference is
+    materialized during preparation.
+    """
+    from .fp8_route import PreparedTesseraFp8Module, prepare_tessera_fp8_module
+    from .sharding import shard_parsed_roles
+
+    if type(tp_size) is not int or tp_size not in (1, 2):
+        raise ValueError(f"{target}: research packed experts cover TP1 or TP2 only")
+    if type(tp_rank) is not int or not 0 <= tp_rank < tp_size:
+        raise ValueError(f"{target}: invalid research tensor-parallel rank")
+    inter = int(declared["intermediate_size"])
+    if inter % tp_size:
+        raise ValueError(f"{target}: intermediate size must divide the tensor-parallel size")
+    device = torch.device("cuda" if device is None else device)
+    _require_expert_groups(blobs, declared, target)
+    prepared = {}
+    for group in MOE_GROUPS:
+        declaration = declared['groups'][group]
+        plan = _packed_group_shard_plan(declared, group, target, tp_rank, tp_size)
+        axis = PreparedTesseraFp8Module.axis(len(blobs[group]))
+        for expert, roles in enumerate(_parsed_experts(blobs[group], declaration,
+                                                       f"{target} {group}", device)):
+            axis.put(expert, prepare_tessera_fp8_module(shard_parsed_roles(roles, plan),
+                                                        device=device))
+        prepared[group] = axis.finish()
+    return PreparedTesseraPackedMoeExperts(prepared['w13'], prepared['w2'])
+
+
+def prepare_tessera_packed_bf16_moe_experts(blobs, declared, target, device=None,
+                                            *, tp_rank=0, tp_size=1):
+    """Research-only selected BF16 owner over original verified expert wires.
+
+    The selected folded tile matches ``read_unit_artifact(...).to(bfloat16)``,
+    the current PrismaQuant joint screen. It is distinct from Tessera's dense
+    BF16 route, which applies row scale after the GEMM instead.
+    """
+    from .bf16_route import PreparedTesseraBf16Module, prepare_tessera_bf16_module
+    from .sharding import shard_parsed_roles
+
+    if type(tp_size) is not int or tp_size not in (1, 2):
+        raise ValueError(f"{target}: research packed BF16 experts cover TP1 or TP2 only")
+    if type(tp_rank) is not int or not 0 <= tp_rank < tp_size:
+        raise ValueError(f"{target}: invalid research tensor-parallel rank")
+    inter = int(declared["intermediate_size"])
+    if inter % tp_size:
+        raise ValueError(f"{target}: intermediate size must divide the tensor-parallel size")
+    device = torch.device("cuda" if device is None else device)
+    _require_expert_groups(blobs, declared, target)
+    prepared = {}
+    for group in MOE_GROUPS:
+        declaration = declared['groups'][group]
+        plan = _packed_group_shard_plan(declared, group, target, tp_rank, tp_size)
+        axis = PreparedTesseraBf16Module.axis(len(blobs[group]))
+        for expert, roles in enumerate(_parsed_experts(blobs[group], declaration,
+                                                       f"{target} {group}", device)):
+            axis.put(expert, prepare_tessera_bf16_module(shard_parsed_roles(roles, plan),
+                                                         device=device))
+        prepared[group] = axis.finish()
+    return PreparedTesseraPackedBf16MoeExperts(prepared['w13'], prepared['w2'])
+
+
+def _compact_role_units(blob, declared_role, target, device):
+    """The shared compact-reader boundary, called by its assigned name.
+
+    ``scheme.parse_compact_tessera_expert_blob(blob, declared_role, target,
+    device=...) -> [(role, CompactWire)]`` with the same signature and
+    refusals as ``parse_tessera_expert_blob``.  Until the loader owner
+    publishes it this raises by name; tests monkeypatch THIS seam (never a
+    copy of the wire validation).
+    """
+    from . import scheme as _scheme
+
+    reader = getattr(_scheme, "parse_compact_tessera_expert_blob", None)
+    if reader is None:
+        raise GrammarError(
+            "the shared compact reader scheme.parse_compact_tessera_expert_blob "
+            "is not published yet; the loader owner owns it and a route falls "
+            "back to the materialising parser until then"
+        )
+    return reader(blob, declared_role, target, device=device)
+
+
+def _compact_expert_units(blob, declared_role, plan, target, *, device, family,
+                          scratch=None):
+    """ONE projection container -> this rank's ``(role, WindowGemvUnit)``.
+
+    Each load callback carries one projection, so the boundary must return
+    exactly one role and it must be the declared member; the plan's own cut
+    is applied through ``prepare_window_compact`` (via the dense lane's
+    ``_role_cut``, one home for the plan-to-cut mapping), which validates it
+    with ``slicing``'s predicates.  Tests mock this seam while the boundary is
+    unpublished; no wire validation is duplicated here.
+    """
+    from ..compact_prep import prepare_window_compact
+    from .native_window import _role_cut
+
+    roles = _compact_role_units(blob, declared_role, target, device)
+    declared = declared_role["roles"][0][0]
+    if len(roles) != 1 or roles[0][0] != declared:
+        raise ValueError(
+            f"{target}: the projection container carries "
+            f"{[name for name, _ in roles]} roles; this callback declared the "
+            f"single projection {declared!r}")
+    name, wire = roles[0]
+    return name, prepare_window_compact(
+        wire, device=device, family=family, scratch=scratch,
+        **_role_cut(plan, name))
+
+
+class _RankLocalPackedIntake:
+    """TP2 loader ownership: one validated original becomes one local packed role.
+
+    The role is placed on its group's expert axis inside its own load callback
+    (tessera#501): the axis allocates each stacked tensor once, at a part's
+    first placement, so no per-expert owner outlives its callback and
+    ``finish`` copies no packed plane.  vLLM finishes only after every layer
+    has loaded, so per-expert owners held to ``finish`` stacked the whole
+    model's routed experts twice over, in E small allocations per tensor.
+    """
+
+    def __init__(self, declared, target, device, tp_rank, tp_size, *, compact=None):
+        self.declared, self.target, self.device = declared, target, device
+        self.family = declared['family']
+        if self.family not in (TESSERA_FP8, TESSERA_BF16):
+            raise ValueError(f"{target}: selected packed intake has no {self.family} decoder")
+        from . import scheme as _scheme
+
+        if compact is None:
+            compact = getattr(_scheme, "parse_compact_tessera_expert_blob", None) is not None
+        self.compact = bool(compact)
+        self.plans = {g: _packed_group_shard_plan(declared, g, target, tp_rank, tp_size)
+                      for g in MOE_GROUPS}
+        self.roles = {g: expert_role_declarations(declared['groups'][g]) for g in MOE_GROUPS}
+        self._has_loaded = False
+        self._scratch = {}  # one BODY transfer buffer per owning routed stack
+        self.axis = {}
+        if self.compact:
+            if len(self.roles['w13']) != 2:
+                raise ValueError(
+                    f"{target}: the compact routed path stacks gate and up per expert; "
+                    f"w13 declares {len(self.roles['w13'])} roles"
+                )
+            from ..native_window_moe import WindowUnitAxis
+
+            window_family = "value" if self.family == TESSERA_BF16 else "e4m3"
+            self.axis = {g: WindowUnitAxis(
+                int(declared['experts']),
+                tuple(str(role['roles'][0][0]) for role in self.roles[g]),
+                family=window_family) for g in MOE_GROUPS}
+            self.axes = {g: None for g in MOE_GROUPS}
+        else:
+            from .bf16_route import PreparedTesseraBf16Module
+            from .fp8_route import PreparedTesseraFp8Module
+
+            module_type = (PreparedTesseraFp8Module if self.family == TESSERA_FP8
+                           else PreparedTesseraBf16Module)
+            self.axes = {g: module_type.axis(int(declared['experts']), parts=len(self.roles[g]))
+                         for g in MOE_GROUPS}
+
+    def placed_projections(self) -> int:
+        """How many rank-local projections the load callbacks have placed."""
+        if self.compact:
+            return sum(axis.filled() for axis in self.axis.values())
+        return sum(axis.placed() for axis in self.axes.values() if axis is not None)
+
+    def resident_bytes(self) -> int:
+        """Device bytes the intake holds (packed constants, no decoded tiles)."""
+        if self.compact:
+            return sum(axis.resident_bytes() for axis in self.axis.values())
+        return sum(axis.resident_bytes() for axis in self.axes.values() if axis is not None)
+
+    def load(self, group, index, expert, wire, *, device):
+        from .sharding import shard_parsed_roles
+
+        device = torch.device(device)
+        if self._has_loaded and device != self.device:
+            raise ValueError(f'{self.target}: packed intake cannot change device after loading starts')
+        self.device = device
+        # Parse the FULL incoming container before cutting; the shared parser
+        # validates its digest, geometry, role and recipe against the sidecar.
+        blob = wire.detach().cpu().contiguous().numpy().tobytes()
+        target = f'{self.target} {group} expert {expert}'
+        if self.compact:
+            if device.type != "cuda":
+                raise ValueError(
+                    f"{target}: the native compact window lane builds its packed planes "
+                    f"with CUDA kernels and requires a CUDA load device; got {device}. "
+                    "A CPU load is not a supported production device for this lane")
+            family = "value" if self.family == TESSERA_BF16 else "e4m3"
+            name, unit = _compact_expert_units(
+                blob, self.roles[group][index], self.plans[group], target,
+                device=device, family=family, scratch=self._scratch)
+            # The axis allocates each plane stack once and drops this unit as
+            # soon as its expert slot is filled; a repeated callback refuses.
+            self.axis[group].put(name, expert, unit)
+            self._has_loaded = True
+            return
+        parsed = parse_tessera_expert_blob(blob, self.roles[group][index], target, device=self.device)
+        local = shard_parsed_roles(parsed, self.plans[group])
+        from .bf16_route import prepare_tessera_bf16_module
+        from .fp8_route import prepare_tessera_fp8_module
+
+        prepare = (prepare_tessera_fp8_module if self.family == TESSERA_FP8
+                   else prepare_tessera_bf16_module)
+        # The axis copies the planes into their slot; this projection's own
+        # allocation is released when the callback returns.
+        self.axes[group].put(expert, prepare(local, device=self.device), part=index)
+        self._has_loaded = True
+
+    def finish(self, w13_lengths, w2_lengths):
+        validate_moe_wire_lengths(w13_lengths, w2_lengths,
+            experts=self.declared['experts'],
+            stride13=self.declared['groups']['w13']['wire_stride'],
+            stride2=self.declared['groups']['w2']['wire_stride'])
+        if self.compact:
+            from ..native_window_moe import PackedWindowMoeBundles
+            from ..window_gemm_grouped import prepare_grouped_window_gemm_from_soa
+
+            family = "value" if self.family == TESSERA_BF16 else "e4m3"
+            arithmetic = "folded" if self.family == TESSERA_BF16 else "epilogue"
+            soa = {g: self.axis[g].finish() for g in MOE_GROUPS}
+            self._scratch.clear()  # every role now lives in its packed axis
+            names = {g: [str(role['roles'][0][0]) for role in self.roles[g]] for g in MOE_GROUPS}
+
+            def bundle(group, part):
+                slot = soa[group][part]
+                return prepare_grouped_window_gemm_from_soa(
+                    words_all=slot["words"], table_all=slot["table"],
+                    codes_all=slot["codes"], native_all=slot["native"],
+                    scale_all=slot["scale"], runs_all=slot["runs"],
+                    init_all=slot["init"], has_init=slot["has_init"],
+                    word_off=slot["word_off"], tile_words=slot["tile_words"],
+                    total_words=slot["total_words"], run_off=slot["run_off"],
+                    perm_all=slot["perm"], rows=slot["rows"], cols=slot["cols"],
+                    experts=int(self.declared['experts']),
+                    window_bits=slot["window_bits"], family=family,
+                    arithmetic=arithmetic)
+
+            self.axis = {}
+            return PackedWindowMoeBundles(
+                gate=bundle('w13', names['w13'][0]), up=bundle('w13', names['w13'][1]),
+                down=bundle('w2', names['w2'][0]), family=family)
+        groups = {}
+        for group in MOE_GROUPS:
+            # Joins gate and up as ``concatenate`` did, then hands over the
+            # axis's tensors: nothing packed is copied here.
+            groups[group] = self.axes[group].finish()
+            self.axes[group] = None
+        owner_type = (PreparedTesseraPackedMoeExperts if self.family == TESSERA_FP8
+                      else PreparedTesseraPackedBf16MoeExperts)
+        return owner_type(groups['w13'], groups['w2'])
+
+
+def prepare_tessera_moe_experts(blobs: Mapping[str, Sequence[Sequence[bytes]]],
+                                declared: Mapping, target: str,
+                                device=None) -> PreparedTesseraMoeExperts:
+    """``{"w13": [[gate, up]]*E, "w2": [[down]]*E}`` -> the stock per-channel FP8 stack.
+
+    ``declared`` is ``validate_tessera_moe_scheme``'s output.  Every blob is
+    parsed against its group's declaration (grid, body, plane, span, roles,
+    per-role rung, geometry) before a byte is decoded, so a container that is
+    not what the sidecar promised is a refusal rather than a wrong tile.
+    """
+    device = torch.device("cuda" if device is None else device)
+    _require_expert_groups(blobs, declared, target)
+    w13, w13_scale = _decode_group(blobs["w13"], declared["groups"]["w13"], f"{target} w13", device)
+    w2, w2_scale = _decode_group(blobs["w2"], declared["groups"]["w2"], f"{target} w2", device)
+    return PreparedTesseraMoeExperts(
+        w13_weight=w13.view(torch.float8_e4m3fn), w2_weight=w2.view(torch.float8_e4m3fn),
+        w13_weight_scale=w13_scale, w2_weight_scale=w2_scale)
+
+
+def _bind_module_prefix(layer, prefix: str) -> bool:
+    """Give the routed experts layer the module identity its trace needs.
+
+    The route trace names a module by ``layer.prefix`` (``telemetry.py``,
+    ``_RouteTrace.count``), and this layer arrives WITHOUT one: vLLM's fused
+    MoE takes ``prefix`` as a constructor argument and stores no attribute, so
+    every routed dispatch was counted UNNAMED -- ``module_names: []``,
+    ``unnamed_modules: 1``, per entry.  That is a missing module identity, not
+    an observed collapse: in the one traced fixture the two routed layers carry
+    DIFFERENT policies (``TESSERA_FP8`` on L3, ``TESSERA_BF16`` on L4), so the
+    entry key separated them by accident.  Nothing guarantees it.  Entries are
+    keyed by policy, shape, symbol, decoder and contract, so two routed modules
+    of the SAME policy and shape share ONE ENTRY -- and that entry's identity is
+    then names-only.  The count does NOT collapse: unnamed objects are still
+    counted per distinct private ``id`` (``telemetry.py``), so two live unnamed
+    modules read ``modules=2`` with ``unnamed_modules=2`` and an empty
+    ``module_names``.  What is lost is which module each was, not how many ran;
+    per-module qualification fails because the names are missing, and a lane
+    policy is not a substitute for them.
+
+    The builder is handed the module's real name and already prints it in every
+    refusal here, so that is the identity it binds -- and ONLY where the layer
+    has no name of its own.  A legitimate ``layer.prefix`` that vLLM set (the
+    dense ``LinearBase`` path does set one) is somebody else's fact: it is
+    preserved, never overwritten, and never merged with ours.
+
+    Returns True when this call wrote the name.
+    """
+    if not isinstance(prefix, str) or not prefix:
+        return False
+    existing = getattr(layer, "prefix", None)
+    if existing not in (None, ""):
+        return False
+    try:
+        layer.prefix = prefix
+    except (AttributeError, TypeError):  # a slotted/immutable layer: no name
+        return False
+    return True
+
+
+def compact_window_lane(family: str, compact_ready: bool, *, tp_size: int,
+                        research_selected) -> bool:
+    """ONE home for the routed window lane's own predicate.
+
+    The construction-time identity (``native_route``) and the loader's
+    ownership (``incremental``) are one question asked in two places, and for
+    every input this builder can be reached with the two said the same thing.
+    What their shared rule did NOT do was admit the compact lane below TP2 for
+    BF16: a research-selected A16 stack at TP1 was constructed non-native --
+    straight into the materialising branch and vLLM's backend oracle
+    (``moe_route.py:738``) -- while nothing filled a compact lane for it.  One
+    home now answers both call sites, and the A16 arm admits TP1 as well as
+    TP2, so the identity and the intake cannot be moved apart.  Whoever moves
+    this rule moves it here.
+
+    Both window families take the compact lane at every world size: the
+    shared reader cuts its windows per rank and the wire is TP-agnostic.  FP8
+    runs the epilogue arithmetic there and BF16 the folded one (the bundle's
+    contract, ``_RankLocalPackedIntake.finish``).  Compressed BF16 became a
+    production expert family in tessera#609 (``scheme.MOE_BUILDERS``); before
+    that its only admission was an explicit research-selected config, which
+    still takes this lane and whose own parallel contract still accepts TP1
+    and TP2 only (``_require_research_parallel_contract`` refuses anything
+    else).  ``compact_ready`` is whether this build publishes the shared
+    reader; without it nothing takes the compact lane, the FP8 route keeps its
+    materialising branch, and a production BF16 stack refuses at construction
+    because there is no materialising BF16 expert path.
+    """
+    # ``research_selected`` and ``tp_size`` stay in the signature because both
+    # call sites ask with them, but neither decides admission any more: the
+    # research route's TP1/TP2 contract is that route's own refusal.
+    del research_selected, tp_size
+    if not compact_ready:
+        return False
+    # Another family's stack belongs to its own builder (``scheme.MOE_BUILDERS``
+    # names each family's route); this lane serves the two window families
+    # only, and an unsupported family answers False rather than being refused
+    # here -- whatever refuses it by name does so where the family is decided.
+    return family in (TESSERA_FP8, TESSERA_BF16)
+
+
+def _require_eager_selected_context(config, prefix):
+    """Keep model and explicit standalone operator eager evidence distinct."""
+    model=getattr(config,"model_config",None)
+    if model is not None:
+        if getattr(model,"enforce_eager",None) is not True:
+            raise ValueError(f"{prefix}: research selected experts require enforce_eager")
+        return
+    # The native whole-operator factory has no ModelConfig: it never loads a
+    # model. Its real CompilationConfig explicitly disables both compilation
+    # and graph capture. Do not invent a ModelConfig merely to pass this gate.
+    from vllm.config.compilation import CompilationMode, CUDAGraphMode
+    compilation=getattr(config,"compilation_config",None)
+    if (compilation is None or getattr(compilation,"mode",None) is not CompilationMode.NONE
+            or getattr(compilation,"cudagraph_mode",None) is not CUDAGraphMode.NONE):
+        raise ValueError(f"{prefix}: standalone research selected experts require explicit eager compilation and no CUDA graphs")
+
+
+def build_tessera_moe_method(scheme: Mapping, prefix: str, mode: str, layer, *,
+                             research_selected: ResearchSelectedMoeConfig | None = None):
+    """Construct the vLLM fused-MoE method serving a Tessera expert stack.
+
+    ``layer`` is the ``RoutedExperts`` being built: its ``moe_config`` is what
+    the runtime's backend oracle is asked about, so it is a constructor
+    argument rather than something read back later.
+    """
+    if mode not in MODES:
+        raise ValueError(f"unknown residency mode {mode!r}")
+    if research_selected is not None and not isinstance(research_selected, ResearchSelectedMoeConfig):
+        raise ValueError("research_selected requires an explicit ResearchSelectedMoeConfig")
+    declared = validate_tessera_moe_scheme(scheme, prefix)
+    family = declared["family"]
+    _bind_module_prefix(layer, prefix)
+    from .scheme import refuse_a_family_with_no_expert_route
+    refuse_a_family_with_no_expert_route(family, prefix)
+    # THE PLATFORM GATE FOR THE EXPERT ROUTE (#457), asked here rather than in
+    # ``config.get_quant_method`` so that both builders -- dense and expert --
+    # are gated at their own front door and neither can be reached past it.
+    # It sits AFTER the no-expert-route refusal because that one is the
+    # narrower and more useful message (a family with no builder has none on
+    # ANY platform), and BEFORE the vLLM fused-MoE imports below, which is
+    # what "before any HIP kernel is touched" means on this path.
+    from .backend import require_platform_backs
+    from .contract import PAYLOAD_FAMILY_BY_ROUTE
+    from .telemetry import record_platform
+
+    payload_family = PAYLOAD_FAMILY_BY_ROUTE.get(family)
+    if payload_family is not None:
+        require_platform_backs(payload_family, f"tessera target {prefix!r}")
+    record_platform()   # latched eagerly: see lane.build_tessera_method
+    if mode != MODE_RESIDENT:
+        raise ValueError(
+            f"tessera target {prefix!r}: the expert route serves {MODE_RESIDENT!r} only. A "
+            f"streamed expert stack would decode E x 2 containers inside every forward, which "
+            "is a different kernel story than the dense streamed route's and carries no "
+            "measurement; refusing is what keeps 'streamed' meaning one thing.")
+
+    from vllm.model_executor.layers.fused_moe.fused_moe_method_base import FusedMoEMethodBase
+    from vllm.model_executor.layers.fused_moe.oracle.fp8 import (
+        convert_to_fp8_moe_kernel_format, make_fp8_moe_kernel, make_fp8_moe_quant_config,
+        select_fp8_moe_backend)
+    from vllm.model_executor.layers.quantization.utils.quant_utils import (
+        kFp8DynamicTokenSym, kFp8StaticChannelSym)
+    from vllm.model_executor.utils import replace_parameter, set_weight_attrs
+
+    groups = declared["groups"]
+
+    class TesseraMoEMethod(FusedMoEMethodBase):
+        """Per-channel FP8 W8A8 routed experts, decoded from Tessera wires."""
+
+        def __init__(self, moe) -> None:
+            super().__init__(moe)
+            self._mode = mode if research_selected is None else 'research_selected'
+            self._research_phase = 'new'
+            self._packed = None
+            self._native = None
+            self._rank_local_intake = None
+            if research_selected is not None:
+                from vllm.config import get_current_vllm_config
+                _require_eager_selected_context(get_current_vllm_config(), prefix)
+                self._require_research_parallel_contract()
+            self._tp_size = (int(moe.moe_parallel_config.tp_size) if research_selected is None
+                             else research_selected.expected_tensor_parallel_size)
+            self._tp_rank = int(moe.moe_parallel_config.tp_rank)
+            if not moe.is_act_and_mul:
+                raise ValueError(
+                    f"tessera target {prefix!r}: this MoE is not gated (is_act_and_mul is "
+                    "False), so its w13 is one shard rather than the gate/up pair the "
+                    "sidecar's groups describe. Refusing rather than loading a pair into a "
+                    "single-shard tile.")
+            # The runtime picks the backend, from the runtime's own predicate,
+            # for the keys this route's tile actually is -- but only when the
+            # legacy stock-kernel path will run.  The compact native route
+            # never asks the stock kernel for anything.
+            from . import scheme as _scheme
+            self._compact_ready = getattr(
+                _scheme, "parse_compact_tessera_expert_blob", None) is not None
+            native_route = compact_window_lane(
+                family, self._compact_ready, tp_size=self._tp_size,
+                research_selected=research_selected)
+            if not native_route:
+                if family == TESSERA_BF16:
+                    if research_selected is None:
+                        raise ValueError(
+                            f"{prefix}: a production TESSERA_BF16 expert stack is served only "
+                            "on the compact native window lane, and this build publishes no "
+                            "compact reader (scheme.parse_compact_tessera_expert_blob). There "
+                            "is no materialising BF16 expert path to fall back to, and "
+                            "serving one would be a different arithmetic, not a slower copy "
+                            "of this one.")
+                    if self.moe.has_bias:
+                        raise ValueError(f"{prefix}: research selected BF16 experts do not cover MoE biases")
+                    from vllm.model_executor.layers.fused_moe.oracle.unquantized import (
+                        UnquantizedMoeBackend, select_unquantized_moe_backend)
+                    self.bf16_backend, self.experts_cls = select_unquantized_moe_backend(moe_config=self.moe)
+                    if self.bf16_backend != UnquantizedMoeBackend.TRITON or self.experts_cls.is_monolithic():
+                        raise ValueError(f"{prefix}: research selected BF16 expert mapping covers stock TRITON only")
+                else:
+                    self.fp8_backend, self.experts_cls = select_fp8_moe_backend(
+                        config=self.moe, weight_key=kFp8StaticChannelSym,
+                        activation_key=kFp8DynamicTokenSym, allow_vllm_cutlass=True)
+                    if research_selected is not None:
+                        from vllm.model_executor.layers.fused_moe.oracle.fp8 import Fp8MoeBackend
+                        if self.fp8_backend != Fp8MoeBackend.TRITON or self.experts_cls.is_monolithic():
+                            raise ValueError(f"{prefix}: research selected expert mapping covers stock TRITON FP8 only")
+            else:
+                self.fp8_backend = self.bf16_backend = self.experts_cls = None
+            # PERSIST THE NATIVE-MODE IDENTITY.  The runtime reads the modular
+            # protocol from the method itself; deriving those answers from
+            # ``self._native`` (set only in process_weights_after_loading) would
+            # leave the construction-time window -- which is when the runner
+            # asks -- delegating to an ``experts_cls`` this route does not own.
+            # It is set here, from the same predicate that chose the branch, so
+            # the ordinary native FP8 route and the research-selected route get
+            # the same explicit answers.
+            self._native_mode = bool(native_route)
+
+        # -- the native modular protocol, stated explicitly -----------------
+        # (Mirrors the A4 route's overrides.  The base properties answer from
+        # ``self.experts_cls``, which the native branch pins to None and the
+        # stock branch selects; delegating when a stock class exists keeps the
+        # legacy path's real behaviour rather than pretending it is native.)
+        @property
+        def is_monolithic(self) -> bool:
+            """Modular on the native route; the stock class answers otherwise.
+
+            Regression: the engine's MoE runner asks this from ``_forward_impl``
+            during ``profile_run``, and the base property returns
+            ``self.experts_cls.is_monolithic()`` -- an AttributeError on
+            ``None`` for a native route.  Attempt mixed514-a5 loaded its
+            weights and died there, in warm-up, with the engine never coming up.
+            """
+            if self._native_mode:
+                return False
+            return super().is_monolithic
+
+        @property
+        def topk_indices_dtype(self) -> "torch.dtype | None":
+            """The native route consumes the router's own ids as given."""
+            if self._native_mode:
+                return None
+            return super().topk_indices_dtype
+
+        @property
+        def mk_can_overlap_shared_experts(self) -> bool:
+            """The runner owns shared experts here; no MK overlap to claim."""
+            if self._native_mode:
+                return False
+            return super().mk_can_overlap_shared_experts
+
+        def _require_research_parallel_contract(self):
+            parallel = self.moe.moe_parallel_config
+            expected_tp = research_selected.expected_tensor_parallel_size
+            if (type(parallel.tp_size) is not int or parallel.tp_size != expected_tp
+                    or any(type(getattr(parallel, field, None)) is not int
+                           or getattr(parallel, field) != 1
+                           for field in ('ep_size', 'dp_size', 'pcp_size', 'sp_size'))
+                    or type(getattr(parallel, 'tp_rank', None)) is not int
+                    or not 0 <= parallel.tp_rank < expected_tp
+                    or getattr(parallel, 'use_ep', None) is not False
+                    or getattr(parallel, 'enable_eplb', None) is not False):
+                raise ValueError(f"{prefix}: research selected experts require explicit "
+                                 f"TP{expected_tp}/EP1/DP1/PCP1/SP1, a valid rank, and no EP/EPLB")
+            if getattr(self.moe, 'defer_moe_finalize', False):
+                raise ValueError(f"{prefix}: research selected experts refuse deferred finalize")
+            if expected_tp > 1 and getattr(self.moe, 'skip_final_all_reduce', False):
+                raise ValueError(f"{prefix}: research selected TP2 requires stock final all-reduce")
+
+        @property
+        def supports_eplb(self) -> bool:
+            # EPLB adds redundant physical experts, so the parameter holds more
+            # rows than the sidecar declares and the stride invariant has no
+            # expert to check.  Say no rather than half-serve.
+            return False
+
+        # -- load -------------------------------------------------------
+        def create_weights(self, layer, num_experts, hidden_size,
+                           intermediate_size_per_partition, params_dtype, **extra):
+            if research_selected is not None and self._research_phase != 'new':
+                raise RuntimeError(f"{prefix}: research owner is already constructed")
+            experts = int(declared["experts"])
+            global_experts = int(extra.get("global_num_experts", num_experts))
+            if int(num_experts) != experts or global_experts != experts:
+                raise ValueError(
+                    f"tessera target {prefix!r}: this rank holds {num_experts} of "
+                    f"{global_experts} experts and the sidecar declares {experts}. The wire "
+                    "stride is the maximum over EVERY expert's blob, so a rank holding a "
+                    "subset cannot check it -- expert parallelism is refused here rather "
+                    "than served on an unverifiable stride.")
+            if int(hidden_size) != int(declared["hidden_size"]):
+                raise ValueError(
+                    f"tessera target {prefix!r}: vLLM builds hidden_size="
+                    f"{hidden_size}, the sidecar declares {declared['hidden_size']}")
+            full_intermediate = int(declared["intermediate_size"])
+            if (full_intermediate % self._tp_size
+                    or int(intermediate_size_per_partition) != full_intermediate // self._tp_size):
+                raise ValueError(
+                    f"tessera target {prefix!r}: this rank's intermediate size is "
+                    f"{intermediate_size_per_partition} and the sidecar declares "
+                    f"{declared['intermediate_size']} at the explicit TP{self._tp_size}. "
+                    "Runtime padding or a cut outside that research contract is refused.")
+            n_cols = full_intermediate // self._tp_size
+            n_rows, k = 2 * n_cols, int(declared["hidden_size"])
+
+            # The wires: one padded row per (expert, projection), the group's
+            # declared stride wide, each with its own loader.  The compact
+            # intake replaces the padded staging wherever the shared reader is
+            # published -- the same predicate the constructor used, so the
+            # identity and the intake cannot disagree.
+            incremental = compact_window_lane(
+                family, self._compact_ready, tp_size=self._tp_size,
+                research_selected=research_selected)
+            if incremental:
+                # Stock constructs every owner before loading any weight. Keep
+                # loader names/device anchors, without full-checkpoint staging.
+                w13_wire = torch.nn.Parameter(torch.empty(0, dtype=torch.uint8), requires_grad=False)
+                w2_wire = torch.nn.Parameter(torch.empty(0, dtype=torch.uint8), requires_grad=False)
+                self._rank_local_intake = _RankLocalPackedIntake(
+                    declared, prefix, w13_wire.device, self._tp_rank, self._tp_size)
+            else:
+                w13_wire = torch.nn.Parameter(
+                    torch.zeros(experts, W13_PROJECTIONS, int(groups["w13"]["wire_stride"]),
+                                dtype=torch.uint8), requires_grad=False)
+                w2_wire = torch.nn.Parameter(
+                    torch.zeros(experts, int(groups["w2"]["wire_stride"]), dtype=torch.uint8),
+                    requires_grad=False)
+            layer.register_parameter("w13_wire", w13_wire)
+            layer.register_parameter("w2_wire", w2_wire)
+            set_weight_attrs(w13_wire, {"weight_loader": self._load_wire})
+            set_weight_attrs(w2_wire, {"weight_loader": self._load_wire})
+            # NOT parameters: no checkpoint tensor fills them.  They are what
+            # the loader learned from the blobs it was handed, and
+            # ``unpack_moe_wires`` checks them against the declared stride.
+            layer.tessera_w13_wire_len = torch.zeros(experts, W13_PROJECTIONS, dtype=torch.long)
+            layer.tessera_w2_wire_len = torch.zeros(experts, dtype=torch.long)
+            # The loader is handed a parameter, not a layer, so it reaches the
+            # length companions through the method that registered them.
+            self._w13_len = layer.tessera_w13_wire_len
+            self._w2_len = layer.tessera_w2_wire_len
+            self._wire_ids = {'w13': id(w13_wire), 'w2': id(w2_wire)}
+
+            # The tile, allocated at create time exactly as the stock
+            # per-channel method allocates it, so what the kernel sees is the
+            # runtime's own parameter set and ``replace_parameter`` has
+            # something to replace -- ON THE MATERIALISING BRANCH ONLY.  The
+            # compact lane never reads it (``process_weights_after_loading``
+            # dropped it unused), and vLLM constructs every layer before it
+            # loads any weight, so allocating it here held a full fp8 tile per
+            # routed layer at once: ~10.9 GB per layer for a 288-expert,
+            # 6144-hidden, 2048-intermediate stack at TP1 (tessera#609).  The
+            # research route already skipped it and serves.
+            if research_selected is None and not incremental:
+                for name, shape in (("w13_weight", (experts, n_rows, k)),
+                                    ("w2_weight", (experts, k, n_cols))):
+                    layer.register_parameter(name, torch.nn.Parameter(
+                        torch.empty(*shape, dtype=torch.float8_e4m3fn), requires_grad=False))
+                for name, shape in (("w13_weight_scale", (experts, n_rows, 1)),
+                                    ("w2_weight_scale", (experts, k, 1))):
+                    layer.register_parameter(name, torch.nn.Parameter(
+                        torch.ones(*shape, dtype=torch.float32), requires_grad=False))
+            layer.w13_input_scale = None
+            layer.w2_input_scale = None
+            layer.tessera_mode = self._mode
+            layer.tessera_family = family
+            layer.tessera_structure = declared["structure"]
+            layer.tessera_activation_contract = ROUTES[family]["activation_contract"]
+            layer.tessera_rows = n_rows
+            layer.tessera_columns = k
+            self._research_phase = 'loading'
+
+        def _load_wire(self, param, loaded_weight, weight_name, shard_id, expert_id,
+                       return_success: bool = False):
+            """Validate and retain one projection, slicing TP2 during intake.
+
+            ``RoutedExperts.load_weights`` calls ``param.weight_loader`` with
+            these keywords; the stack's own ``weight_loader`` would return
+            ``False`` here on the substring test and write nothing, which is
+            why the parameter carries this one.
+            """
+            group, index = SHARD_TO_GROUP.get(str(shard_id), (None, None))
+            if group is None:
+                raise ValueError(
+                    f"tessera target {prefix!r}: shard_id {shard_id!r} is not one of the "
+                    f"shards the expert groups hold ({sorted(SHARD_TO_GROUP)})")
+            if research_selected is not None:
+                if self._research_phase != 'loading':
+                    raise RuntimeError(f"{prefix}: research owner is not loading ({self._research_phase})")
+                if type(expert_id) is not int or not 0 <= expert_id < int(declared['experts']):
+                    raise ValueError(f"{prefix}: invalid global expert ID {expert_id!r}")
+                if id(param) != self._wire_ids[group]:
+                    raise ValueError(f"{prefix}: wire parameter does not belong to group {group}")
+                previous = self._w13_len[expert_id, index] if group == 'w13' else self._w2_len[expert_id]
+                if int(previous) != 0:
+                    raise ValueError(f"{prefix}: expert {expert_id} shard {shard_id} already loaded")
+            blob = loaded_weight.reshape(-1)
+            if blob.dtype != torch.uint8:
+                raise ValueError(
+                    f"tessera target {prefix!r} expert {expert_id} {shard_id}: a Tessera wire "
+                    f"is uint8 bytes, the checkpoint holds {blob.dtype}")
+            length = int(blob.numel())
+            stride = int(groups[group]["wire_stride"])
+            if length == 0 or length > stride:
+                raise ValueError(
+                    f"tessera target {prefix!r} expert {expert_id} {shard_id}: a {length}-byte "
+                    f"wire does not fit the group's declared wire_stride={stride}; the sidecar "
+                    "and the bytes disagree about the row width")
+            if self._rank_local_intake is not None:
+                try:
+                    if research_selected is not None:
+                        self._require_research_parallel_contract()
+                    # Resolve from the live loader anchor, not construction:
+                    # stock can use a different explicit load device. Preserve
+                    # the ordinary finalizer's CUDA promotion before packing.
+                    device = param.device
+                    if device.type != 'cuda' and torch.cuda.is_available():
+                        device = torch.device('cuda', torch.cuda.current_device())
+                    self._rank_local_intake.load(group, index, expert_id, blob, device=device)
+                except Exception:
+                    self._research_phase = 'failed'
+                    self._rank_local_intake = None
+                    raise
+            elif group == "w13":
+                param.data[int(expert_id), index, :length] = blob
+            else:
+                param.data[int(expert_id), :length] = blob
+            if group == "w13":
+                self._w13_len[int(expert_id), index] = length
+            else:
+                self._w2_len[int(expert_id)] = length
+            return True if return_success else None
+
+        def process_weights_after_loading(self, layer) -> None:
+            if research_selected is not None:
+                if self._research_phase != 'loading':
+                    raise RuntimeError(f"{prefix}: research owner is not loading ({self._research_phase})")
+                self._research_phase = 'failed'  # any incomplete/invalid load stays unusable
+            if self._rank_local_intake is not None:
+                intake, self._rank_local_intake = self._rank_local_intake, None
+                prepared = intake.finish(self._w13_len, self._w2_len)
+            else:
+                packed = MoePacked(
+                    w13_wire=layer.w13_wire.data.cpu(), w13_wire_len=layer.tessera_w13_wire_len,
+                    w2_wire=layer.w2_wire.data.cpu(), w2_wire_len=layer.tessera_w2_wire_len)
+                # Every refusal of ``moe_layout`` fires here on real bytes -- in
+                # particular a declared stride that is not the maximum the loaded
+                # lengths imply, which is the sidecar-vs-bytes disagreement no
+                # other check sees.
+                w13_blobs, w2_blobs = unpack_moe_wires(packed)
+                device = layer.w13_wire.device
+                if device.type != "cuda" and torch.cuda.is_available():
+                    device = torch.device("cuda")
+                prepare = (prepare_tessera_moe_experts if research_selected is None
+                           else (prepare_tessera_packed_bf16_moe_experts if family == TESSERA_BF16
+                                 else prepare_tessera_packed_moe_experts))
+                prepared = prepare(
+                    {"w13": w13_blobs, "w2": [[blob] for blob in w2_blobs]},
+                    declared, prefix, device=device,
+                    **({} if research_selected is None else {'tp_rank': self._tp_rank, 'tp_size': self._tp_size}))
+            del layer.w13_wire, layer.w2_wire
+            layer.tessera_w13_wire_len = None
+            layer.tessera_w2_wire_len = None
+            if hasattr(prepared, "adapter"):
+                # The compact intake filled the grouped stacks callback by
+                # callback; the native two-stage adapter is the routed-expert
+                # compute.  The runner keeps shared experts and the final
+                # reduction (NATIVE-MOE-RUNTIME-BOUNDARY.md), so this apply
+                # returns ROUTED output only.  Telemetry says exactly what ran:
+                # an unqualified native experiment, no contract cell claimed.
+                for name in ("w13_weight", "w2_weight", "w13_weight_scale", "w2_weight_scale"):
+                    if hasattr(layer, name):
+                        layer.register_parameter(name, None)
+                self._w13_len = self._w2_len = self._wire_ids = None
+                self._packed = prepared
+                self._native = prepared.adapter()
+                if research_selected is not None:
+                    self._research_phase = 'ready'
+                # The adapter names its own launch: the compact Triton pair
+                # or the fused warp-specialised lane's (tessera#640).  Read
+                # off the object, never derived from the family alone, so a
+                # record says what ran.
+                layer.tessera_decoder = self._native.launch_pair[1]
+                layer.tessera_backend = 'native'
+                return
+            if research_selected is not None:
+                self._w13_len = self._w2_len = self._wire_ids = None
+                self._packed = prepared
+                if hasattr(prepared, "prepare"):
+                    # The loader handed per-expert WindowGemvUnits; the native
+                    # two-stage adapter is built here, once, and the loaded
+                    # packed constants stay the only resident weight.
+                    self._native = prepared.prepare()
+                self._research_phase = 'ready'
+                layer.tessera_decoder = (f'research_selected_{research_selected.decode_backend}_window'
+                                         + ('_folded_bf16' if family == TESSERA_BF16 else ''))
+                selected_backend = self.bf16_backend if family == TESSERA_BF16 else self.fp8_backend
+                layer.tessera_backend = str(getattr(selected_backend, 'value', selected_backend))
+                return
+
+            w13, w2, w13_scale, w2_scale = convert_to_fp8_moe_kernel_format(
+                fp8_backend=self.fp8_backend, layer=layer,
+                w13=prepared.w13_weight, w2=prepared.w2_weight,
+                w13_scale=prepared.w13_weight_scale, w2_scale=prepared.w2_weight_scale,
+                w13_input_scale=None, w2_input_scale=None)
+            replace_parameter(layer, "w13_weight", w13)
+            replace_parameter(layer, "w2_weight", w2)
+            replace_parameter(layer, "w13_weight_scale", w13_scale)
+            replace_parameter(layer, "w2_weight_scale", w2_scale)
+
+            self.moe_quant_config = self.get_fused_moe_quant_config(layer)
+            assert self.moe_quant_config is not None
+            assert self.experts_cls is not None
+            self.moe_kernel = make_fp8_moe_kernel(
+                moe_quant_config=self.moe_quant_config, moe_config=self.moe,
+                fp8_backend=self.fp8_backend, experts_cls=self.experts_cls,
+                routing_tables=layer._expert_routing_tables())
+            layer.tessera_decoder = DECODER_TORCH_STOCK
+            layer.tessera_backend = str(getattr(self.fp8_backend, "value", self.fp8_backend))
+
+        def get_fused_moe_quant_config(self, layer):
+            # The compact scales/config and kernel are per invocation. The
+            # stock runner permits None here and keeps shared experts under
+            # its normal non-MK-overlap execution path.
+            if self._native_mode or research_selected is not None:
+                # The native route carries its own compact scales and has no
+                # stock quant config to build; the research-selected route has
+                # none either.  Both are answered from construction.
+                return None
+            return make_fp8_moe_quant_config(
+                fp8_backend=self.fp8_backend,
+                w1_scale=layer.w13_weight_scale, w2_scale=layer.w2_weight_scale,
+                a1_scale=None, a2_scale=None,
+                per_act_token_quant=True, per_out_ch_quant=True, block_shape=None,
+                gemm1_alpha=getattr(layer, "swiglu_alpha", None),
+                gemm1_beta=getattr(layer, "swiglu_beta", None),
+                swiglu_limit=getattr(layer, "swiglu_limit", None),
+                layer=layer)
+
+        # -- residency declaration (#580) -------------------------------
+        def resident_tensors(self, layer):
+            """The grouped bundles this route holds outside registered state.
+
+            The compact ``PackedWindowMoeBundles`` declare their tensors.  A
+            prepared owner that declares no ``named_tensors()`` (the research
+            per-expert ``PackedWindowUnits``) is not walked: its bytes stay
+            uncharged in a capture's report instead of being attributed by a
+            guess.  The stock-decoded path registers ordinary parameters.
+            """
+            packed = getattr(self, "_packed", None)
+            if callable(getattr(packed, "named_tensors", None)):
+                yield from named_resident_tensors(packed, "tessera_packed")
+
+        # -- forward ----------------------------------------------------
+        def apply(self, layer, x, topk_weights, topk_ids, shared_experts,
+                  shared_experts_input):
+            if self._native is not None:
+                return self._apply_native(layer, x, topk_weights, topk_ids)
+            if research_selected is not None:
+                return self._apply_selected(layer, x, topk_weights, topk_ids,
+                                            shared_experts, shared_experts_input)
+            assert not self.is_monolithic
+            assert self.moe_kernel is not None
+            out = self.moe_kernel.apply(
+                x, layer.w13_weight, layer.w2_weight, topk_weights, topk_ids,
+                activation=layer.activation, global_num_experts=layer.global_num_experts,
+                expert_map=layer.expert_map,
+                apply_router_weight_on_input=layer.apply_router_weight_on_input,
+                shared_experts=shared_experts, shared_experts_input=shared_experts_input)
+            self._record(layer, x)
+            return out
+
+        def apply_monolithic(self, layer, x, router_logits, input_ids=None):
+            if self._native is not None:
+                raise ValueError(
+                    f"{prefix}: the native window MoE requires external top-k routing "
+                    "and has no internal MK kernel; monolithic apply is refused")
+            if research_selected is not None:
+                raise ValueError(f"{prefix}: research selected experts require external top-k routing")
+            assert self.moe_kernel is not None
+            out = self.moe_kernel.apply_monolithic(
+                x, layer.w13_weight, layer.w2_weight, router_logits,
+                activation=layer.activation, global_num_experts=layer.global_num_experts,
+                expert_map=layer.expert_map,
+                apply_router_weight_on_input=layer.apply_router_weight_on_input,
+                num_expert_group=layer.num_expert_group, topk_group=layer.topk_group,
+                e_score_correction_bias=layer.e_score_correction_bias,
+                routed_scaling_factor=layer.routed_scaling_factor)
+            self._record(layer, x)
+            return out
+
+        def research_resident_bytes(self) -> int:
+            if research_selected is None or self._research_phase != 'ready':
+                raise RuntimeError(f"{prefix}: research packed owner is not ready")
+            return self._packed.resident_bytes()
+
+        def _apply_native(self, layer, x, topk_weights, topk_ids) -> torch.Tensor:
+            """The routed-expert compute for the native compact route.
+
+            Returns ROUTED output only: the pinned runner computes shared
+            experts (NO_OVERLAP) before ``apply`` and combines afterwards, so
+            nothing shared may be added here.
+            """
+            if x.ndim != 2 or x.shape[1] != int(declared['hidden_size']):
+                raise ValueError(
+                    f"{prefix}: native input must be [tokens, {declared['hidden_size']}], "
+                    f"got {tuple(x.shape)}")
+            if tuple(topk_ids.shape) != tuple(topk_weights.shape) or topk_ids.shape[0] != x.shape[0]:
+                raise ValueError(f"{prefix}: native routing must be [tokens, top_k]")
+            if topk_ids.dtype not in (torch.int32, torch.int64) \
+                    or not topk_weights.is_floating_point():
+                raise ValueError(
+                    f"{prefix}: native routing needs integer IDs and floating weights")
+            if any(t.device != self._packed.device for t in (x, topk_ids, topk_weights)):
+                raise ValueError(f"{prefix}: inputs and packed experts must share one device")
+            limit = self._require_native_contract(layer)
+            if x.shape[0] == 0:
+                return x.new_empty((0, int(declared['hidden_size'])))
+            x_native = x.reshape(-1, x.shape[-1])
+            if not x_native.is_contiguous():
+                x_native = x_native.contiguous()
+            with torch.profiler.record_function(_profiler_label(self._native)):
+                out = self._native(
+                    x_native, topk_ids, topk_weights,
+                    swiglu_limit=limit,
+                    apply_router_weight_on_input=bool(
+                        getattr(layer, 'apply_router_weight_on_input', False)))
+            self._record(layer, x)
+            return out
+
+        def _require_native_contract(self, layer) -> "float | None":
+            """Fail closed on serving semantics the native path does not
+            reproduce: only silu, no swiglu alpha/beta, and a SwiGLU clamp limit
+            only when it is a usable number.  ``layer.activation`` is a vLLM
+            ``MoEActivation`` enum, not a callable.  Returns the clamp limit the
+            adapter must reproduce (``None`` when the model sets none) -- the
+            adapter owns the arithmetic, this owns the policy."""
+            activation = getattr(layer, 'activation', 'silu')
+            name = str(getattr(activation, 'value', activation)).lower()
+            if name != 'silu':
+                raise ValueError(
+                    f"{prefix}: the native window MoE serves silu; activation "
+                    f"{name!r} has no exact implementation and is refused")
+            for field in ('swiglu_alpha', 'swiglu_beta'):
+                if getattr(layer, field, None) is not None:
+                    raise ValueError(
+                        f"{prefix}: {field} is set; the native window MoE refuses to "
+                        "approximate it")
+            # Lazily imported, like the adapter itself (line ~477): the plugin
+            # import path stays free of the kernel modules.
+            from ..native_window_moe import checked_swiglu_limit
+            try:
+                return checked_swiglu_limit(
+                    getattr(layer, 'swiglu_limit', None), where=f"{prefix}: ")
+            except GrammarError as exc:
+                raise ValueError(str(exc)) from exc
+
+        def _apply_selected(self, layer, x, weights, ids, shared_experts, shared_experts_input):
+            self._require_research_parallel_contract()
+            if self.moe.moe_parallel_config.tp_rank != self._tp_rank:
+                raise ValueError(f"{prefix}: research selected rank changed after construction")
+            if layer.expert_map is not None or int(layer.global_num_experts) != int(declared['experts']):
+                raise ValueError(f"{prefix}: research selected experts require unchanged global expert IDs")
+            if self._research_phase != 'ready':
+                raise RuntimeError(f"{prefix}: research packed owner is not ready")
+            if torch.compiler.is_compiling() or (x.is_cuda and torch.cuda.is_current_stream_capturing()):
+                raise ValueError(f"{prefix}: research selected experts require eager execution without capture")
+            if x.ndim != 2 or x.shape[1] != int(declared['hidden_size']):
+                raise ValueError(f"{prefix}: research input must be [tokens, hidden_size]")
+            expected_shape = (x.shape[0], self.moe.experts_per_token)
+            if tuple(ids.shape) != expected_shape or tuple(weights.shape) != expected_shape:
+                raise ValueError(f"{prefix}: research routing must be [tokens, top_k]")
+            if ids.dtype not in (torch.int32, torch.int64) or not weights.is_floating_point():
+                raise ValueError(f"{prefix}: research routing needs integer IDs and floating weights")
+            if any(t.device != self._packed.device for t in (x, ids, weights)):
+                raise ValueError(f"{prefix}: inputs and packed experts must share one device")
+            if x.shape[0] == 0:
+                # The stock runner owns any shared-expert output independently.
+                return x.new_empty((0, int(declared['hidden_size'])))
+            if self._native is not None:
+                limit = self._require_native_contract(layer)
+                x_native = x.reshape(-1, x.shape[-1])
+                if not x_native.is_contiguous():
+                    x_native = x_native.contiguous()
+                with torch.profiler.record_function(_profiler_label(self._native)):
+                    return self._native(
+                        x_native, ids, weights,
+                        swiglu_limit=limit,
+                        apply_router_weight_on_input=bool(
+                            getattr(layer, 'apply_router_weight_on_input', False)))
+            with torch.profiler.record_function('tessera_research_select_experts'):
+                selected_ids = torch.unique(ids)
+                if bool((selected_ids < 0).any()) or bool((selected_ids >= self._packed.experts).any()):
+                    raise ValueError(f"{prefix}: research routing contains an invalid global expert ID")
+                expert_map = torch.full((self._packed.experts,), -1, dtype=torch.int32, device=x.device)
+                expert_map.scatter_(0, selected_ids.long(),
+                                    torch.arange(selected_ids.numel(), dtype=torch.int32, device=x.device))
+            with torch.profiler.record_function('tessera_research_decode_selected_experts'):
+                decode = self._packed.decode_folded if family == TESSERA_BF16 else self._packed.decode
+                selected = decode(selected_ids,
+                    max_experts_per_chunk=research_selected.max_experts_per_chunk,
+                    backend=research_selected.decode_backend)
+            if family == TESSERA_BF16:
+                from vllm.model_executor.layers.fused_moe.config import FusedMoEQuantConfig
+                from vllm.model_executor.layers.fused_moe.oracle.unquantized import make_unquantized_moe_kernel
+                quant = FusedMoEQuantConfig.make(
+                    gemm1_alpha=getattr(layer, 'swiglu_alpha', None),
+                    gemm1_beta=getattr(layer, 'swiglu_beta', None),
+                    gemm1_clamp_limit=getattr(layer, 'swiglu_limit', None))
+                kernel = make_unquantized_moe_kernel(
+                    quant_config=quant, moe_config=self.moe,
+                    backend=self.bf16_backend, experts_cls=self.experts_cls,
+                    routing_tables=layer._expert_routing_tables())
+            else:
+                quant = make_fp8_moe_quant_config(
+                    fp8_backend=self.fp8_backend,
+                    w1_scale=selected.w13_weight_scale, w2_scale=selected.w2_weight_scale,
+                    a1_scale=None, a2_scale=None, per_act_token_quant=True,
+                    per_out_ch_quant=True, block_shape=None,
+                    gemm1_alpha=getattr(layer,'swiglu_alpha',None),
+                    gemm1_beta=getattr(layer,'swiglu_beta',None),
+                    swiglu_limit=getattr(layer,'swiglu_limit',None), layer=layer)
+                kernel = make_fp8_moe_kernel(moe_quant_config=quant, moe_config=self.moe,
+                    fp8_backend=self.fp8_backend, experts_cls=self.experts_cls,
+                    routing_tables=layer._expert_routing_tables())
+            with torch.profiler.record_function('tessera_research_apply_selected_experts'):
+                return kernel.apply(x, selected.w13_weight, selected.w2_weight, weights, ids,
+                    activation=layer.activation, global_num_experts=layer.global_num_experts,
+                    expert_map=expert_map, apply_router_weight_on_input=layer.apply_router_weight_on_input,
+                    shared_experts=shared_experts, shared_experts_input=shared_experts_input)
+
+        def _record(self, layer, x) -> None:
+            try:
+                x2 = x.reshape(-1, x.shape[-1])
+                native = self._native is not None
+                if native:
+                    # The adapter's own pair: the compact lane's or the fused
+                    # lane's (tessera#640), whichever process_weights built.
+                    symbol, decoder = self._native.launch_pair
+                else:
+                    symbol = f"{GEMM_SYMBOL}:{layer.tessera_backend}"
+                    decoder = layer.tessera_decoder
+                emit_route(
+                    layer, kind="moe", policy=f"{family}:{layer.tessera_mode}",
+                    symbol=symbol, tile_m=0,
+                    shape=route_shape(x2, layer.tessera_rows, layer.tessera_columns),
+                    contract=layer.tessera_activation_contract, state="served", reason=None,
+                    decoder=decoder,
+                    kernel_schedule=symbol)
+            except Exception:  # noqa: BLE001 -- telemetry never breaks a request
+                pass
+
+    return TesseraMoEMethod(layer.moe_config)

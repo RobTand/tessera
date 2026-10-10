@@ -1,0 +1,77 @@
+"""Tessera's vLLM serving plugin: the runtime that reads Tessera bytes.
+
+Tessera is a wire format.  Until now the only runtime that could serve it was
+Gridbook, which imported Tessera's reader and added the serving half.  This
+package IS that serving half, owned by the format it serves: a vLLM
+``general_plugins`` entry point registering ``quant_method = "tessera"``, two
+dense routes (NVFP4 W4A4 and per-channel FP8 W8A8), a streamed window decoder,
+the span-2 NVFP4 CUDA decoder, the route telemetry a census reads, and the
+``runtime_contract.json`` a producer reads to decide whether a rung is
+servable at all.  Nothing here imports ``gridbook``; a test asserts it.
+
+WHAT SELECTS IT.  The checkpoint: ``quantization_config.quant_method:
+"tessera"``.  vLLM's own dispatch then builds :class:`config.TesseraConfig`.
+The single operator knob is the residency, ``TESSERA_SERVE_MODE=resident|
+streamed`` (``lane``), which is declared rather than defaulted because it
+changes the footprint the artifact occupies, and is folded into vLLM's
+compile-cache key because it changes the traced forward.
+
+WHAT IT NEEDS.  A vLLM process on a device whose compiled ops include the
+quantizers each route uses; the NVFP4 route additionally builds one CUDA
+extension on first use (``ext``), and the streamed FP8 route builds the window
+GEMV the same way where the lane serves the unit, falling back to its torch
+window decode where it cannot.  Nothing here is imported unless a Tessera
+checkpoint is being served: this module imports neither torch nor vLLM at
+module level, so a producer can read the packaged contract on a machine with
+no GPU.
+
+SCOPE. Dense Linears in both residency modes, eager and compiled, with tensor
+parallel axes published by ``sharding.ROUTE_TP_AXES``. Declared routed-MoE
+stacks use the resident FP8 route at TP=1 and without expert parallelism.
+The loader refuses unsupported structure, parallelism and residency by name;
+``runtime_contract.json`` separately records which paths have served evidence.
+"""
+from __future__ import annotations
+
+# The version is re-exported from the library, which reads it from the one
+# declaration in pyproject.toml (see tessera/__init__.py).  It is not a copy:
+# the route census publishes both names and compile_identity folds this one
+# into vLLM's compile-cache key, so they are the same string by construction
+# rather than by review.
+from .. import __version__ as __version__
+
+__all__ = ["__version__", "QUANT_METHOD", "register"]
+
+#: The ``quantization_config.quant_method`` value this plugin registers under.
+QUANT_METHOD = "tessera"
+
+
+def register() -> None:
+    """vLLM's ``general_plugins`` entry point.
+
+    Registers the quantization config under ``tessera``.  Idempotent across
+    repeated plugin loads (vLLM loads plugins in the engine core and in every
+    worker process).
+    """
+    from vllm.model_executor.layers.quantization import register_quantization_config
+
+    from .config import TesseraConfig
+
+    try:
+        register_quantization_config(QUANT_METHOD)(TesseraConfig)
+    except ValueError:
+        # Already registered.
+        pass
+
+    # Separate, explicit research attention extension. It does not change the
+    # quantization contract or replace a stock attention enum implementation.
+    import os
+
+    if os.environ.get("TESSERA_RESEARCH_GLM53_NOPE") == "1":
+        from vllm.v1.attention.backends.registry import AttentionBackendEnum, register_backend
+
+        backend = AttentionBackendEnum.CUSTOM
+        path = "tessera.serving.glm53_nope.TesseraGLM53NoPEBackend"
+        if backend.is_overridden() and backend.get_path() != path:
+            raise RuntimeError("Tessera GLM53 NoPE refuses to replace another CUSTOM backend")
+        register_backend(backend, path)

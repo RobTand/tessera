@@ -1,0 +1,74 @@
+[build-system]
+requires = ["setuptools>=77"]  # PEP 639 license expression
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "tessera-quant"
+version = "0.1.0"
+description = "Tessera: trellis-coded quantization of LLM weights onto hardware-native NVFP4, FP8 and BF16 tiles, continuous-rate on the FP8 and BF16 grids, with its own vLLM serving plugin"
+readme = "README.md"
+license = "LicenseRef-Tessera-Attribution-1.0"
+license-files = ["LICENSE"]
+authors = [{name = "Robert Tand", email = "robert.tand@icloud.com"}]
+keywords = ["quantization", "trellis", "NVFP4", "FP8", "vLLM", "LLM"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Programming Language :: Python :: 3",
+    # The only minor the suite and CI exercise; requires-python is wider.
+    "Programming Language :: Python :: 3.12",
+    "Operating System :: POSIX :: Linux",
+    "Environment :: GPU :: NVIDIA CUDA",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+]
+requires-python = ">=3.10"
+dependencies = ["torch>=2.4", "numpy", "safetensors"]
+
+[project.optional-dependencies]
+# The serving half registers with vLLM; the fused kernels are Triton (bundled
+# with torch on Linux) plus two CUDA sources JIT-built by torch at first use.
+#
+# `native` is that JIT toolchain's PyPI half, named once and referenced rather
+# than restated: torch builds the packaged .cu sources with ninja, and both
+# the serving half and the kernel half reach that build.  The toolchain's
+# other half, an nvcc, is not installable from PyPI, so it is a documented
+# requirement (README, docs/ARCHITECTURE.md 5.3) rather than a declared one --
+# and what a route does without one is per route and per residency, published
+# in runtime_contract.json's native_extensions[].when_unavailable, never
+# asserted here.
+native = ["ninja"]
+serve = ["vllm>=0.28", "tessera-quant[native]"]
+kernels = ["triton", "tessera-quant[native]"]
+
+[project.urls]
+Homepage = "https://github.com/RobTand/tessera"
+Source = "https://github.com/RobTand/tessera"
+Documentation = "https://github.com/RobTand/tessera/blob/v0.1.0/docs/ARCHITECTURE.md"
+Issues = "https://github.com/RobTand/tessera/issues"
+
+[project.entry-points."vllm.general_plugins"]
+# Tessera's serving half: registers quant_method="tessera" with vLLM.  The
+# checkpoint selects it; the only operator knob is TESSERA_SERVE_MODE.
+tessera = "tessera.serving:register"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+# `tessera._dev` is the repository's own tooling -- the merge-suite deadline
+# helper, the PrismaBuild source-identity reader, the import-graph analyser
+# behind `tools/impacted_tests.py`.  It lives under `src/` because `tools/`
+# imports it by module name rather than by path; it is not part of what a
+# consumer installs, and every module in it is named by this one pattern
+# rather than by a roster kept somewhere else.  `tools/check_wheel.py` reads
+# this list and then reads the built wheel and sdist, so the exclusion is
+# proved on the artifact and not on this line's intent.
+exclude = ["tessera._dev*"]
+
+[tool.setuptools.package-data]
+# The packaged runtime contract a producer reads through importlib.resources,
+# and CUDA JIT sources under serving/csrc. The span-2 whole-weight decoder was
+# retired; the window GEMV remains published by the native-extension table.
+# Its loader in tessera.kernel_window_gemv resolves the source through that
+# table. An editable install would not notice missing source files; a wheel would.
+"tessera.serving" = ["runtime_contract.json", "csrc/*.cu"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

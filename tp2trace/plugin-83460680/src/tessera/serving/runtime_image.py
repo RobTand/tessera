@@ -1,0 +1,453 @@
+"""Which container image a serve harness is allowed to run, and the refusal.
+
+WHY THIS EXISTS (issue #100).  Every serve harness in ``experiments/`` named
+``vllm/vllm-openai:latest`` and the docs called it the pinned runtime.  A tag
+is not a pin: it is a name upstream can repoint, and two boxes can hold two
+builds under it while every receipt records the same four words.  A two-box A/B
+under a floating tag can put two runtimes on two arms and write down nothing
+that would say so.
+
+The defect is not that the boxes disagreed -- measured on 2026-09-03 they did
+not, both carrying ``vllm/vllm-openai@sha256:61fc8a89...`` -- it is that nothing
+in the system could have told us either way.  This module is what tells us.
+
+THE TRAP, AND IT IS THE WHOLE MODULE.  ``docker image inspect``'s ``.Id`` is
+**not** a stable name for an image across boxes.  On sparky (docker 29 with the
+containerd snapshotter) ``.Id`` is the *manifest* digest; on sparklina
+(overlay2) it is the *config* digest.  The same image reads ``61fc8a896b0a``
+there and ``89154ef00dd1`` here.  Issue #100 was filed off exactly that
+difference, and a gate that compared ``.Id`` would have refused sparklina
+forever for holding identical bytes -- a refusal that permanently disables one
+box is not a fix.  What is stable is ``RepoDigests``: the manifest digests the
+image was pulled under, which both boxes report identically.  So the pin is a
+digest *reference*, the check is membership in ``RepoDigests``, and the local
+``.Id`` is recorded as provenance only.  ``docs/measurements/tessera-serving-
+plugin-2026-09-02.md`` (section 9) had already measured this; the gate had to
+be built to know it.
+
+PRINCIPLE 9, AND WHY THIS REFUSES RATHER THAN WARNS.  A warning nothing reads
+is a confession log, not a gate, and this repo has been bitten by precisely
+that.  :func:`require_pinned` raises; the CLI exits 2 and prints one JSON line
+on stdout so a *program* -- not only a human reading a log -- can read the
+refusal, the resolved digests, and the exact ``docker pull`` that fixes it.
+
+SCOPE. The default pin governs one repository: the vanilla vLLM image named
+by ``versions.default_serve_image``. An explicit digest reference for ANY
+repository is additionally checked against that exact reference's presence
+in ``RepoDigests``. Its caller has already selected bytes, so accepting an
+absent or differently stamped image would not preserve that selection.
+Other repositories' floating tags remain resolved and stamped, not gated
+against the unrelated default pin; they cannot establish an exact-runtime
+census context. This does not change the default image or its policy.
+
+ONE DEFAULT. The default digest lives in ``runtime_contract.json`` at
+``versions.default_serve_image`` (schema v6, #131; ``versions.attested_on.image``
+before it). Runtime-scoped lane cells separately name the images their
+receipts cover, and the validator requires the default to be one of them; the
+cells do not move that default. Harness defaults
+read the contract, while an explicitly selected image is recorded as the
+measurement's identity rather than copied into another default.
+"""
+from __future__ import annotations
+
+import argparse
+import json
+import os
+import re
+import subprocess
+import sys
+from typing import Any, Callable, Mapping
+
+__all__ = [
+    "CENSUS_DECLARATION_ENV",
+    "DECLARATION_SCHEMA",
+    "DECLARATION_SOURCE",
+    "CENSUS_IMAGE_ENV",
+    "PIN_CONTRACT_FIELD",
+    "RuntimeImageError",
+    "container_env",
+    "docker_inspector",
+    "declared_reference",
+    "parse_reference",
+    "pinned_reference",
+    "resolve",
+    "require_pinned",
+]
+
+#: Where the one literal lives.  Read, never copied.
+PIN_CONTRACT_FIELD = ("versions", "default_serve_image")
+
+#: The two variables a container launcher writes so a process INSIDE the
+#: container can check which image it is running in.  The names live here and
+#: are read by both sides -- the launcher through the ``container-env``
+#: subcommand, the census through :func:`declared_reference` -- so neither
+#: spells them a second time.
+CENSUS_IMAGE_ENV = "TESSERA_CENSUS_RUNTIME_IMAGE"
+CENSUS_DECLARATION_ENV = "TESSERA_CENSUS_RUNTIME_IMAGE_DECLARATION"
+
+#: What a receipt records about HOW its runtime scope was established.  A
+#: value a gate switches on, never prose.  It is a DECLARATION and says so:
+#: the launcher resolved the reference from docker's ``RepoDigests`` and wrote
+#: it into the container's environment, which a host process can also do by
+#: hand.  Calling that an attestation would make the receipt claim more than
+#: the mechanism delivers, and this tree's rule is that a claim about another
+#: runtime is read from a machine-readable table or refused -- a misnamed one
+#: is worse than an absent one.
+DECLARATION_SCHEMA = "tessera.runtime-image-declaration/1"
+DECLARATION_SOURCE = "launcher_repo_digests"
+
+#: A pull reference that names *bytes*: ``repo/name@sha256:<64 hex>``.
+#: A tag reference does not match, which is the entire point of the pin.
+_DIGEST_REFERENCE = re.compile(
+    r"^(?P<repository>[a-z0-9][a-z0-9._/-]*[a-z0-9])@(?P<digest>sha256:[0-9a-f]{64})$")
+
+#: A tag reference, for naming what was found when the pin is malformed.
+_TAG_REFERENCE = re.compile(
+    r"^(?P<repository>[a-z0-9][a-z0-9._/-]*[a-z0-9])(?::(?P<tag>[\w][\w.-]*))?$")
+
+
+class RuntimeImageError(RuntimeError):
+    """A serve was asked to run an image the pin does not allow.
+
+    ``payload`` is the machine-readable refusal -- the same object the CLI
+    prints -- so a caller in Python does not have to parse a message.
+    """
+
+    def __init__(self, message: str, payload: Mapping[str, Any]):
+        super().__init__(message)
+        self.payload = dict(payload)
+
+
+# -------------------------------------------------------------- the pin ---
+
+def pinned_reference(contract: Mapping[str, Any] | None = None) -> str:
+    """The pinned pull reference, read from the packaged contract.
+
+    Refuses a tag: a contract that names ``vllm/vllm-openai:latest`` here is
+    not pinning anything, and letting it through would make every downstream
+    check vacuous while still reading like a gate.
+    """
+    if contract is None:
+        from tessera.serving.contract import contract_path
+
+        contract = json.loads(contract_path().read_text(encoding="utf-8"))
+    node: Any = contract
+    for key in PIN_CONTRACT_FIELD:
+        if not isinstance(node, Mapping) or key not in node:
+            raise RuntimeImageError(
+                f"runtime_contract.json has no {'.'.join(PIN_CONTRACT_FIELD)}: "
+                "the serve-image pin lives there and nowhere else",
+                {"refused": True, "reason": "pin_missing"})
+        node = node[key]
+    if not isinstance(node, str) or not _DIGEST_REFERENCE.match(node):
+        raise RuntimeImageError(
+            f"runtime_contract.json {'.'.join(PIN_CONTRACT_FIELD)} is {node!r}, "
+            "which is not a digest reference (repository@sha256:<64 hex>). A tag "
+            "is a name upstream can repoint, not a pin.",
+            {"refused": True, "reason": "pin_not_a_digest", "pinned": node})
+    return node
+
+
+def parse_reference(reference: str) -> tuple[str, str | None, str | None]:
+    """``(repository, tag, digest)`` for a pull reference; tag/digest may be None.
+
+    An unparsable reference yields ``(reference, None, None)`` rather than
+    raising: the caller's job is to decide whether the *pinned* repository is
+    involved, and an image name this does not understand is definitionally not
+    the pinned one.
+    """
+    if (m := _DIGEST_REFERENCE.match(reference)):
+        return m.group("repository"), None, m.group("digest")
+    if (m := _TAG_REFERENCE.match(reference)):
+        return m.group("repository"), m.group("tag"), None
+    return reference, None, None
+
+
+# ------------------------------------------------------------ inspection ---
+
+def docker_inspector(reference: str) -> dict[str, Any]:
+    """What the local daemon holds for ``reference``, or ``present: False``.
+
+    Two fields, and the asymmetry between them is the point: ``repo_digests``
+    names bytes and is comparable across boxes; ``local_id`` is what this
+    daemon's image store happens to call them and is comparable with nothing.
+    """
+    proc = subprocess.run(
+        ["docker", "image", "inspect", reference,
+         "--format", "{{.Id}}\t{{json .RepoDigests}}"],
+        capture_output=True, text=True)
+    if proc.returncode != 0:
+        lines = (proc.stderr or proc.stdout).strip().splitlines()
+        return {"present": False, "local_id": None, "repo_digests": [],
+                "error": lines[-1] if lines else None}
+    local_id, _, digests = proc.stdout.strip().partition("\t")
+    try:
+        parsed = json.loads(digests)
+    except ValueError:
+        parsed = []
+    return {"present": True, "local_id": local_id or None,
+            "repo_digests": sorted(parsed or []), "error": None}
+
+
+# --------------------------------------------------------------- resolve ---
+
+def resolve(requested: str, *,
+            inspector: Callable[[str], Mapping[str, Any]] = docker_inspector,
+            contract: Mapping[str, Any] | None = None) -> dict[str, Any]:
+    """Resolve ``requested`` to the bytes it names, and say whether they pass.
+
+    Always returns; never raises on a mismatch.  :func:`require_pinned` is the
+    enforcing wrapper, so a caller that only wants the receipt fields (a
+    non-pinned image, say) does not have to catch an exception to get them.
+    """
+    pinned = pinned_reference(contract)
+    pinned_repo, _, pinned_digest = parse_reference(pinned)
+    repository, tag, digest = parse_reference(requested)
+
+    found = dict(inspector(requested))
+    repo_digests = list(found.get("repo_digests") or [])
+    # One image can carry several manifest digests (the same bytes pulled under
+    # two repositories, or re-tagged).  Report the one for the repository that
+    # was actually asked for; an image can be a legitimate match on one of its
+    # names and irrelevant under another.
+    own = [ref for ref in repo_digests if parse_reference(ref)[0] == repository]
+    if digest is not None and requested in own:
+        # An explicit invocation names this manifest, even if the same local
+        # image carries other digests or aliases. Do not stamp another alias.
+        resolved_digest = digest
+    elif pinned in own:
+        # When the pin is among them it IS the answer: an image re-tagged under
+        # a second digest of the same repository must not report the other one
+        # as what ran while passing the gate on the pin.
+        resolved_digest = pinned_digest
+    else:
+        resolved_digest = parse_reference(own[0])[2] if own else None
+
+    pinned_repository = repository == pinned_repo
+    gated = pinned_repository or digest is not None
+    record: dict[str, Any] = {
+        "schema": "tessera.runtime_image/1",
+        "requested": requested,
+        "requested_tag": tag,
+        "pinned": pinned,
+        "required": pinned if pinned_repository else requested,
+        "gated": gated,
+        "present": bool(found.get("present")),
+        "repo_digests": repo_digests,
+        "resolved_digest": resolved_digest,
+        # The digest half names no image on its own.  A caller that must hand
+        # this identity to another process -- the launcher writing it into the
+        # environment a census reads -- would otherwise rebuild the reference
+        # from two fields, which is a second spelling of a rule this module
+        # owns.  ``None`` when the daemon holds no manifest digest for it: a
+        # locally built image has no reference to declare, and inventing a name
+        # for it is the failure mode this whole module exists to refuse.
+        "resolved_reference": (None if resolved_digest is None
+                               else f"{repository}@{resolved_digest}"),
+        "local_id": found.get("local_id"),
+        "refused": False,
+        "reason": None,
+        "fix": None,
+    }
+    if digest is not None:
+        if not found.get("present"):
+            record.update(refused=True, reason="image_absent", required=requested,
+                          fix=f"docker pull {requested}")
+            return record
+        if requested not in repo_digests:
+            record.update(refused=True, reason="image_digest_mismatch", required=requested,
+                          fix=f"docker pull {requested}")
+            return record
+        if not pinned_repository:
+            record["reason"] = "explicit_digest"
+            return record
+    if not gated:
+        # Stamped, not gated -- see SCOPE in the module docstring.
+        record["reason"] = "not_pinned_repository"
+        return record
+    if not found.get("present"):
+        record.update(refused=True, reason="image_absent",
+                      fix=f"docker pull {pinned}")
+        return record
+    if pinned not in repo_digests:
+        record.update(refused=True, reason="image_pin_mismatch",
+                      fix=f"docker pull {pinned}")
+        return record
+    record["reason"] = "pinned"
+    return record
+
+
+def require_pinned(requested: str, *,
+                   inspector: Callable[[str], Mapping[str, Any]] = docker_inspector,
+                   contract: Mapping[str, Any] | None = None) -> dict[str, Any]:
+    """:func:`resolve`, but a mismatch is a refusal rather than a field."""
+    record = resolve(requested, inspector=inspector, contract=contract)
+    if record["refused"]:
+        raise RuntimeImageError(_message(record), record)
+    return record
+
+
+def _message(record: Mapping[str, Any]) -> str:
+    if record["reason"] == "image_absent":
+        held = "this box does not hold that image at all"
+    else:
+        held = ("it holds " + ", ".join(record["repo_digests"])
+                if record["repo_digests"] else "it holds no manifest digest for it")
+    return (
+        f"REFUSED: {record['requested']} is not the required serving image.\n"
+        f"  required: {record.get('required', record['pinned'])}\n"
+        f"  this box: {held}\n"
+        f"  local id: {record['local_id']} (box-local; never compare it across boxes)\n"
+        f"  fix:      {record['fix']}")
+
+
+# ------------------------------------------- the launcher's declaration ---
+#
+# WHY AN ENVIRONMENT VARIABLE AND NOT SOMETHING STRONGER (issue #132).  A
+# process inside a container cannot ask the daemon what image it is running:
+# there is no socket, and ``/proc/self/mountinfo`` names overlay layer paths --
+# spelled differently by the two snapshotters on the two GB10s -- which are not
+# manifest digests and cannot be turned into one.  So the strongest available
+# mechanism is the launcher transcribing ``docker image inspect``'s answer
+# VERBATIM into the environment, and the process inside checking its own claim
+# against that table rather than against its own command line.
+#
+# AND SO IT IS NAMED FOR WHAT IT IS: A DECLARATION, NOT AN ATTESTATION.  A
+# hand ``docker run -e`` exporting the pair produces exactly the same record,
+# so nothing here is unforgeable from the host, and the word "attested" in
+# front of it would be a claim about another runtime that no machine-readable
+# table backs -- which this tree refuses (AGENTS.md principle 6).  It is still
+# strictly better than what it replaces, where the census recorded whatever
+# string the operator typed with nothing to compare it to, and it is why the
+# receipt records WHICH mechanism established the scope, and how, instead of
+# stating the image as a bare fact.  A reader who distrusts the mechanism can
+# redo the join from the record, which travels beside the name.  Making this
+# unforgeable needs something the launcher cannot write from outside -- a
+# digest file mounted read-only, checked against the pin -- and until that
+# exists the honest name is the whole of the fix.
+
+
+def container_env(record: Mapping[str, Any]) -> dict[str, str]:
+    """The variables a launcher exports into the container it is starting.
+
+    Empty when the daemon holds no manifest digest for the image (a locally
+    built one).  An empty *variable* would read as a present-but-malformed
+    claim; exporting nothing lets the process inside refuse for the honest
+    reason -- the launcher declared no image -- rather than for a parse error.
+    """
+    reference = record.get("resolved_reference")
+    if not reference:
+        return {}
+    return {CENSUS_IMAGE_ENV: str(reference),
+            CENSUS_DECLARATION_ENV: json.dumps(dict(record), sort_keys=True)}
+
+
+def declared_reference(requested: str, *,
+                       env: Mapping[str, str] | None = None) -> dict[str, Any]:
+    """Check ``requested`` against what the launcher declared, or refuse.
+
+    Returns the declaration a receipt publishes: the mechanism, the image the
+    launcher named, the variables it was read from, and the launcher's record
+    verbatim.  Raises :class:`RuntimeImageError` when the launcher declared
+    nothing, when the pair disagrees with itself, or when the caller names
+    other bytes than the ones the container was started on.
+    """
+    env = os.environ if env is None else env
+    declared = (env.get(CENSUS_IMAGE_ENV) or "").strip()
+    raw = (env.get(CENSUS_DECLARATION_ENV) or "").strip()
+    if not declared or not raw:
+        raise RuntimeImageError(
+            f"REFUSED: the launcher declared no runtime image for this container.\n"
+            f"  requested: {requested}\n"
+            f"  {CENSUS_IMAGE_ENV} / {CENSUS_DECLARATION_ENV} are not both set, so the "
+            "image is an operator's assertion and a receipt scoped to it would name a "
+            "runtime nothing measured.\n"
+            "  fix:      run under experiments/tessera_plugin_run.sh, which resolves the "
+            "image through docker's RepoDigests and exports both",
+            {"refused": True, "reason": "image_declaration_missing",
+             "requested": requested, "env": [CENSUS_IMAGE_ENV, CENSUS_DECLARATION_ENV]})
+    try:
+        record = json.loads(raw)
+    except ValueError:
+        record = None
+    if not isinstance(record, Mapping) or record.get("schema") != "tessera.runtime_image/1":
+        raise RuntimeImageError(
+            f"REFUSED: {CENSUS_DECLARATION_ENV} does not hold a tessera.runtime_image/1 "
+            "record, so there is no table to check the image against",
+            {"refused": True, "reason": "image_declaration_unreadable",
+             "requested": requested, "env": [CENSUS_DECLARATION_ENV]})
+    if record.get("refused"):
+        raise RuntimeImageError(
+            f"REFUSED: the launcher's own record says it refused this image "
+            f"({record.get('reason')}); a container it refused to start declares nothing",
+            {"refused": True, "reason": "image_declaration_refused",
+             "requested": requested, "declared": declared})
+    if record.get("resolved_reference") != declared or declared not in (
+            record.get("repo_digests") or []):
+        raise RuntimeImageError(
+            f"REFUSED: {CENSUS_IMAGE_ENV} is {declared!r}, which the record beside it does "
+            f"not resolve to (it resolved {record.get('resolved_reference')!r} out of "
+            f"{record.get('repo_digests')!r}); half a forged pair is a forged pair",
+            {"refused": True, "reason": "image_declaration_inconsistent",
+             "requested": requested, "declared": declared})
+    if requested != declared:
+        raise RuntimeImageError(
+            f"REFUSED: this run was started on {declared}, not on {requested}.\n"
+            f"  the digest is a join key of the cell scope, so a receipt naming the other "
+            "image would be a covered verdict for a runtime nobody measured.\n"
+            f"  fix:      pass --runtime-image \"${CENSUS_IMAGE_ENV}\", the value the "
+            "launcher resolved from docker's RepoDigests",
+            {"refused": True, "reason": "image_declaration_mismatch",
+             "requested": requested, "declared": declared})
+    return {"schema": DECLARATION_SCHEMA, "source": DECLARATION_SOURCE, "image": declared,
+            "env": [CENSUS_IMAGE_ENV, CENSUS_DECLARATION_ENV], "record": dict(record)}
+
+
+# ------------------------------------------------------------------- cli ---
+
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(
+        prog="python -m tessera.serving.runtime_image",
+        description="Resolve a serve image to the bytes it names, and refuse a "
+                    "floating tag on the pinned repository.")
+    sub = parser.add_subparsers(dest="command", required=True)
+    sub.add_parser("pin", help="print the pinned pull reference")
+    res = sub.add_parser("resolve", help="resolve an image; exit 2 if refused")
+    res.add_argument("--image", required=True)
+    res.add_argument("--allow-unpinned", action="store_true",
+                     help="do not exit 2 for an image outside the pinned "
+                          "repository (the default already permits it)")
+    sub.add_parser("container-env",
+                   help="read a resolve record on stdin; print the KEY=VALUE lines a "
+                        "launcher exports so the process inside can check its own claim "
+                        "against the image the launcher DECLARED. A launcher declaration, "
+                        "never a check the container itself makes: a host process can "
+                        "export the same pair by hand. Prints nothing for an image the "
+                        "daemon holds no manifest digest for.")
+    args = parser.parse_args(argv)
+
+    try:
+        if args.command == "pin":
+            print(pinned_reference())
+            return 0
+        if args.command == "container-env":
+            for key, value in sorted(container_env(json.load(sys.stdin)).items()):
+                print(f"{key}={value}")
+            return 0
+        record = resolve(args.image)
+    except RuntimeImageError as exc:
+        print(json.dumps(exc.payload, sort_keys=True), flush=True)
+        print(exc, file=sys.stderr)
+        return 2
+    # The refusal is on stdout as JSON so a program reads it, and in prose on
+    # stderr so a person does.  Both, always: a gate only a human can read gets
+    # skipped by the script that should have honoured it.
+    print(json.dumps(record, sort_keys=True), flush=True)
+    if record["refused"]:
+        print(_message(record), file=sys.stderr)
+        return 2
+    return 0
+
+
+if __name__ == "__main__":  # pragma: no cover - exercised via subprocess
+    raise SystemExit(main())

@@ -1,0 +1,889 @@
+"""Tensor parallelism: cutting a unit into the shard one rank loads.
+
+This is the slicing half of :mod:`tessera.layout`, cut out so the byte-layout
+half stays importable without torch: :class:`SlicedUnit` subclasses
+:mod:`tessera.encode`'s ``EncodedUnit`` and the cut replays the trellis, so
+this module imports torch and the decoder.  ``tessera.layout`` re-exports the
+cutter names (``SlicedUnit``, ``slice_unit``, ``shard_granularity``,
+``can_shard`` and the private helpers the cutter's own tests reach through
+``layout``) so no caller moves.
+
+A Tessera artifact is written once, by an exporter that never learns the TP
+degree, and every rank cuts its own shard out of those bytes at load.  That
+is the whole contract, and it rests on one fact about the wire: a column's
+body is a bit stream whose only carried state is the trellis register, so a
+stream can be *entered in the middle* provided the state at that point
+travels with it.  ``slice_unit`` does the cutting; ``INITIAL_STATE`` is the
+one plane it adds; ``shard_granularity`` says where the cuts may fall.
+
+Nothing here re-encodes.  Every code in the shard is the code the parent
+stored -- the same E4M3 or E2M1 nibble, against the same scale -- so a rank's
+shard decodes bit-for-bit to its window of the parent's decode.  The
+alternative, which this replaces, was encoding one artifact per TP degree.
+
+**The shard record's frame.**  Every field of a shard record
+(``manifest.ShardOrigin``) names the *original* -- the whole unit the exporter
+wrote, the one artifact every rank cut from -- so ``row_offset``/``col_offset``
+are offsets into it, ``parent_rows``/``parent_columns`` are its extent and
+``parent_digest`` is its manifest digest, composed through any number of
+re-slices; a shard of a shard writes the record the direct cut would.
+"""
+
+from __future__ import annotations
+
+from dataclasses import dataclass
+from fractions import Fraction
+from math import gcd
+
+import torch
+
+from .encode import EncodedUnit
+from .errors import GrammarError
+from .grammar import superblock_count
+from .manifest import BodyKind, RotationState, ScalePlaneKind, scale_block_columns
+from .planes import PlaneKind
+
+__all__ = [
+    "SlicedUnit",
+    "slice_unit",
+    "shard_granularity",
+    "can_shard",
+    "unsliceable_reason",
+    "SLICEABLE_SCHEMA_MINOR",
+    "tp_agnostic_at_minor",
+]
+
+
+#: The container schema minor at which a cut of a whole unit became
+#: *expressible on the wire*, and so the minor from which an artifact is
+#: TP-agnostic.  Minor 4 (2026-09-02, tessera#7) appended the shard record
+#: (``manifest.ShardOrigin``: the offsets and extent of the original a rank
+#: cut from) and the ``INITIAL_STATE`` plane -- one element per column
+#: carrying the trellis state that column starts from, which is the one fact
+#: a stream entered below row 0 cannot recover.  Below it the wire has no way
+#: to say "this is a window of another unit", so a rank's shard could not be
+#: written back out at all and one artifact per TP degree was the only
+#: arrangement (``docs/tessera-serving-and-moe-contract.md`` §7.1, superseded).
+SLICEABLE_SCHEMA_MINOR = 4
+
+
+def tp_agnostic_at_minor(schema_minor: int) -> bool:
+    """Can bytes written at this container schema minor be cut at load?
+
+    THE ONE HOME of the TP-agnosticism rule, and the reason it is a function
+    of the schema minor and of nothing else: what decides whether a rank can
+    take its own slice is whether the wire can *express* a shard, and that is
+    a property of the bytes, never of anything an operator passes.  The
+    exporter therefore never learns the TP degree -- it stamps what these
+    bytes admit (``export._write_config``'s ``tp_agnostic``) -- and the
+    loader gate reads that declaration back
+    (``tessera.serving.sharding.require_a_cuttable_artifact``).
+
+    It is stated here, beside the cutter, rather than in either caller's
+    comment, because a rule restated at a writer and at a reader is two rules
+    that will drift -- which is exactly what happened to the sentence this
+    one replaces (tessera#328: the exporter's comment asserted the artifact
+    was TP-*specific* for four days after ``slice_unit`` inverted it, and the
+    load-time gate it promised did not exist).
+    """
+    return int(schema_minor) >= SLICEABLE_SCHEMA_MINOR
+
+
+@dataclass
+class SlicedUnit(EncodedUnit):
+    """An ``EncodedUnit`` that is a window of another one.
+
+    The extra fields are the shard record's (``manifest.ShardOrigin``) plus
+    the start state itself.  It is a subclass rather than new fields on
+    ``EncodedUnit`` because the encoder never produces one: a shard is made by
+    cutting, at load, and every decoder path reads the state through
+    ``getattr(unit, "initial_state", None)`` -- so a whole unit takes exactly
+    the path it always did.
+
+    ``release_counts`` is the per-superblock release count vector.  A whole
+    unit does not carry one (its counts are ``grammar.release_quota`` of the
+    total, which the reader regenerates); a shard must, because its counts are
+    the *restriction* of its parent's and no quota reproduces them.
+    """
+
+    row_offset: int = 0
+    col_offset: int = 0
+    #: ``[cols]`` int64: the trellis state column ``j`` starts from.  ``None``
+    #: when ``row_offset == 0`` -- the pinned zero start the decoder assumes.
+    initial_state: "torch.Tensor | None" = None
+    parent_rows: int = 0
+    parent_columns: int = 0
+    parent_digest: bytes = b""
+    release_counts: "tuple[int, ...]" = ()
+    #: The INITIAL_STATE plane's element width: the window width under a
+    #: WINDOW body, the convolutional code's memory under TCQ.  Zero exactly
+    #: when there is no state plane.
+    state_bits: int = 0
+
+
+def _lcm(a: int, b: int) -> int:
+    return a * b // gcd(a, b)
+
+
+def _scale_columns_per_row(unit) -> "int | None":
+    """The column stride of the block scale planes, or ``None`` if there are none."""
+    kind = ScalePlaneKind(getattr(unit, "scale_plane", ScalePlaneKind.S6B))
+    return scale_block_columns(kind, unit.group, unit.half)
+
+
+def _block_straddles_rows(block: "int | None", columns: int) -> bool:
+    """Does a block of this scale plane span two output rows?
+
+    The block planes are indexed ``(row * cols + col) // block``, so when the
+    block does not divide the column count a block begins in one output row
+    and ends in the next.  **No rectangle of such a unit is a run of the
+    plane** -- not even the whole of it -- so every cut is refused, the
+    identity slice included, and ``can_shard`` has to say so rather than
+    report a granularity.  This is the one home of that *geometric* question;
+    ``_unsliceable_reason`` is where it meets the other structure that refuses
+    every cut (rotation) and where the cutter and the predicate both read it,
+    because the two answering separately is what let a loader be told "yes"
+    and then handed a ``GrammarError`` (tessera#235, tessera#304).
+
+    No Tessera *encoder* produces such a unit, and since tessera#260 no Tessera
+    *writer* accepts one either: ``encode._pack_scales`` and
+    ``unit_artifact.build_unit_artifact`` refuse an S6b width that is not a
+    whole number of 32-weight groups from one ``grammar.require_scale_groups``
+    -- a group's two halves share one base exponent within one octave, so a
+    group spanning two rows would couple unrelated magnitudes (tessera#57) --
+    and the writer refuses the weaker ``half``-group rule on the other block
+    plane (tessera#56).  A cutter is nonetheless handed an ``EncodedUnit`` and
+    not an artifact, and a unit restricted by hand passes no writer at all, so
+    the question is still asked here and still has to be answered.
+    """
+    return block is not None and bool(columns % block)
+
+
+def _unsliceable_reason(rotation, block, columns) -> "str | None":
+    """Why no cut of this unit is expressible -- the ONE home of that question.
+
+    Two structures refuse **every** cut, the identity slice included, and
+    neither is a property of the cut being asked for, so neither belongs in a
+    granularity:
+
+    * **Rotation.**  An ``R_in``-only unit's codes are the rotated tensor's,
+      and the rotation is a block structure across the input axis: a column cut
+      lands inside a rotation block, and the pieces then decode to plausible
+      wrong weights rather than to a window of the parent's decode.  A row cut
+      is refused with it because a shard is a whole artifact -- a rank writes
+      it back out and the wire carries no way to say "half a rotation" -- and
+      because rotated slicing, if it is ever implemented, has to be implemented
+      in the cutter and the predicate together with its reconstruction
+      semantics proved.
+    * **A straddling scale block.**  ``_block_straddles_rows``: the block
+      planes are indexed ``(row * cols + col) // block``, so when the block does
+      not divide the width no rectangle of the weight is a run of the plane.
+
+    ``can_shard`` returns ``False`` when this returns a sentence and
+    ``slice_unit`` raises exactly that sentence, so the capability API cannot
+    promise a cut the cutter refuses.  That is the whole content of tessera#235
+    -- and tessera#304, which found rotation still answered in only one of the
+    two places: ``can_shard`` reported a rotated unit cuttable on both axes
+    while ``slice_unit`` had always refused it.  The arguments are the three
+    facts every view carries -- an ``EncodedUnit``, a ``ParsedUnit`` and a
+    ``Manifest`` all yield a rotation state, a block width and a column count
+    -- so one predicate serves all three.
+    """
+    from .diagonals import rotation_block_for
+
+    state = RotationState(rotation)
+    if state is not RotationState.NONE:
+        return (
+            f"refusing to slice a rotated unit: {state.name} rotation is a "
+            f"{rotation_block_for(state, columns)}-column block structure a "
+            "column cut would break, and the pieces would decode to plausible "
+            "wrong weights"
+        )
+    if _block_straddles_rows(block, columns):
+        return (
+            f"a {block}-weight block does not divide this unit's {columns} "
+            "columns, so a block spans two output rows and no cut of it -- the "
+            "identity slice included -- is a run of the plane. No encoder "
+            "writes such a unit (tessera#57)"
+        )
+    return None
+
+
+def shard_granularity(unit, superblock: int = 256, arity: int = 1,
+                      memo: "dict | None" = None):
+    """``(row_granularity, col_granularity)``: where a cut may legally fall.
+
+    Both numbers are *derived* from the checks ``slice_unit`` applies, never
+    asserted alongside them, so a granularity this reports is one that slices.
+
+    **Rows.**  A cut has to land on a trellis step, and a step covers ``arity``
+    weight rows; under the coset trellis it also has to land on a super-symbol
+    boundary, because the stored labels of a span-L super-symbol are read
+    together and position 0's label is derived from them -- so entering a
+    super-symbol halfway carries a *label phase* no state can express.  Hence
+    ``arity * span`` under TCQ and ``arity`` under the window body, whose span
+    is always 1.  The block scale planes run along the row, so a row boundary
+    is a block boundary whenever the unit's column count is a whole number of
+    blocks -- and when it is not, there is no granularity to report: a
+    straddling block makes every cut inexpressible, the identity included, so
+    ``_unsliceable_reason`` refuses the unit outright at ``can_shard``
+    instead of this raising a row granularity that would not have sliced
+    (tessera#235).  A rotated unit is refused there for the same reason and in
+    the same place (tessera#304): both are properties of the unit, not of the
+    cut, so neither is expressible as a granularity and this function reports
+    the arithmetic one for a unit the predicate has already admitted.
+
+    **Columns.**  A block scale plane is indexed by ``(row * cols + col) //
+    block``, so a column cut must fall on a block: 32 weights under S6b (which
+    carries a base plane per 32 and a refinement per 16), 16 under LUT.  A
+    CHANNEL plane has no column structure at all -- its scale is one word per
+    output row -- so its column granularity is 1, which is what makes the
+    served FP8 route the cheapest one to shard.  Two things raise it to the
+    superblock: a RELEASE plane, whose placement is defined *within* a
+    superblock (see ``decode.release_order``), and a mixed rate schedule,
+    whose quota ``sum(rates) == root * columns`` is only exact on whole
+    superblocks.
+    """
+    from .manifest import BodyKind, Manifest
+
+    if isinstance(unit, Manifest):
+        return _manifest_granularity(unit, memo)
+    unit, superblock, arity = _unwrap(unit, superblock, arity)
+    steps, cols = unit.body_bits.shape
+    span = int(getattr(unit, "span", 1))
+    body = BodyKind(getattr(unit, "body", BodyKind.TCQ))
+    row = arity * (span if body is BodyKind.TCQ else 1)
+    block = _scale_columns_per_row(unit)
+    col = 1 if block is None else block
+    mixed = len(set(unit.rates)) > 1
+    if mixed or unit.released_positions:
+        col = _lcm(col, superblock)
+    return row, col
+
+
+def _manifest_granularity(manifest, memo: "dict | None" = None):
+    """``shard_granularity`` for a manifest -- what a reader holding bytes has."""
+    from .manifest import BodyKind
+
+    geometry = manifest.geometry
+    block = scale_block_columns(
+        manifest.scale_plane.kind, geometry.group_weights, geometry.half_weights
+    )
+    arity = geometry.rows * geometry.columns // (
+        geometry.columns * _steps_of(manifest, memo))
+    row = arity * (manifest.span if manifest.body is BodyKind.TCQ else 1)
+    col = 1 if block is None else block
+    if len(set(manifest.rates)) > 1 or _released_positions(manifest):
+        col = _lcm(col, geometry.superblock_columns)
+    return row, col
+
+
+def _released_positions(unit) -> int:
+    """The release extent used by the capability checks, from either view."""
+    from .manifest import Manifest
+
+    if isinstance(unit, Manifest):
+        index = unit.plane_order.index(PlaneKind.RELEASE)
+        return max(terminal.plane_elements[index] for terminal in unit.terminals)
+    return unit.released_positions
+
+
+def _steps_of(manifest, memo: "dict | None" = None) -> int:
+    """Trellis steps per column, from the BODY plane's declared element count.
+
+    The arity is not on the wire, so it is recovered by trying the ones a
+    readable artifact can carry: the arities held by
+    ``alphabet.SERIALISABLE_GRIDS``, which this loop derives rather than
+    restates.  A non-power-of-two tuple -- ``k = 3`` over E2M1 is legal to
+    *build* (``alphabet.tuple_grid``) -- would not be found, and cannot arrive
+    either: a grid outside ``SERIALISABLE_GRIDS`` is refused at
+    ``build_unit_artifact`` and no reader can resolve its digest, so no
+    manifest reaches here holding one.  The refusal below says which set it
+    searched rather than claiming no arity works -- and it says so by
+    *formatting the set it searched*, because the two were typed separately
+    until 2026-09-03 and drifted the moment the loop narrowed: the docstring
+    still promised 4 and 8, and the refusal still named them, three commits
+    after the loop stopped trying them.
+    """
+    from .alphabet import SERIALISABLE_GRIDS as _GRIDS
+    from .trellis import body_bits as _bits
+
+    wire = manifest.plane_order
+    elements = max(
+        terminal.plane_elements[wire.index(PlaneKind.BODY)]
+        for terminal in manifest.terminals
+    )
+    if memo is not None:
+        table = memo.get("__steps_of")
+        if table is not None:
+            rates = manifest.rates
+            key = (elements, manifest.geometry.rows, manifest.span,
+                   len(rates), hash(rates))
+            stored = table.get(key)
+            if stored is not None and stored[1] == rates:
+                return stored[0]
+    # The arities a reader can meet are the tuple orders the registry commits
+    # to: ``arity`` is the grid's tuple order, and a grid outside the registry
+    # has no identity a reader can resolve.  A wider tuple is refused twice
+    # over -- by that registry, and by the 256-code ceiling on the byte-wide
+    # ALPHABET/DESCENDANT planes, which E2M1^3's 4096 codes already break.  The
+    # 4 and 8 this loop used to try could only mis-attribute a body-bit count
+    # the registry arities had already failed to explain; refusing is the
+    # honest answer.
+    searched = tuple(sorted({grid.arity for grid in _GRIDS.values()}))
+    for arity in searched:
+        if manifest.geometry.rows % arity:
+            continue
+        steps = manifest.geometry.rows // arity
+        if steps % manifest.span:
+            continue
+        if sum(_bits(rate, steps, manifest.span) for rate in manifest.rates) == elements:
+            if memo is not None:
+                table = memo.setdefault("__steps_of", {})
+                table[(elements, manifest.geometry.rows, manifest.span,
+                       len(manifest.rates), hash(manifest.rates))] = (
+                    steps, manifest.rates)
+            return steps
+    raise GrammarError(
+        f"the BODY plane declares {elements} bits, which no arity in "
+        f"{searched} over this rate schedule produces"
+    )
+
+
+def _require_shard_request(tp: int, axis: str) -> None:
+    if tp < 1:
+        raise GrammarError(f"tp must be positive, got {tp}")
+    if axis not in ("row", "column"):
+        raise GrammarError(f"axis is 'row' or 'column', got {axis!r}")
+
+
+def shard_cut_reason(
+    unit, tp: int, axis: str, superblock: int = 256, arity: int = 1,
+) -> "str | None":
+    """A cut-specific obstruction beyond whole-unit and granularity checks.
+
+    ``unsliceable_reason`` answers whether *every* cut is forbidden. This
+    answers about the requested equal shards: a RELEASE partial tail can
+    obstruct row cuts while column windows of the same unit remain valid.
+    Callers still check divisibility and granularity; ``None`` alone is not
+    admission. ``can_shard`` combines these rules into the binding answer.
+    """
+    _require_shard_request(tp, axis)
+    unit, _rows, cols, _block, _rotation, superblock, _arity = _slicing_facts(
+        unit, superblock, arity)
+    width = cols if axis == "row" else cols // tp
+    # RELEASE granularity aligns all equal-column offsets, so one window
+    # covers every rank. Row shards retain the entire column width.
+    return _release_cut_reason(_released_positions(unit), 0, width, superblock)
+
+
+def can_shard(unit, tp: int, axis: str, superblock: int = 256, arity: int = 1) -> bool:
+    """Can ``unit`` be cut into ``tp`` equal shards along ``axis``?
+
+    ``axis`` is ``"row"`` for a column-parallel Linear (q/k/v, gate/up: vLLM
+    splits the *output* features, which are this unit's rows) and ``"column"``
+    for a row-parallel one (o_proj, down_proj: the *input* features, this
+    unit's columns).  Expert parallelism moves whole units and asks nothing of
+    this function.
+
+    The answer is exactly "``slice_unit`` will accept that cut", never a
+    second reading of the same wire: the granularity below is the one
+    ``slice_unit`` measures its offsets against, and the refusals that do not
+    depend on the cut -- rotation and a straddling scale block -- come from
+    ``_unsliceable_reason``, the sentence ``slice_unit`` raises. RELEASE's
+    column-window check is shared with ``_slice_release`` too: a row split
+    retains the full width, which may include a partial trailing superblock
+    the release cutter cannot retain (tessera#350). A predicate
+    that answered ``True`` where the cutter raises is worse than no predicate
+    -- the loader asks first precisely so it can name a
+    ``tensor_parallel_size`` in the refusal (tessera#235); rotation was the
+    population still answered in only one of the two places (tessera#304).
+    """
+    _require_shard_request(tp, axis)
+    unit, rows, cols, block, rotation, superblock, arity = _slicing_facts(
+        unit, superblock, arity
+    )
+    if _unsliceable_reason(rotation, block, cols) is not None:
+        return False
+    row_gran, col_gran = shard_granularity(unit, superblock, arity)
+    extent, granularity = (rows, row_gran) if axis == "row" else (cols, col_gran)
+    if extent % tp or (extent // tp) % granularity:
+        return False
+    return shard_cut_reason(unit, tp, axis, superblock, arity) is None
+
+
+def _slicing_facts(unit, superblock: int, arity: int):
+    """The five facts every view of a unit yields, plus the unwrapped unit.
+
+    ``(unit, rows, columns, block, rotation, superblock, arity)``.  An
+    ``EncodedUnit``, a ``ParsedUnit`` and a bare ``Manifest`` all answer these,
+    by different routes, and reading them in ONE place is what keeps
+    :func:`can_shard` and :func:`unsliceable_reason` answering about the same
+    unit: the two used to be one function, and a second copy of this stanza
+    beside the other is how a predicate and a reason drift apart.
+    """
+    from .manifest import Manifest
+
+    if isinstance(unit, Manifest):
+        rows, cols = unit.geometry.rows, unit.geometry.columns
+        superblock = unit.geometry.superblock_columns
+        block = scale_block_columns(
+            unit.scale_plane.kind,
+            unit.geometry.group_weights,
+            unit.geometry.half_weights,
+        )
+        rotation = unit.branch.rotation
+    else:
+        unit, superblock, arity = _unwrap(unit, superblock, arity)
+        steps, cols = unit.body_bits.shape
+        rows = steps * arity
+        block = _scale_columns_per_row(unit)
+        rotation = getattr(unit, "rotation", RotationState.NONE)
+    return unit, rows, cols, block, rotation, superblock, arity
+
+
+def unsliceable_reason(unit, superblock: int = 256, arity: int = 1) -> "str | None":
+    """WHY no cut of ``unit`` is expressible, or ``None`` when some cut is.
+
+    :func:`can_shard`'s companion, and the answer it discards.  ``can_shard``
+    returns ``False`` for two quite different populations: a unit no cut of
+    which is expressible at all (rotation, a straddling scale block --
+    :func:`_unsliceable_reason`), and a unit whose wire is fine but whose
+    requested geometry or *granularity* is unsupported. Only the second can
+    have a different-cut remedy, and a caller that could not tell them
+    apart offered a divisor for a unit no divisor can cut (tessera#329).
+
+    Takes the same three shapes of argument ``can_shard`` does and reads them
+    through the same :func:`_slicing_facts`, so "``can_shard`` said no and this
+    says why" is one reading of one unit, not two.
+    """
+    _unit, _rows, cols, block, rotation, _sb, _ar = _slicing_facts(
+        unit, superblock, arity
+    )
+    return _unsliceable_reason(rotation, block, cols)
+
+
+def _unwrap(unit, superblock: int, arity: int):
+    """A ``ParsedUnit`` carries its own superblock and arity; take them.
+
+    A loader holds what ``parse_unit_artifact`` returned, not a bare
+    ``EncodedUnit``, and the defaults here (superblock 256, arity 1) are wrong
+    for a k-tuple grid -- so reading them off the parse is what keeps
+    ``can_shard`` and ``slice_unit`` answering about the same unit.
+    """
+    from .unit_artifact import ParsedUnit
+
+    if not isinstance(unit, ParsedUnit):
+        return unit, superblock, arity
+    return (
+        unit.unit,
+        unit.manifest.geometry.superblock_columns,
+        unit.grid.arity if unit.grid is not None else arity,
+    )
+
+
+def _initial_state(unit, steps0: int, arity: int, code, parent_state):
+    """The trellis state each column is at just before step ``steps0``.
+
+    Computed with the **decoder's own** replay, not a second formula: the
+    window body's state is ``decode.replay_window`` read at the last step above
+    the cut, and the coset trellis's is one ``ConvCode`` step past
+    ``decode._conv_state_stream``'s last row.  A shard of a shard therefore
+    composes for free -- the parent's own start state is an input to both --
+    and there is no separate derivation to drift from the decoder.
+
+    The replay runs over a **bounded tail**, not over every row above the cut.
+    Both registers are finite: the window body's state is the last ``L`` bits
+    of the stream, which ``ceil(L / R)`` positions fill, and the coset
+    trellis's is the last ``memory`` select bits, which ``memory + 1``
+    super-symbols fill (one more, because the stream reports the register
+    *before* each step it has bits for).  Past that depth the rows above
+    contribute nothing -- including the parent's own start state, which is why
+    the tail needs no init once it is full.  Running the whole prefix instead
+    made a rank's cut cost O(rows above it): the last rank of a tp=8 cut
+    replayed seven eighths of the unit to recover fourteen bits per column.
+    """
+    from .decode import _conv_state_stream, replay_window
+
+    if steps0 == 0:
+        # Nothing above the cut inside *this* unit -- but if this unit is
+        # itself a shard, its own start state is what row 0 replays from, and
+        # the sub-shard inherits it verbatim.  Returning ``None`` here made a
+        # re-slice of any rank but the first decode from the pinned zero.
+        return None if parent_state is None else parent_state.clone()
+    body = unit.body_bits
+    cols = body.shape[1]
+    device = body.device
+    rates = torch.tensor(unit.rates, device=device)
+    state = torch.zeros(cols, dtype=torch.long, device=device)
+    span = int(getattr(unit, "span", 1))
+    window = BodyKind(getattr(unit, "body", BodyKind.TCQ)) is BodyKind.WINDOW
+    for present in sorted(set(unit.rates)):
+        which = torch.nonzero(rates == present).squeeze(1)
+        if window:
+            window_bits = int(unit.window_bits)
+            taps = -(-window_bits // present)
+            depth = min(steps0, taps)
+            start = (
+                None
+                if depth == taps or parent_state is None
+                else parent_state.to(device)[which]
+            )
+            state[which] = replay_window(
+                body[steps0 - depth : steps0, which], window_bits, present, start
+            )[-1]
+            continue
+        start = None if parent_state is None else parent_state.to(device)[which]
+        # The coset trellis: one select bit per super-symbol.  The stream gives
+        # the register *before* each super-symbol it has bits for, so the state
+        # at the cut is one step past its last row -- ``ConvCode.step``'s
+        # ``((bit << memory) | state) >> 1``, which is exact and costs a shift.
+        supers = steps0 // span
+        depth = min(supers, code.memory + 1)
+        if depth == code.memory + 1:
+            start = None
+        # Row-slice first, then column-gather: gathering the whole prefix and
+        # slicing it afterwards copies every row above the cut.
+        tail = body[(supers - depth) * span : steps0, which]
+        select = (
+            (tail.long().reshape(depth, span, which.numel())[:, 0]) >> (present - 1)
+        ) & 1
+        stream = _conv_state_stream(select, code.memory, start)
+        state[which] = (
+            (select[depth - 1].long() << code.memory) | stream[depth - 1].long()
+        ) >> 1
+    return state
+
+
+def slice_unit(unit, rows=None, cols=None, *, arity: int = 1, code=None,
+               superblock: int = 256, parent_shape=None, parent_digest: bytes = b"",
+               grid=None):
+    """Cut ``unit`` down to ``rows = (r0, r1)`` by ``cols = (c0, c1)``.
+
+    The result is a **standalone unit**: it decodes on its own, through the
+    same ``tessera.decode`` entry points, to exactly ``decode(unit)[r0:r1,
+    c0:c1]`` -- the same codes against the same scales, bit for bit, with no
+    re-encoding anywhere.  That is what makes a Tessera artifact
+    tensor-parallel by construction: the exporter writes one unit and never
+    learns the TP degree, and each rank cuts its own shard at load.
+
+    Everything is a restriction of what the parent already stored:
+
+    * **BODY / COMPLETION** are per-column streams, so they slice on both axes.
+    * **The block scale planes** are indexed ``(row * cols + col) // block``, so
+      a column cut must fall on a block boundary; a row cut is free whenever a
+      row is a whole number of blocks.  A **CHANNEL** plane slices along rows
+      alone and constrains columns not at all.
+    * **DIAG_SU** is per input channel and **DIAG_SV** per output channel, so
+      each slices on its own axis.
+    * **RELEASE** restricts by the threshold argument in
+      ``decode.release_order``; the shard's per-superblock counts are the
+      parent's counts restricted, and travel on the wire because no spread
+      reproduces them.
+    * **ALPHABET / DESCENDANT** (the forests, or the window table) and the LUT
+      table are whole-unit and are carried across untouched.
+
+    The one thing that is *not* a restriction is the trellis state.  A column's
+    body is a bit stream entered at row 0 from a pinned zero state; entered at
+    row ``r0`` it starts from whatever the rows above left in the register, so
+    that register is stored -- one word per column, on the INITIAL_STATE plane
+    (schema minor 4).  At ``r0 == 0`` there is nothing to store, the plane is
+    absent, and the bytes are the parent's own: the identity slice of any unit
+    is that unit, byte for byte.
+
+    ``unit`` may be an ``EncodedUnit`` or a ``ParsedUnit``; a parsed one
+    supplies its own ``code``, ``superblock``, ``arity`` and parent digest.
+    ``rows``/``cols`` default to the full extent.  Rotation is refused: an
+    ``R_in``-only unit's rotation blocks are a column structure a column cut
+    would break silently -- through ``_unsliceable_reason``, so ``can_shard``
+    answers ``False`` for exactly the units this raises on (tessera#304).
+    """
+    from .trellis import ConvCode
+    from .unit_artifact import ParsedUnit
+
+    if isinstance(unit, ParsedUnit):
+        manifest = unit.manifest
+        grid = unit.grid
+        code = code or unit.code
+        superblock = manifest.geometry.superblock_columns
+        if manifest.shard is None:
+            # A whole artifact is the original: its own geometry and digest
+            # are what a first cut records.  A parsed SHARD's geometry and
+            # digest are the shard's, not the original's -- ``_as_unit``
+            # restored its record onto the unit, and the origin is read off
+            # that below.
+            parent_shape = parent_shape or (
+                manifest.geometry.rows, manifest.geometry.columns
+            )
+            parent_digest = parent_digest or manifest.manifest_digest()
+        unit = unit.unit
+    if grid is not None:
+        arity = grid.arity
+    code = code or ConvCode()
+
+    steps, columns = unit.body_bits.shape
+    n_rows = steps * arity
+    r0, r1 = (0, n_rows) if rows is None else (int(rows[0]), int(rows[1]))
+    c0, c1 = (0, columns) if cols is None else (int(cols[0]), int(cols[1]))
+    if not (0 <= r0 < r1 <= n_rows) or not (0 <= c0 < c1 <= columns):
+        raise GrammarError(
+            f"slice rows [{r0}, {r1}) x cols [{c0}, {c1}) is not inside a "
+            f"{n_rows}x{columns} unit"
+        )
+    # Rotation and a straddling scale block refuse every cut of this unit, the
+    # identity slice included, and ``can_shard`` reads the same predicate -- so
+    # a loader that asks first is never told yes and then handed this
+    # (tessera#235, tessera#304).
+    reason = _unsliceable_reason(
+        getattr(unit, "rotation", RotationState.NONE),
+        _scale_columns_per_row(unit),
+        columns,
+    )
+    if reason is not None:
+        raise GrammarError(reason)
+    row_gran, col_gran = shard_granularity(unit, superblock, arity)
+    for offset, name, granularity in ((r0, "row", row_gran), (c0, "column", col_gran)):
+        if offset % granularity:
+            raise GrammarError(
+                f"{name} offset {offset} is not a multiple of this unit's "
+                f"{name} granularity {granularity}"
+            )
+    if r1 % row_gran and r1 != n_rows:
+        raise GrammarError(
+            f"row {r1} is not a multiple of the row granularity {row_gran}"
+        )
+    if c1 % col_gran and c1 != columns:
+        raise GrammarError(
+            f"column {c1} is not a multiple of the column granularity {col_gran}"
+        )
+
+    rates = tuple(unit.rates[c0:c1])
+    if len(set(unit.rates)) > 1:
+        # The rate quota is exact per whole superblock, so a slice on
+        # superblock boundaries keeps it -- but the check is the arithmetic,
+        # never the boundary rule that is supposed to imply it.
+        root = Fraction(sum(unit.rates), len(unit.rates))
+        want = root * (c1 - c0)
+        if want.denominator != 1 or sum(rates) != int(want):
+            raise GrammarError(
+                f"columns [{c0}, {c1}) carry {sum(rates)} rate bits; the root "
+                f"{root} over {c1 - c0} columns requires {want}. This cut does "
+                "not keep the rate quota exact"
+            )
+
+    s0, s1 = r0 // arity, r1 // arity
+    span = int(getattr(unit, "span", 1))
+    if r0 % arity or r1 % arity or s0 % span or (s1 - s0) % span:
+        raise GrammarError(
+            f"rows [{r0}, {r1}) is not a whole number of span-{span} "
+            f"super-symbols at arity {arity}"
+        )
+    parent_state = getattr(unit, "initial_state", None)
+    state = _initial_state(unit, s0, arity, code, parent_state)
+    # The state is computed over the parent's columns, because the replay that
+    # produces it is per column of the parent; the shard keeps its own.
+    if state is not None:
+        state = state[c0:c1].contiguous()
+
+    kind = ScalePlaneKind(getattr(unit, "scale_plane", ScalePlaneKind.S6B))
+    scale_base = _slice_block_plane(unit.scale_base, n_rows, columns, unit.group,
+                                    r0, r1, c0, c1, "SCALE_BASE")
+    scale_refine = _slice_block_plane(unit.scale_refine, n_rows, columns, unit.half,
+                                      r0, r1, c0, c1, "SCALE_REFINE")
+    scale_rows = None if unit.scale_rows is None else unit.scale_rows[r0:r1].clone()
+    diagonals = None
+    if unit.diagonals is not None:
+        from .diagonals import Diagonals
+
+        diagonals = Diagonals(su=unit.diagonals.su[c0:c1].clone(),
+                              sv=unit.diagonals.sv[r0:r1].clone())
+
+    index, release_code, counts = _slice_release(
+        unit, n_rows, columns, r0, r1, c0, c1, superblock
+    )
+    body_kind = BodyKind(getattr(unit, "body", BodyKind.TCQ))
+    state_bits = 0
+    if state is not None:
+        state_bits = (
+            int(unit.window_bits) if body_kind is BodyKind.WINDOW else code.memory
+        )
+    # The record names the ORIGINAL (see the module docstring).  A unit that
+    # already carries a record is a shard, and its record is the origin: the
+    # offsets below compose into that frame, so the extent and digest must be
+    # the same unit's -- taking them off the immediate parent wrote a record
+    # whose four fields described two units (tessera#140: a legal re-slice
+    # refused as running past its parent, an illegal one serialised).  An
+    # explicit parent that contradicts the record is refused by name rather
+    # than overriding it, because no caller holds a truer origin than the
+    # shard does.
+    inherited = int(getattr(unit, "parent_rows", 0))
+    if inherited:
+        origin_shape = (inherited, int(unit.parent_columns))
+        origin_digest = unit.parent_digest
+        if parent_shape is not None and tuple(parent_shape) != origin_shape:
+            raise GrammarError(
+                f"parent_shape {tuple(parent_shape)} contradicts the record this "
+                f"shard carries: it is a window of a {origin_shape[0]}x"
+                f"{origin_shape[1]} original, and a shard of it names the same one"
+            )
+        if parent_digest and parent_digest != origin_digest:
+            raise GrammarError(
+                f"parent_digest {parent_digest.hex()[:16]} contradicts the record "
+                f"this shard carries ({origin_digest.hex()[:16]}): a shard of a "
+                "shard names the original's manifest, not the shard's"
+            )
+        parent_rows, parent_columns = origin_shape
+        parent_digest = origin_digest
+    else:
+        parent_rows, parent_columns = parent_shape or (n_rows, columns)
+    # The identity slice of a whole unit is that unit: it names no parent, so
+    # it writes no shard record and its bytes are the bytes it came from.  A
+    # slice of a *shard* keeps the shard record whatever its extent, because
+    # the offsets it composes are still offsets into the original.
+    if not inherited and (r0, c0, r1, c1) == (0, 0, n_rows, columns):
+        parent_rows = parent_columns = 0
+        parent_digest = b""
+    return SlicedUnit(
+        rates=rates,
+        anchors=_slice_step_plane(unit.anchors, s0, s1, c0, c1),
+        codes=_slice_step_plane(unit.codes, s0, s1, c0, c1),
+        body_bits=unit.body_bits[s0:s1, c0:c1].contiguous(),
+        completion_bits=_slice_step_plane(unit.completion_bits, s0, s1, c0, c1),
+        scale_base=scale_base,
+        scale_refine=scale_refine,
+        release_index=index,
+        release_code=release_code,
+        # The parent's summed squared error is not a property of the shard and
+        # no restriction of it is; a shard that claimed one would be claiming a
+        # measurement nobody made.
+        sse=0.0,
+        rotation=unit.rotation,
+        rotation_block=unit.rotation_block,
+        diagonals=diagonals,
+        group=unit.group,
+        half=unit.half,
+        completion_limit=unit.completion_limit,
+        scale_refit=unit.scale_refit,
+        span=span,
+        scale_plane=kind,
+        scale_lut=unit.scale_lut,
+        scale_global=unit.scale_global,
+        body=body_kind,
+        window_bits=int(getattr(unit, "window_bits", 0)),
+        window_codes=unit.window_codes,
+        scale_rows=scale_rows,
+        # The reach spellings are a property of the encoding, not of the
+        # extent: a shard is decoded by its parent's table against its
+        # parent's row-spread convention, so it carries them across untouched
+        # and rebuilds under its parent's profile id.  A parent that predates
+        # the fields yields the defaults, which bind nothing.
+        window_seed=int(getattr(unit, "window_seed", 0)),
+        window_sigma=getattr(unit, "window_sigma", None),
+        channel_sigma=getattr(unit, "channel_sigma", None),
+        row_offset=r0 + int(getattr(unit, "row_offset", 0)),
+        col_offset=c0 + int(getattr(unit, "col_offset", 0)),
+        initial_state=state,
+        parent_rows=parent_rows,
+        parent_columns=parent_columns,
+        parent_digest=parent_digest,
+        release_counts=counts,
+        state_bits=state_bits,
+    )
+
+
+def _slice_step_plane(plane, s0: int, s1: int, c0: int, c1: int):
+    """Slice a per-step plane, tolerating the zero placeholders a reader makes."""
+    if plane is None or plane.ndim != 2 or plane.numel() == 0:
+        return plane
+    if plane.stride() == (0, 0):
+        # The window reader's shared zero view (tessera#502): a slice of it is
+        # still one element, and ``contiguous`` would allocate the plane the
+        # reader declined to -- on every role a sharded load cuts.
+        return plane[s0:s1, c0:c1]
+    return plane[s0:s1, c0:c1].contiguous()
+
+
+def _slice_block_plane(plane, rows, columns, block, r0, r1, c0, c1, name):
+    """Slice a block scale plane, whose index is ``(row * cols + col) // block``.
+
+    The plane is one entry per ``block`` consecutive **columns** of one row, so
+    it reshapes to ``[rows, cols // block]`` and slices on both axes -- a
+    strided gather along the row, not a contiguous run, which is exactly why
+    the column cut has to land on a block.
+    """
+    if plane is None or plane.numel() == 0:
+        return plane
+    # Not this cut: ANY cut, the identity included.  The reshape below needs
+    # one row of the weight to be a whole number of plane entries, and a
+    # straddling block means no rectangle of the unit is a run of the plane.
+    # ``slice_unit`` and ``can_shard`` refuse the unit from the same predicate
+    # before reaching here, so this is the backstop for a direct caller -- and
+    # it says it in the predicate's own words, prefixed with the plane whose
+    # reshape would have failed, so there is one sentence and one home.
+    straddling = _unsliceable_reason(RotationState.NONE, block, columns)
+    if straddling is not None:
+        raise GrammarError(f"{name}: {straddling}")
+    if c0 % block or (c1 - c0) % block:
+        raise GrammarError(
+            f"{name}: a {block}-weight block does not divide a cut at columns "
+            f"[{c0}, {c1}) of {columns}"
+        )
+    if plane.numel() != rows * columns // block:
+        raise GrammarError(
+            f"{name} holds {plane.numel()} entries; a {rows}x{columns} unit at "
+            f"block {block} needs {rows * columns // block}"
+        )
+    field = plane.reshape(rows, columns // block)
+    return field[r0:r1, c0 // block : c1 // block].reshape(-1).contiguous()
+
+
+def _release_cut_reason(released: int, c0: int, c1: int, superblock: int) -> "str | None":
+    """The RELEASE window restriction shared by capability and the cutter.
+
+    This is a property of the requested columns, not of the whole unit:
+    a released partial-tail parent can still yield whole-superblock cuts.
+    """
+    width = c1 - c0
+    if released and (c0 % superblock or (width % superblock and width > superblock)):
+        return (
+            f"a unit with {released} released positions cuts "
+            f"only on superblock boundaries: columns [{c0}, {c1}) is neither a "
+            f"union of {superblock}-column superblocks nor inside one"
+        )
+    return None
+
+
+def _slice_release(unit, rows, columns, r0, r1, c0, c1, superblock):
+    """Restrict the RELEASE plane, and report the shard's per-superblock counts.
+
+    The parent's ``release_index`` is already in S9 order -- superblock-major,
+    then descending decoded ``|value|`` with a positional tie-break -- and the
+    restriction preserves both keys: superblocks map monotonically onto the
+    shard's (a cut on a superblock boundary is a refinement of the partition),
+    and within one superblock the surviving entries keep their relative order.
+    So the filter *is* the shard's order, and ``decode.release_order``
+    reproduces it from the shard's own decode.  See that function for why the
+    restriction of a top-n set is a top-k set.
+    """
+    device = unit.body_bits.device
+    empty = torch.zeros(0, dtype=torch.long, device=device)
+    if unit.release_index.numel() == 0:
+        return empty, empty, ()
+    width = c1 - c0
+    reason = _release_cut_reason(unit.release_index.numel(), c0, c1, superblock)
+    if reason is not None:
+        raise GrammarError(reason)
+    # The guard admits whole superblocks or a prefix inside one block: the
+    # count is width // superblock in the first case and one in the second.
+    # Count through ``grammar`` so the shard and whole-unit paths agree.
+    blocks = superblock_count(width, superblock)
+    flat = unit.release_index.long()
+    row = flat // columns
+    col = flat % columns
+    kept = torch.nonzero(
+        (row >= r0) & (row < r1) & (col >= c0) & (col < c1)
+    ).squeeze(1)
+    index = (row[kept] - r0) * width + (col[kept] - c0)
+    block_of = (col[kept] - c0) // superblock
+    counts = tuple(int((block_of == b).sum()) for b in range(blocks))
+    return index, unit.release_code[kept].clone(), counts

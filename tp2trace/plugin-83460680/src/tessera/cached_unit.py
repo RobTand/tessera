@@ -1,0 +1,775 @@
+"""Producer receipts for reusing exact unit bytes, without importing serving.
+
+A unit's wire does not record the source weight or calibration Hessian. Those
+inputs belong to this receipt; the wire still owns geometry, recipe and encoder
+identity. Acceptance compares both against freshly supplied producer inputs.
+This is an intake gate, not evidence that a serving runtime supports the unit.
+"""
+from __future__ import annotations
+
+from dataclasses import dataclass
+from fractions import Fraction
+from functools import lru_cache
+import hashlib
+import inspect
+import json
+from pathlib import Path
+from typing import Protocol, runtime_checkable
+
+from .container import parse
+from .encoder_identity import encoder_fixture_id, resumable
+from .export import (ActivationSource, DEFAULT_CODE, DEFAULT_GROUP, DEFAULT_HALF,
+                     HESSIAN_IDENTITY, WireRecipe, served_recipe)
+from .grammar import bresenham_rate_schedule
+from .manifest import BodyKind, ContainerClass, RotationState
+from .serving_parts import unique_json_pairs
+from .structure import STRUCTURE_DENSE, STRUCTURES
+from .unit_artifact import _reach_attrs, build_unit_artifact, encoder_profile_id
+
+CACHE_SCHEMA = "tessera.cached_units.v1"
+ROOTED_CACHE_SCHEMA = "tessera.cached_units.v2"
+COMPOSED_CACHE_SCHEMA = "tessera.cached_units.v3"
+INPUT_SCHEMA = "tessera.cached_unit_inputs.v1"
+ENCODING_INPUT_SCHEMA = "tessera.encoding_inputs.v1"
+#: The two authority documents a rooted bundle binds by path and SHA256.  Their
+#: schemas are the producer's, so the caller's ``ReuseAuthority`` judges them.
+REUSE_AUTHORITY_DOCUMENTS = ("catalog_extension", "candidate_overlay")
+#: The refusal a rooted bundle gives when no producer authority was supplied.
+MISSING_REUSE_AUTHORITY = ("rooted cached units need a producer reuse authority "
+                           "(CachedUnitBundle(authority=...)); none was supplied")
+
+
+@runtime_checkable
+class ReuseAuthority(Protocol):
+    """A producer's judgement of the records a rooted bundle's reuse rests on.
+
+    A rooted bundle (``tessera.cached_units.v2``) reuses unit bytes that one
+    producer wrote under another producer's encoder.  Tessera owns the bundle:
+    its roots, producer packages, exact path and SHA256 bindings, adoption
+    coverage, the proof roster, the warning record and the served-activation
+    comparison.  The producer owns the documents those bindings point at.  An
+    authority is the producer's reader for them, supplied by the caller;
+    Tessera names no producer schema.
+
+    Every method raises ``ValueError`` (or lets a malformed document raise
+    while it is read) to refuse.  A bundle that needs an authority and has none
+    refuses with ``MISSING_REUSE_AUTHORITY``; it is never accepted unjudged.
+    """
+
+    def check_document(self, role: str, document) -> None:
+        """Refuse a bound authority document the producer does not vouch for.
+
+        ``role`` is one of ``REUSE_AUTHORITY_DOCUMENTS``; ``document`` is the
+        parsed JSON whose bytes matched the bundle's binding.
+        """
+
+    def adoption_proof(self, unit: str, adoption, identity: dict, original: str):
+        """Check one adoption record and return the proof binding it names.
+
+        ``identity`` is the unit's receipt identity and ``original`` is the
+        bundle's ``checkpoint_encoder_source_sha256``.  The returned value is
+        matched against the bundle's ``encoder_source_proofs`` roster; ``None``
+        means the adoption names no proof.
+        """
+
+    def proof_authorizes(self, proof, adoption, original: str) -> bool:
+        """Whether ``proof`` authorizes ``adoption``.
+
+        ``proof`` is the bound proof document the adoption named, or ``None``
+        when the roster holds no such binding.  A ``False`` answer refuses in
+        strict mode and becomes a recorded warning in permissive mode.
+        """
+
+    def served_activations(self, policy, adoptions: dict, units: dict) -> dict:
+        """The served activations a bound policy requires of these adoptions.
+
+        Returns ``{unit: {"group": key, "input_global_scale": value}}``, which
+        the bundle's ``served_activations`` must equal exactly.
+        """
+
+
+def _json_copy(value):
+    return json.loads(json.dumps(value, sort_keys=True, allow_nan=False))
+
+
+def digest_host_tensor(value) -> str:
+    """The ``sha256.dtype_shape_contiguous.v1`` digest of a contiguous host tensor.
+
+    The construction ``tensor_identity`` stamps on every cached unit and every
+    sealed capture, in one place: dtype and shape as JSON, a NUL, then the
+    bytes.  ``value`` must already be a contiguous CPU tensor -- a pinned
+    staging buffer the seal prefetch filled counts, which is why this is
+    split out -- and the bytes are fed to the hash through the buffer
+    protocol rather than ``tobytes()``: the digest is the same, the 64 MiB
+    copy under the GIL is not made.
+    """
+    import torch
+
+    if value.device.type != "cpu" or not value.is_contiguous():
+        raise ValueError("digest_host_tensor needs a contiguous CPU tensor")
+    digest = hashlib.sha256()
+    digest.update(json.dumps({"dtype": str(value.dtype), "shape": list(value.shape)},
+                             sort_keys=True).encode())
+    digest.update(b"\0")
+    digest.update(memoryview(value.view(torch.uint8).numpy()))
+    return digest.hexdigest()
+
+
+def host_fingerprint(value) -> int:
+    """An exact, order-free integer over a contiguous host tensor's bytes.
+
+    The sum of the bytes read as int32 words (int64 accumulator, so it is
+    exact and independent of reduction order), or of the raw bytes when the
+    length is not a whole number of words.  ``export.device_fingerprint``
+    computes the same integer from a device tensor without staging it: the
+    seal prefetch takes this one from the bytes it digested, the consumer
+    takes that one from the tensor it is about to encode, and they agree
+    exactly when the bytes do.  It is a change detector for the seal's memo,
+    not a digest -- the digest is the sha256 beside it.
+    """
+    import numpy as np
+    import torch
+
+    if value.device.type != "cpu" or not value.is_contiguous():
+        raise ValueError("host_fingerprint needs a contiguous CPU tensor")
+    raw = value.view(torch.uint8).numpy()
+    if raw.nbytes % 4 == 0:
+        return int(raw.view(np.int32).sum(dtype=np.int64))
+    return int(raw.sum(dtype=np.int64))
+
+
+def tensor_identity(tensor) -> dict:
+    """Hash actual contiguous values, dtype and shape; never a filename."""
+    value = tensor.detach().cpu().contiguous()
+    return {"algorithm": "sha256.dtype_shape_contiguous.v1", "dtype": str(value.dtype),
+            "shape": list(value.shape), "sha256": digest_host_tensor(value)}
+
+
+@lru_cache(maxsize=1)
+def encoder_source_sha256() -> str:
+    """Conservatively bind the producer package, including unmeasured branches.
+
+    The behavior fixture owns numerical compatibility; this extra source seal
+    refuses reuse across edits outside its finite witnesses as well. It may
+    reject a harmless source edit, but never relabels the encoder fixture.
+    """
+    root = Path(__file__).resolve().parent
+    digest = hashlib.sha256()
+    for path in sorted(p for p in root.rglob("*")
+                       if p.suffix in {".py", ".cu", ".cuh", ".cpp", ".h"}):
+        digest.update(path.relative_to(root).as_posix().encode() + b"\0")
+        digest.update(path.read_bytes())
+        digest.update(b"\0")
+    return digest.hexdigest()
+
+
+def encoding_input_identity(weight, unit_name: str, grid, q256: int, *,
+                            activation: ActivationSource | None = None,
+                            structure: str = STRUCTURE_DENSE) -> dict:
+    """Source/H/settings identity shared by dense and projected campaign units.
+
+    This function imposes no source-layout or runtime topology. A caller using
+    the projected cache/export boundary adds the producer projection through
+    ``unit_input_identity``. No invented expert fields are needed for a dense
+    campaign's resume check.
+
+    ``structure`` is what the unit is served AS, and it picks the recipe the
+    receipt stamps: ``export.served_recipe(grid, q256, structure)``, the one
+    statement the serving exporter encodes and the intake adopts (tessera#662).
+    The block carries no structure key of its own. With the default, and at
+    every rung where the served wire is the research one (every E4M3 and BF16
+    rung, and E2M1x2 at its cap), the block is ``wire_recipe``'s, byte for
+    byte, so no receipt stamped before the argument existed moves. Only a
+    routed E2M1x2 stack below the cap stamps a different block: the span-2
+    TCQ wire its decoder reads.
+    """
+    if not isinstance(unit_name, str) or not unit_name:
+        raise ValueError("encoding input identity requires a unit name")
+    if len(weight.shape) != 2 or min(weight.shape) <= 0:
+        raise ValueError("encoding input identity requires a nonempty 2-D source weight")
+    if type(q256) is not int or q256 <= 0:
+        raise ValueError("cached unit rung must be a positive integer")
+    name = ActivationSource.unit_name(unit_name)
+    calibration = None
+    if activation is not None:
+        if name not in activation.hessians:
+            raise ValueError(f"{name}: cached unit has no exact Hessian key")
+        hessian = activation.hessians[name]
+        if list(hessian.shape) != [weight.shape[1], weight.shape[1]]:
+            raise ValueError(f"{name}: cached unit Hessian shape disagrees with columns")
+        settings = activation.config_block()
+        # Paths and prose are not calibration identity. Every numerical setting
+        # in the owner's config remains, including trailing objectives/sweeps.
+        settings.pop("note", None)
+        settings["hessian"] = {key: activation.provenance[key] for key in HESSIAN_IDENTITY}
+        calibration = {"settings": settings, "hessian": tensor_identity(hessian)}
+    return _json_copy({"schema": ENCODING_INPUT_SCHEMA, "unit": name,
+                       "source": tensor_identity(weight), "calibration": calibration,
+                       "recipe": {"grid": grid.name, "q256": q256,
+                                  **served_recipe(grid, q256, structure).to_config()},
+                       "encoder_source_sha256": encoder_source_sha256(),
+                       "encoder_fixture_id": encoder_fixture_id().hex()})
+
+
+def unit_input_identity(weight, projection: dict, grid, q256: int, *,
+                        activation: ActivationSource | None = None,
+                        structure: str = STRUCTURE_DENSE) -> dict:
+    """Add an explicit producer projection to the common encoding inputs.
+
+    ``projection.tensor`` is the logical producer tensor name WITH ``.weight``;
+    cache keys use ``ActivationSource.unit_name(tensor)`` WITHOUT that suffix.
+    ``source_tensor`` remains the exact physical checkpoint key, with whatever
+    suffix that checkpoint owns. The projection comes from the producer plan,
+    not from an intake-side guess about tensor rank or model architecture.
+    """
+    required = {"tensor", "source_tensor", "source_layout", "source_slice",
+                "expert", "projection", "group", "rows", "cols"}
+    absent = required - projection.keys()
+    if absent:
+        raise ValueError(f"cached unit projection missing {sorted(absent)}")
+    if not isinstance(projection["tensor"], str) or not projection["tensor"].endswith(".weight"):
+        raise ValueError("cached unit projection.tensor must include .weight")
+    if list(weight.shape) != [projection["rows"], projection["cols"]]:
+        raise ValueError("cached unit source shape disagrees with producer projection")
+    identity = encoding_input_identity(weight, projection["tensor"], grid, q256,
+                                        activation=activation, structure=structure)
+    return _json_copy({**identity, "schema": INPUT_SCHEMA,
+                       "projection": {key: projection[key] for key in sorted(required)}})
+
+
+HESSIAN_IDENTITY_MODES = ("committed", "digested")
+
+
+class CachedUnitIdentity:
+    """Derive cached-unit input identities, establishing H identity one of two ways.
+
+    ``derive(weight, unit_name, unit, grid, q256, *, activation)`` is the
+    producer's own identity factory -- the historical producer's when a
+    receipt was written by one, this package's otherwise -- and every field
+    of every identity still comes from it.  What this class decides is
+    where ``calibration.hessian`` comes from:
+
+    ``digested``
+        the producer consumes H through ``activation.hessians[name]`` and
+        digests it, the path every cached export took before this class.
+        On a reference document that is one whole canonical ``.pt`` read
+        per unit, for bytes the cached path never otherwise touches.
+    ``committed``
+        the sealed commitment the reference document holds for the unit,
+        served by ``ReferenceHessians.commitment``.  Exact by construction:
+        ``ReferenceHessians.__getitem__`` refuses any payload whose identity
+        differs from that commitment, so the digested value on an accepting
+        run is the committed value.  The first unit is still derived in full
+        -- H read, digested -- and the spliced form is required to equal it
+        before any other unit is served; that witness also fixes
+        ``calibration.settings``, which is unit-independent (it is the
+        owner's ``config_block`` less prose, the same for every unit).
+
+    Only a checked reference owner has commitments; a plain mapping is
+    digested whatever was asked, and no activation means no calibration
+    block at all.  ``record()`` says which happened, so a receipt never
+    implies bytes were compared when they were not.  Safe to call from
+    several threads once witnessed; the witness itself is serialised.
+    """
+
+    def __init__(self, derive, activation, *, mode: str = "committed"):
+        import threading
+
+        if mode not in HESSIAN_IDENTITY_MODES:
+            raise ValueError(f"cached unit Hessian identity mode must be one of {HESSIAN_IDENTITY_MODES}")
+        self._derive = derive
+        self.activation = activation
+        self._lock = threading.Lock()
+        self._settings = None
+        self._witness = None
+        self._reference = None
+        if activation is None:
+            self.established = None
+        else:
+            from .hessian_capture import REFERENCE_OWNER_TYPES, ReferenceHessianCollection
+            reference = isinstance(activation.hessians, REFERENCE_OWNER_TYPES)
+            self.established = mode if reference else "digested"
+            if reference:
+                owner = activation.hessians
+                if isinstance(owner, ReferenceHessianCollection):
+                    self._reference = {"path": activation.provenance.get("path"),
+                                       "document_sha256": owner.document_sha256,
+                                       "binding": owner.binding()}
+                else:
+                    self._reference = {
+                        "path": activation.provenance.get("path"),
+                        "document_sha256": owner.document_sha256,
+                        **{k: v for k, v in owner.binding().items() if k != "schema"}}
+
+    def __call__(self, weight, unit_name: str, unit, grid, q256: int) -> dict:
+        if self.established != "committed":
+            return self._derive(weight, unit_name, unit, grid, q256, activation=self.activation)
+        with self._lock:
+            if self._settings is None:
+                return self._witness_unit(weight, unit_name, unit, grid, q256)
+        return self._committed(weight, unit_name, unit, grid, q256)
+
+    def _witness_unit(self, weight, unit_name, unit, grid, q256):
+        from .errors import GrammarError
+
+        full = self._derive(weight, unit_name, unit, grid, q256, activation=self.activation)
+        self._settings = _json_copy(full["calibration"]["settings"])
+        spliced = self._committed(weight, unit_name, unit, grid, q256)
+        if spliced != full:
+            self._settings = None
+            raise GrammarError(f"{full['unit']}: committed Hessian identity disagrees with "
+                               "the consumed derivation; refusing to serve commitments")
+        self._witness = {"unit": full["unit"], "agreed": True}
+        return full
+
+    def _committed(self, weight, unit_name, unit, grid, q256):
+        identity = self._derive(weight, unit_name, unit, grid, q256, activation=None)
+        name = identity["unit"]
+        hessians = self.activation.hessians
+        if name not in hessians:
+            raise ValueError(f"{name}: cached unit has no exact Hessian key")
+        commitment = hessians.commitment(name)
+        if commitment["shape"] != [weight.shape[1], weight.shape[1]]:
+            raise ValueError(f"{name}: cached unit Hessian shape disagrees with columns")
+        identity["calibration"] = {"settings": self._settings, "hessian": commitment}
+        return _json_copy(identity)
+
+    def record(self) -> dict:
+        """How calibration H identity was established, for the export receipt."""
+        served = reference = None
+        if self._reference is not None:
+            reference = dict(self._reference, capture_sha256=self.activation.capture_sha256())
+            from .hessian_capture import ReferenceHessianCollection
+            if isinstance(self.activation.hessians, ReferenceHessianCollection):
+                reference["consumption"] = self.activation.hessians.receipt()
+        if self.established == "committed":
+            served = len(self.activation.hessians.receipt()["committed_units_served"])
+        return _json_copy({"schema": "tessera.cached_unit_hessian_identity.v1",
+                           "established": self.established,
+                           "reference": reference,
+                           "witness": self._witness,
+                           "committed_units_served": served})
+
+
+def _local_filename(name: str) -> str:
+    if not isinstance(name, str) or not name or Path(name).name != name or name in {".", ".."}:
+        raise ValueError(f"cached unit filename must be a local leaf: {name!r}")
+    return name
+
+
+@dataclass(frozen=True)
+class AcceptedUnit:
+    blob: bytes
+    manifest: object
+    wire_bytes: int
+
+
+def _check_wire(blob: bytes, identity: dict):
+    from .control import grid_for_name
+    from .planes import PlaneKind
+
+    schema = identity.get("schema")
+    if schema not in (INPUT_SCHEMA, ENCODING_INPUT_SCHEMA):
+        raise ValueError("cached unit input schema is unsupported")
+    projected = schema == INPUT_SCHEMA
+    if projected != ("projection" in identity):
+        raise ValueError("cached unit input schema/projection fields disagree")
+    shape = identity["source"]["shape"]
+    if not isinstance(shape, list) or len(shape) != 2 or any(type(n) is not int or n <= 0 for n in shape):
+        raise ValueError("cached unit source identity must carry an exact 2-D shape")
+    rows, columns = shape
+    if projected and [identity["projection"]["rows"], identity["projection"]["cols"]] != shape:
+        raise ValueError("cached unit projection geometry disagrees with source identity")
+    artifact = parse(blob)
+    manifest = artifact.manifest
+    recipe_spec = identity["recipe"]
+    grid = grid_for_name(recipe_spec["grid"])
+    q256 = recipe_spec["q256"]
+    # The recipe block must be a served wire this package states for the
+    # unit's (grid, q256) and a structure its schema admits (tessera#662): a
+    # dense receipt (no projection) is served dense, so only the dense
+    # spelling; a projected expert unit may be served as either. The wire is
+    # then held to the recipe the block names. A structure-specific intake
+    # still compares the whole block against its own expected identity
+    # (``verify_cached_unit``), so this is the bound a producer's record is
+    # checked against, not a license at export.
+    admissible = STRUCTURES if projected else (STRUCTURE_DENSE,)
+    stated = [{"grid": grid.name, "q256": q256, **served_recipe(grid, q256, s).to_config()}
+              for s in admissible]
+    if recipe_spec not in stated:
+        raise ValueError("cached unit recipe differs from the producer recipe")
+    recipe = WireRecipe.from_config(recipe_spec)
+    geometry = manifest.geometry
+    if manifest.shard is not None or len(manifest.terminals) != 1:
+        raise ValueError("cached unit must be one complete, unsharded terminal")
+    order = {kind: index for index, kind in enumerate(manifest.plane_order)}
+    if any(artifact.terminal.plane_elements[order[plane.kind]] != plane.element_count
+           for plane in manifest.planes):
+        raise ValueError("cached unit must carry complete planes, not a terminal prefix")
+    if (geometry.rows, geometry.columns, geometry.quantizable_params) != (
+            rows, columns, rows * columns):
+        raise ValueError("cached unit wire geometry disagrees with source projection")
+    superblock = inspect.signature(build_unit_artifact).parameters["superblock"].default
+    if (geometry.group_weights, geometry.half_weights, geometry.superblock_columns) != (
+            DEFAULT_GROUP, DEFAULT_HALF, superblock):
+        raise ValueError("cached unit wire group geometry differs from the encoder defaults")
+    if manifest.branch.root_q256 != q256 * grid.arity:
+        raise ValueError("cached unit wire rung differs from the requested rung")
+    if manifest.branch.rotation != RotationState.NONE or manifest.branch.container != ContainerClass.GRIDBOOK:
+        raise ValueError("cached unit wire rotation/container differs from the encoder defaults")
+    cap = grid.payload_bits if recipe.body is BodyKind.WINDOW else grid.rate_cap
+    rates = bresenham_rate_schedule(Fraction(q256 * grid.arity, 256), columns, cap=cap)
+    code = None if recipe.body is BodyKind.WINDOW else DEFAULT_CODE
+    profile = encoder_profile_id(code, rates, grid, recipe.span, recipe.scale_plane,
+                                 recipe.body, recipe.window_bits, recipe.window_seed,
+                                 recipe.window_sigma, recipe.channel_sigma)
+    if manifest.encoder_profile_id != profile or manifest.rates != rates:
+        raise ValueError("cached unit wire encoder profile/rate schedule differs from recipe")
+    wire_profile = encoder_profile_id(
+        code, manifest.rates, grid, manifest.span, manifest.scale_plane.kind,
+        manifest.body, manifest.window_bits, *_reach_attrs(manifest))
+    if manifest.encoder_profile_id != wire_profile:
+        raise ValueError("cached unit wire recipe/reach fields disagree with encoder profile")
+    if (manifest.body, manifest.span, manifest.scale_plane.kind, manifest.window_bits) != (
+            recipe.body, recipe.span, recipe.scale_plane, recipe.window_bits):
+        raise ValueError("cached unit wire recipe fields differ from requested recipe")
+    # The ordinary campaign/export seam spends no completion or release bits.
+    for kind in (PlaneKind.RELEASE, PlaneKind.COMPLETION):
+        index = manifest.plane_order.index(kind)
+        if artifact.terminal.plane_elements[index]:
+            raise ValueError(f"cached unit wire carries non-default {kind.name} elements")
+    if not resumable(manifest):
+        raise ValueError("cached unit wire encoder fixture is not resumable by this encoder")
+    return artifact
+
+
+def make_unit_record(blob: bytes, identity: dict, *, filename: str) -> dict:
+    """Record a just-produced unit using the same validator as export intake."""
+    _check_wire(blob, identity)
+    return {"file": _local_filename(filename), "blob_sha256": hashlib.sha256(blob).hexdigest(),
+            "blob_bytes": len(blob), "identity": _json_copy(identity)}
+
+
+def verify_cached_unit(blob: bytes, record: dict, expected_identity: dict) -> AcceptedUnit:
+    if set(record) != {"file", "blob_sha256", "blob_bytes", "identity"}:
+        raise ValueError("cached unit record has missing or unknown fields")
+    _local_filename(record["file"])
+    if record["blob_bytes"] != len(blob) or record["blob_sha256"] != hashlib.sha256(blob).hexdigest():
+        raise ValueError("cached unit blob size/sha256 mismatch")
+    observed = record["identity"]
+    if not isinstance(observed, dict) or set(observed) != set(expected_identity):
+        raise ValueError("cached unit input identity fields differ")
+    for key, value in expected_identity.items():
+        if observed[key] != value:
+            raise ValueError(f"cached unit {key} identity mismatch")
+    artifact = _check_wire(blob, expected_identity)
+    return AcceptedUnit(blob, artifact.manifest, artifact.terminal.exact_bytes)
+
+
+def _manifest_sha256(manifest: dict) -> str:
+    """The cached-unit manifest seal, one spelling (tessera#708).
+
+    Both bundle constructors (composed and rooted) bind these same bytes;
+    the value is pinned by golden tests and must not move.
+    """
+    return hashlib.sha256(json.dumps(
+        manifest, sort_keys=True, separators=(",", ":"), allow_nan=False).encode()).hexdigest()
+
+
+class CachedUnitBundle:
+    """Closed unit roster; all filenames/source bindings checked before reads."""
+
+    def __init__(self, manifest: dict, directory: Path, expected_units: set[str], source: dict,
+                 *, encoder_source_proof_mode: str = "strict", authority: ReuseAuthority | None = None):
+        if encoder_source_proof_mode not in ("strict", "permissive"):
+            raise ValueError("cached unit encoder_source_proof_mode must be strict or permissive")
+        if authority is not None and not isinstance(authority, ReuseAuthority):
+            raise TypeError("cached unit authority must implement tessera.cached_unit.ReuseAuthority")
+        self.encoder_source_proof_mode = encoder_source_proof_mode
+        self._authority = authority
+        self.warnings = []
+        rooted = manifest.get("schema") == ROOTED_CACHE_SCHEMA
+        composed = manifest.get("schema") == COMPOSED_CACHE_SCHEMA
+        fields = {"schema", "source", "units"}
+        if rooted:
+            fields |= {"wire_roots", "unit_roots", "producer_packages",
+                       "reuse_authority", "encoder_adoptions", "served_activation_policy", "served_activations"}
+        if composed:
+            fields = {"schema", "source", "children"}
+        if set(manifest) != fields or manifest["schema"] not in (
+                CACHE_SCHEMA, ROOTED_CACHE_SCHEMA, COMPOSED_CACHE_SCHEMA):
+            raise ValueError("cached unit bundle has an unsupported schema or fields")
+        from .serving_parts import SOURCE_PART_SCHEMA, prove_source_part
+        if isinstance(source, dict) and source.get("schema") == SOURCE_PART_SCHEMA:
+            # A serving part hashed only the shards it reads (tessera#495);
+            # the bundle's whole-checkpoint identity must vouch for each.
+            whole = manifest["source"]
+            if (not isinstance(whole, dict)
+                    or set(whole) != {"config_sha256", "auxiliary_sha256", "files", "tensors"}
+                    or not isinstance(whole["files"], dict) or not isinstance(whole["tensors"], dict)
+                    or set(whole["files"]) != set(whole["tensors"].values())):
+                raise ValueError("cached unit bundle source is not a whole-checkpoint identity")
+            prove_source_part(source, whole, "cached unit bundle")
+        elif manifest["source"] != source:
+            raise ValueError("cached unit bundle source checkpoint identity mismatch")
+        self.directory = Path(directory).resolve()
+        self.children = {}
+        self.child_manifests = []
+        self.producer_packages = {}
+        self.reuse_authority = None
+        self.encoder_adoptions = {}
+        self.served_activation_policy, self.served_activations = None, {}
+        if composed:
+            self._bind_composed(manifest, expected_units)
+            self.manifest_sha256 = _manifest_sha256(manifest)
+            return
+        units = manifest["units"]
+        if not isinstance(units, dict) or set(units) != set(expected_units):
+            raise ValueError("cached unit bundle coverage differs from the complete producer plan")
+        self.roots = {"legacy": self.directory}
+        self.unit_roots = dict.fromkeys(units, "legacy")
+        if rooted:
+            self._bind_rooted(manifest, units)
+        files = set()
+        for key, record in units.items():
+            name = _local_filename(record["file"])
+            location = (str(self.roots[self.unit_roots[key]]), name)
+            if location in files:
+                raise ValueError(f"duplicate cached unit filename: {name}")
+            files.add(location)
+            if record["identity"]["unit"] != key:
+                raise ValueError(f"cached unit coverage key {key} disagrees with receipt")
+        self.units = _json_copy(units)
+        self.manifest_sha256 = _manifest_sha256(manifest)
+
+    def read(self, key: str) -> tuple[bytes, dict]:
+        if self.children:
+            return self.children[key].read(key)
+        record = self.units[key]
+        root = self.roots[self.unit_roots[key]]
+        path = root / record["file"]
+        if root.resolve() != root or path.is_symlink() or path.resolve().parent != root:
+            raise ValueError(f"cached unit filename escapes bundle: {path}")
+        return path.read_bytes(), record
+
+    def _bind_composed(self, manifest, expected_units):
+        """Join independently completed child manifests without changing receipts."""
+        descriptors = manifest["children"]
+        if not isinstance(descriptors, list) or not descriptors:
+            raise ValueError("cached unit composition needs a nonempty child roster")
+        seen_paths = set()
+        units, producers, owners, served = {}, {}, {}, {}
+        children = []
+        for descriptor in descriptors:
+            if not isinstance(descriptor, dict) or set(descriptor) != {"manifest", "producer_package"}:
+                raise ValueError("cached unit child needs manifest and producer package fields")
+            bound = descriptor["manifest"]
+            # _bound_document verifies the exact file bytes. Reject path aliases
+            # as well, so one document cannot masquerade as two cohorts.
+            if not isinstance(bound, dict) or not isinstance(bound.get("path"), str):
+                raise ValueError("cached unit child manifest path is invalid")
+            path = Path(bound["path"])
+            if path.resolve() != path or path in seen_paths:
+                raise ValueError("cached unit child manifests alias a path")
+            seen_paths.add(path)
+            document = _bound_document(bound)
+            if not isinstance(document, dict) or document.get("schema") not in (
+                    CACHE_SCHEMA, ROOTED_CACHE_SCHEMA):
+                raise ValueError("cached unit composition children must be v1 or v2")
+            child_units = document.get("units")
+            if not isinstance(child_units, dict) or not child_units:
+                raise ValueError("cached unit child has no unit roster")
+            if set(child_units) & set(units):
+                raise ValueError("cached unit child unit rosters overlap")
+            child = CachedUnitBundle(document, path.parent, set(child_units), manifest["source"],
+                                     encoder_source_proof_mode=self.encoder_source_proof_mode,
+                                     authority=self._authority)
+            self.warnings.extend(_json_copy(child.warnings))
+            package = descriptor["producer_package"]
+            if document["schema"] == CACHE_SCHEMA:
+                seals = {record["identity"]["encoder_source_sha256"]
+                         for record in child.units.values()}
+                if len(seals) != 1 or not isinstance(package, dict) or set(package) != {"path", "sha256"}:
+                    raise ValueError("v1 cached unit child needs its one original producer package")
+                seal = next(iter(seals))
+                if not isinstance(package["path"], str):
+                    raise ValueError("v1 cached unit producer package path is invalid")
+                package_path = Path(package["path"])
+                if (not isinstance(seal, str) or len(seal) != 64
+                        or any(c not in '0123456789abcdef' for c in seal)
+                        or package["sha256"] != seal or not package_path.is_absolute()
+                        or package_path.resolve() != package_path):
+                    raise ValueError("v1 cached unit producer package differs from original seal")
+                child_packages = {seal: package}
+            else:
+                if package is not None:
+                    raise ValueError("v2 cached unit child already binds its producer packages")
+                child_packages = child.producer_packages
+            for seal, original in child_packages.items():
+                if seal in producers and producers[seal] != original:
+                    raise ValueError("cached unit child producer package bindings conflict")
+                producers[seal] = original
+            for name in child.units:
+                owners[name] = child
+            units.update(child.units)
+            if set(served) & set(child.served_activations):
+                raise ValueError("cached unit child served activations overlap")
+            served.update(child.served_activations)
+            children.append({"manifest": bound, "schema": document["schema"],
+                             "units": len(child.units), "producer_package": package,
+                             "producer_packages": child.producer_packages,
+                             "reuse_authority": child.reuse_authority,
+                             "encoder_adoptions": len(child.encoder_adoptions),
+                             "warnings": child.warnings,
+                             "served_activation_policy": child.served_activation_policy,
+                             "served_activations": child.served_activations})
+        if set(units) != set(expected_units):
+            raise ValueError("cached unit composition coverage differs from the complete producer plan")
+        self.units, self.children = units, owners
+        # The caller still owns the parsed parent document. Keep its small
+        # provenance dictionaries from changing after manifest_sha256 is set.
+        self.producer_packages = _json_copy(producers)
+        self.served_activations = _json_copy(served)
+        self.child_manifests = _json_copy(children)
+
+    def _bind_rooted(self, manifest, units):
+        roots, owners = manifest["wire_roots"], manifest["unit_roots"]
+        if (not isinstance(roots, dict) or not roots or not isinstance(owners, dict)
+                or set(owners) != set(units) or set(owners.values()) != set(roots)):
+            raise ValueError("cached unit root coverage differs from selected units")
+        resolved = {}
+        for name, spelling in roots.items():
+            path = Path(spelling)
+            if (not isinstance(name, str) or not name or not path.is_absolute()
+                    or str(path) != spelling or path.resolve() != path or not path.is_dir()):
+                raise ValueError("cached unit root must be a canonical existing directory")
+            resolved[name] = path
+        if len(set(resolved.values())) != len(resolved):
+            raise ValueError("cached unit roots alias the same directory")
+        packages = manifest["producer_packages"]
+        seals = {record["identity"]["encoder_source_sha256"] for record in units.values()}
+        if not isinstance(packages, dict) or set(packages) != seals:
+            raise ValueError("cached unit producer coverage differs from selected encoder seals")
+        for seal, package in packages.items():
+            if (not isinstance(seal, str) or len(seal) != 64
+                    or any(c not in '0123456789abcdef' for c in seal)
+                    or not isinstance(package, dict) or set(package) != {"path", "sha256"}
+                    or package["sha256"] != seal or not Path(package["path"]).is_absolute()):
+                raise ValueError("cached unit producer package lacks an exact source binding")
+        authority = manifest["reuse_authority"]
+        if not isinstance(authority, dict) or set(authority) != {
+                "catalog_extension", "candidate_overlay", "encoder_source_proofs",
+                "checkpoint_encoder_source_sha256"}:
+            raise ValueError("rooted cached units need explicit catalog extension authority")
+        judge = self._authority
+        if judge is None:
+            raise ValueError(MISSING_REUSE_AUTHORITY)
+        for name in REUSE_AUTHORITY_DOCUMENTS:
+            judge.check_document(name, _bound_document(authority[name]))
+        proofs = authority["encoder_source_proofs"]
+        if not isinstance(proofs, list):
+            raise ValueError("rooted cached unit encoder proofs must be explicit bindings")
+        proof_documents = {json.dumps(bound, sort_keys=True): _bound_document(bound) for bound in proofs}
+        if len(proof_documents) != len(proofs):
+            raise ValueError("rooted cached unit encoder proof is duplicated")
+        original = authority["checkpoint_encoder_source_sha256"]
+        adoptions = manifest["encoder_adoptions"]
+        changed = {name for name, record in units.items()
+                   if record["identity"]["encoder_source_sha256"] != original}
+        if not isinstance(adoptions, dict) or set(adoptions) != changed:
+            raise ValueError("rooted cached unit adoption coverage differs")
+        used_proofs = set()
+        for name, adoption in adoptions.items():
+            binding = judge.adoption_proof(name, adoption, units[name]["identity"], original)
+            key = json.dumps(binding, sort_keys=True)
+            proof = proof_documents.get(key)
+            if not judge.proof_authorizes(proof, adoption, original):
+                reason = "cached unit encoder source proof does not authorize this adoption"
+                if self.encoder_source_proof_mode == "strict":
+                    raise ValueError(reason)
+                self.warnings.append({
+                    "schema": "tessera.cached_unit_warning.v1",
+                    "code": "encoder_source_proof_not_authorized", "unit": name,
+                    "reason": reason,
+                    "proof_status": ("absent" if binding is None
+                                     else "unlisted" if key not in proof_documents
+                                     else "not_authorizing"),
+                    "encoder_source_proof": _json_copy(binding)})
+            if key in proof_documents:
+                used_proofs.add(key)
+        if used_proofs != set(proof_documents):
+            raise ValueError("rooted cached unit proof roster contains unused authority")
+        policy_bound, served = manifest["served_activation_policy"], manifest["served_activations"]
+        if not isinstance(served, dict) or not set(served) <= set(units):
+            raise ValueError("rooted cached unit served activation coverage differs")
+        if policy_bound is None:
+            # Every E2M1x2 rung executes the static A-side contract, so an
+            # adopted A4 unit at ANY rung needs the bound policy, not only the
+            # cap rung the first adoptions used (tessera#662: routed sub-cap
+            # units are adoptable now).
+            added_a4 = any(units[name]["identity"].get("recipe", {}).get("grid") == "E2M1x2"
+                           for name in adoptions)
+            if served or added_a4:
+                raise ValueError("served activation values lack their bound policy")
+        else:
+            expected = judge.served_activations(_bound_document(policy_bound), adoptions, units)
+            if served != expected:
+                raise ValueError("selected served activations differ from bound executed groups")
+        self.served_activation_policy, self.served_activations = policy_bound, _json_copy(served)
+        self.roots, self.unit_roots = resolved, dict(owners)
+        self.producer_packages = _json_copy(packages)
+        self.reuse_authority, self.encoder_adoptions = _json_copy(authority), _json_copy(adoptions)
+
+    def require_served_scales(self, scales):
+        """Check the actual serialized fp32 inputs against priced group values."""
+        import struct
+        for name, value in self.served_activations.items():
+            key = name + ".input_global_scale"
+            expected = struct.unpack("f", struct.pack("f", value["input_global_scale"]))[0]
+            if scales.get(key) != expected:
+                raise ValueError(f"{name}: exported activation scale differs from the bound served policy")
+
+
+def _bound_document(bound):
+    if not isinstance(bound, dict) or set(bound) != {"path", "sha256"}:
+        raise ValueError("cached unit authority needs an exact path/SHA256 binding")
+    path = Path(bound["path"])
+    if not path.is_absolute() or path.is_symlink():
+        raise ValueError("cached unit authority must name an absolute regular file")
+    raw = path.read_bytes()
+    if hashlib.sha256(raw).hexdigest() != bound["sha256"]:
+        raise ValueError("cached unit authority SHA256 differs")
+    return json.loads(raw, object_pairs_hook=unique_json_pairs)
+
+
+class ProducerCachedUnitIdentities:
+    """Keep each historical factory and its H commitment witness separate."""
+
+    def __init__(self, bundle, producers, derive, activation, *, mode="committed"):
+        self.bundle, self.producers = bundle, producers
+        if set(producers) != set(bundle.producer_packages):
+            raise ValueError("cached unit identity producers differ from the bound bundle")
+        self.identities = {
+            seal: CachedUnitIdentity(
+                lambda *args, _producer=producer, **kwargs: derive(_producer, *args, **kwargs),
+                activation, mode=mode)
+            for seal, producer in producers.items()}
+        self.established = "per_producer"
+
+    def producer_for(self, key):
+        seal = self.bundle.units[key]["identity"]["encoder_source_sha256"]
+        return self.producers[seal]
+
+    def __call__(self, weight, unit_name, unit, grid, q256):
+        key = ActivationSource.unit_name(unit_name)
+        seal = self.bundle.units[key]["identity"]["encoder_source_sha256"]
+        return self.identities[seal](weight, unit_name, unit, grid, q256)
+
+    def record(self):
+        return {"schema": "tessera.cached_unit_hessian_identity.by_producer.v1",
+                "producers": {seal: identity.record()
+                              for seal, identity in sorted(self.identities.items())}}
+
+
+def read_manifest(path: Path) -> dict:
+    return json.loads(Path(path).read_text(), object_pairs_hook=unique_json_pairs)

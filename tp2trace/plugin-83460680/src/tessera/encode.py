@@ -1,0 +1,3931 @@
+"""The Tessera encoder: scales, trellis body, completion, release (doc S5-S9).
+
+Vectorised over columns, which is the only axis that parallelises: the trellis
+runs *down* a column (S5's per-column integer rates), so positions within a
+column are sequentially dependent while columns are independent.  A GLM expert
+is 4096 columns wide, so that is 4096-way parallelism at every step --
+principle 7's GPU-first requirement met by the structure of the problem rather
+than by a kernel.
+
+The pass order is forced by what each stage needs:
+
+1. **Group scales first.**  The trellis quantises ``w / scale`` against the
+   E2M1 grid, so the scale has to exist before the body does.
+2. **Viterbi body**, with S9's anticipated-completion metric.
+3. **Completion bits**, which refine within the anchor's own tree.
+4. **Release**, last, because S9's canonical placement orders positions by
+   "descending decoded |value| within the superblock" -- the *pre-release*
+   decoded value.  Ordering on the post-release value would be circular: the
+   decoder cannot reproduce an order that depends on the overrides it has not
+   read yet.
+"""
+
+from __future__ import annotations
+
+import collections
+import os
+import threading
+from contextlib import contextmanager
+from dataclasses import dataclass
+from typing import Sequence
+
+import torch
+
+import functools
+
+from .alphabet import (
+    E2M1_GRID,
+    E2M1_VALUES,
+    GAUSSIAN_SOURCE,
+    GROUP_SCALED_SOURCE,
+    AnchorForest,
+    PayloadGrid,
+    build_forest,
+)
+from .diagonals import (
+    Diagonals,
+    apply_diagonals,
+    apply_rotation,
+    fit_diagonals,
+    undo_diagonals,
+)
+from .manifest import WINDOW_BITS_MAX, BodyKind, RotationState, ScalePlaneKind
+from .errors import GrammarError
+from .grammar import release_quota, require_release_defined, require_scale_groups
+from .scale_codec import GROUP_WEIGHTS
+from .trellis import SUBSET_COUNT, ConvCode, TCQ
+
+__all__ = [
+    "EncodedUnit",
+    "encode_unit",
+    "e2m1_value_table",
+    "grid_value_table",
+    "require_memory",
+    "LUT_ENTRIES",
+    "LUT_LANDING_MODES",
+    "LUT_LANDING_WIRE",
+    "lut_landing",
+    "refit_diagnostics",
+]
+
+
+def require_memory(code: ConvCode) -> ConvCode:
+    """Refuse a convolutional code with no memory, at both ends of the wire.
+
+    The encoder reads a super-symbol's select bit as ``state >> (memory - 1)``
+    and the decoder builds its start states as ``1 << (memory - 1)``.  At
+    ``memory = 0`` those are a shift by minus one: torch evaluates the first as
+    zero and raises nothing, so the vectorised trellis reports anchors it did
+    not emit, and the second raises a bare ``ValueError: negative shift count``
+    one layer later.  A code with no memory is not a degenerate case this
+    trellis defines, and a silently wrong encode is worse than a refusal, so
+    both ends refuse it by name.  ``ConvCode`` itself is wire (its memory and
+    generators are bound into the encoder profile id) and is left alone; this
+    is the check the two consumers make.
+    """
+    if code.memory < 1:
+        raise GrammarError(
+            f"a convolutional code needs at least one memory element, got "
+            f"{code.memory}; the select bit is state >> (memory - 1) and the "
+            f"decoder's start states are 1 << (memory - 1)"
+        )
+    return code
+
+#: Entries in the per-unit scale table of a ``ScalePlaneKind.LUT`` plane.  The
+#: SCALE_REFINE plane is four bits per half, so sixteen is what a nibble
+#: indexes; fewer is legal on the wire and wastes index bits.
+LUT_ENTRIES = 16
+
+#: E4M3 scale grid, used for the segment-2b refinement (S6b).
+_E4M3_MAX = 448.0
+
+
+def e2m1_value_table(device=None, dtype=torch.float32) -> torch.Tensor:
+    return torch.tensor(E2M1_VALUES, device=device, dtype=dtype)
+
+
+def grid_value_table(
+    grid: PayloadGrid = E2M1_GRID, device=None, dtype=torch.float32
+) -> torch.Tensor:
+    """``slot -> value`` for any payload grid.
+
+    TESSERA-4 and TESSERA-8 are one construction at two grid widths, so every
+    place that used to reach for the E2M1 table takes the forest's own grid
+    instead.  ``e2m1_value_table`` survives as the TESSERA-4 spelling because
+    the kernel lane and the NVFP4 materialiser are E2M1 by definition.
+    """
+    if grid.arity != 1:
+        raise GrammarError(
+            f"grid {grid.name} has arity {grid.arity}: a code decodes to "
+            f"{grid.arity} values, not one. Use grid_vector_table."
+        )
+    return torch.tensor(grid.values, device=device, dtype=dtype)
+
+
+def grid_vector_table(
+    grid: PayloadGrid = E2M1_GRID, device=None, dtype=torch.float32
+) -> torch.Tensor:
+    """``[size, arity]`` -- every code's reconstruction, whatever its width.
+
+    The scalar table is the ``arity == 1`` column of this one, so the encoder
+    and decoder run the arity-1 path through the same expression: a sum over a
+    length-1 axis is exact in floating point, which is what makes "arity 1 is
+    byte-identical" a property rather than a hope.
+    """
+    return torch.tensor(grid.values, device=device, dtype=dtype).reshape(
+        grid.size, grid.arity
+    )
+
+
+@dataclass
+class EncodedUnit:
+    """One encoded Linear: every plane, plus what the accountant needs."""
+
+    rates: "tuple[int, ...]"
+    anchors: torch.Tensor        # [rows, cols] int64, index into forest anchors
+    codes: torch.Tensor          # [rows, cols] int64, E2M1 nibble after Stage C
+    body_bits: torch.Tensor      # [rows, cols] uint8, the R input bits per position
+    completion_bits: torch.Tensor  # [rows, cols] int64, the c completion bits
+    scale_base: torch.Tensor     # [groups] uint8, E8M0 exponent byte
+    scale_refine: torch.Tensor   # [halves] uint8, 4-bit refinement word
+    release_index: torch.Tensor  # [n_released] int64, flat position indices
+    release_code: torch.Tensor   # [n_released] int64, the override nibble
+    # The unweighted squared error of this unit's reconstruction against the
+    # weight it was built from, in the weight's own units -- ``sum (w - s q)^2``
+    # over the planes and codes the unit carries, computed after release.
+    # Diagnostic, never wire: no plane holds it and ``unit_artifact`` parses one
+    # back as 0.0, so two units with different ``sse`` can be byte-identical.
+    sse: float
+    rotation: RotationState = RotationState.NONE
+    rotation_block: int = 1
+    diagonals: "Diagonals | None" = None   # segment 2a, None when not fitted
+    # The segment-2b block geometry.  Stored because a decoder holding only the
+    # planes cannot otherwise turn ``scale_base``/``scale_refine`` back into a
+    # per-position scale: the byte counts alone do not say which axis they run
+    # along.  These travel in the manifest geometry on the wire.
+    group: int = 32
+    half: int = 16
+    # The completion depth this unit was *encoded* at, or None for "as deep as
+    # each rate allows".  It is not the same as ``3 - R``: the encoder truncates
+    # to ``min(completion, depth)`` (see ``encode_unit``), so a unit written at
+    # completion=0 carries no completion information at all.  The serialiser
+    # needs it to size the COMPLETION plane at the depth that was used rather
+    # than the depth the rate leaves room for -- writing the wider plane is what
+    # made every rung of a family weigh the same.
+    completion_limit: "int | None" = None
+    # How many scale-plane refits the encoder ran (``encode_unit``): that many
+    # trellis passes and that many refits, the last refit trailing.  Not wire:
+    # the bytes decode identically at any value.  Recorded because two units
+    # built at different settings are different renderings of one weight, and
+    # a merge that mixes them should be able to see that it did.
+    scale_refit: int = 0
+    # The super-symbol length L of the trellis (``trellis.py``): one select
+    # bit per L positions, ``L - 1`` stored two-bit labels, ``LR + L - 1``
+    # body bits per super-symbol.  Wire: the reader needs it to slice the body
+    # and to replay the code, so it travels in the manifest and is bound into
+    # the encoder profile id.  ``1`` is the per-position trellis, byte for byte.
+    span: int = 1
+    # The scale plane's *kind*.  ``S6B`` is ``scale_base`` + ``scale_refine``
+    # read by ``scales_from_planes``.  ``LUT`` drops the base plane: the
+    # SCALE_REFINE nibble indexes ``scale_lut`` -- up to sixteen distinct E4M3
+    # bytes chosen per unit -- times ``scale_global``.  Same 4 bits per half,
+    # half the plane's bytes, and the half's scale is still one E4M3 behind an
+    # fp32 global, which is exactly the NVFP4 tile's two-level scale.
+    scale_plane: ScalePlaneKind = ScalePlaneKind.S6B
+    scale_lut: "torch.Tensor | None" = None   # [<=16] uint8 E4M3FN bytes, ascending
+    scale_global: float = 1.0
+    # The BODY plane's *kind* (schema minor 2).  Under ``WINDOW`` the trellis
+    # is the bitshift trellis: ``anchors`` holds the per-position STATE (the
+    # last ``window_bits`` bits of the column's stream), ``body_bits`` the R
+    # new bits per position, ``codes`` is ``window_codes[state]``, and the
+    # completion plane is empty.  ``window_codes`` is the table -- one grid
+    # code per state -- and it travels on the ALPHABET plane.  Wire, all
+    # three: bound into the encoder profile id and read off the manifest.
+    body: BodyKind = BodyKind.TCQ
+    window_bits: int = 0
+    window_codes: "torch.Tensor | None" = None   # [2^window_bits] uint8 grid codes
+    # A CHANNEL scale plane (schema minor 3): one fp16 word per output row,
+    # times ``scale_global``; ``scale_base`` and ``scale_refine`` are empty.
+    # Travels on the DIAG_SV plane (``scale_channel.py``).
+    scale_rows: "torch.Tensor | None" = None     # [rows] fp16
+    # What the window table's spread request actually bought (#84).  A grid
+    # has a largest finite magnitude, so a spread that would place the
+    # outermost quantile past it clamps and the table stops widening; on E4M3
+    # a 4x request delivers 1.167x of the shipped reach and piles a quarter of
+    # the entries onto 448.  Diagnostic, never wire -- like ``sse``, no plane
+    # holds it and ``unit_artifact`` parses a unit back with it unset -- but
+    # the encoder is where the clamp happens, so the encoder is where it is
+    # recorded rather than left for a caller to re-derive.
+    table_reach: "WindowTableReach | None" = None
+    # The reach spellings the encoder was told (schema minor 5): the window
+    # table's seed and spread, and the CHANNEL plane's modelled row spread.
+    # Recorded so the artifact states what cut it -- ``unit_artifact``
+    # binds them into the encoder profile id and onto the manifest, which is
+    # what makes equal ids mean equal reach terms.  The spellings, not the
+    # resolved values: ``None`` is the grid-derived default (the amax-bounded
+    # source under a block plane, ``scale_channel.default_channel_sigma``
+    # under a CHANNEL plane), the same convention the checkpoint config's
+    # ``wire.recipes`` already uses.
+    window_seed: int = 0
+    window_sigma: "float | None" = None
+    channel_sigma: "float | None" = None
+
+    @property
+    def released_positions(self) -> int:
+        return int(self.release_index.numel())
+
+
+@functools.lru_cache(maxsize=32)
+def _transition_tables(code: ConvCode, device):
+    """For each next state, its two predecessors and the subsets they emit.
+
+    A rate-1/2 code has exactly two branches into every state, so these are
+    dense tables and the Viterbi step becomes two gathers and a min.
+
+    Memoised on ``(code, device)`` because it is neither cheap nor variable:
+    the loop below is ``2 * states`` Python iterations each writing ONE element
+    into a CUDA tensor, so a call is a few hundred single-element host-to-device
+    copies -- and it depends on nothing but the code.  ``viterbi_columns`` used
+    to build it per call, which under LDLQ is once per column block per refit
+    pass (issue #13).  The returned tensors are read-only to every caller and
+    are shared, which is also what a CUDA-graph capture needs: a stable address.
+    """
+    states = code.states
+    prev = torch.zeros(2, states, dtype=torch.long, device=device)
+    subset = torch.zeros(2, states, dtype=torch.long, device=device)
+    filled = [0] * states
+    for state in range(states):
+        for bit in (0, 1):
+            nxt, sub = code.step(state, bit)
+            slot = filled[nxt]
+            if slot > 1:
+                raise GrammarError(
+                    f"state {nxt} has more than two predecessors; the code is "
+                    "not rate-1/2"
+                )
+            prev[slot, nxt] = state
+            subset[slot, nxt] = sub
+            filled[nxt] = slot + 1
+    if any(count != 2 for count in filled):
+        raise GrammarError("the trellis is not regular: some state has != 2 branches")
+    return prev, subset
+
+
+@functools.lru_cache(maxsize=32)
+def _descendant_values(forest: AnchorForest, completion: int, device):
+    """``[n_anchors, 2^c, arity]`` of the reconstructions reachable at level c.
+
+    Memoised for the reason ``_transition_tables`` is: it builds a nested
+    Python list of ``anchors * 2^c * arity`` floats and ships it to the device,
+    and it is a function of the forest and the completion level alone.
+    """
+    grid = forest.grid
+    table = [
+        [grid.vector(code) for code in forest.reachable(anchor, completion)]
+        for anchor in range(len(forest.blocks))
+    ]
+    return torch.tensor(table, device=device, dtype=torch.float32)
+
+
+@functools.lru_cache(maxsize=32)
+def _subset_table(tcq: TCQ, device):
+    """``[4, 2^(R-1)]`` of anchor indices, by subset.
+
+    ``TCQ.subsets`` is a property that re-derives the partition on every read;
+    memoised here for the same reason as its two neighbours above.
+    """
+    return torch.tensor(tcq.subsets, device=device, dtype=torch.long)
+
+
+@functools.lru_cache(maxsize=32)
+def _anchor_block_table(forest: AnchorForest, device):
+    """``[n_anchors, 2^(cap-R)]`` of the forest's codes, on ``device``.
+
+    ``encode_unit``'s trellis pass built this with ``torch.tensor(forest.blocks,
+    ...)`` per call, which is a Python tuple-of-tuples walked on the host and
+    copied over the bus -- once per LDLQ column block per refit pass.
+    """
+    return torch.tensor(forest.blocks, device=device, dtype=torch.long)
+
+
+#: Whether the TCQ Viterbi's step loop is replayed as a CUDA graph, on every
+#: call the fused trellis does not take (``_TCQ_FUSED_ENV``).  Unset
+#: lets the reuse rule in ``viterbi_columns`` decide, "0" forces the eager
+#: loop, "1" captures as soon as a shape repeats.  A measurement
+#: knob, never a correctness one: both spellings run the same ops in the same
+#: order on the same buffers and return the same states and the same ``sse``
+#: float, which ``tests/test_tcq_graph.py`` pins.
+_TCQ_GRAPH_ENV = "TESSERA_TCQ_GRAPH"
+#: How many calls one shape must draw before capture is worth its cost.  It is
+#: paid once per shape and saves on every call after, so the question is only
+#: whether a shape recurs at all.  Measured on Qwen3-0.6B ``layers.0.mlp.
+#: down_proj``, cropped to 512x512 so both arms run in one process on one
+#: tree: the *weights-only* encode makes four calls of one shape, and capture
+#: still wins it -- 2.50 s eager against 1.51 s captured.  So two is not a
+#: threshold this shape needs protecting from.  One call is: a shape seen once
+#: would pay a capture it never replays, which the first-call reference path
+#: avoids.
+_TCQ_GRAPH_MIN_CALLS = 2
+#: How many shapes hold buffers at once, per thread.  A plan's ``choice``
+#: plane is ``supers * cols * states`` bools, so this is real residency and is
+#: bounded.  Measured on the unit below, the whole plan costs 80 MiB: peak
+#: allocation over a Qwen3-0.6B ``down_proj`` encode went 0.295 -> 0.375 GiB.
+_TCQ_PLAN_CACHE = 4
+#: Plans are **per thread**, and that is a correctness requirement, not a
+#: tuning choice.  A plan owns the buffers its Viterbi writes, so two threads
+#: sharing one would overwrite each other's front, traceback and outputs --
+#: and PrismaBuild's workers encode units concurrently in one process.  The
+#: table memos above are shared because they are read-only; these are not.
+_TCQ_LOCAL = threading.local()
+#: Whether ``auto`` takes the fused trellis (``tcq_fused``) wherever it is
+#: admitted.  Unset or "1" takes it; "0" leaves ``auto`` on the reference and
+#: graph rule above, which is the control an A/B of the two machines measures
+#: against -- ``TESSERA_TCQ_GRAPH`` governs that rule and nothing else.  A
+#: measurement knob, never a correctness one: the fused path returns the
+#: reference's anchors, body field and ``sse`` float, which
+#: ``tests/test_tcq_fused.py`` pins.
+_TCQ_FUSED_ENV = "TESSERA_TCQ_FUSED"
+
+
+def _tcq_fused_wanted() -> bool:
+    raw = os.environ.get(_TCQ_FUSED_ENV, "")
+    if raw in ("", "1"):
+        return True
+    if raw == "0":
+        return False
+    raise GrammarError(
+        f"{_TCQ_FUSED_ENV}={raw!r} is not 0 (the graph rule), 1 or unset "
+        "(the fused trellis wherever it is admitted)")
+
+
+def _tcq_maps():
+    plans = getattr(_TCQ_LOCAL, "plans", None)
+    if plans is None:
+        plans = _TCQ_LOCAL.plans = collections.OrderedDict()
+        _TCQ_LOCAL.seen = collections.OrderedDict()
+    return plans, _TCQ_LOCAL.seen
+
+
+class _TCQPlan:
+    """One TCQ Viterbi's tensors, and the graph that replays its step loop.
+
+    ``run`` is **the definition** of the vectorised coset trellis -- the
+    reference path and the graph path both execute this method, so they cannot
+    drift.  What differs between them is only where the tensors come from: the
+    reference path builds a plan per call and throws it away, and the graph
+    path keeps one per shape so the addresses are stable enough to capture.
+
+    Why a graph at all (issue #13): the step loop is ``supers`` Python
+    iterations of about forty small kernels, plus a traceback of the same
+    length.  Its wall cost is therefore fixed per CALL and almost independent
+    of how many columns the call carries -- which is exactly what the issue
+    measured, ``0.694 s`` a segment whether the segment was 32 columns wide or
+    4096.  LDLQ turns one call into ``cols / ldl_block`` calls, so that fixed
+    cost is what multiplies.  Nothing about the arithmetic is slow; the launch
+    stream is.  Capturing the loop once per shape and replaying it is
+    principle 10's answer and the same one ``window_viterbi`` already took.
+    """
+
+    __slots__ = ("device", "rows", "cols", "arity", "steps", "supers", "span",
+                 "states", "points", "point_dtype", "shift", "memory",
+                 "targets", "weights", "tuples", "wrows", "dvals", "subsets",
+                 "prev", "subset_of", "roll", "column", "cost_a", "cost_b",
+                 "taken", "cost", "end", "choice", "picked", "fold",
+                 "anchors", "bits", "graph")
+
+    def __init__(self, *, device, rows, cols, dtype, weight_dtype, forest,
+                 code, completion, span, owns_input):
+        grid = forest.grid
+        self.device, self.rows, self.cols = device, rows, cols
+        self.arity = grid.arity
+        self.steps = steps = rows // self.arity
+        self.span = span
+        self.supers = supers = steps // span
+        self.states = states = code.states
+        self.memory = code.memory
+        self.prev, self.subset_of = _transition_tables(code, device)
+        self.dvals = _descendant_values(forest, completion, device)  # [A,2^c,k]
+        self.subsets = _subset_table(TCQ(forest, code), device)      # [4, P]
+        self.points = points = self.subsets.shape[1]
+        # The traceback stores the winning point index per (step, column,
+        # subset).  A byte holds it up to rate 9; above that the index must
+        # widen or it wraps silently -- the same "a code is a nibble"
+        # assumption that corrupted the body plane at rate 9.  Width follows
+        # the rate; it is never assumed.
+        self.point_dtype = torch.uint8 if points <= 256 else torch.int32
+        self.shift = points.bit_length() - 1
+        # A captured graph reads its inputs from fixed addresses, so a
+        # persistent plan owns them and the caller copies in; a per-call plan
+        # points straight at the caller's tensors and copies nothing.
+        self.targets = (torch.empty(rows, cols, dtype=dtype, device=device)
+                        if owns_input else None)
+        self.weights = (torch.empty(rows, cols, dtype=weight_dtype, device=device)
+                        if owns_input and weight_dtype is not None else None)
+        self.tuples = self.wrows = None
+        # The front's type is the one the reference reaches: it starts as the
+        # fp32 ``torch.full`` and is promoted by the first branch cost, which
+        # carries ``promote(targets, dvals)`` and ``dvals`` is fp32.  Starting
+        # there is value-identical -- the only fp32 values in the front at that
+        # point are the ``inf`` and the ``0.0`` this fill writes, and both are
+        # exact in every wider type.
+        cost_dtype = torch.promote_types(dtype, torch.float32)
+        self.cost_a = torch.empty(cols, states, dtype=cost_dtype, device=device)
+        self.cost_b = torch.empty(cols, states, dtype=cost_dtype, device=device)
+        self.taken = torch.empty(cols, states, dtype=torch.long, device=device)
+        self.cost = None
+        self.end = torch.empty(cols, dtype=torch.long, device=device)
+        self.choice = torch.empty(supers, cols, states, dtype=torch.bool, device=device)
+        self.picked = torch.empty(steps, cols, SUBSET_COUNT,
+                                  dtype=self.point_dtype, device=device)
+        # The fold's argument per stored position: which label ``v`` position
+        # i took, indexed by the accumulated label after it.  Empty at L = 1.
+        self.fold = torch.empty(supers, max(span - 1, 0), cols, SUBSET_COUNT,
+                                dtype=torch.uint8, device=device)
+        self.roll = torch.arange(SUBSET_COUNT, device=device)
+        self.column = torch.arange(cols, device=device)
+        self.anchors = torch.empty(steps, cols, dtype=torch.long, device=device)
+        self.bits = torch.empty(steps, cols, dtype=torch.long, device=device)
+        self.graph = None
+
+    def bind(self, targets, weights):
+        """Point the plan at this call's targets, copying only if it owns them."""
+        if self.targets is None:
+            source_t, source_w = targets, weights
+        else:
+            self.targets.copy_(targets)
+            source_t = self.targets
+            if weights is None:
+                source_w = None
+            else:
+                self.weights.copy_(weights)
+                source_w = self.weights
+        # [steps, arity, cols]: a tuple is ``arity`` CONSECUTIVE ROWS of one
+        # column, because the trellis runs down columns and the k positions of
+        # a code have to share one branch decision.
+        self.tuples = source_t.reshape(self.steps, self.arity, self.cols)
+        self.wrows = (None if source_w is None
+                      else source_w.reshape(self.steps, self.arity, self.cols))
+
+    def run(self):
+        """The exact Viterbi, writing into this plan's tensors."""
+        cols, arity, span = self.cols, self.arity, self.span
+        dvals, subsets, points = self.dvals, self.subsets, self.points
+        prev, subset_of, roll = self.prev, self.subset_of, self.roll
+        tuples, wrows = self.tuples, self.wrows
+        picked, fold, choice = self.picked, self.fold, self.choice
+        cost, spare, taken = self.cost_a, self.cost_b, self.taken
+        cost.fill_(float("inf"))
+        cost[:, 0] = 0.0
+        flat_subsets = subsets.reshape(-1)
+        for sup in range(self.supers):
+            acc = None
+            for offset in range(span):
+                step = sup * span + offset
+                target = tuples[step].t().reshape(cols, 1, 1, arity)   # [cols,1,1,k]
+                # Anticipated-completion metric, in k dimensions: score the
+                # best reachable descendant under squared Euclidean distance.
+                # At k=1 the sum is over one term and this is bit-identical to
+                # the scalar form.
+                sq = (target - dvals.unsqueeze(0)) ** 2                # [cols,A,2^c,k]
+                if wrows is not None:
+                    sq = sq * wrows[step].t().reshape(cols, 1, 1, arity)
+                err = sq.sum(dim=3).amin(dim=2)                        # [cols,A]
+                by_subset = err[:, flat_subsets].reshape(cols, SUBSET_COUNT, points)
+                best, point = by_subset.min(dim=2)                     # [cols, 4]
+                picked[step] = point.to(self.point_dtype)
+                if acc is None:
+                    acc = best
+                    continue
+                terms = torch.stack(
+                    [acc[:, (roll - v) % SUBSET_COUNT] + best[:, v : v + 1]
+                     for v in range(SUBSET_COUNT)],
+                    dim=2,
+                )                                                      # [cols, 4, 4]
+                acc, arg = terms.min(dim=2)
+                # The fold is exact in COST and not in labels.  ``trellis.TCQ``
+                # enumerates the ``4^(L-1)`` label assignments lexicographically
+                # and keeps the first strict minimum; this keeps the first
+                # minimum of each 4x4 step in turn.  Both reach the same
+                # super-symbol cost -- that is what makes the fold a valid
+                # substitute for the enumeration -- but when two assignments
+                # tie they can land on different labels, and hence on different
+                # stored bytes.  Measured: never at ``L = 2`` (exhaustive over
+                # binary error tables, and 6000 random end-to-end trials agree
+                # exactly); at ``L = 3`` about one column in 5000, e.g. labels
+                # ``(2,0,1)`` from the oracle against ``(2,1,0)`` here at
+                # identical cost.  So the two encoders are equal-cost, not
+                # byte-identical, above ``L = 2``.  Making them agree is a
+                # determinism change that rewrites those columns' bytes; it is
+                # written down here rather than taken.
+                fold[sup, offset - 1] = arg.to(torch.uint8)
+
+            branch = torch.stack(
+                [cost[:, prev[side]] + acc[:, subset_of[side]] for side in (0, 1)]
+            )                                                    # [2, cols, states]
+            # ``out=`` rather than a rebinding, so the winner lands in a
+            # tensor this plan owns and a captured graph writes the same
+            # address every replay.  The pair ping-pongs for the same reason a
+            # rebinding would: the next step reads the front the last one
+            # wrote, and nothing reads the one it is about to overwrite.
+            torch.min(branch, dim=0, out=(spare, taken))
+            cost, spare = spare, cost
+            choice[sup] = taken.bool()
+        self.cost = cost
+        end = self.end
+        torch.argmin(cost, dim=1, out=end)                       # [cols]
+
+        anchors, bits, column = self.anchors, self.bits, self.column
+        state = end
+        for sup in range(self.supers - 1, -1, -1):
+            side = choice[sup][column, state].long()             # [cols]
+            label = subset_of[side, state]                       # super-label
+            # ``side`` says which *predecessor* won, which is not the input
+            # bit.  For this code ``next = (bit << m-1) | (state >> 1)``, so
+            # both predecessors of a state share one input bit and it is read
+            # off the state itself.  Emitting ``side`` instead would produce a
+            # stream that replays to different anchors -- the round-trip test
+            # catches it.
+            select = (state >> (self.memory - 1)) & 1
+            labels = [None] * span
+            for offset in range(span - 1, 0, -1):
+                v = fold[sup, offset - 1][column, label].long()
+                labels[offset] = v
+                label = (label - v) % SUBSET_COUNT
+            labels[0] = label
+            for offset in range(span):
+                step = sup * span + offset
+                pt = picked[step][column, labels[offset]].long()
+                anchors[step] = subsets[labels[offset], pt]
+                head = select if offset == 0 else labels[offset]
+                bits[step] = (head << self.shift) | pt
+            state = prev[side, state]
+
+    def capture(self):
+        """Warm on a side stream, then capture ``run`` as one graph.
+
+        Serialised process-wide, and for the reasons ``window_viterbi``'s own
+        capture block records: under CUDA's default ``global`` error mode any
+        CUDA call from another thread while a capture is open faults it, and
+        even ``thread_local`` mode leaves two captures' begin/end bookkeeping
+        to invalidate each other.  The lock is shared with that module so a
+        window capture and a TCQ capture cannot overlap either.  The one call
+        no mode permits while a capture is open anywhere is a device-wide
+        ``torch.cuda.synchronize()``; nothing in this package makes one.
+        """
+        from .window_viterbi import _CAPTURE_LOCK
+
+        with _CAPTURE_LOCK:
+            warm = torch.cuda.Stream()
+            warm.wait_stream(torch.cuda.current_stream())
+            with torch.cuda.stream(warm):
+                self.run()
+            torch.cuda.current_stream().wait_stream(warm)
+            graph = torch.cuda.CUDAGraph()
+            with torch.cuda.graph(graph, capture_error_mode="thread_local"):
+                self.run()
+        self.graph = graph
+
+    def replay(self):
+        if self.graph is None:
+            self.run()
+        else:
+            self.graph.replay()
+
+    def sse(self) -> float:
+        return float(self.cost.gather(1, self.end.unsqueeze(1)).sum())
+
+
+def _tcq_plan(key, *, device, rows, cols, dtype, weight_dtype, forest, code,
+              completion, span):
+    """The persistent plan for one shape, captured once it has earned it."""
+    plans, _ = _tcq_maps()
+    plan = plans.get(key)
+    if plan is not None:
+        plans.move_to_end(key)
+        return plan
+    plan = _TCQPlan(device=device, rows=rows, cols=cols, dtype=dtype,
+                    weight_dtype=weight_dtype, forest=forest, code=code,
+                    completion=completion, span=span, owns_input=True)
+    plans[key] = plan
+    while len(plans) > _TCQ_PLAN_CACHE:
+        plans.popitem(last=False)
+    return plan
+
+
+def tcq_plan_cache_clear() -> None:
+    """Drop this thread's cached plans and their graphs.
+
+    For tests, and for a caller that wants the residency back.  It clears the
+    calling thread's maps only, which is the same scope they are built in.
+    """
+    plans, seen = _tcq_maps()
+    plans.clear()
+    seen.clear()
+
+
+def viterbi_columns(
+    targets: torch.Tensor,
+    forest: AnchorForest,
+    code: ConvCode,
+    completion: int,
+    span: int = 1,
+    weights: "torch.Tensor | None" = None,
+    impl: str = "auto",
+) -> "tuple[torch.Tensor, torch.Tensor, float]":
+    """Exact Viterbi down every column at once.
+
+    ``targets`` is ``[rows, cols]`` already divided by its group scale.
+    Returns ``(anchor_index[steps, cols], body_field[steps, cols], sse)`` where
+    ``steps = rows // grid.arity`` -- one trellis position per *code*, which is
+    one row only when the grid is scalar.
+
+    ``weights`` is an optional ``[rows, cols]`` positive weight per POSITION
+    on the branch metric.  The targets are normalised per half, so an
+    unweighted trellis minimises ``sum (w/c - q)^2`` -- every position's error
+    divided by its own scale squared, which over-serves the quiet groups a
+    column passes through.  With ``weights = c^2`` the path minimises the
+    true ``sum (w - c q)^2``.  The weight is applied per row inside a code's
+    Euclidean sum: a half is sixteen consecutive columns of one row, so the
+    ``arity`` rows of a code sit in different halves and carry different
+    scales.  ``None`` is bit-identical to the unweighted encoder.
+
+    ``span`` is the super-symbol length L (``trellis.py``).  One trellis step
+    then covers L consecutive positions: each position's best point per subset
+    is found independently, the L per-subset cost vectors are folded with a
+    min-plus convolution over Z/4 -- ``acc[l] = min_v acc[(l - v) mod 4] +
+    best[v]`` -- so the trellis branch sees one four-entry cost vector per
+    super-symbol exactly as it sees one per position at L = 1, and the
+    traceback descends the fold to recover every position's label.  The fold
+    is exact: it is the same minimisation the scalar oracle does by exhausting
+    ``4^(L-1)`` label assignments, in ``L`` steps of a 4x4 minimum.
+
+    The body field per position is ``[select | point]`` at position 0 of a
+    super-symbol and ``[label | point]`` at the others (``R + 1`` bits); at
+    ``L = 1`` every position is ``[select | point]`` and this function is
+    bit-identical to the per-position encoder it replaces.
+
+    ``impl`` picks the machine, never the answer, exactly as it does on
+    ``viterbi_window``.  ``"reference"`` builds a plan for this call alone and
+    runs its step loop eagerly; ``"graph"`` keeps a plan per shape and replays
+    a captured CUDA graph of the same loop.  Both run ``_TCQPlan.run``, so
+    the states, the body field and the ``sse`` float are the same object graph
+    evaluated the same way -- the difference is the launch stream, which is
+    what issue #13 measured and what a graph removes.  ``"fused"`` is the
+    three-launch Triton trellis in ``tcq_fused`` (tessera#486), which returns
+    the identical anchors, body field and ``sse`` float by construction and
+    by test; it takes float32, float16 and bfloat16 inputs at arity 1 and 2
+    on CUDA, and refuses anything else by name.  ``"auto"`` is ``"fused"``
+    wherever that path admits the call (unless ``TESSERA_TCQ_FUSED=0``), then
+    ``"graph"`` on CUDA once a shape has been asked for
+    ``_TCQ_GRAPH_MIN_CALLS`` times, and ``"reference"`` before that and on
+    CPU.
+    """
+    if impl not in ("auto", "reference", "graph", "fused"):
+        raise GrammarError(f"unknown viterbi_columns impl {impl!r}")
+    device = targets.device
+    rows, cols = targets.shape
+    grid = forest.grid
+    arity = grid.arity
+    require_memory(code)
+    if rows % arity:
+        raise GrammarError(
+            f"{rows} rows is not a whole number of arity-{arity} tuples; a "
+            "k-tuple code spans k consecutive rows and cannot straddle the edge"
+        )
+    steps = rows // arity
+    if span < 1 or steps % span:
+        raise GrammarError(
+            f"{steps} trellis positions is not a whole number of span-{span} "
+            "super-symbols; the multidimensional trellis needs the column "
+            "length to be a multiple of its span"
+        )
+
+    if impl == "fused" or (impl == "auto" and device.type == "cuda"
+                           and _tcq_fused_wanted()):
+        from .tcq_fused import tcq_fused_refusal, viterbi_columns_fused
+
+        refusal = tcq_fused_refusal(targets, weights, arity)
+        if refusal is None:
+            return viterbi_columns_fused(targets, weights, forest, code,
+                                         completion, span)
+        if impl == "fused":
+            raise GrammarError(f"the fused TCQ trellis cannot take this call: {refusal}")
+
+    weight_dtype = None if weights is None else weights.dtype
+    key = (device, rows, cols, targets.dtype, weight_dtype, forest, code,
+           completion, span)
+    forced = os.environ.get(_TCQ_GRAPH_ENV, "")
+    if impl == "auto":
+        if device.type != "cuda" or forced == "0":
+            impl = "reference"
+        elif forced == "1":
+            impl = "graph"
+        else:
+            _, seen_map = _tcq_maps()
+            seen = seen_map.get(key, 0) + 1
+            seen_map[key] = seen
+            seen_map.move_to_end(key)
+            while len(seen_map) > 64:
+                seen_map.popitem(last=False)
+            impl = "graph" if seen >= _TCQ_GRAPH_MIN_CALLS else "reference"
+    if impl == "graph" and device.type != "cuda":
+        raise GrammarError("the captured TCQ trellis needs a CUDA device")
+
+    if impl == "reference":
+        plan = _TCQPlan(device=device, rows=rows, cols=cols,
+                        dtype=targets.dtype, weight_dtype=weight_dtype,
+                        forest=forest, code=code, completion=completion,
+                        span=span, owns_input=False)
+        plan.bind(targets, weights)
+        plan.run()
+        return plan.anchors, plan.bits, plan.sse()
+
+    plan = _tcq_plan(key, device=device, rows=rows, cols=cols,
+                     dtype=targets.dtype, weight_dtype=weight_dtype,
+                     forest=forest, code=code, completion=completion, span=span)
+    plan.bind(targets, weights)
+    if plan.graph is None:
+        try:
+            plan.capture()
+        except Exception:                                   # pragma: no cover
+            # A capture that will not take is a performance loss, never a
+            # wrong answer: the eager loop below is the same ops on the same
+            # tensors.  The plan is dropped so the next call does not retry.
+            _tcq_maps()[0].pop(key, None)
+            plan.run()
+            return plan.anchors.clone(), plan.bits.clone(), plan.sse()
+    plan.replay()
+    return plan.anchors.clone(), plan.bits.clone(), plan.sse()
+
+
+@functools.lru_cache(maxsize=64)
+def _window_points_cpu(
+    grid: PayloadGrid, window_bits: int, sigma: "float | None", seed: int, half: int,
+) -> torch.Tensor:
+    """The table's points **before** they are snapped: ``[2^window_bits, arity]``.
+
+    Split out of ``_window_table_cpu`` so the spread a caller asked for can be
+    compared with the one the grid delivered (``window_table_reach``).  Both
+    halves are cached, so asking for the reach costs nothing a table build did
+    not already pay.
+    """
+    size = 1 << window_bits
+    peak = max(abs(v) for v in grid.values)
+    # Equal-mass quantiles of the modelled source, one set per coordinate.
+    # ``sigma=None`` models what the per-half scale plane actually delivers
+    # to the grid -- a Gaussian normalised by its own half's maximum, bounded
+    # at the peak (``GROUP_SCALED_SOURCE``); a number is a plain Gaussian in
+    # grid units for a plane that does not bound (a per-channel scale).
+    if sigma is None:
+        # The group-scaled source is built in whole halves, so a table
+        # narrower than a half takes order statistics of one half's worth.
+        count = max(size, half)
+        sample = torch.tensor(GROUP_SCALED_SOURCE(peak, half, count=count))
+        if sample.numel() != count:
+            raise GrammarError(
+                f"the group-scaled source yielded {sample.numel()} values for "
+                f"{count}; half {half} must divide the table size"
+            )
+        picks = ((torch.arange(size, dtype=torch.float64) + 0.5) * count / size).long()
+        quantiles = sample[picks]
+    else:
+        quantiles = torch.tensor(GAUSSIAN_SOURCE(size, float(sigma)))
+    generator = torch.Generator().manual_seed(int(seed))
+    return torch.stack(
+        [quantiles[torch.randperm(size, generator=generator)] for _ in range(grid.arity)],
+        dim=1,
+    ).float()                                                   # [size, arity]
+
+
+@functools.lru_cache(maxsize=64)
+def _window_table_cpu(
+    grid: PayloadGrid, window_bits: int, sigma: "float | None", seed: int, half: int,
+) -> torch.Tensor:
+    points = _window_points_cpu(grid, window_bits, sigma, seed, half)
+    vectors = grid_vector_table(grid).float()                   # [codes, arity]
+    # Nearest grid vector, ties to the lower code: E4M3's duplicate slots
+    # (the two former NaNs, the negative zero) sit above the legal byte.
+    if grid.arity == 1 and grid.size > 256:
+        codes = _nearest_scalar_code(points[:, 0], grid)
+    else:
+        codes = torch.cdist(points, vectors).argmin(dim=1)
+    return codes.to(torch.uint8) if grid.size <= 256 else codes.to(torch.int32)
+
+
+def _nearest_scalar_code(points: torch.Tensor, grid: PayloadGrid) -> torch.Tensor:
+    """``argmin_c |points - value(c)|``, ties to the lower code, exactly.
+
+    The same answer ``cdist(...).argmin`` gives, computed the way a sorted
+    one-dimensional grid allows -- and computed in float64, which matters at
+    this width for two separate reasons.  BF16 is 65536 codes: the pairwise
+    matrix is 4 GB at L=14, and ``cdist``'s ``x^2 + y^2 - 2xy`` expansion is
+    not the exact ``|x - y|``, so a quantile a hair from a midpoint can land
+    on the wrong side of it in float32.  Neither is a problem a byte-wide
+    grid has, which is why the narrow path is left exactly as it was.
+
+    "Ties to the lower code" is a statement about *codes*, not values, so
+    duplicate values are collapsed to the lowest code carrying them before
+    the search and the two candidates are compared as codes at an exact
+    midpoint.  On BF16 that makes the snap round-half-toward-zero, next to
+    bf16 hardware's round-half-to-even; they differ only on exact midpoints
+    of the table's Gaussian quantiles, which the receipt counts.
+    """
+    values = torch.tensor(grid.values, dtype=torch.float64)
+    order = torch.argsort(values, stable=True)
+    ordered = values[order]
+    # First code of each distinct value, in ascending value order.
+    keep = torch.ones(ordered.numel(), dtype=torch.bool)
+    keep[1:] = ordered[1:] != ordered[:-1]
+    uniq, ucode = ordered[keep], torch.zeros(int(keep.sum()), dtype=torch.long)
+    # ``order`` is a stable sort, so among equal values the lowest code comes
+    # first -- but only within the sort's own tie order, which is code order.
+    ucode.scatter_reduce_(
+        0, torch.cumsum(keep.long(), 0) - 1, order, reduce="amin", include_self=False
+    )
+    p = points.double()
+    right = torch.searchsorted(uniq, p).clamp(0, uniq.numel() - 1)
+    left = (right - 1).clamp_min(0)
+    dl, dr = (p - uniq[left]).abs(), (p - uniq[right]).abs()
+    take_left = torch.where(
+        dl == dr, ucode[left] < ucode[right], dl < dr
+    )
+    return torch.where(take_left, ucode[left], ucode[right])
+
+
+def window_table(
+    grid: PayloadGrid,
+    window_bits: int,
+    *,
+    sigma: "float | None" = None,
+    seed: int = 0,
+    half: int = 16,
+    device=None,
+) -> torch.Tensor:
+    """The window body's table: ``2^window_bits`` grid codes, one per state.
+
+    A state is the last ``window_bits`` bits of a column's stream, so the
+    table is what turns shared history into shaped reconstruction: the
+    trellis picks a path whose states index good values, and the shaping
+    gain comes from the ``2^(window_bits - R)`` states every R-bit choice can
+    land in.  The entries are a seeded permutation of equal-mass quantiles of
+    the modelled source, snapped to the grid (Tseng et al.'s "random Gaussian
+    codebook", on the tile); a computed (hash) table was measured worse than
+    the stored one at every width, so the table is stored, on the ALPHABET
+    plane, and priced there.
+
+    Deterministic in ``(grid, window_bits, sigma, seed, half)`` and cached:
+    every unit on one grid at one width shares the table, and a table that
+    changed run to run would make artifacts irreproducible.  The table is
+    wire regardless -- a reader takes it off the plane, never rebuilds it.
+    """
+    if not 1 <= window_bits <= WINDOW_BITS_MAX:
+        raise GrammarError(f"window_bits {window_bits} outside 1..{WINDOW_BITS_MAX}")
+    if sigma is not None and not sigma > 0:
+        raise GrammarError(f"the window source sigma must be positive, got {sigma}")
+    table = _window_table_cpu(grid, int(window_bits), sigma, int(seed), int(half))
+    return table.to(device) if device is not None else table.clone()
+
+
+@dataclass(frozen=True)
+class WindowTableReach:
+    """What a window table's spread request actually bought, in grid units.
+
+    ``requested`` is the modelled source's outermost quantile -- the spread
+    the caller asked for, before the grid is consulted.  ``realised`` is the
+    outermost entry *after* snapping, which is what the trellis can emit and
+    what ``initial_channel_scale`` scales rows against.  On a grid with a
+    finite peak the two part company: ``delivered`` is their ratio and
+    ``saturated`` counts the entries sitting on the peak.
+    """
+
+    requested: float
+    realised: float
+    delivered: float
+    saturated: int
+    saturated_fraction: float
+    size: int
+
+
+def window_table_reach(
+    grid: PayloadGrid,
+    window_bits: int,
+    *,
+    sigma: "float | None" = None,
+    seed: int = 0,
+    half: int = 16,
+) -> WindowTableReach:
+    """The spread a window table was asked for against the one the grid gave.
+
+    A window table's entries are drawn from the grid, and a grid has a largest
+    finite magnitude.  Ask for a spread that would put the outermost quantile
+    past it and the entry clamps: the table stops widening, silently, and
+    every further widening only piles more quantiles onto the same peak.  On
+    E4M3 that ceiling arrives early -- a requested window/channel ratio of 4x
+    delivers 1.167x of the shipped reach, and 1.25x already delivers all of it
+    (issue #84, measured on 8 dense Qwen3-0.6B units).
+
+    So a sweep that reports only the realised reach reads the flat curve past
+    the clamp as "the axis stopped mattering", and that reading is wrong: the
+    reach stops moving while the error keeps moving, because the interior of
+    the table keeps deforming.  ``saturated`` is the quantity that separates
+    the two, which is why it is reported beside the reach and not instead of
+    it.
+
+    Costs nothing a table build did not already pay: both halves are cached.
+    """
+    points = _window_points_cpu(grid, int(window_bits), sigma, int(seed), int(half))
+    table = _window_table_cpu(grid, int(window_bits), sigma, int(seed), int(half))
+    values = grid_vector_table(grid)[table.long()]
+    peak = max(abs(v) for v in grid.values)
+    realised = float(values.abs().max())
+    requested = float(points.abs().max())
+    on_peak = int((values.abs().amax(dim=-1) >= peak - 1e-12).sum())
+    return WindowTableReach(
+        requested=requested,
+        realised=realised,
+        delivered=realised / requested if requested > 0 else 1.0,
+        saturated=on_peak,
+        # ``table`` is the code array -- one entry per table slot, shape
+        # ``[size]`` -- so its ``numel`` IS the entry count.  Dividing it by
+        # the arity halved ``size`` and doubled ``saturated_fraction`` on
+        # every arity>1 grid, where the fraction can then exceed 1.0.  It is
+        # the ``values`` array (``[size, arity]``) that carries the arity, and
+        # ``on_peak`` is already counted over its per-entry ``amax``.  This is
+        # a live path: ``E2M1X2_SUBCAP_RECIPE`` is a WINDOW body on the
+        # arity-2 grid and is what ``wire_recipe`` returns below the cap.
+        saturated_fraction=on_peak / float(table.numel()),
+        size=int(table.numel()),
+    )
+
+
+# Past a crossover the fast path is slower than the reference it exists to
+# replace, so ``auto`` stops taking it.  This is a measured crossover, not a
+# taste: either side of it the two machines return the same answer, and the
+# constant names the rate at which the faster machine stops being faster.
+# ``TESSERA_WINDOW_FUSED_MAX_RATE`` moves it for a box whose crossover sits
+# elsewhere.
+#
+# It was 7, and 7 was a workaround.  The kernel did not get gradually slower
+# with the rate: it fell off a cliff at R = 8 (65 s against the reference's
+# 6.6 s), and the constant was set below the cliff rather than the cliff being
+# fixed.  The cause was the class-minimum scan's flat unroll spilling 690
+# bytes per thread at R = 8 and nothing at R <= 7
+# (``window_viterbi._scan_unroll``, and the registers are read off the
+# compiled kernel by ``experiments/window_viterbi_r8_diagnosis.py``).  With
+# the scan spelled as a runtime loop the cliff is gone and every rate is
+# faster than it was, so the crossover moves to where the *algorithm* runs
+# out.  Re-measured on GB10, 1024x1024 at L = 14, one process, identical
+# states and identical sse at every rate
+# (``experiments/window_viterbi_scan_unroll_sweep.py``):
+#
+#     R            4      6      7      8      9     10     11     12
+#     reference  4.08   4.00   4.13   3.97   4.14   4.19   4.47   4.30  s
+#     fused      0.16   0.19   0.29   0.49   0.89   1.67   3.16   6.01  s
+#              25.3x  20.8x  14.2x   8.1x   4.6x   2.5x   1.4x  0.72x
+#
+# The wire's own rate domain is 1..8 (code rate 1..8 over an 8-bit-native
+# alphabet), so every rate an artifact can carry now runs fused; 11 is where
+# a caller reaching past the wire stops being served by the kernel.
+WINDOW_FUSED_MAX_RATE = 11
+
+
+def _fused_max_rate() -> int:
+    raw = os.environ.get("TESSERA_WINDOW_FUSED_MAX_RATE")
+    if raw is None:
+        return WINDOW_FUSED_MAX_RATE
+    try:
+        return int(raw)
+    except ValueError:
+        raise GrammarError(
+            f"TESSERA_WINDOW_FUSED_MAX_RATE={raw!r} is not an integer rate"
+        ) from None
+
+
+def viterbi_window(
+    targets: torch.Tensor,
+    vectors: torch.Tensor,
+    window_bits: int,
+    rate: int,
+    weights: "torch.Tensor | None" = None,
+    chunk: int = 512,
+    impl: str = "auto",
+    want_sse: bool = True,
+) -> "tuple[torch.Tensor, float | None]":
+    """Exact Viterbi over the bitshift trellis, down every column at once.
+
+    ``targets`` is ``[rows, cols]`` already divided by its scale; ``vectors``
+    is ``[2^window_bits, arity]`` -- the table's reconstruction per state.
+    Returns ``(state[steps, cols] int64, sse)``, ``steps = rows // arity``.
+    ``want_sse=False`` returns ``(state, None)``: the states are the same
+    tensor, and the fused path then makes no host round trip at all --
+    reading the float is the one sync a Viterbi call has, and the encoder's
+    batch driver, which discards the cost, is what asks for this.
+
+    The trellis: ``state_t = ((state_{t-1} << R) | bits_t) mod 2^L`` from
+    ``state_{-1} = 0``, so a state's ``2^R`` predecessors share its low
+    ``L - R`` bits and differ in the ``R`` bits that fall off the top.  One
+    step is a minimum over those predecessors per low class -- a ``[2^R,
+    2^(L-R)]`` reduction -- then every state adds its own branch cost.  The
+    start is **pinned** at state 0, exactly as the decoder assumes: a free
+    start would encode information the reader cannot recover.
+
+    ``weights`` is the same per-POSITION branch-metric weight as
+    ``viterbi_columns`` takes; ``chunk`` bounds the column batch, since the
+    cost front is ``2^L`` floats per column and the traceback ``2^(L-R)``
+    bytes per position per column.
+
+    ``chunk`` is exact in the states and approximate in the float.  Columns
+    are independent, so the returned states are bit-identical at every chunk
+    size; ``sse``, however, is accumulated one chunk at a time in fp32 and so
+    depends on how the columns were partitioned.  Measured on 32x96 CPU
+    targets at L=8, R=2: identical states at chunk 7/16/32/96/512, and
+    ``sse`` spread over 3.05e-05 on a total of 910.09 -- about one ulp per
+    partial sum.  A figure anyone quotes is recomputed from the codes, not
+    read off this return; the equality tests that do read it hold ``chunk``
+    fixed, which is also the sense in which the fused path below returns "the
+    identical sse float".
+
+    ``impl`` picks the machine, never the answer.  ``"reference"`` is the
+    torch chain below -- the definition, and the only path on CPU;
+    ``"fused"`` is the Triton step kernel in ``window_viterbi``, which
+    returns identical states and the identical sse float (see that module for
+    why that is a contract and not a hope); ``"auto"`` takes the fused path
+    on CUDA inputs when Triton is present **and the rate is at or below
+    ``WINDOW_FUSED_MAX_RATE``**, and the reference otherwise.  ``"fused"``
+    asked for explicitly is still honoured above the crossover: the crossover
+    governs the choice ``auto`` makes, not what the caller may demand.
+    """
+    if impl not in ("auto", "reference", "fused"):
+        raise GrammarError(f"unknown viterbi_window impl {impl!r}")
+    device = targets.device
+    rows, cols = targets.shape
+    size, arity = vectors.shape
+    if size != 1 << window_bits:
+        raise GrammarError(
+            f"the table holds {size} states, window_bits {window_bits} needs {1 << window_bits}"
+        )
+    if not 1 <= rate <= window_bits:
+        raise GrammarError(f"rate {rate} does not fit a {window_bits}-bit window")
+    if rows % arity:
+        raise GrammarError(
+            f"{rows} rows is not a whole number of arity-{arity} tuples; a "
+            "k-tuple code spans k consecutive rows and cannot straddle the edge"
+        )
+    steps = rows // arity
+    fan = 1 << rate                                  # predecessors per state
+    low = size >> rate                               # low classes
+    if impl != "reference":
+        from .window_viterbi import fused_available, viterbi_window_fused
+
+        wanted = impl == "fused" or rate <= _fused_max_rate()
+        if targets.is_cuda and fused_available() and wanted:
+            return viterbi_window_fused(targets, vectors, window_bits, rate,
+                                        weights=weights, chunk=chunk,
+                                        want_sse=want_sse)
+        if impl == "fused":
+            raise GrammarError(
+                "the fused window Viterbi is a CUDA path and needs triton; "
+                f"targets are on {device} and triton is "
+                f"{'present' if fused_available() else 'absent'}"
+            )
+    tuples = targets.float().reshape(steps, arity, cols)
+    wrows = None if weights is None else weights.float().reshape(steps, arity, cols)
+    table = vectors.float().to(device)
+    states = torch.empty(steps, cols, dtype=torch.long, device=device)
+    sse = 0.0
+    for start in range(0, cols, chunk):
+        x = tuples[:, :, start : start + chunk]                  # [steps, arity, n]
+        n = x.shape[2]
+        cost = torch.full((size, n), float("inf"), device=device)
+        cost[0] = 0.0
+        # The traceback stores the winning predecessor's top R bits per
+        # (step, low class, column).  A byte holds it up to rate 8.
+        back = torch.empty(steps, low, n, dtype=torch.uint8 if fan <= 256 else torch.int32,
+                           device=device)
+        for step in range(steps):
+            best, pred = cost.view(fan, low, n).min(dim=0)      # [low, n]
+            back[step] = pred.to(back.dtype)
+            diff = x[step].t().unsqueeze(1) - table.unsqueeze(0)  # [n, size, arity]
+            diff = diff * diff
+            if wrows is not None:
+                diff = diff * wrows[step, :, start : start + chunk].t().unsqueeze(1)
+            branch = diff.sum(dim=2).t()                          # [size, n]
+            # new state = (low class << R) | new bits: consecutive states
+            # share one predecessor class.
+            cost = best.repeat_interleave(fan, dim=0) + branch
+        final, state = cost.min(dim=0)                           # [n]
+        sse += float(final.sum())
+        column = torch.empty(steps, n, dtype=torch.long, device=device)
+        for step in range(steps - 1, -1, -1):
+            column[step] = state
+            lowbits = state >> rate
+            pred = back[step].gather(0, lowbits.unsqueeze(0)).squeeze(0).long()
+            state = (pred << (window_bits - rate)) | lowbits
+        states[:, start : start + chunk] = column
+    return states, (sse if want_sse else None)
+
+
+def _pack_scales(
+    weights: torch.Tensor, group: int, half: int, peak: float = 6.0,
+    headroom: float = 1.0,
+):
+    """S6b: one E8M0 base byte per group, one 4-bit refinement per half.
+
+    The refinement word is ``d`` (one exponent-delta bit) and ``m`` (three
+    mantissa bits), giving the half's scale ``2^(E-127+d) * (1 + m/8)``.  Both
+    halves share the base and ``d <= 1``, so the two half-exponents lie within
+    one octave -- S6b is explicit that arbitrary legal E4M3 pairs are therefore
+    *not* representable, and that the cost of that restriction is arm 5's to
+    measure.
+
+    Groups are cut per output row, and a width that is not a whole number of
+    groups is refused: the two halves of a group share one base exponent, so
+    a group spanning two rows would couple unrelated magnitudes (issue #57).
+    Through ``grammar.require_scale_groups``, which is where that rule is
+    written -- the writer and the reader raise the same words from the same
+    function (issue #260).
+    """
+    if weights.ndim != 2:
+        raise GrammarError(
+            f"expected a 2-D weight, got shape {tuple(weights.shape)}"
+        )
+    rows, cols = weights.shape
+    require_scale_groups(cols, group)
+    groups = weights.reshape(rows, -1, group).reshape(-1, group)
+    halves = weights.reshape(rows, -1, half).reshape(-1, half)
+    amax_group = groups.abs().amax(dim=1).clamp_min(1e-30)
+    amax_half = halves.abs().amax(dim=1).clamp_min(1e-30)
+
+    # Base: the po2 that puts the group's amax at the top of the payload grid's
+    # range -- 6.0 for E2M1, 448.0 for E4M3.  Scaling to the wrong peak wastes
+    # binades at one end and clips at the other.
+    #
+    # ``headroom`` scales that landing point.  ``amax / peak`` is a *heuristic*,
+    # and a weaker one than it looks: the exponent below is a ``floor``, so the
+    # base lands on or under ``amax / peak`` and the group's own peak can be
+    # clipped by up to 2x -- measured at 10% on ``amax = 6.6`` against a peak
+    # of 6.0, where the largest encodable value comes back 6.0.  ``ceil`` would
+    # clip nothing; it would also spend a binade.  Below 1.0 the extremes clip
+    # harder and everything else is coded finer; above 1.0 the reverse.  Which
+    # is better is a property of the weight distribution and the grid, so it is
+    # a question for the objective, not for a rule -- principle 2.  1.0 and
+    # ``floor`` are exactly today's behaviour, byte for byte, and every shipped
+    # recipe selects the CHANNEL or LUT plane rather than this one.
+    target = amax_group / (peak * headroom)
+    exponent = torch.floor(torch.log2(target)).clamp(-127, 128)
+    base_byte = (exponent + 127).clamp(0, 255).to(torch.uint8)
+
+    per_half = amax_half / (peak * headroom)
+    base_for_half = torch.repeat_interleave(exponent, group // half)
+    ratio = per_half / torch.exp2(base_for_half)
+    # d picks the octave, m the mantissa within it -- and the wire allows
+    # ``ratio`` in [1, 4).  What this expression can PRODUCE is [0, 2): the
+    # base is ``floor(log2(amax_group / (peak * headroom)))`` and every half's
+    # ``per_half <= amax_group``, so ``ratio < 2`` always and ``delta`` is
+    # provably zero here, whatever the weights.  Half the refine code space is
+    # dead on the pack, and only ``_refit_scales`` (which searches bases) ever
+    # emits ``d = 1``.  Evaluating both bases per group at pack time is the fix,
+    # and it rewrites S6b bytes -- which is why it is written down here and not
+    # taken: no shipping recipe selects this plane, and the replay path that
+    # can (``export.encode_settings_from_config``) promises byte identity on
+    # the checkpoints that already carry it.
+    delta = (ratio >= 2.0).to(torch.long)
+    mantissa = torch.floor((ratio / torch.exp2(delta.float()) - 1.0) * 8.0)
+    mantissa = mantissa.clamp(0, 7).to(torch.long)
+    refine = ((delta << 3) | mantissa).to(torch.uint8)
+    effective = torch.exp2(base_for_half + delta.float()) * (1.0 + mantissa.float() / 8.0)
+    return base_byte, refine, effective
+
+
+def _refit_scales(
+    work: torch.Tensor,
+    units: torch.Tensor,
+    group: int,
+    half: int,
+    base_byte: torch.Tensor,
+    refine: torch.Tensor,
+    effective: torch.Tensor,
+):
+    """One least-squares step on the scale plane, landed on S6b words.
+
+    ``_pack_scales`` sets a half's scale from its amax so that nothing clips.
+    That is a legality rule, not a minimiser: once the trellis has chosen its
+    codes, the scale that minimises the half's squared error is
+    ``<w, u> / <u, u>`` over the half's weights ``w`` and their unscaled grid
+    values ``u`` -- and it is lower, because amax/peak spends the half's whole
+    range on one element.  This step moves every half toward that optimum.
+
+    The optimum is a float; the wire stores one E8M0 base per group and a
+    ``(d, m)`` refinement per half.  With the codes fixed a half's error is a
+    parabola in its scale, ``A s^2 - 2 B s + C`` with ``A = <u, u>`` and
+    ``B = <w, u>``, so the choice between candidate words is exact arithmetic
+    on ``A`` and ``B``: three base candidates are tried, each half rounds to its
+    nearest ``(d, m)`` under that base, and a group keeps the word it had
+    wherever no candidate lowers its error.  No group ends worse than it began,
+    so the *step* is monotone in weight-space squared error.
+
+    The *alternation* in ``encode_unit`` is monotone only where the trellis
+    pass that follows descends that same error, and two settings stop it from
+    doing so.  ``trellis_weighting="none"`` -- ``encode_unit``'s signature
+    default -- minimises the per-half normalised error instead; only
+    ``"scale"`` weights each position by its scale squared, which per column
+    is the same argmin as the true squared error, and that is what the
+    exporter ships (``export.DEFAULT_TRELLIS_WEIGHTING``).  And under ``ldl``
+    the trellis minimises the error against the LDLQ-compensated target while
+    this step refits against ``work``, whatever the weighting.  Outside those
+    two cases each half can undo the other's gain, and only the trailing refit
+    is guaranteed.
+
+    Words are emitted canonical: a group whose halves both carry ``d = 1`` is
+    written one base higher with ``d = 0``, the form ``scale_codec`` names.
+    The bytes' meaning is unchanged -- ``scales_from_planes`` reads them exactly
+    as it reads the amax plane -- which is what makes this an encoder choice
+    and not a wire change.
+
+    Halves are cut per output row, like the pack's: the refit groups the same
+    halves the pack grouped, so it refuses the same widths (issue #57), from
+    the same ``grammar.require_scale_groups`` the pack calls.
+    """
+    if work.ndim != 2 or units.ndim != 2:
+        raise GrammarError(
+            f"expected 2-D work and units, got {tuple(work.shape)} and "
+            f"{tuple(units.shape)}"
+        )
+    rows, cols = work.shape
+    require_scale_groups(cols, group)
+    per_group = group // half
+    W = work.float().reshape(rows, -1, half).reshape(-1, half)
+    U = units.float().reshape(rows, -1, half).reshape(-1, half)
+    A = (U * U).sum(dim=1)
+    B = (W * U).sum(dim=1)
+    # A half whose codes are all zero, or whose fit points the wrong way, has
+    # no least-squares scale; it keeps the one it has.
+    desired = torch.where(A > 0, B / A.clamp_min(1e-30), effective)
+    desired = torch.where(desired > 0, desired, effective)
+
+    # Consecutive halves pair within a row: the guard above leaves an even
+    # number of halves per row, so no group spans rows here either.
+    g = desired.reshape(-1, per_group)
+    Ag, Bg = A.reshape(-1, per_group), B.reshape(-1, per_group)
+    prev = effective.reshape(-1, per_group)
+    best_cost = (Ag * prev * prev - 2.0 * Bg * prev).sum(dim=1)
+    best_E = base_byte.to(torch.float32) - 127.0
+    word = refine.to(torch.long).reshape(-1, per_group)
+    best_d = ((word >> 3) & 1).to(torch.float32)
+    best_m = (word & 7).to(torch.float32)
+
+    lo = torch.floor(torch.log2(g.min(dim=1).values))
+    hi = torch.floor(torch.log2(g.max(dim=1).values)) - 1.0
+    for E in (lo, lo + 1.0, hi):
+        E = E.clamp(-127.0, 126.0)
+        ratio = (g / torch.exp2(E)[:, None]).clamp(1.0, 4.0)
+        d = (ratio >= 2.0).to(torch.float32)
+        m = torch.round((ratio / torch.exp2(d) - 1.0) * 8.0)
+        carry = (m >= 8.0) & (d == 0.0)
+        m = torch.where(carry, torch.zeros_like(m), m)
+        d = torch.where(carry, torch.ones_like(d), d)
+        m = m.clamp(max=7.0)
+        both = d.min(dim=1).values == 1.0
+        E = torch.where(both, E + 1.0, E)
+        d = torch.where(both[:, None], torch.zeros_like(d), d)
+        eff = torch.exp2(E[:, None] + d) * (1.0 + m / 8.0)
+        cost = (Ag * eff * eff - 2.0 * Bg * eff).sum(dim=1)
+        take = cost < best_cost
+        best_cost = torch.where(take, cost, best_cost)
+        best_E = torch.where(take, E, best_E)
+        best_d = torch.where(take[:, None], d, best_d)
+        best_m = torch.where(take[:, None], m, best_m)
+
+    new_base = (best_E + 127.0).clamp(0.0, 255.0).to(torch.uint8)
+    new_refine = ((best_d.to(torch.long) << 3) | best_m.to(torch.long)).reshape(-1).to(torch.uint8)
+    new_effective = torch.exp2(
+        torch.repeat_interleave(best_E, per_group) + best_d.reshape(-1)
+    ) * (1.0 + best_m.reshape(-1) / 8.0)
+    return new_base, new_refine, new_effective
+
+
+E4M3_NORMAL_BYTES = (0x08, 0x7E)   # inclusive: 2^-6 .. 448
+
+
+def e4m3_positive_values(device=None) -> torch.Tensor:
+    """``[119]`` -- the positive *normal* E4M3FN values, ascending; entry ``i``
+    is byte ``i + 8``.
+
+    Subnormals (bytes 0x01..0x07, ``2^-6 * m/8``) are excluded on purpose: the
+    kernel lane decodes a scale byte by field arithmetic, ``2^(e-7) (1+m/8)``,
+    which is the S6b relabelling's contract (``wire.nvfp4_scale_bytes`` only
+    ever emits exponent fields 1..15) and is wrong at exponent field 0.  The
+    LUT plane is materialised to the same bytes, so it holds to the same range.
+    Seventeen binades remain; a unit whose scales span more is not a unit.
+    """
+    lo, hi = E4M3_NORMAL_BYTES
+    return (
+        torch.arange(lo, hi + 1, dtype=torch.uint8, device=device)
+        .view(torch.float8_e4m3fn)
+        .float()
+    )
+
+
+def _lut_cost(targets: torch.Tensor, weights: torch.Tensor, table: torch.Tensor) -> torch.Tensor:
+    """``sum_h A_h (s_h - nearest(table, s_h))^2`` -- the plane's weighted error."""
+    gap = (targets[:, None] - table[None, :]).abs().amin(dim=1)
+    return (weights * gap * gap).sum()
+
+
+def _nearest(targets: torch.Tensor, table: torch.Tensor) -> torch.Tensor:
+    """Index of the nearest table entry, in the linear domain.
+
+    With the codes fixed a half's error is ``A s^2 - 2 B s + C``, a parabola
+    with its minimum at ``s* = B/A``, so among candidate scales the nearest to
+    ``s*`` in *linear* distance is the exact minimiser -- not the nearest in
+    log distance, which is what an E4M3 rounder would do.
+    """
+    return (targets[:, None] - table[None, :]).abs().argmin(dim=1)
+
+
+def _fit_lut_exact(
+    targets: torch.Tensor,
+    weights: torch.Tensor,
+    global_scale: float,
+    entries: int = LUT_ENTRIES,
+) -> "tuple[torch.Tensor, torch.Tensor]":
+    """The same objective as ``_fit_lut``, solved exactly rather than greedily.
+
+    ``_fit_lut`` minimises ``sum_b w_b (s_b - nearest(table, s_b))^2`` over
+    sixteen E4M3 values by greedy backward elimination plus swap passes.  That
+    objective is a **one-dimensional weighted k-median with the medians drawn
+    from a sorted finite candidate set**, and that problem has an exact
+    O(entries * n_candidates^2) dynamic program -- so the greedy is a heuristic
+    where an explicit exists (AGENTS.md principle 2), and issue #50's question
+    "how much does the sixteen-entry landing give back" cannot be attributed
+    between *the solver* and *the sixteen-entry budget* until the solver is
+    exact.
+
+    **Why the decomposition is exact.**  Sort the targets.  For a chosen
+    ascending table ``v_{i1} < ... < v_{iE}`` every target lands on its nearest
+    entry, so the assignment is decided by the midpoints between *consecutive*
+    chosen entries and by nothing else.  The cost therefore splits into a left
+    tail (targets below ``v_{i1}``), one term per consecutive chosen pair, and
+    a right tail (targets at or above ``v_{iE}``) -- a shortest path through
+    the candidates, which is what the DP walks.  Each term is read off
+    prefix sums of ``w``, ``w s`` and ``w s^2`` in float64, so a segment's cost
+    is O(1) and the whole table costs O(E * n^2) with n <= 119.
+
+    The candidate bracket is ``_fit_lut``'s, and it is lossless rather than a
+    budget: it runs from the largest grid value below the smallest target to
+    the smallest grid value above the largest, and an entry outside that
+    interval is dominated by the bracket's own endpoint (every target is on one
+    side of it), so the DP's optimum over the bracket is the optimum over the
+    whole E4M3 grid.
+
+    Returns ``(bytes[entries] uint8 ascending, values[entries] float32)``,
+    ``_fit_lut``'s contract exactly.  The chosen indices come out of the DP
+    strictly ascending, so the bytes are strictly ascending and distinct with
+    no re-sort -- which is what the manifest requires of a LUT table.
+    """
+    device = targets.device
+    grid_values = e4m3_positive_values(device) * global_scale
+    live = weights > 0
+    if not bool(live.any()):
+        first_byte = E4M3_NORMAL_BYTES[0]
+        return (
+            torch.arange(first_byte, first_byte + entries, dtype=torch.uint8, device=device),
+            grid_values[:entries],
+        )
+    # float64 on the CPU: the DP's arithmetic is the one place the fit's
+    # answer is decided, the tensors are small, and a segment cost is a
+    # difference of prefix sums, which is where float32 would lose the
+    # sub-ulp residual the fit is choosing between.
+    s = targets[live].detach().double().cpu()
+    w = weights[live].detach().double().cpu()
+    order = torch.argsort(s)
+    s, w = s[order].contiguous(), w[order].contiguous()
+    n_t = int(s.numel())
+    lo, hi = float(s[0]), float(s[-1])
+    gv = grid_values.detach().double().cpu()
+    first = max(int((gv < lo).sum()) - 1, 0)
+    last = min(int((gv <= hi).sum()) + 1, gv.numel())
+    while last - first < entries:
+        if first > 0:
+            first -= 1
+        if last - first < entries and last < gv.numel():
+            last += 1
+    cand = gv[first:last].contiguous()
+    n = int(cand.numel())
+
+    zero = torch.zeros(1, dtype=torch.float64)
+    P0 = torch.cat([zero, torch.cumsum(w, 0)])
+    P1 = torch.cat([zero, torch.cumsum(w * s, 0)])
+    P2 = torch.cat([zero, torch.cumsum(w * s * s, 0)])
+
+    def seg(a: torch.Tensor, b: torch.Tensor, v: torch.Tensor) -> torch.Tensor:
+        """``sum_{a <= k < b} w_k (s_k - v)^2`` from the prefix sums."""
+        return (P2[b] - P2[a]) - 2.0 * v * (P1[b] - P1[a]) + v * v * (P0[b] - P0[a])
+
+    # ``idx[k]`` = the first target at or above ``cand[k]``.
+    idx = torch.searchsorted(s, cand)
+    lo_i = torch.zeros(n, dtype=idx.dtype)
+    hi_i = torch.full((n,), n_t, dtype=idx.dtype)
+    left = seg(lo_i, idx, cand)            # [n] targets below cand[k] -> cand[k]
+    right = seg(idx, hi_i, cand)           # [n] targets at/above cand[k] -> cand[k]
+
+    # ``pair[i, j]`` (i < j) = the cost of the targets strictly between two
+    # consecutive chosen entries, each on the nearer of the two.
+    mid = (cand[:, None] + cand[None, :]) * 0.5
+    m = torch.searchsorted(s, mid.reshape(-1).contiguous()).reshape(n, n)
+    ai = idx[:, None].expand(n, n)
+    bj = idx[None, :].expand(n, n)
+    pair = seg(ai, m, cand[:, None]) + seg(m, bj, cand[None, :])
+    pair = torch.where(
+        torch.arange(n)[:, None] < torch.arange(n)[None, :],
+        pair, torch.full_like(pair, float("inf")),
+    )
+
+    best = left.clone()                                   # one entry chosen
+    back = torch.zeros(entries, n, dtype=torch.long)
+    for m_ in range(1, entries):
+        tot = best[:, None] + pair                        # [prev, next]
+        best, arg = tot.min(dim=0)
+        back[m_] = arg
+    j = int((best + right).argmin())
+    chosen = [j]
+    for m_ in range(entries - 1, 0, -1):
+        j = int(back[m_][j])
+        chosen.append(j)
+    chosen_t = torch.tensor(sorted(chosen), dtype=torch.long, device=device)
+    FIRST = E4M3_NORMAL_BYTES[0]
+    return (
+        (chosen_t + (first + FIRST)).to(torch.uint8),
+        grid_values[chosen_t + first],
+    )
+
+
+def _fit_lut(
+    targets: torch.Tensor,
+    weights: torch.Tensor,
+    global_scale: float,
+    entries: int = LUT_ENTRIES,
+    swaps: int = 32,
+    exact: bool = False,
+) -> "tuple[torch.Tensor, torch.Tensor]":
+    """Choose ``entries`` DISTINCT E4M3 scales minimising the weighted error.
+
+    Returns ``(bytes[entries] uint8 ascending, values[entries] float32)``
+    where ``values = e4m3(bytes) * global_scale``.
+
+    Two things this deliberately is not.  It is not k-means: continuous
+    centroids snapped to E4M3 after each Lloyd step collapse onto one another
+    (sixteen centroids became eleven distinct scales on a GLM expert, a 3.4%
+    loss), because the snap is not part of the objective Lloyd minimises.  And
+    it is not a rounder: the objective is exact per assignment, on the finite
+    grid the wire can actually store.
+
+    Greedy backward elimination from every in-range E4M3 value: each round
+    removes the entry whose loss is smallest.  Removing entry ``i`` moves
+    exactly the targets assigned to it, each to the nearer of its two
+    neighbours in the sorted table, so the loss of every candidate removal is
+    one ``index_add`` over the current assignment rather than a full
+    re-evaluation per candidate.  A few swap passes then try each table entry
+    against each unused grid value at full cost.
+
+    ``swaps`` is only the safety backstop bounding those passes: the
+    refinement ends the first pass that improves the running cost by less
+    than one ulp of that cost in the cost's own dtype -- below that an
+    "improvement" is rounding noise, not a descent step, so the threshold
+    is ``torch.finfo(cost.dtype).eps`` scaled by the current cost, never a
+    constant -- and every production caller takes this default.
+
+    ``exact=True`` (issue #50, opt-in and default off) hands the same objective
+    to :func:`_fit_lut_exact`, which solves it by dynamic program instead of
+    greedily.  Everything above stays the description of the default path.
+    """
+    if exact:
+        return _fit_lut_exact(targets, weights, global_scale, entries)
+    device = targets.device
+    grid_values = e4m3_positive_values(device) * global_scale          # [119]
+    live = weights > 0
+    if not bool(live.any()):
+        # Nothing to fit: a unit of all-zero halves.  Any table decodes it.
+        first_byte = E4M3_NORMAL_BYTES[0]
+        return (
+            torch.arange(first_byte, first_byte + entries, dtype=torch.uint8, device=device),
+            grid_values[:entries],
+        )
+    s, w = targets[live], weights[live]
+    lo, hi = float(s.min()), float(s.max())
+    # The grid values bracketing [lo, hi], one step wider each side, and never
+    # fewer than ``entries`` candidates: a unit whose targets span less than
+    # two octaves has fewer in-range E4M3 values than the table holds.
+    first = max(int((grid_values < lo).sum()) - 1, 0)
+    last = min(int((grid_values <= hi).sum()) + 1, grid_values.numel())
+    while last - first < entries:
+        if first > 0:
+            first -= 1
+        if last - first < entries and last < grid_values.numel():
+            last += 1
+    # Grid index -> byte: entry ``i`` of ``e4m3_positive_values`` is byte
+    # ``i + FIRST``; the swap loop below inverts it the same way.
+    FIRST = E4M3_NORMAL_BYTES[0]
+    candidate_bytes = torch.arange(first + FIRST, last + FIRST, dtype=torch.long, device=device)
+    table = grid_values[first:last]
+
+    while table.numel() > entries:
+        assign = _nearest(s, table)
+        left = table[(assign - 1).clamp_min(0)]
+        right = table[(assign + 1).clamp_max(table.numel() - 1)]
+        left_gap = torch.where(assign > 0, (s - left).abs(), torch.full_like(s, float("inf")))
+        right_gap = torch.where(
+            assign < table.numel() - 1, (s - right).abs(), torch.full_like(s, float("inf"))
+        )
+        here = (s - table[assign]).abs()
+        alt = torch.minimum(left_gap, right_gap)
+        loss = torch.zeros(table.numel(), device=device, dtype=s.dtype).index_add_(
+            0, assign, w * (alt * alt - here * here)
+        )
+        drop = int(loss.argmin())
+        keep = torch.ones(table.numel(), dtype=torch.bool, device=device)
+        keep[drop] = False
+        table, candidate_bytes = table[keep], candidate_bytes[keep]
+
+    table, candidate_bytes = _lut_swap_passes(s, w, table, candidate_bytes, grid_values,
+                                              first, last, swaps)
+    order = torch.argsort(candidate_bytes)
+    return candidate_bytes[order].to(torch.uint8), table[order]
+
+
+#: The cost the swap passes are defined on.  The fused passes reproduce this
+#: function, so they run only while ``_lut_cost`` is still it: a test that
+#: scripts the cost drives the reference loop, which is the loop it means.
+_LUT_COST_REFERENCE = _lut_cost
+#: Whether ``_fit_lut``'s swap passes take the fused kernels (``lut_fused``)
+#: wherever they are admitted.  Unset or "1" takes them; "0" runs
+#: ``_lut_swap_passes_reference`` on every fit, which is the control an A/B
+#: measures against.  A measurement knob, never a correctness one: the fused
+#: passes return the reference's table and bytes, which
+#: ``tests/test_lut_fused.py`` pins.
+_LUT_FUSED_ENV = "TESSERA_LUT_FUSED"
+
+
+def _lut_fused_wanted() -> bool:
+    raw = os.environ.get(_LUT_FUSED_ENV, "")
+    if raw in ("", "1"):
+        return True
+    if raw == "0":
+        return False
+    raise GrammarError(
+        f"{_LUT_FUSED_ENV}={raw!r} is not 0 (the reference swap passes), 1 or unset "
+        "(the fused passes wherever they are admitted)")
+
+
+def _lut_swap_passes(s, w, table, candidate_bytes, grid_values, first, last, swaps):
+    """``_fit_lut``'s swap refinement: the fused passes where admitted, else the reference.
+
+    Both return ``(table, candidate_bytes)`` as the passes leave them.  The
+    fused passes also hand a fit back when their tripwire sees their cost
+    differ from torch's; the reference then runs from the same arguments.
+    """
+    if (swaps > 0 and s.is_cuda and _lut_cost is _LUT_COST_REFERENCE
+            and _lut_fused_wanted()):
+        from .lut_fused import lut_swap_refusal, swap_passes_fused
+
+        if lut_swap_refusal(s, w, table, grid_values) is None:
+            fused = swap_passes_fused(s, w, table, candidate_bytes, grid_values,
+                                      first, last, swaps)
+            if fused is not None:
+                return fused
+    return _lut_swap_passes_reference(s, w, table, candidate_bytes, grid_values,
+                                      first, last, swaps)
+
+
+def _lut_swap_passes_reference(s, w, table, candidate_bytes, grid_values, first, last, swaps):
+    """The swap passes as torch ops, one trial at a time: the definition.
+
+    Each pass tries every table entry against every unused grid value in the
+    bracket ``[first, last)`` at full cost; ``_fit_lut``'s docstring states the
+    stop rule.  ``lut_fused.swap_passes_fused`` is this loop fused, and returns
+    what this returns.
+    """
+    device = s.device
+    FIRST = E4M3_NORMAL_BYTES[0]
+    for _ in range(swaps):
+        improved = False
+        base_cost = _lut_cost(s, w, table)
+        base = float(base_cost)
+        # The stop test is derived from the precision of the dtype the cost
+        # is accumulated in: a swap must lower the running cost by at least
+        # one ulp of that cost, else the "improvement" is rounding noise. An
+        # exactly-represented (non-floating) cost needs no threshold at all.
+        step = (torch.finfo(base_cost.dtype).eps
+                if base_cost.is_floating_point() else 0.0)
+        all_bytes = torch.arange(first + FIRST, last + FIRST, dtype=torch.long, device=device)
+        unused = all_bytes[~torch.isin(all_bytes, candidate_bytes)]
+        for i in range(table.numel()):
+            for byte in unused.tolist():
+                trial = table.clone()
+                trial[i] = grid_values[byte - FIRST]
+                cost = float(_lut_cost(s, w, trial))
+                if cost < base * (1.0 - step):
+                    table, base, improved = trial, cost, True
+                    candidate_bytes = candidate_bytes.clone()
+                    candidate_bytes[i] = byte
+                    unused = all_bytes[~torch.isin(all_bytes, candidate_bytes)]
+        if not improved:
+            break
+    return table, candidate_bytes
+
+
+def _lut_values(table_bytes: torch.Tensor, global_scale: float) -> torch.Tensor:
+    """E4M3 bytes -> scales, exactly as ``scales_from_lut`` reads them."""
+    return table_bytes.view(torch.float8_e4m3fn).float() * global_scale
+
+
+def _mx_po2_field(exponent: torch.Tensor) -> torch.Tensor:
+    """``2^E`` exactly, for integer-valued fp32 ``E`` in ``[-127, 127]``.
+
+    The encoder's copy of the decoder's arithmetic: the same bit construction
+    ``wire.mx_scales_from_plane`` uses, so the plane the trellis quantised
+    against and the plane the reader derives are the same fp32 numbers.
+    """
+    biased = (exponent + 127.0).to(torch.int32)
+    bits = torch.where(biased == 0, torch.full_like(biased, 1 << 22), biased << 23)
+    return bits.view(torch.float32)
+
+
+def _rtn_sse(groups: torch.Tensor, scale: torch.Tensor, emit: torch.Tensor) -> torch.Tensor:
+    """Per-group squared error of round-to-nearest onto ``emit`` at ``scale``.
+
+    ``groups`` is ``[G, group]``, ``scale`` ``[G]``, ``emit`` the sorted
+    distinct values the body can reconstruct (in grid units).  The nearest
+    value is found by search on the sorted set rather than by a table over
+    codes, because the set is what matters here: two codes that decode to one
+    value are one candidate.
+    """
+    target = groups / scale[:, None]
+    hi = torch.searchsorted(emit, target.reshape(-1)).clamp(0, emit.numel() - 1)
+    lo = (hi - 1).clamp_min(0)
+    pick_lo = (target.reshape(-1) - emit[lo]).abs() <= (emit[hi] - target.reshape(-1)).abs()
+    nearest = torch.where(pick_lo, emit[lo], emit[hi]).reshape_as(groups)
+    return ((groups - nearest * scale[:, None]) ** 2).sum(dim=1)
+
+
+def _pack_scales_mx(
+    weights: torch.Tensor, group: int, emit: torch.Tensor,
+) -> "tuple[torch.Tensor, torch.Tensor]":
+    """The MX plane's initial words: one E8M0 per 32-weight block (tessera#443).
+
+    A block's scale is a bare power of two, so there is no mantissa to land
+    on and only one question per block: which binade.  The candidates are the
+    two the block's amax and the body's reach leave open -- ``E_hi =
+    ceil(log2(amax / reach))``, the lowest binade at which the loudest weight
+    is still inside what the body can emit, and ``E_hi - 1``, which codes
+    everything else one binade finer and clips the loudest weight by at most
+    2x.  Which is better is a property of the block's distribution and the
+    grid (the S6b pack's own comment says so and takes ``floor`` anyway), so
+    it is decided by measuring: round-to-nearest squared error onto the
+    values the body can reconstruct, per block, and the lower one wins.  A
+    rule would be a heuristic; this is the objective.
+
+    A block whose weights are all zero has no amax to place and takes byte
+    0x00 (``2^-127``): every code then decodes to at most ``448 * 2^-127``
+    in magnitude, finite and below fp32's normal range.  The block does not
+    reconstruct to exactly zero under a window body, because the trellis's
+    shared history can leave nonzero codes where the target was zero, and the
+    floor word is what makes those codes negligible rather than a rule that
+    pretends they are absent.  Not 0xFF, which is E8M0's NaN and is refused
+    everywhere.  Nonfinite weights are
+    refused by the caller before this runs: an E8M0 word has no way to say
+    "this block held a NaN", and neither has an E4M3 tile.
+
+    ``reach`` -- the largest magnitude the body can emit -- is
+    ``emit.abs().max()``: the window table's outermost entry under a WINDOW
+    body, the largest anchor under TCQ.  The plane is fit against what the
+    trellis reconstructs, never against the grid's nominal peak and never by
+    rounding a row scale into a block scale.
+
+    Returns ``(base_byte [G] uint8, effective [G] fp32)``.
+    """
+    if weights.ndim != 2:
+        raise GrammarError(f"expected a 2-D weight, got shape {tuple(weights.shape)}")
+    rows, cols = weights.shape
+    require_scale_groups(cols, group)
+    groups = weights.float().reshape(rows, -1, group).reshape(-1, group)
+    amax = groups.abs().amax(dim=1)
+    reach = float(emit.abs().max())
+    nonzero = amax > 0
+    # ``clamp_min`` keeps log2 finite on an all-zero block; its exponent is
+    # overwritten below, so the value never reaches the wire.
+    e_hi = torch.ceil(torch.log2(amax.clamp_min(1e-30) / reach)).clamp(-127.0, 127.0)
+    e_lo = (e_hi - 1.0).clamp(-127.0, 127.0)
+    cost_hi = _rtn_sse(groups, _mx_po2_field(e_hi), emit)
+    cost_lo = _rtn_sse(groups, _mx_po2_field(e_lo), emit)
+    exponent = torch.where(cost_lo < cost_hi, e_lo, e_hi)
+    exponent = torch.where(nonzero, exponent, torch.full_like(exponent, -127.0))
+    base_byte = (exponent + 127.0).to(torch.uint8)
+    return base_byte, _mx_po2_field(exponent)
+
+
+def _refit_scales_mx(
+    work: torch.Tensor,
+    units: torch.Tensor,
+    group: int,
+    base_byte: torch.Tensor,
+    effective: torch.Tensor,
+    metric: "torch.Tensor | None" = None,
+) -> "tuple[torch.Tensor, torch.Tensor]":
+    """One least-squares step on the MX plane, landed on E8M0 words.
+
+    With the codes fixed a block's error is ``A s^2 - 2 B s + C`` in its
+    scale, ``A = <u, u>`` and ``B = <w, u>`` over the block's unscaled grid
+    values ``u``.  The wire holds a power of two, and a convex parabola's
+    minimum over the powers of two is one of the two bracketing ``B / A``, so
+    both are costed exactly and the block keeps the word it had unless one of
+    them is strictly lower: no block ends worse than it began and the *step*
+    is monotone in squared error.  The same hold the CHANNEL and S6b refits
+    carry: a block with ``A <= 0`` or ``B <= 0`` has no positive minimiser and
+    keeps its word.
+
+    ``metric`` is ``None`` (the plain squared error) or a 1-D ``[cols]``
+    per-input-column weight, under which ``A`` and ``B`` are the weighted
+    sums.  A 2-D metric couples the blocks of a row and is refused by
+    ``encode_unit`` before this runs: the coupled po2 search is not written,
+    and a flag that ran the separable solve under a coupled metric would name
+    an arm that did something else.
+
+    Blocks are cut per output row, as the pack cut them, from the same
+    ``grammar.require_scale_groups``.
+    """
+    if work.ndim != 2 or units.ndim != 2:
+        raise GrammarError(
+            f"expected 2-D work and units, got {tuple(work.shape)} and {tuple(units.shape)}"
+        )
+    rows, cols = work.shape
+    require_scale_groups(cols, group)
+    W = work.float()
+    U = units.float()
+    if metric is None:
+        weighted = U
+    else:
+        from .scale_channel import check_refit_metric
+
+        check_refit_metric(metric, cols)
+        if metric.ndim != 1:
+            raise GrammarError(
+                "the MX plane's refit is written for a 1-D per-column metric; a "
+                f"{tuple(metric.shape)} metric couples the blocks and has no po2 "
+                "search here"
+            )
+        weighted = U * metric.to(W.dtype).to(W.device).reshape(1, -1)
+    A = (weighted * U).reshape(rows, -1, group).sum(dim=2).reshape(-1)
+    B = (weighted * W).reshape(rows, -1, group).sum(dim=2).reshape(-1)
+    valid = (A > 0) & (B > 0)
+    star = torch.where(valid, B / A.clamp_min(1e-30), effective)
+    e_lo = torch.floor(torch.log2(star.clamp_min(1e-38))).clamp(-127.0, 127.0)
+    e_hi = (e_lo + 1.0).clamp(-127.0, 127.0)
+    old_e = base_byte.to(torch.float32) - 127.0
+
+    def cost(exponent):
+        s = _mx_po2_field(exponent)
+        return A * s * s - 2.0 * B * s
+
+    best_e, best_cost = old_e, cost(old_e)
+    for candidate in (e_lo, e_hi):
+        c = cost(candidate)
+        better = valid & (c < best_cost)
+        best_e = torch.where(better, candidate, best_e)
+        best_cost = torch.where(better, c, best_cost)
+    return (best_e + 127.0).to(torch.uint8), _mx_po2_field(best_e)
+
+
+def _pack_scales_lut(
+    weights: torch.Tensor, half: int, peak: float = 6.0, headroom: float = 1.0,
+    entries: int = LUT_ENTRIES,
+):
+    """The LUT plane's starting point: amax targets, energy weights.
+
+    Returns ``(table_bytes[entries], index[halves] uint8, effective[halves],
+    global_scale)``.  The global is a power of two placing the largest target
+    in E4M3's seventh binade from the top, so the table has headroom above
+    (the least-squares refit can raise a scale past its amax) and seventeen
+    binades below.  Weighting each half by the energy of its normalised
+    weights approximates the ``<u, u>`` the refit will use once codes exist.
+
+    The global is ``2**(floor(log2(amax / (peak * headroom))) - 6)`` and the
+    refits never move it, so it is writable exactly when that exponent fits
+    the ratio codec's varint (``canonical.fits_uint``, 64 bits: exponents
+    down to -63), i.e. while ``amax >= peak * headroom * 2**-57``.  On E2M1
+    (peak 6) that is ``amax >= 4.2e-17`` and on E4M3 (peak 448)
+    ``3.1e-15`` -- a dead tensor -- but on the BF16 grid (peak 2**128) it is
+    ``amax >= 2**71``, so a LUT plane there is refused by the manifest on any
+    weight; BF16 ships the CHANNEL plane, whose global is the median row
+    scale's binade and carries no grid peak.  Measured: E2M1 at amax 2**-50
+    writes and at 2**-55 is refused; BF16 with ``scale_plane=LUT`` is refused
+    at 2**-132 on ``randn`` weights.
+    """
+    flat = weights.reshape(-1)
+    halves = flat.reshape(-1, half)
+    amax_half = halves.abs().amax(dim=1).clamp_min(1e-30)
+    target = amax_half / (peak * headroom)
+    energy = ((halves / target[:, None]) ** 2).sum(dim=1)
+    global_scale = float(2.0 ** (torch.floor(torch.log2(target.max())).item() - 6.0))
+    table_bytes, table = _fit_lut(target, energy, global_scale, entries)
+    index = _nearest(target, table)
+    return table_bytes, index.to(torch.uint8), table[index], global_scale
+
+
+#: Opt-in sink for the metric refit's own arithmetic (``refit_diagnostics``).
+#: ``None`` -- the state every encode runs in -- means the refit records
+#: nothing and costs nothing extra.
+_REFIT_DIAG: "list | None" = None
+
+#: Opt-in landing mode for the LUT plane's metric refit (``lut_landing``).
+#: ``"table"`` -- the state every encode runs in -- is the wire.
+_LUT_LANDING: str = "table"
+_LUT_LANDING_SINK: "dict | None" = None
+
+#: What a LUT refit is allowed to land its per-block optimum on.
+#:
+#: ``"table"``  the wire: sixteen E4M3 entries chosen by ``_fit_lut``, each
+#:              block assigned nearest-in-linear.  Four bits per block.
+#: ``"grid"``   every in-range E4M3 value, nearest-in-linear.  Eight bits per
+#:              block, which the LUT plane's index does not have.
+#: ``"none"``   the continuous per-block optimum itself.  Not a plane at all.
+#:
+#: Only ``LUT_LANDING_WIRE`` is a wire.  The other two are ceiling reads for
+#: issue #50 and are refused everywhere they could be mistaken for an encoder
+#: setting -- including in a promotion's evidence (issue #85).
+LUT_LANDING_MODES = ("table", "grid", "none")
+
+#: The one mode of :data:`LUT_LANDING_MODES` that is a wire.  Named rather than
+#: taken as "the first entry": a downstream gate has to say *which* landing a
+#: number was taken under (``tessera.control.assert_plane_promotion``, issue
+#: #85), and a rule spelled as a position in a tuple is a rule that moves when
+#: the tuple is reordered.  One rule, one home -- this is the home.
+LUT_LANDING_WIRE = "table"
+
+
+@contextmanager
+def lut_landing(mode: str = "table"):
+    """Measurement-only: what the LUT refit's block scales are allowed to land on.
+
+    Issue #50 asks how much of the metric refit's step the sixteen-entry table
+    gives back, and the only honest way to bound that is to run the encode with
+    the landing removed and read the same geomean.  ``"none"`` does exactly
+    that -- every block keeps the continuous optimum the refit computed -- so
+    the number it produces is **the most any table fit could return**, not a
+    number a table fit reaches.  ``"grid"`` sits between: it removes the
+    sixteen-entry budget but keeps the E4M3 values the wire can name, so the
+    pair separates "the table is too small" from "the grid is too coarse".
+
+    **The unit that comes back is not serialisable in either non-default mode.**
+    Its ``scale_lut`` and ``scale_refine`` are the plane it started the last
+    refit with, and its effective scales are not on that table -- so
+    ``materialize_stock``/``stock_dequant`` decode *a different weight* from
+    the one measured.  That is why this yields a sink: the encode writes the
+    reconstruction it actually built into ``sink["work_reconstruction"]``, and
+    a caller that scores anything else is scoring bytes the run never held.
+    The sink is filled in ``"table"`` mode too, so a control arm can prove the
+    two agree before any ceiling arm is believed.
+
+    Debug-only: floats out, no byte in.  With the context inactive the encode
+    is byte for byte what it was and pays nothing --
+    ``experiments/gs_refit_byte_baseline.py`` is the proof.
+    """
+    if mode not in LUT_LANDING_MODES:
+        raise GrammarError(
+            f"unknown LUT landing mode {mode!r}; one of {list(LUT_LANDING_MODES)}"
+        )
+    global _LUT_LANDING, _LUT_LANDING_SINK
+    outer, outer_sink = _LUT_LANDING, _LUT_LANDING_SINK
+    sink: dict = {}
+    _LUT_LANDING, _LUT_LANDING_SINK = mode, sink
+    try:
+        yield sink
+    finally:
+        _LUT_LANDING, _LUT_LANDING_SINK = outer, outer_sink
+
+
+@contextmanager
+def refit_diagnostics():
+    """Collect one record per metric-aware LUT refit call, for a measurement.
+
+    A refit's *landed* error is the number an encode acts on, and it is
+    the sum of two different things: how good a point the step reaches, and
+    how much of that the sixteen-entry table and its nearest-in-linear landing
+    give back.  A screen that moves and a screen that does not are the same
+    landed number until those are separated, so this yields the list the refit
+    appends to.  With ``coupled_landing`` on, the plane the encode acts on is
+    the record's ``coupled`` instead, and ``landed`` stays the separable
+    landing so the two remain readable side by side (issue #50).  Debug-only:
+    floats out, no byte in.  For a 1-D metric the
+    recorded costs are the separable parabola ``sum A c^2 - 2 B c``, which
+    equals the true weighted error only up to a constant -- so compare records
+    within one call, never a 1-D call's numbers against a full-H call's.
+    """
+    global _REFIT_DIAG
+    outer, _REFIT_DIAG = _REFIT_DIAG, []
+    try:
+        yield _REFIT_DIAG
+    finally:
+        _REFIT_DIAG = outer
+
+
+def _refit_scales_lut_metric(
+    work: torch.Tensor,
+    units: torch.Tensor,
+    half: int,
+    table_bytes: torch.Tensor,
+    index: torch.Tensor,
+    effective: torch.Tensor,
+    global_scale: float,
+    metric: torch.Tensor,
+    gauss_seidel: bool = False,
+    exact_fit: bool = False,
+    coupled_landing: bool = False,
+    row_weight: "torch.Tensor | None" = None,
+):
+    """The LUT plane's refit under an input metric -- JSO's knob, solved with H.
+
+    ``row_weight`` is the source-basis row weighting ``sv^2`` when segment-2a
+    diagonals are present (tessera#231): the objective the export prices is
+    ``sum_r sv_r^2 E_r H' E_r^T``, and while every per-row quantity below --
+    targets, steps, line searches, landing argmins -- cancels a positive
+    per-row factor exactly, the sixteen-entry table is SHARED across rows, so
+    its fit weights and every cross-row cost comparison must carry it or the
+    plane is chosen for the balanced coordinates instead of the objective.
+    ``None`` -- every encode without diagonals -- is byte for byte the refit
+    that was always here.
+
+    ``_refit_scales_lut`` minimises the plain squared error, for which a
+    16-block's scale is ``<w, u> / <u, u>`` over its own sixteen columns and
+    nothing else.  Under a metric the blocks stop being independent, and this
+    is the same least-squares step taken in the metric's geometry.
+
+    **The closed form.**  Row ``r`` reconstructs as ``w_hat_r = sum_b s_rb
+    u_rb``, where ``u_rb`` is the row's unscaled grid values on block ``b`` and
+    zero elsewhere.  The proxy loss is ``L = sum_r (w_r - w_hat_r) H (w_r -
+    w_hat_r)^T`` -- H couples input features, so *columns* interact and *rows*
+    do not, which is why every step below is exact per row.  Differentiating in
+    one block's scale with the others held:
+
+        dL/ds_rb = -2 (w_r - w_hat_r) H u_rb^T
+        s*_rb    = (r_rb H u_rb^T) / (u_rb H u_rb^T),
+                   r_rb = w_r - sum_{b' != b} s_rb' u_rb'
+
+    which is the projection of the block's residual onto its own codes in the
+    H inner product.  Written incrementally -- the form actually computed --
+    with ``G = (W - S*U) H`` the current gradient field and ``A_rb = u_rb H
+    u_rb^T`` the block's curvature:
+
+        s*_rb = s_rb + (G_rb . u_rb) / A_rb
+
+    ``A`` needs only H's **diagonal 16x16 blocks**; the off-diagonal coupling
+    enters through ``G``.  At ``H = I`` the cross terms vanish because blocks
+    have disjoint support, ``A = <u, u>``, ``G . u = <w, u> - s <u, u>``, and
+    the form collapses to ``<w, u> / <u, u>`` -- the plain refit, exactly.  A
+    1-D metric (the diagonal ``h^alpha`` objective) is separable the same way
+    and is computed directly.
+
+    **This is JSO's question with H in place of the grid search.**  Joint scale
+    optimisation asks which per-block scale minimises an activation-weighted
+    error and answers it by trying a small ladder of levels; here the answer is
+    the stationary point of that same error, in closed form, with no ladder and
+    no level to choose.
+
+    **Three things are approximate, and the guard is where they are paid for.**
+    (a) Every block moves at once, so the vector step is Jacobi, not the joint
+    minimiser -- corrected by an exact per-row step length ``t*`` along the
+    direction, which is the true minimiser on that line and is identically 1
+    when the metric is separable.  ``gauss_seidel`` replaces that Jacobi step
+    with one sequential sweep: block ``b`` is solved against a residual that
+    already carries blocks ``0..b-1``, which is the textbook fix for exactly
+    this and is what issue #35 asks to be measured.  It is **encoder-side and
+    opt-in**: no byte of the wire's grammar moves, the same decoder reads the
+    result, and with the flag off this function computes what it always
+    computed.  It is offered through ``export.ActivationSource`` as
+    ``refit_gauss_seidel`` (tessera#103) -- the field and the guard's entry
+    for it arrived in the same change, so no checkpoint config can record a
+    sweep the merge guard has no field to compare.
+    (b) ``_fit_lut`` chooses the sixteen table
+    entries under the separable second-order model ``sum_b A_b (c_b - s*_b)^2``,
+    i.e. the expansion around the current plane with cross-block terms dropped.
+    (c) Assignment is nearest-in-linear to ``s*``, the exact per-block optimum
+    given the others -- given the others *at the continuous target*, which is
+    not where the others land.  The accept test is where the cross terms come
+    back: the candidate planes are scored on the **full quadratic**, and the
+    plane the unit already has is one of the candidates, so the *step* is
+    monotone in the metric's own error.  The *alternation* with the trellis is
+    not: the Viterbi's branch metric never sees ``metric``, so under an
+    H-weighted refit the two halves descend different errors by construction.
+    ``ldl`` and ``trellis_weighting="none"`` separate them further, exactly as
+    in ``_refit_scales``.
+
+    **Which of (b) and (c) costs anything was measured, not argued** (issue
+    #50, `docs/measurements/tessera-lut-landing-oracle-2026-09-03.md`).  On
+    six Qwen3-0.6B units at the E2M1x2 cap wire, 24 Gauss-Seidel passes: the
+    ``new-table`` candidate won 4 (q_proj's first pass and three passes of
+    L2.down_proj, the unit whose plane starts furthest from its optimum) and
+    the table the unit already had was re-assigned on the other 20; an exact
+    coordinate step over the sixteen entries with every cross-block term
+    kept, started from the coupled assignment, moved 0 entries on every pass
+    of five of the six units, and on L2.down_proj 6-19 entries a pass worth
+    0.9% of that unit's error after re-assignment had taken its out-space
+    error from 0.02383 to 0.01002 (the cited receipt, section 2).
+    (b) is separable and it is not where the loss is.  (c) is: a block landed
+    nearest to ``s*_b`` is not at its conditional minimiser once its
+    neighbours have landed somewhere else.
+    ``coupled_landing`` fixes exactly that, and nothing else: starting from
+    the plane the accept test chose, each block is re-assigned to the table
+    entry minimising the full quadratic given every other block where it now
+    stands, with the gradient field carried block to block as the
+    Gauss-Seidel step carries it (``_coupled_landing``).  Every move lowers
+    the quadratic by an exactly known amount, so the result is a fourth
+    candidate that can only be at or below the third, and the guard is
+    unchanged.  Under a 1-D metric the blocks are independent and nearest-in-
+    linear IS the conditional minimiser, so there is nothing for the sweep to
+    do -- the oracle's replay of the diagonal control found one fp32 tie in
+    3.67 million block-passes -- and ``encode_unit`` refuses the flag
+    there rather than name an arm that did nothing.  Encoder-side and
+    opt-in like ``gauss_seidel``: the wire, the decoder and the profile id do
+    not move, and an exporter cannot set it.
+
+    Landing is unchanged and needs no rounding rule of its own: the table holds
+    exact E4M3 bytes, and nearest-in-linear to ``s*`` is the exact minimiser
+    among them (``_nearest``).  ``land_at_least``'s round-up exists for a
+    *floor*, which is a CHANNEL-plane mechanism; there is no floor here.
+    """
+    rows, cols = work.shape
+    if cols % half:
+        raise GrammarError(
+            f"a metric-aware LUT refit needs each {half}-weight scale block to lie "
+            f"within one row, and {cols} input features is not a multiple of {half}"
+        )
+    nb = cols // half
+    W = work.float()
+    U = units.float()
+    S = effective.reshape(rows, nb)
+    Ub = U.reshape(rows, nb, half)
+
+    from .scale_channel import check_refit_metric
+
+    check_refit_metric(metric, cols)
+    rw = None
+    if row_weight is not None:
+        if row_weight.numel() != rows:
+            raise GrammarError(
+                f"a row weight holds one factor per output row: "
+                f"{row_weight.numel()} for {rows} rows"
+            )
+        rw = row_weight.to(W.dtype).to(W.device).reshape(rows, 1)
+    if metric.ndim == 1:
+        h = metric.to(W.dtype).to(W.device).reshape(1, nb, half)
+        A = (Ub * Ub * h).sum(dim=2)
+        B = (W.reshape(rows, nb, half) * Ub * h).sum(dim=2)
+        target = torch.where(A > 0, B / A.clamp_min(1e-30), S)
+
+        def cost(C: torch.Tensor) -> float:
+            q = A * C * C - 2.0 * B * C
+            return float(q.sum() if rw is None else (q * rw).sum())
+    else:
+        H = metric.to(W.dtype).to(W.device)
+        Hd = torch.diagonal(H.reshape(nb, half, nb, half), dim1=0, dim2=2).permute(2, 0, 1)
+        A = torch.einsum("rbi,bij,rbj->rb", Ub, Hd, Ub)
+        E = W - S.repeat_interleave(half, dim=1) * U
+        G = E @ H
+        if gauss_seidel:
+            # One in-place sweep in the natural block order.  Each block's
+            # coordinate step is the exact minimiser GIVEN the blocks already
+            # moved, so ``G`` has to carry those moves: block ``b``'s update
+            # changes ``E`` only on its own sixteen columns, and the gradient
+            # field it feeds forward is that change through H's rows for those
+            # columns.  Total work is one ``E @ H``'s worth of flops, split
+            # into ``nb`` panels.
+            live = G.clone()
+            step = torch.zeros_like(S)
+            for b in range(nb):
+                lo, hi = b * half, (b + 1) * half
+                Ubb = Ub[:, b, :]
+                d = (live[:, lo:hi] * Ubb).sum(dim=1).div(A[:, b].clamp_min(1e-30))
+                d = torch.where(A[:, b] > 0, d, torch.zeros_like(d))
+                step[:, b] = d
+                live = live - (d.unsqueeze(1) * Ubb) @ H[lo:hi, :]
+            del live
+        else:
+            step = ((G.reshape(rows, nb, half) * Ub).sum(dim=2)).div(A.clamp_min(1e-30))
+            step = torch.where(A > 0, step, torch.zeros_like(step))
+        # The exact step length along that direction, per row -- rows are
+        # independent under H, so each has its own line minimiser and the
+        # pre-landing candidate can never raise the loss.  ``G`` here is the
+        # gradient field at ``S``, before any sweep, which is what makes ``t``
+        # the minimiser of the true line through ``S`` in direction ``D`` under
+        # either optimiser; a Gauss-Seidel direction already satisfies ``t=1``
+        # descent, and the line search can only improve on it.
+        D = step.repeat_interleave(half, dim=1) * U
+        num = (G * D).sum(dim=1)
+        den = ((D @ H) * D).sum(dim=1)
+        t = torch.where(den > 0, num / den.clamp_min(1e-30), torch.zeros_like(num))
+        target = S + t.clamp_min(0.0).unsqueeze(1) * step
+
+        def cost(C: torch.Tensor) -> float:
+            Ec = W - C.repeat_interleave(half, dim=1) * U
+            q = (Ec @ H) * Ec
+            return float(q.sum() if rw is None else (q * rw).sum())
+
+    diagnostic = _REFIT_DIAG
+    if diagnostic is not None:
+        from .encoder_identity import building
+        # The first exported unit computes its identity with internal fixture
+        # encodes. Those are not refits of the unit being measured.
+        if building():
+            diagnostic = None
+    stepped = target if diagnostic is None else target.clone()
+    valid = (A > 0) & (target > 0)
+    target = torch.where(valid, target, S)
+    weights = torch.where(valid, A, torch.zeros_like(A))
+    if rw is not None:
+        # The shared-table fit's weights carry the row factors; the per-row
+        # revert/target logic above already cancelled them exactly.
+        weights = weights * rw
+
+    flat_t, flat_w = target.reshape(-1), weights.reshape(-1)
+
+    best_bytes, best_index, best_eff = table_bytes, index.long(), S
+    before = best = cost(S)
+    won = "kept"
+    if _LUT_LANDING == "table":
+        old_table = _lut_values(table_bytes, global_scale)
+        new_bytes, new_table = _fit_lut(flat_t, flat_w, global_scale, table_bytes.numel(),
+                                        exact=exact_fit)
+
+        # Three candidates, scored on the full quadratic: the plane the unit
+        # already has, the same table re-assigned to the new targets, and the
+        # freshly fit table.  Keeping the current plane in the running is what
+        # makes this monotone once the cross-block terms are charged -- under a
+        # separable metric it never wins, because re-assignment lands every block
+        # on its own minimiser.
+        for label, cand_bytes, cand_table in (("old-table", table_bytes, old_table),
+                                              ("new-table", new_bytes, new_table)):
+            idx = _nearest(flat_t, cand_table)
+            eff = cand_table[idx].reshape(rows, nb)
+            here = cost(eff)
+            if here < best:
+                best, best_bytes, best_index, best_eff, won = here, cand_bytes, idx, eff, label
+    else:
+        # The ceiling read (issue #50, ``lut_landing``).  One candidate against
+        # the plane the unit has, scored on the same full quadratic and kept
+        # under the same accept test, so the arm is monotone in exactly the
+        # sense the wire arm is and the only difference between them is what
+        # the block scales are allowed to be.  ``best_bytes``/``best_index``
+        # are deliberately left as the plane the pass STARTED with: they no
+        # longer describe ``best_eff``, and a unit built this way decodes to
+        # something the run never held.  ``lut_landing``'s sink is the only
+        # reconstruction a caller may score.
+        if _LUT_LANDING == "grid":
+            free = e4m3_positive_values(target.device) * global_scale
+            cand = free[_nearest(flat_t, free)].reshape(rows, nb)
+        else:
+            cand = target
+        here = cost(cand)
+        if here < best:
+            best, best_eff, won = here, cand, _LUT_LANDING
+    landed = best
+    coupled = None
+    if coupled_landing and metric.ndim == 2:
+        # The fourth candidate: the chosen plane with its assignment made
+        # cross-block aware.  It used to be taken without a comparison, on
+        # the reasoning that every move lowers the quadratic "by
+        # construction" -- true in exact arithmetic, and exactly the reading
+        # tessera#232's witness broke in FP32.  The sweep now rolls back a
+        # sweep its own recompute rejects, and this call site holds it to
+        # the SAME accept test every other candidate passes: returned only
+        # when its recomputed full cost wins.  The sink records both so the
+        # separable landing stays measurable next to it.  It re-assigns INTO
+        # the table, so a ``lut_landing`` ceiling mode -- which removed the
+        # table -- has nothing for it to assign into.
+        if _LUT_LANDING != "table":
+            raise GrammarError(
+                f"coupled_landing re-assigns blocks into the sixteen-entry table; "
+                f"lut_landing({_LUT_LANDING!r}) removed it, so the two cannot be "
+                "read in one refit"
+            )
+        c_eff, c_index, c_cost, coupled = _coupled_landing(
+            W, U, Ub, H, A, best_eff, best_index.reshape(rows, nb),
+            _lut_values(best_bytes, global_scale), half, best, row_weight=rw)
+        if c_cost < best:
+            best_eff, best_index, best = c_eff, c_index.reshape(-1), c_cost
+            won = won + "+coupled"
+        else:
+            # The incumbent stands; the record describes the plane returned,
+            # which is what the sink's one consumer scores.
+            coupled = {"cost": best, "sweeps": coupled["sweeps"], "moves": 0}
+    if diagnostic is not None:
+        # Debug-only, floats only, appended after every decision this call
+        # made.  The refit's landed error is three things added together and
+        # the landed number alone cannot tell them apart:
+        #
+        #   before   -> stepped     the STEP.  Jacobi against Gauss-Seidel,
+        #                           each with its exact per-row line search;
+        #                           the only quantity issue #35 is about.
+        #   stepped  -> continuous  the non-positive-target REVERT.  A block
+        #                           whose optimum is a collapsed scale keeps
+        #                           the one it has, which un-does part of any
+        #                           step, both optimisers' alike.
+        #   continuous -> landed    the LANDING.  ``_fit_lut``'s separable
+        #                           model -- the one that drops every
+        #                           cross-block term -- plus nearest-in-linear
+        #                           assignment into sixteen table entries.
+        #
+        # ``reverted`` counts the blocks the middle leg held back.
+        # ``gauss_seidel`` records the optimiser that RAN, not the argument
+        # that was passed.  The sweep is read only on the coupled branch: under
+        # a 1-D metric the blocks are separable and the separable step is taken
+        # whatever the flag says.  ``encode_unit`` refuses the flag when no leg
+        # of the schedule couples, so this used to be unreachable -- the
+        # trailing schedule (issue #75) reaches it, because a coupled trailing
+        # leg legitimately carries the flag past three separable inner passes.
+        # A record that said a sweep ran there would misdescribe the refit to
+        # the one consumer this dict has, a measurement.
+        diagnostic.append({
+            "gauss_seidel": bool(gauss_seidel) and metric.ndim != 1,
+            "gauss_seidel_requested": bool(gauss_seidel),
+            "metric_ndim": int(metric.ndim),
+            "rows": int(rows), "blocks": int(nb),
+            "before": before,
+            "stepped": cost(stepped),
+            "continuous": cost(target),
+            "landed": landed,
+            "landing": _LUT_LANDING,
+            "reverted": int((~valid).sum()),
+            "candidate": won,
+            **({} if coupled is None else {
+                "coupled": coupled["cost"], "coupled_sweeps": coupled["sweeps"],
+                "coupled_moves": coupled["moves"]}),
+        })
+    return best_bytes, best_index.reshape(-1).to(torch.uint8), best_eff.reshape(-1)
+
+
+def _coupled_landing(W, U, Ub, H, A, C, I, table, half, start_cost,
+                     row_weight=None):
+    """Re-assign every block to the table entry minimising the FULL quadratic
+    given every other block where it now stands -- the landing (c) above with
+    the cross-block terms kept.
+
+    A block's error with the others held is a parabola in its own scale,
+    ``A_b (c_b - s_b)^2 + const`` with ``s_b = c_b + (G_b . u_b) / A_b`` the
+    conditional optimum read off the CURRENT gradient field ``G = (W - C U) H``.
+    The table entry nearest ``s_b`` in linear distance is its exact minimiser
+    over the table, and the decrease from moving there is exactly ``A_b
+    ((c_b - s_b)^2 - (t - s_b)^2)``.  A move is taken only where that is
+    positive, and ``G`` is pushed through H's rows for the block's sixteen
+    columns so the next block sees it -- one ``E @ H`` of flops per sweep,
+    split into ``nb`` panels, the same shape as the Gauss-Seidel step.  A
+    block whose conditional optimum is non-positive is held where it is, the
+    refit's own revert rule (``valid``): the trellis runs on ``work / scale``
+    and a collapsed scale was measured to break the alternation's
+    monotonicity, so the sweep re-assigns and never collapses.
+
+    Sweeps repeat until no block moves or a whole sweep lowers the quadratic
+    by less than fp32 can resolve on it (``torch.finfo(float32).eps`` times
+    the cost -- a dtype constant, not a tuning).  The gradient field and the
+    cost are recomputed exactly at the top of every sweep, so the stop rule
+    reads a true cost and rounding in the incremental pushes cannot
+    accumulate across sweeps.
+
+    **A sweep the recomputed cost rejects is rolled back** (tessera#232).
+    The per-move gains are exact in exact arithmetic, but in FP32 a sweep's
+    local gains can disagree with the recomputed full quadratic on
+    ill-conditioned inputs -- near-cancelling loud blocks under an H with an
+    off-diagonal term one ulp from 1 raised the recomputed cost by 24 ulps
+    while every local gain read positive.  The stop rule already reads the
+    disagreement; what it must not do is keep the plane it just measured as
+    worse, so the walk restores the last accepted sweep's ``C``/``I`` before
+    breaking, ``moves`` counts accepted moves only, and the returned cost is
+    the returned plane's own recomputed number -- at or below ``start_cost``
+    by construction again, this time including the rounding.  Whether the
+    exact quadratic would have improved is beside the point: the function's
+    acceptance IS the FP32 recompute, and a candidate its own check calls
+    worse is not returned.  Returns ``(C, I, cost, record)``.
+    """
+    rows, nb = C.shape
+    C, I = C.clone(), I.clone()
+    eps = torch.finfo(torch.float32).eps
+    prev = start_cost
+    sweeps = moves = 0
+    # ``row_weight`` (tessera#231) weights the COST sums only: every per-row
+    # quantity -- conditional optima, argmins, gains -- cancels a positive
+    # per-row factor exactly, so the moves are the moves; what the factor
+    # changes is what one sweep's total is worth against the stop rule, which
+    # must be measured on the same functional the refit compares candidates on.
+    rw = None if row_weight is None else row_weight.reshape(rows, 1)
+    kept_C = kept_I = None
+    last_moved = 0
+    while True:
+        E = W - C.repeat_interleave(half, dim=1) * U
+        G = E @ H
+        now = float(((G * E) if rw is None else (G * E * rw)).sum())
+        if sweeps:
+            if now >= prev:
+                # The last sweep's local gains disagreed with the recomputed
+                # full cost: roll it back and keep the incumbent
+                # (tessera#232).  ``moves`` stays the accepted count.
+                C, I = kept_C, kept_I
+                moves -= last_moved
+                break
+            if prev - now <= eps * prev:
+                break
+        kept_C, kept_I = C.clone(), I.clone()
+        prev = now
+        moved = 0
+        for b in range(nb):
+            lo, hi = b * half, (b + 1) * half
+            Ubb = Ub[:, b, :]
+            Ab = A[:, b]
+            s = C[:, b] + (G[:, lo:hi] * Ubb).sum(dim=1) / Ab.clamp_min(1e-30)
+            j = (s[:, None] - table[None, :]).abs().argmin(dim=1)
+            new = table[j]
+            gain = Ab * ((C[:, b] - s) ** 2 - (new - s) ** 2)
+            # The refit's own revert rule, unchanged: a block whose conditional
+            # optimum is non-positive keeps the scale it has (see ``valid``
+            # above and the measured reason in ``_refit_scales_lut``) -- the
+            # sweep may re-assign, never collapse.
+            take = (Ab > 0) & (s > 0) & (gain > 0)
+            if bool(take.any()):
+                d = torch.where(take, new - C[:, b], torch.zeros_like(new))
+                G = G - (d.unsqueeze(1) * Ubb) @ H[lo:hi, :]
+                C[:, b] = torch.where(take, new, C[:, b])
+                I[:, b] = torch.where(take, j, I[:, b])
+                moved += int(take.sum())
+        sweeps += 1
+        moves += moved
+        last_moved = moved
+        if moved == 0:
+            break
+    # ``prev`` is the exact cost of the plane as it stood at the top of the
+    # last completed sweep; the final plane is at or below it, so read it once
+    # more so the record is the plane's own number.
+    E = W - C.repeat_interleave(half, dim=1) * U
+    q = (E @ H) * E
+    final = float(q.sum() if rw is None else (q * rw).sum())
+    return C, I, final, {"cost": final, "sweeps": sweeps, "moves": moves}
+
+
+def _refit_scales_lut(
+    work: torch.Tensor,
+    units: torch.Tensor,
+    half: int,
+    table_bytes: torch.Tensor,
+    index: torch.Tensor,
+    effective: torch.Tensor,
+    global_scale: float,
+    metric: "torch.Tensor | None" = None,
+    gauss_seidel: bool = False,
+    exact_fit: bool = False,
+    coupled_landing: bool = False,
+    row_weight: "torch.Tensor | None" = None,
+):
+    """One least-squares step on the LUT plane, monotone by construction.
+
+    The per-half optimum ``s* = <w, u> / <u, u>`` is the same as in
+    ``_refit_scales``; what differs is where it lands.  Two tables are tried:
+    the one the unit has, re-assigned nearest-in-linear (which cannot cost
+    more than the current assignment), and a fresh ``_fit_lut`` on the new
+    targets.  The lower weighted cost wins, so a greedy fit that happens to be
+    worse than the table it would replace is never taken -- without this the
+    alternation with the trellis could oscillate.
+
+    ``metric`` hands the step off to ``_refit_scales_lut_metric``, which is the
+    same least squares in the metric's geometry; the plain path below is left
+    exactly as it was so that a weights-only encode is byte for byte what it
+    always was.
+    """
+    if metric is not None:
+        return _refit_scales_lut_metric(
+            work, units, half, table_bytes, index, effective, global_scale, metric,
+            gauss_seidel=gauss_seidel, exact_fit=exact_fit,
+            coupled_landing=coupled_landing, row_weight=row_weight,
+        )
+    if row_weight is not None:
+        # The plain refit deliberately minimises the balanced-coordinate
+        # error -- the weights-only encode, byte for byte what it always was.
+        # A source-basis row factor belongs to the metric-aware objective
+        # (tessera#231); accepted here it would quietly change encodes that
+        # asked for no metric, so it is refused instead.
+        raise GrammarError(
+            "row_weight carries the metric-aware refit's source-basis sv^2 "
+            "factors, and without refit_metric the refit minimises the "
+            "balanced-coordinate error by design: the argument would change "
+            "an encode that asked for no metric"
+        )
+    W = work.float().reshape(-1, half)
+    U = units.float().reshape(-1, half)
+    A = (U * U).sum(dim=1)
+    B = (W * U).sum(dim=1)
+    # The assignment rule.  A half with ``B <= 0`` -- codes that anti-correlate
+    # with its weights -- has its exact minimiser at the smallest positive
+    # scale, but handing it a collapsed scale is not free: the trellis runs on
+    # ``work / scale`` (a per-half normalised objective, see ``encode_unit``),
+    # so the next pass would be forced to spend the column's shared path on
+    # that half's enormous normalised residual.  Measured: the alternation
+    # stops being monotone in true SSE.  Such a half keeps its scale.
+    valid = (A > 0) & (B > 0)
+    targets = torch.where(valid, B / A.clamp_min(1e-30), effective)
+    weights = torch.where(valid, A, torch.zeros_like(A))
+
+    # The accept rule, exact.  ``_lut_cost`` is what the fit optimises -- a
+    # weighted distance that equals the per-half parabola ``A c^2 - 2 B c`` up
+    # to a constant only where ``valid``.  The decision between the two tables
+    # is made on the parabola itself, over every half, so a re-assignment of
+    # a held half under the new table is charged at its true cost and the
+    # step is monotone with no hole: under the old table each valid half
+    # lands on its exact minimiser and each held half on the entry it holds.
+    def exact_cost(table: torch.Tensor) -> "tuple[torch.Tensor, float]":
+        index = _nearest(targets, table)
+        c = table[index]
+        return index, float((A * c * c - 2.0 * B * c).sum())
+
+    old_table = _lut_values(table_bytes, global_scale)
+    new_bytes, new_table = _fit_lut(targets, weights, global_scale, table_bytes.numel(),
+                                    exact=exact_fit)
+    old_index, old_cost = exact_cost(old_table)
+    new_index, new_cost = exact_cost(new_table)
+    if new_cost < old_cost:
+        table_bytes, table, index = new_bytes, new_table, new_index
+    else:
+        table, index = old_table, old_index
+    return table_bytes, index.to(torch.uint8), table[index]
+
+
+def encode_unit(
+    weights: torch.Tensor,
+    forest: "AnchorForest | dict[int, AnchorForest]",
+    rates: "tuple[int, ...]",
+    code: ConvCode = ConvCode(),
+    rotation: RotationState = RotationState.NONE,
+    with_diagonals: bool = False,
+    diagonals: "Diagonals | None" = None,
+    completion: int | None = None,
+    released_positions: int = 0,
+    group: int = 32,
+    half: int = 16,
+    scale_headroom: float = 1.0,
+    superblock: int = 256,
+    scale_refit: int = 4,
+    span: int = 1,
+    scale_plane: ScalePlaneKind = ScalePlaneKind.S6B,
+    trellis_weighting: str = "none",
+    body: BodyKind = BodyKind.TCQ,
+    window_bits: int = 0,
+    window_seed: int = 0,
+    window_sigma: "float | None" = None,
+    channel_sigma: "float | None" = None,
+    ldl: "torch.Tensor | None" = None,
+    ldl_block: int = 32,   # DEFAULT_LDLQ_BLOCK in export.py; kept literal to avoid a cycle
+    refit_metric: "torch.Tensor | None" = None,
+    refit_metric_trailing: "torch.Tensor | None" = None,
+    refit_reach_floor: bool = False,
+    refit_gauss_seidel: bool = False,
+    refit_lut_exact: bool = False,
+    refit_coupled_landing: bool | str = False,
+) -> EncodedUnit:
+    """Encode one Linear.  ``weights`` is ``[rows, cols]`` in the source dtype.
+
+    ``scale_plane=CHANNEL`` (schema minor 3) sets one scale per output row
+    instead of a block plane: rows start at ``channel_sigma`` grid units of
+    RMS (``scale_channel.default_channel_sigma`` when ``None``), the window
+    table -- or the TCQ forest the caller built -- models that Gaussian, and
+    ``scale_refit`` least-squares refits every row to its codes.  Segment 2a
+    cannot be fitted under it: the row field *is* the plane.
+
+    ``body`` selects the trellis (schema minor 2): ``TCQ`` is the shaped
+    convolutional trellis over the anchor forests; ``WINDOW`` is the bitshift
+    trellis over a ``2^window_bits``-entry table (``window_table``,
+    ``viterbi_window``), which needs no forest, no completion axis and span
+    1.  ``window_seed``/``window_sigma`` parameterise the table and are
+    recorded by the exporter so a replay rebuilds the same one.
+
+    ``trellis_weighting`` is the branch-metric weight the Viterbi runs under:
+    ``"none"`` minimises the per-half normalised error (the encoder as first
+    built), ``"scale"`` weights each code by its half's scale squared so the
+    path minimises the true squared error (``viterbi_columns``).  An encoder
+    setting, not wire: any decoder reads either.
+
+    ``ldl`` turns the pass into **LDLQ**: the unit-block-lower factor of the
+    regularised input Hessian (``compensate.block_ldl``) over this unit's
+    columns, under which the encoder quantises column blocks of ``ldl_block``
+    from last to first and pushes each block's residual into the blocks not
+    yet quantised.  Columns are independent inside the Viterbi, so a block is
+    exactly the columns of a whole-matrix pass restricted to that range --
+    which is what makes this a scheduling change and not a second encoder.
+    The scale plane is shared by every block and refit between passes, so the
+    slice-equals-whole property the standalone ``compensate.compensated_targets``
+    needs does not arise.  Encoder-side only: no byte of the wire changes, and
+    the same decoder reads the result.
+
+    ``refit_metric`` is the error the scale refit minimises: ``None`` the plain
+    squared error, ``[cols]`` a per-input-column weight (a diagonal Hessian, or
+    a power of one), ``[cols, cols]`` the full Hessian's exact quadratic.  It
+    is read by the CHANNEL plane's row-scale refit
+    (``scale_channel.refit_channel_scale``) and by the LUT plane's per-16
+    block-scale refit (``_refit_scales_lut_metric``), which is the same closed
+    form restricted to a block's columns; S6b has no metric-aware refit and
+    refuses one rather than ignoring it.      ``refit_reach_floor`` keeps every
+    row's refit scale high enough that the pass's own target stays inside the
+    body's reach, and is CHANNEL-only for the same reason -- a block scale
+    already tracks its own sixteen weights.  Both are encoder settings; neither
+    is wire.
+
+    **The metric's basis is the working basis** -- the coordinates of the
+    matrix the body actually quantises, after ``rotation`` and after the
+    diagonals divide (tessera#231).  ``refit_metric``,
+    ``refit_metric_trailing`` and ``ldl`` are all read against ``work``, so a
+    caller that rotates or balances must transport a source-coordinate H
+    first: ``H' = Du R^T H R Du`` (``diagonals.transport_metric`` states the
+    rule; ``ActivationSource.for_unit`` is the boundary that applies it and
+    refactors the LDL from the transported, then regularised, H').  With no
+    transform the two bases coincide and nothing changes.  The row half of
+    the transport -- the source objective weights row ``r`` by ``sv_r^2`` --
+    is the encoder's own job because only it holds the fit: per-row refit
+    decisions cancel the factor exactly, and the one cross-row decision, the
+    LUT plane's shared table, is handed ``sv^2`` below.
+
+    ``refit_metric_trailing`` swaps the objective of the trailing refit only
+    (issue #75): inner passes minimise ``refit_metric``, the last refit
+    minimises ``refit_metric_trailing`` instead, at the same pass count -- the
+    fair pair ``T R_h T R_h T R_h T R_H`` against ``T R_h T R_h T R_h T R_h``,
+    which one ``refit_metric`` on every pass cannot express.  ``None`` -- the
+    state every encode runs in -- is the uniform schedule, byte for byte.
+    The two legs are **not** symmetric, and the asymmetry is load-bearing:
+    ``refit_metric=None`` makes the inner passes plain, but
+    ``refit_metric_trailing=None`` means *inherit the base leg* -- the
+    selection below is ``refit_metric_trailing if last and it is not None else
+    refit_metric`` -- so a plain trailing pass over a weighted base leg has no
+    spelling here.  ``ActivationSource.for_unit`` refuses that combination
+    rather than encoding one thing and recording another (#103).  At
+    ``scale_refit=1`` the single refit IS the trailing one and runs under the
+    trailing leg.  Encoder-side and opt-in like ``refit_gauss_seidel``:
+    ``ActivationSource.refit_objective_trailing`` reads it (tessera#103), the
+    checkpoint config records the schedule, and the merge guard compares it.
+
+    ``refit_gauss_seidel`` sweeps the LUT plane's block scales sequentially
+    instead of stepping every block from one residual (issue #35).  It is
+    meaningful only where the blocks are actually coupled -- a full-Hessian
+    ``refit_metric`` on the LUT plane -- and is refused anywhere else rather
+    than accepted as a no-op, for the same reason ``refit_metric`` is: a
+    silently ignored encoder setting is how an export ships bytes it did not
+    ask for.  Encoder-side and opt-in: the wire, the decoder and the profile
+    id are untouched, and with it off the encode is byte for byte what it was.
+
+    ``refit_coupled_landing`` makes the same refit's landing cross-block aware
+    (issue #50): after the table is chosen, every block is re-assigned to the
+    entry minimising the full quadratic given where its neighbours landed
+    (``_coupled_landing``), instead of nearest to its own continuous target.
+    ``True`` (or ``"every"``) does it on every pass's refit; ``"trailing"`` on
+    the last refit only, leaving the alternation's inner passes exactly as
+    they were -- the Viterbi's branch metric never sees ``refit_metric``, so a
+    plane moved further under H between passes is a plane the next trellis
+    pass did not ask for, and the two modes are measured as two arms.
+    Refused under the same three conditions as ``refit_gauss_seidel`` and for
+    the same reason -- under a 1-D metric nearest-in-linear already IS the
+    conditional minimiser, so the flag would name an arm that changed
+    nothing.  Independent of ``refit_gauss_seidel``: the two are separate
+    treatments and are measured as such.
+
+    ``span`` is the trellis super-symbol length (``viterbi_columns``) and
+    ``scale_plane`` how segment 2b is written; both are wire and both default
+    to the per-position trellis over the S6b plane so that every artifact
+    built before they existed is reproducible from its source.  The exporter
+    sets the shipping defaults (``export.DEFAULT_SPAN``,
+    ``export.DEFAULT_SCALE_PLANE``).
+    """
+    return encode_units(
+        [weights], forest, rates, code,
+        rotation=rotation,
+        with_diagonals=with_diagonals,
+        diagonals=[diagonals],
+        completion=completion,
+        released_positions=released_positions,
+        group=group,
+        half=half,
+        scale_headroom=scale_headroom,
+        superblock=superblock,
+        scale_refit=scale_refit,
+        span=span,
+        scale_plane=scale_plane,
+        trellis_weighting=trellis_weighting,
+        body=body,
+        window_bits=window_bits,
+        window_seed=window_seed,
+        window_sigma=window_sigma,
+        channel_sigma=channel_sigma,
+        ldl=[ldl],
+        ldl_block=ldl_block,
+        refit_metric=[refit_metric],
+        refit_metric_trailing=[refit_metric_trailing],
+        refit_reach_floor=refit_reach_floor,
+        refit_gauss_seidel=refit_gauss_seidel,
+        refit_lut_exact=refit_lut_exact,
+        refit_coupled_landing=refit_coupled_landing,
+    )[0]
+
+
+def encode_units(
+    weights: "Sequence[torch.Tensor]",
+    forest: "AnchorForest | dict[int, AnchorForest]",
+    rates: "tuple[int, ...]",
+    code: ConvCode = ConvCode(),
+    rotation: RotationState = RotationState.NONE,
+    with_diagonals: bool = False,
+    diagonals: "Sequence[Diagonals | None] | None" = None,
+    completion: int | None = None,
+    released_positions: int = 0,
+    group: int = 32,
+    half: int = 16,
+    scale_headroom: float = 1.0,
+    superblock: int = 256,
+    scale_refit: int = 4,
+    span: int = 1,
+    scale_plane: ScalePlaneKind = ScalePlaneKind.S6B,
+    trellis_weighting: str = "none",
+    body: BodyKind = BodyKind.TCQ,
+    window_bits: int = 0,
+    window_seed: int = 0,
+    window_sigma: "float | None" = None,
+    channel_sigma: "float | None" = None,
+    ldl: "Sequence[torch.Tensor | None] | None" = None,
+    ldl_block: int = 32,   # DEFAULT_LDLQ_BLOCK in export.py; kept literal to avoid a cycle
+    refit_metric: "Sequence[torch.Tensor | None] | None" = None,
+    refit_metric_trailing: "Sequence[torch.Tensor | None] | None" = None,
+    refit_reach_floor: bool = False,
+    refit_gauss_seidel: bool = False,
+    refit_lut_exact: bool = False,
+    refit_coupled_landing: bool | str = False,
+) -> "list[EncodedUnit]":
+    """Encode ``len(weights)`` same-shape Linears through ONE trellis schedule.
+
+    The batch axis of ``encode_unit`` (tessera#385).  Every unit runs exactly
+    the per-unit encode -- its own scale plane, its own LDL feedback
+    (``residual @ ldl_factor`` at the same shapes and strides), its own scale
+    refit, its own ``sse`` -- and only the Viterbi is shared: at each point
+    where a unit would call ``viterbi_window`` or ``viterbi_columns`` on its
+    ``[rows, n]`` slice of columns, the batch joins the ``B`` slices along the
+    column axis and makes one ``[rows, B * n]`` call.  Columns are independent
+    inside both trellises (``viterbi_window``, ``viterbi_columns``: the branch
+    metric and the min-scan are per column, the traceback is per column), so
+    each unit's columns of the joined answer are the columns its own call would
+    have returned.  The wire per unit is therefore **byte-identical** to
+    ``encode_unit`` on that unit alone, and ``encode_unit`` IS this function at
+    ``B = 1`` -- there is one implementation, not a fast path and a reference.
+
+    What it buys: the trellis launch count is divided by ``B``.  Under LDLQ a
+    unit makes ``cols / ldl_block`` narrow Viterbi calls per pass, each a
+    ``steps``-deep chain of launches over ``ldl_block`` columns; the coset
+    trellis (``_TCQPlan``) is launch-bound at that width and the campaign's
+    ``[1792, 2048]`` experts ran it at 32 columns a call.  Joined, one chain
+    covers ``B * ldl_block`` columns for the same launches.  The fused window
+    body is a different case, and this does not pretend otherwise: its step
+    kernel is already tiled over an L2-bounded column width
+    (``window_viterbi._layout``), so a wider call there is more tiles of the
+    same width, and the gain is the per-call overhead only.
+
+    Per-unit arguments are sequences of ``len(weights)``: ``weights``, and
+    optionally ``diagonals``, ``ldl``, ``refit_metric`` and
+    ``refit_metric_trailing`` (``None`` for the whole sequence means ``None``
+    for every unit).  Everything else is shared, because the joined call must
+    be the same call for every unit: one grid and forests, one rate schedule,
+    one body, one plane, one ``ldl_block`` and pass count.  A batch that mixes
+    units with and without an LDL factor is refused -- the block schedule is
+    what keeps the units in step -- as is one whose weights differ in shape or
+    device.  ``rows`` must match because the joined tensor is ``[rows, B * n]``;
+    ``cols`` because the schedule is per column.
+
+    Memory is ``B`` times one unit's working set (``work``, the LDLQ ``base``
+    / ``ldlq_target`` / ``recon`` / ``targets`` in fp32) plus the joined
+    call's own buffers; the caller sizes ``B`` to the device.
+
+    Returns the ``EncodedUnit`` per unit, in order.
+    """
+    count = len(weights)
+    if count == 0:
+        raise GrammarError("encode_units needs at least one unit")
+
+    def per_unit(name, values):
+        if values is None:
+            return [None] * count
+        values = list(values)
+        if len(values) != count:
+            raise GrammarError(
+                f"{name}: {len(values)} entries for {count} units -- a per-unit "
+                "argument is one entry per weight, in order"
+            )
+        return values
+
+    weights = list(weights)
+    diagonals_ = per_unit("diagonals", diagonals)
+    ldl_ = per_unit("ldl", ldl)
+    refit_metric_ = per_unit("refit_metric", refit_metric)
+    refit_metric_trailing_ = per_unit("refit_metric_trailing", refit_metric_trailing)
+    if count > 1:
+        shapes = {tuple(w.shape) for w in weights}
+        if len(shapes) != 1:
+            raise GrammarError(
+                f"a batch shares one shape; got {sorted(shapes)}. The joined "
+                "trellis call is [rows, B * n], so rows must agree, and the rate "
+                "schedule is per column, so cols must"
+            )
+        devices = {str(w.device) for w in weights}
+        if len(devices) != 1:
+            raise GrammarError(f"a batch lives on one device; got {sorted(devices)}")
+        with_ldl = [l is not None for l in ldl_]
+        if any(with_ldl) and not all(with_ldl):
+            raise GrammarError(
+                "a batch runs one LDLQ schedule: every unit carries an LDL "
+                "factor or none does. The block schedule is what keeps the "
+                "units' trellis calls in step"
+            )
+
+    steps = [
+        _encode_unit_steps(
+            weights[i], forest, rates, code,
+            rotation=rotation,
+            with_diagonals=with_diagonals,
+            diagonals=diagonals_[i],
+            completion=completion,
+            released_positions=released_positions,
+            group=group,
+            half=half,
+            scale_headroom=scale_headroom,
+            superblock=superblock,
+            scale_refit=scale_refit,
+            span=span,
+            scale_plane=scale_plane,
+            trellis_weighting=trellis_weighting,
+            body=body,
+            window_bits=window_bits,
+            window_seed=window_seed,
+            window_sigma=window_sigma,
+            channel_sigma=channel_sigma,
+            ldl=ldl_[i],
+            ldl_block=ldl_block,
+            refit_metric=refit_metric_[i],
+            refit_metric_trailing=refit_metric_trailing_[i],
+            refit_reach_floor=refit_reach_floor,
+            refit_gauss_seidel=refit_gauss_seidel,
+            refit_lut_exact=refit_lut_exact,
+            refit_coupled_landing=refit_coupled_landing,
+        )
+        for i in range(count)
+    ]
+    return _drive_in_step(steps)
+
+
+def _encode_unit_steps(
+    weights: torch.Tensor,
+    forest: "AnchorForest | dict[int, AnchorForest]",
+    rates: "tuple[int, ...]",
+    code: ConvCode = ConvCode(),
+    rotation: RotationState = RotationState.NONE,
+    with_diagonals: bool = False,
+    diagonals: "Diagonals | None" = None,
+    completion: int | None = None,
+    released_positions: int = 0,
+    group: int = 32,
+    half: int = 16,
+    scale_headroom: float = 1.0,
+    superblock: int = 256,
+    scale_refit: int = 4,
+    span: int = 1,
+    scale_plane: ScalePlaneKind = ScalePlaneKind.S6B,
+    trellis_weighting: str = "none",
+    body: BodyKind = BodyKind.TCQ,
+    window_bits: int = 0,
+    window_seed: int = 0,
+    window_sigma: "float | None" = None,
+    channel_sigma: "float | None" = None,
+    ldl: "torch.Tensor | None" = None,
+    ldl_block: int = 32,   # DEFAULT_LDLQ_BLOCK in export.py; kept literal to avoid a cycle
+    refit_metric: "torch.Tensor | None" = None,
+    refit_metric_trailing: "torch.Tensor | None" = None,
+    refit_reach_floor: bool = False,
+    refit_gauss_seidel: bool = False,
+    refit_lut_exact: bool = False,
+    refit_coupled_landing: bool | str = False,
+):
+    """``encode_unit``'s body as a generator: every trellis call is yielded.
+
+    The per-unit encode, verbatim, except that where it would call the
+    Viterbi it yields a ``_TrellisCall`` and receives the answer for its own
+    columns.  A window span yields a tuple instead: one call per rate present
+    in the span, rates ascending, answered by a tuple in the same order.
+    ``encode_units`` drives one of these per unit in lock step and runs the
+    yielded calls joined along the column axis; the generator's return value
+    is the ``EncodedUnit``.  Not an entry point: ``encode_unit`` and
+    ``encode_units`` are.
+    """
+    if weights.ndim != 2:
+        raise GrammarError(f"expected a 2-D weight, got shape {tuple(weights.shape)}")
+    rows, cols = weights.shape
+    if len(rates) != cols:
+        raise GrammarError(f"{len(rates)} rates for {cols} columns")
+    body = BodyKind(body)
+    if isinstance(forest, PayloadGrid):
+        # A window body has no forests; the grid is all it needs.
+        if body is not BodyKind.WINDOW:
+            raise GrammarError("a TCQ body needs its anchor forests, not a bare grid")
+        grid, forests = forest, {}
+    else:
+        forests = forest if isinstance(forest, dict) else {forest.rate: forest}
+        grid = next(iter(forests.values())).grid
+        if any(f.grid != grid for f in forests.values()):
+            raise GrammarError("a unit's rate schedule must share one payload grid")
+        for present in sorted(set(rates)):
+            if present not in forests and body is BodyKind.TCQ:
+                raise GrammarError(
+                    f"the schedule uses rate {present} but no forest was supplied "
+                    f"for it; got forests for {sorted(forests)}"
+                )
+    device = weights.device
+    if body is BodyKind.WINDOW:
+        if span != 1:
+            raise GrammarError(f"a window body has no super-symbols; span must be 1, got {span}")
+        if completion not in (None, 0):
+            raise GrammarError(
+                "a window body has no completion axis: its table is flat, not a "
+                f"forest; got completion={completion}"
+            )
+        if window_bits < max(rates):
+            raise GrammarError(
+                f"window_bits {window_bits} cannot hold a rate-{max(rates)} position's bits"
+            )
+        completion = 0
+    elif window_bits:
+        raise GrammarError("window_bits is only meaningful under a window body")
+
+    # S5 transforms, outermost first: rotate the input basis, then remove the
+    # rank-1 magnitude field, then set scales on what is left.  The order is
+    # forced -- fitting diagonals before rotating would fit the rotation's
+    # own structure, and setting scales first would price a matrix the body
+    # never sees.
+    arity = grid.arity
+    if rows % arity:
+        raise GrammarError(
+            f"{rows} rows is not a whole number of arity-{arity} tuples; a "
+            "k-tuple code spans k consecutive rows and cannot straddle the edge"
+        )
+    # Two refusals stand between a caller and a released encode, and this one
+    # goes first because it is the substantive one: a k-tuple code stands for
+    # k positions, so there is no per-position code for an override to
+    # replace, and no width of RELEASE plane fixes that.  Asked after the
+    # width rule below, every tuple grid a recipe can select is told its
+    # problem is plane width instead -- E2M1x2 is 256 codes -- which is a
+    # reason a wider plane would remove and this one would not, and this
+    # refusal is left reachable only on a hand-built narrow tuple grid.
+    # Encoder-local on purpose: both readers carry their own arity refusal,
+    # and the width rule is the one tessera#180 gave a single home.
+    if released_positions and arity > 1:
+        raise GrammarError(
+            "release is not defined at arity > 1: an override replaces one "
+            "position's code, and a k-tuple code has no per-position code to "
+            "replace. The k-tuple trellis is what release was the alternative "
+            "to -- see docs/measurements/release-vs-tuple-trellis.md."
+        )
+    # A release stores a whole payload code and the RELEASE plane is one fixed
+    # width whatever the grid, so release is defined only where the grid's
+    # codes fit it.  The rule and its words live in ``grammar`` because the two
+    # readers owe the same refusal on the same bytes (tessera#180); asking here,
+    # before any work, is what keeps the message about release instead of the
+    # "value out of range for a 4-bit field" ``wire.pack_uniform`` would raise
+    # one call after the encoder that chose the codes.
+    if released_positions:
+        require_release_defined(grid)
+
+    rotated, rotation_block = apply_rotation(weights, rotation)
+    # A caller may supply a fit made on a WIDER matrix than this call sees.
+    # ``sv`` is per output row and a row spans every column, so a fit made on a
+    # column slice is not the fit a whole-matrix encode would make -- which
+    # silently breaks the slice-equals-whole property ``compensate.py`` relies
+    # on to be preprocessing rather than surgery.  Passing the whole matrix's
+    # fit in is how a compensated encode stays reproducible from its target.
+    # A supplied pair is FP16 words, exactly what the wire will carry:
+    # ``apply_diagonals`` below refuses a wider dtype by field name, so the
+    # factors this encode balances with, reports ``sse`` against and returns
+    # on the unit are the bytes the writer packs (tessera#286).
+    if diagonals is not None and with_diagonals:
+        raise GrammarError(
+            "with_diagonals=True fits its own; pass one or the other, not both"
+        )
+    fitted = diagonals if diagonals is not None else (
+        fit_diagonals(rotated) if with_diagonals else None
+    )
+    work = apply_diagonals(rotated, fitted) if fitted else rotated
+
+    peak = max(abs(v) for v in grid.values)
+    scale_plane = ScalePlaneKind(scale_plane)
+    # The reach spellings as told, before the CHANNEL branch resolves
+    # ``channel_sigma=None`` to the grid default for its own arithmetic: the
+    # unit records the spelling (so the profile id binds what was asked, and
+    # a default build keeps the digest it always had), the math below uses
+    # the resolved value.
+    reach_seed = int(window_seed)
+    reach_window_sigma = None if window_sigma is None else float(window_sigma)
+    reach_channel_sigma = None if channel_sigma is None else float(channel_sigma)
+    table_bytes, global_scale = None, 1.0
+    channel_rows = effective_rows = None
+    body_reach = None
+    table_reach = None
+    if scale_plane is ScalePlaneKind.CHANNEL:
+        from .scale_channel import default_channel_sigma, initial_channel_scale
+
+        if fitted is not None:
+            raise GrammarError(
+                "a CHANNEL scale plane carries its row scale on the DIAG_SV field; "
+                "segment 2a diagonals cannot also be fitted under it"
+            )
+        if channel_sigma is None:
+            channel_sigma = default_channel_sigma(grid)
+        # The body's reach in grid units, so the initial plane starts every
+        # raised row's largest weight on what the trellis can emit
+        # (``initial_channel_scale`` lands the lower bound upward since #87):
+        # the window table's extreme entry, or the largest anchor the forests
+        # reach.  The finished plane is separate: ``refit_reach_floor`` below
+        # re-imposes the bound after refit passes, and is off by default.
+        if body is BodyKind.WINDOW:
+            reach_sigma = channel_sigma if window_sigma is None else window_sigma
+            reach_codes = window_table(
+                grid, window_bits, sigma=reach_sigma, seed=window_seed, half=half, device=device,
+            )
+            reach = float(grid_vector_table(grid, device)[reach_codes.long()].abs().max())
+            table_reach = window_table_reach(
+                grid, window_bits, sigma=reach_sigma, seed=window_seed, half=half,
+            )
+        else:
+            reach = max(
+                float(grid_vector_table(grid, device)[
+                    torch.as_tensor(f.blocks, device=device, dtype=torch.long)].abs().max())
+                for f in forests.values()
+            )
+        body_reach = reach
+        channel_rows, effective_rows, global_scale = initial_channel_scale(
+            work, channel_sigma, reach=reach,
+        )
+        base_byte = torch.zeros(0, dtype=torch.uint8, device=device)
+        refine = torch.zeros(0, dtype=torch.uint8, device=device)
+        effective = None
+    elif scale_plane is ScalePlaneKind.LUT:
+        table_bytes, refine, effective, global_scale = _pack_scales_lut(
+            work, half, peak=peak, headroom=scale_headroom,
+        )
+        base_byte = torch.zeros(0, dtype=torch.uint8, device=device)
+    elif scale_plane is ScalePlaneKind.MX:
+        from .alphabet import require_mx_grid
+
+        # The OCP MXFP8 plane (tessera#443): E4M3 elements under one E8M0
+        # per 32.  Each refusal is where the bytes are decided, by name.
+        require_mx_grid(grid, purpose="the MX scale plane")
+        if group != GROUP_WEIGHTS:
+            raise GrammarError(
+                f"the MX scale plane is one E8M0 word per {GROUP_WEIGHTS} weights "
+                f"(OCP K32); got group={group}"
+            )
+        if fitted is not None:
+            raise GrammarError(
+                "the MX scale plane carries no DIAG_SU/DIAG_SV planes: an MXFP8 "
+                "tile is codes times block scales and nothing after, so "
+                "segment 2a diagonals cannot be fitted under it"
+            )
+        if not bool(torch.isfinite(work).all()):
+            raise GrammarError(
+                "the MX scale plane refuses nonfinite weights: an E8M0 word has "
+                "no way to say a block held NaN or inf, and an E4M3 tile has no "
+                "code for one either; clean the weight before encoding"
+            )
+        require_scale_groups(cols, group)
+        # What the body can reconstruct, in grid units: the plane is fit
+        # against these values, never against the grid's nominal peak.
+        if body is BodyKind.WINDOW:
+            # The table is built at the plane's own block: ``sigma=None``
+            # models a Gaussian normalised by its block's amax, and under
+            # this plane the block is 32 weights, not the S6b half.  A
+            # power-of-two scale lands the block's amax somewhere in
+            # [reach/2, reach] rather than on it, which no stored source
+            # models; the trellis fits what the table gives it, and the
+            # better model is a measurement #443's bullet 5 owes.
+            mx_codes = window_table(
+                grid, window_bits, sigma=window_sigma, seed=window_seed,
+                half=group, device=device,
+            )
+            emit = grid_vector_table(grid, device)[mx_codes.long()].reshape(-1)
+            table_reach = window_table_reach(
+                grid, window_bits, sigma=window_sigma, seed=window_seed, half=group,
+            )
+        else:
+            emit = torch.cat([
+                grid_vector_table(grid, device)[
+                    torch.as_tensor(f.blocks, device=device, dtype=torch.long)
+                ].reshape(-1)
+                for f in forests.values()
+            ])
+        emit = emit.float().unique()
+        body_reach = float(emit.abs().max())
+        base_byte, effective = _pack_scales_mx(work, group, emit)
+        refine = torch.zeros(0, dtype=torch.uint8, device=device)
+    else:
+        base_byte, refine, effective = _pack_scales(
+            work, group, half, peak=peak, headroom=scale_headroom,
+        )
+
+    # A code covers ``arity`` consecutive rows, so every per-code plane is
+    # ``steps`` tall, not ``rows``.  The scale planes stay per-position.
+    steps = rows // arity
+    if span < 1 or steps % span:
+        raise GrammarError(
+            f"{steps} trellis positions per column is not a whole number of "
+            f"span-{span} super-symbols; pass span=1 for this shape"
+        )
+    # One code costs R bits -- R + 1 at positions carrying a stored label when
+    # span > 1 -- so the body plane is a uint8 only while that fits.  A
+    # 1024-code k-tuple grid runs at R=9 and wrapped silently here, decoding
+    # to weights worse than zero (rel_err 1.55) with nothing raising.
+    body_dtype = torch.uint8 if max(rates) + (1 if span > 1 else 0) <= 8 else torch.int32
+    anchors = torch.zeros(steps, cols, dtype=torch.long, device=device)
+    body_bits = torch.zeros(steps, cols, dtype=body_dtype, device=device)
+    completion_bits = torch.zeros(steps, cols, dtype=torch.long, device=device)
+    codes = torch.zeros(steps, cols, dtype=torch.long, device=device)
+    vectors = grid_vector_table(grid, device)
+    window_codes = window_vectors = window_index = None
+    if body is BodyKind.WINDOW:
+        # Under a CHANNEL plane the table models the Gaussian the rows were
+        # scaled to; under a block plane ``None`` models the amax-bounded
+        # source the half's scale delivers.
+        table_sigma = window_sigma
+        if table_sigma is None and scale_plane is ScalePlaneKind.CHANNEL:
+            table_sigma = channel_sigma
+        # The MX plane's block is the group, and its branch above already
+        # built (and cached) this exact table.
+        table_half = group if scale_plane is ScalePlaneKind.MX else half
+        window_codes = window_table(
+            grid, window_bits, sigma=table_sigma, seed=window_seed, half=table_half, device=device,
+        )
+        # The table as indices, once: ``trellis_pass`` reads a state's code
+        # through it at every span of every pass, and converting the stored
+        # uint8/int32 table there made a fresh copy per span, rate and unit.
+        window_index = window_codes.long()
+        window_vectors = vectors[window_index]                  # [2^L, arity]
+        # Under a block plane the CHANNEL branch above never ran, so this is
+        # where the table's delivered spread is first known.  Recorded on
+        # every window body and not only the one that needs the reach for a
+        # row start: the clamp is a property of the table (#84).
+        if table_reach is None:
+            table_reach = window_table_reach(
+                grid, window_bits, sigma=table_sigma, seed=window_seed, half=table_half,
+            )
+
+    def current_scale() -> torch.Tensor:
+        # The per-position scale the trellis quantises against, ``[rows,
+        # cols]``: a block plane's halves repeated along the row, or a
+        # CHANNEL plane's row word broadcast along it.
+        if scale_plane is ScalePlaneKind.CHANNEL:
+            from .scale_channel import channel_scale_field
+
+            return channel_scale_field(channel_rows, global_scale, rows, cols)
+        if scale_plane is ScalePlaneKind.MX:
+            return torch.repeat_interleave(effective, group).reshape(rows, cols)
+        return torch.repeat_interleave(effective, half).reshape(rows, cols)
+
+    # The columns each (range, rate) pair owns, computed once from the
+    # schedule instead of by a ``torch.nonzero`` per block per pass: the
+    # schedule is static, so the index is too, and ``nonzero`` is a
+    # device-to-host sync -- one per LDLQ block per rate per pass, which on
+    # the campaign's shapes was several hundred a unit (tessera#385).  The
+    # indices are exactly what ``nonzero`` returned: ascending, one per
+    # column whose rate is ``present`` inside the half-open range.
+    column_index: dict = {}
+
+    def columns_of(lo: int, hi: int, present: int) -> torch.Tensor:
+        key = (lo, hi, present)
+        found = column_index.get(key)
+        if found is None:
+            picked = torch.tensor(
+                [i for i in range(lo, hi) if rates[i] == present],
+                dtype=torch.long,
+            )
+            if device.type == "cuda":
+                # Through pinned memory, so the upload is enqueued and the
+                # host moves on.  A pageable host tensor copied to the device
+                # ends in a stream sync (the buffer must outlive the copy),
+                # and this is called at every LDLQ block of every unit: with
+                # the Viterbi no longer waiting per chunk, that sync would be
+                # where the pass stalled instead.  Same indices either way.
+                found = picked.pin_memory().to(device, non_blocking=True)
+            else:
+                found = picked.to(device)
+            column_index[key] = found
+        return found
+
+    def trellis_pass(
+        targets: torch.Tensor,
+        weights: "torch.Tensor | None" = None,
+        span_cols: "tuple[int, int] | None" = None,
+    ):
+        # One Viterbi per rate: columns are independent, so a mixed-rate
+        # schedule is a partition of columns and not a harder problem.
+        # ``span_cols`` restricts the pass to a half-open range of columns and
+        # is the whole of what LDLQ needs from the trellis: because the Viterbi
+        # carries no state across columns, encoding a range is bit-identical to
+        # the same columns of a full pass over the same targets and scale.
+        #
+        # A generator, not a function: the Viterbi itself is not called here.
+        # Each call is YIELDED as a ``_TrellisCall`` to ``encode_units``, which
+        # runs it -- joined along the column axis with the same call from
+        # every other unit of its batch, since columns are independent -- and
+        # sends this unit's slice of the answer back.  The Viterbi's own cost
+        # is not returned: the unit's ``sse`` is computed once at the end,
+        # from the planes and codes the unit returns.
+        lo, hi = (0, cols) if span_cols is None else span_cols
+        if body is BodyKind.WINDOW:
+            # One table for every rate: a state indexes the same entry
+            # whatever width the column's new bits have.
+            #
+            # Every rate's call of this span is yielded AT ONCE, as a tuple,
+            # and its answers come back as a tuple in the same order.  The
+            # rates partition the span's columns, each call reads only its own
+            # columns of ``targets``/``weights``, and each answer is written
+            # only into its own columns of the three planes -- so no call
+            # depends on another's answer, and the driver may run them
+            # concurrently (``_run_group``: one CUDA stream per rate).  The
+            # gathers now all precede the Viterbi calls and the scatters all
+            # follow them; every tensor holds the values the one-rate-at-a-time
+            # loop gave it.
+            present_cols = []
+            for present in sorted(set(rates)):
+                which = columns_of(lo, hi, present)
+                if which.numel():
+                    present_cols.append((present, which))
+            if not present_cols:
+                return
+            states = yield tuple(
+                _TrellisCall(
+                    body=body, rate=present, targets=targets[:, which].contiguous(),
+                    weights=None if weights is None else weights[:, which].contiguous(),
+                    window_vectors=window_vectors, window_bits=window_bits,
+                )
+                for present, which in present_cols
+            )
+            for (present, which), state in zip(present_cols, states):
+                anchors[:, which] = state
+                body_bits[:, which] = (state & ((1 << present) - 1)).to(body_dtype)
+                codes[:, which] = window_index[state]
+            return
+        for present in sorted(set(rates)):
+            picked = forests[present]
+            depth = picked.cap - present
+            level = depth if completion is None else min(completion, depth)
+            which = columns_of(lo, hi, present)
+            if which.numel() == 0:
+                continue
+            sub = targets[:, which].contiguous()
+            sub_w = None if weights is None else weights[:, which].contiguous()
+            a, b = yield _TrellisCall(
+                body=body, rate=present, targets=sub, weights=sub_w,
+                forest=picked, code=code, level=level, span=span,
+            )
+            blocks = _anchor_block_table(picked, device)
+            reachable = blocks[:, :: 1 << (depth - level)]
+            per_pos = vectors[reachable][a]              # [steps, n, D, arity]
+            want = sub.reshape(steps, arity, -1).permute(0, 2, 1).unsqueeze(2)
+            c_bits = _completion_choice(want, per_pos, sub_w, steps, arity)
+            anchors[:, which] = a
+            body_bits[:, which] = b.to(body_dtype)
+            completion_bits[:, which] = c_bits
+            codes[:, which] = reachable[a, c_bits]
+
+    # The amax plane and the trellis are each set without knowledge of the
+    # other.  ``scale_refit`` alternates them: re-fit every half's scale to
+    # the codes just chosen (``_refit_scales``), then let the trellis choose
+    # again for the new plane.  The schedule ENDS on a refit: a refit after
+    # the last trellis pass costs no Viterbi and is monotone, and at equal
+    # pass count it always beats ending on the trellis (six GLM experts,
+    # held-out: T 1.000, TR 1.044, TRTR 1.072, TRTRTRTR 1.084 vs TRTRTRT
+    # 1.082).  So ``scale_refit=k`` runs k trellis passes and k refits, and
+    # ``scale_refit=0`` is the amax plane, byte for byte.  Each refit is a
+    # plane VALUE written in the same S6b bytes: the decoder, the kernel and
+    # the profile id are untouched.
+    if trellis_weighting not in ("none", "scale"):
+        raise GrammarError(f"trellis_weighting must be 'none' or 'scale', got {trellis_weighting!r}")
+    # The refit metric and the reach floor are read only by the refit below,
+    # and only where that refit implements them.  Handed to a plane or a
+    # schedule that does not, they would be silently dropped and the unit
+    # would encode as if the caller had passed nothing -- an activation-aware
+    # export would then ship weights-only bytes and raise nothing, which is
+    # the whole failure this plumbing exists to prevent.  Refuse instead of
+    # ignoring, one message per reason.
+    if (refit_metric is not None or refit_metric_trailing is not None) \
+            and scale_plane is ScalePlaneKind.S6B:
+        raise GrammarError(
+            "refit_metric is implemented for the CHANNEL plane's row scale and "
+            "the LUT plane's per-half block scale; S6b's grouped (base, refine) "
+            "words have no metric-aware refit, so this would be silently ignored"
+        )
+    if scale_plane is ScalePlaneKind.MX:
+        # The MX refit is the separable po2 search (``_refit_scales_mx``): a
+        # 1-D metric weights columns and keeps the blocks independent; a 2-D
+        # one couples a row's blocks and has no coupled po2 search here, so
+        # it is refused rather than solved as if it were diagonal.
+        for name, m in (("refit_metric", refit_metric),
+                        ("refit_metric_trailing", refit_metric_trailing)):
+            if m is not None and m.ndim != 1:
+                raise GrammarError(
+                    f"{name} of shape {tuple(m.shape)} couples the MX plane's "
+                    "blocks; only a 1-D per-column metric has a po2 refit here, "
+                    "and running the separable step under a coupled metric "
+                    "would name an arm that did something else"
+                )
+    if refit_reach_floor and scale_plane is not ScalePlaneKind.CHANNEL:
+        raise GrammarError(
+            "refit_reach_floor is a CHANNEL-plane mechanism: it raises a ROW's "
+            "scale so the row's loudest weight stays inside the body's reach. A "
+            "block plane's scale already tracks its own sixteen weights' amax, "
+            "and there is no measured floor for one, so this would be silently "
+            "ignored"
+        )
+    if refit_gauss_seidel:
+        # The sweep is a different OPTIMISER for one objective: the coupled
+        # least squares the LUT plane's block scales solve under a full
+        # Hessian.  Under no metric there is no such solve; under a diagonal
+        # one the sixteen-column blocks decouple exactly and a sequential
+        # sweep computes the same numbers as a parallel one, so accepting the
+        # flag there would name an arm that did nothing -- the failure mode
+        # the sweep is being measured against.  On CHANNEL there is one scale
+        # per row and no block to sweep.  Refuse, one message per reason.
+        # Under a trailing schedule (issue #75) the legs that run are the
+        # base on the inner passes and the trailing leg on the last one, so
+        # the flag is meaningful when EITHER leg couples -- a coupled
+        # trailing refit after separable inner passes is the arm the
+        # schedule exists to express -- and refused only when no leg that
+        # runs couples.
+        from .scale_channel import check_refit_metric as _check_gs_metric
+
+        if refit_metric_trailing is not None:
+            _check_gs_metric(refit_metric_trailing, cols)
+        if refit_metric is None and refit_metric_trailing is None:
+            raise GrammarError(
+                "refit_gauss_seidel is a sweep order for the metric-aware block-scale "
+                "refit, and without refit_metric no such refit runs: the plain "
+                "least squares is already per-block exact"
+            )
+        if scale_refit > 1 and refit_metric_trailing is not None:
+            in_use = [m for m in (refit_metric, refit_metric_trailing) if m is not None]
+        elif scale_refit == 1 and refit_metric_trailing is not None:
+            in_use = [refit_metric_trailing]
+        else:
+            in_use = [refit_metric] if refit_metric is not None else []
+        if in_use and all(m.ndim == 1 for m in in_use):
+            raise GrammarError(
+                "refit_gauss_seidel needs a metric that couples the blocks. A 1-D "
+                f"refit_metric ({tuple(in_use[0].shape)}) is separable: each "
+                "16-column block's step is already its joint minimiser, so a "
+                "sequential sweep computes exactly the parallel one's numbers and "
+                "the flag would name an arm that changed nothing"
+            )
+        if scale_plane is not ScalePlaneKind.LUT:
+            raise GrammarError(
+                f"refit_gauss_seidel sweeps the LUT plane's per-{half} block scales; "
+                f"the {scale_plane.name} plane has no block sweep to order "
+                "(CHANNEL's row scales are independent under H and its refit is "
+                "already the exact minimiser), so this would be silently ignored"
+            )
+    if refit_lut_exact:
+        # The exact fit is a different SOLVER for one objective: the weighted
+        # k-median ``_fit_lut`` already states.  It changes what the refit's
+        # table is, so it needs a refit to run and a table for that refit to
+        # choose; off the LUT plane there is no table, and at ``scale_refit=0``
+        # the amax plane is written byte for byte and no fit is re-run.  Refuse
+        # each rather than accept a flag that names an arm that did nothing --
+        # exactly what ``refit_gauss_seidel`` refuses above, for the same reason.
+        if scale_plane is not ScalePlaneKind.LUT:
+            raise GrammarError(
+                f"refit_lut_exact solves the LUT plane's sixteen-entry table fit "
+                f"exactly; the {scale_plane.name} plane has no such table, so this "
+                "would be silently ignored"
+            )
+        if scale_refit == 0:
+            raise GrammarError(
+                "refit_lut_exact chooses the table a scale REFIT fits, and "
+                "scale_refit=0 runs none: the amax plane is written byte for byte "
+                "and the argument would be silently ignored"
+            )
+    if refit_coupled_landing is True:
+        refit_coupled_landing = "every"
+    if refit_coupled_landing not in (False, "every", "trailing"):
+        raise GrammarError(
+            f"refit_coupled_landing={refit_coupled_landing!r}: expected False, True "
+            "(every pass's refit) or 'trailing' (the last refit only)"
+        )
+    if refit_coupled_landing:
+        # Same three refusals as the sweep, for the same reason: under no
+        # metric there is no coupled quadratic; under a 1-D one the blocks are
+        # independent and nearest-in-linear is already each block's
+        # conditional minimiser; on CHANNEL there is one scale per row and no
+        # block.
+        # Which metrics actually run, not which argument was passed: #75's
+        # schedule puts a coupled metric on the TRAILING pass behind 1-D inner
+        # ones, and reading refit_metric alone would refuse
+        # refit_coupled_landing="trailing" -- the one arm the schedule exists
+        # to express.  This mirrors refit_gauss_seidel's `in_use` above; the
+        # two flags gate on the same fact and must read it the same way.
+        if refit_metric_trailing is not None:
+            in_use = [refit_metric_trailing] if refit_coupled_landing == "trailing" else (
+                ([refit_metric] if refit_metric is not None else []) + [refit_metric_trailing])
+        else:
+            in_use = [refit_metric] if refit_metric is not None else []
+        if not in_use:
+            raise GrammarError(
+                "refit_coupled_landing re-assigns the LUT plane's blocks under the "
+                "metric-aware refit, and without refit_metric no such refit runs: "
+                "the plain landing is already per-block exact"
+            )
+        if all(m.ndim == 1 for m in in_use):
+            raise GrammarError(
+                "refit_coupled_landing needs a metric that couples the blocks. A 1-D "
+                f"refit_metric ({tuple(in_use[0].shape)}) is separable: nearest-"
+                "in-linear is already each block's conditional minimiser, so the "
+                "coupled sweep moves nothing and the flag would name an arm that "
+                "changed nothing"
+            )
+        if scale_plane is not ScalePlaneKind.LUT:
+            raise GrammarError(
+                f"refit_coupled_landing re-assigns the LUT plane's per-{half} block "
+                f"scales; the {scale_plane.name} plane has no table to assign into, "
+                "so this would be silently ignored"
+            )
+    if _LUT_LANDING != "table":
+        # A ceiling read (``lut_landing``, issue #50) is only a ceiling on the
+        # thing it removes.  Off the LUT plane there is no table to remove; with
+        # no metric the plain path is left literally untouched so that a
+        # weights-only encode stays byte for byte what it was; and under a
+        # rotation or fitted diagonals the sink's reconstruction is of ``work``
+        # and not of the weight, so the number would be read in the wrong space.
+        # Refuse each rather than return a number that means something else.
+        if scale_plane is not ScalePlaneKind.LUT:
+            raise GrammarError(
+                f"lut_landing removes the LUT plane's sixteen-entry table; the "
+                f"{scale_plane.name} plane has none, so this would be silently ignored"
+            )
+        if refit_metric is None and refit_metric_trailing is None:
+            raise GrammarError(
+                "lut_landing is implemented for the metric-aware LUT refit; the "
+                "plain least squares path is deliberately unchanged, so without "
+                "refit_metric this would be silently ignored"
+            )
+        if rotation is not RotationState.NONE or with_diagonals or diagonals is not None:
+            raise GrammarError(
+                "lut_landing's sink records the reconstruction of the WORKING "
+                "matrix; under a rotation or fitted diagonals that is not the "
+                "weight, and the ceiling would be read in the wrong space"
+            )
+        if scale_refit == 0:
+            raise GrammarError(
+                "lut_landing changes where a scale REFIT lands, and scale_refit=0 "
+                "runs none: the amax plane is written byte for byte and the "
+                "context would be silently ignored"
+            )
+    if scale_refit == 0 and (refit_metric is not None
+                              or refit_metric_trailing is not None
+                              or refit_reach_floor):
+        named = ("refit_metric_trailing" if refit_metric is None and refit_metric_trailing is not None
+                 else "refit_metric" if refit_metric is not None else "refit_reach_floor")
+        raise GrammarError(
+            f"{named} shapes the scale refit, and scale_refit=0 runs none: "
+            f"the amax plane is written byte for byte and the argument "
+            f"would be silently ignored"
+        )
+    if ldl is not None:
+        if ldl.shape != (cols, cols):
+            raise GrammarError(
+                f"the LDL factor is {tuple(ldl.shape)}, expected ({cols}, {cols}) "
+                "-- one row and column per input feature of THIS unit"
+            )
+        if ldl_block < 1:
+            raise GrammarError(f"the LDLQ block must be at least one column, got {ldl_block}")
+        if cols % ldl_block:
+            raise GrammarError(
+                f"{cols} input features is not a multiple of the LDLQ block {ldl_block}; "
+                "block_ldl refuses the same shape, so the factor and the schedule "
+                "cannot both be right"
+            )
+        # The factor and the schedule must agree on the block size.  block_ldl
+        # leaves the identity on its own diagonal blocks, so this catches the
+        # dangerous direction: a factor built FINER than the schedule has spent
+        # compensation on columns the schedule then quantises together, and the
+        # arithmetic stays well-formed while pricing an arm that is neither
+        # block size.  (The reverse -- a coarser factor read at a finer block --
+        # keeps the identity here and merely compensates less, so it passes.)
+        _m = cols // ldl_block
+        _diag = torch.diagonal(
+            ldl.reshape(_m, ldl_block, _m, ldl_block), dim1=0, dim2=2
+        ).permute(2, 0, 1)
+        if not torch.allclose(
+            _diag,
+            torch.eye(ldl_block, dtype=ldl.dtype, device=ldl.device).expand(_m, -1, -1),
+            atol=1e-5,
+        ):
+            raise GrammarError(
+                f"the LDL factor's {ldl_block}-column diagonal blocks are not the "
+                f"identity: it was not produced by block_ldl at block {ldl_block}. "
+                "Pass the ldl_block the factor was built with."
+            )
+        # LDLQ used to refuse every plane but CHANNEL, on the reasoning that a
+        # block plane's within-row column spans "would have to be scheduled
+        # with the blocks".  They do not: the plane is read ONCE per pass,
+        # before the block loop (``scale = current_scale()``), and refit ONCE
+        # after it, so every block of every pass quantises against the same
+        # fixed plane whatever its column granularity.  The schedule and the
+        # plane never interleave, and the identity-factor tests pin that on the
+        # LUT plane's two bodies as they already did on CHANNEL.
+        ldl_factor = ldl.to(device=device, dtype=torch.float32)
+        # Descending block starts.  No block is ever short: ``cols %
+        # ldl_block`` is refused above, so ``max(..., 0)`` is the floor on a
+        # case this function cannot reach, not a short trailing block.
+        block_spans = [
+            (max(stop - ldl_block, 0), stop) for stop in range(cols, 0, -ldl_block)
+        ]
+    ldlq_target = None
+    passes = max(scale_refit, 1)
+    for p in range(passes):
+        # The schedule (issue #75): inner refits minimise ``refit_metric``,
+        # the trailing one ``refit_metric_trailing`` when set.  At
+        # ``scale_refit=1`` the single refit IS the trailing one.
+        last = scale_refit > 0 and p == passes - 1
+        metric_now = (refit_metric_trailing if last and refit_metric_trailing is not None
+                      else refit_metric)
+        scale = current_scale()
+        weights = None
+        if trellis_weighting == "scale":
+            # One weight per POSITION (a half is sixteen columns of one row,
+            # so every position of a trellis column has its own scale).
+            # Normalised to the column's loudest position so the fp32 path
+            # costs stay O(1); a per-column constant moves no argmin.
+            weights = (scale / scale.amax(dim=0, keepdim=True)) ** 2
+        # ``trellis_pass`` writes ``codes``/``anchors``/``body_bits`` from the
+        # yielded Viterbi answers. The driver discards the trellis's cost;
+        # the unit's ``sse`` is computed once at the end, from the planes and
+        # codes the unit returns.
+        if ldl is None:
+            targets = work / scale
+            yield from trellis_pass(targets, weights)
+        else:
+            # LDLQ: quantise column blocks last to first, and push each
+            # block's reconstruction residual into the blocks still to come.
+            base = work.float()
+            ldlq_target = base.clone()
+            recon = torch.zeros_like(base)
+            targets = torch.empty_like(base)
+            for start, stop in block_spans:
+                if stop < cols:
+                    residual = base[:, stop:] - recon[:, stop:]
+                    ldlq_target[:, start:stop] = (
+                        base[:, start:stop] + residual @ ldl_factor[stop:, start:stop]
+                    )
+                # Only this block's columns are read; scaling the whole matrix
+                # once per block would cost the pass a factor of cols/block.
+                targets[:, start:stop] = ldlq_target[:, start:stop] / scale[:, start:stop]
+                yield from trellis_pass(targets, weights, span_cols=(start, stop))
+                block_units = (
+                    vectors[codes[:, start:stop]].permute(0, 2, 1).reshape(rows, stop - start)
+                )
+                recon[:, start:stop] = block_units * scale[:, start:stop]
+            del base, recon, targets
+        if scale_refit == 0:
+            break
+        units = vectors[codes].permute(0, 2, 1).reshape(rows, cols)
+        if scale_plane is ScalePlaneKind.CHANNEL:
+            from .scale_channel import refit_channel_scale
+
+            floor = None
+            if refit_reach_floor:
+                if body_reach is None:
+                    raise GrammarError("a reach floor needs the body's reach; none was computed")
+                # The target the trellis actually saw this pass -- W without
+                # LDLQ, the compensated target with it, which is the one that
+                # can walk out past the table's last entry.
+                seen = work.float() if ldlq_target is None else ldlq_target
+                floor = seen.abs().amax(dim=1) / float(body_reach)
+            channel_rows, effective_rows = refit_channel_scale(
+                work, units, channel_rows, global_scale,
+                metric=metric_now, floor=floor,
+            )
+        elif scale_plane is ScalePlaneKind.LUT:
+            table_bytes, refine, effective = _refit_scales_lut(
+                work, units, half, table_bytes, refine, effective, global_scale,
+                metric=metric_now, gauss_seidel=refit_gauss_seidel,
+                exact_fit=refit_lut_exact,
+                # The source-basis row factors (tessera#231): with segment-2a
+                # diagonals the metric-aware objective weights row r by
+                # sv_r^2.  Per-row decisions cancel the factor; the shared
+                # sixteen-entry table does not, so the refit is told.
+                row_weight=(
+                    None if fitted is None or metric_now is None
+                    else fitted.sv.to(device=device, dtype=torch.float32).pow(2)
+                ),
+                coupled_landing=(
+                    refit_coupled_landing == "every"
+                    or (refit_coupled_landing == "trailing" and last)
+                ),
+            )
+        elif scale_plane is ScalePlaneKind.MX:
+            base_byte, effective = _refit_scales_mx(
+                work, units, group, base_byte, effective, metric=metric_now,
+            )
+        else:
+            base_byte, refine, effective = _refit_scales(
+                work, units, group, half, base_byte, refine, effective
+            )
+    # The plane may have moved after the last pass, and release below may still
+    # move codes.  ``sse`` is computed once, at the end, from the planes and
+    # codes the unit actually returns.
+    scale = current_scale()
+
+    # Stage B: release, in S9's canonical order -- descending |decoded value|
+    # within the superblock, on the PRE-release decode so the decoder can
+    # reproduce the order from bytes it already has.
+    # Both of release's refusals -- arity, and a grid wider than the plane --
+    # were made at the top, before any of the work above ran.
+    release_index = torch.zeros(0, dtype=torch.long, device=device)
+    release_code = torch.zeros(0, dtype=torch.long, device=device)
+    if released_positions:
+        values = grid_value_table(grid, device)
+        decoded = values[codes] * scale
+        release_index = _canonical_release_order(
+            decoded, cols, superblock, released_positions
+        )
+        flat_t = (work.reshape(-1))[release_index]
+        flat_s = (scale.reshape(-1))[release_index]
+        best = ((flat_t / flat_s).unsqueeze(1) - values.unsqueeze(0)) ** 2
+        release_code = best.argmin(dim=1)
+        codes.reshape(-1)[release_index] = release_code
+
+    # ``sse``, and it means ONE thing: the unweighted squared error of this
+    # unit's reconstruction against the weight it was built from, in the
+    # weight's own units, over the planes and codes the unit returns.
+    #
+    # It used to mean three.  The trellis total is in per-half *normalised*
+    # units and is the WEIGHTED sum when ``trellis_weighting="scale"`` -- the
+    # shipping setting -- so the same weights reported 444.11 unweighted and
+    # 138.08 weighted; the refit branch replaced it with an unweighted
+    # normalised sum, whose units move with every refit; and neither was
+    # recomputed after release, which mutates ``codes``, so what came back was
+    # the error of an encoding the unit no longer held.  Weight space is the
+    # one form that does not drift: it is what ``trellis_weighting="scale"``
+    # and the plain refit both minimise, and it is the axis the LDLQ receipt's
+    # own ``plain`` column is measured on, so the diagnostic and the receipt
+    # now speak about the same quantity.
+    #
+    # "The weight's own units" includes the S5 transforms (tessera#230):
+    # ``work`` is the BALANCED matrix, and for a balanced error E the
+    # source-weight error is ``Dv E Du R^T``, so the diagonal factors must be
+    # multiplied back or the number depends on the balancing gauge (the
+    # issue's sv=2 witness read exactly 4x low).  The remaining rotation is
+    # blockwise-orthogonal and moves no Frobenius norm, so undoing the
+    # diagonals on the error IS the source-space number, without paying a
+    # rotation round trip whose only effect is its own rounding.
+    #
+    # Diagnostic, not wire: no plane carries it, ``unit_artifact`` parses one
+    # back as 0.0, and no artifact byte depends on it.
+    units = vectors[codes].permute(0, 2, 1).reshape(rows, cols)
+    error = work - units * scale
+    if fitted is not None:
+        error = undo_diagonals(error, fitted)
+    sse = float((error ** 2).sum())
+
+    if _LUT_LANDING_SINK is not None:
+        # Debug-only, floats out, no byte in.  In a non-default landing mode
+        # the returned unit's scale plane is NOT what this encode built, so the
+        # reconstruction has to travel out of band or the caller scores bytes
+        # the run never held.  It is recorded in ``"table"`` mode too, so a
+        # control arm can prove it equals ``stock_dequant`` of the same unit
+        # before any ceiling arm is believed.
+        _LUT_LANDING_SINK["mode"] = _LUT_LANDING
+        _LUT_LANDING_SINK["serialisable"] = _LUT_LANDING == "table"
+        _LUT_LANDING_SINK["work_reconstruction"] = (units * scale).detach().clone()
+
+    return EncodedUnit(
+        rates=rates,
+        anchors=anchors,
+        codes=codes,
+        body_bits=body_bits,
+        completion_bits=completion_bits,
+        scale_base=base_byte,
+        scale_refine=refine,
+        release_index=release_index,
+        release_code=release_code,
+        sse=sse,
+        rotation=rotation,
+        rotation_block=rotation_block,
+        diagonals=fitted,
+        group=group,
+        half=half,
+        completion_limit=completion,
+        scale_refit=scale_refit,
+        span=span,
+        scale_plane=scale_plane,
+        scale_lut=table_bytes,
+        scale_global=global_scale,
+        body=body,
+        window_bits=window_bits,
+        window_codes=window_codes,
+        scale_rows=channel_rows,
+        window_seed=reach_seed,
+        window_sigma=reach_window_sigma,
+        channel_sigma=reach_channel_sigma,
+        table_reach=table_reach,
+    )
+
+
+@dataclass(frozen=True, eq=False)
+class _TrellisCall:
+    """One unit's Viterbi call, as ``_encode_unit_steps`` yields it.
+
+    A window span yields a tuple of these, one per rate present in the span;
+    every other yield is a single call.
+    ``targets``/``weights`` are this unit's ``[rows, n]`` column slice.  A
+    WINDOW call names its table; a TCQ call its forest, code, completion level
+    and span.  ``same_call_as`` is the check that two units' calls can be
+    joined: the shared arguments make them the same call by construction, and
+    this is where that construction is asserted rather than assumed.
+    """
+
+    body: BodyKind
+    rate: int
+    targets: torch.Tensor
+    weights: "torch.Tensor | None"
+    window_vectors: "torch.Tensor | None" = None
+    window_bits: int = 0
+    forest: "AnchorForest | None" = None
+    code: "ConvCode | None" = None
+    level: int = 0
+    span: int = 1
+
+    def same_call_as(self, other: "_TrellisCall") -> bool:
+        return (
+            self.body is other.body
+            and self.rate == other.rate
+            and tuple(self.targets.shape) == tuple(other.targets.shape)
+            and (self.weights is None) == (other.weights is None)
+            and self.window_bits == other.window_bits
+            and self.forest is other.forest
+            and self.code == other.code
+            and self.level == other.level
+            and self.span == other.span
+        )
+
+
+def _run_joined(calls: "list[_TrellisCall]"):
+    """Run one Viterbi over every call's columns; return each call's answer.
+
+    At one call the tensor handed to the Viterbi IS that call's tensor -- no
+    copy, no view -- so ``encode_unit`` runs the same object through the same
+    plan cache as it did before the batch axis existed.
+    """
+    lead = calls[0]
+    n = lead.targets.shape[1]
+    if len(calls) == 1:
+        joined, joined_w = lead.targets, lead.weights
+    else:
+        joined = torch.cat([c.targets for c in calls], dim=1)
+        joined_w = (None if lead.weights is None
+                    else torch.cat([c.weights for c in calls], dim=1))
+    if lead.body is BodyKind.WINDOW:
+        # ``want_sse=False``: the cost is discarded (the unit's ``sse`` is
+        # computed once at the end from its codes), and not reading it is
+        # what lets the host queue the next block's Viterbi, and the next
+        # unit's, behind this one instead of waiting for it.
+        state, _ = viterbi_window(
+            joined, lead.window_vectors, lead.window_bits, lead.rate, weights=joined_w,
+            want_sse=False,
+        )
+        if len(calls) == 1:
+            return [state]
+        return [state[:, i * n:(i + 1) * n] for i in range(len(calls))]
+    a, b, _ = viterbi_columns(
+        joined, lead.forest, lead.code, lead.level, span=lead.span, weights=joined_w,
+    )
+    if len(calls) == 1:
+        return [(a, b)]
+    return [(a[:, i * n:(i + 1) * n], b[:, i * n:(i + 1) * n]) for i in range(len(calls))]
+
+
+#: ``0`` runs a window span's rate calls one after another on the caller's
+#: stream; anything else (the default) runs each on its own CUDA stream.  A
+#: measurement control, never a correctness one: the calls are independent and
+#: each returns the same states on any stream.
+_RATE_STREAMS_ENV = "TESSERA_WINDOW_RATE_STREAMS"
+
+_RATE_STREAMS_LOCAL = threading.local()
+
+
+def _rate_streams(device: torch.device, count: int) -> "list[torch.cuda.Stream]":
+    """``count`` side streams on ``device``, kept per thread and reused.
+
+    Per thread for the reason ``window_viterbi``'s plan cache is: a stream is
+    where this thread's rate calls are ordered, and two threads encoding their
+    own units must not order their work behind each other's.
+    """
+    cache = getattr(_RATE_STREAMS_LOCAL, "streams", None)
+    if cache is None:
+        cache = _RATE_STREAMS_LOCAL.streams = {}
+    held = cache.setdefault(device, [])
+    while len(held) < count:
+        held.append(torch.cuda.Stream(device=device))
+    return held[:count]
+
+
+def _run_group(groups: "list[list[_TrellisCall]]") -> list:
+    """Run each rate's joined call and return each one's per-call answers.
+
+    ``groups[k]`` is rate ``k``'s call from every unit.  On CUDA each rate
+    runs on its own side stream, forked from and joined back to the caller's
+    stream, so the window Viterbi's latency-bound step chains of two rates
+    overlap instead of queueing one behind the other.  The calls are the ones
+    ``_run_joined`` makes one at a time -- same tensors, same plans, same
+    kernels -- and share nothing: each reads its own columns and each rate
+    has its own plan (the plan key carries the rate), so the answers are the
+    serial loop's answers.
+
+    Allocator ordering across the fork: the inputs were allocated on the
+    caller's stream and are read on a side stream, and the answers are the
+    reverse, so each is recorded on the stream that reads it; a block is then
+    not reused until that stream's reader has run.
+    """
+    lead = groups[0][0]
+    if (len(groups) < 2 or not lead.targets.is_cuda
+            or os.environ.get(_RATE_STREAMS_ENV, "") == "0"):
+        return [_run_joined(calls) for calls in groups]
+    device = lead.targets.device
+    main = torch.cuda.current_stream(device)
+    streams = _rate_streams(device, len(groups))
+    ready = main.record_event()
+    out = []
+    for stream, calls in zip(streams, groups):
+        stream.wait_event(ready)
+        for call in calls:
+            call.targets.record_stream(stream)
+            if call.weights is not None:
+                call.weights.record_stream(stream)
+            if call.window_vectors is not None:
+                call.window_vectors.record_stream(stream)
+        with torch.cuda.stream(stream):
+            out.append(_run_joined(calls))
+    for stream, answers in zip(streams, out):
+        main.wait_stream(stream)
+        for answer in answers:
+            answer.record_stream(main)
+    return out
+
+
+def _same_request(a, b) -> bool:
+    """``same_call_as`` over one yield: a single call, or a span's rate tuple."""
+    if isinstance(a, tuple) or isinstance(b, tuple):
+        return (isinstance(a, tuple) and isinstance(b, tuple) and len(a) == len(b)
+                and all(x.same_call_as(y) for x, y in zip(a, b)))
+    return a.same_call_as(b)
+
+
+def _drive_in_step(steps: list) -> "list[EncodedUnit]":
+    """Advance every unit's generator together, joining each round's calls.
+
+    Every unit runs the same schedule -- the same passes over the same blocks
+    at the same rates -- so the generators yield the same call at the same
+    time and finish together.  A batch that falls out of step is a bug in
+    that construction, and it is refused by name rather than run.
+    """
+    count = len(steps)
+    results: list = [None] * count
+    pending: list = [None] * count
+
+    def advance(i, value):
+        try:
+            pending[i] = steps[i].send(value)
+        except StopIteration as stop:
+            results[i] = stop.value
+            pending[i] = None
+
+    for i in range(count):
+        advance(i, None)
+    while True:
+        live = [i for i in range(count) if pending[i] is not None]
+        if not live:
+            break
+        if len(live) != count:
+            raise GrammarError(
+                f"batch fell out of step: {count - len(live)} of {count} units "
+                "finished while the rest still had trellis calls to make"
+            )
+        lead = pending[0]
+        for i in live[1:]:
+            if not _same_request(pending[i], lead):
+                raise GrammarError(
+                    f"batch fell out of step: unit {i} asked for a different "
+                    "trellis call than unit 0 at the same point of the schedule"
+                )
+        if isinstance(lead, tuple):
+            # A window span's rate calls, yielded together: join each rate
+            # across the units, run the rates as a group, hand each unit its
+            # tuple of answers back in its own order.
+            per_rate = _run_group([[pending[i][k] for i in live] for k in range(len(lead))])
+            answers = [tuple(rate[j] for rate in per_rate) for j in range(len(live))]
+        else:
+            answers = _run_joined([pending[i] for i in live])
+        for i, answer in zip(live, answers):
+            advance(i, answer)
+    return results
+
+
+def _completion_choice(
+    want: torch.Tensor, per_pos: torch.Tensor,
+    weights: "torch.Tensor | None", steps: int, arity: int,
+) -> torch.Tensor:
+    """Which descendant each position spends its completion bits on.
+
+    The second rate axis's only decision, in one place.  The completion bits
+    choose among the descendants the anchor reaches, under the SAME metric the
+    trellis scored the anchor with: per-position weights, summed over the
+    tuple's coordinates (``viterbi_columns``' ``sq * wrows``).  At arity 1 the
+    sum has one term and a positive scalar cancels in the argmin, which is why
+    every artifact written so far is unaffected; at arity > 1 the coordinates
+    carry different weights and the unweighted pick is a different code.
+
+    ``per_pos`` is ``[steps, n, D, arity]`` and ``D`` is the reachable set.  At
+    ``completion=0`` -- the exporter's default, and every rung at its body cap
+    -- ``D`` is 1 and this returns zeros whatever the metric says, which is the
+    reason a fixture at a rung with headroom is the only thing that watches it
+    (tessera#143).
+    """
+    err = (want - per_pos) ** 2
+    if weights is not None:
+        err = err * weights.reshape(steps, arity, -1).permute(0, 2, 1).unsqueeze(2)
+    return err.sum(dim=3).argmin(dim=2)
+
+
+def _canonical_release_order(
+    decoded: torch.Tensor, cols: int, superblock: int, total: int
+) -> torch.Tensor:
+    """S9's release placement: which positions get a 4-bit override.
+
+    S9 fixes the order *within* a superblock -- "descending decoded |value|
+    within the superblock, positional tie-break" -- and puts the **count** for
+    each superblock in the manifest ("each plane's per-superblock count
+    vector").  So placement is free but the counts are charged, and this
+    returns the flat indices in the order the decoder will reconstruct them.
+
+    Counts come from ``grammar.release_quota``: the total at a *uniform
+    release density*, so every superblock is within one release of its own
+    exact width-proportional share.  A quality-driven allocation is S9's
+    lambda-greedy pass; this is the uniform baseline it has to beat.
+
+    The partition is ``grammar.superblock_count`` blocks of
+    ``grammar.superblock_widths`` columns -- a **ceiling**, the same one the
+    layout gives a granule to.  The count used to be a floor here and in
+    ``decode.release_order``, which meant the quota ran over one block fewer
+    than ``block_of`` produces and **no release could ever land in a trailing
+    partial superblock**: on a 640-column unit positions 512..639 were
+    unreachable, while the layout allocated the granule for them anyway.  The
+    round trip did not notice, because encoder and decoder floored alike.
+    Ceiling the count then made the *spread* wrong in the other direction --
+    an equal count over unequal blocks -- which is what the quota fixes; see
+    its docstring for why the density, not the count, is the thing to hold
+    equal.
+    """
+    device = decoded.device
+    counts = release_quota(total, cols, superblock)
+
+    flat = decoded.abs().reshape(-1)
+    position = torch.arange(flat.numel(), device=device)
+    block_of = (position % cols) // superblock
+
+    chosen = []
+    for index, count in enumerate(counts):
+        if not count:
+            continue
+        members = position[block_of == index]
+        if count > members.numel():
+            # Unreachable at any *legal* total: ``release_quota`` gives a
+            # superblock at most ``ceil(total * width / cols)`` releases, and
+            # ``total <= rows * cols`` bounds that by ``rows * width``, the
+            # positions the superblock has.  What it still catches is an
+            # illegal one -- more releases than the unit has positions -- and
+            # it catches it here, before ``layout``'s own range check, because
+            # the encoder places before it lays out.  It must never truncate:
+            # the reader regenerates this order from the placed count, so
+            # placing fewer releases than declared makes it respread a
+            # different total and recover a different set, corrupting exactly
+            # the positions release exists to protect.
+            raise GrammarError(
+                f"superblock {index} releases {count} of {members.numel()} "
+                "positions"
+            )
+        magnitude = flat[members]
+        # Stable descending sort: ties fall back to ascending position, which
+        # makes the order total and so reproducible by the decoder.
+        order = torch.argsort(magnitude, descending=True, stable=True)
+        chosen.append(members[order[:count]])
+    if not chosen:
+        return torch.zeros(0, dtype=torch.long, device=device)
+    return torch.cat(chosen)

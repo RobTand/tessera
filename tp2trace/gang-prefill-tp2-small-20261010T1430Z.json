@@ -1,0 +1,87 @@
+{
+ "priority": 0,
+ "priority_reason": "issuegraph tessera#1185 D30 small TP2 gang: full artifact at tiny context, one profiled step",
+ "timeout_s": 3600,
+ "members": [
+  {
+   "tag": "sparklina",
+   "cwd": "/home/rob/wt/ig/tessera-1185",
+   "argv": [
+    "python3",
+    "tp2trace/rank_trace.py",
+    "--gang-rank",
+    "0"
+   ],
+   "demand": {
+    "cpu": 8,
+    "mem_gb": 100,
+    "gpu": 1
+   },
+   "gpu_memory_gb": 96,
+   "exclusive": true,
+   "max_attempts": 1,
+   "container_images": [
+    "localhost/prismaquant/spark-vllm-nccl230@sha256:f8dbe1a02e33ccb7416ab40b72a83e8c725dcb6fed3e90bae4a658cce5e1b7f5"
+   ],
+   "env": {
+    "OMP_NUM_THREADS": "1",
+    "MKL_NUM_THREADS": "1",
+    "OPENBLAS_NUM_THREADS": "1",
+    "MAX_JOBS": "1",
+    "PYTHONDONTWRITEBYTECODE": "1",
+    "TP2TRACE_RUN": "prefill-tp2-small-20261010T1430Z",
+    "TP2TRACE_ARTIFACT": "/mnt/shared/tessera-measurements/pact-e4m3-accuracy-20260928/release-t8/exported",
+    "TP2TRACE_PLUGIN": "tp2trace/plugin-83460680",
+    "TP2TRACE_PLUGIN_COMMIT": "83460680ed84e33c82eb62b31345381cc151aa58",
+    "TP2TRACE_MLM": "512",
+    "TP2TRACE_MBT": "512",
+    "TP2TRACE_UTIL": "0.3",
+    "TP2TRACE_KVBYTES": "268435456",
+    "TP2TRACE_STEPS": "1",
+    "TP2TRACE_WANT": "64",
+    "TP2TRACE_WARM_TOKENS": "32",
+    "TP2TRACE_MEASURE_TOKENS": "64"
+   }
+  },
+  {
+   "tag": "sparky",
+   "cwd": "/home/rob/wt/ig/tessera-1185",
+   "argv": [
+    "python3",
+    "tp2trace/rank_trace.py",
+    "--gang-rank",
+    "1"
+   ],
+   "demand": {
+    "cpu": 8,
+    "mem_gb": 100,
+    "gpu": 1
+   },
+   "gpu_memory_gb": 96,
+   "exclusive": true,
+   "max_attempts": 1,
+   "container_images": [
+    "localhost/prismaquant/spark-vllm-nccl230@sha256:f8dbe1a02e33ccb7416ab40b72a83e8c725dcb6fed3e90bae4a658cce5e1b7f5"
+   ],
+   "env": {
+    "OMP_NUM_THREADS": "1",
+    "MKL_NUM_THREADS": "1",
+    "OPENBLAS_NUM_THREADS": "1",
+    "MAX_JOBS": "1",
+    "PYTHONDONTWRITEBYTECODE": "1",
+    "TP2TRACE_RUN": "prefill-tp2-small-20261010T1430Z",
+    "TP2TRACE_ARTIFACT": "/mnt/shared/tessera-measurements/pact-e4m3-accuracy-20260928/release-t8/exported",
+    "TP2TRACE_PLUGIN": "tp2trace/plugin-83460680",
+    "TP2TRACE_PLUGIN_COMMIT": "83460680ed84e33c82eb62b31345381cc151aa58",
+    "TP2TRACE_MLM": "512",
+    "TP2TRACE_MBT": "512",
+    "TP2TRACE_UTIL": "0.3",
+    "TP2TRACE_KVBYTES": "268435456",
+    "TP2TRACE_STEPS": "1",
+    "TP2TRACE_WANT": "64",
+    "TP2TRACE_WARM_TOKENS": "32",
+    "TP2TRACE_MEASURE_TOKENS": "64"
+   }
+  }
+ ]
+}
