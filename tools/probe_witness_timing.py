@@ -18,7 +18,7 @@ SHARD = Path(
 TIMEOUT_S = 30.0
 
 
-def test_resident_hash_at_population_scale():
+def measure():
     torch = __import__("torch")
     assert torch.cuda.is_available(), "probe needs the device it prices"
     from safetensors import safe_open
@@ -39,6 +39,18 @@ def test_resident_hash_at_population_scale():
     facts = er.resident_bytes(model)
     elapsed = time.time() - started
     assert sum(fact["bytes"] for fact in facts.values()) == resident, "hash covered every resident byte"
+    return resident, file_bytes, elapsed
+
+
+def test_resident_hash_at_population_scale():
+    resident, file_bytes, elapsed = measure()
     print(f"PROBE resident_bytes bytes={resident} file_bytes={file_bytes} elapsed_s={elapsed:.1f} "
           f"timeout_s={TIMEOUT_S} within={elapsed < TIMEOUT_S}")
     assert elapsed < TIMEOUT_S, "per-request resident re-hash exceeds the fetch timeout"
+
+
+if __name__ == "__main__":
+    resident, file_bytes, elapsed = measure()
+    print(f"PROBE resident_bytes bytes={resident} file_bytes={file_bytes} elapsed_s={elapsed:.1f} "
+          f"timeout_s={TIMEOUT_S} within={elapsed < TIMEOUT_S}")
+    raise SystemExit(0 if elapsed < TIMEOUT_S else 4)
