@@ -26,12 +26,14 @@ def _line_with(text, needle, after=0):
     raise AssertionError(f"missing block: {needle}")
 
 
-def test_f16_e4m3_library_prefetches_from_a_prefetch():
-    """The defect: the 16-bit E4M3 path read distance 0."""
+def test_each_library_reads_its_own_distance():
+    """The defect: the 16-bit E4M3 path read distance 0. Pin the full arm map:
+    the E4M3 instruction and the 16-bit E4M3 library read A_PREFETCH, the value
+    family reads VALUE_A_PREFETCH, the FP4 lane reads 0."""
     text = _text()
-    line = _line_with(text, "constexpr int PREFETCH_DISTANCE")
-    joined = line + text.split("constexpr int PREFETCH_DISTANCE")[1].split(";")[0]
-    assert "FAMILY_FP8 ? A_PREFETCH" in joined
+    chunk = text.split("constexpr int PREFETCH_DISTANCE")[1].split(";")[0]
+    norm = " ".join(chunk.split())
+    assert norm == "= FAMILY_MMA8 ? A_PREFETCH : (FAMILY_FP8 ? A_PREFETCH : (!FAMILY_FP4 ? VALUE_A_PREFETCH : 0))", norm
 
 
 def test_prefetch_stays_gated_to_routed_one_run():
@@ -42,11 +44,11 @@ def test_prefetch_stays_gated_to_routed_one_run():
 
 
 def test_value_and_fp4_paths_do_not_move():
-    """The value arm and the FP4 lane keep their distances."""
+    """The value arm and the FP4 lane keep their distances (pinned above)."""
     text = _text()
     chunk = text.split("constexpr int PREFETCH_DISTANCE")[1].split(";")[0]
-    assert "VALUE_A_PREFETCH" in chunk
-    assert ": 0" in chunk
+    norm = " ".join(chunk.split())
+    assert "(!FAMILY_FP4 ? VALUE_A_PREFETCH : 0)" in norm, norm
 
 
 def test_prefetch_adds_no_shared_memory():
