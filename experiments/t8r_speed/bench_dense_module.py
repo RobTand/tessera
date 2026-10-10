@@ -105,16 +105,65 @@ SOURCE_KEYS = {"lm_head": "lm_head.weight"}
 #: ``_Glm5NextMergedColumnParallelLinear`` takes these shard ids as replicated;
 #: ``tools/tessera_projection_smoke.py`` builds the KDA case with the same pair.
 KDA_REPLICATED_PARTITIONS = (4, 5)
+#: Pinned construction census that owns the KDA column layout (tessera#1182).
+#: The preflight reads this receipt, never the table under test, so a short
+#: ``MODULES`` entry cannot approve itself.
+CONSTRUCTION_RECEIPT = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                                    "..", "..", "docs", "measurements", "construction",
+                                    "2026-10-07", "glm53-flash-4layer-selected-t8.json")
+#: Receipt fragment that names the KDA merged input, and the TP degree the
+#: bench times (TP2 per-rank shards; replicated partitions stay whole).
+KDA_RECEIPT_FRAGMENT = "in_proj_qkvbfg_a"
+KDA_TP_DEGREE = 2
+
+
+def _construction_kda_tp2():
+    """TP2 rows, replicated ids, local total and floor from the receipt.
+
+    Read ``output_sizes`` and ``replicated_shard_ids`` of the KDA merged
+    input from the pinned construction census. Sharded partitions halve
+    over ``KDA_TP_DEGREE``; replicated partitions stay whole.
+    """
+    with open(CONSTRUCTION_RECEIPT) as handle:
+        census = json.load(handle)
+    for entry in census.get("linears", []):
+        if KDA_RECEIPT_FRAGMENT in entry.get("prefix_pattern", ""):
+            full = list(entry["output_sizes"])
+            replicated = list(entry["replicated_shard_ids"])
+            rows = []
+            for index, width in enumerate(full):
+                if index in replicated:
+                    rows.append(width)
+                else:
+                    if width % KDA_TP_DEGREE:
+                        raise ValueError(f"bench module 'kda_in': construction width {width} "
+                                         f"does not split over TP{KDA_TP_DEGREE}")
+                    rows.append(width // KDA_TP_DEGREE)
+            floor = min(rows[index] for index in replicated)
+            return rows, replicated, sum(rows), floor
+    raise ValueError("bench module 'kda_in': the pinned construction receipt "
+                     "holds no KDA merged input entry")
+
+
+def require_pinned_kda_contract():
+    """Refuse a ``MODULES['kda_in']`` entry outside the pinned receipt."""
+    contract_roles, _ = MODULES["kda_in"]
+    expected, replicated, total, _ = _construction_kda_tp2()
+    if list(KDA_REPLICATED_PARTITIONS) != list(replicated):
+        raise ValueError(f"bench module 'kda_in': replicated partitions "
+                         f"{list(KDA_REPLICATED_PARTITIONS)} differ from construction {list(replicated)}")
+    given = [rows for _, rows in contract_roles]
+    if list(given) != list(expected):
+        raise ValueError(f"bench module 'kda_in': pinned contract {given} rows differ "
+                         f"from construction {expected}")
+    if sum(given) != total:
+        raise ValueError(f"bench module 'kda_in': pinned contract total {sum(given)} rows "
+                         f"differs from construction {total}")
+    return None
 
 
 def _contract_total(roles):
     return sum(rows for _, rows in roles)
-
-
-def _contract_floor(contract_roles):
-    """One full contract block over the replicated partitions, derived."""
-    return min(rows for index, (_, rows) in enumerate(contract_roles)
-               if index in KDA_REPLICATED_PARTITIONS)
 
 
 def require_module_geometry(name, roles, cols):
@@ -122,8 +171,9 @@ def require_module_geometry(name, roles, cols):
 
     Read ``MODULES[name]``: unknown modules, column counts, role
     populations, replicated roles below one contract block, short local
-    totals, and moved rows each refuse by name. No literal geometry lives
-    here; every number comes from the contract row being checked.
+    totals, and moved rows each refuse by name. The KDA floor and total
+    come from the pinned construction receipt, never the table under
+    test, so a short ``MODULES`` entry cannot approve itself.
     """
     try:
         contract_roles, contract_cols = MODULES[name]
@@ -137,15 +187,19 @@ def require_module_geometry(name, roles, cols):
         raise ValueError(f"bench module {name!r}: roles {sorted(given)} differ "
                          f"from contract {sorted(wanted)}")
     if name == "kda_in":
-        if any(index >= len(contract_roles) for index in KDA_REPLICATED_PARTITIONS):
+        require_pinned_kda_contract()
+        _, replicated, receipt_total, floor = _construction_kda_tp2()
+        if any(index >= len(contract_roles) for index in replicated):
             raise ValueError(f"bench module {name!r}: contract lost a replicated partition")
-        floor = _contract_floor(contract_roles)
-        for index in KDA_REPLICATED_PARTITIONS:
+        for index in replicated:
             role, _ = contract_roles[index]
             if given[role] < floor:
                 raise ValueError(f"bench module {name!r}: replicated role {role!r} holds "
                                  f"{given[role]} rows below one contract block of {floor}")
-    if _contract_total(roles) != _contract_total(contract_roles):
+        if _contract_total(roles) != receipt_total:
+            raise ValueError(f"bench module {name!r}: local total {_contract_total(roles)} rows "
+                             f"differs from construction {receipt_total}")
+    elif _contract_total(roles) != _contract_total(contract_roles):
         raise ValueError(f"bench module {name!r}: local total {_contract_total(roles)} rows "
                          f"differs from contract {_contract_total(contract_roles)}")
     for role, rows in wanted.items():
@@ -159,13 +213,21 @@ def require_contract_total(name, rows, cols):
     """Refuse a total-only dense shape outside its pinned contract, if any.
 
     Shapes with no contract entry are research probes and pass. Callers that
-    alias a contract name with a short total refuse before timing.
+    alias a contract name with a short total refuse before timing. The KDA
+    total comes from the pinned construction receipt, never the table.
     """
     if name not in MODULES:
         return None
     contract_roles, contract_cols = MODULES[name]
     if cols != contract_cols:
         raise ValueError(f"bench shape {name!r}: {cols} columns differ from contract {contract_cols}")
+    if name == "kda_in":
+        require_pinned_kda_contract()
+        _, _, receipt_total, _ = _construction_kda_tp2()
+        if rows != receipt_total:
+            raise ValueError(f"bench shape {name!r}: local total {rows} rows differs "
+                             f"from construction {receipt_total}")
+        return None
     if rows != _contract_total(contract_roles):
         raise ValueError(f"bench shape {name!r}: local total {rows} rows differs "
                          f"from contract {_contract_total(contract_roles)}")

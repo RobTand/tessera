@@ -1687,10 +1687,15 @@ changes.
 
 Re-stamped 2026-10-10 for issues #1020 and #1182 and the bench geometry preflight.
 `bench_dense_module.require_module_geometry` refuses a module outside its pinned
-`MODULES` contract before timing. Replicated KDA partitions each hold one full
-contract block, and the local total matches the contract. `bench_geometry.py`
-derives its dense totals from the same contract and refuses aliased short totals.
-The short KDA proxy shape is removed.
+contract before timing. The KDA floor (128 rows per replicated role) and the
+local total (12576 rows) come from the pinned construction census
+(`docs/measurements/construction/2026-10-07/glm53-flash-4layer-selected-t8.json`:
+`output_sizes` with `replicated_shard_ids` [4, 5], halved over TP2 except the
+replicated pair), never the table under test. `require_pinned_kda_contract`
+refuses a `MODULES['kda_in']` entry outside that census, so a short table
+cannot approve itself. `bench_geometry.py` derives its dense totals from the
+same contract and refuses aliased short totals. The short KDA proxy shape is
+removed.
 
 Re-stamped 2026-10-01 for the GLM-5.3 release serve's compilation mode
 (tessera#774). The T-8 release serve passes
