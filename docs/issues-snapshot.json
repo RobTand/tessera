@@ -1,6 +1,6 @@
 {
  "default_repo": "RobTand/tessera",
- "generated": "2026-10-09T12:14:01Z",
+ "generated": "2026-10-10T04:28:26Z",
  "repos": {
   "RobTand/prismaquant": {
    "1": {
@@ -5796,7 +5796,7 @@
     "title": "Integration batch 31: #2275 keep PrismaBuild test imports out of collection (stacked on batch 30)"
    },
    "2301": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "[P1] Remove unused G3 routed-source reads and consume PB phased residency"
    },
    "2302": {
@@ -6512,7 +6512,7 @@
     "title": "[P2] Prevent: Keep prerequisite staging outside release measurements"
    },
    "2463": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "[P2] Measure Stage A/B container-cache peak and derive the cache ceiling"
    },
    "2464": {
@@ -6520,7 +6520,7 @@
     "title": "[P3] GPU validation of the container-cache reservation slice"
    },
    "2465": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "[P2] Decide the routed-expert drift bound of the D42 research split capture"
    },
    "2466": {
@@ -6580,7 +6580,7 @@
     "title": "[P2] Record GLM T-8 serve evidence and coordinator authorization"
    },
    "2479": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "[P1] Remove unused G3 routed-source reads and consume PB phased residency"
    },
    "248": {
@@ -6600,7 +6600,7 @@
     "title": "[P2] Import the canonical replay entry point and accept the approved deadline"
    },
    "2483": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "[P2] Complete the PACT contract in the existing model profile"
    },
    "2484": {
@@ -6644,7 +6644,7 @@
     "title": "[P2] Deliver the accepted D44 guard through the repository snapshot"
    },
    "2493": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "Measure the workload-specific cache peak and reject incomplete sampler evidence"
    },
    "2494": {
@@ -6692,7 +6692,7 @@
     "title": "[P3] A missing profile silently drops the GLM direct-consumer contract in the anchor helpers"
    },
    "2503": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "[P2] Complete the PACT contract in the existing model profile"
    },
    "2504": {
@@ -6728,44 +6728,392 @@
     "title": "[P2] Publish immutable Tessera serving-code qualification evidence"
    },
    "2511": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "[P2] Read Tessera lane schema v12 and apply the per-launch rung scope"
    },
    "2512": {
     "state": "OPEN",
     "title": "[P3] GPU validation queue (prismaquant, issuegraph)"
    },
+   "2513": {
+    "state": "CLOSED",
+    "title": "[P2] Read Tessera lane schema v12 and apply the per-launch rung scope"
+   },
+   "2514": {
+    "state": "OPEN",
+    "title": "[P2] Conformance suite needs tessera serving module on fleet worker"
+   },
+   "2515": {
+    "state": "OPEN",
+    "title": "[P2] Supply a BF16 artifact for the PQ #2459 rows 1-4"
+   },
+   "2516": {
+    "state": "OPEN",
+    "title": "[P1] PACT L40 band 39:45: run two sequential windows on the deadline-fixed source (measurement)"
+   },
+   "2517": {
+    "state": "OPEN",
+    "title": "[P0] No Tessera GLM card can be published: native_export.graph is required while serving is eager-only, and research_only is read by nothing"
+   },
+   "2518": {
+    "state": "CLOSED",
+    "title": "[P2] Enforce the branch naming rule (prismaquant-<issue>) in the pull request check"
+   },
+   "2519": {
+    "state": "CLOSED",
+    "title": "[P2] Enforce the branch naming rule (prismaquant-<issue>) in the pull request check"
+   },
    "252": {
     "state": "CLOSED",
     "title": "Require every pull request to main to link a repository issue"
+   },
+   "2520": {
+    "state": "OPEN",
+    "title": "[P1] PACT replay: stop on a progress stall, not on a wall-clock deadline"
+   },
+   "2521": {
+    "state": "CLOSED",
+    "title": "[P2] Record supplemental fixture authorization for PQ #2459"
+   },
+   "2522": {
+    "state": "OPEN",
+    "title": "[P3] Consolidate duplicate model-profile prefix helpers"
+   },
+   "2523": {
+    "state": "CLOSED",
+    "title": "[P2] issuegraph merge train pq-9: 1 accepted fixes"
+   },
+   "2524": {
+    "state": "CLOSED",
+    "title": "[P2] Recurring root cause in prismaquant: missing_gate (issuegraph post-mortems)"
+   },
+   "2525": {
+    "state": "CLOSED",
+    "title": "[P2] issuegraph merge train pq-10: 3 accepted fixes"
+   },
+   "2526": {
+    "state": "OPEN",
+    "title": "[P1] Deliver the accepted D44 autonomous controller"
+   },
+   "2527": {
+    "state": "CLOSED",
+    "title": "[P2] Recurring root cause in prismaquant: design (issuegraph post-mortems)"
+   },
+   "2528": {
+    "state": "OPEN",
+    "title": "[P3] GPU validation of prismaquant#1586: graph receipt verification (#1586)"
+   },
+   "2529": {
+    "state": "CLOSED",
+    "title": "[P3] Decision or action by a person for prismaquant#2520: Provide timestamped progress histories for attempts 19da023889f64a8\n[... 119 characters cut]"
    },
    "253": {
     "state": "CLOSED",
     "title": "Quantize and serve a full mixed trellis-4/8/16 LFM2.5 sanity artifact"
    },
+   "2530": {
+    "state": "OPEN",
+    "title": "[P1] Qualify original layer-45 capture and Stage A/B prices for all 867 units"
+   },
+   "2531": {
+    "state": "OPEN",
+    "title": "[P1] Qualify paired rate trades and preserve the depth-price evidence"
+   },
+   "2532": {
+    "state": "OPEN",
+    "title": "[P1] Enumerate Option B body and MTP allocations under one artifact byte cap"
+   },
+   "2533": {
+    "state": "OPEN",
+    "title": "[P0] Measure the authorized A8S L41-L44 R832 confirming arm"
+   },
+   "2534": {
+    "state": "OPEN",
+    "title": "[P1] Admit measured Option B Pareto evidence without a scalar exchange weight"
+   },
+   "2535": {
+    "state": "OPEN",
+    "title": "[P0] Apply authorized flat depth prices and receipt-bound band calibration"
+   },
+   "2536": {
+    "state": "OPEN",
+    "title": "[P1] Qualify Option B artifacts and matched speculative serving evidence"
+   },
+   "2537": {
+    "state": "OPEN",
+    "title": "[P1] Qualify remaining 2048-token depth prices and band calibration"
+   },
+   "2538": {
+    "state": "OPEN",
+    "title": "[P0] Compare corrected all-rates quality with matched A8S"
+   },
+   "2539": {
+    "state": "OPEN",
+    "title": "[P1] Add the qualified Option B release CLI and evidence replay"
+   },
    "254": {
     "state": "CLOSED",
     "title": "Require PRs to link repository issues"
+   },
+   "2540": {
+    "state": "CLOSED",
+    "title": "[P1] Refresh the digest census and assign exact consumer contracts"
+   },
+   "2541": {
+    "state": "OPEN",
+    "title": "[P1] Consolidate value identities by exact consumer contract"
+   },
+   "2542": {
+    "state": "OPEN",
+    "title": "[P1] Consolidate bounded-read and tensor identities by consumer contract"
+   },
+   "2543": {
+    "state": "OPEN",
+    "title": "[P1] Resolve standalone digest consumers by deployment contract"
+   },
+   "2544": {
+    "state": "OPEN",
+    "title": "[P1] Independently audit complete digest coverage before parent closure"
+   },
+   "2545": {
+    "state": "OPEN",
+    "title": "[P1] Complete existing native-cell and graph prerequisites for image X"
+   },
+   "2546": {
+    "state": "CLOSED",
+    "title": "[P1] Publish allocation-bound fused-module proof and the selectable cell matrix"
+   },
+   "2547": {
+    "state": "OPEN",
+    "title": "[P1] Publish exact-candidate GPU qualification for Tessera #610 and #611"
+   },
+   "2548": {
+    "state": "OPEN",
+    "title": "[P1] Complete separate TP2, quality, and performance measurements on image X"
+   },
+   "2549": {
+    "state": "OPEN",
+    "title": "[P1] Publish measured Tessera cells and integrate the exact runtime pin"
    },
    "255": {
     "state": "CLOSED",
     "title": "Count observed Tessera calibration rows when Hessians are disabled"
    },
+   "2550": {
+    "state": "OPEN",
+    "title": "[P2] PACT replay: set the stall default from the first complete progress history"
+   },
+   "2551": {
+    "state": "OPEN",
+    "title": "Stop PACT replay on a progress stall"
+   },
+   "2552": {
+    "state": "OPEN",
+    "title": "[P1] Integrate accepted image X prerequisites and prove complete coverage"
+   },
+   "2553": {
+    "state": "CLOSED",
+    "title": "[P1] Refresh the digest census and assign exact consumer contracts"
+   },
+   "2554": {
+    "state": "OPEN",
+    "title": "[P3] GPU validation of prismaquant#1347: PQ #1347 growth-aware read-ahead on sparky layer-7 row"
+   },
+   "2555": {
+    "state": "OPEN",
+    "title": "[P3] Read-ahead reclaims groups as consumer memory grows: 472 groups, 7.9 GB re-read (9%) on an idle box"
+   },
+   "2556": {
+    "state": "OPEN",
+    "title": "[P1] Qualify paired rate trades and preserve the depth-price evidence"
+   },
+   "2557": {
+    "state": "OPEN",
+    "title": "[P1] Enumerate Option B body and MTP allocations under one artifact byte cap"
+   },
+   "2558": {
+    "state": "CLOSED",
+    "title": "[P1] Pre-dispatch packet for 14 Tessera rungs"
+   },
+   "2559": {
+    "state": "OPEN",
+    "title": "[P1] Census and reconcile for 1588 Stage B"
+   },
    "256": {
     "state": "CLOSED",
     "title": "Count observed calibration rows without Hessians"
+   },
+   "2560": {
+    "state": "OPEN",
+    "title": "[P1] Stage B encode rows for 14 Tessera rungs"
+   },
+   "2561": {
+    "state": "OPEN",
+    "title": "[P1] Joint AURA rows, pickle, and proof for 42 rungs"
+   },
+   "2562": {
+    "state": "OPEN",
+    "title": "[P1] Menu report for 42 rungs with cell state"
+   },
+   "2563": {
+    "state": "CLOSED",
+    "title": "[P2+] Pilot 1 MiB record cap refuses the sealed 2.7 MB layer-7 campaign record; PQ #1347 row validation cannot run"
+   },
+   "2564": {
+    "state": "CLOSED",
+    "title": "[P1] Publish allocation-bound fused-module proof and the selectable cell matrix"
+   },
+   "2565": {
+    "state": "CLOSED",
+    "title": "[P1] Pre-dispatch packet for 14 Tessera rungs"
+   },
+   "2566": {
+    "state": "OPEN",
+    "title": "[P1] Compiled scorer support for batch KL from graph serves"
+   },
+   "2567": {
+    "state": "OPEN",
+    "title": "[P1] Retake time table, served frontier, and picks at v60"
+   },
+   "2568": {
+    "state": "OPEN",
+    "title": "[P1] Retake served gold KL and PPL on roster plus A16/A8/A4"
+   },
+   "2569": {
+    "state": "OPEN",
+    "title": "[P1] Verify three release cards with verdicts on card"
    },
    "257": {
     "state": "CLOSED",
     "title": "AURA additivity diagnostic labels unverified equal-length probes exact"
    },
+   "2570": {
+    "state": "OPEN",
+    "title": "[P1] Audit vision merger roster with shape and name provenance"
+   },
+   "2571": {
+    "state": "OPEN",
+    "title": "[P1] Qwen3 estimator study"
+   },
+   "2572": {
+    "state": "OPEN",
+    "title": "[P1] GLM layer 5 and 9 replay"
+   },
+   "2573": {
+    "state": "OPEN",
+    "title": "[P1] Per-block sidecar for routed rows"
+   },
+   "2574": {
+    "state": "OPEN",
+    "title": "[P1] Mechanism fix for routed A excess"
+   },
+   "2575": {
+    "state": "OPEN",
+    "title": "[P1] Use measured vision rows and emit pinned names with fail-closed gaps"
+   },
+   "2576": {
+    "state": "OPEN",
+    "title": "[P1] G3 whole-model validation of A and W"
+   },
+   "2577": {
+    "state": "CLOSED",
+    "title": "[P1] Decide visual capture rule and non-body wire plan"
+   },
+   "2578": {
+    "state": "OPEN",
+    "title": "[P2+] Measure vision merger panels on GPU with proof"
+   },
+   "2579": {
+    "state": "OPEN",
+    "title": "[P1] Scoped attention census and H code"
+   },
    "258": {
     "state": "CLOSED",
     "title": "Prepare and qualify sealed mixed LFM sanity inputs"
    },
+   "2580": {
+    "state": "OPEN",
+    "title": "[P1] Attention bind plus v4 bridge to body Stage A"
+   },
+   "2581": {
+    "state": "OPEN",
+    "title": "[P1] Attention H, PREPARE and Stage B rows with join"
+   },
+   "2582": {
+    "state": "OPEN",
+    "title": "[P1] Allocator offer with closed export"
+   },
+   "2583": {
+    "state": "OPEN",
+    "title": "[P1] G3 test of attention pick"
+   },
+   "2584": {
+    "state": "OPEN",
+    "title": "[P1] Publish exact-candidate GPU qualification for Tessera #610 and #611"
+   },
+   "2585": {
+    "state": "OPEN",
+    "title": "[P1] Audit vision merger roster with shape and name provenance"
+   },
+   "2586": {
+    "state": "OPEN",
+    "title": "[P1] Capture metadata fence admits same-signature ZFS byte mutation; integrity contract decision"
+   },
+   "2587": {
+    "state": "OPEN",
+    "title": "[P1] Decide visual capture rule and non-body wire plan"
+   },
+   "2588": {
+    "state": "OPEN",
+    "title": "[P3] GPU validation of prismaquant#2566: paired graph/eager TR3 dumps"
+   },
+   "2589": {
+    "state": "OPEN",
+    "title": "[P1] Compiled scorer support for batch KL from graph serves"
+   },
    "259": {
     "state": "CLOSED",
     "title": "Prepare sealed mixed LFM sanity inputs and native prerequisites"
+   },
+   "2590": {
+    "state": "OPEN",
+    "title": "[P3] Full-campaign GPU-bound check after pinned staging"
+   },
+   "2591": {
+    "state": "OPEN",
+    "title": "[P1] Attribute and reduce remaining CPU copy cost in projected-unit CUDA qualification"
+   },
+   "2592": {
+    "state": "OPEN",
+    "title": "[P1] Qwen3 estimator study"
+   },
+   "2593": {
+    "state": "OPEN",
+    "title": "[P1] Per-block sidecar for routed rows"
+   },
+   "2594": {
+    "state": "OPEN",
+    "title": "[P2] Stage B scratch qualification and vendored DSv4 import isolation"
+   },
+   "2595": {
+    "state": "OPEN",
+    "title": "[P2] Shared PACT profile contract before consumer migration"
+   },
+   "2596": {
+    "state": "OPEN",
+    "title": "[P3] GPU validation of prismaquant#2458: D50 served-task witness binding"
+   },
+   "2597": {
+    "state": "OPEN",
+    "title": "[P3] GPU validation of prismaquant#2579: attention H capture on GLM-5.3-Flash draw"
+   },
+   "2598": {
+    "state": "OPEN",
+    "title": "[P1] Scoped attention census and H code"
+   },
+   "2599": {
+    "state": "OPEN",
+    "title": "[P1] Bind D44 retained adoption and catalogue resume to the current scientific scope"
    },
    "26": {
     "state": "CLOSED",
@@ -6775,9 +7123,89 @@
     "state": "CLOSED",
     "title": "Validate paired joint AURA assignment diagnostics"
    },
+   "2600": {
+    "state": "OPEN",
+    "title": "[P2] Gate PrismaQuant pin updates and producer schema PRs on v12 scope proof"
+   },
+   "2601": {
+    "state": "OPEN",
+    "title": "[P2] Refuse mutated capture joins, unmeasured ceilings, and head-mismatched merges"
+   },
+   "2602": {
+    "state": "OPEN",
+    "title": "[P3] Growth reserve budget with tests and arch bounds"
+   },
+   "2603": {
+    "state": "OPEN",
+    "title": "[P3] Apply Rob cap decision for sealed record"
+   },
+   "2604": {
+    "state": "OPEN",
+    "title": "[P3] Sparky layer-7 row validation with counters and Netdata"
+   },
+   "2605": {
+    "state": "OPEN",
+    "title": "[P2] Provide runnable PB TR3 procedure on both teachers for masked-tile candidate"
+   },
+   "2606": {
+    "state": "OPEN",
+    "title": "[P2] Measure 2010 close-reread cost on a real capture; price ZFS snapshot path"
+   },
+   "2607": {
+    "state": "CLOSED",
+    "title": "[P2] Refuse mutated role counts and replaced payload bytes at capture join and completed adoption"
+   },
+   "2608": {
+    "state": "OPEN",
+    "title": "[P2] Refuse measured ceilings without complete GPU workload evidence, and refuse incomplete sampler coverage after child failure"
+   },
+   "2609": {
+    "state": "OPEN",
+    "title": "[P2] Find the merge admission owner and file the head-binding issue there"
+   },
    "261": {
     "state": "CLOSED",
     "title": "Qualify fixed-teacher joint AURA through streamed producer and persisted candidate currency"
+   },
+   "2610": {
+    "state": "CLOSED",
+    "title": "[P2] issuegraph merge train pq-12: 4 accepted fixes"
+   },
+   "2611": {
+    "state": "OPEN",
+    "title": "[P3] Growth reserve budget with tests and arch bounds"
+   },
+   "2612": {
+    "state": "CLOSED",
+    "title": "[P1] Recover evidence lost from /home/rob/tmp after the 10-10 reboot (93 open records)"
+   },
+   "2613": {
+    "state": "OPEN",
+    "title": "[P2] Provide runnable PB TR3 procedure on both teachers for masked-tile candidate"
+   },
+   "2614": {
+    "state": "OPEN",
+    "title": "[P2] Gate PrismaQuant pin updates and producer schema PRs on v12 scope proof"
+   },
+   "2615": {
+    "state": "OPEN",
+    "title": "[P3] G3 staged read raises for an unmapped path after setup closes (check order)"
+   },
+   "2616": {
+    "state": "OPEN",
+    "title": "[P3] G3 staged reader imports the private _classify from staged_lease"
+   },
+   "2617": {
+    "state": "OPEN",
+    "title": "[P3] G3 staged reader has no availability fallback when acquire_for refuses"
+   },
+   "2618": {
+    "state": "OPEN",
+    "title": "[P3] Refuse MTP-objective rows in body-price admission by objective, not only by payload provenance"
+   },
+   "2619": {
+    "state": "OPEN",
+    "title": "[P1] Qualify original layer-45 capture and Stage A/B prices for all 867 units"
    },
    "262": {
     "state": "CLOSED",
@@ -10094,7 +10522,7 @@
     "title": "Add actual mixed TCQ and dense twelve-bit T4 geometry readers"
    },
    "1007": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "[P1] Derive the packed T4 GPU arithmetic correctness bound before qualification"
    },
    "1008": {
@@ -10262,7 +10690,7 @@
     "title": "[P2+] source_dependencies link test collides on shared /tmp and blocks the CPU green proof"
    },
    "1045": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "Qualify R768 on base routed T-8 cells (contract v66)"
    },
    "1046": {
@@ -10310,7 +10738,7 @@
     "title": "[P3] Pin the retired-route refusals in the owner-runtime tests to the route message"
    },
    "1056": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "[P2+] Publish a runtime endpoint-to-artifact binding for the D50 task adapter"
    },
    "1057": {
@@ -10334,7 +10762,7 @@
     "title": "Prove public structure-spec harvest on a committed fixture"
    },
    "1061": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "[P2+] Execute missing MNBT cells without replay after a partial window"
    },
    "1062": {
@@ -10418,7 +10846,7 @@
     "title": "contract.vllm_module_name reimplements vLLM's WeightsMapper and diverges from it in three places"
    },
    "1080": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "[P2] Land PR #1045: Admit run table [3] on base routed T-8 cells (contract v59)"
    },
    "1081": {
@@ -10426,7 +10854,7 @@
     "title": "[P1] Land PR #1017: Repair issue 875 native qualification pytest runtime"
    },
    "1082": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "[P2] Land PR #994: Measure actual E2M1 recipes for D41 rung allowability"
    },
    "1083": {
@@ -10438,7 +10866,7 @@
     "title": "[P2] Prevent: Separate the primary error from bounded cleanup results"
    },
    "1085": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "Migrate the GB and D1 producer caller with the explicit source (tessera 944)"
    },
    "1086": {
@@ -10450,12 +10878,12 @@
     "title": "[P1] Land PR #1070: Publish canonical class timing evidence"
    },
    "1088": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "[P3] GPU validation of endpoint witness producer"
    },
    "1089": {
-    "state": "OPEN",
-    "title": "[P2+] Publish a runtime endpoint-to-artifact binding for the D50 task adapter"
+    "state": "CLOSED",
+    "title": "[P2+] Bind task endpoints to live serving byte observations"
    },
    "109": {
     "state": "CLOSED",
@@ -10522,11 +10950,11 @@
     "title": "[P2] issuegraph merge train ts-4: 1 accepted fixes"
    },
    "1103": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "[P1] Publish the canonical TESSERA_E2M1_K2 performant menu"
    },
    "1104": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "[P2] Correct tessera#790 measurement scripts and retain acceptance gaps"
    },
    "1105": {
@@ -10566,7 +10994,7 @@
     "title": "[P3] GPU validation of the canonical T4 q896 performant menu"
    },
    "1113": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "[P1] Publish the canonical TESSERA_E2M1_K2 performant menu"
    },
    "1114": {
@@ -10582,40 +11010,368 @@
     "title": "[P3] GPU validation queue (tessera, issuegraph)"
    },
    "1117": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "[P3] Decision or action by a person for tessera#790: Run the matched caller baseline and cache-hit rows with the approved 270\n[... 45 characters cut]"
+   },
+   "1118": {
+    "state": "CLOSED",
+    "title": "[P2] issuegraph merge train ts-6: 1 accepted fixes"
+   },
+   "1119": {
+    "state": "CLOSED",
+    "title": "[P2] issuegraph merge train ts-7: 3 accepted fixes"
    },
    "112": {
     "state": "CLOSED",
     "title": "The CUDA-gated test surface is covered by no automatic signal: master was red on 766033c while CI, the x86 suite and a CPU run all read green"
    },
+   "1120": {
+    "state": "OPEN",
+    "title": "[P2] Recurring root cause in tessera: design (issuegraph post-mortems)"
+   },
+   "1121": {
+    "state": "CLOSED",
+    "title": "[P2] Land PR #1085: Migrate the GB and D1 producer caller with the explicit source (tessera 944)"
+   },
+   "1122": {
+    "state": "OPEN",
+    "title": "[P2+] Record the independent T4 arithmetic qualification verdict for the first PQ-PACT ship"
+   },
+   "1123": {
+    "state": "CLOSED",
+    "title": "[P1] Derive the packed T4 GPU arithmetic correctness bound before qualification"
+   },
+   "1124": {
+    "state": "OPEN",
+    "title": "[P2] Publish executable BF16 and rate-specific fixtures for PQ #2459"
+   },
+   "1125": {
+    "state": "CLOSED",
+    "title": "[P2] Enforce the branch naming rule (tessera-<issue>) in the pull request check"
+   },
+   "1126": {
+    "state": "CLOSED",
+    "title": "[P2] issuegraph merge train ts-8: 2 accepted fixes"
+   },
+   "1127": {
+    "state": "CLOSED",
+    "title": "[P2] Enforce the branch naming rule (tessera-<issue>) in the pull request check"
+   },
+   "1128": {
+    "state": "CLOSED",
+    "title": "[P1] Complete the Tessera verifier expectation and offline CLI contract"
+   },
+   "1129": {
+    "state": "CLOSED",
+    "title": "[P1] Complete the Tessera verifier expectation and offline CLI contract"
+   },
    "113": {
     "state": "CLOSED",
     "title": "The window-GEMV lane has no served KL under a compiled forward, which is the configuration vLLM serves by default"
+   },
+   "1130": {
+    "state": "CLOSED",
+    "title": "[P2] issuegraph merge train ts-9: 1 accepted fixes"
+   },
+   "1131": {
+    "state": "CLOSED",
+    "title": "[P2] issuegraph merge train ts-11: 1 accepted fixes"
+   },
+   "1132": {
+    "state": "CLOSED",
+    "title": "[P2] Recurring root cause in tessera: missing_gate (issuegraph post-mortems)"
+   },
+   "1133": {
+    "state": "CLOSED",
+    "title": "[P3] GPU validation of tessera#1103: T4 performant menu binding"
+   },
+   "1134": {
+    "state": "OPEN",
+    "title": "[P3] GPU validation of tessera#1056: the endpoint witness producer"
+   },
+   "1135": {
+    "state": "CLOSED",
+    "title": "[P3] Decision or action by a person for tessera#1124: Restore at least 8 GiB of available control-seat memory."
+   },
+   "1136": {
+    "state": "CLOSED",
+    "title": "[P1] Extend panel schema and worker to dense TP2 and routed TP2 intakes"
+   },
+   "1137": {
+    "state": "CLOSED",
+    "title": "[P1] Add routed rows to the #685 baseline consumer"
+   },
+   "1138": {
+    "state": "OPEN",
+    "title": "[P2] Record wire manifest, runtime pin, and campaign approval"
+   },
+   "1139": {
+    "state": "OPEN",
+    "title": "[P1] Prove TP2 loader smoke on one real wire per shape"
    },
    "114": {
     "state": "CLOSED",
     "title": "The x86 arm of the merged suite exits 1 and publishes no population, so every cross-arch receipt is 'incomplete'"
    },
+   "1140": {
+    "state": "OPEN",
+    "title": "[P1] Measure the 304-row native panel with power and #685 comparison"
+   },
+   "1141": {
+    "state": "CLOSED",
+    "title": "[P1] Record GPU gate for tessera#690 and file parked E2M1 issue"
+   },
+   "1142": {
+    "state": "OPEN",
+    "title": "[P1] Verify fused E4M3 route census at R1152 and priced pairs"
+   },
+   "1143": {
+    "state": "OPEN",
+    "title": "[P1] Cut dense and shared window cost and prove oracle zero"
+   },
+   "1144": {
+    "state": "OPEN",
+    "title": "[P1] Publish matched R896 bench rows and dense census cells"
+   },
+   "1145": {
+    "state": "OPEN",
+    "title": "[P1] Report 2500 tok/s serve rate with full receipts"
+   },
+   "1146": {
+    "state": "CLOSED",
+    "title": "[P1] Replace stopped E4M3 prerequisite and prove rungs 880 and 912"
+   },
+   "1147": {
+    "state": "CLOSED",
+    "title": "[P1] Add routed rows to the #685 baseline consumer"
+   },
+   "1148": {
+    "state": "CLOSED",
+    "title": "[P1] Record GPU gate for tessera#690 and file parked E2M1 issue"
+   },
+   "1149": {
+    "state": "OPEN",
+    "title": "[P2] Parked fused routed E2M1 lane: no bench rule, no GPU run"
+   },
    "115": {
     "state": "CLOSED",
     "title": "Unraised CHANNEL rows can still land one fp16 ulp below the body reach"
+   },
+   "1150": {
+    "state": "OPEN",
+    "title": "[P0] Compiled serve of release artifact with batch KL receipt"
+   },
+   "1151": {
+    "state": "OPEN",
+    "title": "[P0] Compiled scope for release batch cells"
+   },
+   "1152": {
+    "state": "OPEN",
+    "title": "[P1] Decode graph evidence with open gap state"
+   },
+   "1153": {
+    "state": "OPEN",
+    "title": "[P0] Compiled re-allocation check against eager"
+   },
+   "1154": {
+    "state": "OPEN",
+    "title": "[P3] GPU validation of tessera#1146: [3, 4] pair decode inside image X"
+   },
+   "1155": {
+    "state": "CLOSED",
+    "title": "[P1] Replace stopped E4M3 prerequisite and prove rungs 880 and 912"
+   },
+   "1156": {
+    "state": "CLOSED",
+    "title": "[P2] issuegraph merge train ts-12: 1 accepted fixes"
+   },
+   "1157": {
+    "state": "OPEN",
+    "title": "[P1] Decode graph evidence with open gap state"
+   },
+   "1158": {
+    "state": "CLOSED",
+    "title": "[P3] GPU validation of tessera#1103: T4 performant menu binding"
+   },
+   "1159": {
+    "state": "OPEN",
+    "title": "[P1] Full-artifact TP2 graph window aE1/aGR/aE2 with batch KL dumps"
    },
    "116": {
     "state": "CLOSED",
     "title": "Encoder identity fixture misses unraised fp16 reach-boundary landing"
    },
+   "1160": {
+    "state": "CLOSED",
+    "title": "[P1] Extend panel schema and worker to dense TP2 and routed TP2 intakes"
+   },
+   "1161": {
+    "state": "OPEN",
+    "title": "[P3] Two xdist workers that share one TORCH_EXTENSIONS_DIR rebuild and replace a library the other has mapped"
+   },
+   "1162": {
+    "state": "OPEN",
+    "title": "[P3] GPU validation of tessera#1056: the endpoint witness producer"
+   },
+   "1163": {
+    "state": "OPEN",
+    "title": "[P3] GPU validation of tessera#739: f16 one-run activation prefetch"
+   },
+   "1164": {
+    "state": "OPEN",
+    "title": "[P2] Prior-word load still waits on 16-bit routed launches"
+   },
+   "1165": {
+    "state": "OPEN",
+    "title": "[P1] Fused routed kernel: the chunk loop waits on its one-chunk-ahead global loads"
+   },
+   "1166": {
+    "state": "OPEN",
+    "title": "[P1] Served E2M1x2 reader with byte proof and CPU dry runs"
+   },
+   "1167": {
+    "state": "OPEN",
+    "title": "[P1] Recipe-scoped actual-sample quality for served recipes"
+   },
+   "1168": {
+    "state": "OPEN",
+    "title": "[P1] D41 GPU geometry for served dense and route groups"
+   },
+   "1169": {
+    "state": "OPEN",
+    "title": "[P1] Canonical publish of recipe quality and geometry with evidence"
+   },
    "117": {
     "state": "CLOSED",
     "title": "serve_and_dump_kl emits duplicate trust-remote-code flags"
+   },
+   "1170": {
+    "state": "OPEN",
+    "title": "[P1] Served E2M1x2 reader with byte proof and CPU dry runs"
+   },
+   "1171": {
+    "state": "OPEN",
+    "title": "[P2] Full CUDA population on the merged tree of PR 1089 (endpoint observer, merge 36ca1dbd)"
+   },
+   "1172": {
+    "state": "OPEN",
+    "title": "[P2] Full-vocabulary KL for prefill and true decode"
+   },
+   "1173": {
+    "state": "OPEN",
+    "title": "[P2] Promotion of measured envelope with contract and docs"
+   },
+   "1174": {
+    "state": "CLOSED",
+    "title": "[P2] issuegraph merge train ts-13: 5 accepted fixes"
+   },
+   "1175": {
+    "state": "OPEN",
+    "title": "[P2] Resolve coarse power sensor gap"
+   },
+   "1176": {
+    "state": "OPEN",
+    "title": "[P2] Pass matched input TR3 on both teachers"
+   },
+   "1177": {
+    "state": "OPEN",
+    "title": "[P2] Attest override with per rank eager traces"
+   },
+   "1178": {
+    "state": "OPEN",
+    "title": "[P2] Record L8192 c1 rate or miss"
+   },
+   "1179": {
+    "state": "OPEN",
+    "title": "[P2] Record before and after NCU and Torch profile"
    },
    "118": {
     "state": "CLOSED",
     "title": "Emit each vLLM serve flag once"
    },
+   "1180": {
+    "state": "OPEN",
+    "title": "[P3] GPU validation of tessera#1062: graph-only census serve"
+   },
+   "1181": {
+    "state": "OPEN",
+    "title": "[P1] Distinguish R768 CUDA graph capture from polymorphic compilation"
+   },
+   "1182": {
+    "state": "OPEN",
+    "title": "[P2] Enforce benchmark geometry, derived arithmetic bound, and producer cache proof"
+   },
+   "1183": {
+    "state": "OPEN",
+    "title": "[P2] Decide land site for four prefill costs"
+   },
+   "1184": {
+    "state": "OPEN",
+    "title": "[P2] Keep single receipt owner; refuse empty traces, unbound intake, and silent conflict drops"
+   },
+   "1185": {
+    "state": "OPEN",
+    "title": "[P2] Trace four prefill costs on pinned image at TP2"
+   },
+   "1186": {
+    "state": "OPEN",
+    "title": "[P2] Measure token-shard mHC probe at TP2"
+   },
+   "1187": {
+    "state": "OPEN",
+    "title": "[P2] Measure KDA conv-split probe at TP2"
+   },
+   "1188": {
+    "state": "OPEN",
+    "title": "[P2] Measure NoPE MLA mask skip and cat skip at TP2"
+   },
+   "1189": {
+    "state": "OPEN",
+    "title": "[P3] GPU validation of tessera#782: auto T* at 512, 640, 768, 1024"
+   },
    "119": {
     "state": "CLOSED",
     "title": "PR CI cannot resolve master for merge-suite receipt test"
+   },
+   "1190": {
+    "state": "OPEN",
+    "title": "[P2] SP mHC auto T* is biased low: the startup microbenchmark picks 32 or 512, the served crossover is in (512, 768]"
+   },
+   "1191": {
+    "state": "OPEN",
+    "title": "[P2] Receipt owner: pin that nonzero shard exit, missing summary or missing digest is never green"
+   },
+   "1192": {
+    "state": "OPEN",
+    "title": "[P1] Probe a newer ptxas for L1 prefetch hint retention on the f16 library"
+   },
+   "1193": {
+    "state": "OPEN",
+    "title": "[P2] Audit: name the owner and fix status of each clause (trace evidence, intake binding, conflict drops)"
+   },
+   "1194": {
+    "state": "OPEN",
+    "title": "[P2] Retained-trace evidence: refuse empty, duplicate, mismatched or out-of-root traces; shared files pass"
+   },
+   "1195": {
+    "state": "OPEN",
+    "title": "[P2] Intake binding: refuse a stale finding, correction, review, title, body or receipt after a rebase"
+   },
+   "1196": {
+    "state": "OPEN",
+    "title": "[P2] Conflict merge: refuse a dropped branch-only contract test without a recorded disposition"
+   },
+   "1197": {
+    "state": "OPEN",
+    "title": "[P1] cp.async ring for the f16 library chunk-loop loads, gated to one-run routed launches, with A/B speed gate"
+   },
+   "1198": {
+    "state": "OPEN",
+    "title": "[P2] NCU PC-level sampling of the loop move on the gated ring binary"
+   },
+   "1199": {
+    "state": "OPEN",
+    "title": "[P2] Enforce benchmark geometry, derived arithmetic bound, and producer cache proof"
    },
    "12": {
     "state": "CLOSED",
@@ -10624,6 +11380,34 @@
    "120": {
     "state": "CLOSED",
     "title": "Fetch the base ref for PR population receipts"
+   },
+   "1200": {
+    "state": "OPEN",
+    "title": "[P3] GPU validation of tessera#1124: PQ2459 eight-cell fixtures"
+   },
+   "1201": {
+    "state": "OPEN",
+    "title": "[P2] Publish executable BF16 and rate-specific fixtures for PQ #2459"
+   },
+   "1202": {
+    "state": "OPEN",
+    "title": "[P2] Served TP2 window arm for the shared-add fold (TR3 KL, trace, power)"
+   },
+   "1203": {
+    "state": "OPEN",
+    "title": "[P2] Audit: name the owner and fix status of each clause (trace evidence, intake binding, conflict drops)"
+   },
+   "1204": {
+    "state": "OPEN",
+    "title": "[P2] Served TP2 shared-add fold arm at 4c0fd6ac (measurement)"
+   },
+   "1205": {
+    "state": "OPEN",
+    "title": "[P3] GPU validation of tessera#1142: R1152 fused census on stub B"
+   },
+   "1206": {
+    "state": "OPEN",
+    "title": "[P1] Verify fused E4M3 route census at R1152 and priced pairs"
    },
    "121": {
     "state": "CLOSED",
@@ -13594,7 +14378,7 @@
     "title": "_fit_lut's stop test is a bare relative-improvement literal, not derived from the cost dtype"
    },
    "790": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "[P2] tessera_producer_plan hashes the whole source on every call (~36 min idle GPU per GLM census); pass SourceDigestCache or accept a verified identity"
    },
    "791": {
@@ -13958,7 +14742,7 @@
     "title": "[P2] Expert projection CLI requires repository experiment and deprecated exporter shim"
    },
    "872": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "[P1] Served U4 matched A/B discards generation choices; teacher forcing is not generation correctness"
    },
    "873": {
@@ -14222,7 +15006,7 @@
     "title": "[P0] Attest CUDA graph mode for GLM-5.3: per-branch indexer capture and eager operator priority (#702, refs prismaquant#1586)"
    },
    "931": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "[P1] T-8 dense lane is 1.7-2.4x slower than BF16 at prefill M=2048 on GLM-5.3 projection shapes"
    },
    "932": {
@@ -14498,7 +15282,7 @@
     "title": "Add seeded L2048 OFF/OFF restart control"
    },
    "994": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "Restore four D41 E2M1 adapter contract tests"
    },
    "995": {
