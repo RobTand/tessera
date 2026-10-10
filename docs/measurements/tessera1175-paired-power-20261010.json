@@ -31,6 +31,9 @@
    "fast_mean_w": 81.34128476084538,
    "fast_energy_trapz_j": 7315.148843273756,
    "fast_steady_mean_w": 81.99592117647059,
+   "fast_head15_mean_w": 83.25300666666666,
+   "fast_tail15_mean_w": 81.26671999999999,
+   "steady_drift_pct": -2.385843762519574,
    "netdata_points": 82,
    "netdata_span": [
     1791606909,
@@ -6108,6 +6111,9 @@
    "fast_mean_w": 82.53417130144605,
    "fast_energy_trapz_j": 7422.52549013149,
    "fast_steady_mean_w": 82.99027411764705,
+   "fast_head15_mean_w": 86.32336666666667,
+   "fast_tail15_mean_w": 81.74526666666667,
+   "steady_drift_pct": -5.303430782163662,
    "netdata_points": 85,
    "netdata_span": [
     1791606716,

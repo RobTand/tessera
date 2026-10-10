@@ -115,3 +115,94 @@ def test_steady_bias_fits_declared_joule_bound():
     assert abs(derived["steady_bias_pct"]) <= JOULE_BOUND_PCT
     for shift, value in derived["shift_sensitivity_pct"].items():
         assert abs(value) <= JOULE_BOUND_PCT, shift
+
+STEADINESS_GATE_PCT = 3.0
+
+
+def shift_bias_pct(fast, netdata_rows, a, b, shift_s):
+    """Bias when a Netdata group at stamp t pairs as t minus s."""
+    pts = [(t, w) for t, w in sorted(fast) if a - 0.2 <= t <= b + 0.2]
+    ef = 0.0
+    for (x, wx), (y, wy) in zip(pts, pts[1:]):
+        xx, yy = max(x, a), min(y, b)
+        if yy > xx:
+            ef += (wx + wy) / 2.0 * (yy - xx)
+    en = float(sum(v[0] for t, v in sorted(netdata_rows)
+                   if a <= t - shift_s <= b))
+    return 100.0 * (en - ef) / ef
+
+
+def head_tail_drift_pct(fast, t0, t1):
+    """Head mean and tail mean drift over the fast series."""
+    ordered = sorted(fast)
+    head = [w for t, w in ordered if t0 + 10 <= t <= t0 + 25]
+    tail = [w for t, w in ordered if t >= t1 - 15]
+    hm = sum(head) / len(head)
+    tm = sum(tail) / len(tail)
+    return hm, tm, 100.0 * (tm - hm) / hm
+
+
+def sparklina_rows(raw):
+    return raw["netdata"]["sparklina"]["raw_response"]["result"]["data"]
+
+
+def test_shift_sensitivity_recomputes_from_raw():
+    for name in ("primary", "supporting_shared_run"):
+        block = load()[name]
+        raw, derived = block["raw"], block["derived"]
+        t0, _ = raw["interval_unix"]
+        rows = sparklina_rows(raw)
+        last = sorted(rows)[-1][0]
+        a = t0 + 10
+        for shift, value in derived["shift_sensitivity_pct"].items():
+            want = shift_bias_pct(raw["fast_power_samples"], rows,
+                                  a, last, float(shift))
+            assert abs(value - want) < 1e-9, (name, shift)
+
+
+def test_shared_utc_bound_set_is_exact():
+    from datetime import datetime
+    raw = primary()["raw"]
+    derived = primary()["derived"]
+    t0, t1 = raw["interval_unix"]
+    assert derived["interval_unix"] == [t0, t1]
+    lo, hi = (datetime.fromisoformat(x) for x in derived["utc_bounds"])
+    assert abs(lo.timestamp() - t0) < 1e-3
+    assert abs(hi.timestamp() - t1) < 1e-3
+    for box in ("sparky", "sparklina"):
+        query = raw["netdata"][box]["query"]
+        assert ("after=%d" % int(t0)) in query
+        assert ("before=%d" % (int(t1) + 1)) in query
+
+
+def test_steadiness_metric_in_derived_block():
+    for name in ("primary", "supporting_shared_run"):
+        block = load()[name]
+        raw, derived = block["raw"], block["derived"]
+        t0, t1 = raw["interval_unix"]
+        hm, tm, drift = head_tail_drift_pct(raw["fast_power_samples"],
+                                            t0, t1)
+        assert abs(derived["fast_head15_mean_w"] - hm) < 1e-9, name
+        assert abs(derived["fast_tail15_mean_w"] - tm) < 1e-9, name
+        assert abs(derived["steady_drift_pct"] - drift) < 1e-9, name
+
+
+def test_primary_passes_steadiness_gate_and_shared_fails():
+    prim = primary()["derived"]["steady_drift_pct"]
+    shared = load()["supporting_shared_run"]["derived"]["steady_drift_pct"]
+    assert abs(prim) <= STEADINESS_GATE_PCT
+    assert abs(shared) > STEADINESS_GATE_PCT
+
+
+def test_bound_derivation_covers_primary_shifts():
+    derived = primary()["derived"]
+    seen = [abs(derived["steady_bias_pct"])]
+    seen += [abs(v) for v in derived["shift_sensitivity_pct"].values()]
+    assert max(seen) < JOULE_BOUND_PCT
+    assert abs(max(seen) - 1.2688285917382995) < 1e-9
+
+
+def test_shared_shift_exceeds_bound_outside_gate():
+    shared = load()["supporting_shared_run"]["derived"]
+    assert abs(shared["shift_sensitivity_pct"]["1.0"]) > JOULE_BOUND_PCT
+

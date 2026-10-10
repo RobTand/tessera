@@ -87,16 +87,33 @@ Primary run, sparklina, intersected window `[t0, last Netdata group]`:
 | Steady (`t0+10 s` on) | 5591.4 J | 5603.5 J | +0.22 % |
 
 Shift sensitivity of the steady bias: +0.31 % at -1 s,
--1.27 % at +1 s.
+-1.27 % at +1 s. Shift convention: a shift of plus s pairs a
+Netdata group at stamp t as true time t minus s. Plus s models
+a Netdata clock ahead of true time by s. The test recomputes
+each shift value from the raw series with this rule.
 
 ## Bound for work-per-joule use
 
-Use Netdata only on steady load of 60 s or more. Drop the first
-10 s after a load step. Drop the Netdata-absent tail. Shift by the
-rounded clock median. Then Netdata energy is unbiased within
-plus or minus 1.5 %. Transient edges stay outside any joule claim.
-This keeps the `timing_panel.py` HOLD: no rank reads raw Netdata
-means without this window rule and this bound.
+Observed worst case on the qualifying capture: steady bias
++0.22 %, +0.31 % at -1 s shift, -1.27 % at +1 s shift. Maximum
+absolute value is 1.27 %. The bound is plus or minus 1.5 %:
+ceiling of 1.27 plus margin for 1 s `Date` header quantization
+and 10 s Netdata collection.
+
+Scope: exclusive capture of 60 s or more, thermally steady load,
+tail cut at the last Netdata group, clock shift applied.
+Steadiness gate: fast head mean (`t0+10 s` to `t0+25 s`) versus
+tail mean (last 15 s) drift within 3 %. Primary drift is -2.39 %
+and passes. The shared run drift is -5.30 % and fails: it started
+hot at 90 W after prior load and cooled through the run. Its +1 s
+shift bias of -2.62 % exceeds the bound and shows the cost of
+unsteady use. Transient edges stay outside any joule claim.
+This keeps the `timing_panel.py` HOLD: no rank reads raw
+Netdata means without this window rule and this bound.
+
+Limit: one qualifying capture supports this bound. It is an
+observed maximum plus margin, not a population statistic.
+A second exclusive capture should confirm it before rank use.
 
 ## Rerun
 
