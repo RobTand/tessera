@@ -5,7 +5,7 @@ an arm the run did not submit is written as `not submitted in this run` rather
 than left out. A pass count means nothing without the device population it was
 measured on, and a lone row is a result quoted without its counterpart --
 exactly the misreading tessera#112 is about. So the rows of a run always name
-both populations, even when only one was measured.
+every population, even when only one was measured.
 
 Rows above 2026-09-04T08:11 predate that rule and can be lone: a run submitted
 with `--arm x86` wrote one row and said nothing about the GPU population. Read

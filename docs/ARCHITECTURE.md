@@ -2233,6 +2233,8 @@ cell under compiled execution. The contract version and its cells are
 unchanged. See §5.1.1 and
 `docs/measurements/2026-09-28-glm53-nope-graphs-508.md`.
 
+The pinned image anchors the NoPE lane of the strict-CUDA suite arm (§1.1).
+
 Re-stamped 2026-09-28 for the fused window kernel's DENSE identity (contract
 v43, the dense follow-up to tessera#640). The q256 1024 dense and shared-expert
 window Linears -- E4M3 and BF16 -- are served by a SECOND launch identity by
@@ -3798,6 +3800,20 @@ dependencies declare their versions and every file's path, mode, length and
 SHA-256 (`tessera.suite_dependencies.v1`); changed bytes or a symlink refuse.
 The runner checks the dependency seal at entry and exit, so a host-side
 mutation during pytest cannot turn a clean summary into a successful action.
+
+The strict-CUDA arm splits in two lanes (tessera#938). No sealed image serves
+the whole CUDA surface. The `gpu` lane runs the NoPE files in
+`localhost/prismaquant/spark-vllm-nccl230@sha256:c2e75e03cfc52c15489b40fe58e65acb7347f6fa3ddf2e81afda86760698147b`,
+minus `tests/test_serving_mla_mask_registration.py` and
+`tests/test_serving_mla_mask_runtime_gpu.py`, which that image cannot collect.
+The `gpu-mla` lane runs only those two files in
+`localhost/prismaquant/spark-vllm-nccl230@sha256:5be13705acaecc7b4aaf342a84f80d67844c9970ff8375bf9fbeecc9c98ce84a`,
+which provides `index_group`. The receipt holds both lane populations beside
+the x86 one. `tools/merge_suite.py` defines the lane files once
+(`MLA_LANE_TARGETS`); the NoPE lane ignores exactly that list. At the next
+serving-pin bump, one newer image with both the kpool-tail backport and
+`index_group` rejoins the lanes. Measure the `_GRAPH_RUNNER_SHA256` gate on
+that image first.
 The source and declared data roots mount readonly at their actual absolute
 paths, while the surface directory and action-owned cache mount writable.
 `--artifact-root ENV=PATH` uses the names owned by `tests/box_artifacts.py`;
@@ -3875,7 +3891,7 @@ names no executor:
   `unknown`. With no verifier declared, nothing is left out, so arms that
   carry different generated files never agree on a source.
 
-`tools/merge_suite.py`, which submits both arms through PrismaBuild, declares
+`tools/merge_suite.py`, which submits its arms through PrismaBuild, declares
 PrismaBuild's published `pbsnapshot.py verify` (RobTand/prismabuild#1280). That
 tool verifies pbrun's closure stamp against the exact sealed action request,
 and its entries carry the `action_key` and `request_sha256` that the resume

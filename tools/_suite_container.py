@@ -113,7 +113,7 @@ def parse(argv):
     _require("--strict-cuda" in inner[3:], "container population requires strict CUDA")
     outputs, seen, workers = [], set(), 1
     flags = {"-q", "-v", "-s", "--quiet", "--verbose", "--strict-cuda", "--no-header", "--disable-warnings"}
-    valued = {"-n", "--dist", "--durations", "--tb", "--maxfail", "-k", "-m", "--surface-json", "-p"}
+    valued = {"-n", "--dist", "--durations", "--tb", "--maxfail", "-k", "-m", "--surface-json", "-p", "--ignore"}
     index = 3
     while index < len(inner):
         option = inner[index]
@@ -122,8 +122,9 @@ def parse(argv):
             continue
         key, equal, attached = option.partition("=")
         if key in valued:
-            _require(key == "-p" or key not in seen, "duplicate pytest option " + key)
-            seen.add(key)
+            # ``-p`` and ``--ignore`` repeat (two plugins, two lane files);
+            # every other valued option names one thing exactly once.
+            _require(key in ("-p", "--ignore") or key not in seen, "duplicate pytest option " + key)
             if equal:
                 value = attached
             else:
@@ -139,6 +140,12 @@ def parse(argv):
                 workers = int(value)
             elif key == "--dist":
                 _require(value == "worksteal", "container distribution must be worksteal")
+            elif key == "--ignore":
+                # A lane exclusion names suite files the lane's image cannot
+                # serve; anything else is a foreign source by another name.
+                _require(value.startswith("tests/")
+                         and str(Path(value)) == value and ".." not in Path(value).parts,
+                         "ignore escapes the suite: " + value)
         else:
             test_path = option.split("::", 1)[0]
             _require((test_path == "tests" or test_path.startswith("tests/"))
