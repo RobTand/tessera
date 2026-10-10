@@ -85,6 +85,9 @@ def main() -> int:
     corpus = dict(corpus, chunks=chunks, n_chunks=len(chunks),
                   seqlen=len(chunks[0]),
                   scored_positions=len(chunks) * (len(chunks[0]) - 1))
+    top_id = max(max(c) for c in chunks)
+    print(f"chunks={len(chunks)} seqlen={len(chunks[0])} "
+          f"max_id={top_id}", flush=True)
     outdir = Path(args.outdir)
     outdir.mkdir(parents=True, exist_ok=True)
     if args.slice_chunks or args.slice_tokens:
