@@ -66,7 +66,9 @@ __all__ = [
     "DENSE_RATE_MAX",
     "LIBRARIES",
     "FusedDenseWindowRole",
+    "FusedLaunchPair",
     "FusedRoutedWindowMoE",
+    "fused_launch_for_rates",
     "MODULE_NAME_E4M3",
     "MODULE_NAME_E4M3MMA",
     "MODULE_NAME_VALUE",
@@ -436,6 +438,62 @@ def routed_lane_rates(library: str) -> "tuple[int, ...]":
     mma8 = library_mma8(library)
     return tuple(r for r in RATES
                  if smem_bytes(0, _round_up_4(slot_words_for_rate(r)), mma8=mma8) <= SM121_MAX_DYNAMIC_SMEM)
+
+
+@dataclasses.dataclass(frozen=True)
+class FusedLaunchPair:
+    """The fused launches one route pair takes on one library.
+
+    ``rates`` is the pair's one or two column rates. ``slot_words`` is the
+    launch's word-stage slot, derived the way :func:`slot_words_for_pair`
+    derives it: the larger rate's :func:`slot_words_for_rate`, rounded up to
+    a multiple of 4. ``stages_gate_up`` / ``smem_gate_up`` describe the
+    two-table gate/up launch (mode 0) and ``stages_down`` / ``smem_down``
+    the one-table down launch (mode 2) at that slot, each at its own
+    :func:`word_stages`. ``fits_sm121`` says both launches fit the target
+    platform's per-block opt-in shared memory. Geometry only: whether a
+    rung may serve is the contract's, not this object's.
+    """
+    rates: tuple[int, ...]
+    library: str
+    slot_words: int
+    stages_gate_up: int
+    smem_gate_up: int
+    stages_down: int
+    smem_down: int
+    fits_sm121: bool
+
+
+def fused_launch_for_rates(rates, library: str) -> FusedLaunchPair:
+    """The fused launch pair a route's column rates take on ``library``.
+
+    The one home mapping a priced pair to its launch parameters: the census
+    proof and any later serve plan read this instead of re-deriving the slot
+    beside it. Refuses an unknown library and rates outside ``RATES`` by
+    name; a pair the device cannot fit reports ``fits_sm121`` as ``False``
+    so the caller, not this geometry, decides admission.
+    """
+    if library not in LIBRARIES:
+        raise GrammarError(f"unknown fused library {library!r}; known: {sorted(LIBRARIES)}")
+    seen = tuple(int(r) for r in rates)
+    if len(seen) not in (1, 2) or len(set(seen)) != len(seen) or any(r not in RATES for r in seen):
+        raise GrammarError(f"a fused launch pair takes one or two distinct rates of {list(RATES)}; got {list(rates)!r}")
+    mma8 = library_mma8(library)
+    slot = _round_up_4(max(slot_words_for_rate(r) for r in seen))
+    stages_gate_up = word_stages(0, slot, mma8=mma8)
+    smem_gate_up = _smem_bytes_at_stages(0, slot, stages_gate_up, mma8=mma8)
+    stages_down = word_stages(2, slot, mma8=mma8)
+    smem_down = _smem_bytes_at_stages(2, slot, stages_down, mma8=mma8)
+    return FusedLaunchPair(
+        rates=tuple(sorted(seen)),
+        library=library,
+        slot_words=slot,
+        stages_gate_up=stages_gate_up,
+        smem_gate_up=smem_gate_up,
+        stages_down=stages_down,
+        smem_down=smem_down,
+        fits_sm121=smem_gate_up <= SM121_MAX_DYNAMIC_SMEM and smem_down <= SM121_MAX_DYNAMIC_SMEM,
+    )
 
 
 def smem_reason(mode: int, slot_words: int, device: torch.device, library: str) -> "str | None":
