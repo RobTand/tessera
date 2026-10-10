@@ -128,16 +128,21 @@ def _load_model(checkpoint: str, dtype: str):
 
 
 def cmd_dump(args: argparse.Namespace) -> int:
+    return dump_payload(args)
+
+
+def dump_payload(args: argparse.Namespace, model=None) -> int:
     import torch
     corpus = json.loads(Path(args.corpus_contract).read_text())
     chunks = corpus["chunks"]
     seqlen = corpus["seqlen"]
     scored_per_chunk = seqlen - 1
     positions = len(chunks) * scored_per_chunk
-    _commit("load", 0)
-    model = _load_model(args.checkpoint, args.dtype)
-    model = model.to(args.device).eval()
-    _commit("load", 1)
+    if model is None:
+        _commit("load", 0)
+        model = _load_model(args.checkpoint, args.dtype)
+        model = model.to(args.device).eval()
+        _commit("load", 1)
     arch = type(model).__name__
     vocab = int(model.config.get_text_config().vocab_size
                 if hasattr(model.config, "get_text_config")
