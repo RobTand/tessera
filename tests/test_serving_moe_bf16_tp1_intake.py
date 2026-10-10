@@ -9,7 +9,9 @@ import types
 import pytest
 
 pytest.importorskip("torch")
-pytest.importorskip("vllm")
+pytest.importorskip("vllm.model_executor.layers.fused_moe.activation")
+# tessera#1031: a stub ``vllm`` satisfies a top-package guard while the
+# activation submodule stays unimportable. Guard the submodule instead.
 
 import torch
 
