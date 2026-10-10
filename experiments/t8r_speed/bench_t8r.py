@@ -309,6 +309,104 @@ class PowerSampler:
                 "calls_per_j": (n / ((t1 - t0) * mean)) if mean else None}
 
 
+def _legacy_uniform_scheme_metadata(scheme, module):
+    """Top-level expert metadata for a class-less stored routed scheme.
+
+    Measurement-only legacy shim (tessera#694): checkpoints through #966 spell
+    a routed group's rung as one int q256, which the library reads as the whole
+    stack's rung (``scheme._expert_role_rungs``). Every expert then shares one
+    profile, and the exporter's class sort is the identity. This restates that
+    reading through the library's own sorter so the timing harness loads the
+    same wires the loader verifies. Production still refuses class-less
+    schemes; this never reaches a serve. The scheme passes through unchanged
+    when it already carries both fields, or when its groups do not read as
+    legacy routed groups (the validator decides those, as before). A
+    half-present pair refuses loudly. The loader refuses experts whose extents
+    differ, and ``build_routed`` checks the loaded run tables against the
+    asserted rungs after the load.
+    """
+    from tessera.expert_classes import build_expert_metadata
+    has_ids = scheme.get("expert_ids") is not None
+    has_classes = scheme.get("expert_classes") is not None
+    if has_ids and has_classes:
+        return scheme
+    if has_ids != has_classes:
+        raise ValueError(
+            f"{module}: expert_ids and expert_classes come as a pair; one is present without the other")
+    groups = scheme.get("groups") or {}
+    if set(groups) != {"w13", "w2"}:
+        return scheme
+    experts = scheme.get("experts")
+    if type(experts) is not int or experts < 1:
+        return scheme
+    matrices = {}
+    for name in ("w13", "w2"):
+        group = groups[name]
+        roles = group.get("roles") or []
+        declared = group.get("q256")
+        if not roles or isinstance(declared, bool) or not isinstance(declared, int):
+            return scheme
+        matrices[name] = [[int(declared)] * len(roles) for _ in range(experts)]
+    metadata = build_expert_metadata(matrices, target=module)
+    if metadata["expert_ids"] != list(range(experts)) or len(metadata["expert_classes"]) != 1:
+        raise ValueError(f"{module}: legacy uniform derivation must sort to one identity class")
+    enriched = dict(scheme)
+    enriched.update(metadata)
+    return enriched
+
+
+def _check_routed_runs_against_classes(packed, declared, module):
+    """Loaded wire run tables against the asserted class profiles.
+
+    Measurement guard (tessera#694): gate/up bundles keep whole columns (the
+    w13 plan cuts rows only), so each expert's run table must sum to its class
+    profile rung exactly. Down bundles may be column-cut per rank, so experts
+    of one class must carry identical rank-local run multisets instead. A
+    natively mixed run layout returns early; the loader's declared sizes own
+    it. Runs nothing when the declaration carries no classes (CPU control-flow
+    stubs). Refuses loudly otherwise.
+    """
+    classes = declared.get("expert_classes")
+    if not classes:
+        return
+    tables = {}
+    for role, group, index, exact in (("gate", "w13", 0, True), ("up", "w13", 1, True),
+                                      ("down", "w2", 0, False)):
+        bundle = getattr(packed, role, None)
+        table = getattr(bundle, "runs_all", None) if bundle is not None else None
+        if bundle is None or table is None:
+            raise ValueError(f"{module}: class-checked routed load must carry {role} run tables")
+        experts = int(bundle.experts)
+        width = getattr(bundle, "word_off", None)
+        if width is not None and experts > 1:
+            steps = (width[1:] - width[:-1]).reshape(-1)
+            if bool((steps != steps[0]).any()):
+                return
+        if table.numel() % (experts * 4) != 0:
+            return
+        tables[role] = (bundle, table.reshape(experts, -1, 4).cpu(), group, index, exact)
+    for descriptor in classes:
+        profile = descriptor["q256"]
+        members = list(range(int(descriptor["start"]), int(descriptor["end"])))
+        if not members:
+            raise ValueError(f"{module}: class covers no experts")
+        down_keys = set()
+        for storage in members:
+            for role in ("gate", "up"):
+                bundle, rows, group, index, _exact = tables[role]
+                total = int((rows[storage][:, 0] * rows[storage][:, 2]).sum())
+                want = int(profile[group][index])
+                if total * 256 != want * int(bundle.cols):
+                    raise ValueError(
+                        f"{module}: storage expert {storage} {role} run tables sum to "
+                        f"{total} rate-columns over {int(bundle.cols)} columns against "
+                        f"asserted q256 {want}")
+            rows = tables["down"][1][storage]
+            down_keys.add(tuple(map(tuple, rows[:, :3].tolist())))
+        if len(down_keys) != 1:
+            raise ValueError(f"{module}: one class carries {len(down_keys)} distinct down run tables")
+
+
 # ------------------------------------------------------------------ builders
 def build_dense(store, module, kind):
     from tessera.serving.lane import build_tessera_method
@@ -347,6 +445,7 @@ def build_routed(store, module):
     from tessera.serving.moe_route import _RankLocalPackedIntake
     from tessera.expert_classes import inverse_expert_ids, storage_expert_ids
     scheme = store.schemes[module]
+    scheme = _legacy_uniform_scheme_metadata(scheme, module)
     declared = validate_tessera_moe_scheme(scheme, module)
     dev = torch.device("cuda")
     intake = _RankLocalPackedIntake(declared, module, dev, TP_RANK, TP_SIZE)
@@ -363,6 +462,7 @@ def build_routed(store, module):
             else:
                 w2_len[e] = wire.numel()
     packed = intake.finish(w13_len, w2_len)
+    _check_routed_runs_against_classes(packed, declared, module)
     native = packed.adapter()
     # The adapter takes storage IDs. Build the plugin's one device inverse here.
     inverse = torch.tensor(inverse_expert_ids(declared["expert_ids"]), dtype=torch.int32,
