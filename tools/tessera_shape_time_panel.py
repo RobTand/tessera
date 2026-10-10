@@ -127,8 +127,7 @@ def read_request(path, *, expected_sha256=None, producer_root=ROOT):
     if hashlib.sha256(raw_contract).hexdigest() != runtime["contract_sha256"]:
         raise ValueError("request requires a different immutable runtime contract")
     scope = census_plan._request_scope(request["scope"])
-    if (scope["route"], scope["structure"], scope["mode"], scope["execution_mode"], scope["tp_degree"]) != ("TESSERA_FP8", "dense", "resident", "eager", 1) or scope["requested_platform"] != runtime["platform"]:
-        raise ValueError("first slice requires one E4M3 dense TP1 eager/resident scope")
+    tp.admitted_panel_scope(scope, runtime)
     tp._object(request["sampling"], {"samples", "warmup_iterations", "steady_s", "seed"}, "sampling")
     tp._integer(request["sampling"]["samples"], "sample count", 3)
     tp._integer(request["sampling"]["warmup_iterations"], "warmups")
@@ -141,11 +140,14 @@ def read_request(path, *, expected_sha256=None, producer_root=ROOT):
         raise ValueError("requires both explicit Netdata endpoints")
     wire = tp.read_bound(request["wire"])
     declared, roles = tp.wire_facts(wire, request["scheme"])
-    if (declared["rows"], declared["columns"], declared["q256"]) != (scope["shape"]["N"], scope["shape"]["K"], scope["q256"]):
+    if scope["structure"] == "routed_moe":
+        if (declared["hidden_size"], declared["intermediate_size"], declared["experts"]) != (scope["shape"]["K"], scope["shape"]["N"], scope["shape"]["experts"]):
+            raise ValueError("request routed stack geometry differs")
+    elif (declared["rows"], declared["columns"], declared["q256"]) != (scope["shape"]["N"], scope["shape"]["K"], scope["q256"]):
         raise ValueError("request wire geometry/rung differs")
     doc = tp.json_bytes(raw_contract)
     possible = []
-    for launch in tp.scheme.route_launches(scope["route"], structure="dense", regime=scope["regime"], mode="resident"):
+    for launch in tp.candidate_launches(scope["route"], scope["structure"], scope["regime"]):
         try:
             tp.admitted_cell(doc, scope, runtime, (launch["symbol"], launch["decoder"]), roles)
         except ValueError:
