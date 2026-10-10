@@ -178,6 +178,12 @@ def test_audit_refuses_graph_replays_counted(tmp_path):
     assert any("graph" in p for p in record["problems"])
 
 
+def test_receipt_path_still_refuses_without_out(capsys):
+    attest = _attest()
+    assert attest.main([]) == 2
+    assert "refusing" in capsys.readouterr().err
+
+
 def test_cli_writes_audit_record_from_repeated_flags(tmp_path):
     attest = _attest()
     paths = _good_pair(tmp_path)

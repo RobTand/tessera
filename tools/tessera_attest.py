@@ -942,7 +942,8 @@ def build_receipt(*, identity: dict, steps: dict, power: dict, reference: dict,
 
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
-    ap.add_argument("--out", required=True, help="where to write the JSON receipt")
+    ap.add_argument("--out", default=None, help="where to write the JSON receipt "
+                    "(required unless --mask-skip-traces takes the audit path)")
     ap.add_argument("--expect-platform", default=None,
                     help="refuse before doing anything unless the device reads as this token")
     ap.add_argument("--claim-platform", default=None,
@@ -996,6 +997,11 @@ def main(argv=None) -> int:
         for problem in record["problems"]:
             print(f"  problem: {problem}")
         return 0 if record["passed"] else 1
+
+    if not args.out:
+        print("refusing: --out is required for a receipt; the audit path "
+              "uses --audit-out instead", file=sys.stderr)
+        return 2
 
     identity = probe_identity()
     measured = identity.get("platform")
