@@ -30,6 +30,20 @@ STOCK_SOURCES = {
 }
 STOCK_HEADER_TREE_SHA256 = "b553db1f7f4518dd81d04ad6d28d75eefbb0c157c6c81dbc5b630595fd4be142"
 
+#: The dispatch words this override emits through ``telemetry.emit_route``.
+#: One home for the emit side: ``_emit`` and its callers name these, and
+#: the trace audit in ``tools/tessera_attest.py`` pins each value to this
+#: source, so a renamed word breaks the audit instead of slipping past it.
+MASK_SKIP_POLICY = "mla_mask_skip_eager_dispatch"
+MASK_SKIP_KIND = "attention_backend"
+MASK_SKIP_CONTRACT = "stock_kernel_overrides"
+NATIVE_DECODER = "native_mg_mask_skip"
+STOCK_DECODER = "stock"
+NATIVE_SYMBOL = "tessera_mla_prefill_mg_l0"
+STOCK_SYMBOL = "stock"
+NATIVE_SCHEDULE = "mg_mask_skip_pass_buffers"
+STOCK_SCHEDULE = "stock_mg"
+
 
 def _digest(path):
     return hashlib.sha256(Path(path).read_bytes()).hexdigest()
@@ -132,17 +146,17 @@ class TesseraMLASparseSM120Impl(FlashInferMLASparseSM120Impl):
         context = getattr(self, "_tessera_mla_context", None)
         if not context or torch.compiler.is_compiling() or torch.cuda.is_current_stream_capturing():
             return
-        telemetry.emit_route(context[1], kind="attention_backend",
-            policy="mla_mask_skip_eager_dispatch", symbol=symbol,
+        telemetry.emit_route(context[1], kind=MASK_SKIP_KIND,
+            policy=MASK_SKIP_POLICY, symbol=symbol,
             shape=f"T{q.shape[0]}:H{self.num_heads}:D{self.kv_lora_rank}",
-            contract="stock_kernel_overrides", state="served", reason=reason,
-            decoder="stock" if reason else "native_mg_mask_skip",
-            kernel_schedule="stock_mg" if reason else "mg_mask_skip_pass_buffers")
+            contract=MASK_SKIP_CONTRACT, state="served", reason=reason,
+            decoder=STOCK_DECODER if reason else NATIVE_DECODER,
+            kernel_schedule=STOCK_SCHEDULE if reason else NATIVE_SCHEDULE)
 
     def _run_mqa_kernel(self, q, kv_cache, topk_indices_physical):
         refusal = self._refusal(q, kv_cache, topk_indices_physical)
         if refusal:
-            self._emit(q, "stock", refusal)
+            self._emit(q, STOCK_SYMBOL, refusal)
             return super()._run_mqa_kernel(q, kv_cache, topk_indices_physical)
         output = torch.empty_like(q)
         lse = torch.empty(q.shape[0],32,dtype=torch.float32,device=q.device)
@@ -153,11 +167,11 @@ class TesseraMLASparseSM120Impl(FlashInferMLASparseSM120Impl):
         resolved=_prepared._functional_plan(tensors,3,False,False).plan.inspect()
         if (str(resolved["numeric_route"]),str(resolved["implementation"]),
                 str(resolved["merge"]),int(resolved["variant"])) != ("fp8","mg","direct",2):
-            self._emit(q,"stock","stock resolver selected another numerical route")
+            self._emit(q,STOCK_SYMBOL,"stock resolver selected another numerical route")
             return super()._run_mqa_kernel(q,kv_cache,topk_indices_physical)
         library=getattr(self,"_tessera_mla_library",None)
         if library is None:
             library=self._tessera_mla_library=library_for_device(q.device)
         library.call(1,q,kv_cache,topk_indices_physical,output,lse)
-        self._emit(q,"tessera_mla_prefill_mg_l0")
+        self._emit(q,NATIVE_SYMBOL)
         return output
