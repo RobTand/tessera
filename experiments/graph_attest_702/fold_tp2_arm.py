@@ -85,6 +85,13 @@ def mem_gib() -> float:
     raise Refused("MemAvailable unreadable")
 
 
+def chmod_tree(path: Path) -> None:
+    for root, dirs, files in os.walk(path):
+        for name in dirs:
+            os.chmod(os.path.join(root, name), 0o777)
+    os.chmod(path, 0o777)
+
+
 def serve_lock(action: str, owner_name: str, run: Path) -> None:
     script = SNAP / "experiments" / "serve_lock.sh"
     env = dict(os.environ, SERVE_LOCK_OWNER=owner_name)
@@ -116,6 +123,8 @@ def wait_url(base: str, env: Envelope, deadline_s: float = 1800.0) -> None:
             pass
         time.sleep(10)
     raise Refused("serve readiness deadline")
+
+
 def post(base: str, path: str) -> int:
     req = urllib.request.Request(base + path, data=b"{}", method="POST",
                                  headers={"Content-Type": "application/json"})
@@ -142,6 +151,8 @@ def phase_p(setup: dict, rank: int, env: Envelope, run: Path, owned: dict) -> di
     out = run / arm_name
     (out / "profiles" / arm_name).mkdir(parents=True, exist_ok=True)
     (run / f"ext{rank}").mkdir(parents=True, exist_ok=True)
+    chmod_tree(out)
+    chmod_tree(run / f"ext{rank}")
     image_env = {"TESSERA_CENSUS_RUNTIME_IMAGE": IMAGE,
                  "TESSERA_ROUTE_TRACE": f"/out/route-rank{rank}.json"}
     if fold:
