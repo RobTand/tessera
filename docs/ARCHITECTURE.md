@@ -109,9 +109,9 @@ The byte audit retains both the fragment checks and the projection checks.
 The CUDA source, numerical checks, tolerances and default-off selection stay unchanged.
 The retained graphics processor evidence does not establish serving qualification.
 
-Re-stamped 2026-10-08 for the graph witness contract (issue #1062).
+Re-stamped 2026-10-10 for the graph-only census separation (issue #1062).
 
---compiled names Torch compilation only. Mode NONE keeps CUDA graphs but disables the Torch trace. Its records keep capture shapes. Replay runs no Python. The census refuses that combination before any load. Real compiled records still carry M star. Phase cover still requires current logical rows. No default, pin, gate or admission changes.
+--compiled names a non-eager engine. A real Torch trace takes the shape-polymorphic arm and still requires M star records. Mode NONE means CUDA graphs only: records keep concrete capture shapes, the census checks them as concrete, and every graph-only census states capture time only with no logical row credit. Replay runs no Python. Phase, owner, route, decoder, dtype and cell checks run on both paths. No default, pin or admission changes.
 
 Re-stamped 2026-10-08 for replay-free native matrix selection (issue #1061).
 
