@@ -26,7 +26,8 @@ set -e
 inc="$(python3 -c "import glob; p=sorted(glob.glob(\"/usr/local/lib/python3*/dist-packages/nvidia/cu*/include\")); print(p[0] if p else \"\")")"
 dst=/usr/local/cuda/include
 for src in "$inc"/*; do n="$(basename "$src")"; [ -e "$dst/$n" ] || ln -s "$src" "$dst/$n"; done
-pip install --no-deps --no-build-isolation -q -e /tessera
+python3 -m pip install --no-deps --no-build-isolation -q -e /tessera
+python3 -m pip install -q pytest
 cd /tessera
 python3 experiments/sweep_window_gemm_decode.py --out /out/sweep.json --commit "$TESSERA_HEAD"
 python3 -c "import json; d = json.load(open(\"/out/sweep.json\")); print(json.dumps({k: v for k, v in d.items() if k != \"records\"}))"
