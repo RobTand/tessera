@@ -56,6 +56,8 @@ def barrier(rdv: Path, phase: str, rank: int, env: Envelope, wait_peer: bool = T
     while env.remaining() > CLEANUP_SECONDS:
         if peer.exists():
             return
+        if (rdv / "barrier" / f"{phase}.failed").exists():
+            raise Refused(f"phase {phase} failed on the peer rank")
         if time.time() - t0 > 300:
             t0 = time.time()
             print(f"heartbeat: rank{rank} waits peer at {phase}", flush=True)
@@ -138,6 +140,9 @@ def phase_p(setup: dict, rank: int, env: Envelope, run: Path, owned: dict) -> di
                            master_port=MASTER_PORT, api_port=API_PORT)
     assert "--compilation-config" in cmd[-1] and "FULL_DECODE_ONLY" in cmd[-1]
     name = f"fold1204-{setup['run_id']}-{arm_name}-r{rank}"
+    cmd[cmd.index("--cidfile") + 1] = str(run / f"p-cid-rank{rank}")
+    cmd[cmd.index("--name") + 1] = name
+    run_cmd = cmd[1:]
     serve_lock("acquire", f"fold1204-{arm_name}-p-r{rank}", run)
     (out / "logs").mkdir(parents=True, exist_ok=True)
     try:
@@ -317,9 +322,9 @@ def main() -> int:
     for key, fn in (("p", phase_p), ("t", phase_t), ("power", phase_power)):
         try:
             receipt[key] = fn(setup, args.rank, env, run, owned) if key != "power" else fn(setup, args.rank, env, run)
-        except Refused:
+        except Exception as exc:
             atomic_json(run / "barrier" / f"{key}.failed", {"rank": args.rank})
-            raise
+            raise Refused(f"phase {key} error: {type(exc).__name__}: {exc}") from exc
     atomic_json(run / f"rank{args.rank}.receipt.json", receipt)
     print(json.dumps(receipt, sort_keys=True), flush=True)
     return 0
