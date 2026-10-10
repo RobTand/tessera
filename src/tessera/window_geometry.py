@@ -5,7 +5,7 @@ from .errors import GrammarError
 from .manifest import WINDOW_BITS_MAX
 
 __all__ = ["TILE_ROWS", "require_window_geometry", "MIN_M_BLOCK", "DECODE_MAX_M",
-           "decode_schedule"]
+           "DECODE_BLOCK_N", "decode_schedule"]
 
 TILE_ROWS = 512
 
@@ -19,18 +19,26 @@ MIN_M_BLOCK = 16
 #: (tessera#617).
 DECODE_MAX_M = 16
 
+#: The N block the decode-regime schedule runs.  The GB10 sweep
+#: (``experiments/sweep_window_gemm_decode.py``) reads BN = 32 as best or
+#: tied at every issue shape at M = 1 and M = 8, and larger N blocks strand
+#: SMs (8 CTAs at 2048 rows, BN = 256) or serialize the decode per block.
+DECODE_BLOCK_N = 32
+
 
 def decode_schedule(m: int, block_m: int, block_n: int, block_k: int) -> tuple:
     """The dense GEMM's effective ``(BM, BN, BK)`` for a call with ``m`` rows.
 
     At or below ``DECODE_MAX_M`` the call is weight-bound -- M = 8 costs the
-    same as M = 1 -- so it runs the minimum M block over the prepared N/K
-    blocks.  The N/K blocks never move here, so the K-loop order each output
-    accumulates in is unchanged and the numerics stay inside the oracle
-    tolerance.  Above it the prepared blocks serve unchanged.
+    same as M = 1 -- so it runs the minimum M block over a narrow N block:
+    the prefill M block wastes issue on masked dot rows, and a wide N block
+    strands SMs at small rows.  The K block never moves here, so the K-loop
+    order each output accumulates in is unchanged.  The N block never grows
+    beyond the prepared one.  Above ``DECODE_MAX_M`` the prepared blocks
+    serve unchanged.
     """
     if int(m) <= DECODE_MAX_M:
-        return (MIN_M_BLOCK, block_n, block_k)
+        return (MIN_M_BLOCK, min(block_n, DECODE_BLOCK_N), block_k)
     return (block_m, block_n, block_k)
 
 
