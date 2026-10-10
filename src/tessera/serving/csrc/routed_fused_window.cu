@@ -182,17 +182,14 @@ constexpr int WORD_STAGES_MIN = 2;
 // producers' barrier.  A ``prefetch.global.L1`` of the row A_PREFETCH chunks
 // ahead brings the line in while earlier chunks decode.
 //
-// Measured on the E4M3 instruction's routed launches (recorded prefill
+// Measured on the E4M3 instruction's routed launches only (recorded prefill
 // routing, drift-symmetric, output bitwise equal; pf4one-ab-20260930T*): at
 // distance 4 the one-run R1024 launch ran at 0.847 (M 512) and 0.861
 // (M 2048) of no prefetch, where removing the A load altogether bounds it at
 // 0.82-0.83; on the two-run R1088 launch the same prefetch cost 2.7-4.2%,
-// and gated off there it measured 1.000/0.998.  The 16-bit E4M3 library
-// (``tessera_routed_fused_e4m3``) takes the same distance on the same gated
-// launches by construction: the same ``load_a`` global, the same
-// ``PREFETCH_A`` gate (routed one-run only), a ``prefetch.global.L1`` hint
-// that changes no byte and no layout.  Its timing is unmeasured; the value
-// family stays on its #874 arm and the FP4 lane on its own.
+// and gated off there it measured 1.000/0.998.  So the kernel prefetches on
+// the launches that measurement covers -- the E4M3 instruction's routed
+// one-run pairs (``PREFETCH_A``) -- and nowhere else.
 #ifndef TESSERA_ROUTED_FUSED_A_PREFETCH
 #define TESSERA_ROUTED_FUSED_A_PREFETCH 4
 #endif
@@ -866,7 +863,7 @@ __global__ void __launch_bounds__(THREADS, 1) routed_fused_kernel(const Params p
                   "the pair fits the target's block at this width");
     using L = Layout<MODE, BMT, PAIRED>;
     constexpr int PREFETCH_DISTANCE = FAMILY_MMA8 ? A_PREFETCH
-        : (FAMILY_FP8 ? A_PREFETCH : (!FAMILY_FP4 ? VALUE_A_PREFETCH : 0));
+        : (!FAMILY_FP8 && !FAMILY_FP4 ? VALUE_A_PREFETCH : 0);
     // The activation ring (MMA8_A_RING): the routed two-run launches.
     constexpr bool A_RING = MMA8_A_RING && TWO && !DENSE;
     constexpr bool PREFETCH_A = PREFETCH_DISTANCE > 0 && !DENSE && !TWO && !A_RING;
