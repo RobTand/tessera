@@ -2651,3 +2651,82 @@ def test_an_attempt_whose_summary_counts_subtests_still_binds_to_its_population(
     _, record = _resumed_with(tmp_path, detail={"stdout": stdout})
     assert record["exit_status_observed"] is True, record.get("pool_actions_refused")
     assert record["returncode"] == 0
+
+
+def test_an_attempt_that_published_but_printed_no_summary_binds_nothing(
+        tmp_path):
+    """A publication line with no terminal summary behind it binds nothing.
+
+    The attempt wrote the file -- the digest on its publication line matches
+    the bytes -- and then died before pytest printed its summary. The digest
+    leg passes and the summary leg refuses, so the row stays unobserved and
+    the verdict is never green. The held counts still cover every bucket the
+    tool compares, so the refusal is the missing line and nothing else.
+    """
+
+    merge_suite = _module()
+    receipt_dir = tmp_path / "receipt"
+    receipt_dir.mkdir(exist_ok=True)
+    surface = receipt_dir / "surface.gpu.json"
+    key = "beef" + "0" * 60
+    merge_suite.POOL_QUEUE, merge_suite.POOL_CAS_REQUESTS = _fake_pool(
+        tmp_path, surface, [(key, "done", 0, "sparky")])
+    request = _request_of(merge_suite.POOL_CAS_REQUESTS, key)
+    _gpu_population(surface, producer=request)
+    digest = surface_publication.digest_bytes(surface.read_bytes())
+    stdout = (surface_publication.publication_line(
+        surface_publication.POPULATION, surface, digest)
+        + "\nFatal Python error: Aborted\n")
+    assert merge_suite._summary_counts(stdout) == (None, None), stdout
+    outcome_path = merge_suite.POOL_QUEUE / "done" / f"{key}.json"
+    outcome = json.loads(outcome_path.read_text())
+    outcome["detail"]["stdout"] = stdout
+    outcome_path.write_text(json.dumps(outcome))
+
+    record = merge_suite._resume("gpu", merge_suite.ARMS["gpu"], receipt_dir)
+    _unobserved(merge_suite, record, "printed no terminal summary")
+    held = record["surface"]["counts"]
+    for bucket in merge_suite._COMPARED_COUNTS:
+        assert isinstance(held.get(bucket), int), (bucket, held)
+
+
+def test_failed_and_error_counts_stay_separate_fields():
+    """A shard with F failures and E errors keeps both numbers apart.
+
+    The counts come from the buckets the tool itself compares, with failures
+    and errors set to different nonzero values. The arm result names each
+    value beside its own field, the verdict is red, and their sum appears
+    nowhere: no reader can mistake one number for the other.
+    """
+
+    merge_suite = _module()
+    counts = dict.fromkeys(merge_suite._COMPARED_COUNTS, 0)
+    counts.update({"passed": 10, "failed": 2, "error": 5, "skipped": 1})
+    assert counts["failed"] != counts["error"]
+    arm = _population("gpu", counts=counts)
+
+    result = merge_suite._arm_results([arm])["gpu"]
+    assert result == (f"red: {counts['failed']} failed, "
+                      f"{counts['error']} error"), result
+    assert str(counts["failed"] + counts["error"]) not in result, result
+    assert not merge_suite._verdict([arm]).startswith("green on"), result
+    held = arm["surface"]["counts"]
+    assert (held["failed"], held["error"]) == (2, 5), held
+
+
+def test_the_binding_trusts_each_of_the_tools_final_attempt_statuses(tmp_path):
+    """Only the outcome statuses the tool owns carry the final attempt.
+
+    The accepted set is read from the tool, not restated here: each status it
+    names binds a clean attempt, and anything outside it (pinned on master by
+    ``test_a_lease_lost_record_carries_an_earlier_attempts_detail``) binds
+    nothing.
+    """
+
+    merge_suite = _module()
+    for status in merge_suite._FINAL_ATTEMPT_STATUSES:
+        sub = tmp_path / f"attempt-{status}"
+        sub.mkdir(exist_ok=True)
+        module, record = _resumed_with(sub, outcome={"status": status})
+        assert record["exit_status_observed"] is True, (status, record)
+        assert record["returncode"] == 0, (status, record)
