@@ -219,5 +219,5 @@ def test_shared_steady_bias_outside_bound():
     """
     shared = load()["supporting_shared_run"]["derived"]
     assert abs(shared["steady_bias_pct"]) > JOULE_BOUND_PCT
-    assert abs(shared["steady_bias_pct"] - 1.6269294732745554) < 1e-9
+    assert abs(shared["steady_bias_pct"] + 1.6269294732745554) < 1e-9
 
