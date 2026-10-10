@@ -15,6 +15,7 @@ import copy
 import importlib.util
 import json
 import os
+import shutil
 import subprocess
 import sys
 import time
@@ -115,7 +116,6 @@ def main() -> int:
             rc = fv.dump_payload(_ns(args, role, regime, str(stem),
                                      str(corp_path), args.teacher), model)
             assert rc == 0
-            stems[(role, regime)] = str(stem) + ".meta.json"
     _commit("dump", 1)
     t0 = time.time()
     student, changed, total = build_fp8rtn_student(teacher, torch)
@@ -123,6 +123,14 @@ def main() -> int:
           f"changed={changed}/{total}", flush=True)
     sdir = outdir / "student_fp8rtn"
     student.save_pretrained(str(sdir))
+    # kl_tool records a tokenizer identity off the artifact path: a student
+    # without tokenizer files refuses at dump time, so the copy travels.
+    for name in ("tokenizer.json", "tokenizer_config.json", "vocab.json",
+                 "merges.txt", "special_tokens_map.json",
+                 "chat_template.jinja"):
+        src = Path(args.teacher) / name
+        if src.exists():
+            shutil.copy2(src, sdir / name)
     (sdir / "fp8rtn_provenance.json").write_text(json.dumps({
         "method": "per-tensor E4M3 round-trip of every >1D weight, "
                   "deterministic, no training",
