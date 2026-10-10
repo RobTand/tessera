@@ -38,6 +38,12 @@ Version two and version three input-table metadata use the alphabet's pure grid 
 The existing version one conversion and actual raw-input normalization retain their owner paths.
 The meaningful hosted pure test stays active. No measurement or qualification changes.
 
+Contract v67 cites the open graph gap in every decode cell (tessera#1152).
+Each decode cell carries one `graph_equality` record naming `2026-09-30-glm-nightly-cells-and-graph-equivalence.md`.
+The record is decode-only, carries no top-K number, and grades `route_only`.
+No decode cell claims a compiled KL or a compiled scope.
+Batch cells and eager scopes are byte-identical.
+
 Contract v66 admits R768 and table [3] on the two base routed E4M3 cells (tessera#1080, PR #1045).
 The base-image TP2 receipt proves decoder `native_routed_window_classes_e4m3mma` on both ranks in decode M1 and batch M64.
 Qualification covers only `sm_121`, the base image, eager execution, resident service, and R768.
@@ -7594,8 +7600,16 @@ scored in, the execution modes, the smoke on record, and the population. A
 decode cell is refused -- the confusion #133 is about), and `grade` is
 derived from the entries and checked, like `executes`: `route_only` when
 nothing attests quality in the cell's regime, else `kl_lower_bound`, else
-`kl_full_vocab`. On the shipped table every decode cell
-is `route_only`. Two were not: `tessera_e4m3_k1_dense_sm121_decode_streamed`
+`kl_full_vocab`. Contract v67 (tessera#1152) adds a third kind,
+`graph_equality`, for the decode compiled path. It is not a KL bound. It
+records that a graph serve computes what the eager serve computes, read off
+the receipt it cites. A CUDA-graph serve replays decode batches, so the kind
+is decode-only and refused elsewhere. It carries no top-K number and never
+raises the grade. On the shipped table every decode cell
+is `route_only` and cites the open gap
+(`2026-09-30-glm-nightly-cells-and-graph-equivalence.md`) as one
+`graph_equality` record, and no decode cell claims a compiled KL. Two cells were not `route_only`:
+`tessera_e4m3_k1_dense_sm121_decode_streamed`
 (`tessera-decode-regime-kl-2026-09-03.md` eager,
 `tessera-compiled-decode-kl-r6-2026-09-04.md` compiled) and, from contract v24,
 `tessera_bf16_k1_dense_gfx1201_decode`

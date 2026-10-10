@@ -289,7 +289,15 @@ PLUGIN_ENTRY_POINT = "tessera = tessera.serving:register"
 #: it cannot drift.  ``receipt`` is a repository path under
 #: :data:`EVIDENCE_RECEIPT_ROOT`; the validator checks its grammar and a tree
 #: test checks the file (a wheel does not ship docs).
-EVIDENCE_KL_KINDS = ("topk_intersection_lower_bound", "full_vocab")
+#:
+#: ``graph_equality`` (contract v67, tessera#1152) is not a KL bound: it is a
+#: decode-only record that a graph serve computes what the eager serve
+#: computes, read off the receipt it cites.  A CUDA-graph serve replays
+#: decode batches, so the validator refuses the kind outside a decode cell.
+#: It carries no top-K number and never raises the grade: a decode cell that
+#: cites the open gap cites it with ``grade`` ``route_only`` and claims no
+#: compiled KL.
+EVIDENCE_KL_KINDS = ("topk_intersection_lower_bound", "full_vocab", "graph_equality")
 EVIDENCE_SMOKE_STATUSES = ("recorded", "repetitive", "not_recorded")
 EVIDENCE_GRADES = ("route_only", "kl_lower_bound", "kl_full_vocab")
 EVIDENCE_RECEIPT_ROOT = "docs/measurements/"
@@ -2465,7 +2473,10 @@ def derive_evidence_grade(cell: Mapping[str, Any]) -> str:
     any other), so the derivation is: no entry, ``route_only`` -- the census
     attests dispatch and nothing attests quality in this regime; any top-K
     intersection bound, ``kl_lower_bound``; any full-vocabulary KL,
-    ``kl_full_vocab``.  ``qualification`` is deliberately not overloaded
+    ``kl_full_vocab``.  A ``graph_equality`` record never raises the grade
+    (tessera#1152): it cites the open graph gap and claims no compiled KL,
+    so a decode cell carrying only one still grades ``route_only``.
+    ``qualification`` is deliberately not overloaded
     with this: one home per fact.
     """
     kinds = {entry["kind"] for entry in cell["evidence"]["kl"]}
@@ -2720,7 +2731,9 @@ def cell_evidence(cell: Mapping[str, Any], where: str = "lane_eligibility cell",
     the field a gate cannot read.  ``kl`` entries are ``{kind, top_k, regime,
     execution_modes, receipt}``: ``kind`` from :data:`EVIDENCE_KL_KINDS`,
     ``top_k`` a positive integer for a top-K bound and ``null`` for a
-    full-vocabulary KL, ``regime`` the CELL'S OWN regime (a prefill bound
+    full-vocabulary KL or a ``graph_equality`` record (tessera#1152: the record
+    is not a bound, and it is decode-only -- refused outside a decode cell),
+    ``regime`` the CELL'S OWN regime (a prefill bound
     written into a decode cell is the confusion this field exists to refuse),
     ``execution_modes`` a non-empty distinct subset of the cell's, ``receipt``
     a repository path. A ``kl`` entry may stamp the rung its receipt measured
@@ -2765,10 +2778,20 @@ def cell_evidence(cell: Mapping[str, Any], where: str = "lane_eligibility cell",
                 raise ValueError(
                     f"{spot}.top_k must be a positive integer for a top-K intersection bound, "
                     f"got {top_k!r}")
+        elif kind == "graph_equality":
+            if top_k is not None:
+                raise ValueError(
+                    f"{spot}.top_k must be null for a graph-equality record, got {top_k!r}: "
+                    "the record is not a top-K bound, so a number beside it is prose")
         elif top_k is not None:
             raise ValueError(
                 f"{spot}.top_k must be null for a full-vocabulary KL, got {top_k!r}")
         regime = entry["regime"]
+        if kind == "graph_equality" and regime != "decode":
+            raise ValueError(
+                f"{spot}.regime {regime!r}: a graph-equality record is a decode-only claim "
+                "(a CUDA-graph serve replays decode batches), so one outside a decode cell "
+                "attests nothing")
         if regimes is not None and regime not in regimes:
             raise ValueError(
                 f"{spot}.regime {regime!r} is not a declared regime {sorted(regimes)} "

@@ -77,6 +77,20 @@ def _bound(regime, modes, receipt):
             "execution_modes": modes, "receipt": receipt}
 
 
+#: The open gap tessera#702 records: no CUDA-graph serve of GLM-5.3 computes
+#: what eager computes, so no decode cell claims a compiled KL (tessera#1152).
+GRAPH_GAP = "docs/measurements/2026-09-30-glm-nightly-cells-and-graph-equivalence.md"
+
+
+def _graph_equality(regime, modes, receipt=GRAPH_GAP):
+    return {"kind": "graph_equality", "top_k": None, "regime": regime,
+            "execution_modes": modes, "receipt": receipt}
+
+#: The ``kl`` kinds that bound quality and raise the grade. ``graph_equality``
+#: records the open graph gap and never does (tessera#1152).
+_BOUND_KINDS = ("topk_intersection_lower_bound", "full_vocab")
+
+
 _NO_SMOKE = {"status": "not_recorded", "receipt": None,
              "attribution": "unattributed", "control": None, "record": None}
 
@@ -230,12 +244,17 @@ def test_the_stored_grade_is_the_derived_one(contract):
 def test_no_cell_claims_full_vocabulary_kl(contract):
     """The premise correction, read off the table: every KL this repository
     serves is a top-1024 intersection lower bound, so no cell may grade above
-    ``kl_lower_bound`` until a full-vocabulary measurement exists."""
+    ``kl_lower_bound`` until a full-vocabulary measurement exists. A
+    ``graph_equality`` record is not a KL bound: it cites the open graph gap
+    (tessera#1152) and carries no top-K number."""
     for cell in contract["lane_eligibility"]["cells"]:
         assert cell["evidence"]["grade"] != "kl_full_vocab"
         for entry in cell["evidence"]["kl"]:
-            assert entry["kind"] == "topk_intersection_lower_bound"
-            assert entry["top_k"] == 1024
+            if entry["kind"] == "graph_equality":
+                assert entry["top_k"] is None
+            else:
+                assert entry["kind"] == "topk_intersection_lower_bound"
+                assert entry["top_k"] == 1024
 
 
 def test_the_routed_moe_cells_are_now_distinguishable_from_the_dense_ones(contract):
@@ -497,10 +516,14 @@ def test_which_decode_cells_carry_a_decode_regime_bound(contract):
 
     This was ``test_only_the_streamed_e4m3_decode_cell_has_a_decode_regime_bound``
     until #460 scored the second one; the count was never the claim.
+    Contract v67 (tessera#1152) adds the next decode-regime record, and it is
+    not a bound: every decode cell cites the open graph gap as
+    ``graph_equality`` and still grades ``route_only``.
     """
     with_decode_kl = sorted(
         cell["id"] for cell in contract["lane_eligibility"]["cells"]
-        if cell["regime"] == "decode" and cell["evidence"]["kl"])
+        if cell["regime"] == "decode"
+        and any(entry["kind"] in _BOUND_KINDS for entry in cell["evidence"]["kl"]))
     # Both of them -- the sm_121 window-GEMV lane's and the gfx1201
     # ``torch_window`` lane's -- were scored against the dense dispatch that
     # ``1b767a207`` retired, and contract v31 withdrew their cells with it
@@ -528,7 +551,7 @@ def test_every_named_receipt_is_in_the_tree(contract):
 
 
 def test_the_grammar_is_exported_for_a_consumer(contract):
-    assert EVIDENCE_KL_KINDS == ("topk_intersection_lower_bound", "full_vocab")
+    assert EVIDENCE_KL_KINDS == ("topk_intersection_lower_bound", "full_vocab", "graph_equality")
     assert EVIDENCE_SMOKE_STATUSES == ("recorded", "repetitive", "not_recorded")
     assert EVIDENCE_GRADES == ("route_only", "kl_lower_bound", "kl_full_vocab")
     assert EVIDENCE_RECEIPT_ROOT == "docs/measurements/"
@@ -598,6 +621,62 @@ def test_a_bound_in_another_regime_is_not_this_cells_evidence(contract):
         validate_serving_contract(_with_evidence(contract, DECODE, borrowed))
 
 
+def test_a_decode_cell_may_cite_the_open_graph_gap(contract):
+    """tessera#1152: the validator accepts a decode graph-equality record, and
+    it grades ``route_only`` -- the cell cites the gap receipt and claims no
+    compiled KL."""
+    evidence = {"grade": "route_only", "kl": [_graph_equality("decode", ["eager"])],
+                "smoke": _NO_SMOKE}
+    doc = _with_evidence(contract, DECODE, evidence)
+    validate_serving_contract(doc)
+    parsed = cell_evidence(_cells(doc)[DECODE], DECODE)
+    assert parsed["grade"] == "route_only"
+    assert parsed["kl"] == [_graph_equality("decode", ["eager"])]
+
+
+def test_a_graph_equality_record_is_decode_only(contract):
+    """tessera#1152: a graph serve replays decode batches, so a batch-regime
+    graph-equality record attests nothing, in either cell; and a decode-regime
+    one is not a batch cell's evidence."""
+    batch_regime = {"grade": "route_only", "kl": [_graph_equality("batch", ["eager"])],
+                    "smoke": _NO_SMOKE}
+    with pytest.raises(ValueError, match="decode-only"):
+        validate_serving_contract(_with_evidence(contract, DECODE, batch_regime))
+    with pytest.raises(ValueError, match="decode-only"):
+        validate_serving_contract(_with_evidence(contract, BATCH, batch_regime))
+    misplaced = {"grade": "route_only", "kl": [_graph_equality("decode", ["eager"])],
+                 "smoke": _NO_SMOKE}
+    with pytest.raises(ValueError, match="is not the cell's regime"):
+        validate_serving_contract(_with_evidence(contract, BATCH, misplaced))
+
+
+def test_a_graph_equality_record_carries_no_top_k(contract):
+    """tessera#1152: the record is not a top-K bound, so a number beside it is refused."""
+    numbered = {"grade": "route_only",
+                "kl": [{**_graph_equality("decode", ["eager"]), "top_k": 1024}],
+                "smoke": _NO_SMOKE}
+    with pytest.raises(ValueError, match="top_k must be null"):
+        validate_serving_contract(_with_evidence(contract, DECODE, numbered))
+
+
+def test_decode_cells_cite_the_graph_gap_and_batch_cells_carry_nothing(contract):
+    """tessera#1152, read off the shipped file: every decode cell cites the
+    gap receipt with grade ``route_only`` and eager scope; every batch cell
+    carries no ``kl`` entry."""
+    for cell in contract["lane_eligibility"]["cells"]:
+        assert cell["runtime"]["execution_modes"] == ["eager"], cell["id"]
+        if cell["regime"] == "decode":
+            assert cell["evidence"]["grade"] == "route_only", cell["id"]
+            assert [entry["kind"] for entry in cell["evidence"]["kl"]] == [
+                "graph_equality"], cell["id"]
+            entry = cell["evidence"]["kl"][0]
+            assert entry["receipt"] == GRAPH_GAP, cell["id"]
+            assert entry["top_k"] is None and entry["regime"] == "decode", cell["id"]
+            assert entry["execution_modes"] == ["eager"], cell["id"]
+        else:
+            assert cell["evidence"]["kl"] == [], cell["id"]
+
+
 @pytest.mark.parametrize("entry, match", [
     ({"kind": "screen", "top_k": 1024, "regime": "batch", "execution_modes": ["eager"],
       "receipt": PLUGIN}, "kind 'screen' is not one of"),
@@ -607,6 +686,12 @@ def test_a_bound_in_another_regime_is_not_this_cells_evidence(contract):
       "execution_modes": ["eager"], "receipt": PLUGIN}, "top_k must be a positive integer"),
     ({"kind": "full_vocab", "top_k": 1024, "regime": "batch",
       "execution_modes": ["eager"], "receipt": PLUGIN}, "top_k must be null"),
+    ({"kind": "graph_equality", "top_k": 1024, "regime": "batch",
+      "execution_modes": ["eager"], "receipt": PLUGIN}, "top_k must be null"),
+    ({"kind": "graph_equality", "top_k": None, "regime": "batch",
+      "execution_modes": ["eager"], "receipt": PLUGIN}, "decode-only"),
+    ({"kind": "graph_equality", "top_k": None, "regime": "decode",
+      "execution_modes": ["eager"], "receipt": PLUGIN}, "is not the cell's regime"),
     ({"kind": "topk_intersection_lower_bound", "top_k": 1024, "regime": "prefill",
       "execution_modes": ["eager"], "receipt": PLUGIN}, "regime 'prefill'"),
     ({"kind": "topk_intersection_lower_bound", "top_k": 1024, "regime": "batch",
