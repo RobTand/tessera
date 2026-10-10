@@ -101,6 +101,76 @@ MLA_MODULES = {"q_a_proj", "kv_a_proj_with_mqa", "q_b_proj", "fused_qkv_a", "idx
 SOURCE_PREFIX = "model.language_model.layers.{layer}.self_attn.{name}.weight"
 #: Roles whose source tensor is not under a layer's ``self_attn``.
 SOURCE_KEYS = {"lm_head": "lm_head.weight"}
+#: KDA input partitions vLLM replicates whole on every rank (tessera#1020).
+#: ``_Glm5NextMergedColumnParallelLinear`` takes these shard ids as replicated;
+#: ``tools/tessera_projection_smoke.py`` builds the KDA case with the same pair.
+KDA_REPLICATED_PARTITIONS = (4, 5)
+
+
+def _contract_total(roles):
+    return sum(rows for _, rows in roles)
+
+
+def _contract_floor(contract_roles):
+    """One full contract block over the replicated partitions, derived."""
+    return min(rows for index, (_, rows) in enumerate(contract_roles)
+               if index in KDA_REPLICATED_PARTITIONS)
+
+
+def require_module_geometry(name, roles, cols):
+    """Refuse a bench module outside its pinned contract before timing.
+
+    Read ``MODULES[name]``: unknown modules, column counts, role
+    populations, replicated roles below one contract block, short local
+    totals, and moved rows each refuse by name. No literal geometry lives
+    here; every number comes from the contract row being checked.
+    """
+    try:
+        contract_roles, contract_cols = MODULES[name]
+    except KeyError:
+        raise ValueError(f"bench module {name!r} has no pinned contract geometry") from None
+    if cols != contract_cols:
+        raise ValueError(f"bench module {name!r}: {cols} columns differ from contract {contract_cols}")
+    wanted = dict(contract_roles)
+    given = dict(roles)
+    if len(given) != len(roles) or set(given) != set(wanted):
+        raise ValueError(f"bench module {name!r}: roles {sorted(given)} differ "
+                         f"from contract {sorted(wanted)}")
+    if name == "kda_in":
+        if any(index >= len(contract_roles) for index in KDA_REPLICATED_PARTITIONS):
+            raise ValueError(f"bench module {name!r}: contract lost a replicated partition")
+        floor = _contract_floor(contract_roles)
+        for index in KDA_REPLICATED_PARTITIONS:
+            role, _ = contract_roles[index]
+            if given[role] < floor:
+                raise ValueError(f"bench module {name!r}: replicated role {role!r} holds "
+                                 f"{given[role]} rows below one contract block of {floor}")
+    if _contract_total(roles) != _contract_total(contract_roles):
+        raise ValueError(f"bench module {name!r}: local total {_contract_total(roles)} rows "
+                         f"differs from contract {_contract_total(contract_roles)}")
+    for role, rows in wanted.items():
+        if given[role] != rows:
+            raise ValueError(f"bench module {name!r}: role {role!r} holds {given[role]} rows, "
+                             f"contract holds {rows}")
+    return None
+
+
+def require_contract_total(name, rows, cols):
+    """Refuse a total-only dense shape outside its pinned contract, if any.
+
+    Shapes with no contract entry are research probes and pass. Callers that
+    alias a contract name with a short total refuse before timing.
+    """
+    if name not in MODULES:
+        return None
+    contract_roles, contract_cols = MODULES[name]
+    if cols != contract_cols:
+        raise ValueError(f"bench shape {name!r}: {cols} columns differ from contract {contract_cols}")
+    if rows != _contract_total(contract_roles):
+        raise ValueError(f"bench shape {name!r}: local total {rows} rows differs "
+                         f"from contract {_contract_total(contract_roles)}")
+    return None
+
 
 
 def source_weight(model, layer, name, rows, cols):
@@ -313,6 +383,7 @@ def main():
     groups = []          # (key, builder) -> builder() returns (head, make) with make(m) -> (meta, call)
     for name in args.modules.split(","):
         roles, cols = MODULES[name]
+        require_module_geometry(name, roles, cols)
         rows = sum(r for _, r in roles)
         for q in (int(v) for v in args.q256.split(",")):
             groups.append((f"{name}:q{q}", ("module", name, roles, cols, rows, q)))

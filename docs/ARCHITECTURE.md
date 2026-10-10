@@ -1678,6 +1678,13 @@ most 128 rows at small M, is tracked in tessera#805.
 split still binds. No route, rung, cell, served byte or contract field
 changes.
 
+Re-stamped 2026-10-10 for issues #1020 and #1182 and the bench geometry preflight.
+`bench_dense_module.require_module_geometry` refuses a module outside its pinned
+`MODULES` contract before timing. Replicated KDA partitions each hold one full
+contract block, and the local total matches the contract. `bench_geometry.py`
+derives its dense totals from the same contract and refuses aliased short totals.
+The short KDA proxy shape is removed.
+
 Re-stamped 2026-10-01 for the GLM-5.3 release serve's compilation mode
 (tessera#774). The T-8 release serve passes
 `--compilation-config '{"mode":"NONE","cudagraph_mode":"FULL_DECODE_ONLY"}'`
