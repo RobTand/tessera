@@ -62,3 +62,32 @@ def receipt(root: Path, world=2):
 def resign(value):
     value["fingerprint"] = ew.fingerprint(value)
     return value
+
+
+def expectations(value):
+    """Consumer facts for the fixture, separate from runtime observations."""
+    sources = value["artifacts"][0]["models"][0]["files"]
+    return {
+        "endpoint": value["listener"]["endpoint"],
+        "served_alias": value["listener"]["served_alias"],
+        "artifacts": {name: {k: fact[k] for k in ("sha256", "bytes")} for name, fact in sources.items()},
+        "tokenizer": {
+            "files": {name: {k: fact[k] for k in ("sha256", "bytes")}
+                      for name, fact in value["tokenizer"]["files"].items()},
+            **{k: copy.deepcopy(value["tokenizer"][k]) for k in ("backend", "vocab", "special_ids")},
+        },
+        "attempt_id": value["launch"]["attempt_id"],
+        "ranks": value["launch"]["ranks"].copy(),
+    }
+
+
+def expectation_args(value, root):
+    expected = expectations(value)
+    artifact_file = root / "expected-artifacts.json"
+    tokenizer_file = root / "expected-tokenizer.json"
+    artifact_file.write_text(json.dumps(expected["artifacts"]))
+    tokenizer_file.write_text(json.dumps(expected["tokenizer"]))
+    return ["--expect-endpoint", expected["endpoint"], "--expect-alias", expected["served_alias"],
+            "--expect-artifacts", str(artifact_file), "--expect-tokenizer", str(tokenizer_file),
+            "--expect-attempt", expected["attempt_id"],
+            "--expect-ranks", ",".join(map(str, expected["ranks"]))]
