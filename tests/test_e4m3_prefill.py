@@ -203,7 +203,7 @@ def _route_layer(monkeypatch, flag, mode, seed, vllm_mode="NONE", roles=ROLES):
                                                 (None, "streamed", False), ("1", "streamed", False)])
 def test_the_fp8_route_attaches_only_under_the_flag_and_resident(monkeypatch, flag, mode, attached, roles):
     """The real load and forward cover dense and shared projection modules."""
-    pytest.importorskip("vllm")   # the route's A side is vLLM's native FP8 quantiser
+    pytest.importorskip("vllm.model_executor.parameter")   # the route's A side is vLLM's native FP8 quantiser
     from tessera.serving import compile_identity, e4m3_prefill, telemetry
     from tessera.serving.scheme import DECODE_ONCE_DENSE_SYMBOL
 
@@ -230,7 +230,7 @@ def test_a_compiled_vllm_forward_refuses_the_flag_at_load(monkeypatch, flag):
     """The eager-only gate is the LOAD: with vLLM's compilation mode not NONE,
     the flag refuses by name before any copy is made; unset, the module loads
     as on master."""
-    pytest.importorskip("vllm")
+    pytest.importorskip("vllm.model_executor.parameter")
     from tessera.serving.e4m3_prefill import FLAG
 
     if flag == "1":
@@ -249,7 +249,7 @@ def test_a_dynamic_token_dimension_compiles_without_a_copy_and_refuses_with_one(
     specialises it and raises ``ConstraintViolationError``.  With the flag
     unset the route's ``apply`` compiles once and serves two M; with a
     decode-once copy attached it refuses by name (the lane is eager-only)."""
-    pytest.importorskip("vllm")
+    pytest.importorskip("vllm.model_executor.parameter")
     from tessera.serving.e4m3_prefill import FLAG
 
     from tessera.serving import fp8_route

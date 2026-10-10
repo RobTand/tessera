@@ -1,5 +1,12 @@
 # Changelog
 
+## 2026-10-10 — isolate vLLM stub state in the test co-run (issue #1015)
+
+Guard the three remaining vLLM consumers on the submodule they import, not on the bare package.
+A leaked bare vLLM stub now skips those files instead of failing them with `'vllm' is not a package`.
+The cohort regression test replays the old import-time stub against the real intake consumer.
+No serving default, qualifier, wire, or timing rule changes.
+
 ## 2026-10-09 — complete the endpoint verifier contract (issue #1128)
 
 Require explicit endpoint, alias, artifact bytes, tokenizer facts, launch attempt, and complete rank expectations in the public CPU CLI.
