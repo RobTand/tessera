@@ -210,12 +210,65 @@ def _identity(row_or_group: Mapping[str, Any], fields=("structure", "module", "f
     return tuple(row_or_group.get(field) for field in fields)
 
 
+def _routed_row_view(panel: Mapping[str, Any], scope: Mapping[str, Any],
+                     row: Mapping[str, Any], index: int) -> dict[str, Any]:
+    """Project one ``routed_moe`` panel row from its rank-local scope shape.
+
+    A routed scope carries one rung and one ``(N, K)`` pair, while the #685
+    groups name two: ``w13`` stacks gate then up as ``[2N, K]`` and ``w2`` is
+    ``[K, N]`` over the same hidden ``K`` and intermediate ``N``
+    (``scheme.validate_tessera_moe_scheme``).  The projection therefore reads
+    ``q256`` as the ``(q256, q256)`` pair and the shape as the
+    ``((2N, K), (K, N))`` pair.  Bad or lost geometry refuses by name: a lost
+    shape is never borrowed and a bad one never reaches a comparison.
+    """
+    from .timing_panel import json_bytes, read_bound
+    where = f"panel row {index}: routed_moe rank-local shape"
+    shape = scope.get("shape")
+    if not isinstance(shape, Mapping):
+        raise ValueError(f"{where} is absent: the scope must carry a shape object "
+                         f"with positive integer M, N and K, got {shape!r}")
+    dims = {}
+    for field in ("M", "N", "K"):
+        value = shape.get(field)
+        if type(value) is not int or value < 1:
+            raise ValueError(f"{where} requires positive integer (M, N, K); "
+                             f"{field} is {value!r}")
+        dims[field] = value
+    route = scope.get("route")
+    try:
+        family = family_key(_route_family(route))
+    except ValueError:
+        raise
+    except Exception as exc:
+        raise ValueError(f"panel row {index}: routed_moe route {route!r} "
+                         "has no payload family") from exc
+    grid = scope.get("grid")
+    if not isinstance(grid, str) or not grid:
+        raise ValueError(f"panel row {index}: routed_moe scope names no grid: "
+                         f"{grid!r}")
+    rung = scope.get("q256")
+    if type(rung) is not int or rung < 1:
+        raise ValueError(f"panel row {index}: routed_moe scope q256 must be a "
+                         f"positive integer, got {rung!r}")
+    samples = json_bytes(read_bound(panel["evidence"]["samples"]))
+    return row_view(
+        structure="routed_moe", module=row["prefix"],
+        family=family, grid=grid,
+        q256=(rung, rung),
+        rank_local_shape=((2 * dims["N"], dims["K"]), (dims["K"], dims["N"])),
+        m=dims["M"], median_ms=row["timing"]["median_ms"],
+        samples_n=len(samples["samples_ms"]), scope_id=row.get("scope_id"),
+        panel_row_index=index)
+
+
 def panel_row_views(panel: Mapping[str, Any]) -> list[dict[str, Any]]:
     """Project a validated ``tessera.shape_time_panel.v1`` receipt into row views.
 
     The caller owns validation (``timing_panel.validate_panel``); this reads
-    the validated shape only.  Structures the one-row dense schema does not
-    project are named, never dropped.
+    the validated shape only.  Dense rows project as before; routed rows
+    project from rank-local scope shape (see ``_routed_row_view``).
+    Structures no projection owns are named, never dropped.
     """
     from .timing_panel import json_bytes, read_bound
     rows = panel.get("rows")
@@ -230,21 +283,25 @@ def panel_row_views(panel: Mapping[str, Any]) -> list[dict[str, Any]]:
             raise ValueError(f"panel row {index}: plan scope for scope_id "
                              f"{row.get('scope_id')!r} is absent")
         structure = str(scope.get("structure"))
-        if structure != "dense":
-            raise ValueError(
-                f"panel row {index}: structure {structure!r} has no panel projection in "
-                "the tessera.shape_time_panel.v1 schema yet; extend panel_row_views when "
-                "the schema grows, do not compare a routed stack by dense projection")
-        shape = scope["shape"]
-        samples = json_bytes(read_bound(panel["evidence"]["samples"]))
-        views.append(row_view(
-            structure="dense", module=row["prefix"],
-            family=family_key(_route_family(scope["route"])), grid=scope["grid"],
-            q256=(scope["q256"],),
-            rank_local_shape=((shape["N"], shape["K"]),),
-            m=shape["M"], median_ms=row["timing"]["median_ms"],
-            samples_n=len(samples["samples_ms"]), scope_id=row.get("scope_id"),
-            panel_row_index=index))
+        if structure == "dense":
+            shape = scope["shape"]
+            samples = json_bytes(read_bound(panel["evidence"]["samples"]))
+            views.append(row_view(
+                structure="dense", module=row["prefix"],
+                family=family_key(_route_family(scope["route"])), grid=scope["grid"],
+                q256=(scope["q256"],),
+                rank_local_shape=((shape["N"], shape["K"]),),
+                m=shape["M"], median_ms=row["timing"]["median_ms"],
+                samples_n=len(samples["samples_ms"]), scope_id=row.get("scope_id"),
+                panel_row_index=index))
+            continue
+        if structure == "routed_moe":
+            views.append(_routed_row_view(panel, scope, row, index))
+            continue
+        raise ValueError(
+            f"panel row {index}: structure {structure!r} has no panel projection in "
+            "the tessera.shape_time_panel.v1 schema yet; extend panel_row_views when "
+            "the schema grows, do not compare a routed stack by dense projection")
     return views
 
 
