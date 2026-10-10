@@ -137,7 +137,7 @@ def main() -> int:
         "changed_elements": changed, "total_elements": total,
         "teacher": str(Path(args.teacher).resolve()),
         "label": "baseline screen, not a promoted rate"}, indent=1))
-    del teacher
+    del teacher, model  # the loop variable still holds the teacher
     for regime in ("prefill", "decode"):
         stem = outdir / f"student_{regime}"
         rc = fv.dump_payload(_ns(args, "student", regime, str(stem),
