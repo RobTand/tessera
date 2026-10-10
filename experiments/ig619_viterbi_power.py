@@ -14,6 +14,11 @@ torch.profiler kernel table for one single-unit encode (it names the
 time-holding kernel), and sha256 of every unit blob in both arms (wires stay
 byte-identical). verify=False: the claim is encode throughput, and the
 verify decode is not on that path.
+
+Width arms: --l2-div sets TESSERA_WINDOW_L2_BYTES to L2//div before tessera
+imports, so the step kernel tiles wider than the default sixth of L2.
+--best-form sets TESSERA_WINDOW_BEST_FORM. Both keep bytes identical by
+contract. The receipt records the resolved budget and each plan width.
 """
 
 from __future__ import annotations
@@ -243,14 +248,24 @@ def main(argv=None) -> int:
     ap.add_argument("--units", type=int, default=4)
     ap.add_argument("--idle-s", type=float, default=3.0)
     ap.add_argument("--out", default="/tmp/ig619_receipt.json")
+    ap.add_argument("--l2-div", type=int, default=None)
+    ap.add_argument("--best-form", type=int, default=None, choices=(0, 1))
     args = ap.parse_args(argv)
 
     import torch
-    from tessera import window_viterbi
 
     if not torch.cuda.is_available():
         print(json.dumps({"error": "no CUDA device"}))
         return 2
+    l2_cache = int(torch.cuda.get_device_properties(0).L2_cache_size)
+    if args.l2_div is not None:
+        if args.l2_div < 1:
+            print(json.dumps({"error": "l2-div is not a positive divisor"}))
+            return 2
+        os.environ["TESSERA_WINDOW_L2_BYTES"] = str(l2_cache // args.l2_div)
+    if args.best_form is not None:
+        os.environ["TESSERA_WINDOW_BEST_FORM"] = str(args.best_form)
+    from tessera import window_viterbi
     rec: dict = {
         "schema": "tessera.ig619_viterbi_power/1",
         "device": torch.cuda.get_device_name(),
@@ -265,6 +280,10 @@ def main(argv=None) -> int:
                 ("TESSERA_WINDOW_BEST_FORM", "TESSERA_WINDOW_GRAPH",
                  "TESSERA_WINDOW_L2_BYTES", "TESSERA_WINDOW_RATE_STREAMS")},
         "envelope_w": ENVELOPE_W,
+        "l2_cache_size": l2_cache,
+        "l2_budget_bytes": window_viterbi._L2_BUDGET,
+        "l2_div": args.l2_div,
+        "best_form": args.best_form,
     }
     with Power() as power:
         time.sleep(args.idle_s)
@@ -301,11 +320,35 @@ def main(argv=None) -> int:
                 "batch": _netdata_power("localhost", *row["batch_utc_unix"]),
             }
         rec["netdata_power"] = netdata
+    rec["plans"] = _plan_diag()
     text = json.dumps(rec, indent=1)
     with open(args.out, "w") as f:
         f.write(text)
     print(text)
     return 0
+
+
+def _plan_diag() -> list:
+    """Each cached plan width, batch count and step count, per shape.
+
+    Names whether an arm runs launch-bound: batches times steps is the
+    _step launch count, width times low is the grid behind each launch.
+    """
+    from tessera import window_viterbi
+
+    plans, _seen = window_viterbi._window_maps()
+    out = []
+    for key, plan in plans.items():
+        (device, rows, cols, arity, size, rate, chunk, has_w, budget, scan,
+         best, tile) = key
+        out.append({
+            "rows": rows, "cols": cols, "arity": arity, "size": size,
+            "rate": rate, "chunk": chunk, "has_weights": has_w,
+            "budget_bytes": budget, "best_form": best,
+            "steps": plan.steps, "width": plan.width,
+            "batches": plan.batches, "grid": list(plan.grid),
+        })
+    return out
 
 if __name__ == "__main__":
     sys.exit(main())
