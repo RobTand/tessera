@@ -4807,6 +4807,13 @@ module and charges shared storage once. This observer adds no model buffers,
 device movement, or tensor copy.
 The native operator receipt uses the same route interface.
 It hashes resident tensor contents before and after each measurement.
+
+Re-stamped 2026-10-10 for issue #1182 and the measurement acceptance gate.
+`bench_native_operator.accept_measurement` accepts a timing-admissible receipt only
+with every phase measured, every tensor digest present, and every transfer byte
+count tracked. The bench runs this gate before it publishes a timing-admissible
+receipt. Each gap refuses by name.
+
 Storage alias conflicts retain the existing refusal. An object a route does
 not declare (the research per-expert `PackedWindowUnits`) is not walked, so its
 bytes stay uncharged in the report rather than attributed by guess. Dense export
