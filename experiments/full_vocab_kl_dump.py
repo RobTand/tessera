@@ -245,30 +245,38 @@ def cmd_compare(args: argparse.Namespace) -> int:
             f"vocab {(student_meta.get('payload') or {}).get('vocab_size')}\n"
             "  An exact number over mismatched inputs is a plausible wrong "
             "number with no error.")
-    t = np.asarray(t_arr, dtype=np.float64)
-    s = np.asarray(s_arr, dtype=np.float64)
-    n, vocab = t.shape
-    # max-subtracted normalisation: the dump writes true log-softmax rows,
-    # so this changes nothing but the rounding.
-    t = t - t.max(axis=1, keepdims=True)
-    s = s - s.max(axis=1, keepdims=True)
-    p = np.exp(t)
-    p /= p.sum(axis=1, keepdims=True)
-    q = np.exp(s)
-    q /= q.sum(axis=1, keepdims=True)
-    kl = (p * (np.log(p) - np.log(q))).sum(axis=1)
-    t_top1 = t.argmax(axis=1)
-    s_top1 = s.argmax(axis=1)
-    agree = t_top1 == s_top1
-    t_top1_p = p[np.arange(n), t_top1]
-    conf = t_top1_p > 0.5
-    # bare areas for a top-K instrument: teacher mass its own top-K cannot
-    # see, and positions where the teacher has no confident top-1. K clamps
-    # to the vocabulary: the instrument must not assume vocab > 1024.
+    n, vocab = t_arr.shape
+    # Row blocks: a full float64 copy of both sides is 10 GB at this
+    # vocabulary. The dump writes true log-softmax rows, so max-subtracted
+    # normalisation changes nothing but the rounding.
     cov_k = min(1024, vocab)
-    order = np.argpartition(-t, cov_k - 1, axis=1)[:, :cov_k]
-    take = np.take_along_axis(p, order, axis=1).sum(axis=1)
-    tail = 1.0 - take
+    kl_all = np.empty(n, dtype=np.float64)
+    agree_all = np.empty(n, dtype=bool)
+    tail_all = np.empty(n, dtype=np.float64)
+    top1p_all = np.empty(n, dtype=np.float64)
+    step = 256
+    for lo in range(0, n, step):
+        tb = np.asarray(t_arr[lo:lo + step], dtype=np.float64)
+        sb = np.asarray(s_arr[lo:lo + step], dtype=np.float64)
+        tb -= tb.max(axis=1, keepdims=True)
+        sb -= sb.max(axis=1, keepdims=True)
+        pb = np.exp(tb)
+        pb /= pb.sum(axis=1, keepdims=True)
+        qb = np.exp(sb)
+        qb /= qb.sum(axis=1, keepdims=True)
+        m = tb.shape[0]
+        kl_all[lo:lo + m] = (pb * (np.log(pb) - np.log(qb))).sum(axis=1)
+        tt = tb.argmax(axis=1)
+        agree_all[lo:lo + m] = tt == sb.argmax(axis=1)
+        top1p_all[lo:lo + m] = pb[np.arange(m), tt]
+        # bare areas for a top-K instrument: teacher mass its own top-K
+        # cannot see. K clamps to the vocabulary.
+        order = np.argpartition(-tb, cov_k - 1, axis=1)[:, :cov_k]
+        tail_all[lo:lo + m] = (
+            1.0 - np.take_along_axis(pb, order, axis=1).sum(axis=1))
+    kl, agree = kl_all, agree_all
+    conf = top1p_all > 0.5
+    tail = tail_all
     label = teacher_meta.get("teacher_label") or "unknown"
     corpus = teacher_meta.get("corpus") or {}
     tok = teacher_meta.get("tokenizer") or {}
