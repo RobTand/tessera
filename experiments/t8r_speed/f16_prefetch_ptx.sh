@@ -29,7 +29,7 @@ docker run --rm --network=none --ipc=host --cpuset-cpus "$CPUS" \
 set -uo pipefail
 cd '$OUT'
 command -v nvcc cuobjdump || exit 3
-INC=\$(python3 -c 'import torch.utils.cpp_extension as e; print(\" \".join(\"-I\"+p for p in e.include_paths()))')
+INC=\$(python3 -c 'import sysconfig, torch.utils.cpp_extension as e; print(\" \".join([\"-I\"+p for p in e.include_paths()] + [\"-I\"+sysconfig.get_paths()[\"include\"]]))')
 FLAGS=\"-O3 -lineinfo -std=c++17 -DTESSERA_ROUTED_FUSED_FP8=1 -DTESSERA_ROUTED_FUSED_MMA8=0 -gencode arch=compute_121,code=sm_121\"
 for a in base new; do
   nvcc \$FLAGS \$INC --ptx \$a.cu -o \$a.ptx || exit 4
