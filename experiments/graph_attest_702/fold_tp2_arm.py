@@ -129,7 +129,7 @@ def phase_p(setup: dict, rank: int, env: Envelope, run: Path, owned: dict) -> di
     arm_name, fold = setup["arm"], setup["fold"]
     config, arm = build_config(setup, str(SNAP))
     out = run / arm_name
-    (out / "profiles").mkdir(parents=True, exist_ok=True)
+    (out / "profiles" / arm_name).mkdir(parents=True, exist_ok=True)
     (run / f"ext{rank}").mkdir(parents=True, exist_ok=True)
     image_env = {"TESSERA_CENSUS_RUNTIME_IMAGE": IMAGE,
                  "TESSERA_ROUTE_TRACE": f"/out/route-rank{rank}.json"}
