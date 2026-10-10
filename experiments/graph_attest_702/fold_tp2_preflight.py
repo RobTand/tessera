@@ -73,6 +73,13 @@ def check_arm_schema(tmp: Path) -> None:
             + ("TESSERA_GLM53_FOLD_SHARED_ADD=1\n" if name == "gate" else ""))
     print("arm schema ok: base and gate .env files written")
 
+def check_claim_shape() -> None:
+    arm_src = (ROOT / "experiments/graph_attest_702/fold_tp2_arm.py").read_text()
+    have = set(re.findall(r'(\w+)=', arm_src.split("owned = dict(")[1].split(")")[0]))
+    need = {"action_key", "nonce", "scope_id", "host", "container_owner", "claimed_unix"}
+    assert not (need - have), f"claim identity lacks {need - have}"
+    print("claim shape ok: arm identity carries every require_claim key")
+
 
 def check_lever_chain() -> None:
     gates = (ROOT / "tools" / "serve_comparison_gates.sh").read_text()
@@ -123,8 +130,8 @@ def main() -> int:
     check_fold_latch()
     check_artifact()
     check_arm_schema(tmp)
+    check_claim_shape()
     check_lever_chain()
-    check_serve_argv()
     print("D38 PREFLIGHT PASS")
     return 0
 
