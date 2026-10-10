@@ -67,7 +67,9 @@ for a in base new; do
   echo "$a: lib=$lib"
   docker run --rm --network=none --user "$(id -u):$(id -g)" -v "$OUT":"$OUT" ${NATIVE_CONTAINER_EXT:+-v "$NATIVE_CONTAINER_EXT":"$NATIVE_CONTAINER_EXT"} --entrypoint bash "$IMG" -c \
     "cuobjdump -sass '$lib' > '$OUT/sass-$a.txt'" > "$OUT/sass-$a.log" 2>&1 || FAILED+=("sass-$a:$?")
-  echo "$a: prefetch.global.L1 = $(grep -c 'prefetch.global.L1' "$OUT/sass-$a.txt" 2>/dev/null || echo 0)"
+  echo "$a: cuobjdump bytes=$(stat -c %s "$OUT/sass-$a.txt" 2>/dev/null || echo 0)"
+  echo "$a: PREFETCH lines = $(grep -ci 'prefetch' "$OUT/sass-$a.txt" 2>/dev/null || true)"
+  grep -ai -m3 'prefetch' "$OUT/sass-$a.txt" 2>/dev/null | cut -c1-160 || true
 done
 fi
 python3 - "$OUT" <<'PY'
@@ -98,17 +100,22 @@ json.dump(rows, open(root / "ab_summary.json", "w"), indent=1)
 for r in rows:
     print(json.dumps(r))
 print(f"cells={len(rows)} mismatches={mismatches}")
-def scoreboard(d):
-    hits = []
-    for f in glob.glob(str(root / d / "ncu.csv")):
-        with open(f, newline="") as fh:
-            for line in fh:
-                if "scoreboard" in line.lower():
-                    hits.append(line.strip())
-    return hits
+import os
 for d in ("ncu-base", "ncub-new"):
-    print(f"== {d} scoreboard lines:")
-    for h in scoreboard(d)[:20]:
+    dd = root / d
+    names = sorted(os.path.basename(p) for p in dd.glob("*") if p.is_file())[:12] if dd.is_dir() else ["DIR MISSING"]
+    print(f"== {d}: " + "; ".join(names))
+    f = dd / "ncu.csv"
+    if not f.exists():
+        print(f"== {d}: ncu.csv MISSING")
+        continue
+    lines = open(f, errors="replace").read().splitlines()
+    print(f"== {d}: ncu.csv lines={len(lines)}")
+    for h in lines[:3]:
+        print(f"  header: {h[:200]}")
+    hits = [ln.strip()[:300] for ln in lines if "stall" in ln.lower() or "scoreboard" in ln.lower()]
+    print(f"== {d}: stall/scoreboard lines={len(hits)}")
+    for h in hits[:40]:
         print(f"  {h}")
 PY
 echo "FAILED=[${FAILED[*]:-none}]"
