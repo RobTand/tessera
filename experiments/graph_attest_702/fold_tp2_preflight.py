@@ -37,6 +37,44 @@ def check_imports() -> None:
     print("imports ok: intake, identity, generation client, tp2_recipe")
 
 
+def check_arm_names() -> None:
+    import ast
+    import builtins
+    src = (ROOT / "experiments/graph_attest_702/fold_tp2_arm.py").read_text()
+    tree = ast.parse(src)
+    module_defs = {n.name for n in tree.body if isinstance(n, (ast.FunctionDef, ast.ClassDef))}
+    for n in tree.body:
+        if isinstance(n, ast.Import):
+            module_defs |= {(a.asname or a.name).split(".")[0] for a in n.names}
+        elif isinstance(n, ast.ImportFrom):
+            module_defs |= {a.asname or a.name.split(".")[0] for a in n.names}
+        elif isinstance(n, ast.Assign):
+            for t in n.targets:
+                if isinstance(t, ast.Name):
+                    module_defs.add(t.id)
+    module_defs |= set(dir(builtins))
+    bad = {}
+    for node in tree.body:
+        if not isinstance(node, ast.FunctionDef):
+            continue
+        stores, loads = set(), set()
+        for child in ast.walk(node):
+            if isinstance(child, ast.Name):
+                if isinstance(child.ctx, ast.Store):
+                    stores.add(child.id)
+                else:
+                    loads.add(child.id)
+            elif isinstance(child, ast.arg):
+                stores.add(child.arg)
+            elif isinstance(child, ast.ExceptHandler) and child.name:
+                stores.add(child.name)
+        missing = loads - stores - module_defs
+        if missing:
+            bad[node.name] = sorted(missing)
+    assert not bad, f"undefined names in fold_tp2_arm: {bad}"
+    print("arm names ok: every loaded name resolves in fold_tp2_arm")
+
+
 def check_fold_latch() -> None:
     os.environ.pop("TESSERA_GLM53_FOLD_SHARED_ADD", None)
     from tessera.serving import glm53_shared_fold as fold
@@ -127,6 +165,7 @@ def main() -> int:
     tmp = Path(args.tmp)
     tmp.mkdir(parents=True, exist_ok=True)
     check_imports()
+    check_arm_names()
     check_fold_latch()
     check_artifact()
     check_arm_schema(tmp)
