@@ -34,6 +34,19 @@ Cross-check: each served lower bound sits below its exact number (prefill
 0.01504591 <= 0.01530802). The decode bounds cover different position sets
 (256 strided served vs 4088 exact), so their gap is expected and labelled.
 
+Per-position maxima tell the run-parity side. The served prefill
+`kl_lower_max` is 1.5424 against an exact `kl_max` of 1.2541 on the same
+4088 positions: a lower bound above the exact number on the same
+distributions is impossible, so the served vLLM logits differ from the
+in-runtime logits. The stride-matched exact decode KL on the served 256
+rows (action `dca4c356828501a6644eebbdaf5e3a066513d4a6c60454018e37b60a932ae07c`)
+reads mean 0.01398055, p99 0.06683516, max 0.08358969, top-1 agree 92.97%;
+the served decode lower bound on those rows reads mean 0.01329875 (below
+the exact mean, as a bound must) but max 0.09554864, above the exact max
+0.08358969. Both regimes show the same labelled gap: quality (exact) and
+run parity (served) stay split, and the served path is not a substitute
+for the exact number.
+
 ## 2. Same histories, same masks
 
 All four exact payloads carry contract
@@ -41,7 +54,8 @@ All four exact payloads carry contract
 source `076d33efc4476dcc417a2bb249c0bc950bb54bbb471d73f69c15cef0010b53d0`,
 tokenizer `76f13c8e6e553e35b09733ed5543274fdcd97285d3fcd7e1cccd4e0ad8089891`,
 4088 positions and vocab 151936. The driver asserts this before it exits, and
-`compare` refuses anything else. Decode advances teacher-forced on the
+`compare` refuses anything else, names the first differing identity field,
+and refuses a missing identity too. Decode advances teacher-forced on the
 corpus's own next token, so histories never drift. Prefill scores one 512-row
 forward per chunk; decode records one row forwarded per scored position.
 
@@ -66,8 +80,8 @@ forward per chunk; decode records one row forwarded per scored position.
 Greedy smoke (`experiments/moe_greedy_smoke.py`, pair schema
 `tessera.moe-greedy-smoke-pair/2`, reference `bf16_source`), 7 short raw
 prompts plus one 2000-token long-context prompt (`PLONG`, WikiText-2 test
-text, disjoint from no KL position by claim but a smoke, not a quality
-measurement):
+text from corpus chunks 4..7 that the KL also scores: a smoke over scored
+text, not a quality measurement):
 
 | prompt | student | teacher | shared |
 |---|---|---|---|
@@ -96,21 +110,38 @@ under `/mnt/shared/tessera-runs/ig1172/serve/`:
   `.build.json` sidecars and `.metrics.txt` gate files.
 - `logs/serve_smoke_{teacher_bf16,student_fp8rtn}.log`.
 - `metrics_{teacher_bf16,student_fp8rtn}.txt`.
-- `exit_status.txt`: all twelve steps exit 0 (four top-K dumps, two
-  compares, prompts build, two smoke serves, smoke compare).
+- `exit_status.txt` (12 lines): ten step statuses read 0 (four top-K dumps,
+  two compares, prompts build, two smoke serves, smoke compare) plus two
+  serve-log path lines. Each step records its own status through `step`
+  before `set -e` can hide a failure; a rerun that fails stops at the
+  failing step with its status on record.
 
 ## 6. Device and receipts (strict-CUDA block)
 
 - Dumps ran on sparklina/sparky GB10 (sm121, compute capability 12.1),
   `execution.device: cuda`, device name `NVIDIA GB10`, peak 2.35 GB
-  (teacher) and 5.04 GB (student) from the CUDA allocator counter.
+  (teacher) and 5.04 GB (student) from the CUDA allocator counter. The
+  student peak is the process peak with the teacher still resident (the
+  dump loop variable held it past `del teacher`); the driver now releases
+  both names before the student dumps.
 - Serves ran on sparklina, compute 12.1, 35.9 W mean GPU power.
+- Strict-CUDA unit run (action
+  `860a2b7e2b89e623684f126169ed0a095bc489e516bcd2cb95d48f11b537965e`,
+  sparky, NVIDIA GB10, torch 2.11.0+cu130):
+  The run covers `tests/test_full_vocab_kl_instrument.py`: 13 passed,
+  0 skipped, 1 test allocated on the device, no box-artifact skip.
+  `KL_TOOL_DIR` pointed at the shared-mount instrument
+  (`/mnt/shared/tessera-suite-envs/ts-readiness-kl-20261002`), so the
+  `kl_tool` reader test ran against a production-written payload. The
+  earlier x86 receipts (`d4a35862`, `5f03b06a`) are CPU-only populations
+  and claim no CUDA surface.
 - PrismaBuild CAS receipts: dump `cab050bd636e6a037ceee35ee977647e1d6d013a703c748101f938c288301a0a`,
   stage `74c15d2d006edc5b42296dc1969363f49d9e1248cf28cf91e78b0be1c`,
   prefill compare `da79c7d5e38350179ed5b32ff97ce22cd3ad60dd8da939b5a97acaf8d95dfe0f`,
   decode compare `911e2cf56e0f6965d3561e41107639c4ff8d560ac152147b15d5024f15f6ce8d`,
   serve `6129f61416bf3fdeba59427fe5d68f9980e4b7854e30b9d71a5019c4a4af42f2`,
-  unit tests `d4a358628cd6d5816022b27b14bce7111020fc6d2d302635b7367f9acbe9ea77`.
+  strict-CUDA unit tests `860a2b7e2b89e623684f126169ed0a095bc489e516bcd2cb95d48f11b537965e`,
+  stride-matched exact decode KL `dca4c356828501a6644eebbdaf5e3a066513d4a6c60454018e37b60a932ae07c`.
 
 ## 7. What this does not claim
 
