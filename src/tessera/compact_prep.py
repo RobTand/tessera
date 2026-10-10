@@ -911,10 +911,14 @@ def prepare_a4_wire_compact(wire: CompactWire, *, device="cuda"):
 
     TCQ retains the validated packed BODY verbatim and uses the existing
     forest/code owners. WINDOW uses lane_planes.pack_window_planes, including
-    its byte alignment, incoming-state padding and trailing slack. Neither
-    changes stored bytes or introduces a serving route.
+    its byte alignment, incoming-state padding and trailing slack. The widths
+    it admits are the recipe owner's: the served fourteen bit wire and the
+    research twelve bit wire (``export.E2M1X2_SERVED_WINDOW_BITS`` and
+    ``export.E2M1X2_SUBCAP_WINDOW_BITS``). Neither changes stored bytes or
+    introduces a serving route.
     """
     from . import lane_planes as lp
+    from .export import E2M1X2_SERVED_WINDOW_BITS, E2M1X2_SUBCAP_WINDOW_BITS
     from .kernel_a4 import build_code_nibbles
     from .kernel_a4_wire import A4WireUnit
     from .stock import e2m1_nibbles
@@ -941,8 +945,12 @@ def prepare_a4_wire_compact(wire: CompactWire, *, device="cuda"):
         initial = md.shard_state.reshape(-1).to(device=device, dtype=torch.int32)
     memory = 0
     if md.body is BodyKind.WINDOW:
-        if int(md.manifest.window_bits) != 12:
-            raise GrammarError("packed A4 geometry requires the actual served twelve bit WINDOW")
+        if int(md.manifest.window_bits) not in (E2M1X2_SUBCAP_WINDOW_BITS, E2M1X2_SERVED_WINDOW_BITS):
+            raise GrammarError(
+                "packed A4 geometry requires the served fourteen bit or research twelve bit WINDOW "
+                f"(export.E2M1X2_SERVED_WINDOW_BITS={E2M1X2_SERVED_WINDOW_BITS}, "
+                f"export.E2M1X2_SUBCAP_WINDOW_BITS={E2M1X2_SUBCAP_WINDOW_BITS}); "
+                f"this unit carries L={int(md.manifest.window_bits)}")
         require_window_geometry(md.manifest.window_bits, rates)
         # Existing packer is the byte-order, padding, offsets and slack owner.
         parsed = _window_unit(md, device)
