@@ -1,4 +1,10 @@
 # Changelog
+## 2026-10-10 — pure-check correction for PQ2459 fixtures (issue #1124)
+
+Name the pinned serve image through the contract field in scope.json, not a copied digest.
+Qualify the authorization note references as RobTand/prismaquant#2459 and rebind the packet scope digest.
+Wire bytes, cells, entry points, and qualification state stay unchanged.
+
 ## 2026-10-09 — additive PQ2459 fixture inputs (issue #1124)
 
 Publish the eight-cell fixture input packet for PrismaQuant #2459.
