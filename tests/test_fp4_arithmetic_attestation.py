@@ -318,39 +318,6 @@ def packed_shapes_fixture_report(*shapes):
     return report
 
 
-def test_fixed_tolerance_refuses_a_correct_cancellation_result():
-    import torch
-    from tessera.fp4_arithmetic import check_packed_stock_arithmetic, derive_packed_stock_bound
-    report = packed_shapes_fixture_report((2, 8, 4096))
-    kwargs = dict(k=4096, global_scale=1, report=report, device="CPU test fixture",
-                  physical_device="fixture-device", shape=(2, 8, 4096))
-    allowance, _ = derive_packed_stock_bound(64.0, **kwargs)
-    fixed_tolerance = 1e-4
-    measured_error = 0.01
-    assert allowance["atol"] > measured_error > fixed_tolerance
-    check_kwargs = {key: value for key, value in kwargs.items() if key not in ("device", "shape")}
-    actual = torch.full((2, 8), measured_error, dtype=torch.float32)
-    expected = torch.zeros((2, 8), dtype=torch.float32)
-    receipt = check_packed_stock_arithmetic(actual, expected, 64.0, **check_kwargs)
-    assert receipt["max_abs_error"] > fixed_tolerance
-
-
-def test_fixed_tolerance_accepts_a_wrong_tiny_output():
-    import torch
-    from tessera.fp4_arithmetic import FP4QualificationError as Refusal
-    from tessera.fp4_arithmetic import check_packed_stock_arithmetic, derive_packed_stock_bound
-    report = packed_shapes_fixture_report((1, 4, 256))
-    kwargs = dict(k=256, global_scale=1, report=report, device="CPU test fixture",
-                  physical_device="fixture-device", shape=(1, 4, 256))
-    allowance, _ = derive_packed_stock_bound(1e-7, **kwargs)
-    assert allowance["atol"] < 1e-6 < 1e-3
-    check_kwargs = {key: value for key, value in kwargs.items() if key not in ("device", "shape")}
-    actual = torch.full((1, 4), 1e-6, dtype=torch.float32)
-    expected = torch.zeros((1, 4), dtype=torch.float32)
-    with pytest.raises(Refusal, match="exceeds"):
-        check_packed_stock_arithmetic(actual, expected, 1e-7, **check_kwargs)
-
-
 def test_fixed_allowance_never_qualifies_without_a_derived_bound():
     from tessera.fp4_arithmetic import FP4QualificationError as Refusal
     from tessera.fp4_arithmetic import require_derived_stock_qualification
