@@ -4,7 +4,8 @@
 
 Guard the three remaining vLLM consumers on the submodule they import, not on the bare package.
 A leaked bare vLLM stub now skips those files instead of failing them with `'vllm' is not a package`.
-The cohort regression test replays the old import-time stub against the real intake consumer.
+The benchmark regression checks import-state preservation with and without real vLLM.
+The existing ddd2137 repair moves the benchmark installer from import time to its command entry point.
 No serving default, qualifier, wire, or timing rule changes.
 
 ## 2026-10-10 — admit the served L14 WINDOW in the opt-in packed reader (issue #1166)
