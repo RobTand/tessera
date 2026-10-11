@@ -1,5 +1,16 @@
 # Changelog
 
+## 2026-10-11 - bind KL histories and repair campaign completion, issue #1172
+
+Keep history identities and KL reduction in the full-vocabulary instrument.
+Hash effective token chunks and their non-first-position masks.
+Give each campaign slice a content-bound contract identity.
+Retain both teacher metadata paths before the four-payload check.
+Require decode metadata and valid prefix addresses before exact row selection.
+Use normalized log probabilities, with exact zero-mass semantics.
+Exercise the campaign with a supported CPU checkpoint through its final exit.
+These source repairs do not replace the failed P5 generation result.
+No serving lane, runtime gate, or rate promotion changes.
 ## 2026-10-11 - use a temporary checkpoint path in the KL fixture, issue #1172
 
 Derive the synthetic checkpoint path from each test's temporary directory.

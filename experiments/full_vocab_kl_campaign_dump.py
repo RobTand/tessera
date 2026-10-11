@@ -83,9 +83,9 @@ def main() -> int:
         chunks = chunks[:args.slice_chunks]
     if args.slice_tokens:
         chunks = [c[:args.slice_tokens] for c in chunks]
-    corpus = dict(corpus, chunks=chunks, n_chunks=len(chunks),
-                  seqlen=len(chunks[0]),
-                  scored_positions=len(chunks) * (len(chunks[0]) - 1))
+    corpus = dict(corpus, chunks=chunks)
+    corpus.update(fv.corpus_identity(
+        corpus, sliced=bool(args.slice_chunks or args.slice_tokens)))
     top_id = max(max(c) for c in chunks)
     print(f"chunks={len(chunks)} seqlen={len(chunks[0])} "
           f"max_id={top_id}", flush=True)
@@ -93,7 +93,6 @@ def main() -> int:
     outdir.mkdir(parents=True, exist_ok=True)
     if args.slice_chunks or args.slice_tokens:
         # A sliced input set is a new contract, never the frozen one.
-        corpus = dict(corpus, contract_sha256="slice-test-only")
         corp_path = outdir / "corpus_slice.json"
         corp_path.write_text(json.dumps(corpus))
     else:
@@ -116,6 +115,7 @@ def main() -> int:
             rc = fv.dump_payload(_ns(args, role, regime, str(stem),
                                      str(corp_path), args.teacher), model)
             assert rc == 0
+            stems[(role, regime)] = str(stem) + ".meta.json"
     _commit("dump", 1)
     t0 = time.time()
     student, changed, total = build_fp8rtn_student(teacher, torch)

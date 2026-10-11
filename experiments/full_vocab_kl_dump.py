@@ -113,25 +113,59 @@ def read_full_vocab_payload(meta_path: str | Path) -> tuple[dict, np.ndarray]:
     return meta, arr
 
 
-def _identity_fields(meta: dict) -> dict:
+def corpus_identity(corpus: dict, *, sliced: bool = False) -> dict:
+    """Derive the effective histories and non-first mask from token chunks."""
+    chunks = corpus["chunks"]
+    lengths = [len(chunk) for chunk in chunks]
+    if not lengths or min(lengths) < 2 or len(set(lengths)) != 1:
+        raise SystemExit("REFUSED: corpus needs nonempty equal chunks of at least two tokens")
+    mask = [list(range(1, length)) for length in lengths]
+    def digest(value):
+        return hashlib.sha256(json.dumps(value, sort_keys=True,
+                                         separators=(",", ":")).encode()).hexdigest()
+    histories_sha = digest(chunks)
+    mask_sha = digest(mask)
+    contract_sha = corpus["contract_sha256"]
+    if sliced:
+        contract_sha = digest({"parent_contract_sha256": contract_sha,
+                               "histories_sha256": histories_sha,
+                               "mask_sha256": mask_sha})
+    return {"source_sha256": corpus["source_sha256"],
+            "contract_sha256": contract_sha,
+            "histories_sha256": histories_sha, "mask_sha256": mask_sha,
+            "chunk_lengths": lengths, "n_chunks": len(chunks),
+            "seqlen": lengths[0], "tokens": sum(lengths),
+            "scored_positions": sum(len(row) for row in mask)}
+
+
+def _identity_fields(meta: dict, *, subset: bool = False) -> dict:
     corpus = meta.get("corpus") or {}
     tokenizer = meta.get("tokenizer") or {}
     payload = meta.get("payload") or {}
-    return {"contract_sha256": corpus.get("contract_sha256"),
-            "source_sha256": corpus.get("source_sha256"),
-            "tokenizer identity_sha256": tokenizer.get("identity_sha256"),
-            "positions": payload.get("positions"),
-            "vocab_size": payload.get("vocab_size")}
+    fields = {"contract_sha256": corpus.get("contract_sha256"),
+              "source_sha256": corpus.get("source_sha256"),
+              "tokenizer identity_sha256": tokenizer.get("identity_sha256"),
+              "tokenizer vocab_size": tokenizer.get("vocab_size"),
+              "n_chunks": corpus.get("n_chunks"),
+              "seqlen": corpus.get("seqlen")}
+    if not subset:
+        fields.update(histories_sha256=corpus.get("histories_sha256"),
+                      mask_sha256=corpus.get("mask_sha256"),
+                      positions=payload.get("positions"),
+                      vocab_size=payload.get("vocab_size"))
+    return fields
 
 
 def histories_and_masks(meta_a: dict, meta_b: dict) -> bool:
-    """Whether two payloads score the same inputs under the same mask."""
+    """Whether two full payloads score the same inputs under the same mask."""
     return _first_identity_mismatch(meta_a, meta_b) == "no field differs"
 
 
-def _first_identity_mismatch(meta_a: dict, meta_b: dict) -> str:
+def _first_identity_mismatch(meta_a: dict, meta_b: dict, *,
+                             subset: bool = False) -> str:
     """Name the first identity field that differs, for the refusal."""
-    ids_a, ids_b = _identity_fields(meta_a), _identity_fields(meta_b)
+    ids_a = _identity_fields(meta_a, subset=subset)
+    ids_b = _identity_fields(meta_b, subset=subset)
     for name, a in ids_a.items():
         b = ids_b[name]
         if a is None or b is None:
@@ -141,17 +175,64 @@ def _first_identity_mismatch(meta_a: dict, meta_b: dict) -> str:
     return "no field differs"
 
 
+def decode_subset_rows(served: dict, teacher: dict, student: dict) -> np.ndarray:
+    """Validate the decode identity and prefix addresses before row selection."""
+    for role, meta in (("teacher", teacher), ("student", student),
+                       ("served", served)):
+        regime = meta.get("regime") or {}
+        if regime.get("name") != "decode":
+            raise SystemExit(f"REFUSED: {role} needs explicit decode metadata")
+        if role != "served" and (
+                regime.get("rows_per_scored_forward") != 1 or
+                regime.get("forwards") != meta["payload"]["positions"]):
+            raise SystemExit(f"REFUSED: {role} needs true M=1 decode metadata")
+    for other, subset in ((student, False), (served, True)):
+        why = _first_identity_mismatch(teacher, other, subset=subset)
+        if why != "no field differs":
+            raise SystemExit("REFUSED: " + why)
+    lengths = teacher["corpus"].get("chunk_lengths")
+    prefixes = served["regime"].get("prefix_lengths")
+    if (not isinstance(lengths, list) or not lengths or
+            any(type(n) is not int or n < 2 for n in lengths) or
+            len(lengths) != teacher["corpus"]["n_chunks"] or
+            any(n != teacher["corpus"]["seqlen"] for n in lengths) or
+            sum(n - 1 for n in lengths) != teacher["payload"]["positions"]):
+        raise SystemExit("REFUSED: decode chunk lengths do not cover exact rows")
+    if not isinstance(prefixes, list) or len(prefixes) != len(lengths):
+        raise SystemExit("REFUSED: prefix_lengths must address every chunk")
+    rows, offset = [], 0
+    for ci, (length, addresses) in enumerate(zip(lengths, prefixes)):
+        if (not isinstance(addresses, list) or not addresses or
+                any(type(p) is not int or not 1 <= p < length for p in addresses) or
+                addresses != sorted(set(addresses))):
+            raise SystemExit(f"REFUSED: chunk {ci} has invalid prefix addresses")
+        rows.extend(offset + p - 1 for p in addresses)
+        offset += length - 1
+    if (len(rows) != served["regime"].get("scored_positions") or
+            len(rows) != (served.get("payload") or {}).get("positions")):
+        raise SystemExit("REFUSED: prefix count differs from served scored positions")
+    return np.asarray(rows, dtype=np.int64)
+
+
 def kl_rows(teacher: np.ndarray, student: np.ndarray):
-    """The shared full-vocabulary reduction for one bounded row block."""
+    """Reduce normalized log probabilities without taking log of rounded mass."""
     lp = np.array(teacher, dtype=np.float64, copy=True)
     lq = np.array(student, dtype=np.float64, copy=True)
-    lp -= lp.max(axis=1, keepdims=True)
-    lq -= lq.max(axis=1, keepdims=True)
+    for name, logs in (("teacher", lp), ("student", lq)):
+        maxima = logs.max(axis=1, keepdims=True)
+        if np.isnan(logs).any() or not np.isfinite(maxima).all():
+            raise SystemExit(f"REFUSED: {name} row has no valid probability distribution")
+        logs -= maxima
+        logs -= np.log(np.exp(logs).sum(axis=1, keepdims=True))
     p = np.exp(lp)
-    p /= p.sum(axis=1, keepdims=True)
-    q = np.exp(lq)
-    q /= q.sum(axis=1, keepdims=True)
-    return (p * (np.log(p) - np.log(q))).sum(axis=1), lp, lq, p
+    active = p > 0.0
+    terms = np.zeros_like(p)
+    np.subtract(lp, lq, out=terms, where=active)
+    np.multiply(p, terms, out=terms, where=active)
+    # Positive teacher support against exact zero student mass is infinite KL,
+    # even when exponentiation rounds the positive teacher mass to zero.
+    terms[np.isfinite(lp) & np.isneginf(lq)] = np.inf
+    return terms.sum(axis=1), lp, lq, p
 
 
 
@@ -177,10 +258,11 @@ def cmd_dump(args: argparse.Namespace) -> int:
 def dump_payload(args: argparse.Namespace, model=None) -> int:
     import torch
     corpus = json.loads(Path(args.corpus_contract).read_text())
+    identity = corpus_identity(corpus)
     chunks = corpus["chunks"]
-    seqlen = corpus["seqlen"]
+    seqlen = identity["seqlen"]
     scored_per_chunk = seqlen - 1
-    positions = len(chunks) * scored_per_chunk
+    positions = identity["scored_positions"]
     if model is None:
         _commit("load", 0)
         model = _load_model(args.checkpoint, args.dtype)
@@ -229,9 +311,7 @@ def dump_payload(args: argparse.Namespace, model=None) -> int:
         "schema": DUMP_SCHEMA,
         "role": args.role,
         "metric": {"full_vocab": True, "requested_top_k": None},
-        "corpus": {"source_sha256": corpus["source_sha256"],
-                   "tokens": corpus["tokens"],
-                   "contract_sha256": corpus["contract_sha256"]},
+        "corpus": identity,
         "tokenizer": corpus["tokenizer"],
         "regime": {"name": args.regime,
                    "histories": len(chunks),

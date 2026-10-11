@@ -40,23 +40,9 @@ def main(argv: list[str] | None = None) -> int:
     args = ap.parse_args(argv)
     fv = _load_dump()
     served = json.loads(Path(args.served_meta).read_text())
-    prefixes = served["regime"]["prefix_lengths"]
     teacher_meta, t_arr = fv.read_full_vocab_payload(args.teacher)
     student_meta, s_arr = fv.read_full_vocab_payload(args.student)
-    if not fv.histories_and_masks(teacher_meta, student_meta):
-        raise SystemExit(
-            "REFUSED: " + fv._first_identity_mismatch(teacher_meta,
-                                                      student_meta))
-    n_chunks = len(prefixes)
-    per_chunk = teacher_meta["payload"]["positions"] // n_chunks
-    rows = []
-    for c, lens in enumerate(prefixes):
-        for p in lens:
-            rows.append(c * per_chunk + (int(p) - 1))
-    rows = np.asarray(rows, dtype=np.int64)
-    assert rows.size == 256, f"served stride set has {rows.size} rows, not 256"
-    n, vocab = t_arr.shape
-    assert tuple(s_arr.shape) == (n, vocab)
+    rows = fv.decode_subset_rows(served, teacher_meta, student_meta)
     kl = np.empty(rows.size, dtype=np.float64)
     agree = np.empty(rows.size, dtype=bool)
     step = 256
