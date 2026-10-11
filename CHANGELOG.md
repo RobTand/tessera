@@ -1,5 +1,12 @@
 # Changelog
 
+## 2026-10-11 — refuse malformed mask-skip audit identities (issue #1211)
+
+Require a positive integer world and an integer rank in that world.
+Refuse rank conflicts and unknown graph or compile coverage.
+Return a failed audit record instead of a traceback for malformed rank values.
+The CPU audit does not qualify a live MLA route or CUDA execution.
+
 ## 2026-10-10 — admit the served L14 WINDOW in the opt-in packed reader (issue #1166)
 
 Admit the served fourteen bit WINDOW beside the research twelve bit WINDOW in `prepare_a4_wire_compact`.
