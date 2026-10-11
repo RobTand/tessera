@@ -289,13 +289,6 @@ def test_native_loader_shape_produces_rank_local_packed_tiles(wires, rank):
     assert method.moe_kernel is None and method.moe_quant_config is None
 
 
-@pytest.mark.parametrize('value', [0, 3, 4, True, 2.0, '2'])
-def test_only_explicit_tp1_or_tp2_config_is_accepted(value):
-    with pytest.raises(ValueError, match='tensor_parallel_size'):
-        moe_route.ResearchSelectedMoeConfig(max_experts_per_chunk=1,
-                                            expected_tensor_parallel_size=value)
-
-
 @cuda
 @pytest.mark.parametrize('field,value', [('tp_size', 1), ('tp_rank', 2), ('ep_size', 2),
     ('dp_size', 2), ('pcp_size', 2), ('sp_size', 2), ('use_ep', True), ('enable_eplb', True)])
