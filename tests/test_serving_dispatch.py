@@ -102,18 +102,18 @@ def runtime_modules():
     before = {name: mod for name, mod in sys.modules.items() if _is_isolated(name)}
     missing = object()
     package_attr = getattr(package, "config", missing)
-    for name in list(sys.modules):
-        # Only a stub (no ``__file__``) may be REMOVED: importing real vLLM
-        # registers opaque types with Torch that no sys.modules bookkeeping
-        # can undo, so a second import of it dies.
-        if _is_isolated(name) and (name in _ISOLATED
-                                   or getattr(sys.modules.get(name), "__file__", None) is None):
-            sys.modules.pop(name, None)
-    vars(package).pop("config", None)
-    _install_vllm_stubs()
-    from tessera.serving.config import TesseraConfig
-    globals()["TesseraConfig"] = TesseraConfig
     try:
+        for name in list(sys.modules):
+            # Only a stub (no ``__file__``) may be REMOVED: importing real vLLM
+            # registers opaque types with Torch that no sys.modules bookkeeping
+            # can undo, so a second import of it dies.
+            if _is_isolated(name) and (name in _ISOLATED
+                                       or getattr(sys.modules.get(name), "__file__", None) is None):
+                sys.modules.pop(name, None)
+        vars(package).pop("config", None)
+        _install_vllm_stubs()
+        from tessera.serving.config import TesseraConfig
+        globals()["TesseraConfig"] = TesseraConfig
         yield
     finally:
         for name in list(sys.modules):
