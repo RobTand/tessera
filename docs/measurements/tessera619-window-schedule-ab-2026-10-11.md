@@ -2,8 +2,9 @@
 
 **Date:** 2026-10-11 · **Issue:** tessera#619 · **Runner:** PrismaBuild only
 **Probe:** `experiments/ig619_viterbi_power.py`. Both runs executed it at commit
-`affe0c1dd`. Two later commits add `--table` and the import-root fix. They change
-no measurement code.
+`affe0c1dd`, with `PYTHONPATH=src` (each receipt records it under `env`). Three
+later commits add `--table`, the import-root fix and a source-tree check. They
+change no measurement code. The two receipts predate the `tessera_src` field.
 **Actions:** sparky `0ab6c0cdbd6921b09239cdd6ce661f36b03426cc69fcdc2e56f2ce295f32b26d`,
 sparklina `ff64432c66248b151b4973491f379878e1a14dab48ba533b148115ba3e185efe`.
 Each ran about 13.5 minutes on one GB10 and exited 0. Each is one action per
@@ -294,6 +295,9 @@ python experiments/ig619_viterbi_power.py --table DIR/receipt-sparky-*.json
 
 The probe exits 0 when every arm matches and no phase failed. It exits 3 when
 an arm writes different bytes, 1 when a phase fails, and 2 without a CUDA
-device. The probe puts its own `src` first. A stale `tessera` in the
-site-packages cannot stand in for the snapshot. It did so for the first three
-arms of the 2026-10-10 attempt.
+device. The probe puts its own `src` first. A stale `tessera` in the site-packages cannot
+stand in for the snapshot. It did so for the first three arms of the 2026-10-10
+attempt. The probe also refuses a `tessera` from another tree (exit 2) and records
+the tree it used as `tessera_src`. A smoke at a 256x512 shape, run without
+`PYTHONPATH` on sparklina (action `c7127e5ca334`), recorded the snapshot's own
+`src` there.
