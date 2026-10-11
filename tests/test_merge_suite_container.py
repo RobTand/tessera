@@ -97,6 +97,31 @@ def test_lane_ignores_repeat_and_stay_inside_the_suite():
             owner.parse(argv[2:])
 
 
+@pytest.mark.parametrize("key,values", [
+    ("-k", ("first", "second")),
+    ("-m", ("first", "second")),
+    ("-n", ("1", "2")),
+    ("--maxfail", ("1", "2")),
+    ("--dist", ("worksteal", "worksteal")),
+    ("--durations", ("5", "10")),
+    ("--tb", ("short", "long")),
+])
+@pytest.mark.parametrize("attached", [(False, False), (True, True), (False, True)])
+def test_duplicate_singleton_pytest_options_refuse_at_the_consumer(key, values, attached):
+    argv = command()
+    for value, attach in zip(values, attached):
+        argv += [key + "=" + value] if attach else [key, value]
+    output, refusal = merge_module()._effective_surface_json(argv)
+    assert output is None, f"duplicate {key} was accepted: {output}"
+    assert "duplicate pytest option " + key in refusal
+
+
+def test_plugins_and_lane_ignores_remain_repeatable():
+    argv = command() + ["-p", "no:cacheprovider", "-p=xdist.plugin",
+                        "--ignore", "tests/first.py", "--ignore=tests/second.py"]
+    assert merge_module()._effective_surface_json(argv) == ("/receipts/run/surface.gpu.json", None)
+
+
 @pytest.mark.parametrize("path", ["other/suite_container.py", "./tools/suite_container.py", "/foreign/tools/suite_container.py", "tools/../tools/suite_container.py"])
 def test_a_runner_basename_establishes_no_authority(path):
     argv = command()
@@ -253,6 +278,69 @@ def test_container_submission_spends_its_parallel_reservation(tmp_path):
     assert refusal is None
     assert inner[inner.index("-n") + 1] == "4"
     assert inner[inner.index("--dist") + 1] == "worksteal"
+
+
+@pytest.mark.parametrize("explicit_scratch", [False, True])
+def test_two_lane_plans_keep_independent_cache_custody_on_one_host(
+        tmp_path, monkeypatch, capsys, explicit_scratch):
+    import shlex
+
+    module = merge_module()
+    source, site, surface, cache, data = [tmp_path / name for name in
+                                         ("source", "site", "surface", "cache", "data")]
+    for path in (source, site, surface, data):
+        path.mkdir()
+    for name in ("pytest", "pytest-xdist"):
+        metadata = site / (name + ".dist-info")
+        metadata.mkdir()
+        (metadata / "METADATA").write_text(f"Metadata-Version: 2.1\nName: {name}\nVersion: 1\n")
+    verifier = data / "pbsnapshot.py"
+    verifier.write_text("# verifier fixture\n")
+    monkeypatch.setattr(owner, "PB_VERIFIER", verifier)
+    digest = owner.dependency_manifest(str(site))[1]
+    scratch = owner.artifact_specs()["scratch"].env
+    args = SimpleNamespace(cpus=1, pytest_arg=[], gpu_tag="one-host", mem_gb=4,
+        checkout=source, timeout_s=300, wait_s=300, dry_run=True,
+        gpu_image=module.GPU_NOPE_IMAGE, gpu_mla_image=module.GPU_MLA_IMAGE,
+        gpu_deps_site=str(site), gpu_deps_sha256=digest, gpu_cache_dir=str(cache),
+        gpu_data_root=[str(data)],
+        artifact_root=[f"{scratch}={cache}/tmp"] if explicit_scratch else [])
+    plans = [module._submit(name, module.ARMS[name], args, surface)
+             for name in ("gpu", "gpu-mla")]
+    runners = []
+    for plan in plans:
+        invocation = shlex.split(plan["pbrun"])
+        start = invocation.index(owner.RUNNER) + 1
+        runners.append(invocation[start:])
+    specs = [owner.parse(argv) for argv in runners]
+    assert specs[0]["--cache-dir"] != specs[1]["--cache-dir"], "lane plans share one action-owned cache"
+    monkeypatch.chdir(source)
+    monkeypatch.setenv("PRISMABUILD_ACTION_SCOPE", "cpu-custody-fixture")
+    monkeypatch.setenv("TESSERA_SOURCE_VERIFIER", f"/usr/bin/python3 {verifier} verify")
+    monkeypatch.setenv("PRISMABUILD_CONTAINER_OWNER", "cpu-custody-fixture")
+    monkeypatch.delenv("CUDA_VISIBLE_DEVICES", raising=False)
+    monkeypatch.delenv(scratch, raising=False)
+    launches = []
+    monkeypatch.setattr(owner.subprocess, "call", lambda argv: launches.append(argv) or 0)
+    for index, (argv, spec) in enumerate(zip(runners, specs)):
+        key = str(index + 1) * 64
+        monkeypatch.setenv("PRISMABUILD_ACTION_KEY", key)
+        if explicit_scratch:
+            monkeypatch.setenv(scratch, spec["artifacts"][scratch])
+        payload = {"params": {"container_images": [spec["--image"]],
+                              "demand": {"cpu": 1, "gpu": 1}},
+                   "environment": {"variables": spec["artifacts"]}}
+        monkeypatch.setattr(owner, "admitted_request", lambda *args: payload)
+        assert owner.main(argv) == 0
+        assert Path(spec["--cache-dir"], ".suite-action").read_text() == key
+        assert owner.main(argv) == 0
+        monkeypatch.setenv("PRISMABUILD_ACTION_KEY", "f" * 64)
+        before = len(launches)
+        assert owner.main(argv) == 2
+        assert "cache belongs to another action" in capsys.readouterr().err
+        assert len(launches) == before
+        assert Path(spec["--cache-dir"], ".suite-action").read_text() == key
+    assert len(launches) == 4
 
 
 def test_dependency_versions_and_bytes_are_both_sealed(tmp_path):
