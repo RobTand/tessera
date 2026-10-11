@@ -214,6 +214,20 @@ def test_loader_normalized_byte_level_flags_that_never_change_token_ids_are_acce
     assert verify(root, with_byte_level_tokenizer(root, value, loaded=live_normalization)) is None
 
 
+@pytest.mark.parametrize("byte_level", [False, True])
+def test_tokenizer_array_roots_are_not_normalized_into_objects(sample, byte_level):
+    root, value = sample
+    if byte_level:
+        value = with_byte_level_tokenizer(root, value, loaded=live_normalization)
+    fact = value["tokenizer"]["files"]["tokenizer.json"]
+    content = list(fact["content"].items())
+    raw = json.dumps(content).encode()
+    (root / "tokenizer.json").write_bytes(raw)
+    value["tokenizer"]["files"]["tokenizer.json"] = {
+        "sha256": hashlib.sha256(raw).hexdigest(), "bytes": len(raw), "content": content}
+    assert verify(root, resign(value)) is not None
+
+
 @pytest.mark.parametrize("change", ["pre_tokenizer_add_prefix_space", "pre_tokenizer_use_regex",
                                     "pre_tokenizer_regex", "decoder_type", "model"])
 def test_loader_changes_that_can_change_token_ids_are_refused(sample, change):
