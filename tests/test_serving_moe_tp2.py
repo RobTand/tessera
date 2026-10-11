@@ -30,6 +30,9 @@ import types
 import pytest
 import torch
 
+# _eager reads vllm.config; a bare vllm stub must skip this file, not error it.
+pytest.importorskip("vllm.config")
+
 from tessera.errors import GrammarError
 from tessera.serving import moe_route
 from tessera.serving.scheme import validate_tessera_moe_scheme
