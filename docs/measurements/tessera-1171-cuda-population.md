@@ -127,7 +127,7 @@ The largest packed-expert shard (`Qwen3.8-Flash-Next`
 `model-00062-of-00131`) is 3,510,240,000 bytes.
 No population test resident-loads a full bundle.
 
-The probe (`tools/probe_witness_timing.py`) calls
+The probe (`tools/probe_witness_timing.py`, removed in version 2; `tools/probe_witness_endpoint.py` replaces it) calls
 `tessera.serving.endpoint_runtime.resident_bytes`. That is the exact
 function `observe_worker` calls per request
 (`endpoint_runtime.py:286`). The 30 s bound is the `fetch_witness`
