@@ -328,8 +328,8 @@ Quality uses whole-anchor chords, not per-rung sample gates.
 This work starts no graphics processor campaign and makes no serving or speed qualification claim.
 
 Re-stamped 2026-10-06 for issue #1005: the default-off D41 T4
-`--packed-reader` measures actual mixed span-two TCQ and dense twelve-bit
-WINDOW recipes on the E2M1 pair grid. `compact_prep.prepare_a4_wire_compact`
+`--packed-reader` measures mixed span-two TCQ, research twelve-bit WINDOW
+and served fourteen-bit WINDOW recipes. `compact_prep.prepare_a4_wire_compact`
 keeps TCQ BODY bytes packed and uses the existing forest label/code owners;
 WINDOW preparation uses `lane_planes.pack_window_planes`, including its
 incoming history, column alignment and trailing slack. The separate
