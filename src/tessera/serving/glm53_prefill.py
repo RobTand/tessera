@@ -71,12 +71,13 @@ with a barrier across ranks before each span, as the median of CUDA-event
 timings on this serve's stream. ``T*`` is the smallest grid count from which
 the SP branch beats stock at every larger grid count, agreed across ranks by
 a MAX reduction, and logged with the table. No threshold is a constant here.
-The grid holds 512, 640, 768 and 1024, so it brackets the served crossover in
-(512, 768]: window u4-TSTAR-20261001T0536Z runs force slower than stock at 512
-tokens and faster from 768, and ``auto`` answers 768 there. The former sum of
-isolated medians is gone: it read the all-gather plus reduce-scatter as
-cheaper than the all-reduce from 32 to 1024 tokens and chose ``T*`` 32, while
-the same serve ran SP slower than stock at 512 tokens (u4-R1-20261001T0058Z).
+The grid holds 512, 640, 768 and 1024. Those points cover the historical
+force/off crossover in (512, 768] from window u4-TSTAR-20261001T0536Z.
+A CPU fixture returns 768 for synthetic savings with that interval. The new
+``auto`` threshold has no served measurement. These spans contain mHC and
+collectives, not complete attention and MLP layer forwards. The former sum
+of isolated medians is gone: it chose ``T*`` 32 while the historical serve
+ran SP slower than stock at 512 tokens (u4-R1-20261001T0058Z).
 
 **The KDA prefill conv, per q/k/v slice.**  The pinned KDA layer runs one
 short causal conv over the merged q|k|v channels and splits its token-major

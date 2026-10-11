@@ -193,8 +193,10 @@ def test_t_star_infinite_when_sp_never_pays():
 
 
 def test_grid_and_choice_bracket_the_served_crossover():
-    """Window u4-TSTAR puts the A8S crossover in (512, 768]: force loses at 512
-    tokens and wins from 768, so ``auto`` must answer 768, never 32 or 512."""
+    """Synthetic savings select 768 within the historical force/off interval.
+
+    This CPU fixture does not measure the new auto threshold on a serve.
+    """
     assert tuple(t for t in gp.T_GRID if 512 <= t <= 1024) == (512, 640, 768, 1024)
     rows = [_row(32, -0.40), _row(256, -0.10), _row(512, -0.28), _row(640, -0.05),
             _row(768, 0.35), _row(1024, 0.73), _row(2048, 1.10)]

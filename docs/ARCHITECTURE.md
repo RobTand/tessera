@@ -1,5 +1,11 @@
 # Tessera plan-to-serve architecture
 
+Re-stamped 2026-10-11 for the default-off SP threshold evidence correction, issue #782.
+The CPU fixture proves the grid and selection rule for synthetic savings.
+The new auto threshold has no A8S TP2 served measurement.
+Helper spans do not establish complete barrier-synced layer timing.
+The release default stays off. No pin or scientific promotion changes.
+
 The hosted `pure` check enforces branch rule 12 for pull requests.
 The branch must match `tessera-<issue>` or `tessera-<issue>-<word>` and link that issue in the body.
 The suffix follows `[a-z0-9][a-z0-9-]*`. The script reads local references and GitHub issue URLs from the event JSON.
@@ -9444,7 +9450,7 @@ raises.
 | Variable | Default | What it changes |
 |---|---|---|
 | `TESSERA_GLM53_ONORM_CUDA` | `0` | `1` adds `+fused_rms_norm_gated` to `custom_ops` when the serve's own `custom_ops` names that op neither way, so the KDA output norm runs vLLM's `forward_cuda`. Nothing is rebound. Under compilation mode NONE (§5.1.2) `custom_ops` is already `all`, so it changes nothing there; in any other mode it changes a stock default, which is why it is opt-in. |
-| `TESSERA_GLM53_SP_MHC` | `off` | `force` or `auto` rebinds `Glm5NextDecoderLayer.forward` so that each TP 2 rank keeps the mHC state for half the batch's tokens. Every mHC call on an SP pass runs at the full batch's pre-norm split-k (`SplitForcer`), which is what makes it bitwise. `auto` measures `T*` per serve with barrier-synced end-to-end branch timing (one span per branch, stock against SP) on a grid holding 512, 640, 768 and 1024, which brackets the served crossover in (512, 768]: window `u4-TSTAR-20261001T0536Z` runs force slower than stock at 512 tokens and faster from 768, and `auto` answers 768 there. |
+| `TESSERA_GLM53_SP_MHC` | `off` | `force` or `auto` rebinds `Glm5NextDecoderLayer.forward` so that each TP 2 rank keeps the mHC state for half the batch's tokens. Every mHC call on an SP pass runs at the full batch's pre-norm split-k (`SplitForcer`), which is what makes it bitwise. `auto` times stock and SP helper spans with a rank barrier before each span. The spans contain mHC and collectives, not complete attention and MLP layer forwards. The grid includes 512, 640, 768 and 1024. These points cover the historical force/off crossover in (512, 768] from window `u4-TSTAR-20261001T0536Z`. A CPU fixture selects 768 from synthetic savings. The new auto threshold and complete barrier-synced layer timing have no served measurement. Issue #782 remains open. |
 | `TESSERA_GLM53_SP_MHC_SPEC` | unset | `1` allows SP with speculative decoding. Without it, a speculative serve declines SP. |
 | `TESSERA_GLM53_MHC_FUSED` | unset | `1` installs `mhc_fusion` (contract `stock_kernel_overrides`, kind `model_method`): `Glm5NextDecoderLayer.hc_fused_post_pre` runs one fused post/GEMM/pre kernel per mHC site that stock runs at split 1, the split read at call time, so it composes with `TESSERA_GLM53_SP_MHC`. It must be bitwise to stock, and it stays default-off until the GPU gate and a served A/B land (#783). Unlike the rows above, an install whose contract entry has drifted raises instead of declining. |
 | `TESSERA_GLM53_KDA_CONV_SPLIT` | `off` | `on` rebinds `Glm5NextLinearAttention._forward` to run the KDA prefill's short conv once per q/k/v slice, so FlashKDA's three `.contiguous()` copies become no-ops. The rebind compiles the stock method's own source with one block replaced, and only when that block occurs exactly once. `glm53_prefill.py` reads and digest-checks the file; `src/tessera/serving/method_rebuild.py` compiles the text and reads no file. The #808 selector follows that helper call, so the generic source parameter remains unknown. The frozen `202d1f07` receipt established a static predecessor path through layout's lazy slicing import; the guarded-re-export analyzer now distinguishes direct layout names from slicing demands. Runtime callable reachability and source origin remain unproved. |

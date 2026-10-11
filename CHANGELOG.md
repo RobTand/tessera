@@ -1,5 +1,12 @@
 # Changelog
 
+## 2026-10-11 SP threshold evidence correction, issue #782
+
+Separate synthetic CPU selection evidence from the historical force/off crossover.
+State that the new auto threshold has no A8S TP2 served measurement.
+State that helper spans do not time complete attention and MLP layer forwards.
+Keep the release default off and the scientific criteria open.
+
 ## 2026-10-10 — admit the served L14 WINDOW in the opt-in packed reader (issue #1166)
 
 Admit the served fourteen bit WINDOW beside the research twelve bit WINDOW in `prepare_a4_wire_compact`.
