@@ -5,6 +5,8 @@
 Require a positive integer world and an integer rank in that world.
 Refuse rank conflicts and unknown graph or compile coverage.
 Return a failed audit record instead of a traceback for malformed rank values.
+Use one lightweight identity owner for native and stock decoder and schedule records.
+Preserve the actual executed symbol and the compile and capture guards.
 The CPU audit does not qualify a live MLA route or CUDA execution.
 
 ## 2026-10-10 — admit the served L14 WINDOW in the opt-in packed reader (issue #1166)
