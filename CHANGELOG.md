@@ -1,5 +1,10 @@
 # Changelog
 
+## 2026-10-11 - use a temporary checkpoint path in the KL fixture, issue #1172
+
+Derive the synthetic checkpoint path from each test's temporary directory.
+Keep the box-artifact guard and the production KL instrument unchanged.
+
 ## 2026-10-09 — complete the endpoint verifier contract (issue #1128)
 
 Require explicit endpoint, alias, artifact bytes, tokenizer facts, launch attempt, and complete rank expectations in the public CPU CLI.

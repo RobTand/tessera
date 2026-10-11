@@ -45,7 +45,7 @@ def _arrays(seed=0):
                                    size=(POSITIONS, VOCAB)).astype(np.float32)
     return teacher, student
 
-def _meta(regime="prefill", contract="c" * 64, vocab=VOCAB,
+def _meta(tmp_path, regime="prefill", contract="c" * 64, vocab=VOCAB,
           positions=POSITIONS):
     return {
         "schema": "prismaquant.kl_position_dump/2",
@@ -56,7 +56,7 @@ def _meta(regime="prefill", contract="c" * 64, vocab=VOCAB,
                    "contract_sha256": contract},
         "tokenizer": {"identity_sha256": "t" * 64},
         "regime": {"name": regime},
-        "model": {"checkpoint": "/mnt/shared/models/X", "arch": "Qwen3",
+        "model": {"checkpoint": str(tmp_path / "models" / "X"), "arch": "Qwen3",
                   "dtype": "bfloat16"},
         "payload": {"positions": positions, "vocab_size": vocab},
     }
@@ -70,7 +70,7 @@ def _write(tmp_path, name, arrays, meta):
 
 def test_writer_round_trip_preserves_logprobs(tmp_path):
     teacher, _ = _arrays()
-    meta_path = _write(tmp_path, "t", teacher, _meta())
+    meta_path = _write(tmp_path, "t", teacher, _meta(tmp_path))
     meta, arr = fv.read_full_vocab_payload(meta_path)
     assert tuple(arr.shape) == (POSITIONS, VOCAB)
     assert arr.dtype == np.float32
@@ -81,8 +81,8 @@ def test_writer_round_trip_preserves_logprobs(tmp_path):
 
 def test_compare_exact_matches_brute_force(tmp_path, capsys):
     teacher, student = _arrays()
-    t = _write(tmp_path, "t", teacher, _meta())
-    s_meta = _meta()
+    t = _write(tmp_path, "t", teacher, _meta(tmp_path))
+    s_meta = _meta(tmp_path)
     s_meta["role"] = "student"
     del s_meta["teacher_label"]
     s = _write(tmp_path, "s", student, s_meta)
@@ -106,8 +106,8 @@ def test_compare_exact_matches_brute_force(tmp_path, capsys):
 
 def test_compare_refuses_a_cross_regime_pair(tmp_path):
     teacher, student = _arrays()
-    t = _write(tmp_path, "t", teacher, _meta(regime="prefill"))
-    s_meta = _meta(regime="decode")
+    t = _write(tmp_path, "t", teacher, _meta(tmp_path, regime="prefill"))
+    s_meta = _meta(tmp_path, regime="decode")
     s_meta["role"] = "student"
     s = _write(tmp_path, "s", student, s_meta)
     with pytest.raises(SystemExit, match="cross-regime"):
@@ -116,8 +116,8 @@ def test_compare_refuses_a_cross_regime_pair(tmp_path):
 
 def test_compare_refuses_a_contract_mismatch(tmp_path):
     teacher, student = _arrays()
-    t = _write(tmp_path, "t", teacher, _meta())
-    s_meta = _meta(contract="d" * 64)
+    t = _write(tmp_path, "t", teacher, _meta(tmp_path))
+    s_meta = _meta(tmp_path, contract="d" * 64)
     s_meta["role"] = "student"
     s = _write(tmp_path, "s", student, s_meta)
     with pytest.raises(SystemExit, match="contract"):
@@ -127,8 +127,8 @@ def test_compare_refuses_a_contract_mismatch(tmp_path):
 def test_compare_refuses_a_vocab_mismatch(tmp_path):
     teacher, _ = _arrays()
     student = np.zeros((POSITIONS, VOCAB + 1), dtype=np.float32)
-    t = _write(tmp_path, "t", teacher, _meta())
-    s_meta = _meta(vocab=VOCAB + 1)
+    t = _write(tmp_path, "t", teacher, _meta(tmp_path))
+    s_meta = _meta(tmp_path, vocab=VOCAB + 1)
     s_meta["role"] = "student"
     s = _write(tmp_path, "s", student, s_meta)
     with pytest.raises(SystemExit, match="vocab"):
@@ -136,9 +136,9 @@ def test_compare_refuses_a_vocab_mismatch(tmp_path):
 
 
 def test_histories_and_masks_must_match(tmp_path):
-    assert fv.histories_and_masks(_meta(), _meta()) is True
-    other = _meta(contract="d" * 64)
-    assert fv.histories_and_masks(_meta(), other) is False
+    assert fv.histories_and_masks(_meta(tmp_path), _meta(tmp_path)) is True
+    other = _meta(tmp_path, contract="d" * 64)
+    assert fv.histories_and_masks(_meta(tmp_path), other) is False
 
 
 @box_artifacts.require("kl_instrument", "kl_tool.py")
@@ -152,7 +152,7 @@ def test_payload_opens_in_kl_tool_reader(tmp_path):
     sys.modules[spec.name] = kl_tool
     spec.loader.exec_module(kl_tool)
     teacher, _ = _arrays()
-    meta_path = _write(tmp_path, "t", teacher, _meta())
+    meta_path = _write(tmp_path, "t", teacher, _meta(tmp_path))
     meta, arr = kl_tool.read_full_vocab_payload(meta_path)
     assert tuple(arr.shape) == (POSITIONS, VOCAB)
     assert (meta["payload"]["positions"],
@@ -301,7 +301,7 @@ def test_dump_payload_allocates_on_cuda(tmp_path):
 
 
 def test_histories_and_masks_refuses_missing_identity(tmp_path):
-    full = _meta()
+    full = _meta(tmp_path)
     for key in ("corpus", "tokenizer", "payload"):
         partial = {k: v for k, v in full.items() if k != key}
         assert fv.histories_and_masks(full, partial) is False
