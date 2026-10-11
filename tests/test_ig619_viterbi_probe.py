@@ -234,3 +234,48 @@ def test_a_window_shorter_than_one_netdata_second_is_not_sent():
 ])
 def test_one_sampler_line_is_a_power_and_maybe_a_clock(line, want):
     assert probe.parse_sample(line) == want
+
+
+def _receipt():
+    arms = [_timed_arm("front#1", "front", 12, 60.0, 70.0),
+            _timed_arm("best#1", "best", 12, 20.0, 85.0),
+            _timed_arm("best#2", "best", 12, 20.0, 85.0),
+            _timed_arm("front#2", "front", 12, 60.0, 70.0),
+            _timed_arm("front/2t", "front", 12, 40.0, 75.0, threads=2),
+            _timed_arm("best/2t", "best", 12, 20.0, 85.0, threads=2)]
+    for arm in arms:
+        arm["power"].update(mean_fraction_of_envelope=arm["power"]["mean_w"] / 140.0,
+                            mean_sm_mhz=2400)
+    arms[0]["netdata"] = {"mean_w": 69.5, "accepted_groups": 5}
+    rung = {"grid": "bf16", "q256": 1024, "rows": 2048, "cols": 4096, "units": 12,
+            "arms": arms, "identity": {"ok": True, "arms": 6, "units": 12},
+            "comparisons": probe._comparisons(arms, threads=2),
+            "plans": [{"best_form": True, "rate": 4, "steps": 2048, "width": 512,
+                       "batches": 8, "grid": [16, 256]}],
+            "profile": {"front": {"wall_s": 4.7, "device_s": 4.62, "device_over_wall": 0.98,
+                                  "top": [{"name": "_step", "count": 1048576,
+                                           "us_per_launch": 4.37}]},
+                        "best": None}}
+    return {"host": "sparky", "device": "NVIDIA GB10", "torch": "2.11.0+cu130",
+            "head": "abcdef0123456789", "idle_power": {"mean_w": 5.1}, "rungs": [rung]}
+
+
+def test_the_rendered_tables_carry_the_receipt_numbers():
+    text = probe.render_tables(_receipt())
+    assert "bf16 q256 1024, 12 units of 2048x4096" in text
+    for arm in ("front#1", "best#2", "front/2t"):
+        assert f"| {arm} |" in text
+    assert "speedup 3.000x" in text           # best over front, pooled ABBA
+    assert "| _step |" in text                  # the profile row is there
+    assert "1048576" in text and "[16, 256]" in text
+    assert "69.50" in text, "the Netdata reading sits beside the in-process one"
+
+
+def test_rendering_survives_a_receipt_with_missing_readings():
+    rec = _receipt()
+    rec["rungs"][0]["comparisons"] = None
+    rec["rungs"][0]["profile"] = None
+    rec["rungs"][0]["arms"][1]["j_per_unit"] = None
+    rec["rungs"][0]["arms"][1]["power"] = {"points": 0}
+    text = probe.render_tables(rec)
+    assert "| best#1 |" in text and "-" in text

@@ -321,6 +321,8 @@ def build_parser():
                     help="GRID:Q256 list; q256 not a multiple of 256 is a mixed-rate stack")
     ap.add_argument("--idle-s", type=float, default=3.0)
     ap.add_argument("--no-profile", action="store_true")
+    ap.add_argument("--table", metavar="RECEIPT", default=None,
+                    help="print markdown tables of a receipt and exit; reads no device")
     ap.add_argument("--out", default="/tmp/ig619_receipt.json")
     ap.add_argument("--publish-dir", default=None,
                     help="also write the receipt here, opened exclusively so a "
@@ -646,6 +648,77 @@ def _comparisons(arms, threads):
     return out
 
 
+# -- the receipt a person reads ---------------------------------------------------------
+
+def _num(value, digits=2):
+    return "-" if value is None else f"{value:.{digits}f}"
+
+
+def render_tables(rec) -> str:
+    """Markdown tables of one receipt, written by the code that wrote it, so a
+    doc quotes the receipt and not a retyping of it."""
+    lines = [f"{rec['host']}: {rec['device']}, torch {rec['torch']}, head "
+             f"{str(rec.get('head'))[:10]}, idle "
+             f"{_num((rec.get('idle_power') or {}).get('mean_w'))} W"]
+    for rung in rec["rungs"]:
+        lines += ["", f"{rung['grid']} q256 {rung['q256']}, {rung['units']} units of "
+                      f"{rung['rows']}x{rung['cols']}", "",
+                  "| arm | units/s | mean W | of 140 W | SM MHz | J/unit | Netdata W | groups |",
+                  "|---|---:|---:|---:|---:|---:|---:|---:|"]
+        for arm in rung["arms"]:
+            power, box = arm["power"], arm.get("netdata") or {}
+            lines.append(
+                f"| {arm['name']} | {arm['units_per_s']:.4f} | {_num(power.get('mean_w'))} "
+                f"| {_num(power.get('mean_fraction_of_envelope'), 3)} "
+                f"| {power.get('mean_sm_mhz', '-')} | {_num(arm['j_per_unit'], 1)} "
+                f"| {_num(box.get('mean_w'))} | {box.get('accepted_groups', '-')} |")
+        cmp = rung.get("comparisons") or {}
+        pooled = cmp.get("pooled_single_thread") or {}
+        if pooled:
+            lines += ["", "| pooled ABBA | units/s | mean W | J/unit |", "|---|---:|---:|---:|"]
+            for form, row in pooled.items():
+                lines.append(f"| {form} | {row['units_per_s']:.4f} | {_num(row['mean_w'])} "
+                             f"| {_num(row['j_per_unit'], 1)} |")
+        for key, label in (("best_over_front", "best over front"),
+                           ("repeat_spread", "second ABBA arm over first"),
+                           ("threads_over_one", "threads over one"),
+                           ("rate_streams_on_over_off", "rate streams on over off")):
+            value = cmp.get(key)
+            if not value:
+                continue
+            rows = value if "speedup" not in value else {"": value}
+            for form, row in rows.items():
+                lines.append(f"- {label}{' (' + form + ')' if form else ''}: speedup "
+                             f"{row['speedup']:.3f}x, joule ratio {_num(row['joule_ratio'], 3)}")
+        block = rung.get("abba_block") or {}
+        if block:
+            box, own = block.get("netdata") or {}, block.get("sampler") or {}
+            lines.append(f"- ABBA block, Netdata {_num(box.get('mean_w'))} W over "
+                         f"{box.get('accepted_groups', 0)} groups; in-process "
+                         f"{_num(own.get('mean_w'))} W over {own.get('points', 0)} samples")
+        if rung.get("profile"):
+            lines += ["", "| profile (one unit) | wall s | device s | device/wall | top kernel "
+                          "| launches | us each |", "|---|---:|---:|---:|---|---:|---:|"]
+            for name, table in rung["profile"].items():
+                if not table:
+                    continue
+                top = (table.get("top") or [{}])[0]
+                lines.append(f"| {name} | {table['wall_s']} | {table['device_s']} "
+                             f"| {table['device_over_wall']} | {top.get('name', '-')} "
+                             f"| {top.get('count', '-')} | {top.get('us_per_launch', '-')} |")
+        if rung.get("plans"):
+            lines += ["", "| plan | rate | steps | width | batches | grid |", "|---|---:|---:|---:|---:|---|"]
+            for plan in rung["plans"]:
+                lines.append(f"| {'best' if plan['best_form'] else 'front'} | {plan['rate']} "
+                             f"| {plan['steps']} | {plan['width']} | {plan['batches']} "
+                             f"| {plan['grid']} |")
+        if rung.get("errors"):
+            lines += ["", f"errors: {rung['errors']}"]
+        identity = rung.get("identity") or {}
+        lines.append(f"- identity: {identity}")
+    return "\n".join(lines)
+
+
 # -- the run ---------------------------------------------------------------------------
 
 def _git(*argv):
@@ -665,6 +738,10 @@ def _publish(directory, receipt, host):
 
 def main(argv=None) -> int:
     args = parse_args(argv)
+    if args.table:
+        with open(args.table) as handle:
+            print(render_tables(json.load(handle)))
+        return 0
 
     import torch
 
