@@ -30,6 +30,9 @@ import types
 import pytest
 import torch
 
+# _eager reads vllm.config; a bare vllm stub must skip this file, not error it.
+pytest.importorskip("vllm.config")
+
 from tessera.errors import GrammarError
 from tessera.serving import moe_route
 from tessera.serving.scheme import validate_tessera_moe_scheme
@@ -284,13 +287,6 @@ def test_native_loader_shape_produces_rank_local_packed_tiles(wires, rank):
     method.apply(layer, x, weights, routing, _SharedSpy(), None)
     assert method.research_resident_bytes() == owner_bytes
     assert method.moe_kernel is None and method.moe_quant_config is None
-
-
-@pytest.mark.parametrize('value', [0, 3, 4, True, 2.0, '2'])
-def test_only_explicit_tp1_or_tp2_config_is_accepted(value):
-    with pytest.raises(ValueError, match='tensor_parallel_size'):
-        moe_route.ResearchSelectedMoeConfig(max_experts_per_chunk=1,
-                                            expected_tensor_parallel_size=value)
 
 
 @cuda

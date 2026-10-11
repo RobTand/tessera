@@ -9,7 +9,8 @@ import types
 import pytest
 
 pytest.importorskip("torch")
-pytest.importorskip("vllm")
+pytest.importorskip("vllm.config")
+pytest.importorskip("vllm.model_executor.layers.fused_moe.activation")
 
 import torch
 
