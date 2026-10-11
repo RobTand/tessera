@@ -105,10 +105,14 @@ def test_missing_artifact_scope_is_not_read_as_current_encoder_evidence():
 
 def test_weight_screen_never_promotes_the_served_evidence_grade():
     cell = copy.deepcopy(load_serving_contract()["lane_eligibility"]["cells"][0])
+    # A weight screen adds no KL entry. The cell keeps the KL entries it
+    # holds (tessera#1152: a decode cell cites the open graph gap), and the
+    # grade stays route_only.
+    kl_before = copy.deepcopy(cell["evidence"]["kl"])
     cell["evidence"]["artifact"] = artifact()
     parsed = cell_evidence(cell)
     assert parsed["grade"] == "route_only"
-    assert parsed["kl"] == []
+    assert parsed["kl"] == kl_before
     assert parsed["artifact"] == artifact()
 
 
