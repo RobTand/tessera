@@ -1,6 +1,6 @@
 {
  "default_repo": "RobTand/tessera",
- "generated": "2026-10-10T04:28:26Z",
+ "generated": "2026-10-10T04:44:56Z",
  "repos": {
   "RobTand/prismaquant": {
    "1": {
@@ -7211,6 +7211,14 @@
     "state": "CLOSED",
     "title": "[P2] Populate static Tessera activation scales in the transient anchor renderer"
    },
+   "2620": {
+    "state": "OPEN",
+    "title": "[P2] pq2281-source-qualification.md claims legacy pricing 'bitwise unchanged' with no receipt"
+   },
+   "2621": {
+    "state": "OPEN",
+    "title": "[P3] Apply Rob cap decision for sealed record"
+   },
    "263": {
     "state": "CLOSED",
     "title": "Qualify joint AURA through streamed checkpoints and frozen corpus inputs"
@@ -11408,6 +11416,10 @@
    "1206": {
     "state": "OPEN",
     "title": "[P1] Verify fused E4M3 route census at R1152 and priced pairs"
+   },
+   "1207": {
+    "state": "CLOSED",
+    "title": "[P3] Decision or action by a person for tessera#1183: Rob or the vLLM owner posts a note in tessera#735."
    },
    "121": {
     "state": "CLOSED",
