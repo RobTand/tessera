@@ -235,6 +235,23 @@ def kl_rows(teacher: np.ndarray, student: np.ndarray):
     return terms.sum(axis=1), lp, lq, p
 
 
+def kl_p99(values: np.ndarray) -> float:
+    """Linear p99 over KL values, including exact positive infinity."""
+    rank = 0.99 * (values.size - 1)
+    lower = int(rank)
+    upper = min(lower + 1, values.size - 1)
+    ordered = np.partition(values, (lower, upper))
+    left, right = ordered[lower], ordered[upper]
+    weight = rank - lower
+    if weight == 0.0 or left == right:
+        return float(left)
+    if np.isposinf(right):
+        return float(right)
+    difference = right - left
+    return float(left + difference * weight if weight < 0.5
+                 else right - difference * (1.0 - weight))
+
+
 
 def _load_model(checkpoint: str, dtype: str):
     import torch
@@ -409,7 +426,7 @@ def cmd_compare(args: argparse.Namespace) -> int:
             student_meta["payload"]["array"]),
         "positions": int(n),
         "all": {"kl_mean": float(kl.mean()),
-                "kl_p99": float(np.quantile(kl, 0.99)),
+                "kl_p99": kl_p99(kl),
                 "kl_max": float(kl.max()),
                 "top1_agree_pct": float(100.0 * agree.mean())},
         "confident": {"n": int(conf.sum()),

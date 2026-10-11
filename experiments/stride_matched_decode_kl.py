@@ -60,7 +60,7 @@ def main(argv: list[str] | None = None) -> int:
         "student_payload": str(Path(args.student).resolve()),
         "served_meta": str(Path(args.served_meta).resolve()),
         "kl_mean": float(kl.mean()),
-        "kl_p99": float(np.quantile(kl, 0.99)),
+        "kl_p99": fv.kl_p99(kl),
         "kl_max": float(kl.max()),
         "top1_agree_pct": float(100.0 * agree.mean()),
     }
