@@ -2175,9 +2175,9 @@ def test_only_the_silent_directory_read_is_listed(tmp_path, reader, why):
 
 
 # Issue 1014 classifies every site in docs/reports/unnamed-directory-reads-1014.md.
-# select() measured 115 modules and 169 sites on base 83a1f38c4965.
-# Literal loop alternatives name the conftest's three import roots, so the
-# The measured ceiling holds at 114 modules and 170 sites.
+# Base 83a1f38c4965 measured 115 modules and 169 sites.
+# Literal conftest import roots reduced the budget to 114 modules and 168 sites.
+# The current measured ceiling holds at 114 modules and 170 sites.
 # The f16 finalizer must bind actual object and ELF files in its caller-supplied
 # external build directory. Its six reads add two net sites to this budget;
 # they cannot name an in-repository base. Selection remains fail-open.
