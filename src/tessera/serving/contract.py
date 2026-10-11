@@ -290,13 +290,12 @@ PLUGIN_ENTRY_POINT = "tessera = tessera.serving:register"
 #: :data:`EVIDENCE_RECEIPT_ROOT`; the validator checks its grammar and a tree
 #: test checks the file (a wheel does not ship docs).
 #:
-#: ``graph_equality`` (contract v67, tessera#1152) is not a KL bound: it is a
-#: decode-only record that a graph serve computes what the eager serve
-#: computes, read off the receipt it cites.  A CUDA-graph serve replays
-#: decode batches, so the validator refuses the kind outside a decode cell.
-#: It carries no top-K number and never raises the grade: a decode cell that
-#: cites the open gap cites it with ``grade`` ``route_only`` and claims no
-#: compiled KL.
+#: ``graph_equality`` (contract v67, tessera#1152) is not a KL bound.
+#: This decode-only record cites the open graph gap and attests no equality,
+#: compiled KL, or compiled scope. A CUDA-graph serve replays decode batches,
+#: so the validator refuses the kind outside a decode cell.
+#: It carries no top-K number and never raises the grade.
+#: A decode cell that cites the open gap keeps ``grade`` ``route_only``.
 EVIDENCE_KL_KINDS = ("topk_intersection_lower_bound", "full_vocab", "graph_equality")
 EVIDENCE_SMOKE_STATUSES = ("recorded", "repetitive", "not_recorded")
 EVIDENCE_GRADES = ("route_only", "kl_lower_bound", "kl_full_vocab")
