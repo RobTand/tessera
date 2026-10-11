@@ -1,15 +1,12 @@
 #!/usr/bin/env bash
-# Probe whether the f16 activation prefetch reaches PTX and SASS (tessera#739).
-#
-# Builds the fused routed kernel TU twice with nvcc -- once from master's
-# source, once from this checkout's -- under the f16 library's own flags, and
-# counts the prefetch instruction in the PTX and in the disassembled object.
-# A volatile-asm hint must appear in both; SASS counts that differ only by the
-# new prefetch instructions prove the gate's codegen claim directly.
+# Observe PTX hints and SASS opcodes under the f16 flags for issue 739.
+# Cache-control opcodes are candidates. Text counts cannot prove hint removal.
+# This probe supplies no timing, wait, or complete acceptance result.
 #
 # Usage: f16_prefetch_ptx.sh <out_root>
 # Requires ORACLE_IMAGE (a CUDA image with nvcc, cuobjdump and torch).
-set -uo pipefail
+set -euo pipefail
+: "${PRISMABUILD_ACTION_KEY:?codegen probe requires PrismaBuild admission}"
 OUT=$(realpath -m "${1:?out_root}")
 MASTER_CU=$(realpath -m "${MASTER_CU:-$PWD/pb-arms/master-src/tessera/serving/csrc/routed_fused_window.cu}")
 NEW_CU=$(realpath -m "${NEW_CU:-$PWD/src/tessera/serving/csrc/routed_fused_window.cu}")
@@ -40,13 +37,10 @@ done
 rc=$?
 tail -5 "$OUT/build.log"
 ((rc == 0)) || { echo "BUILD FAILED rc=$rc"; exit 1; }
+HERE=$(cd "$(dirname "$0")" && pwd)
 for a in base new; do
-  echo "== $a"
-  echo "ptx prefetch lines: $(grep -ci 'prefetch' "$OUT/$a.ptx")"
-  grep -ai -m4 'prefetch' "$OUT/$a.ptx" | cut -c1-160
-  echo "sass PREFETCH lines: $(grep -ci 'prefetch' "$OUT/$a.sass")"
-  grep -ai -m4 'prefetch' "$OUT/$a.sass" | cut -c1-160
+  python3 "$HERE/f16_prefetch_accept.py" --ptx "$OUT/$a.ptx" --sass "$OUT/$a.sass" \
+    > "$OUT/$a-codegen.json" || exit 1
+  cat "$OUT/$a-codegen.json"
 done
-echo "ptx bytes: base=$(stat -c %s "$OUT/base.ptx") new=$(stat -c %s "$OUT/new.ptx")"
-echo "sass bytes: base=$(stat -c %s "$OUT/base.sass") new=$(stat -c %s "$OUT/new.sass")"
-echo ALL_DONE
+echo "SELECTED_STAGES_DONE stages=[codegen] hint_retention=unknown issue_acceptance=not_established"

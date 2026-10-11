@@ -71,6 +71,37 @@ def finalize(directory, source):
         return receipt
 
 
+def verify_finalized(receipt_path, source, library, expected_sha256):
+    """Check retained build bytes and the actual Ninja source dependency."""
+    source, library = Path(source).resolve(), Path(library).resolve()
+    receipt_path = Path(receipt_path).resolve()
+    directory = library.parent
+    if receipt_path != directory / 'native-finalization.json':
+        raise RuntimeError('native finalization is not beside the selected ELF')
+    receipt = json.loads(receipt_path.read_text())
+    if receipt.get('schema') != 'tessera.native_build_finalization.v1' or receipt.get('no_pending_work') is not True:
+        raise RuntimeError('native build finalization is incomplete')
+    files = [source, directory / 'build.ninja', *sorted(directory.glob('*.o')),
+             *sorted(directory.glob('*.so'))]
+    observed = {str(path): binding(path) for path in files}
+    if observed != receipt['bindings'] or observed[str(library)]['sha256'] != expected_sha256:
+        raise RuntimeError('finalized source/object/ELF bytes or timestamps differ')
+    inputs = subprocess.run(['ninja', '-C', str(directory), '-t', 'inputs', library.name],
+                            check=True, capture_output=True, text=True).stdout.splitlines()
+    dependencies = {(directory / value).resolve() for value in inputs}
+    if source not in dependencies:
+        raise RuntimeError('selected ELF does not compile the requested source arm')
+    dry = subprocess.run(['ninja', '-C', str(directory), '-n', '-d', 'explain'],
+                         check=True, capture_output=True, text=True)
+    if dry.stdout.strip() != 'ninja: no work to do.':
+        # -C adds a directory banner in some Ninja versions.
+        lines = [line for line in dry.stdout.splitlines() if not line.startswith('ninja: Entering directory')]
+        if lines != ['ninja: no work to do.']:
+            raise RuntimeError('selected native build has pending work: ' + dry.stdout + dry.stderr)
+    return receipt
+
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('source', type=Path)

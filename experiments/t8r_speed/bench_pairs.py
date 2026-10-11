@@ -47,12 +47,7 @@ from bench_t8r import (EXPERTS, HIDDEN, TOP_K, PowerSampler, balanced_routing,  
 INTER = 1024          # the TP2 rank's intermediate columns
 BK = 32
 
-# case -> (r_lo, fraction of columns at r_lo + 1: None = one run; "1b" = 32
-# columns; "-1b" = all but 32)
-CASES = {
-    "r4": (4, None), "r4+1b": (4, "1b"), "r4+q": (4, 0.25), "r5-1b": (4, "-1b"), "r5": (5, None),
-    "r3": (3, None), "r3+q": (3, 0.25), "r3+1b": (3, "1b"),
-}
+from bench_pair_scope import CASES, requested_cells
 
 
 def n_hi_of(spec, cols):
@@ -124,6 +119,7 @@ def main():
     ap.add_argument("--library", default=None, help="a routed_fused.LIBRARIES key of the E4M3 family")
     ap.add_argument("--bm", type=int, default=64, help="routes per superblock: 64, or 128 where the launch has it")
     args = ap.parse_args()
+    requested_cells(args.cases, args.modes, args.ms)
     os.makedirs(args.out, exist_ok=True)
     from tessera import routed_fused as rf
     library = args.library or rf.library_for("e4m3")
@@ -134,8 +130,21 @@ def main():
     power = PowerSampler()
     ms = [int(v) for v in args.ms.split(",")]
     modes = [int(v) for v in args.modes.split(",")]
+    from pathlib import Path
+    from tessera._dev.native_identity import loaded_native_identity
+    from finalize_native_build import finalize, verify_finalized
+    source = Path(rf.__file__).parent / "serving/csrc/routed_fused_window.cu"
+    native = loaded_native_identity(lib, source)
+    if native["source_sha256"] != os.environ.get("KERNEL_SHA"):
+        raise RuntimeError("imported pair benchmark source differs from the requested arm")
+    finalize(Path(native["path"]).parent, source)
+    finalization = Path(native["path"]).parent / "native-finalization.json"
+    verify_finalized(finalization, source, native["path"], native["sha256"])
     meta = {"device": torch.cuda.get_device_name(), "sms": sms, "experts": EXPERTS, "hidden": HIDDEN,
-            "inter": INTER, "top_k": TOP_K, "ms": ms, "modes": modes, "kernel_sha": os.environ.get("KERNEL_SHA"),
+            "inter": INTER, "top_k": TOP_K, "ms": ms, "modes": modes, "cases": args.cases.split(","),
+            "kernel_sha": native["source_sha256"], "native": native,
+            "finalization_path": str(finalization),
+            "finalization_sha256": hashlib.sha256(finalization.read_bytes()).hexdigest(),
             "tessera_head": os.environ.get("TESSERA_HEAD"), "image": os.environ.get("ORACLE_IMAGE"),
             "host": os.environ.get("HOST_NAME"), "power_source": power.source, "start_unix": time.time(),
             "library": library, "bm": args.bm}
@@ -201,6 +210,9 @@ def main():
             torch.cuda.empty_cache()
             json.dump({"meta": meta, "results": results}, open(os.path.join(args.out, "bench_pairs.json"), "w"),
                       indent=1)
+    torch.cuda.synchronize()
+    meta["native_after"] = loaded_native_identity(lib, source, expected_sha256=native["sha256"])
+    verify_finalized(finalization, source, native["path"], native["sha256"])
     meta["end_unix"] = time.time()
     json.dump({"meta": meta, "results": results}, open(os.path.join(args.out, "bench_pairs.json"), "w"), indent=1)
     print("done", flush=True)
