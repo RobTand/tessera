@@ -71,3 +71,10 @@ box reports 89% mean utilization. Utilization is not saturation here.
 No default moves. Widening the budget is measured worse, and promoting
 the best-form moves the shipping schedule, which only Rob prices
 (tessera#483). This file is the evidence for that decision.
+
+## Addendum, 2026-10-11
+
+`tessera619-window-schedule-ab-2026-10-11.md` repeats the front and best-form
+arms in one process on one board, on both boxes, with the two controls this
+receipt lacked. It closes the box confound named above. The same-board ratio for
+BF16 is 2.75x to 2.76x at 0.40x to 0.41x joules. Nothing above this line changes.
