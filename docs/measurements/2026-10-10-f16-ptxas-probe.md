@@ -5,11 +5,11 @@ change. No toolchain pin change.
 
 ## Question
 
-The f16 library emits 96 `prefetch.global.L1` hints in PTX, and ptxas
-13.0.88 drops all 96 before SASS. A newer ptxas that keeps the hints
-would give the parent a cheap prefetch lever instead of the cp.async
-ring. This record asks which ptxas versions the pool holds, and repeats
-the f7d34fc probe on each one it finds.
+The f16 prefetch arm emitted 96 `prefetch.global.L1` hints in PTX.
+ptxas 13.0.88 removed all 96 before SASS. Hint retention alone does not
+establish a replacement for the cp.async ring. This record uses the
+archived f7d34fc probe and the dated pool sweep. No newer-toolchain
+probe completed.
 
 ## Method
 
@@ -39,9 +39,8 @@ both Sparks, in every CUDA-bearing image and on the hosts.
 
 ## Results
 
-One ptxas version exists on the pool, so the table has one version.
-Both arms come from the f7d34fc log, which this writer read from the
-pool archive:
+The dated pool sweep found one ptxas version, so the table has one version.
+Both arms come from the f7d34fc log in the pool archive:
 
 | ptxas | arm | PTX prefetch lines | SASS prefetch lines |
 |---|---|---|---|
@@ -51,7 +50,7 @@ pool archive:
 The 96 PTX hints die in ptxas. Both SASS binaries hold no prefetch
 instruction. The baseline repeats the known negative result.
 
-## Sweep: no newer ptxas is available
+## Dated sweep: no newer ptxas found
 
 | Location | ptxas | Evidence |
 |---|---|---|
@@ -64,17 +63,17 @@ instruction. The baseline repeats the known negative result.
 
 Two fresh repeats were submitted and withdrawn: PB 9555a3fe waited 9
 hours READY while the pool deferred CPU-only work behind GPU load, and
-PB f94b6ab0 waited 25 minutes with the same deferral. The pool admits
-no CPU-only compile on the Sparks under current GPU load, so the
-baseline evidence rests on the archived f7d34fc run above.
+PB f94b6ab0 waited 25 minutes with the same deferral. Neither repeat
+produced a result. The baseline evidence rests on the archived
+f7d34fc run above. These deferrals do not establish current pool admission.
 
 ## Verdict
 
-The prefetch lever cannot survive on a newer toolchain: no newer
-ptxas exists on the pool to test it. k2, the cp.async ring, is the
-only path. When a newer ptxas arrives, repeat the probe above before
-any timing claim. A change to the repo toolchain pin needs a decision
-from Rob.
+The dated pool sweep found no newer ptxas to test. Hint retention on a
+newer toolchain remains unknown. For the available toolchain, k2, the
+cp.async ring, remains the only path. When a newer ptxas arrives, repeat
+the probe above before any timing claim. A change to the repo toolchain
+pin needs a decision from Rob.
 
 ## What a hint count is not
 
