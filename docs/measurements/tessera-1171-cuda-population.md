@@ -1,5 +1,13 @@
 # Tessera#1171: full CUDA population on the merged tree of PR 1089
 
+> **WITHDRAWN IN PART (2026-10-11).** Two verdicts of this version are withdrawn.
+> (1) "All 25 are baselines": the reruns used trees that contain PR 1089, so
+> they could not separate a baseline from a regression, and they sealed a
+> source that differs from the population. (2) "The endpoint witness path
+> completes far inside its timeout": the probe timed one shard, not the route.
+> The population counts, the skip list and the receipt path stay valid.
+> Read `tessera-1171-cuda-population-v2.md` for the replacement answers.
+
 Date: 2026-10-10. Author: issuegraph attempt 2. Status: measured.
 
 ## Tree measured
