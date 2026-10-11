@@ -9,7 +9,7 @@ import types
 import pytest
 
 pytest.importorskip("torch")
-pytest.importorskip("vllm")
+pytest.importorskip("vllm.config")
 
 import torch
 
