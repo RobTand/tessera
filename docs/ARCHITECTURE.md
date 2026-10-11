@@ -1559,6 +1559,14 @@ capture fixture passed on the retained candidate; full-model serving remains
 unqualified.
 No production runtime pin, route cell, default, artifact or ship gate moves.
 
+Re-stamped 2026-10-11 for the eager mask-skip trace audit (issue #1211).
+`serving/mla_mask_skip_identity.py` owns the emitter and audit vocabulary.
+It selects the native or stock decoder and schedule while it preserves the actual executed symbol.
+The audit imports this owner without torch or vLLM.
+It requires a positive integer world and one integer rank per participant.
+Rank conflicts and unknown graph or compile coverage refuse.
+CPU audit success proves no live MLA execution or CUDA qualification.
+
 Re-stamped 2026-10-01 for the stock-kernel overrides block (contract v54).
 A new top-level block, `stock_kernel_overrides`, publishes where the plugin,
 behind an opt-in flag, replaces a kernel of the stock runtime with its own,
