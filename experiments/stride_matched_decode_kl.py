@@ -62,16 +62,9 @@ def main(argv: list[str] | None = None) -> int:
     step = 256
     for lo in range(0, rows.size, step):
         idx = rows[lo:lo + step]
-        tb = np.asarray(t_arr[idx], dtype=np.float64)
-        sb = np.asarray(s_arr[idx], dtype=np.float64)
-        tb -= tb.max(axis=1, keepdims=True)
-        sb -= sb.max(axis=1, keepdims=True)
-        pb = np.exp(tb)
-        pb /= pb.sum(axis=1, keepdims=True)
-        qb = np.exp(sb)
-        qb /= qb.sum(axis=1, keepdims=True)
+        reduced, tb, sb, _ = fv.kl_rows(t_arr[idx], s_arr[idx])
         m = tb.shape[0]
-        kl[lo:lo + m] = (pb * (np.log(pb) - np.log(qb))).sum(axis=1)
+        kl[lo:lo + m] = reduced
         agree[lo:lo + m] = tb.argmax(axis=1) == sb.argmax(axis=1)
     result = {
         "schema": "tessera.stride_matched_exact_kl/1",

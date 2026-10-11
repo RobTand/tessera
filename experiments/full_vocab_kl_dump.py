@@ -113,43 +113,46 @@ def read_full_vocab_payload(meta_path: str | Path) -> tuple[dict, np.ndarray]:
     return meta, arr
 
 
+def _identity_fields(meta: dict) -> dict:
+    corpus = meta.get("corpus") or {}
+    tokenizer = meta.get("tokenizer") or {}
+    payload = meta.get("payload") or {}
+    return {"contract_sha256": corpus.get("contract_sha256"),
+            "source_sha256": corpus.get("source_sha256"),
+            "tokenizer identity_sha256": tokenizer.get("identity_sha256"),
+            "positions": payload.get("positions"),
+            "vocab_size": payload.get("vocab_size")}
+
+
 def histories_and_masks(meta_a: dict, meta_b: dict) -> bool:
     """Whether two payloads score the same inputs under the same mask."""
-    ca, cb = meta_a.get("corpus") or {}, meta_b.get("corpus") or {}
-    ta, tb = meta_a.get("tokenizer") or {}, meta_b.get("tokenizer") or {}
-    pa, pb = meta_a.get("payload") or {}, meta_b.get("payload") or {}
-    ids_a = (ca.get("contract_sha256"), ca.get("source_sha256"),
-             ta.get("identity_sha256"), pa.get("positions"),
-             pa.get("vocab_size"))
-    ids_b = (cb.get("contract_sha256"), cb.get("source_sha256"),
-             tb.get("identity_sha256"), pb.get("positions"),
-             pb.get("vocab_size"))
-    # A missing identity never matches, not even another missing one: this
-    # compare exists to refuse mismatches, so absence refuses too.
-    return (all(v is not None for v in ids_a)
-            and all(v is not None for v in ids_b)
-            and tuple(ids_a) == tuple(ids_b))
+    return _first_identity_mismatch(meta_a, meta_b) == "no field differs"
 
 
 def _first_identity_mismatch(meta_a: dict, meta_b: dict) -> str:
     """Name the first identity field that differs, for the refusal."""
-    ca, cb = meta_a.get("corpus") or {}, meta_b.get("corpus") or {}
-    ta, tb = meta_a.get("tokenizer") or {}, meta_b.get("tokenizer") or {}
-    pa, pb = meta_a.get("payload") or {}, meta_b.get("payload") or {}
-    for name, a, b in (
-            ("contract_sha256", ca.get("contract_sha256"),
-             cb.get("contract_sha256")),
-            ("source_sha256", ca.get("source_sha256"),
-             cb.get("source_sha256")),
-            ("tokenizer identity_sha256", ta.get("identity_sha256"),
-             tb.get("identity_sha256")),
-            ("positions", pa.get("positions"), pb.get("positions")),
-            ("vocab_size", pa.get("vocab_size"), pb.get("vocab_size"))):
+    ids_a, ids_b = _identity_fields(meta_a), _identity_fields(meta_b)
+    for name, a in ids_a.items():
+        b = ids_b[name]
         if a is None or b is None:
             return f"{name} is missing on one side ({a!r} vs {b!r})"
         if a != b:
             return f"{name} differs ({a!r} vs {b!r})"
     return "no field differs"
+
+
+def kl_rows(teacher: np.ndarray, student: np.ndarray):
+    """The shared full-vocabulary reduction for one bounded row block."""
+    lp = np.array(teacher, dtype=np.float64, copy=True)
+    lq = np.array(student, dtype=np.float64, copy=True)
+    lp -= lp.max(axis=1, keepdims=True)
+    lq -= lq.max(axis=1, keepdims=True)
+    p = np.exp(lp)
+    p /= p.sum(axis=1, keepdims=True)
+    q = np.exp(lq)
+    q /= q.sum(axis=1, keepdims=True)
+    return (p * (np.log(p) - np.log(q))).sum(axis=1), lp, lq, p
+
 
 
 def _load_model(checkpoint: str, dtype: str):
@@ -287,16 +290,10 @@ def cmd_compare(args: argparse.Namespace) -> int:
     top1p_all = np.empty(n, dtype=np.float64)
     step = 256
     for lo in range(0, n, step):
-        tb = np.asarray(t_arr[lo:lo + step], dtype=np.float64)
-        sb = np.asarray(s_arr[lo:lo + step], dtype=np.float64)
-        tb -= tb.max(axis=1, keepdims=True)
-        sb -= sb.max(axis=1, keepdims=True)
-        pb = np.exp(tb)
-        pb /= pb.sum(axis=1, keepdims=True)
-        qb = np.exp(sb)
-        qb /= qb.sum(axis=1, keepdims=True)
+        reduced, tb, sb, pb = kl_rows(t_arr[lo:lo + step],
+                                       s_arr[lo:lo + step])
         m = tb.shape[0]
-        kl_all[lo:lo + m] = (pb * (np.log(pb) - np.log(qb))).sum(axis=1)
+        kl_all[lo:lo + m] = reduced
         tt = tb.argmax(axis=1)
         agree_all[lo:lo + m] = tt == sb.argmax(axis=1)
         top1p_all[lo:lo + m] = pb[np.arange(m), tt]
