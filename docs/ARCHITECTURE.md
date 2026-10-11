@@ -1,5 +1,14 @@
 # Tessera plan-to-serve architecture
 
+Re-stamped 2026-10-11 for the KL instrument source correction, issue #1172.
+`full_vocab_kl_dump.py` owns the effective history identity and the exact KL reduction.
+Campaign slices hash their token chunks and non-first-position masks.
+The campaign retains all four metadata paths before its final identity check.
+The stride reader requires decode metadata and validates prefix addresses before row selection.
+The CPU checkpoint smoke proves campaign completion, not served quality or GPU qualification.
+The recorded P5 generation failure remains an acceptance blocker.
+No cell grade, route, rate, or serving gate changes.
+
 The hosted `pure` check enforces branch rule 12 for pull requests.
 The branch must match `tessera-<issue>` or `tessera-<issue>-<word>` and link that issue in the body.
 The suffix follows `[a-z0-9][a-z0-9-]*`. The script reads local references and GitHub issue URLs from the event JSON.
@@ -8513,9 +8522,10 @@ materialised path serves. One cell per regime rather than one per
 per-residency KL was measured in both regimes and came back bit-identical, so
 the residency is not an axis these receipts distinguish. Both grade
 `kl_lower_bound` from a top-1024 teacher/student-intersection bound scored in
-the cell's own regime. `kl_full_vocab` is **not** claimed and the reason is
-measured: no instrument in this repository produces a full-vocabulary KL
-(`moe-evidence-debt-2026-09-04.md` §4). `qualification: device_qualified` is
+the cell's own regime. These cells do not claim `kl_full_vocab`.
+Issue #1172 adds an exact full-vocabulary instrument, but its synthetic
+FP8-RTN result does not qualify these HIP cells.
+`qualification: device_qualified` is
 qualified under the receipt's own scope line -- gfx1201 under WSL2 proves the
 HIP code path, says nothing about gfx1151 numerics, and makes no performance
 claim. No routed-MoE cell: the BF16 MoE builder path was not exercised on HIP.
