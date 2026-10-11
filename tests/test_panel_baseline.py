@@ -446,3 +446,91 @@ def test_the_reviewer_cli_names_null_samples_without_a_traceback(tmp_path):
     assert proc.returncode == 2, proc.stderr
     assert "REFUSED" in proc.stderr and "samples_ms" in proc.stderr
     assert "Traceback" not in proc.stderr
+
+
+# --- routed panel projection (tessera#1137): panel_row_views plans routed_moe
+# rows from rank-local scope shape, and refuses bad or lost geometry by name.
+
+
+def _routed_scope(*, route="TESSERA_FP8", grid="E4M3", q256=1024,
+                  m=512, n=1024, k=4096):
+    return {"route": route, "grid": grid, "q256": q256, "structure": "routed_moe",
+            "mode": "resident", "execution_mode": "eager", "regime": "batch",
+            "tp_degree": 1, "requested_platform": "sm_121",
+            "shape": {"M": m, "N": n, "K": k, "experts": 8, "topk": 1}}
+
+
+def _panel_with_scopes(tmp_path, entries):
+    blob = json.dumps({"samples_ms": [float(v) for v in range(1, 31)]}).encode()
+    samples_path = tmp_path / "samples.json"
+    samples_path.write_bytes(blob)
+    bound = {"path": str(samples_path.resolve()), "bytes": len(blob),
+             "sha256": hashlib.sha256(blob).hexdigest()}
+    plan_rows, rows = [], []
+    for index, (scope, prefix, median_ms) in enumerate(entries):
+        scope_id = f"scope-{index}"
+        plan_rows.append({"id": scope_id, "scope": scope})
+        rows.append({"scope_id": scope_id, "prefix": prefix,
+                     "timing": {"median_ms": median_ms}})
+    return {"schema": tp.SCHEMA, "rows": rows, "plan": {"rows": plan_rows},
+            "evidence": {"samples": bound}, "runtime": {}}
+
+
+def test_panel_row_views_plans_routed_moe_rows_with_rank_local_shape(tmp_path):
+    from tessera.serving import panel_baseline as pb
+    documented = next(g for g in pb.BASELINE_GROUPS if g["selector"] == "experts.T8")
+    panel = _panel_with_scopes(tmp_path, [(_routed_scope(), documented["module"], 2.5)])
+    (view,) = pb.panel_row_views(panel)
+    assert view["structure"] == "routed_moe"
+    assert view["module"] == documented["module"]
+    assert view["family"] == "TESSERA_FP8" and view["grid"] == "E4M3"
+    assert view["q256"] == (1024, 1024)
+    assert view["rank_local_shape"] == ((2048, 4096), (4096, 1024))
+    assert view["m"] == 512 and view["median_ms"] == 2.5 and view["samples_n"] == 30
+    assert view["scope_id"] == "scope-0" and view["panel_row_index"] == 0
+
+
+@pytest.mark.parametrize("shape", [
+    None,  # lost: the scope carries no geometry at all
+    "2048x4096",  # bad: not a shape object
+    {},  # lost: no dimensions
+    {"M": 512, "N": 1024},  # lost: no K
+    {"M": 0, "N": 1024, "K": 4096},  # bad: nonpositive M
+    {"M": 512, "N": 0, "K": 4096},  # bad: nonpositive N
+    {"M": 512, "N": 1024, "K": -1},  # bad: nonpositive K
+    {"M": 512, "N": "1024", "K": 4096},  # bad: not integers
+    {"M": 512, "N": 1024.0, "K": 4096},  # bad: not integers
+    {"M": 512, "N": True, "K": 4096},  # bad: booleans are not dimensions
+])
+def test_panel_row_views_refuses_bad_or_lost_routed_geometry_by_name(tmp_path, shape):
+    from tessera.serving import panel_baseline as pb
+    scope = _routed_scope()
+    if shape is None:
+        del scope["shape"]
+    else:
+        scope["shape"] = shape
+    panel = _panel_with_scopes(
+        tmp_path, [(scope, "model.language_model.layers.10.mlp.experts", 2.5)])
+    with pytest.raises(ValueError, match="rank-local shape"):
+        pb.panel_row_views(panel)
+
+
+def test_compare_rates_routed_panel_rows_for_all_four_documented_groups(tmp_path):
+    from tessera.serving import panel_baseline as pb
+    samples = (1.0, 2.0, 3.0, 4.0)
+    median_ms = pb.bench_summarize(samples)["median_ms"]
+    route_of = {"TESSERA_FP8": "TESSERA_FP8", "TESSERA_BF16": "TESSERA_BF16",
+                "TESSERA_NVFP4": "TESSERA_NVFP4"}
+    entries = [(_routed_scope(route=route_of[documented["family"]],
+                              grid=documented["grid"],
+                              q256=documented["q256"][0]),
+                documented["module"], median_ms)
+               for documented in pb.BASELINE_GROUPS]
+    rows = pb.panel_row_views(_panel_with_scopes(tmp_path, entries))
+    receipt = pb.compare(_synthetic_table(samples=samples), rows)
+    assert receipt["bench_rule"]["proven_reproduction"] is True
+    assert receipt["bench_rule"]["cells_checked"] == 4 * len(pb.REQUESTED_MS)
+    for selector in ("experts.T8", "experts.T16", "rate.experts.E4M3_R896", "experts.T4"):
+        assert receipt["groups"][selector]["512"]["verdict"] == "reproduced"
+        for m in ("1", "2048", "8192"):
+            assert receipt["groups"][selector][m]["verdict"] == "no_panel_row"

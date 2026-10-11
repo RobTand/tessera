@@ -672,6 +672,47 @@ def _check_phase_tensors(panel, phase_tensors):
                 raise ValueError(f"{phase}: actual {name} differs from independent panel")
 
 
+def _acceptance_sha(value, name):
+    if (not isinstance(value, str) or len(value) != 64
+            or any(c not in "0123456789abcdef" for c in value)):
+        raise ValueError(f"measurement acceptance lacks digest {name}")
+
+
+def accept_measurement(receipt):
+    """Accept a timing-admissible operator receipt for a decision.
+
+    Every required phase carries a completed timing measurement, content
+    digests on each tensor, and tracked transfer bytes in resources. The
+    receipt carries its own panel and runtime digests. Each gap refuses by
+    name; nothing is accepted on a missing field.
+    """
+    if not isinstance(receipt, dict) or receipt.get("status") != "timing_admissible":
+        raise ValueError("measurement acceptance requires a timing_admissible receipt")
+    _acceptance_sha(receipt.get("panel_sha256"), "panel_sha256")
+    _acceptance_sha(receipt.get("runtime_sha256"), "runtime_sha256")
+    phases = receipt.get("phases")
+    if not isinstance(phases, dict):
+        raise ValueError("measurement acceptance lacks phase observations")
+    transfers = receipt.get("resources", {}).get("phases") if isinstance(receipt.get("resources"), dict) else None
+    for phase in PHASES:
+        observation = phases.get(phase)
+        if not isinstance(observation, dict):
+            raise ValueError(f"measurement acceptance lacks phase {phase!r}")
+        if observation.get("measurement") is None:
+            raise ValueError(f"measurement acceptance lacks {phase} timing measurement")
+        for tensor in ("input", "reference_qdq", "qdq", "reference_output", "output"):
+            record = observation.get(tensor)
+            if not isinstance(record, dict) or not isinstance(record.get("content_sha256"), str):
+                raise ValueError(f"measurement acceptance lacks {phase}.{tensor} digest")
+            _acceptance_sha(record["content_sha256"], f"{phase}.{tensor} content_sha256")
+        movement = transfers.get(phase) if isinstance(transfers, dict) else None
+        if (not isinstance(movement, dict)
+                or type(movement.get("input_bytes")) is not int or movement["input_bytes"] < 0
+                or type(movement.get("output_bytes")) is not int or movement["output_bytes"] < 0):
+            raise ValueError(f"measurement acceptance lacks {phase} tracked transfer bytes")
+    return None
+
+
 def measure_prepared_operator(prepared, panel, phase_tensors, *, warmup_iterations, iterations,
                               resource_collector=None):
     """Gate BOTH phases/QDQ before any timings; retain explicit resource gaps."""
@@ -961,6 +1002,8 @@ def main(argv=None):
                 if _agree_numerical_status(prepared, complete):
                     time_after_resource_collection(prepared, json.loads(args.panel.read_text()), phase_tensors,
                         result, collector=collector, warmup_iterations=args.warmup_iterations, iterations=args.iterations)
+        if result["status"] == "timing_admissible":
+            accept_measurement(result)
         args.out.write_text(json.dumps(result, sort_keys=True, indent=2, allow_nan=False) + "\n")
         # pbrun's CAS result is stdout. Bind the separately retained artifact
         # bytes to that result, rather than relying on an external path alone.
