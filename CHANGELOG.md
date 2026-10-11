@@ -1,5 +1,15 @@
 # Changelog
 
+## 2026-10-10 — isolate vLLM stub state in the test co-run (issue #1015)
+
+Guard the three remaining vLLM consumers on the submodule they import, not on the bare package.
+A leaked bare vLLM stub now skips those files instead of failing them with `'vllm' is not a package`.
+The benchmark regression checks import-state preservation with and without real vLLM.
+The existing ddd2137 repair moves the benchmark installer from import time to its command entry point.
+Both dispatch fixtures restore the prior bindings after a setup import or installer fails.
+The setup regression checks real configuration imports and exact module and package bindings.
+No serving default, qualifier, wire, or timing rule changes.
+
 ## 2026-10-10 — admit the served L14 WINDOW in the opt-in packed reader (issue #1166)
 
 Admit the served fourteen bit WINDOW beside the research twelve bit WINDOW in `prepare_a4_wire_compact`.
