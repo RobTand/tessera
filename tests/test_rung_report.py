@@ -98,3 +98,17 @@ def test_the_real_wire_table_sets_both_ratios_and_the_harness_bias_side_by_side(
     assert "| 512 | 1.450 | **1.510** | 1.300 | 1.300 | 1.000 | 1.041 | 1.000 |" in wall
     graph = out.split("Real wires against synthetic, graph replay")[1].split("Real wires")[0]
     assert "| 1 |" in graph and "| 512 |" not in graph
+
+
+def test_the_maxima_table_names_each_runs_worst_cell_per_rung(tmp_path, capsys):
+    first, second = tmp_path / "first.json", tmp_path / "second.json"
+    first.write_text(json.dumps(_doc()))
+    worse = _doc()
+    worse["rungs"]["1088"]["cells"]["1"] = _cell(1.6, 1.2, 450.0, 290.0, 10.0, r=4, two=True, per_joule=28.0, watts=75.0)
+    second.write_text(json.dumps(worse))
+    assert report.main(["--run", f"A={first}", "--run", f"B={second}", "--maxima-only"]) == 0
+    out = capsys.readouterr().out
+    assert "Run A" not in out
+    wall = out.split("eager forward wall:")[1].split("graph replay")[0]
+    assert "| R1088 | **1.510** at M 512 | **1.600** at M 1 |" in wall
+    assert "| R832 | 1.300 at M 512 | 1.300 at M 512 |" in wall

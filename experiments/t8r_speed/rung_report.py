@@ -124,6 +124,20 @@ def split_table(doc, reference, m):
     return table(["Rung", "gate/up us", "/ R1024", "down us", "/ R1024", "all kernels us", "/ R1024"], rows)
 
 
+def maxima_table(runs, key):
+    """Per rung, each run's largest ratio over the reference and the M it falls at."""
+    rungs = [q for q in runs[0][1]["rungs"] if int(q) != int(runs[0][2])]
+    header = ["Rung"] + [label for label, _doc, _ref, _summary in runs]
+    rows = []
+    for q in rungs:
+        row = [f"R{q}"]
+        for _label, doc, _ref, summary in runs:
+            found = [(summary[str(m)][q][key]["ratio"], m) for m in doc["meta"]["ms"] if key in summary[str(m)].get(q, {})]
+            row.append(f"{cell(max(found)[0])} at M {max(found)[1]}" if found else "-")
+        rows.append(row)
+    return table(header, rows)
+
+
 def power_table(doc, summary, m):
     row = summary[str(m)]
     rows = []
@@ -140,16 +154,22 @@ def main(argv=None):
     ap.add_argument("--real")
     ap.add_argument("--reference", type=int, default=1024)
     ap.add_argument("--splits", default="1,8,512,2048")
+    ap.add_argument("--maxima-only", action="store_true", help="print only the per-rung maxima over the runs")
     args = ap.parse_args(argv)
     real = json.load(open(args.real)) if args.real else None
+    runs = []
     for item in args.run:
         label, path = item.split("=", 1)
         doc = json.load(open(path))
         summary = summarize_rungs(doc, args.reference)
+        runs.append((label, doc, args.reference, summary))
+        if args.maxima_only:
+            continue
         print(f"### Run {label}: {doc['meta']['host']}, kernel {str(doc['meta']['kernel_sha'])[:8]}, "
               f"action {str(doc['meta']['pb_action'])[:8]}\n")
+        layout = doc["rungs"][str(args.reference)].get("word_layouts", {}).get("gate", "unrecorded")
         for key, title in KEYS:
-            print(f"Time over R{args.reference}, {title}:\n")
+            print(f"Time over R{args.reference} ({layout} words), {title}:\n")
             print(ratio_table(doc, summary, key, args.reference) + "\n")
         if real is not None:
             for key, title in KEYS:
@@ -161,6 +181,11 @@ def main(argv=None):
                 print(split_table(doc, args.reference, m) + "\n")
                 print(f"Work per joule at M = {m}:\n")
                 print(power_table(doc, summary, m) + "\n")
+    if len(runs) > 1:
+        print("### Largest ratio over M, per rung and run\n")
+        for key, title in KEYS:
+            print(f"{title}:\n")
+            print(maxima_table(runs, key) + "\n")
     return 0
 
 
