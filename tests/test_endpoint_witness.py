@@ -224,7 +224,7 @@ def test_tokenizer_array_roots_are_not_normalized_into_objects(sample, byte_leve
     raw = json.dumps(content).encode()
     (root / "tokenizer.json").write_bytes(raw)
     value["tokenizer"]["files"]["tokenizer.json"] = {
-        "sha256": hashlib.sha256(raw).hexdigest(), "bytes": len(raw), "content": content}
+        "sha256": hashlib.sha256(raw).hexdigest(), "bytes": len(raw), "content": json.loads(raw)}
     assert verify(root, resign(value)) is not None
 
 
