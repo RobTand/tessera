@@ -688,6 +688,10 @@ def audit_mla_mask_skip_traces(paths, *, world_size) -> dict:
     any problem fails the record. The audit never raises: a broken input
     is a failed record, not a traceback.
     """
+    if type(world_size) is not int or world_size <= 0:
+        return {"schema": MASK_SKIP_AUDIT_SCHEMA, "world_size": world_size,
+                "passed": False, "problems": ["world_size must be a positive integer"],
+                "ranks": []}
     vocab = MASK_SKIP_VOCABULARY
     policy = vocab["MASK_SKIP_POLICY"]
     kind = vocab["MASK_SKIP_KIND"]
@@ -719,9 +723,16 @@ def audit_mla_mask_skip_traces(paths, *, world_size) -> dict:
             problems.append(f"{path}: trace names no rank; a rank read off a "
                             "path is a guess, so the audit refuses it")
             continue
-        if served_world != world_size:
-            problems.append(f"{path}: world_size {served_world} is not the "
-                            f"expected world {world_size}")
+        if type(served_world) is not int or served_world != world_size:
+            problems.append(f"{path}: world_size {served_world!r} is not the "
+                            f"expected integer world {world_size}")
+            continue
+        if type(rank) is not int or not 0 <= rank < world_size:
+            problems.append(f"{path}: rank {rank!r} is not an integer in "
+                            f"the expected world [0, {world_size})")
+            continue
+        if payload.get("rank_conflict") is not None:
+            problems.append(f"{path}: trace reports a rank_conflict")
             continue
         if rank in seen:
             problems.append(f"{path}: rank {rank} is already audited; each "
@@ -732,13 +743,13 @@ def audit_mla_mask_skip_traces(paths, *, world_size) -> dict:
         if not isinstance(coverage, dict):
             problems.append(f"{path}: trace names no dispatch coverage")
             continue
-        if coverage.get("cuda_graph_replays_counted"):
-            problems.append(f"{path}: trace counts graph replays; an "
-                            "eager-only audit refuses it")
+        if coverage.get("cuda_graph_replays_counted") is not False:
+            problems.append(f"{path}: dispatch coverage must explicitly "
+                            "exclude graph replays for an eager-only audit")
             continue
-        if coverage.get("torch_compile_tracing_counted"):
-            problems.append(f"{path}: trace counts compile tracing; an "
-                            "eager-only audit refuses it")
+        if coverage.get("torch_compile_tracing_counted") is not False:
+            problems.append(f"{path}: dispatch coverage must explicitly "
+                            "exclude compile tracing for an eager-only audit")
             continue
         entries = payload.get("entries")
         if not isinstance(entries, list):
