@@ -76,6 +76,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(
 
 from tessera.serving.backend import capability_token, gcn_arch_token  # noqa: E402
 from tessera.serving_parts import read_serving_manifest  # noqa: E402
+from tessera.serving.mla_mask_skip_identity import MASK_SKIP_VOCABULARY  # noqa: E402
 
 #: Bumped when the receipt's shape changes.  A consumer keys on it, and #460
 #: mints cells from receipts that carry it.
@@ -655,18 +656,6 @@ def ingest_receipt(path: str, kind: str, *, reads=()) -> dict:
 
 # --- mask-skip trace audit (tessera#1177) ------------------------------------
 
-#: One vocabulary defines the native and stock dispatch roles this audit accepts.
-MASK_SKIP_VOCABULARY = {
-    "MASK_SKIP_POLICY": "mla_mask_skip_eager_dispatch",
-    "MASK_SKIP_KIND": "attention_backend",
-    "MASK_SKIP_CONTRACT": "stock_kernel_overrides",
-    "NATIVE_DECODER": "native_mg_mask_skip",
-    "STOCK_DECODER": "stock",
-    "NATIVE_SYMBOL": "tessera_mla_prefill_mg_l0",
-    "STOCK_SYMBOL": "stock",
-    "NATIVE_SCHEDULE": "mg_mask_skip_pass_buffers",
-    "STOCK_SCHEDULE": "stock_mg",
-}
 
 MASK_SKIP_AUDIT_SCHEMA = "tessera.mask-skip-audit/1"
 MASK_SKIP_TRACE_SCHEMA = "tessera.route_trace/1"

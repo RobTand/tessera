@@ -17,6 +17,7 @@ from vllm.v1.attention.backends.mla.index_group import HiSparseMLAIndexGroup
 
 from . import contract, flags, telemetry
 from .mla_prefill import MlaPrefillLibrary
+from .mla_mask_skip_identity import emit_mask_skip_route
 
 FLAG = "TESSERA_RESEARCH_MLA_MASK_SKIP"
 BACKEND_PATH = "tessera.serving.mla_sparse_sm120.TesseraMLASparseSM120Backend"
@@ -132,12 +133,8 @@ class TesseraMLASparseSM120Impl(FlashInferMLASparseSM120Impl):
         context = getattr(self, "_tessera_mla_context", None)
         if not context or torch.compiler.is_compiling() or torch.cuda.is_current_stream_capturing():
             return
-        telemetry.emit_route(context[1], kind="attention_backend",
-            policy="mla_mask_skip_eager_dispatch", symbol=symbol,
-            shape=f"T{q.shape[0]}:H{self.num_heads}:D{self.kv_lora_rank}",
-            contract="stock_kernel_overrides", state="served", reason=reason,
-            decoder="stock" if reason else "native_mg_mask_skip",
-            kernel_schedule="stock_mg" if reason else "mg_mask_skip_pass_buffers")
+        emit_mask_skip_route(context[1], symbol=symbol, reason=reason,
+                             shape=f"T{q.shape[0]}:H{self.num_heads}:D{self.kv_lora_rank}")
 
     def _run_mqa_kernel(self, q, kv_cache, topk_indices_physical):
         refusal = self._refusal(q, kv_cache, topk_indices_physical)
