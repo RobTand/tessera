@@ -408,9 +408,14 @@ def _submit(name: str, arm: dict, args, receipt_dir: Path) -> dict:
     command = _command(arm, surface_json, args.pytest_arg, cpus)
     artifact_roots = getattr(args, "artifact_root", [])
     if image:
+        cache_dir = str(suite_container.absolute(args.gpu_cache_dir) / name)
+        scratch_env = suite_container.artifact_specs()["scratch"].env
+        artifact_roots = [f"{scratch_env}={cache_dir}/tmp"
+                          if root == f"{scratch_env}={args.gpu_cache_dir}/tmp" else root
+                          for root in artifact_roots]
         runner = ["--image", image, "--deps-site", args.gpu_deps_site,
                   "--deps-sha256", args.gpu_deps_sha256,
-                  "--surface-dir", str(receipt_dir), "--cache-dir", args.gpu_cache_dir]
+                  "--surface-dir", str(receipt_dir), "--cache-dir", cache_dir]
         for root in getattr(args, "gpu_data_root", []):
             runner += ["--data-root", root]
         for root in artifact_roots:
@@ -1705,7 +1710,7 @@ def main() -> int:
     ap.add_argument("--gpu-deps-site", default="", help="readonly scoped pytest/xdist site")
     ap.add_argument("--gpu-deps-sha256", default="", help="suite_dependencies.v1 content seal")
     ap.add_argument("--gpu-cache-dir", default="",
-                    help="new owned writable directory on local disk outside the source")
+                    help="new local writable root outside the source; each container lane owns a child directory")
     ap.add_argument("--gpu-data-root", action="append", default=[str(POOL_ROOT)],
                     help="canonical same-path readonly data mount; repeatable")
     ap.add_argument("--artifact-root", action="append", default=[], metavar="ENV=PATH",

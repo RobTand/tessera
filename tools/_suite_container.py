@@ -125,6 +125,7 @@ def parse(argv):
             # ``-p`` and ``--ignore`` repeat (two plugins, two lane files);
             # every other valued option names one thing exactly once.
             _require(key in ("-p", "--ignore") or key not in seen, "duplicate pytest option " + key)
+            seen.add(key)
             if equal:
                 value = attached
             else:
