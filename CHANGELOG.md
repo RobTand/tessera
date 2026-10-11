@@ -1,5 +1,15 @@
 # Changelog
 
+## 2026-10-11: refuse invalid f16 probe acceptance, issue #739
+
+Derive the expected population from requested benchmark cases, modes, and M values.
+Propagate analyzer failures and refuse missing cells, output mismatches, and incorrect source arms.
+Reuse mapped-native and finalized-build owners for actual source and ELF custody.
+Retain partial probe scope and unknown hint retention. Keep issue 739 open.
+The targeted CPU population passes five tests, with no skips or CUDA allocations.
+
+
+
 ## 2026-10-10 — admit the served L14 WINDOW in the opt-in packed reader (issue #1166)
 
 Admit the served fourteen bit WINDOW beside the research twelve bit WINDOW in `prepare_a4_wire_compact`.

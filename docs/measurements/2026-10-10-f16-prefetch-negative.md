@@ -93,3 +93,51 @@ revision, and their timing band above confirms it.
   ring port of the MMA8 ring to the f16 library, with its own A/B.
 - A newer ptxas that keeps the hint, with a repeat of the probe above
   before any timing claim.
+
+## Scope correction, 2026-10-11
+
+This correction supersedes the SASS absence and ptxas-removal conclusions above.
+The original text and measurements remain as dated history.
+The count method searched only for the literal text `prefetch` in each SASS dump.
+Zero matches do not establish hint removal.
+[NVIDIA's Blackwell instruction table](https://docs.nvidia.com/cuda/archive/13.0.3/cuda-binary-utilities/index.html#blackwell-instruction-set) identifies `CCTL` and `CCTLL` as cache-control instructions.
+It also identifies `CCTLT` and `UTMACCTL` as cache-control instructions.
+The historical count did not inspect those opcodes or their modifiers.
+Hint retention remains unknown.
+The timing differences do not prove a scheduling effect from dead PTX.
+
+The three repeated matrices contain 18 distinct cells, not 54 distinct cells.
+They do not cover every routed cell or dense timing.
+The unlocated 724-test oracle statement supplies no independently verified receipt here.
+Historical measurements do not qualify the reverted source head.
+
+PB action `a28bed109503dc35da95be64b07610ce724ddf3041a6470d1f1e497a2f3e9abe` remains failed with return code 1.
+Its timed stage completed, but both NCU stages returned 2 and both SASS stages returned 125.
+It supplies failed partial evidence, not successful complete acceptance.
+The later empty NCU captures supply no loop-move comparison.
+
+The corrected A/B validator derives cells from requested cases, modes, and M values.
+It refuses output mismatches, missing cells, analyzer errors, and incorrect source arms.
+Each arm selects its source and cache explicitly.
+The existing mapped-native and build-finalization owners bind the actual ELF, source bytes, and Ninja source dependency.
+SASS uses the recorded loaded ELF, not the newest library.
+The codegen report retains cache-control opcode observations and an unknown hint-retention result.
+Unknown disassembly stays unknown.
+
+CPU proof uses actual scalar ELF artifacts and the real shell entry point.
+PB `8b1599a20b9c5ae3c8fada077620a6bb27fbe324f0e8495b256b2136c246a92c` shows all five regression cases fail before the correction.
+PB `b2b700ed57d7bf4e8e0195c4459267a12f717a2afc6e6e519fd3c0856fa1a6f8` passes all five after the correction.
+Both runs use two xdist workers, worksteal, and one native thread per worker.
+Both populations report no CUDA device, zero skips, zero uncollected modules, and zero device allocations.
+These results prove CPU acceptance mechanics only.
+
+`AB_STEPS=analyze` validates retained artifacts without a GPU or Docker.
+`AB_CASES`, `AB_MODES`, and `AB_MS` declare the required population for that analysis.
+Its receipt names the selected stages and states `issue_acceptance: not_established`.
+A partial probe cannot establish complete issue acceptance.
+
+No fresh GPU benchmark, NCU capture, or serving run accompanies this correction.
+No kernel, layout, default, runtime pin, or prefetch change accompanies it.
+Complete bitwise coverage, R1024 timing, dense/two-run timing, and PC-level NCU evidence remain open.
+Issue 739 stays open.
+
