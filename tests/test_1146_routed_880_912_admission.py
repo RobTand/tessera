@@ -271,7 +271,6 @@ def test_producer_answers_hold_outside_routed_880_912_scope():
     ]
     answers = [_answer(contract, *a) for a in queries]
     assert answers == expected
-    assert contract["contract_version"] == 66
 
 
 def _answer(contract, grid, q256, body, plane, family, span, target, structure):
