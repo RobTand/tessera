@@ -105,6 +105,7 @@ def tokenizer_vocab(backend):
 
 def token_identity(backend):
     """The backend without the ByteLevel flags in BYTE_LEVEL_UNREAD_FLAGS."""
+    require(isinstance(backend, dict), "tokenizer backend is not an object")
     def strip(node, flags):
         if not isinstance(node, dict):
             return node
