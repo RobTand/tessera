@@ -78,7 +78,9 @@ def _representative(pair, cell, row):
 def _priced_pairs(cell, row):
     """The rule pairs the lane reaches and the cell covers: the pairs the allocator can price."""
     lane_rates = set(routed_lane_rates(LIBRARY))
-    return [t for t in _rule_pairs(row) if set(t) <= lane_rates and _representative(t, cell, row) is not None]
+    return [t for t in _rule_pairs(row) if set(t) <= lane_rates and any(
+        rung_rates(row, q) == t and cell_covers_rung(cell, q, row)
+        for q in range(256, 2049))]
 
 
 def _e4m3mma_decoder(cell, row, q):
