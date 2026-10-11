@@ -2,7 +2,8 @@
 
 Issue: RobTand/tessera#694, item 2 of #690. Source: branch `tessera-694` at
 `f709862e2` (the kernel, loader and lane predicates of `origin/master`
-`4c0fd6aca`; the branch adds only measurement tools, tests and this note).
+`4c0fd6aca`; the branch adds only measurement tools, tests, this note and its
+stamps).
 Kernel `src/tessera/serving/csrc/routed_fused_window.cu`, sha256
 `8a1536dfbc3df70edbdc37001a0db6947e97d9263926bc85a4d4d3ca231eae4f`: every
 run below recorded this sha, and it is the sha of the file on master. Contract
@@ -628,22 +629,25 @@ host path dominates.
 
 ## Oracles at HEAD
 
-`tests/test_routed_fused_window.py` (`4ddd5eec`, sparky) and
-`tests/test_dense_fused_window.py` (`0ca8d62a`, sparklina), at `f709862e2`
-in the pinned image under `--strict-cuda`, through `experiments/
-routed_fused_tests.sh`:
+`tests/test_routed_fused_window.py` and `tests/test_dense_fused_window.py` in
+the pinned image under `--strict-cuda`, through `experiments/
+routed_fused_tests.sh`, twice: at `f709862e2` and again at `a0601deee`, the
+head after the second merge of master:
 
-| File | Passed | Failed | Skipped | Allocated on the device | Seconds |
-|---|---:|---:|---:|---:|---:|
-| `tests/test_routed_fused_window.py` | 427 | 0 | 0 | 419 | 306 |
-| `tests/test_dense_fused_window.py` | 297 | 0 | 0 | 290 | 209 |
+| File | Head | Key | Host | Passed | Failed | Skipped | Allocated on the device | Seconds |
+|---|---|---|---|---:|---:|---:|---:|---:|
+| `tests/test_routed_fused_window.py` | `f709862e2` | `4ddd5eec` | sparky | 427 | 0 | 0 | 419 | 306 |
+| `tests/test_routed_fused_window.py` | `a0601deee` | `e492ad17` | sparklina | 427 | 0 | 0 | 419 | 304 |
+| `tests/test_dense_fused_window.py` | `f709862e2` | `0ca8d62a` | sparklina | 297 | 0 | 0 | 290 | 209 |
+| `tests/test_dense_fused_window.py` | `a0601deee` | `56d16e6b` | sparky | 297 | 0 | 0 | 290 | 205 |
 
 The matrix covers every one-run rate 1 to 8 and every adjacent pair, with the
 fp64 one-hot decode oracle at bound zero, the accumulation oracle at the
 truncating-accumulator bound, the real GLM dense role shapes, and CUDA-graph
-capture. The files and the kernel are byte-identical at the head of this
-branch, so the receipts hold for it; the surface files are
-`ig694-20261011/gpu-routed/surface.json` and `gpu-dense/surface.json`.
+capture. The surface files are `ig694-20261011/gpu-{routed,dense}/surface.json`
+and `gpu-{routed,dense}-head/surface.json`. The files and the kernel are
+byte-identical at the head of this branch, which adds only this note's receipts
+to `a0601deee`.
 
 ## Route census at HEAD
 
@@ -707,9 +711,11 @@ rows under `ig694-20261010/`).
 | 2026-10-10 real-wire bench | `f33afcf0` | `ig694-20261010/routed-bench/` |
 | 2026-10-10 dense bench | `27083c52` | `ig694-20261010/dense-bench/` |
 | 2026-10-10 NCU of the real wires | `05458683` | `ig694-20261010/ncu/t8r.ncu-rep` |
+| GPU oracles at `a0601deee` | `e492ad17`, `56d16e6b` | `gpu-routed-head/`, `gpu-dense-head/` |
 | CPU: the bench tests, before and after the script | `4ffcc4fb` / `efb7d4e2` | pbtest reports |
-| CPU: the tool tests | `2d9e78ed`, `a1d8d571` | pbtest reports |
+| CPU: the tool tests, last run | `457da552`, `1b295027` | pbtest reports |
 | CPU: the shim tests, before and after | `e814cb54` / `4107ce01` | pbtest reports |
+| CPU: the 414 impacted test files at `a0601deee`, 8 shards: 8,476 passed, 2,215 skipped (device-less x86 arm), none failed | `1ad2a3cf`, `f254ad08`, `0df9d16c`, `82325ebf`, `2ab7ea6a`, `300ccb9d`, `657c20cc`, `3ddadf32` | pbtest reports |
 
 The tables above are the output of `experiments/t8r_speed/rung_report.py`
 (and `ncu_rung_table.py --markdown`) on these receipts. A first routed bench
