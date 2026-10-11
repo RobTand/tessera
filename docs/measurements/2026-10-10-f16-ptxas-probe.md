@@ -102,3 +102,22 @@ This correction supersedes two statements above:
 The 13.0.88 label comes from the sibling-image sweep and `docs/ARCHITECTURE.md`, not from the retained probe log.
 No newer-toolchain probe completed. This correction adds no measurement or qualification.
 
+
+## SASS count scope correction, 2026-10-11
+
+This correction supersedes every hint-removal and SASS absence conclusion above.
+The original dated text and counts remain as history.
+The method uses `grep -ci prefetch` on the SASS dump.
+It counts a literal spelling, not the architecture's cache-control instructions.
+The retained f7d34fc payload reports 96 PTX text matches and zero SASS text matches for the candidate arm.
+It does not inspect cache-control opcodes or establish hint removal.
+
+[NVIDIA's Blackwell instruction table](https://docs.nvidia.com/cuda/archive/13.0.3/cuda-binary-utilities/index.html#blackwell-instruction-set) identifies `CCTL` and `CCTLL` as cache-control instructions.
+It also identifies `CCTLT` and `UTMACCTL` as cache-control instructions.
+These opcode names need instruction-level inspection with their modifiers and source association.
+A literal zero count cannot replace that evidence.
+Hint survival and hint removal both remain unknown for the retained probe.
+The count supplies no causal explanation for any timing difference.
+No fresh CUDA compile, benchmark, NCU capture, or serving run supports this correction.
+No toolchain pin, kernel, layout, default, or scientific qualification changes.
+
