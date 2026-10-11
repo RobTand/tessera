@@ -247,3 +247,25 @@ def test_audit_refuses_rank_conflict(tmp_path):
     _write(Path(paths[1]), payload)
     record = attest.audit_mla_mask_skip_traces(paths, world_size=2)
     assert record["passed"] is False
+
+
+@pytest.mark.parametrize("reason,decoder,schedule", [
+    (None, "native_mg_mask_skip", "mg_mask_skip_pass_buffers"),
+    ("decode remains stock", "stock", "stock_mg"),
+])
+def test_emitter_role_selects_the_executed_decoder_and_schedule(reason, decoder, schedule):
+    pytest.importorskip("torch")
+    from types import SimpleNamespace
+    from tessera.serving.mla_mask_skip_identity import emit_mask_skip_route
+    from tessera.serving.telemetry import read_route
+
+    layer = SimpleNamespace(prefix="model.layers.0.self_attn")
+    emit_mask_skip_route(layer, shape="T2048:H32:D512",
+                        symbol="stock" if reason else "tessera_mla_prefill_mg_l0",
+                        reason=reason)
+    record = read_route(layer)
+    assert record["decoder"] == decoder
+    assert record["kernel_schedule"] == schedule
+    assert record["policy"] == "mla_mask_skip_eager_dispatch"
+    assert record["kind"] == "attention_backend"
+    assert record["contract"] == "stock_kernel_overrides"
