@@ -11,6 +11,7 @@ Use normalized log probabilities, with exact zero-mass semantics.
 Exercise the campaign with a supported CPU checkpoint through its final exit.
 These source repairs do not replace the failed P5 generation result.
 No serving lane, runtime gate, or rate promotion changes.
+
 ## 2026-10-11 - use a temporary checkpoint path in the KL fixture, issue #1172
 
 Derive the synthetic checkpoint path from each test's temporary directory.

@@ -152,3 +152,31 @@ under `/mnt/shared/tessera-runs/ig1172/serve/`:
   read quality. Screens stay labelled as screens.
 - A full-model MoE pair (GLM 642 GB / 162 GB) does not fit the 104 GB box
   cap; the instrument stands ready for one that does.
+
+
+## 8. Source correction, 2026-10-11
+
+This section corrects the source claims above. It does not replace the dated measurements.
+Review of source head `2fbc45d147a3a44124d31c51da41f9fbb2d8ddf8` found that the campaign omitted both teacher metadata paths.
+The final four-payload check therefore raised `KeyError`.
+The historical dump receipt does not prove that this driver completed its final check.
+
+Source revision `b63eabc7cc` corrects the three instrument scripts and their consumer tests.
+The full-vocabulary instrument now owns the history identity and KL reduction.
+Slices hash their effective token chunks and non-first-position masks.
+The stride reader binds corpus and tokenizer identities, requires decode metadata, and validates prefix addresses before row selection.
+Normalized log probabilities avoid NaN for identical finite tails and preserve exact zero-mass semantics.
+Historical metadata without the effective history hashes cannot satisfy the new exact comparison contract.
+
+PrismaBuild action `6a0e5feb31e0b7b1671ec12d1ae18daba007a32e5fa72678d210c5373677630d` reproduced all fifteen consumer failures before the fix.
+PrismaBuild action `97173a19cb9bd3ee01dcd750c49d6bd15741a31cd83a4b9b9dad79dbe656bcd2` passed the targeted CPU population.
+It recorded 33 passes, one skip with reason `no CUDA device`, and no uncollected modules.
+It used two xdist workers with worksteal and torch 2.11.0+cpu.
+A real, locally saved GPT2LMHeadModel checkpoint exercised both teacher regimes, both student regimes, final metadata agreement, and exit zero.
+The checkpoint has deterministic synthetic weights. This CPU smoke does not prove generation quality, a served route, or GPU qualification.
+
+P5 remains repetitive and `not_shared_with_reference` under the existing pair rule.
+A valid generation-smoke pass under that rule remains necessary for issue #1172 acceptance.
+The parent must supply that separate GPU and serving proof with the matched BF16 teacher, fixed inputs, route census, exit statuses, and CAS records.
+This source correction changes no acceptance criterion and establishes no issue #442 C3 promotion or real Tessera route.
+
