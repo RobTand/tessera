@@ -15,9 +15,11 @@ two passes' difference over that mean.
 
 Shapes (per rank, TP2): routed gate/up (4096 to 2 x 1024, launch mode 0) and
 down (1024 to 4096, mode 2); dense ``o_proj`` 4096 to 4096, ``q_b`` 1536 to
-8192, and KDA ``in_proj_qkvbfg_a`` 4096 to 12448.  The dense identity needs
-rows in multiples of 128, and 12448 is not one, so that shape is refused by
-name and its first 12416 rows (97 blocks) run as ``kda_in_12416``.
+8192, and KDA ``in_proj_qkvbfg_a`` at its pinned contract total from
+``bench_dense_module.MODULES`` (tessera#1020: the sweep timed a short proxy
+and dropped replicated rows). The dense identity needs rows in multiples of
+128, so the full KDA total refuses there by name; the full module times
+per role in ``bench_dense_module.py``.
 
 M: 1, 64, 512 and 8192.  Routed cells use balanced routing (token t picks
 experts (8t + j) mod 288) and, when ``--routing`` names the recorded prefill
@@ -65,10 +67,22 @@ from bench_rates import (EXPERTS, HIDDEN, INTER, MMA_BF16_TFLOPS, MMA_E4M3_TFLOP
                          routing_tables, sha)
 from bench_t8r import (ENVELOPE_W, PowerSampler, balanced_routing, kernel_profile,  # noqa: E402
                        recorded_routing, routing_files, routing_stats, summarize, time_events)
+from bench_dense_module import MODULES as BENCH_CONTRACT_MODULES  # noqa: E402
+from bench_dense_module import require_contract_total  # noqa: E402
 
 DEFAULT_RUNGS = sorted([256 * k for k in range(1, 9)] + [256 * k + f for k in range(1, 8) for f in (64, 128, 192)])
-PROTOCOL_DENSE = {"o_proj": (4096, 4096), "q_b": (8192, 1536), "kda_in": (12448, 4096),
-                  "kda_in_12416": (12416, 4096)}
+
+
+def _contract_shape(module):
+    """Total rows and columns from the pinned bench contract, never literals."""
+    roles, cols = BENCH_CONTRACT_MODULES[module]
+    return (sum(rows for _, rows in roles), cols)
+
+
+PROTOCOL_DENSE = {"o_proj": _contract_shape("o_proj"), "q_b": _contract_shape("q_b_proj"),
+                  "kda_in": _contract_shape("kda_in")}
+#: Sweep names that alias a bench contract module (tessera#1182).
+DENSE_SHAPE_MODULES = {"o_proj": "o_proj", "q_b": "q_b_proj", "kda_in": "kda_in"}
 
 
 def geometry(rf, r_lo, frac, mode, mma8):
@@ -717,7 +731,7 @@ def main():
     ap.add_argument("--part", choices=("routed", "dense", "all"), required=True)
     ap.add_argument("--cases", default=",".join(f"q{q}" for q in DEFAULT_RUNGS))
     ap.add_argument("--ms", default="1,64,512,8192")
-    ap.add_argument("--shapes", default="o_proj,q_b,kda_in,kda_in_12416")
+    ap.add_argument("--shapes", default="o_proj,q_b,kda_in")
     ap.add_argument("--routing", default="", help="recorded routing root with m<M>/ for the requested M")
     ap.add_argument("--routing-kind", choices=("balanced", "recorded", "both"), default="both")
     ap.add_argument("--refs", action="store_true", help="vLLM FP8 MoE and torch._scaled_mm references")
@@ -743,6 +757,11 @@ def main():
             shapes[name] = (rows, columns)
         PROTOCOL_DENSE.update(shapes)
         args.shapes = ",".join(shapes)
+    for shape in args.shapes.split(","):
+        module = DENSE_SHAPE_MODULES.get(shape)
+        if module is not None:
+            rows, cols = PROTOCOL_DENSE[shape]
+            require_contract_total(module, rows, cols)
     os.makedirs(args.out, exist_ok=True)
     from tessera import routed_fused as rf
     library = args.library or rf.library_for("e4m3")
