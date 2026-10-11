@@ -56,6 +56,7 @@ from fractions import Fraction
 import torch
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from rung_summary import BAR, rungs_over_the_bar, summarize_rungs  # noqa: E402
 
 EXPERTS, TOP_K, HIDDEN, INTER, SWIGLU_LIMIT = 288, 8, 4096, 1024, 10.0
 DEFAULT_RUNGS = (768, 832, 896, 928, 960, 1024, 1088, 1152)
@@ -63,8 +64,6 @@ DEFAULT_MS = (1, 2, 3, 4, 5, 6, 7, 8, 512, 2048, 8192)
 GRAPH_M_MAX = 8
 #: The rate bound of the routed launches: every rate 1..8 is a case.
 RATE_CAP = 8
-#: The bar #694 sets: a mixed rung's time over R1024's at the same M.
-BAR = 1.5
 
 
 def rung_geometry(q256, cols):
@@ -158,67 +157,6 @@ def cpu_preflight(rungs):
                 raise AssertionError(f"q256 {q}: {why}")
         done.append(q)
     return {"status": "cpu_preflight_passed", "rungs": done, "tiny_geometry": [experts, hidden, inter]}
-
-
-def cell_time(cell, key):
-    """The mean of the forward and reverse passes' medians, and their spread."""
-    f, r = cell.get("F", {}).get(key), cell.get("R", {}).get(key)
-    if not f or not r:
-        return None
-    mean = 0.5 * (f["median_ms"] + r["median_ms"])
-    return {"ms": mean, "spread": abs(f["median_ms"] - r["median_ms"]) / mean}
-
-
-def summarize_rungs(doc, reference):
-    """``{M: {rung: {...}}}``: each rung's time over the reference rung's, per M.
-
-    ``wall`` is the eager CUDA-event time, ``graph`` the replayed call (M <= 8
-    only), ``kernel`` the profiler's device time per call.  ``fwd_per_j`` is the
-    forward pass's power loop: forwards per joule.  ``rank`` orders the rungs of
-    one M by it, best first.
-    """
-    out = {}
-    records = doc["rungs"]
-    ref = records[str(reference)]["cells"]
-    for m in doc["meta"]["ms"]:
-        row = {}
-        for rung, record in records.items():
-            cell = record["cells"].get(str(m))
-            ref_cell = ref.get(str(m))
-            if not cell or not ref_cell:
-                continue
-            entry = {}
-            for key in ("wall", "graph"):
-                t, t0 = cell_time(cell, key), cell_time(ref_cell, key)
-                if t and t0:
-                    entry[key] = {"ms": t["ms"], "ratio": t["ms"] / t0["ms"],
-                                  "spread": max(t["spread"], t0["spread"])}
-            k, k0 = cell.get("F", {}).get("profile"), ref_cell.get("F", {}).get("profile")
-            if k and k0 and k0["kernel_us_per_call"]:
-                entry["kernel"] = {"us": k["kernel_us_per_call"],
-                                   "ratio": k["kernel_us_per_call"] / k0["kernel_us_per_call"]}
-            power = cell.get("F", {}).get("power") or {}
-            if power.get("calls_per_j"):
-                entry["fwd_per_j"] = power["calls_per_j"]
-                entry["mean_w"] = power.get("mean_w")
-            row[rung] = entry
-        ranked = sorted((r for r in row if "fwd_per_j" in row[r]), key=lambda r: -row[r]["fwd_per_j"])
-        for place, rung in enumerate(ranked, 1):
-            row[rung]["rank"] = place
-        out[str(m)] = row
-    return out
-
-
-def rungs_over_the_bar(summary, reference, key="wall"):
-    """``[(rung, M, ratio)]`` of every cell whose ``key`` ratio exceeds the bar."""
-    over = []
-    for m, row in summary.items():
-        for rung, entry in row.items():
-            if int(rung) == int(reference) or key not in entry:
-                continue
-            if entry[key]["ratio"] > BAR:
-                over.append((int(rung), int(m), entry[key]["ratio"]))
-    return sorted(over)
 
 
 def emit(record):
