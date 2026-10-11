@@ -2177,13 +2177,15 @@ def test_only_the_silent_directory_read_is_listed(tmp_path, reader, why):
 # Issue 1014 classifies every site in docs/reports/unnamed-directory-reads-1014.md.
 # select() measured 115 modules and 169 sites on base 83a1f38c4965.
 # Literal loop alternatives name the conftest's three import roots, so the
-# measured ceiling now holds at 114 modules and 168 sites.
+# The measured ceiling holds at 114 modules and 170 sites.
+# The f16 finalizer must bind actual object and ELF files in its caller-supplied
+# external build directory. Its six reads add two net sites to this budget;
+# they cannot name an in-repository base. Selection remains fail-open.
 # Runtime parameters, external box paths, and temporary test fixtures retain
 # the accepted unnamed-base limit. A new read must name its base or raise
 # both relevant limits here with its reason (PB1496).
-# The endpoint producer consumes the loader's file list and adds no directory read.
 _UNNAMED_DIRECTORY_READ_MODULES = 114
-_UNNAMED_DIRECTORY_READ_SITES = 168
+_UNNAMED_DIRECTORY_READ_SITES = 170
 
 
 def _exceeds_unnamed_directory_read_ceiling(modules: int, sites: int) -> bool:
