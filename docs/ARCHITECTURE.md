@@ -1,5 +1,16 @@
 # Tessera plan-to-serve architecture
 
+Re-stamped 2026-10-11 for the f16 probe acceptance owner, issue #739.
+The f16 A/B probe derives expected cells from requested cases, modes, and M values.
+The validator refuses missing cells, output mismatches, analyzer errors, and incorrect source arms.
+Mapped-native and build-finalization owners bind the actual ELF, source bytes, and Ninja source dependency.
+Each arm has an explicit source and cache. SASS uses the recorded ELF path.
+Selected probe stages supply partial observations, never complete issue acceptance.
+Literal SASS text counts cannot prove hint removal. Hint retention remains unknown.
+The CPU proof establishes no GPU, timing, NCU wait, or serving qualification.
+Kernels, layout, defaults, runtime pins, and prefetch remain unchanged.
+
+
 The hosted `pure` check enforces branch rule 12 for pull requests.
 The branch must match `tessera-<issue>` or `tessera-<issue>-<word>` and link that issue in the body.
 The suffix follows `[a-z0-9][a-z0-9-]*`. The script reads local references and GitHub issue URLs from the event JSON.
