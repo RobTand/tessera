@@ -129,6 +129,38 @@ def check_pattern(groups):
         raise ValueError(f"the calls launch different kernel patterns: {sorted(map(str, patterns))}")
 
 
+def markdown(groups):
+    """One table per M of the routed launches: the metrics the stall reading needs.
+
+    A metric the report lacks prints as ``-``.
+    """
+    def show(value, spec, scale=1.0):
+        return "-" if value is None else format(value / scale, spec)
+
+    out = []
+    for m in sorted({g["M"] for g in groups}):
+        rows = []
+        for g in (g for g in groups if g["M"] == m):
+            for launch in g["launches"]:
+                t = launch["template"]
+                if not t:
+                    continue
+                kind = f"{t['r_lo']}{'/' + str(t['r_lo'] + 1) if t['two'] else ''}"
+                rows.append("| " + " | ".join([
+                    f"R{g['rung']}", "gate/up" if t["mode"] == 0 else "down",
+                    kind + (", piece-major" if t["piece_major"] else ""),
+                    show(launch["duration_us"], ".1f"), show(launch["inst_executed"], ".1f", 1e6),
+                    show(launch["issue_active_pct"], ".1f"), show(launch["sm_throughput_pct"], ".1f"),
+                    show(launch["stall_barrier"], ".2f"), show(launch["stall_long_scoreboard"], ".2f"),
+                    show(launch["stall_short_scoreboard"], ".2f"), show(launch["smem_bank_conflicts"], ".1f", 1e6),
+                    show(launch["registers"], ".0f")]) + " |")
+        head = ("| Rung | Launch | Rates | us | Instructions (M) | Issue active % | SM throughput % | "
+                "Barrier stall | Long-scoreboard stall | Short-scoreboard stall | Shared bank conflicts (M) | Registers |\n"
+                "|---|---|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|")
+        out.append(f"M = {m}:\n\n" + head + "\n" + "\n".join(rows) + "\n")
+    return "\n".join(out)
+
+
 def import_csv(report):
     done = subprocess.run([NCU, "--import", report, "--page", "raw", "--csv"], check=True,
                           capture_output=True, text=True)
@@ -141,6 +173,7 @@ def main(argv=None):
     ap.add_argument("--csv")
     ap.add_argument("--cells", required=True)
     ap.add_argument("--out")
+    ap.add_argument("--markdown", action="store_true", help="print the routed launches as Markdown tables")
     args = ap.parse_args(argv)
     if bool(args.report) == bool(args.csv):
         ap.error("give exactly one of --report and --csv")
@@ -155,6 +188,9 @@ def main(argv=None):
     if args.out:
         with open(args.out, "w") as handle:
             json.dump(result, handle, indent=1)
+    if args.markdown:
+        print(markdown(groups))
+        return 0
     for g in groups:
         for launch in g["launches"]:
             t = launch["template"]

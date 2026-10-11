@@ -91,3 +91,14 @@ def test_the_cli_writes_the_table_and_prints_every_launch(tmp_path, capsys):
     printed = [json.loads(line) for line in capsys.readouterr().out.splitlines() if line.startswith("{")]
     assert sum("launch" in p for p in printed) == 6
     assert any(p.get("missing_metrics") for p in printed)
+
+
+def test_the_markdown_table_lists_the_routed_launches_and_dashes_what_the_report_lacks():
+    launches, _ = table.read_launches(_csv([(3, 1, 1000), (4, 0, 2000)]))
+    groups = table.split_by_call(launches, [(832, 1), (1024, 1)])
+    out = table.markdown(groups)
+    assert out.startswith("M = 1:")
+    lines = [l for l in out.splitlines() if l.startswith("| R") and l[3].isdigit()]
+    assert len(lines) == 4
+    assert lines[0].startswith("| R832 | gate/up | 3/4 | 3.0 | - | - | - | 2.50 |")
+    assert lines[3].startswith("| R1024 | down | 4 | 2.0 | - | - | - | 2.90 |")
