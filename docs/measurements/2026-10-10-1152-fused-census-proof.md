@@ -60,3 +60,54 @@ pass unchanged. E2M1 stays parked under tessera#1149.
   the fix at collection with `ImportError: cannot import name
   'fused_launch_for_rates'`; passes after it).
 - Unchanged scope: `tests/test_t8_routed_cells.py` on CPU.
+
+## Correction after master refresh, 2026-10-11
+
+The sections above retain the original dated note verbatim.
+They describe the original head `bf55cc57b2fc203819150bc8af52dbc81f574723`.
+The refreshed branch includes master `a891e8faeaea8a9da6f56b05b6ab381dadc18364`, which publishes contract v67.
+This branch does not freeze master at v66 or change its contract bytes.
+No test pins an incidental contract version.
+
+The original memory table describes ordinary 64-route superblocks only.
+The native launch adds the A-region difference at 128-route superblocks.
+At default build flags, that difference is 4,096 bytes for the E4M3 instruction.
+The native owners are `a_region_bytes`, `smem_bytes_at` and `launch_smem_bytes` in
+`src/tessera/serving/csrc/routed_fused_window.cu:309-384`.
+The native launch uses that allocation at lines 1970-1979.
+The Python owner is `routed_fused.launch_smem_bytes`.
+The helper now calls that owner and `slot_words_for_pair` through `run_pair`.
+It takes an explicit `bm` width, with 64 as the unchanged default.
+It refuses nonadjacent rates and widths without both native launches.
+It does not select the default-off paired schedule.
+
+| Pair | Width | Slot | Gate/up stages | Gate/up bytes | Down stages | Down bytes |
+|---|---|---|---|---|---|---|
+| `[3, 4]` | 64 | 8 | 3 | 53,456 | 3 | 36,880 |
+| `[3, 4]` | 128 | 8 | 3 | 57,552 | 3 | 40,976 |
+| `[4, 5]` | 64 | 12 | 3 | 56,528 | 3 | 39,952 |
+| `[4, 5]` | 128 | 12 | 3 | 60,624 | 3 | 44,048 |
+
+These figures describe the ordinary schedule with `MMA8_A_RING=0`.
+The build-scoped activation ring retains its existing allocation owner.
+
+The retained census does not contain a rung in each route record.
+Its `checkpoint_sidecars.config.json` digest binds the retained stub B config.
+See `experiments/results/glm53_u1_stub_b_e4m3mma_tp1_eager_census.json:81-84`.
+That config is `experiments/results/glm53_u1_stub_b_config.json`.
+Its routed E4M3 groups at lines 548-727 name rungs 928, 896, 1024 and 1088.
+Both `w13` and `w2` carry those rungs.
+Their run tables derive as `[3, 4]`, `[3, 4]`, `[4]` and `[4, 5]`.
+The census `records` and `record_owner` fields bind those modules to the fused launch in both phases.
+The same rung summary appears in `2026-09-30-glm-nightly-cells-and-graph-equivalence.md:59`.
+CPU proof now uses actual census rungs as the pair representatives, not cover-only rungs 769 and 1025.
+The export check runs once, because export takes no cell selector.
+The base-cell checks do not establish additional runtime-twin qualification.
+
+The actual R1152 census criterion remains unmet.
+No retained stub B config group above names R1152.
+Run-table equivalence and CPU geometry do not replace that census.
+Issue #1205 remains the GPU follow-up and a dependency of parent #690.
+Use `Refs #1142`, not a closing reference, for this CPU integration.
+No GPU work or serve occurs in this correction.
+No cell, admission, default, runtime pin or kernel changes.

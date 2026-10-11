@@ -1,5 +1,12 @@
 # Changelog
 
+## 2026-10-11: correct CPU fused launch geometry, issue #1142
+
+Reuse the existing run-pair, slot and launch-memory owners in `fused_launch_for_rates`.
+Account for explicit 64-route and 128-route superblocks.
+Refuse pairs and widths without native launches.
+Preserve master contract bytes and every serving admission and default.
+The actual R1152 census remains unmet under issue #1205, which blocks parent #690.
 ## 2026-10-10 — admit the served L14 WINDOW in the opt-in packed reader (issue #1166)
 
 Admit the served fourteen bit WINDOW beside the research twelve bit WINDOW in `prepare_a4_wire_compact`.

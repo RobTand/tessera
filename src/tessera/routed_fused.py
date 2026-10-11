@@ -453,9 +453,12 @@ class FusedLaunchPair:
     :func:`word_stages`. ``fits_sm121`` says both launches fit the target
     platform's per-block opt-in shared memory. Geometry only: whether a
     rung may serve is the contract's, not this object's.
+    The ordinary launch uses ``bm`` routes per superblock. The helper calls
+    :func:`launch_smem_bytes` for that width and does not select a schedule.
     """
     rates: tuple[int, ...]
     library: str
+    bm: int
     slot_words: int
     stages_gate_up: int
     smem_gate_up: int
@@ -464,33 +467,40 @@ class FusedLaunchPair:
     fits_sm121: bool
 
 
-def fused_launch_for_rates(rates, library: str) -> FusedLaunchPair:
-    """The fused launch pair a route's column rates take on ``library``.
+def fused_launch_for_rates(rates: tuple[int, ...], library: str, *, bm: int = BM) -> FusedLaunchPair:
+    """Ordinary fused launch geometry at an explicit superblock width.
 
-    The one home mapping a priced pair to its launch parameters: the census
-    proof and any later serve plan read this instead of re-deriving the slot
-    beside it. Refuses an unknown library and rates outside ``RATES`` by
-    name; a pair the device cannot fit reports ``fits_sm121`` as ``False``
-    so the caller, not this geometry, decides admission.
+    Reuse the run-pair, slot and launch-memory owners. The default width is
+    ``BM``; callers must name ``BM_WIDE`` for a wide launch. Unsupported
+    pairs and widths have no native launch. Device fit is geometry only,
+    not serving admission. This helper does not select the paired schedule.
     """
     if library not in LIBRARIES:
         raise GrammarError(f"unknown fused library {library!r}; known: {sorted(LIBRARIES)}")
-    seen = tuple(int(r) for r in rates)
+    seen = tuple(sorted(int(r) for r in rates))
     if len(seen) not in (1, 2) or len(set(seen)) != len(seen) or any(r not in RATES for r in seen):
-        raise GrammarError(f"a fused launch pair takes one or two distinct rates of {list(RATES)}; got {list(rates)!r}")
+        raise GrammarError(f"a fused launch pair takes one or two distinct rates of {list(RATES)}; got {seen!r}")
+    table, col0, word0 = [], 0, 0
+    for rate in seen:
+        table.append((rate, col0, BK, word0))
+        col0, word0 = col0 + BK, word0 + chunk_words(rate) * BK
+    pair, why = run_pair(torch.tensor(table, dtype=torch.int32), col0)
+    if pair is None:
+        raise GrammarError(why)
+    if not all(has_width(library, mode, bm) for mode in (0, 2)):
+        raise GrammarError(f"{library} has no gate/up and down launch pair at {bm}-route superblocks")
     mma8 = library_mma8(library)
-    slot = _round_up_4(max(slot_words_for_rate(r) for r in seen))
-    stages_gate_up = word_stages(0, slot, mma8=mma8)
-    smem_gate_up = _smem_bytes_at_stages(0, slot, stages_gate_up, mma8=mma8)
-    stages_down = word_stages(2, slot, mma8=mma8)
-    smem_down = _smem_bytes_at_stages(2, slot, stages_down, mma8=mma8)
+    slot = slot_words_for_pair(pair)
+    smem_gate_up = launch_smem_bytes(0, slot, mma8=mma8, bm=bm)
+    smem_down = launch_smem_bytes(2, slot, mma8=mma8, bm=bm)
     return FusedLaunchPair(
-        rates=tuple(sorted(seen)),
+        rates=seen,
         library=library,
+        bm=bm,
         slot_words=slot,
-        stages_gate_up=stages_gate_up,
+        stages_gate_up=word_stages(0, slot, mma8=mma8),
         smem_gate_up=smem_gate_up,
-        stages_down=stages_down,
+        stages_down=word_stages(2, slot, mma8=mma8),
         smem_down=smem_down,
         fits_sm121=smem_gate_up <= SM121_MAX_DYNAMIC_SMEM and smem_down <= SM121_MAX_DYNAMIC_SMEM,
     )

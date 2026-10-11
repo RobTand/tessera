@@ -188,6 +188,28 @@ def test_stub_b_served_the_shared_pair_on_the_fused_launch(phase):
     cell = _cell(contract, BASE_IDS[0])
     decoder = _e4m3mma_decoder(cell, row, NEIGHBOR)
     receipt = json.loads(E4M3MMA_RECEIPT.read_text(encoding="utf-8"))
+    config_path = ROOT / "experiments/results/glm53_u1_stub_b_config.json"
+    config_bytes = config_path.read_bytes()
+    from hashlib import sha256
+
+    assert sha256(config_bytes).hexdigest() == receipt["checkpoint_sidecars"]["config.json"]
+    schemes = json.loads(config_bytes)["quantization_config"]["config_groups"].values()
+    served_pairs = set()
+    for group in schemes:
+        scheme = group["scheme"]
+        if scheme.get("structure") != "routed_moe" or scheme.get("grid") != "E4M3":
+            continue
+        target = receipt["declared_name_mapping"][group["targets"][0]]
+        records = [record for name, record in receipt["records"][phase].items()
+                   if receipt["record_owner"][phase][name] == target]
+        assert len(records) == 1
+        assert (records[0]["symbol"], records[0]["decoder"]) == (FUSED_SYMBOL, decoder)
+        assert records[0]["state"] == "served"
+        for projection in scheme["groups"].values():
+            q = projection["q256"]
+            assert q in cell["rungs_q256"]
+            served_pairs.add(rung_rates(row, q))
+    assert set(_priced_pairs(cell, row)) <= served_pairs
     routes = receipt["histogram"][phase]["routes"]
     match = [r for r in routes if (r["symbol"], r["decoder"]) == (FUSED_SYMBOL, decoder)]
     assert len(match) == 1
