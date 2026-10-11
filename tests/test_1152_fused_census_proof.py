@@ -68,9 +68,9 @@ def _rule_pairs(row):
 
 
 def _representative(pair, cell, row):
-    """The lowest rung with this table that the cell covers, or None."""
+    """The lowest census rung with this table that the cell covers, or None."""
     return min(
-        (q for q in range(256, 2049) if rung_rates(row, q) == pair and cell_covers_rung(cell, q, row)),
+        (q for q in cell["rungs_q256"] if rung_rates(row, q) == pair and cell_covers_rung(cell, q, row)),
         default=None,
     )
 
@@ -121,10 +121,6 @@ def test_r1152_shares_the_held_r1088_pair(cell_id):
     cell = _cell(contract, cell_id)
     assert rung_rates(row, TARGET) == rung_rates(row, NEIGHBOR) == (4, 5)
     assert NEIGHBOR in cell["rungs_q256"]
-    launch = fused_launch_for_rates(rung_rates(row, TARGET), LIBRARY)
-    held = fused_launch_for_rates(rung_rates(row, NEIGHBOR), LIBRARY)
-    assert (launch.slot_words, launch.smem_gate_up, launch.smem_down) == (
-        held.slot_words, held.smem_gate_up, held.smem_down)
 
 
 @pytest.mark.parametrize("cell_id", BASE_IDS)
@@ -140,8 +136,7 @@ def test_r1152_admission_comes_from_the_covered_range(cell_id):
     assert fused_launch_for_rates((4, 5), LIBRARY).fits_sm121
 
 
-@pytest.mark.parametrize("cell_id", BASE_IDS)
-def test_export_gate_admits_r1152(cell_id):
+def test_export_gate_admits_r1152():
     assert (
         refuse_unserveable_wire(
             "E4M3",
@@ -183,6 +178,11 @@ def test_fused_lanes_read_r1152_as_4_5():
 
 @pytest.mark.parametrize("phase", ("decode", "prefill"))
 def test_stub_b_served_the_shared_pair_on_the_fused_launch(phase):
+    """The held receipt proves the launch, not an R1152 census.
+
+    Stub B routed rungs come from the retained config and the nightly note:
+    docs/measurements/2026-09-30-glm-nightly-cells-and-graph-equivalence.md:59.
+    """
     contract = _contract()
     row = _row(contract)
     cell = _cell(contract, BASE_IDS[0])
@@ -195,3 +195,31 @@ def test_stub_b_served_the_shared_pair_on_the_fused_launch(phase):
     assert match[0]["contract"] == "fp8_per_token_dynamic"
     assert match[0]["state"] == "served"
     assert match[0]["modules"] == 4
+
+
+@pytest.mark.parametrize("rates,gate_up,down", [
+    ((3, 4), 57_552, 40_976),
+    ((4, 5), 60_624, 44_048),
+])
+def test_launch_geometry_accounts_for_wide_superblocks(rates, gate_up, down):
+    from tessera import routed_fused as rf
+
+    launch = fused_launch_for_rates(rates, LIBRARY, bm=rf.BM_WIDE)
+    assert launch.smem_gate_up == gate_up + rf.A_RING_BYTES_MMA8 * 2
+    assert launch.smem_down == down + rf.A_RING_BYTES_MMA8 * 2
+    assert launch.fits_sm121
+
+
+def test_nonadjacent_rates_have_no_native_launch():
+    from tessera.routed_fused import GrammarError
+
+    with pytest.raises(GrammarError, match="not adjacent"):
+        fused_launch_for_rates((3, 5), LIBRARY)
+
+
+@pytest.mark.parametrize("library", ("value", "e4m3"))
+def test_wide_pair_requires_both_native_launches(library):
+    from tessera.routed_fused import BM_WIDE, GrammarError
+
+    with pytest.raises(GrammarError, match="superblocks"):
+        fused_launch_for_rates((3, 4), library, bm=BM_WIDE)
