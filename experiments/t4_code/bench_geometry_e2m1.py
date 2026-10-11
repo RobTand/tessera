@@ -6,8 +6,8 @@ wire_recipe retains sub-cap WINDOW L12 and cap TCQ research recipes.
 Historical span-two TCQ timings do not measure the served WINDOW L14 recipe.
 They are not D41 allowability evidence for served E2M1x2.
 Owner refusals remain missing measurements, not a family-wide exclusion.
---packed-reader selects the diagnostic TCQ and L12 WINDOW reader.
-That reader does not accept the served WINDOW L14 recipe.
+--packed-reader selects the diagnostic TCQ, research L12 WINDOW and served L14 WINDOW reader.
+This reader does not change serving admission.
 --correctness checks code bytes, scale bytes and conditional arithmetic diagnostics.
 --quality-structure binds the CPU screen to the actual routed or dense recipe.
 

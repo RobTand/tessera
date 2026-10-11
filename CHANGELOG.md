@@ -1,5 +1,12 @@
 # Changelog
 
+## 2026-10-10 — admit the served L14 WINDOW in the opt-in packed reader (issue #1166)
+
+Admit the served fourteen bit WINDOW beside the research twelve bit WINDOW in `prepare_a4_wire_compact`.
+Read both widths from the recipe owner (`export.E2M1X2_SERVED_WINDOW_BITS`, `export.E2M1X2_SUBCAP_WINDOW_BITS`).
+Prove byte identity with `materialize_stock` for whole served units and row cuts on CPU.
+Hold encoded bytes, serve defaults, pins, recipes, gates and kernels fixed.
+
 ## 2026-10-09 — complete the endpoint verifier contract (issue #1128)
 
 Require explicit endpoint, alias, artifact bytes, tokenizer facts, launch attempt, and complete rank expectations in the public CPU CLI.
@@ -101,6 +108,16 @@ PrismaQuant refuses v12 by name until its reader admits the schema and applies t
 Issue prismaquant#2511 tracks that reader. The PrismaQuant pin stays at v11 until the reader lands.
 Historical pairs retain their original scope. Runtime twins, kernels, decoders, pins, and defaults stay unchanged.
 R640 and R1280-R2048 remain refused. No D41 receipt allowance, KL result, or speed result follows.
+
+## 2026-10-09 — record the T4 menu GPU validation (issue #1133)
+
+Add the PrismaBuild receipt for the T4 performant menu validation (parent issue #1103).
+The policy checks pass on x86 and on a GB10 worker. The dense and routed menus stay [896].
+The 21 native A4 execution tests pass on a GB10 worker in a PrismaBuild-local container image.
+The legacy pool GPU venv still cannot lower block-scaled FP4 MMA for sm_121, so its native tests error.
+The receipt keeps metadata checks, native execution coverage and the limits apart.
+No test, tool, source, wire, recipe, gate or serving change follows.
+No performance, serving or approved-cell measurement claim follows.
 
 ## 2026-10-08 — canonical class publication (issue #1018)
 
