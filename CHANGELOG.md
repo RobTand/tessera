@@ -1,14 +1,5 @@
 # Changelog
 
-## 2026-10-11 — measure the window Viterbi's two schedules on one board (issue #619)
-
-Add a matched A/B probe and two GB10 receipts for the fused window Viterbi at the GLM routed-expert shapes.
-Both schedules run in one process on one board in ABBA order, and the probe refuses unequal bytes.
-Best-form is 2.71x to 2.77x faster at 0.40x to 0.41x the joules per unit, with identical wires on both boxes.
-Two units in flight and rate streams buy nothing on the default schedule.
-The probe now derives its import root from its own location and refuses a tessera from another tree.
-No default, kernel, wire, or source change. Moving the default stays Rob's decision.
-
 ## 2026-10-09 — complete the endpoint verifier contract (issue #1128)
 
 Require explicit endpoint, alias, artifact bytes, tokenizer facts, launch attempt, and complete rank expectations in the public CPU CLI.
