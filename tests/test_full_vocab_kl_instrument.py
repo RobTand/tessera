@@ -469,3 +469,35 @@ def test_campaign_equal_count_slices_have_distinct_histories(
                  str(first / "teacher_decode.meta.json"), "--student",
                  str(second / "student_decode.meta.json")])
 
+
+@pytest.mark.parametrize("consumer", ["compare", "stride"])
+@pytest.mark.parametrize("positions,infinite_rows,expected", [
+    (1, 1, np.inf), (101, 1, 0.0), (256, 128, np.inf),
+])
+def test_p99_preserves_infinite_kl_endpoints(tmp_path, consumer, positions, infinite_rows, expected):
+    teacher = np.tile([0.0, -np.inf], (positions, 1)).astype(np.float32)
+    student = teacher.copy()
+    student[-infinite_rows:] = [-np.inf, 0.0]
+    meta = _meta(tmp_path, regime="decode", vocab=2, positions=positions)
+    meta["corpus"].update(chunk_lengths=[positions + 1])
+    meta["regime"].update(rows_per_scored_forward=1, forwards=positions)
+    t = _write(tmp_path, "infinite_t", teacher, meta)
+    s_meta = copy.deepcopy(meta)
+    s_meta["role"] = "student"
+    s = _write(tmp_path, "infinite_s", student, s_meta)
+    out = tmp_path / "infinite_summary.json"
+    if consumer == "compare":
+        assert fv.main(["compare", "--teacher", t, "--student", s, "--out", str(out)]) == 0
+        summary = json.loads(out.read_text())["all"]
+    else:
+        served = copy.deepcopy(s_meta)
+        served["regime"].update(prefix_lengths=[list(range(1, positions + 1))],
+                               scored_positions=positions)
+        served_path = tmp_path / "infinite_served.json"
+        served_path.write_text(json.dumps(served))
+        assert _load_stride().main(["--teacher", t, "--student", s,
+                                   "--served-meta", str(served_path), "--out", str(out)]) == 0
+        summary = json.loads(out.read_text())
+    assert summary["kl_p99"] == expected
+    assert np.isposinf(summary["kl_mean"])
+
