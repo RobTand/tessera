@@ -655,10 +655,7 @@ def ingest_receipt(path: str, kind: str, *, reads=()) -> dict:
 
 # --- mask-skip trace audit (tessera#1177) ------------------------------------
 
-#: The dispatch words the audit below accepts. Pinned to the words in
-#: ``src/tessera/serving/mla_sparse_sm120.py`` by
-#: ``tests/test_attest_mask_skip_traces.py``: a renamed emit word breaks
-#: that test instead of slipping past this audit.
+#: One vocabulary defines the native and stock dispatch roles this audit accepts.
 MASK_SKIP_VOCABULARY = {
     "MASK_SKIP_POLICY": "mla_mask_skip_eager_dispatch",
     "MASK_SKIP_KIND": "attention_backend",
