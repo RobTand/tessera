@@ -41,22 +41,22 @@ Power is read two ways, against the 140 W envelope.  The in-process sampler is
 one streaming ``nvidia-smi`` at 500 ms (watts and the SM clock, so a power cap
 shows as a clock and not only as a number), bracketed by each arm's own wall
 clock.  The box's Netdata is the second instrument, read through
-``experiments/box_power_window.py`` over the same windows; its 10 s groups are
-kept only when they lie wholly inside a window, so a 20 s arm has one or two.
+``experiments/box_power_window.py`` over the same windows; its groups are kept
+only when they lie wholly inside a window.
 J/unit is the arm's mean watts over its units/s, and a pooled figure is total
 joules over total units.
 
-One unit per rung is also profiled (``torch.profiler``) under each form, for
-the kernel that holds the time, its launches and microseconds each, and the
-fraction of the encode's wall clock the device spent in kernels.  Profiling
-never shares a run with timing.
+One unit per rung is also profiled (``torch.profiler``) under each form, and at
+BF16 one unit per thread under the N-thread arm, for the kernel that holds the
+time, its launches and microseconds each, and the summed kernel time over the
+encode's wall clock.  Profiling never shares a run with timing.
 
 NOT measured here: real GLM weights (the units are N(0, 0.02^2) in bf16, which
 fixes the shapes, rates and kernel sequence and not the values), served KL
 (the bytes are identical, so there is nothing to price), and any box but the one
 the action landed on.  Run it on each box you want a reading for.
 
-Usage, through PrismaBuild (``--gpu``, ``PYTHONPATH=src``)::
+Usage, through PrismaBuild (``--gpu``; the probe puts its own ``src`` first)::
 
     python experiments/ig619_viterbi_power.py \\
         --publish-dir /mnt/shared/tessera-measurements/issue-619-ab-20261011
@@ -94,7 +94,8 @@ _RATE_STREAMS_ENV = "TESSERA_WINDOW_RATE_STREAMS"
 _RECORDED_ENV = (_BEST_FORM_ENV, _RATE_STREAMS_ENV, "TESSERA_WINDOW_GRAPH",
                  "TESSERA_WINDOW_L2_BYTES", "TESSERA_WINDOW_BEST_TILE",
                  "TESSERA_WINDOW_SCAN_UNROLL", "PYTHONPATH")
-#: A Netdata group is 10 s; the last arm's group is not complete until it ends.
+#: Netdata reads the GPU every 10 s, so the last arm's groups are not complete
+#: until a collection after it ends.
 _NETDATA_SETTLE_S = 12.0
 _GRIDS = ("bf16", "e4m3")
 
