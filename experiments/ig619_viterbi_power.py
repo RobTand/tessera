@@ -104,6 +104,10 @@ class IdentityError(RuntimeError):
     """Two arms of one comparison wrote different bytes."""
 
 
+class SourceTreeError(RuntimeError):
+    """The ``tessera`` that ran is not the tree this probe ships with."""
+
+
 # -- the bookkeeping that carries the claim ------------------------------------
 
 def arm_schedule(forms):
@@ -134,6 +138,21 @@ def check_identity(arms):
                 raise IdentityError(
                     f"arm {arm['name']!r} unit {i} differs from {ref['name']!r}: "
                     f"sha256 {got[:12]} against {want[:12]}")
+
+
+def check_source_tree(module_file, own_src):
+    """Refuse unless ``tessera`` was imported from ``own_src``.
+
+    The receipt names the commit of the snapshot it ran from.  If the
+    interpreter found another ``tessera`` first, the number belongs to other
+    code under that commit's name.  ``module_file`` is the imported module's
+    ``__file__``; the tree is the ``src`` that holds its package.
+    """
+    tree = Path(module_file).resolve().parents[1]
+    if tree != Path(own_src).resolve():
+        raise SourceTreeError(
+            f"tessera was imported from {tree}, not from this probe's own tree {own_src}")
+    return str(tree)
 
 
 def split_units(units, threads):
@@ -757,6 +776,12 @@ def main(argv=None) -> int:
         return 2
     from tessera import window_viterbi
 
+    try:
+        tessera_src = check_source_tree(
+            window_viterbi.__file__, Path(__file__).resolve().parents[1] / "src")
+    except SourceTreeError as exc:
+        print(json.dumps({"error": str(exc)}))
+        return 2
     props = torch.cuda.get_device_properties(0)
     host = socket.gethostname()
     rec: dict = {
@@ -765,6 +790,7 @@ def main(argv=None) -> int:
         "uuid": str(props.uuid), "sms": props.multi_processor_count,
         "torch": torch.__version__,
         "head": _git("rev-parse", "HEAD"), "parent": _git("rev-parse", "HEAD^"),
+        "tessera_src": tessera_src,
         "fused_available": window_viterbi.fused_available(),
         "env": {k: os.environ.get(k, "") for k in _RECORDED_ENV},
         "envelope_w": ENVELOPE_W,

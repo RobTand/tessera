@@ -300,3 +300,17 @@ def test_a_stale_tessera_earlier_on_the_path_cannot_stand_in_for_the_snapshot(tm
     found = subprocess.run([sys.executable, "-c", code], env=env, check=True,
                            capture_output=True, text=True).stdout.strip()
     assert Path(found) == ROOT / "src" / "tessera" / "__init__.py"
+
+
+def test_a_tessera_from_another_tree_is_refused_by_name(tmp_path):
+    """The receipt names the snapshot's commit, so code from elsewhere must not
+    run under it."""
+    own = tmp_path / "snapshot" / "src"
+    other = tmp_path / "shared" / "src"
+    for tree in (own, other):
+        (tree / "tessera").mkdir(parents=True)
+        (tree / "tessera" / "window_viterbi.py").write_text("")
+    assert probe.check_source_tree(own / "tessera" / "window_viterbi.py", own) == str(own)
+    with pytest.raises(probe.SourceTreeError) as caught:
+        probe.check_source_tree(other / "tessera" / "window_viterbi.py", own)
+    assert str(other) in str(caught.value) and str(own) in str(caught.value)
