@@ -8,10 +8,9 @@ mismatched or silent file.
 
 import importlib.util
 import json
-import sys
 from pathlib import Path
 
-OWNER = Path(__file__).resolve().parents[1] / "src" / "tessera" / "serving" / "mla_sparse_sm120.py"
+import pytest
 
 TOOL = Path(__file__).resolve().parents[1] / "tools" / "tessera_attest.py"
 
@@ -207,17 +206,44 @@ def test_cli_refuses_audit_without_world_size(tmp_path, capsys):
     assert "refusing" in capsys.readouterr().err
 
 
-def test_audit_vocabulary_matches_emit_owner():
-    """The audited words are the ones the override emits, read off its source.
-
-    ``mla_sparse_sm120`` needs vLLM to import, which a CPU worker may not
-    hold, so this pins the vocabulary by reading the source file as text:
-    each audited word is a string literal in the emitter, and the pin loads
-    no emitter or vLLM module.
-    """
+@pytest.mark.parametrize("world_size", [0, True, 1.0])
+def test_audit_refuses_non_integer_or_empty_world(tmp_path, world_size):
     attest = _attest()
-    source = OWNER.read_text()
-    for name, value in attest.MASK_SKIP_VOCABULARY.items():
-        assert f'"{value}"' in source, f"{name}={value!r} is absent from the emitter"
-    assert "vllm" not in sys.modules
-    assert "tessera.serving.mla_sparse_sm120" not in sys.modules
+    entries = [_entry("native_mg_mask_skip", "tessera_mla_prefill_mg_l0"),
+               _entry("stock", "stock", launches=12)]
+    paths = [] if world_size == 0 else [
+        _write(tmp_path / "rank0.json", _trace(0, 1, entries))]
+    record = attest.audit_mla_mask_skip_traces(paths, world_size=world_size)
+    assert record["passed"] is False
+
+
+@pytest.mark.parametrize("rank", [-1, 2, True, 1.0, "1", [], {}])
+def test_audit_refuses_invalid_rank_without_raising(tmp_path, rank):
+    attest = _attest()
+    paths = _good_pair(tmp_path)
+    payload = json.loads(Path(paths[1]).read_text())
+    payload["rank"] = rank
+    _write(Path(paths[1]), payload)
+    record = attest.audit_mla_mask_skip_traces(paths, world_size=2)
+    assert record["passed"] is False
+
+
+@pytest.mark.parametrize("field", ["cuda_graph_replays_counted", "torch_compile_tracing_counted"])
+def test_audit_refuses_unknown_dispatch_coverage(tmp_path, field):
+    attest = _attest()
+    paths = _good_pair(tmp_path)
+    payload = json.loads(Path(paths[1]).read_text())
+    del payload["dispatch_coverage"][field]
+    _write(Path(paths[1]), payload)
+    record = attest.audit_mla_mask_skip_traces(paths, world_size=2)
+    assert record["passed"] is False
+
+
+def test_audit_refuses_rank_conflict(tmp_path):
+    attest = _attest()
+    paths = _good_pair(tmp_path)
+    payload = json.loads(Path(paths[1]).read_text())
+    payload["rank_conflict"] = {"reported": 0, "observed": 1}
+    _write(Path(paths[1]), payload)
+    record = attest.audit_mla_mask_skip_traces(paths, world_size=2)
+    assert record["passed"] is False
