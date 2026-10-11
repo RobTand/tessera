@@ -10,6 +10,8 @@ standing in for a decode one.
 from __future__ import annotations
 
 import json
+import copy
+import subprocess
 import importlib.util
 import sys
 from pathlib import Path
@@ -311,3 +313,157 @@ def test_histories_and_masks_refuses_missing_identity(tmp_path):
     thin_a = {"payload": {"positions": POSITIONS, "vocab_size": VOCAB}}
     thin_b = {"payload": {"positions": POSITIONS, "vocab_size": VOCAB}}
     assert fv.histories_and_masks(thin_a, thin_b) is False
+
+
+def _load_stride():
+    path = CHECKOUT / "experiments" / "stride_matched_decode_kl.py"
+    spec = importlib.util.spec_from_file_location("_fv_stride_test", path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def _stride_files(tmp_path, tail=-1000.0):
+    arr = np.tile([0.0, tail], (256, 1)).astype(np.float32)
+    meta = _meta(tmp_path, regime="decode", vocab=2, positions=256)
+    meta["corpus"].update(n_chunks=1, seqlen=257, chunk_lengths=[257],
+                          histories_sha256="h" * 64, mask_sha256="m" * 64)
+    meta["regime"].update(rows_per_scored_forward=1, forwards=256)
+    t = _write(tmp_path, "stride_t", arr, meta)
+    smeta = copy.deepcopy(meta)
+    smeta["role"] = "student"
+    s = _write(tmp_path, "stride_s", arr, smeta)
+    served = copy.deepcopy(smeta)
+    served["regime"].update(prefix_lengths=[list(range(1, 257))],
+                            scored_positions=256)
+    path = tmp_path / "served.meta.json"
+    path.write_text(json.dumps(served))
+    return t, s, path
+
+
+@pytest.mark.parametrize("tail", [-1000.0, -np.inf])
+def test_compare_identical_extreme_tail_is_zero(tmp_path, tail):
+    arr = np.tile([0.0, tail], (POSITIONS, 1)).astype(np.float32)
+    t = _write(tmp_path, "extreme_t", arr, _meta(tmp_path, vocab=2))
+    s = _write(tmp_path, "extreme_s", arr, _meta(tmp_path, vocab=2))
+    out = tmp_path / "extreme.json"
+    assert fv.main(["compare", "--teacher", t, "--student", s,
+                    "--out", str(out)]) == 0
+    result = json.loads(out.read_text())
+    assert result["all"]["kl_mean"] == 0.0
+    assert result["all"]["kl_max"] == 0.0
+
+
+@pytest.mark.parametrize("tail", [-1000.0, -np.inf])
+def test_stride_identical_extreme_tail_is_zero(tmp_path, tail):
+    t, s, served = _stride_files(tmp_path, tail)
+    out = tmp_path / "stride.json"
+    assert _load_stride().main(["--teacher", t, "--student", s,
+                               "--served-meta", str(served),
+                               "--out", str(out)]) == 0
+    result = json.loads(out.read_text())
+    assert result["kl_mean"] == 0.0
+    assert result["kl_max"] == 0.0
+
+
+@pytest.mark.parametrize("field", ["contract_sha256", "source_sha256"])
+def test_stride_refuses_served_identity_drift(tmp_path, field):
+    t, s, served = _stride_files(tmp_path)
+    meta = json.loads(served.read_text())
+    meta["corpus"][field] = "d" * 64
+    served.write_text(json.dumps(meta))
+    with pytest.raises(SystemExit, match=field):
+        _load_stride().main(["--teacher", t, "--student", s,
+                             "--served-meta", str(served)])
+
+
+@pytest.mark.parametrize("side", ["teacher", "student", "served"])
+def test_stride_refuses_non_decode_metadata(tmp_path, side):
+    t, s, served = _stride_files(tmp_path)
+    path = Path({"teacher": t, "student": s, "served": served}[side])
+    meta = json.loads(path.read_text())
+    meta["regime"]["name"] = "prefill"
+    path.write_text(json.dumps(meta))
+    with pytest.raises(SystemExit, match="decode"):
+        _load_stride().main(["--teacher", t, "--student", s,
+                             "--served-meta", str(served)])
+
+
+@pytest.mark.parametrize("prefix", [0, 257, 1.5, True])
+def test_stride_refuses_invalid_prefix_address(tmp_path, prefix):
+    t, s, served = _stride_files(tmp_path)
+    meta = json.loads(served.read_text())
+    meta["regime"]["prefix_lengths"][0][0] = prefix
+    served.write_text(json.dumps(meta))
+    with pytest.raises(SystemExit, match="prefix"):
+        _load_stride().main(["--teacher", t, "--student", s,
+                             "--served-meta", str(served)])
+
+
+@pytest.fixture
+def supported_cpu_checkpoint(tmp_path):
+    import torch
+    from transformers import GPT2Config, GPT2LMHeadModel, PreTrainedTokenizerFast
+    from tokenizers import Tokenizer
+    from tokenizers.models import WordLevel
+    torch.manual_seed(1172)
+    config = GPT2Config(vocab_size=TINY_VOCAB, n_positions=512, n_embd=8,
+                        n_layer=1, n_head=1, bos_token_id=None,
+                        eos_token_id=None)
+    model = GPT2LMHeadModel(config).to(torch.bfloat16).eval()
+    checkpoint = tmp_path / "supported_checkpoint"
+    model.save_pretrained(checkpoint)
+    tokenizer = PreTrainedTokenizerFast(tokenizer_object=Tokenizer(
+        WordLevel({f"t{i}": i for i in range(TINY_VOCAB)}, unk_token="t0")))
+    tokenizer.save_pretrained(checkpoint)
+    return checkpoint
+
+
+def _campaign(checkpoint, corpus, outdir, *extra):
+    cmd = [sys.executable, str(CHECKOUT / "experiments" /
+                               "full_vocab_kl_campaign_dump.py"),
+           "--teacher", str(checkpoint), "--corpus-contract", str(corpus),
+           "--outdir", str(outdir), "--device", "cpu", *extra]
+    result = subprocess.run(cmd, text=True, capture_output=True)
+    print("campaign command:", cmd)
+    print(result.stdout)
+    print(result.stderr)
+    print("campaign exit:", result.returncode)
+    return result
+
+
+def test_campaign_real_cpu_checkpoint_reaches_four_way_exit(
+        tmp_path, supported_cpu_checkpoint):
+    corpus, _ = _tiny_corpus(tmp_path)
+    outdir = tmp_path / "campaign"
+    result = _campaign(supported_cpu_checkpoint, corpus, outdir)
+    assert result.returncode == 0, result.stderr
+    assert "all four payloads share" in result.stdout
+    metas = [fv.read_full_vocab_payload(outdir / f"{role}_{regime}.meta.json")[0]
+             for role in ("teacher", "student")
+             for regime in ("prefill", "decode")]
+    assert all(fv.histories_and_masks(metas[0], m) for m in metas)
+    for regime in ("prefill", "decode"):
+        assert fv.main(["compare", "--teacher",
+                        str(outdir / f"teacher_{regime}.meta.json"),
+                        "--student",
+                        str(outdir / f"student_{regime}.meta.json")]) == 0
+
+
+def test_campaign_equal_count_slices_have_distinct_histories(
+        tmp_path, supported_cpu_checkpoint):
+    corpus, _ = _tiny_corpus(tmp_path, chunks=2, seqlen=512)
+    first, second = tmp_path / "slice1", tmp_path / "slice2"
+    _campaign(supported_cpu_checkpoint, corpus, first,
+              "--slice-chunks", "1", "--slice-tokens", "511")
+    _campaign(supported_cpu_checkpoint, corpus, second,
+              "--slice-chunks", "2", "--slice-tokens", "256")
+    a, _ = fv.read_full_vocab_payload(first / "teacher_decode.meta.json")
+    b, _ = fv.read_full_vocab_payload(second / "teacher_decode.meta.json")
+    assert a["payload"]["positions"] == b["payload"]["positions"] == 510
+    assert not fv.histories_and_masks(a, b)
+    with pytest.raises(SystemExit, match="histories|contract"):
+        fv.main(["compare", "--teacher",
+                 str(first / "teacher_decode.meta.json"), "--student",
+                 str(second / "student_decode.meta.json")])
+
