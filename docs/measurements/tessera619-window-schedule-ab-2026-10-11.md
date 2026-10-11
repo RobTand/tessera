@@ -6,19 +6,21 @@
 no measurement code.
 **Actions:** sparky `0ab6c0cdbd6921b09239cdd6ce661f36b03426cc69fcdc2e56f2ce295f32b26d`,
 sparklina `ff64432c66248b151b4973491f379878e1a14dab48ba533b148115ba3e185efe`.
-Each ran about 13.5 minutes on one GB10, exit 0, one action per box, pinned by host tag
-so each box holds its own matched pair.
+Each ran about 13.5 minutes on one GB10 and exited 0. Each is one action per
+box, pinned by host tag, so each box holds its own matched pair.
 **Receipts:** `tessera619-window-schedule-ab-2026-10-11-sparky.json` (SHA-256
 `db26bfdc37897dbb79779b7feb2da835217143515bbb706be257a270e764e4ea`) and
 `...-sparklina.json` (`f00fb5166059cffe041b254d98b0277c1fedbe0dd52a7cb3d3b3a5db279b59a0`)
 in this directory. They are byte copies of the files under
-`/mnt/shared/tessera-measurements/issue-619-ab-20261011/`. The tables below are read from the receipts with `python experiments/ig619_viterbi_power.py --table RECEIPT`.
+`/mnt/shared/tessera-measurements/issue-619-ab-20261011/`. The tables below are
+read from the receipts with the probe's `--table` option.
 
 ## Why this receipt exists
 
 The 2026-10-10 receipt (`tessera619-window-width-arms-2026-10-10.md`) ran the
 best-form schedule on sparky and the front schedule on sparklina. A box
-difference could sit inside its 2.8x. It did not time two units in flight. Its probe recorded `byte_identical` and exited 0 whatever the value.
+difference could sit inside its 2.8x. It did not time two units in flight. Its
+probe recorded `byte_identical` and exited 0 whatever the value.
 
 This receipt runs both schedules in one process on one board, in ABBA order, on
 each box. The probe refuses unequal bytes and exits 3. It also times two
@@ -39,8 +41,10 @@ changes. The wire, the recipe table and the byte audit stay as they were.
 
 ## Best-form against front-form, same board
 
-Each schedule pools its two ABBA arms. Units/s is total units over total seconds. J/unit is total joules over total units, with joules as mean watts times seconds per arm. Units are
-synthetic 2048x4096 bf16 weights, weights-only fresh encode, `verify=False`.
+Each schedule pools its two ABBA arms. Units/s is total units over total
+seconds. J/unit is total joules over total units, with joules as mean watts
+times seconds per arm. Units are synthetic 2048x4096 bf16 weights,
+weights-only fresh encode, `verify=False`.
 
 | box | rung | schedule | units/s | mean W | of 140 W | J/unit |
 |---|---|---|---:|---:|---:|---:|
@@ -69,7 +73,7 @@ synthetic 2048x4096 bf16 weights, weights-only fresh encode, `verify=False`.
   first arm's units/s, in every box and rung.
 - The 2026-10-10 figure, 2.82x at 0.44x joules, mixed two boxes. The same-board
   figure for BF16 is 2.75x to 2.76x at 0.40x to 0.41x. The earlier headline
-  stands, a little high on speed and a little low on joules.
+  stands. It read a little high on speed and a little pessimistic on joules.
 
 ### Power, clock and the 140 W envelope
 
@@ -79,13 +83,14 @@ Power is the in-process sampler (500 ms) over each arm's own window.
   to 85 W (57% to 61%).
 - The SM clock falls as power rises. Single-thread front arms hold 2430 to
   2486 MHz. Best arms hold 2067 to 2251 MHz. Idle is 208 MHz at 5.5 to 6 W.
-- PrismaBuild's own box window recorded a peak of 92.4 W (sparky) and 91.9 W (sparklina). It recorded a peak board temperature of 87 and 86 C.
+- PrismaBuild's own box window recorded a peak of 92.4 W (sparky) and 91.9 W
+  (sparklina). It recorded a peak board temperature of 87 and 86 C.
   PrismaBuild's declared reference text says the fleet's recorded maxima from
   2026-08-28 to 2026-09-21 were 114 W (sparky) and 106 W (sparklina).
 - So 61% of 140 W is not 39% of free headroom. The clock falls while the board
-  stays far below 140 W. That looks like a power or thermal limit. This receipt
-  does not say which one. Read the fractions above as readings, not as spare
-  capacity.
+  stays far below 140 W. That is consistent with a power or thermal limit. This
+  receipt does not say which one. Read the fractions above as readings, not as
+  spare capacity.
 
 Netdata, the second instrument, agrees. Over 28 arm windows the median
 difference from the in-process sampler is 1.2 W, and 25 windows differ by 5 W or
@@ -113,7 +118,6 @@ those three. Over each 15-group ABBA block the two instruments differ by 0.31,
 | sparklina | E4M3 | best#1 | 80.95 | 0.578 | 2105 | 79.35 | 4 |
 | sparklina | E4M3 | best#2 | 79.61 | 0.569 | 2067 | 87.75 | 4 |
 | sparklina | E4M3 | front#2 | 73.86 | 0.528 | 2430 | 74.22 | 5 |
-
 
 ## Which kernel holds the time
 
@@ -149,9 +153,9 @@ Reading:
 
 - **The device is busy.** At BF16 and the front schedule the summed kernel time
   is 97.7% of the unit's wall time. The device is idle for at most 2.3% of the
-  unit in total. Source reads, refits, packing and the host side fit inside that
-  figure. The E4M3 rows sum to 109% because their two rate chains overlap, so
-  they bound nothing. The BF16 rows carry the bound.
+  unit in total. Any host-only phase, such as source reads or packing, fits
+  inside that figure. The E4M3 rows sum to 109% because their two rate chains
+  overlap, so they bound nothing. The BF16 rows carry the bound.
 - **One kernel holds the time.** `_step` is 96% of device time at the front
   schedule, `_step_best` 90% at best-form. `_traceback` is the next kernel: 37 ms
   at BF16 and 41 to 42 ms at E4M3, under 1% of the unit.
@@ -192,17 +196,24 @@ six and six. Rate streams are `TESSERA_WINDOW_RATE_STREAMS`: at a mixed rate
 - Two units in flight buy nothing at the front schedule. No reading is above
   1.03x. Three of four are 0.60x to 0.74x. At best-form the readings are 0.96x to
   1.08x.
-- Rate streams overlap the two rate chains of one unit. They buy 0% to 1.5% at the front schedule and 5.7% to 5.9% at best-form. The same lever gave 18% to 22%
-  at the G2 LDLQ shapes (`tessera668-window-rate-streams-2026-09-27.md`). Those
-  shapes call the Viterbi in many short calls. A weights-only unit calls it four
-  times.
+- Rate streams overlap the two rate chains of one unit. They buy 0% to 1.5% at
+  the front schedule and 5.7% to 5.9% at best-form. The same lever gave 18% to
+  22% at the G2 LDLQ shapes (`tessera668-window-rate-streams-2026-09-27.md`).
+  Those shapes call the Viterbi in many short calls. A weights-only unit calls it
+  four times.
 - The short profile run of two units, one per thread, explains the shape. At the
   front schedule the summed kernel time is 1.97x the wall time, so the two chains
-  do overlap in time. But every `_step` takes 8.88 us (sparky) or 9.25 us (sparklina). Alone it takes 4.39 and 4.41 us. So the two units take 9.63 s and 10.00 s. One after the other they would take 9.82 s and 9.85 s. At best-form the kernels stretch 1.22x to 1.24x. The pair takes 3.16 s and 3.21 s, against 3.43 s and 3.45 s in series. That is a 7% to 9% gain.
+  do overlap in time. But every `_step` takes 8.88 us (sparky) or 9.25 us
+  (sparklina). Alone it takes 4.39 and 4.41 us. So the two units take 9.63 s and
+  10.00 s. One after the other they would take 9.82 s and 9.85 s. At best-form the
+  kernels stretch 1.22x to 1.24x. The pair takes 3.16 s and 3.21 s, against 3.43 s
+  and 3.45 s in series. That is a 7% to 9% gain.
 - A second chain therefore does not find spare device at the front schedule.
   That points at a resource the two chains share. This receipt does not say
-  which: the L2, the issue slots or the launch path. The 2026-10-06 Nsight packet
-  in `tessera-window-best-form-2026-09-09.md` reads the same front kernel (grid 16x16, block 128). It shows 5.6% issue-active and 17.2% of L2 throughput, with long-scoreboard stalls first. It ran at rung 1088 with the cache flushed and
+  which: the L2, the issue slots or the launch path. The 2026-10-06 Nsight packet in
+  `tessera-window-best-form-2026-09-09.md` reads the same front kernel (grid
+  16x16, block 128). It shows 5.6% issue-active and 17.2% of L2 throughput, with
+  long-scoreboard stalls first. It ran at rung 1088 with the cache flushed and
   base clocks, so it does not certify production residency.
 - The long two-thread arms run slower than the short profile pair at the front
   schedule (0.60x to 0.74x against 1.0x on three of four). This receipt does not
@@ -216,17 +227,19 @@ refit. `_run_joined` passes `want_sse=False` (`encode.py:3912` to `3915`), so th
 Viterbi calls queue behind each other. The SSE read is one of the points where
 the host waits for work already queued. The profile bounds what that wait can
 hide. At BF16 and the front schedule the device is busy 97.7% of the unit's wall
-time. At best-form it is busy 101%, which is profiler attribution noise around
+time. At best-form the sum is 101%, which I read as profiler attribution noise around
 100%. So the sync opens no gap. Removing it could save at most the 2.3% the
 device is idle in total.
 
 ## What this changes in the 2026-10-10 reading
 
-- "Occupancy per launch is small (256 CTAs) and the chain cannot overlap with
-  itself" is half right. The chain can overlap with a second chain. The overlap
-  does not turn into throughput at the front schedule.
+- The 2026-10-10 reading said occupancy per launch is small (256 CTAs) and the
+  chain cannot overlap with itself. Both statements hold. But a second chain does
+  overlap in time, and the overlap does not turn into throughput at the front
+  schedule. Small occupancy is not spare capacity.
 - "A wider front-form tile loses" stands. This receipt does not repeat that arm.
-- "Box confound" is closed. The ratio holds on one board, on two boards.
+- The box confound is closed. The ratio holds on one board, on each of two
+  boards.
 
 ## What a default change would need
 
@@ -256,8 +269,10 @@ A follow-on issue carries the decision, with the options and a recommendation.
 ## What this does not establish
 
 - Real GLM weights. The units are N(0, 0.02^2) in bf16. They fix the shapes,
-  rates and kernel sequence and not the values. Timing does not depend on the
-  values at this granularity. The bytes' identity was checked on these values only.
+  rates and kernel sequence and not the values. The issue's real-weight units
+  took 4.4 to 4.6 s at the front schedule against 4.66 to 4.77 s here. That
+  compares two different setups, so values may move the time by a few percent.
+  The bytes' identity was checked on these values only.
 - Served quality. The bytes are identical, so there is nothing to price. No KL ran.
 - One action per box, 12 units per arm, two repeats of each ABBA arm. No run on
   another day.
@@ -277,5 +292,8 @@ pbrun --cwd . --demand gpu=1,mem_gb=32 --tag sparky --cpus 4 \
 python experiments/ig619_viterbi_power.py --table DIR/receipt-sparky-*.json
 ```
 
-The probe exits 0 when every arm matches and no phase failed. It exits 3 when an arm writes different bytes, 1 when a phase fails, and 2 without a CUDA device.
-The probe puts its own `src` first. A stale `tessera` in the site-packages cannot stand in for the snapshot. It did so for the first three arms of the 2026-10-10 attempt.
+The probe exits 0 when every arm matches and no phase failed. It exits 3 when
+an arm writes different bytes, 1 when a phase fails, and 2 without a CUDA
+device. The probe puts its own `src` first. A stale `tessera` in the
+site-packages cannot stand in for the snapshot. It did so for the first three
+arms of the 2026-10-10 attempt.
