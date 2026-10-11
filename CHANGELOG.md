@@ -9,6 +9,15 @@ Use one lightweight identity owner for native and stock decoder and schedule rec
 Preserve the actual executed symbol and the compile and capture guards.
 The CPU audit does not qualify a live MLA route or CUDA execution.
 
+## 2026-10-11 — restore the intake import probe state, issue #1031
+
+The guard probe removes the cached intake module before it checks the activation import.
+It restores the prior consumer and every vLLM binding after the probe.
+It checks the exact activation refusal instead of any skip.
+CPU allocation tests require both vllm.config and the fused MoE activation module.
+The six CPU configuration refusal cases use the shared configuration module without a vLLM guard.
+No GPU or served-output qualification follows from these CPU tests.
+
 ## 2026-10-10 — isolate vLLM stub state in the test co-run (issue #1015)
 
 Guard the three remaining vLLM consumers on the submodule they import, not on the bare package.
