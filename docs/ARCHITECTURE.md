@@ -9,6 +9,7 @@ The script uses only the Python standard library and never treats pull request f
 
 Re-stamped 2026-10-11 for the split-suite source correction, against master `a12034b6`.
 CPU checks prove singleton refusal and independent lane custody. They do not qualify either GPU lane.
+
 Re-stamped 2026-10-09 for the migrated GB and D1 producer caller (tessera#944).
 Re-stamped 2026-10-09 for the canonical T4 performant menu (issue #1103).
 CEO decision dec-1009-095820-aebb approves dense [896] and routed [896] as performance-only TCQ menus.
