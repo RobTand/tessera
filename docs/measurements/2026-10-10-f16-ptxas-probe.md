@@ -92,3 +92,13 @@ No newer-toolchain probe completed. Hint retention on a newer toolchain remains 
 A hint count does not establish a replacement for the cp.async ring.
 This record supplies no speed, stall, wait, C2 or C4 result.
 
+## Attribution correction, 2026-10-11
+
+This correction supersedes two statements above:
+
+- The Verdict claim that starts "The prefetch lever cannot survive" has no observed newer-toolchain result. Newer-toolchain retention remains unknown.
+- The preceding clarification says the retained probe reports ptxas 13.0.88. The f7d34fc log prints the 96/0 counts, but no compiler version.
+
+The 13.0.88 label comes from the sibling-image sweep and `docs/ARCHITECTURE.md`, not from the retained probe log.
+No newer-toolchain probe completed. This correction adds no measurement or qualification.
+
