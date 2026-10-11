@@ -346,8 +346,8 @@ by shape, dtype and bytes. Unequal tables refuse in both development and
 certified modes; generator names and profile identity are not the criterion.
 The quality helper takes `--quality-structure` and
 records each actual served recipe and encoder byte count independently.
-This reader admits exactly the served twelve-bit WINDOW scope, not wider
-research windows. The D41 image wrapper resolves actual Docker facts and
+This reader admits served fourteen-bit WINDOW and research twelve-bit WINDOW.
+Other WINDOW widths remain refused. The D41 image wrapper resolves actual Docker facts and
 routes digest/pin identity drift through `tessera.dev_mode.seal_check`: default
 development mode stamps and continues; explicit certified mode retains the
 identity refusal. Unavailable images, invalid shapes/rates and packed-byte
