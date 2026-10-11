@@ -15,7 +15,7 @@ import pytest
 
 from tessera import endpoint_observer as eo
 from tessera import endpoint_witness as ew
-from _endpoint_fixture import receipt, resign
+from _endpoint_fixture import expectation_args, receipt, resign
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -85,9 +85,13 @@ def test_the_probe_publishes_and_the_standalone_verifier_rechecks_the_listener(t
         assert result.returncode == 0, result.stderr
         published = Path(result.stdout.strip())
         assert json.loads(published.read_bytes())["listener"] == observed["listener"]
-        checked = command("verify_endpoint_witness.py", published, "--served-dir", artifact, "--expect-ranks", "0,1")
+        checked = command("verify_endpoint_witness.py", published, "--served-dir", artifact,
+                          *expectation_args(observed, tmp_path))
         assert checked.returncode == 0, checked.stderr
-        assert "runtime witness valid" in checked.stdout
+        verdict = json.loads(checked.stdout)
+        assert verdict["verdict"] == "valid"
+        assert verdict["proof_scope"] == "current_runtime_byte_binding"
+        assert verdict["current_endpoint_verified"] is True
         assert calls == [True, False, False]
 
 
@@ -162,7 +166,7 @@ def test_publication_refuses_missing_or_incomplete_loaded_inputs(tmp_path):
 def test_standalone_verifier_never_imports_serving_or_torch(tmp_path):
     artifact = tmp_path / "artifact"
     value = receipt(artifact)
-    with server(value, tmp_path / "public") as (url, _, _):
+    with server(value, tmp_path / "public") as (url, observed, _):
         published = eo.fetch_witness(url, publish=True)["public_receipt_path"]
         script = """import importlib.abc, runpy, sys
 class Block(importlib.abc.MetaPathFinder):
@@ -174,6 +178,6 @@ sys.argv = sys.argv[1:]
 runpy.run_path(sys.argv[0], run_name='__main__')
 """
         result = subprocess.run([sys.executable, "-c", script, str(ROOT / "tools/verify_endpoint_witness.py"),
-                                 published, "--served-dir", str(artifact)],
+                                 published, "--served-dir", str(artifact), *expectation_args(observed, tmp_path)],
                                 capture_output=True, text=True, timeout=45)
         assert result.returncode == 0, result.stderr

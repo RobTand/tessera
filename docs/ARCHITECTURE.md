@@ -328,8 +328,8 @@ Quality uses whole-anchor chords, not per-rung sample gates.
 This work starts no graphics processor campaign and makes no serving or speed qualification claim.
 
 Re-stamped 2026-10-06 for issue #1005: the default-off D41 T4
-`--packed-reader` measures actual mixed span-two TCQ and dense twelve-bit
-WINDOW recipes on the E2M1 pair grid. `compact_prep.prepare_a4_wire_compact`
+`--packed-reader` measures mixed span-two TCQ, research twelve-bit WINDOW
+and served fourteen-bit WINDOW recipes. `compact_prep.prepare_a4_wire_compact`
 keeps TCQ BODY bytes packed and uses the existing forest label/code owners;
 WINDOW preparation uses `lane_planes.pack_window_planes`, including its
 incoming history, column alignment and trailing slack. The separate
@@ -346,8 +346,8 @@ by shape, dtype and bytes. Unequal tables refuse in both development and
 certified modes; generator names and profile identity are not the criterion.
 The quality helper takes `--quality-structure` and
 records each actual served recipe and encoder byte count independently.
-This reader admits exactly the served twelve-bit WINDOW scope, not wider
-research windows. The D41 image wrapper resolves actual Docker facts and
+This reader admits served fourteen-bit WINDOW and research twelve-bit WINDOW.
+Other WINDOW widths remain refused. The D41 image wrapper resolves actual Docker facts and
 routes digest/pin identity drift through `tessera.dev_mode.seal_check`: default
 development mode stamps and continues; explicit certified mode retains the
 identity refusal. Unavailable images, invalid shapes/rates and packed-byte
@@ -404,6 +404,13 @@ The corrected API also passes retained-output audits from both physical devices 
 Arithmetic qualification remains false before both required reviews.
 Complete fused-network and two-device arithmetic qualification remain outside this claim.
 Section 17.8 gives the normative derivation, corrective controls, and retained device receipts.
+
+Re-stamped 2026-10-10 for issue #1182 and the packed-stock acceptance gate.
+`tessera.fp4_arithmetic.require_derived_stock_qualification` refuses any allowance
+outside a derived packed-stock bound receipt for the measured device. A fixed
+tolerance carries no bound schema or device evidence and never qualifies.
+`check_packed_stock_arithmetic` runs this gate on its derived receipt before it
+compares. The receipt now stamps the measured device beside the physical device.
 
 Re-stamped 2026-10-06 for issue #1002 and the CEO 09:50 bounded diagnostic
 directive. Two explicit opt-in scopes extend the existing managed rank
@@ -1293,12 +1300,17 @@ bytes equal the current published verifier, under bounded stable reads;
 execution uses those held bytes and rechecks them afterwards. No fleet alias,
 original input rewrite, serving pin change or new GPU measurement is involved.
 
-Re-stamped 2026-10-02 for the first Tessera #688 native timing receipt
-slice. `serving.timing_panel` is a passive stdlib validator for one E4M3
-dense TP1 eager/resident operator, requiring canonical wire/container
-checks, independent runtime identity, a positively matching backed cell,
-its named native launch and wire predicate, and bound raw measurement
-evidence. It shares `fused_frame` framing with the existing fused reader.
+Re-stamped 2026-10-09 for tessera#1136: the #688 panel admits dense TP1/TP2
+and routed TP2 scopes, and refuses all other scopes by name.
+`serving.timing_panel` is a passive stdlib validator for one E4M3 FP8
+eager/resident operator or expert stack per receipt, requiring canonical
+wire/container checks (a per-shard wire index for a routed stack),
+independent runtime identity with an explicit TP rank, a positively matching
+backed cell, its named native extension lane and wire predicate, and bound
+raw measurement evidence. Dense wires build through
+`serving.lane.build_tessera_method`; routed stacks build through the
+production route named by `scheme.MOE_BUILDERS` at TP2, never the research
+packed path. It shares `fused_frame` framing with the existing fused reader.
 Samples determine a true median and inclusive quartiles; energy remains
 HOLD while cross-host clocks are unqualified. New package source changes
 its source digest if deployed as a runtime. The repository producer owns
@@ -1672,6 +1684,18 @@ most 128 rows at small M, is tracked in tessera#805.
 `routed_fused.dense_k_split` is the dispatcher every launch asks, so a forced
 split still binds. No route, rung, cell, served byte or contract field
 changes.
+
+Re-stamped 2026-10-10 for issues #1020 and #1182 and the bench geometry preflight.
+`bench_dense_module.require_module_geometry` refuses a module outside its pinned
+contract before timing. The KDA floor (128 rows per replicated role) and the
+local total (12576 rows) come from the pinned construction census
+(`docs/measurements/construction/2026-10-07/glm53-flash-4layer-selected-t8.json`:
+`output_sizes` with `replicated_shard_ids` [4, 5], halved over TP2 except the
+replicated pair), never the table under test. `require_pinned_kda_contract`
+refuses a `MODULES['kda_in']` entry outside that census, so a short table
+cannot approve itself. `bench_geometry.py` derives its dense totals from the
+same contract and refuses aliased short totals. The short KDA proxy shape is
+removed.
 
 Re-stamped 2026-10-01 for the GLM-5.3 release serve's compilation mode
 (tessera#774). The T-8 release serve passes
@@ -4788,6 +4812,13 @@ module and charges shared storage once. This observer adds no model buffers,
 device movement, or tensor copy.
 The native operator receipt uses the same route interface.
 It hashes resident tensor contents before and after each measurement.
+
+Re-stamped 2026-10-10 for issue #1182 and the measurement acceptance gate.
+`bench_native_operator.accept_measurement` accepts a timing-admissible receipt only
+with every phase measured, every tensor digest present, and every transfer byte
+count tracked. The bench runs this gate before it publishes a timing-admissible
+receipt. Each gap refuses by name.
+
 Storage alias conflicts retain the existing refusal. An object a route does
 not declare (the research per-expert `PackedWindowUnits`) is not walked, so its
 bytes stay uncharged in the report rather than attributed by guess. Dense export
@@ -9339,19 +9370,53 @@ All rank and tokenizer observations carry its nonce and fall within that interva
 Load observations must fall within each observed worker process lifetime and precede the request.
 The launch attempt identifies the actual frontend process by host, boot ID, PID, and kernel start ticks.
 It does not come from a probe argument, manifest, lease, container label, or publication receipt.
-The verifier requires a new live request to the same endpoint.
+The live verifier requires a new request to the same endpoint.
 It compares the listener owner, alias, complete world, loaded inputs, resident state, and tokenizer state.
 A replacement listener with the same alias cannot reuse an old receipt.
 A stopped listener or changed state cannot supply current endpoint evidence.
 
 `tools/probe_endpoint_witness.py --base-url URL --artifact-dir PATH` invokes the live producer.
-`tools/verify_endpoint_witness.py RECEIPT --served-dir PATH` is the standalone verifier.
+`tools/verify_endpoint_witness.py` requires the receipt, actual source directories, and all consumer expectations:
+
+```sh
+python tools/verify_endpoint_witness.py RECEIPT --served-dir ARTIFACT \
+  --expect-endpoint URL --expect-alias ALIAS --expect-attempt ATTEMPT \
+  --expect-ranks 0,1 --expect-artifacts artifact-files.json \
+  --expect-tokenizer tokenizer-facts.json
+```
+
 Use `--tokenizer-dir PATH` when the tokenizer source has a separate directory.
-Use `--expect-ranks 0,1` when the consumer requires that rank set.
+The artifact expectation file maps every observed source filename to exactly `sha256` and `bytes`.
+The tokenizer expectation file contains exactly `files`, `backend`, `vocab`, and `special_ids`.
+Its `files` map names all observed tokenizer sources, each with exactly `sha256` and `bytes`.
+Its other fields specify the complete backend, token-to-ID mapping, and special IDs from the consumer contract.
+Supply consumer expectations independently of the presented receipt.
+An alias, file size, or vocabulary length cannot replace these facts.
+Absent expectations, conflicting facts, and incomplete rank sets refuse before any endpoint request.
+
+Add `--offline` to prove only the recorded launch against actual artifact and tokenizer bytes.
+Offline mode performs no endpoint request, inference, serving import, or rank operation.
+`verify_recorded_witness` owns this separate operation; `verify_witness` still requires a live listener.
+Both operations retain the complete receipt, file digest, tensor range, and tokenizer byte checks.
+Offline success proves no current listener ownership, current loaded state, or current endpoint availability.
+
+The CLI writes exactly one `tessera.endpoint_witness_verdict.v1` JSON object to stdout.
+This applies to success, verification refusal, and argument errors; `--help` displays normal usage text.
+The object contains `mode`, `verdict`, `reason`, `proof_scope`, and `current_endpoint_verified`.
+Success uses `verdict="valid"`, `reason=null`, and one explicit proof scope:
+
+- Offline: `recorded_runtime_byte_binding`, with `current_endpoint_verified=false`.
+- Live: `current_runtime_byte_binding`, with `current_endpoint_verified=true`.
+
+Refusal uses `verdict="refused"`, a named reason, `proof_scope=null`, and `current_endpoint_verified=false`.
+Success exits with status zero; refusal exits with status four.
 Both commands use only the standard library and the pure receipt modules.
 The consumer imports no Tessera serving module and performs no rank lifecycle work.
 File digests prove byte integrity. Request nonces reject cached replies.
 Neither mechanism requires a recorded run identity, approved source stamp, or identity seal.
+Consumer expectations check runtime facts, not recorded source identities or producer pins.
+They supply no observation and do not replace the byte-integrity proof.
+D32 remains unchanged; byte-integrity and runtime correctness checks refuse in every dev mode.
 Input manifests, aliases, leases, launch arguments, and publication receipts alone qualify nothing.
 
 
