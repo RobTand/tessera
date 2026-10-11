@@ -7,6 +7,13 @@ Record the full-rung result at HEAD: R768, R832, R896, R928 and R960 run within 
 Against R1024 with legacy words every rung runs within 1.40x. A two-run launch executes 1.6x the instructions of the one-run piece-major launch.
 No kernel, wire, recipe, gate, default or serving change follows. A route census at this head stays open: stub B carries no expert classes.
 
+## 2026-10-10 — admit the served L14 WINDOW in the opt-in packed reader (issue #1166)
+
+Admit the served fourteen bit WINDOW beside the research twelve bit WINDOW in `prepare_a4_wire_compact`.
+Read both widths from the recipe owner (`export.E2M1X2_SERVED_WINDOW_BITS`, `export.E2M1X2_SUBCAP_WINDOW_BITS`).
+Prove byte identity with `materialize_stock` for whole served units and row cuts on CPU.
+Hold encoded bytes, serve defaults, pins, recipes, gates and kernels fixed.
+
 ## 2026-10-09 — complete the endpoint verifier contract (issue #1128)
 
 Require explicit endpoint, alias, artifact bytes, tokenizer facts, launch attempt, and complete rank expectations in the public CPU CLI.
