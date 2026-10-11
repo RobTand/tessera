@@ -78,7 +78,7 @@ def test_the_ratio_table_marks_only_the_cells_above_the_bar(tmp_path, capsys):
     graph = out.split("graph replay (M <= 8):")[1].split("Time over")[0]
     assert "| 1 | 1 | 1.250 | 1.500 |" in graph
     assert "**" not in graph
-    assert "| 512 | - | - | - |" in graph
+    assert "| 512 |" not in graph
 
 
 def test_the_launch_split_and_the_joule_ranking_come_from_the_forward_pass(tmp_path, capsys):

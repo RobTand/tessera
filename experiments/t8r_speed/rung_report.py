@@ -45,6 +45,8 @@ def ratio_table(doc, summary, key, reference):
     ms = [str(m) for m in doc["meta"]["ms"]]
     rows = []
     for m in ms:
+        if not any(key in summary[m].get(q, {}) for q in rungs):
+            continue                      # graph replay stops at M 8: no row, no dashes
         row = [m]
         for q in rungs:
             entry = summary[m].get(q, {}).get(key)
