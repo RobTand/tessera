@@ -28,28 +28,39 @@ def _drop_vllm():
         del sys.modules[name]
 
 
+_INTAKE = "test_serving_moe_bf16_tp1_intake"
+_MISSING = object()
+
+
 def _pollute():
-    """Leave the stub graph an earlier file leaves behind."""
     saved = _save_vllm()
+    consumer = sys.modules.pop(_INTAKE, _MISSING)
     _drop_vllm()
     dispatch._install_vllm_stubs()
-    return saved
+    return saved, consumer
 
 
 def _clean(saved):
+    modules, consumer = saved
     _drop_vllm()
-    sys.modules.update(saved)
-    sys.modules.pop("test_serving_moe_bf16_tp1_intake", None)
+    sys.modules.update(modules)
+    sys.modules.pop(_INTAKE, None)
+    if consumer is not _MISSING:
+        sys.modules[_INTAKE] = consumer
 
 
 def test_stale_layers_stub_makes_the_intake_file_skip():
+    before = _save_vllm()
+    consumer = sys.modules.get(_INTAKE, _MISSING)
     saved = _pollute()
     try:
         assert "vllm.model_executor.layers" in sys.modules
-        with pytest.raises(pytest.skip.Exception):
-            importlib.import_module("test_serving_moe_bf16_tp1_intake")
+        with pytest.raises(pytest.skip.Exception, match="fused_moe.activation"):
+            importlib.import_module(_INTAKE)
     finally:
         _clean(saved)
+    assert _save_vllm() == before
+    assert sys.modules.get(_INTAKE, _MISSING) is consumer
 
 
 def _finish(running):

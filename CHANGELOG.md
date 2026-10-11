@@ -1,5 +1,13 @@
 # Changelog
 
+## 2026-10-11 — restore the intake import probe state, issue #1031
+
+The guard probe removes the cached intake module before it checks the activation import.
+It restores the prior consumer and every vLLM binding after the probe.
+It checks the exact activation refusal instead of any skip.
+CPU allocation tests require both vllm.config and the fused MoE activation module.
+No GPU or served-output qualification follows from these CPU tests.
+
 ## 2026-10-10 — admit the served L14 WINDOW in the opt-in packed reader (issue #1166)
 
 Admit the served fourteen bit WINDOW beside the research twelve bit WINDOW in `prepare_a4_wire_compact`.
