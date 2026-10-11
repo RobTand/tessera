@@ -41,8 +41,8 @@ def test_actual_wire_codes_and_scales(q, structure):
 
 
 
-@pytest.mark.parametrize("window_bits", [14, 16])
-def test_legacy_diagnostic_reader_refuses_windows_other_than_twelve_bits(window_bits):
+@pytest.mark.parametrize("window_bits", [16])
+def test_packed_reader_refuses_windows_outside_served_and_research_widths(window_bits):
     from tessera.compact_prep import prepare_a4_wire_compact
     from tessera.errors import GrammarError
     from tessera.manifest import BodyKind, ScalePlaneKind
@@ -50,8 +50,71 @@ def test_legacy_diagnostic_reader_refuses_windows_other_than_twelve_bits(window_
     encoded = encode_linear(source, grid=grid_for_name("E2M1x2"), q256=640,
         body=BodyKind.WINDOW, span=1, scale_plane=ScalePlaneKind.LUT, window_bits=window_bits)
     wire = parse_compact_wire(encoded.blob, device="cpu")
-    with pytest.raises(GrammarError, match="twelve bit WINDOW"):
+    with pytest.raises(GrammarError, match="packed A4 geometry requires"):
         prepare_a4_wire_compact(wire, device="cpu")
+
+
+def test_served_reader_widths_come_from_the_recipe_owner():
+    from tessera.export import E2M1X2_SERVED_RECIPE, E2M1X2_SERVED_WINDOW_BITS, E2M1X2_SUBCAP_WINDOW_BITS
+    grid = grid_for_name("E2M1x2")
+    assert (E2M1X2_SERVED_WINDOW_BITS, E2M1X2_SUBCAP_WINDOW_BITS) == (14, 12)
+    for q, structure in ((640, STRUCTURE_DENSE), (641, STRUCTURE_ROUTED_MOE),
+            (895, STRUCTURE_ROUTED_MOE), (896, STRUCTURE_DENSE)):
+        recipe = served_recipe(grid, q, structure)
+        assert recipe.to_config() == E2M1X2_SERVED_RECIPE.to_config()
+        assert recipe.window_bits == E2M1X2_SERVED_WINDOW_BITS
+
+
+@pytest.mark.parametrize("q,structure",
+    [(640, STRUCTURE_DENSE), (641, STRUCTURE_ROUTED_MOE),
+     (895, STRUCTURE_ROUTED_MOE), (896, STRUCTURE_DENSE)])
+def test_served_window_reader_matches_stock_bytes(q, structure):
+    from tessera.compact_prep import prepare_a4_wire_compact
+    from tessera.kernel_a4_wire import decode_wire_codes
+    from tessera.stock import materialize_stock
+    from tessera.unit_artifact import parse_unit_artifact
+    grid = grid_for_name("E2M1x2")
+    recipe = served_recipe(grid, q, structure)
+    source = torch.linspace(-0.2, 0.2, 32 * 256).reshape(32, 256).to(torch.bfloat16)
+    encoded = encode_linear(source, grid=grid, q256=q, body=recipe.body,
+                            span=recipe.span, scale_plane=recipe.scale_plane,
+                            window_bits=recipe.window_bits, window_seed=recipe.window_seed,
+                            window_sigma=recipe.window_sigma, channel_sigma=recipe.channel_sigma)
+    wire = parse_compact_wire(encoded.blob, device="cpu")
+    unit = prepare_a4_wire_compact(wire, device="cpu")
+    parsed = parse_unit_artifact(encoded.blob, device="cpu")
+    reference = materialize_stock(parsed.unit, parsed.forests, parsed.code)
+    codes, scales = decode_wire_codes(unit)
+    assert torch.equal(codes, reference["weight_packed"])
+    assert torch.equal(scales, reference["weight_scale"].view(torch.uint8))
+    assert max(unit.layout["column_field_end_bits"]) <= unit.body.numel() * 8
+    assert unit.window_bits == recipe.window_bits == 14
+
+
+@pytest.mark.parametrize("structure,q", [(STRUCTURE_ROUTED_MOE, 641), (STRUCTURE_DENSE, 640)])
+def test_served_row_cut_matches_stock_bytes_and_keeps_history(structure, q):
+    from tessera.compact_prep import prepare_a4_wire_compact
+    from tessera.kernel_a4_wire import decode_wire_codes
+    from tessera.slicing import slice_unit
+    from tessera.stock import materialize_stock
+    from tessera.unit_artifact import build_unit_artifact, parse_unit_artifact
+    grid = grid_for_name("E2M1x2")
+    recipe = served_recipe(grid, q, structure)
+    source = (torch.randn(64, 256, generator=torch.Generator().manual_seed(13)) * 0.04).to(torch.bfloat16)
+    encoded = encode_linear(source, grid=grid, q256=q, body=recipe.body,
+        span=recipe.span, scale_plane=recipe.scale_plane, window_bits=recipe.window_bits,
+        window_seed=recipe.window_seed, window_sigma=recipe.window_sigma,
+        channel_sigma=recipe.channel_sigma)
+    parent = parse_unit_artifact(encoded.blob, device="cpu")
+    shard = slice_unit(parent, rows=(32, 64))
+    _, _, blob = build_unit_artifact(shard, "history", parent.forests, q * grid.arity, parent.code)
+    parsed = parse_unit_artifact(blob, device="cpu")
+    reference = materialize_stock(parsed.unit, parsed.forests, parsed.code)
+    unit = prepare_a4_wire_compact(parse_compact_wire(blob, device="cpu"), device="cpu")
+    assert bool(unit.initial.any()), "the canonical row cut carries actual nonzero history"
+    codes, scales = decode_wire_codes(unit)
+    assert torch.equal(codes, reference["weight_packed"])
+    assert torch.equal(scales, reference["weight_scale"].view(torch.uint8))
 
 
 @pytest.mark.parametrize("structure", [STRUCTURE_ROUTED_MOE, STRUCTURE_DENSE])
