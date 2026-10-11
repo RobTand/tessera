@@ -1,5 +1,12 @@
 # Changelog
 
+## 2026-10-11 — measure every rung of the fused routed lane against R1024 (issue #694)
+
+Add a bench that times the routed E4M3 owner at any rung on synthetic wires, a report that renders its receipts, and an NCU table of its launches.
+Record the full-rung result at HEAD: R768, R832, R896, R928 and R960 run within 1.42x of the served R1024, and R1088 and R1152 reach 1.50x to 1.57x on device time.
+Against R1024 with legacy words every rung runs within 1.40x. A two-run launch executes 1.6x the instructions of the one-run piece-major launch.
+No kernel, wire, recipe, gate, default or serving change follows. A route census at this head stays open: stub B carries no expert classes.
+
 ## 2026-10-09 — complete the endpoint verifier contract (issue #1128)
 
 Require explicit endpoint, alias, artifact bytes, tokenizer facts, launch attempt, and complete rank expectations in the public CPU CLI.

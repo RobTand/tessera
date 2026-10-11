@@ -2166,20 +2166,28 @@ instantiation; built for rate 4 alone, the E4M3 gate/up launch compiles to
 3,376 sm_121 SASS instructions against the v44 kernel's 3,368. (Since the
 two-run column map, the pair is a kernel template parameter the host picks,
 not a per-item switch: see "Mixed rates (contract v45)" in section 3.3.)
-Re-stamped 2026-10-10 for the 1.5x bar at HEAD (tessera#694 close-out): on the
-T8R release artifact's own stacks (288 experts, M 1 to 8192, TP2 rank-0,
-balanced routing), fused E4M3 routed R1088 and R832 run at 1.276x to 1.479x of
-fused R1024 per forward at every M, inside the bar with no kernel change (the
-merged descriptor ring and per-pair kernel are the optimization). R960 rides
-the same (3, 4) instantiation as R832, R1152 the same (4, 5) one as R1088, and
-R768 is one-rate; the GPU oracles execute all three synthetically. See §3.3
-"Mixed rates" and `docs/measurements/2026-10-10-mixed-rate-head-bench.md`,
-which also records the dense M <= 8 fused-lane rows and the decode-once
-dispatch at M >= 256 (tessera#931). The export prices each fused unit's table,
-run pair and block descriptors (`serving_parts.routed_fused_unit_bytes`). At
-v45 the mixed stacks ran 2.0x to 3.9x faster than the compact adapter they
-replaced (`docs/measurements/2026-09-28-mixed-rate-fused-window.md`). No cell's `executes`, rungs or
-flags move. A TP1 eager census of stub B on the GLM image served all 21 of
+Measured at v45 on layer 3 of GLM-5.3-Flash (288 experts, M 1 to 2048), the
+E4M3 R1024 routed stack ran 2.9% to 6.3% faster than master, and the R832,
+R960 and R1088 stacks ran 2.0x to 3.9x faster than the compact adapter they
+replaced (`docs/measurements/2026-09-28-mixed-rate-fused-window.md`) but at
+1.50x to 1.71x of R1024's time, short of #694's 1.5x. Re-stamped 2026-10-11
+against HEAD (`docs/measurements/2026-10-11-mixed-rate-head-bench.md`, kernel
+sha256 `8a1536df`, contract v66, 288 experts, TP2 rank-0 shapes, M 1 to 8192):
+every rung from R768 to R1152 builds the class-dispatch fused adapter and
+runs on the device. Against the served R1024 (piece-major words, which are 7%
+to 17% faster than legacy words on the eager wall) the rungs R768, R832, R896,
+R928 and R960 run within 1.42x of it on the eager wall, graph replay and
+profiler time, while R1088 and R1152 reach 1.48x to 1.52x on the eager wall and
+1.50x to 1.57x on device time at their worst M, so the 1.5x bar holds for five
+of the seven rungs and is missed by up to 5% for the (4, 5) pair; against R1024
+with legacy words every rung runs within 1.40x. NCU names the cause: a two-run
+launch executes 1.6x the instructions of the one-run piece-major launch, and a
+two-run launch reads neither piece-major words nor the staged stream history
+(`routed_fused_window.cu`, `PM` and `STAGE_PREV`). The bench also records the
+dense M <= 8 fused-lane rows and the decode-once dispatch at M >= 256
+(tessera#931). The export prices each fused unit's table, run pair and block
+descriptors (`serving_parts.routed_fused_unit_bytes`). No cell's `executes`,
+rungs or flags move. A TP1 eager census of stub B on the GLM image served all 21 of
 its modules on the fused kernel in both phases: the five routed stacks (E4M3
 at q256 896, 928, 1024 and 1088; BF16 at 1024) on the fused routed pair, and
 the sixteen dense modules on the fused dense identity at every rung from 832
@@ -6180,11 +6188,12 @@ per rank at TP2, 32.3 MB per MoE layer). The timing, oracle and GPU test
 receipts are in `docs/measurements/2026-09-28-mixed-rate-fused-window.md`:
 routed R1024 runs 2.9% to 6.3% faster than master, and mixed rates (R832, R960
 and R1088) run 2.0x to 3.9x faster than the compact adapter. The v45 rows put
-the mixed stacks at 1.50x to 1.71x of R1024; the HEAD close-out re-bench
-(`docs/measurements/2026-10-10-mixed-rate-head-bench.md`) reads 1.276x to
-1.479x per forward at every M from 1 to 8192, inside #694's 1.5x bar with no
-further kernel change. A TP1 eager census of stub B on the GLM image recorded every
-routed stack and every dense module on the fused kernel
+the mixed stacks at 1.50x to 1.71x of R1024. The HEAD bench
+(`docs/measurements/2026-10-11-mixed-rate-head-bench.md`) reads R768, R832,
+R896, R928 and R960 within 1.42x of the served R1024 and R1088 and R1152 at up
+to 1.52x (eager wall) and 1.57x (device time); against R1024 with legacy words
+every rung is within 1.40x. A TP1 eager census of stub B on the GLM image
+recorded every routed stack and every dense module on the fused kernel
 (`experiments/results/glm53_u1_stub_b_fused_mixed_tp1_eager_census.json`,
 replayed by `tests/test_glm_u1_census_cells.py`). E2M1 fused stays parked; the
 E2M1_K2 routed stacks stay on the A4 span-2 grouped path.
