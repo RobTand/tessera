@@ -5,9 +5,11 @@
 Restore duplicate refusal for singleton pytest options. Keep `-p` and `--ignore` repeatable.
 Give each container lane its own child under the explicit local cache root.
 Keep the existing PB action ownership check, including refusal of a conflicting owner.
+
 Seal an explicit scratch override to each lane child. Keep unrelated artifact roots unchanged.
 Preserve strict-CUDA, allocator, missing-artifact, source, and paired-population gates.
 The NoPE pass criterion remains unmet. CPU proof does not qualify either GPU lane or promote scientific results.
+
 ## 2026-10-10 — admit the served L14 WINDOW in the opt-in packed reader (issue #1166)
 
 Admit the served fourteen bit WINDOW beside the research twelve bit WINDOW in `prepare_a4_wire_compact`.
