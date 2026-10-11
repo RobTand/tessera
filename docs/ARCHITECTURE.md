@@ -7,6 +7,8 @@ Branches with `ig/` or `release` prefixes are exempt. Pull requests created befo
 The workflow checks new commits and body edits. The cutoff itself requires the check.
 The script uses only the Python standard library and never treats pull request fields as shell source.
 
+Re-stamped 2026-10-11 for the split-suite source correction, against master `a12034b6`.
+CPU checks prove singleton refusal and independent lane custody. They do not qualify either GPU lane.
 Re-stamped 2026-10-09 for the migrated GB and D1 producer caller (tessera#944).
 Re-stamped 2026-10-09 for the canonical T4 performant menu (issue #1103).
 CEO decision dec-1009-095820-aebb approves dense [896] and routed [896] as performance-only TCQ menus.
@@ -3807,8 +3809,8 @@ defaults and preventing each xdist worker's native math or extension compiler
 from multiplying its one-CPU share. The per-process limits are recorded in
 each arm's receipt; these environment settings are not an OS-level CPU quota.
 An explicit `--gpu-image` enables the container GPU arm. It requires
-`--gpu-deps-site`, its `--gpu-deps-sha256` seal, and a new owned
-`--gpu-cache-dir` on local disk outside the checkout. The shared container
+`--gpu-deps-site`, its `--gpu-deps-sha256` seal, and a new writable
+`--gpu-cache-dir` root on local disk outside the checkout. The shared container
 owner refuses known network filesystem types before command construction,
 cache creation or launch, naming the path, mount point and filesystem type.
 The coordinator calls the same rule before any action is submitted. A
@@ -3821,7 +3823,8 @@ entry alone refuses because its backing filesystem is not stably mounted.
 The shared mount reader in `tessera._dev.native_identity` also owns native
 mapped-device provenance; unresolved cache mount provenance fails closed.
 `tools/_suite_container.py` owns
-the finite runner grammar and Docker argv; `tools/suite_container.py` launches
+the finite runner grammar and Docker argv. Among valued pytest options, only `-p` and `--ignore` may repeat.
+The parser refuses duplicate singleton options with attached, separate, or mixed values. `tools/suite_container.py` launches
 it only inside an admitted PB action. GPU `--cpus N` becomes pytest `-n N
 --dist worksteal` with the same aggregate reservation. Use `--gpu-cpus` and
 `--gpu-mem-gb` when its population needs different CPU
@@ -3845,6 +3848,10 @@ the x86 one. `tools/merge_suite.py` defines the lane files once
 serving-pin bump, one newer image with both the kpool-tail backport and
 `index_group` rejoins the lanes. Measure the `_GRAPH_RUNNER_SHA256` gate on
 that image first.
+Each container lane uses its own child directory under `--gpu-cache-dir`, named `gpu` or `gpu-mla`.
+The existing `.suite-action` check binds each child to its sealed PB action key.
+The same action retains custody. A different owner refuses before Docker starts.
+An explicit `TESSERA_SCRATCH_DIR=<root>/tmp` follows each lane child in its sealed request.
 The source and declared data roots mount readonly at their actual absolute
 paths, while the surface directory and action-owned cache mount writable.
 `--artifact-root ENV=PATH` uses the names owned by `tests/box_artifacts.py`;
