@@ -14,12 +14,15 @@ split of units between threads, the ratios, and the two instrument readings
 """
 from __future__ import annotations
 
+import os
+import subprocess
 import sys
 from pathlib import Path
 
 import pytest
 
 ROOT = Path(__file__).resolve().parents[1]
+PROBE = ROOT / "experiments" / "ig619_viterbi_power.py"
 sys.path.insert(0, str(ROOT / "experiments"))
 
 import ig619_viterbi_power as probe  # noqa: E402
@@ -279,3 +282,21 @@ def test_rendering_survives_a_receipt_with_missing_readings():
     rec["rungs"][0]["arms"][1]["power"] = {"points": 0}
     text = probe.render_tables(rec)
     assert "| best#1 |" in text and "-" in text
+
+
+def test_a_stale_tessera_earlier_on_the_path_cannot_stand_in_for_the_snapshot(tmp_path):
+    """Its import root comes from its own location.  The first three arms of
+    tessera#619 failed because a stale venv copy of ``tessera`` was found
+    before the snapshot's; the probe must find its own tree first whatever the
+    interpreter's path holds."""
+    stale = tmp_path / "stale" / "tessera"
+    stale.mkdir(parents=True)
+    (stale / "__init__.py").write_text("")
+    env = {**os.environ, "PYTHONPATH": os.pathsep.join(
+        [str(tmp_path / "stale"), str(ROOT / "experiments")])}
+    code = ("import importlib.util, runpy; "
+            f"runpy.run_path({str(PROBE)!r}, run_name='probe'); "
+            "print(importlib.util.find_spec('tessera').origin)")
+    found = subprocess.run([sys.executable, "-c", code], env=env, check=True,
+                           capture_output=True, text=True).stdout.strip()
+    assert Path(found) == ROOT / "src" / "tessera" / "__init__.py"

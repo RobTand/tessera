@@ -73,8 +73,14 @@ import subprocess
 import sys
 import threading
 import time
+from pathlib import Path
 
-import box_power_window
+# The tree this file ships with, never whichever ``tessera`` the interpreter's
+# site-packages happens to carry: the first three arms of tessera#619 failed
+# because a stale venv copy shadowed the snapshot (tests/test_experiment_import_roots.py).
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
+
+import box_power_window  # noqa: E402
 
 ENVELOPE_W = box_power_window.ENVELOPE_W
 
