@@ -38,7 +38,8 @@ exits 3.  An earlier version of this probe recorded ``byte_identical: false``
 and still exited 0.
 
 Power is read two ways, against the 140 W envelope.  The in-process sampler is
-one streaming ``nvidia-smi`` at 500 ms, bracketed by each arm's own wall
+one streaming ``nvidia-smi`` at 500 ms (watts and the SM clock, so a power cap
+shows as a clock and not only as a number), bracketed by each arm's own wall
 clock.  The box's Netdata is the second instrument, read through
 ``experiments/box_power_window.py`` over the same windows; its 10 s groups are
 kept only when they lie wholly inside a window, so a 20 s arm has one or two.
@@ -193,6 +194,21 @@ def netdata_power(host, after, before):
     return netdata_power_summary(series)
 
 
+def parse_sample(line):
+    """``(watts, sm_mhz)`` from one ``nvidia-smi`` CSV line, ``None`` where a
+    field is unreadable.  The clock is context: it is never a reason to drop a
+    power sample, and an unreadable power field drops the whole line."""
+    fields = [f.strip() for f in line.split(",")]
+    try:
+        watts = float(fields[0])
+    except (ValueError, IndexError):
+        return None, None
+    try:
+        return watts, float(fields[1])
+    except (ValueError, IndexError):
+        return watts, None
+
+
 class Power:
     """Sample ``nvidia-smi`` power.draw as one streaming subprocess for the run.
 
@@ -205,15 +221,30 @@ class Power:
     def __init__(self, period_ms: int = 500):
         self._period_ms = period_ms
         self._samples: list[tuple[float, float]] = []
+        self._clocks: list[tuple[float, float]] = []
         self._errors = 0
         self._stop = threading.Event()
         self._proc = None
         self._thread = threading.Thread(target=self._run, daemon=True)
 
+    def _fields(self) -> str:
+        """``power.draw,clocks.sm`` if the driver answers it, else power alone:
+        a query the driver refuses would leave the whole run with no power."""
+        try:
+            done = subprocess.run(
+                ["nvidia-smi", "--query-gpu=power.draw,clocks.sm",
+                 "--format=csv,noheader,nounits"], capture_output=True, text=True,
+                timeout=30)
+            if done.returncode == 0:
+                return "power.draw,clocks.sm"
+        except Exception:
+            pass
+        return "power.draw"
+
     def __enter__(self):
         try:
             self._proc = subprocess.Popen(
-                ["nvidia-smi", "--query-gpu=power.draw",
+                ["nvidia-smi", f"--query-gpu={self._fields()}",
                  "--format=csv,noheader,nounits", f"-lms={self._period_ms}"],
                 stdout=subprocess.PIPE, text=True)
         except Exception:
@@ -237,12 +268,14 @@ class Power:
         for line in proc.stdout:
             if self._stop.is_set():
                 break
-            try:
-                watts = float(line.strip().split()[0])
-            except Exception:
+            stamp = time.time()
+            watts, mhz = parse_sample(line)
+            if watts is None:
                 self._errors += 1
                 continue
-            self._samples.append((time.time(), watts))
+            self._samples.append((stamp, watts))
+            if mhz is not None:
+                self._clocks.append((stamp, mhz))
 
     def window(self, t0: float, t1: float) -> dict:
         sel = [s for s in self._samples if t0 <= s[0] <= t1]
@@ -257,6 +290,9 @@ class Power:
             "mean_fraction_of_envelope": round(sum(watts) / len(watts) / ENVELOPE_W, 4),
             "max_fraction_of_envelope": round(max(watts) / ENVELOPE_W, 4),
         })
+        mhz = [c[1] for c in self._clocks if t0 <= c[0] <= t1]
+        if mhz:
+            out.update({"mean_sm_mhz": round(sum(mhz) / len(mhz)), "min_sm_mhz": round(min(mhz))})
         return out
 
 

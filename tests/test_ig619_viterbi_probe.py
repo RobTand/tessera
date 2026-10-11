@@ -140,8 +140,18 @@ def test_sampler_window_reports_points_and_never_a_zero_mean():
     inside = sampler.window(10.0, 11.0)
     assert inside["points"] == 3 and inside["mean_w"] == 70.0
     assert inside["mean_fraction_of_envelope"] == pytest.approx(70.0 / probe.ENVELOPE_W)
+    assert "mean_sm_mhz" not in inside, "no clock samples, no clock reading"
     empty = sampler.window(20.0, 21.0)
     assert empty["points"] == 0 and "mean_w" not in empty
+
+
+def test_sampler_window_reports_the_sm_clock_beside_the_power():
+    """A power cap shows as a clock before it shows as a lower wattage."""
+    sampler = probe.Power()
+    sampler._samples = [(10.0, 60.0), (10.5, 70.0), (11.0, 80.0)]
+    sampler._clocks = [(10.0, 2400.0), (10.5, 2200.0), (11.0, 2000.0), (30.0, 100.0)]
+    out = sampler.window(10.0, 11.0)
+    assert out["mean_sm_mhz"] == 2200 and out["min_sm_mhz"] == 2000
 
 
 def test_units_must_split_evenly_before_anything_touches_a_device():
@@ -211,3 +221,16 @@ def test_a_window_shorter_than_one_netdata_second_is_not_sent():
     """No network is touched: the answer is the refusal itself."""
     out = probe.netdata_power("127.0.0.1", 100.2, 100.9)
     assert "error" in out and out.get("mean_w") is None
+
+
+@pytest.mark.parametrize("line,want", [
+    ("70.31, 2411", (70.31, 2411.0)),
+    ("5.29, 208\n", (5.29, 208.0)),
+    ("5.29", (5.29, None)),                 # the power-only query
+    ("66.0, [N/A]", (66.0, None)),           # a clock the driver will not say
+    ("[N/A], 2411", (None, None)),           # no power, no sample
+    ("", (None, None)),
+    ("garbage, 12", (None, None)),
+])
+def test_one_sampler_line_is_a_power_and_maybe_a_clock(line, want):
+    assert probe.parse_sample(line) == want
