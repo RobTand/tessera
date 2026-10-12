@@ -9369,6 +9369,15 @@ These observations do not replace decoder agreement or scientific comparability 
 
 Tokenizer evidence includes the loaded backend, vocabulary mapping, special IDs, and actual local source bytes.
 The backend and mapping must agree with `tokenizer.json`.
+The backend and `tokenizer.json` roots must be JSON objects.
+The verifier refuses array roots before ByteLevel normalization.
+Nested Unigram vocabulary arrays remain supported.
+The comparison ignores the ByteLevel flags that no token ID depends on.
+These are a pre-tokenizer's `trim_offsets` and every flag on a ByteLevel decoder.
+transformers rewrites them when it loads the file, and the pinned vLLM image shows exactly these four differences.
+A pre-tokenizer's `add_prefix_space` and `use_regex` stay exact.
+This tolerance is a correctness rule for the byte join. It grants no D50 qualification.
+Re-stamped 2026-10-11 for the strict tokenizer root boundary (issue #1134).
 Special IDs must agree with the source tokenizer configuration.
 A vocabulary length or client tokenizer record supplies none of these facts.
 Unsupported loaders, missing observations, incomplete coverage, and in-place reloads leave the evidence incomplete.

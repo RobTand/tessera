@@ -1,5 +1,12 @@
 # Changelog
 
+## 2026-10-11 — refuse tokenizer array roots (issue #1134)
+
+Require dictionary roots before the endpoint witness normalizes ByteLevel flags.
+Reject malformed `tokenizer.json` arrays even when their pairs form the same object.
+Keep the four allowed flag differences and nested Unigram vocabulary arrays unchanged.
+CPU and offline CLI proof grant no current endpoint or served-quality qualification.
+
 ## 2026-10-11 — restore the intake import probe state, issue #1031
 
 The guard probe removes the cached intake module before it checks the activation import.
