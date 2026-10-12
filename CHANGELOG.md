@@ -16,6 +16,10 @@ CPU allocation tests require both vllm.config and the fused MoE activation modul
 The six CPU configuration refusal cases use the shared configuration module without a vLLM guard.
 No GPU or served-output qualification follows from these CPU tests.
 
+## 2026-10-10 — graph-only census separation (issue #1062)
+
+--compiled now names a non-eager engine, not a Torch trace. A run with compilation mode NONE loads and measures CUDA graphs only. Its records keep concrete capture shapes. The census checks those shapes as concrete and no longer requires M star. A real Torch trace still requires shape-polymorphic M star records in both driven phases. Every graph-only census states capture time only and grants no logical row credit. Replay runs no Python. Phase, owner, route, decoder, dtype and cell checks run on both paths. The receipt attests capture_time_shapes_unattested for graph-only runs. No admission follows from this change.
+
 ## 2026-10-10 — isolate vLLM stub state in the test co-run (issue #1015)
 
 Guard the three remaining vLLM consumers on the submodule they import, not on the bare package.
