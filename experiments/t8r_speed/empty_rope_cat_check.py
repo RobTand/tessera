@@ -4,14 +4,14 @@ Calls the stock SM120 sparse-MLA kernel exactly as vLLM's
 ``FlashInferMLASparseSM120Impl._run_mqa_kernel`` does (image 5be13705), at the
 GLM-5.3 TP2 shapes: 32 heads per rank, 512-wide latent query, fp8_ds_mla
 656-byte cache rows in 64-token pages, top-k width 2176, ``arbitrary_fp32``
-scales. Three query forms per case:
+scales. Two query forms per case:
 
 - ``cat``: ``torch.cat((q_nope, q_pe_empty), dim=-1)``, the stock form, run
   twice as a determinism control;
 - ``direct``: ``tessera.serving.glm53_empty_rope.query_without_empty_rope``
   applied to the same tuple, which must return ``q_nope`` itself.
 
-Order per case: cat, direct, cat, direct (forward then reverse). Every output is
+Order per case: cat, direct, cat, direct. Every output is
 compared bitwise (int16 view) against the first cat output.
 
 Cases: prefill chunk 1 (positions 0-2047, short rows padded with -1), prefill
@@ -115,6 +115,8 @@ def check_case(name, positions, cache, workspace, mla, helper, dev, seed):
     outs = []
     for form in ("cat", "direct", "cat", "direct"):
         qq = torch.cat(q, dim=-1) if form == "cat" else helper(q)
+        if form == "direct":
+            same_object = same_object and qq is nope
         outs.append((form, run_kernel(qq, cache, indices, workspace, mla)))
     torch.cuda.synchronize()
     ref = outs[0][1]
