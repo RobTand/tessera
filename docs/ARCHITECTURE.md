@@ -9629,33 +9629,95 @@ for the first folded call and one for the first kept call.
 
 The flag is off by default. No route, contract or artifact changes.
 
+`experiments/t8r_speed/shared_fold_check.py --out DIR --base-source PATH`
+qualifies the fold against the retained original pre-fold
+`routed_fused_window.cu`; it does not infer a baseline from this checkout's
+parent. Missing or unreadable `--base-source` produces a named refusal,
+a failed receipt and a nonzero exit before GPU execution. The harness and
+CPU controls use the same numeric and SASS decision functions.
+
+Numeric qualification requires exactly one case per `routed_fused.LIBRARIES`
+entry, T in `{1, 2, 3, 4, 5, 6, 7, 8, 512, 2048, 2049}`, and data form
+`served_scale` or `adversarial`, at H=4096 and top-k=8. Every case executes
+stock/fold/stock/fold, compares int16 views exactly to the first stock output,
+and checks the targeted answers on every adversarial execution. Missing,
+duplicate, unexpected or errored cases fail. The CUDA unit matrix covers
+every routed library at T in `{1, 2, 4, 2048}` with both data forms.
+
+SASS qualification uses `experiments/t4_code/sass_dump.py`'s kernel-name
+normalization and comparison report for every library it declares, including
+E2M1. Every original kernel must be classified `identical`: equal ordered
+instruction sequences after addresses and encodings are stripped. Multiset
+agreement, changed or removed kernels, absent libraries, empty original
+coverage, failed commands and malformed reports fail. Each library must add
+exactly one kernel whose demangled unqualified function name is exactly
+`token_sum_shared_kernel`; other additions fail. This stricter decision is
+local to the shared-fold harness.
+
+`DIR/shared_fold_check.json` retains numeric runs, SASS command results,
+provenance and timing screens, records both source SHA-256 digests, and adds
+`qualification.passed` and `qualification.failure_reasons`. Exit zero requires
+complete numeric coverage and successful SASS qualification; omitted evidence
+fails. The `sass-before/`, `sass-after/` dumps and `sass-compare.json` are
+retained beside the receipt. Profiler and CUDA-event timing remain `[S]`
+screens and establish no served saving or energy benefit. Matched TP2 served
+arms must still establish baseline-identical TR3 KL, removal of eligible
+separate adds in per-rank profiler traces, and measured latency and work per
+joule on both hosts. Default-on adoption remains Rob's separate decision.
+
 ### 5.1.3 Opt-in: skip the zero-width RoPE query cat (tessera#796)
 
 GLM-5.3 attention has `qk_rope_head_dim == 0`. The stock
 `FlashInferMLASparseSM120Impl.forward_mqa` still joins `(q_nope, q_pe)` with
-`torch.cat`, which copies all of `q_nope`: 11 copies of 67 MB per 2048-token
-prefill chunk at TP 2, about 6.4 ms.
+`torch.cat`, which copies all of `q_nope`.
 
 With `TESSERA_GLM53_SKIP_EMPTY_ROPE_CAT=1`, `TesseraConfig.get_quant_method`
 rebinds that method (`serving.glm53_empty_rope`). The rebind passes `q_nope`
-itself when the cat would only copy it: a 2-tuple, a zero-wide second part,
-matching leading shape, dtype and device, and a contiguous, 512-byte-aligned
-`q_nope`. The kernel then reads the same bytes, shape, strides and alignment.
-Every other query reaches the stock code unchanged.
+itself exactly when the query satisfies `isinstance(q, tuple)` and has length
+two, both parts satisfy `isinstance(part, torch.Tensor)`, their ranks are equal
+and positive, the second part's final dimension is zero, and their leading
+shapes, dtypes and devices match. `q_nope` must also be contiguous and its data
+pointer divisible by 512. Every other query reaches the stock code by identity.
 
-The rebind installs only on a stock source whose sha256 is in the inspected
-set (image `5be13705`); any other source keeps the stock method. Each process
-logs one line: `installed`, `declined` (with the reason) or `off`. It also logs
-whether the first tuple query skipped the cat.
+The only permitted rebind is
+`vllm.v1.attention.backends.mla.flashinfer_mla_sparse_sm120.FlashInferMLASparseSM120Impl.forward_mqa`,
+on stock module source SHA-256
+`102ca08793d567f95598eefeb34c3f6ec50b3b9d704f162d1402b97b12b5777b`
+(inspected image `5be13705`) with parameter sequence
+`self, q, kv_c_and_k_pe_cache, attn_metadata, layer`. Unavailable imports,
+classes or methods, unreadable or unknown sources, and uninspectable or changed
+signatures decline without rebinding. Installation is idempotent; the wrapper
+retains `__wrapped_stock__` and calls stock exactly once, preserving the other
+arguments, result and exceptions.
 
-The flag is off by default. No route, contract or artifact changes.
+Each process logs one installation line: `installed`, `declined` (with the
+reason) or `off`, retaining source/image provenance on installation. The first
+tuple query reports `cat skipped` or `cat kept (reason)` once; earlier
+non-tuple queries do not consume that report.
+
+The flag is off by default. It uses `latched_bool`: after whitespace stripping,
+`1` enables it; unset, empty and `0` disable it. Other spellings raise
+`ValueError` naming the flag; changing its normalized value after latching
+raises `RuntimeError`. No route, contract or artifact changes.
 
 The GPU qualification probe `experiments/t8r_speed/empty_rope_cat_check.py`
 requires the stock `concat_and_cache_mla` producer and successful CUDA
 completion before recording cache provenance. Import, writer and completion
 failures propagate; synthetic cache bytes never replace a failed stock writer
-(tessera#887). CPU failure controls cover this refusal only, not GPU arithmetic
-or the matched served TR3/cat-trace gate required by #796.
+(tessera#887). Its five cases are prefill positions 0–2047 and 6144–8191, and
+decode batches 1, 2 and 4 at position 8191, with 32 heads and latent width 512.
+Each runs cat/direct/cat/direct against the same stock-produced cache and
+compares every output through an `int16` view to the first cat output. The
+helper must return `q_nope` itself on every call. Each case and `all_bitwise`
+are recorded in JSON; any case failure makes the exit status nonzero.
+
+CPU controls verify eligibility, propagation and receipt refusal/aggregation;
+they do not establish GPU arithmetic or the matched served TR3/cat-trace gate
+required by #796. Those need the qualified GPU receipt and matched TP2 served
+arms against the same BF16 teacher and artifact bytes. Timing must be measured
+before and after on the delivered source; this unit guarantees no saving.
+Default-on promotion requires a separate decision after served evidence.
+
 ### 5.2 What the wheel ships besides Python
 
 Two non-Python files are opened at run time, and each is declared in
