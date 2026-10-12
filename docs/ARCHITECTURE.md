@@ -951,6 +951,61 @@ eager-equivalence receipts remain independent. This is a correctness-only
 gate fix: no runtime image, public pin, serving cell, wire, numerical path,
 residency or performance default is promoted.
 
+CPU paired-K32 proofs (#857) execute the production admission expression,
+`pair_of`, `paired_k32_scope`, `launch_pair`, allocation owners, `check_slot`
+and consumer loop extracted from `routed_fused_window.cu`, using host-only
+tensor, launch, fragment, MMA and barrier shims. Pairing remains default-off
+and import-frozen: unset or exactly `0` disables it, exactly `1` enables the
+E4M3 MMA build define, and every other string is refused by selector name.
+Other library families receive no paired define. Admission requires an enabled
+paired build, FP8 E4M3 MMA, routed unsplit mode 0 or 2, legacy resident addressing, one R4 run,
+slot8, BMT128, K at least192 and divisible by64, and input rows at least512.
+The entry and dispatch proofs cover disabled builds, piece-major exclusion
+and existing width/family refusals. At default independent experimental
+controls the paired gate/up and down allocations are 76,240 and 59,664 bytes;
+the original allocations remain 57,552 and 40,976. The device-capacity shim
+checks the tensor's device and refuses one byte below the selected allocation.
+
+The consumer proof compares each scalar accumulator's K32 trace with the
+ordinary schedule and with increasing logical chunk indices, including all
+consumer lanes and row-block boundaries. Two microsteps share each alternating
+A/B pair slot and one FULL/EMPTY handoff. The producer proof retains alternating
+words/history slots, copy retirement, producer-reader and decoded-slot reuse,
+final-copy drain and delayed descriptor/scale epilogue reads across items.
+Its K128/two-pair failure control retains the reason for the K192 minimum.
+Both #855 terminal branches execute under delayed-consumer controls at paired
+quantum counts, including odd/even parity and zero work; releasing the other
+EMPTY parity alone cannot publish the sentinel. The FP4 branch is a protocol
+control, not a paired FP4 specialization. `_ext` executes with compiled-metadata
+fixtures in both selector mismatch directions. Torch-dependent Python proofs
+use an `importorskip` fixture; compiler-only proofs still run without torch.
+
+Temporary unsafe source mutations produced these retained failure excerpts
+under `pytest -s`; the production files were unchanged:
+
+```text
+unsafe disabled-build mutation: entry=1, dispatch=0, expected=0
+unsafe piece-major-entry mutation: entry=1, dispatch=0, expected=0
+unsafe piece-major-dispatch mutation: entry=0, dispatch=1, expected=0
+unsafe live-allocation mutation: guard admitted insufficient capacity: 1 1 76240
+unsafe live-allocation mutation: guard admitted insufficient capacity: 1 1 59664
+unsafe consumer order mutation: accumulator K32 order changed
+unsafe consumer early-empty mutation: EMPTY before final accumulator reader
+unsafe compiled-selector validation mutation: DID NOT RAISE GrammarError
+unsafe terminal 0/missing-wait, paired quanta=3: FULL reused before delayed consumer reset
+unsafe terminal 1/missing-wait, paired quanta=3: FULL reused before delayed consumer reset
+unsafe terminal 0/unused-wait, paired quanta=0: first-use terminal waited on nonexistent chunk
+unsafe terminal 1/unused-wait, paired quanta=0: first-use terminal waited on nonexistent chunk
+```
+
+These are CPU source/protocol and loader checks. They do not establish CUDA
+compilation or correctness, speedup, serving admission, runtime pinning,
+default promotion or an energy result. Fragment/MMA tags prove order and
+ownership rather than numerical output; metadata fixtures prove loader behavior
+rather than the identity of a compiled CUDA bank. Decoding, MMA instructions,
+epilogue, wire bytes and resident representation remain unchanged. Native builds
+and GPU qualification require separate receipts from the coordinator.
+
 Re-stamped 2026-10-04 for paired compiled-bank choice identity (#919).
 The paired 0/1 selector is strict and import-frozen, like the independent
 MMA8 B-fragment selector. Environment edits after import cannot retarget a
