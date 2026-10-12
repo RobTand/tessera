@@ -9629,6 +9629,42 @@ for the first folded call and one for the first kept call.
 
 The flag is off by default. No route, contract or artifact changes.
 
+`experiments/t8r_speed/shared_fold_check.py --out DIR --base-source PATH`
+qualifies the fold against the retained original pre-fold
+`routed_fused_window.cu`; it does not infer a baseline from this checkout's
+parent. Missing or unreadable `--base-source` produces a named refusal,
+a failed receipt and a nonzero exit before GPU execution. The harness and
+CPU controls use the same numeric and SASS decision functions.
+
+Numeric qualification requires exactly one case per `routed_fused.LIBRARIES`
+entry, T in `{1, 2, 3, 4, 5, 6, 7, 8, 512, 2048, 2049}`, and data form
+`served_scale` or `adversarial`, at H=4096 and top-k=8. Every case executes
+stock/fold/stock/fold, compares int16 views exactly to the first stock output,
+and checks the targeted answers on every adversarial execution. Missing,
+duplicate, unexpected or errored cases fail. The CUDA unit matrix covers
+every routed library at T in `{1, 2, 4, 2048}` with both data forms.
+
+SASS qualification uses `experiments/t4_code/sass_dump.py`'s kernel-name
+normalization and comparison report for every library it declares, including
+E2M1. Every original kernel must be classified `identical`: equal ordered
+instruction sequences after addresses and encodings are stripped. Multiset
+agreement, changed or removed kernels, absent libraries, empty original
+coverage, failed commands and malformed reports fail. Each library must add
+exactly one kernel whose demangled unqualified function name is exactly
+`token_sum_shared_kernel`; other additions fail. This stricter decision is
+local to the shared-fold harness.
+
+`DIR/shared_fold_check.json` retains numeric runs, SASS command results,
+provenance and timing screens, records both source SHA-256 digests, and adds
+`qualification.passed` and `qualification.failure_reasons`. Exit zero requires
+complete numeric coverage and successful SASS qualification; omitted evidence
+fails. The `sass-before/`, `sass-after/` dumps and `sass-compare.json` are
+retained beside the receipt. Profiler and CUDA-event timing remain `[S]`
+screens and establish no served saving or energy benefit. Matched TP2 served
+arms must still establish baseline-identical TR3 KL, removal of eligible
+separate adds in per-rank profiler traces, and measured latency and work per
+joule on both hosts. Default-on adoption remains Rob's separate decision.
+
 ### 5.1.3 Opt-in: skip the zero-width RoPE query cat (tessera#796)
 
 GLM-5.3 attention has `qk_rope_head_dim == 0`. The stock
