@@ -9,6 +9,7 @@ quant-config entry, only when opted in, and only on an inspected source.
 from __future__ import annotations
 
 import hashlib
+import json
 import logging
 import sys
 import types
@@ -233,7 +234,7 @@ def test_uninspectable_stock_declines_without_rebinding(empty_rope,monkeypatch,f
     assert getattr(empty_rope.impl,'forward_mqa',None) is before
 
 
-@pytest.mark.parametrize('exception',[OSError,ValueError,TypeError])
+@pytest.mark.parametrize('exception',[OSError,ValueError,TypeError,RuntimeError])
 def test_unavailable_stock_class_declines_without_rebinding(empty_rope,monkeypatch,exception):
     mod=empty_rope.mod;monkeypatch.setenv(mod.FLAG,'1')
     stock=sys.modules[STOCK]
@@ -244,6 +245,49 @@ def test_unavailable_stock_class_declines_without_rebinding(empty_rope,monkeypat
     broken=UnavailableClassModule(stock.__name__);broken.__file__=stock.__file__
     monkeypatch.setitem(sys.modules,STOCK,broken)
     assert mod.install_for_current_config() is False
+
+
+@pytest.mark.parametrize("fault", ["source", "method", "signature"])
+def test_stock_inspection_runtime_errors_decline_without_rebinding(empty_rope, monkeypatch, caplog, fault):
+    mod = empty_rope.mod
+    monkeypatch.setenv(mod.FLAG, "1")
+    stock = sys.modules[STOCK]
+    if fault == "source":
+        class UnreadableSource(types.ModuleType):
+            def __getattribute__(self, name):
+                if name == "__file__":
+                    raise RuntimeError("unavailable source")
+                return super().__getattribute__(name)
+        broken = UnreadableSource(STOCK)
+        broken.__dict__.update(stock.__dict__)
+        monkeypatch.setitem(sys.modules, STOCK, broken)
+        stock = broken
+    elif fault == "method":
+        class UnavailableMethod(type):
+            def __getattribute__(self, name):
+                if name == "forward_mqa":
+                    raise RuntimeError("unavailable method")
+                return super().__getattribute__(name)
+        impl = UnavailableMethod("FlashInferMLASparseSM120Impl", (),
+                                 {"forward_mqa": empty_rope.original})
+        monkeypatch.setattr(stock, "FlashInferMLASparseSM120Impl", impl)
+    else:
+        class UninspectableMethod:
+            def __call__(self, *args):
+                pass
+
+            @property
+            def __signature__(self):
+                raise RuntimeError("unavailable signature")
+        monkeypatch.setattr(empty_rope.impl, "forward_mqa", UninspectableMethod())
+    impl = stock.__dict__["FlashInferMLASparseSM120Impl"]
+    before = dict(impl.__dict__)
+    with caplog.at_level(logging.WARNING, logger=mod.__name__):
+        assert mod.install_for_current_config() is False
+        assert mod.install_for_current_config() is False
+    assert dict(impl.__dict__) == before
+    lines = _lines(caplog, mod)
+    assert len(lines) == 1 and "declined" in lines[0] and "RuntimeError" in lines[0]
 
 
 # CPU stand-ins establish probe refusal, not actual CUDA cache-writer arithmetic.
@@ -296,4 +340,281 @@ def test_qualification_cache_keeps_stock_writer_bytes_and_completion_order(monke
     assert torch.equal(cache, torch.full_like(cache, 17))
     assert log["cache_writer"] == "vllm._custom_ops.concat_and_cache_mla(fp8_ds_mla)"
     assert log["cache_sha256"] == hashlib.sha256(cache.numpy().tobytes()).hexdigest()
+
+
+@pytest.mark.parametrize("case", [
+    "first_nontensor", "second_nontensor", "both_scalars", "first_scalar",
+    "second_scalar", "rank_mismatch", "device_mismatch", "empty_tuple", "one_part",
+])
+def test_query_eligibility_rejects_nontensors_scalars_rank_and_device_mismatches(case):
+    from tessera.serving.glm53_empty_rope import query_without_empty_rope, skip_reason
+
+    nope, pe = _served_query()
+    q = {
+        "first_nontensor": lambda: (object(), pe),
+        "second_nontensor": lambda: (nope, object()),
+        "both_scalars": lambda: (torch.tensor(1), torch.tensor(0)),
+        "first_scalar": lambda: (torch.tensor(1), pe),
+        "second_scalar": lambda: (nope, torch.tensor(0)),
+        "rank_mismatch": lambda: (nope, nope.new_empty((8, 0))),
+        "device_mismatch": lambda: (nope, torch.empty(pe.shape, dtype=pe.dtype, device="meta")),
+        "empty_tuple": lambda: (),
+        "one_part": lambda: (nope,),
+    }[case]()
+    assert isinstance(skip_reason(q), str) and skip_reason(q)
+    assert query_without_empty_rope(q) is q
+
+
+def test_query_eligibility_accepts_tuple_and_tensor_subclasses_and_rank_one():
+    from tessera.serving.glm53_empty_rope import query_without_empty_rope, skip_reason
+
+    class Query(tuple):
+        pass
+
+    class Tensor(torch.Tensor):
+        pass
+
+    nope = _aligned((16,)).as_subclass(Tensor)
+    pe = torch.empty(0, dtype=nope.dtype).as_subclass(Tensor)
+    q = Query((nope, pe))
+    assert skip_reason(q) is None
+    assert query_without_empty_rope(q) is nope
+
+
+def test_installation_target_and_inspected_revision_are_the_pinned_contract():
+    from tessera.serving import glm53_empty_rope as mod
+
+    assert mod._MODULE == STOCK
+    assert mod._CLASS == "FlashInferMLASparseSM120Impl"
+    assert mod._INSPECTED_SHA256 == {
+        "102ca08793d567f95598eefeb34c3f6ec50b3b9d704f162d1402b97b12b5777b"}
+
+
+@pytest.mark.parametrize("value, enabled", [
+    (None, False), ("", False), ("0", False), ("1", True),
+    (" \t\n", False), (" 0\n", False), ("\t1 ", True),
+])
+def test_empty_rope_flag_spellings_and_latch(empty_rope, monkeypatch, value, enabled):
+    mod = empty_rope.mod
+    if value is None:
+        monkeypatch.delenv(mod.FLAG, raising=False)
+    else:
+        monkeypatch.setenv(mod.FLAG, value)
+    assert mod.install_for_current_config() is enabled
+    before = empty_rope.impl.forward_mqa
+    normalized = "" if value is None else value.strip()
+    monkeypatch.setenv(mod.FLAG, f" \t{normalized}\n")
+    assert mod.install_for_current_config() is enabled
+    monkeypatch.setenv(mod.FLAG, "0" if normalized != "0" else "")
+    with pytest.raises(RuntimeError, match=mod.FLAG):
+        mod.install_for_current_config()
+    assert empty_rope.impl.forward_mqa is before
+
+
+@pytest.mark.parametrize("value", ["true", "false", "on", "off", "yes", "no", "2", "-1", "01", " 1 0 "])
+def test_empty_rope_flag_invalid_spellings_name_the_flag(empty_rope, monkeypatch, value):
+    monkeypatch.setenv(empty_rope.mod.FLAG, value)
+    with pytest.raises(ValueError, match=empty_rope.mod.FLAG):
+        empty_rope.mod.install_for_current_config()
+    assert empty_rope.impl.forward_mqa is empty_rope.original
+
+
+@pytest.mark.parametrize("form", ["eligible", "ineligible", "nontuple"])
+@pytest.mark.parametrize("raises", [False, True])
+def test_wrapper_preserves_arguments_results_and_exceptions(empty_rope, monkeypatch, form, raises):
+    mod = empty_rope.mod
+    nope, pe = _served_query()
+    q = {"eligible": (nope, pe), "ineligible": (nope, nope[..., :1]), "nontuple": nope}[form]
+    cache, metadata, layer, result = object(), object(), object(), object()
+    error = RuntimeError("stock forward failed")
+    calls = []
+
+    def forward_mqa(self, q, kv_c_and_k_pe_cache, attn_metadata, layer):
+        calls.append((self, q, kv_c_and_k_pe_cache, attn_metadata, layer))
+        if raises:
+            raise error
+        return result
+
+    monkeypatch.setattr(empty_rope.impl, "forward_mqa", forward_mqa)
+    monkeypatch.setenv(mod.FLAG, "1")
+    assert mod.install_for_current_config() is True
+    assert empty_rope.impl.forward_mqa.__wrapped_stock__ is forward_mqa
+    instance = empty_rope.impl()
+    if raises:
+        with pytest.raises(RuntimeError) as caught:
+            instance.forward_mqa(q, cache, metadata, layer)
+        assert caught.value is error
+    else:
+        assert instance.forward_mqa(q, cache, metadata, layer) is result
+    assert len(calls) == 1
+    expected = (instance, nope if form == "eligible" else q, cache, metadata, layer)
+    assert all(actual is wanted for actual, wanted in zip(calls[0], expected))
+
+
+def test_first_ineligible_tuple_reports_kept_reason_once(empty_rope, monkeypatch, caplog):
+    monkeypatch.setenv(empty_rope.mod.FLAG, "1")
+    assert empty_rope.mod.install_for_current_config() is True
+    nope, pe = _served_query()
+    q = (nope, nope[..., :2].clone())
+    reason = empty_rope.mod.skip_reason(q)
+    caplog.clear()
+    with caplog.at_level(logging.WARNING, logger=empty_rope.mod.__name__):
+        instance = empty_rope.impl()
+        instance.forward_mqa(nope, None, None, None)
+        assert _lines(caplog, empty_rope.mod) == []
+        instance.forward_mqa(q, None, None, None)
+        instance.forward_mqa((nope, pe), None, None, None)
+        instance.forward_mqa(q, None, None, None)
+    assert _lines(caplog, empty_rope.mod) == [
+        "tessera.glm53_empty_rope: query cat skip: first tuple query "
+        f"[(8, 4, 16), (8, 4, 2)]: cat kept ({reason})"]
+
+
+@pytest.mark.parametrize("fault", [
+    None, "changed_first_direct", "changed_second_cat", "changed_second_direct",
+    "helper_clone", "helper_second_call_clone", "helper_third_call_clone",
+])
+def test_qualification_receipt_refuses_changed_output_or_nonidentity_helper(monkeypatch, fault):
+    from experiments.t8r_speed import empty_rope_cat_check as probe
+
+    cache, workspace, mla = object(), object(), object()
+    positions = torch.tensor([8191, 8191])
+    indices = torch.tensor([[0, 1, -1], [0, 1, -1]], dtype=torch.int32)
+    calls, queries = [], []
+
+    def build_indices(actual_positions, dev, seed):
+        assert actual_positions is positions and dev == torch.device("cpu") and seed == 4
+        return indices
+
+    def helper(q):
+        queries.append(q)
+        clone = (fault == "helper_clone"
+                 or fault == "helper_second_call_clone" and len(queries) == 2
+                 or fault == "helper_third_call_clone" and len(queries) == 3)
+        return q[0].clone() if clone else q[0]
+
+    def run_kernel(q, actual_cache, actual_indices, actual_workspace, actual_mla):
+        assert actual_cache is cache and actual_indices is indices
+        assert actual_workspace is workspace and actual_mla is mla
+        calls.append(q)
+        out = q.clone()
+        changed_run = {"changed_first_direct": 2, "changed_second_cat": 3,
+                       "changed_second_direct": 4}.get(fault)
+        if len(calls) == changed_run:
+            out.view(torch.int16)[0, 0, 0] ^= 1
+        return out
+
+    monkeypatch.setattr(probe, "build_indices", build_indices)
+    monkeypatch.setattr(probe, "run_kernel", run_kernel)
+    monkeypatch.setattr(torch.cuda, "synchronize", lambda: None)
+    receipt = probe.check_case("cpu_control", positions, cache, workspace, mla,
+                               helper, torch.device("cpu"), 3)
+    assert len(calls) == 4 and len(queries) == 3
+    assert all(q is queries[0] for q in queries)
+    assert calls[0] is not queries[0][0] and calls[2] is not queries[0][0]
+    assert queries[0][0].shape == (2, 32, 512) and queries[0][1].shape == (2, 32, 0)
+    assert receipt["case"] == "cpu_control" and receipt["positions"] == [8191, 8191]
+    assert [row["form"] for row in receipt["runs"]] == ["cat", "direct", "cat", "direct"]
+    assert [row["order"] for row in receipt["runs"]] == [0, 1, 2, 3]
+    helper_identity = fault not in {
+        "helper_clone", "helper_second_call_clone", "helper_third_call_clone"}
+    assert receipt["helper_returned_q_nope"] is helper_identity
+    assert receipt["bitwise"] is (fault is None)
+    if fault is None:
+        assert calls[1] is queries[0][0] and calls[3] is queries[0][0]
+        assert all(row["bitwise_equal_to_first_cat"] for row in receipt["runs"])
+        assert len({row["sha256"] for row in receipt["runs"]}) == 1
+    elif fault.startswith("changed"):
+        expected = {"changed_first_direct": 1, "changed_second_cat": 2,
+                    "changed_second_direct": 3}[fault]
+        assert [row["bitwise_equal_to_first_cat"] for row in receipt["runs"]] == [
+            index != expected for index in range(4)]
+
+
+@pytest.mark.parametrize("fault", [None, "mismatch", "case_exception"])
+def test_qualification_main_reports_all_five_cases_and_fails_on_mismatch(monkeypatch, tmp_path, capsys, fault):
+    from experiments.t8r_speed import empty_rope_cat_check as probe
+    from tessera.serving.glm53_empty_rope import query_without_empty_rope
+
+    mla, cache, workspace = object(), object(), object()
+    runtime = types.ModuleType("vllm")
+    runtime.__version__ = "cpu-control-vllm"
+    flashinfer = types.ModuleType("flashinfer")
+    flashinfer.__version__ = "cpu-control-flashinfer"
+    utils = types.ModuleType("vllm.utils.flashinfer")
+    utils.flashinfer_trtllm_batch_decode_with_kv_cache_mla = mla
+    sparse = types.ModuleType("vllm.v1.attention.backends.mla.flashinfer_mla_sparse")
+
+    def get_workspace(dev):
+        assert dev == torch.device("cuda")
+        return workspace
+
+    sparse._get_workspace_buffer = get_workspace
+    for name, module in [("vllm", runtime), ("flashinfer", flashinfer),
+                         (utils.__name__, utils), (sparse.__name__, sparse)]:
+        monkeypatch.setitem(sys.modules, name, module)
+    monkeypatch.setattr(sys, "argv", ["empty_rope_cat_check", "--out", str(tmp_path), "--reps", "7"])
+    monkeypatch.setattr(torch.cuda, "get_device_name", lambda: "CPU control")
+    monkeypatch.setattr(torch.cuda, "get_device_capability", lambda: (0, 0))
+    monkeypatch.setenv("ORACLE_IMAGE", "cpu-control-image")
+    monkeypatch.setenv("TESSERA_HEAD", "cpu-control-source")
+    monkeypatch.setenv("TESSERA_STATE", "cpu-control-state")
+    monkeypatch.setenv("PB_ACTION_KEY", "cpu-control-action")
+    arange, full = torch.arange, torch.full
+
+    def cpu_positions(factory):
+        def make(*args, **kwargs):
+            assert kwargs.pop("device") == torch.device("cuda")
+            return factory(*args, **kwargs)
+        return make
+
+    monkeypatch.setattr(torch, "arange", cpu_positions(arange))
+    monkeypatch.setattr(torch, "full", cpu_positions(full))
+    events, results = [], []
+
+    def build_cache(dev, log):
+        assert dev == torch.device("cuda")
+        log.update(cache_writer="cpu-control-writer", cache_sha256="cpu-control-cache")
+        events.append("cache")
+        return cache
+
+    def check_case(name, positions, actual_cache, actual_workspace, actual_mla, helper, dev, seed):
+        assert events[0] == "cache"
+        assert actual_cache is cache and actual_workspace is workspace and actual_mla is mla
+        assert helper is query_without_empty_rope and dev == torch.device("cuda")
+        events.append((name, positions.tolist(), seed))
+        result = dict(case=name, bitwise=not (fault == "mismatch" and name == "decode_b2"))
+        if fault == "case_exception" and name == "decode_b2":
+            result = dict(case=name, bitwise=False, error="RuntimeError: controlled case failure")
+            results.append(result)
+            raise RuntimeError("controlled case failure")
+        results.append(result)
+        return result
+
+    def screen(actual_cache, actual_workspace, actual_mla, helper, dev, reps):
+        assert actual_cache is cache and actual_workspace is workspace and actual_mla is mla
+        assert helper is query_without_empty_rope and dev == torch.device("cuda") and reps == 7
+        events.append("screen")
+        return {}
+
+    monkeypatch.setattr(probe, "build_cache", build_cache)
+    monkeypatch.setattr(probe, "check_case", check_case)
+    monkeypatch.setattr(probe, "screen", screen)
+    assert probe.main() == (0 if fault is None else 1)
+    assert events == ["cache", ("prefill_chunk1", list(range(2048)), 3),
+                      ("prefill_chunk4", list(range(6144, 8192)), 13),
+                      ("decode_b1", [8191], 23), ("decode_b2", [8191, 8191], 33),
+                      ("decode_b4", [8191] * 4, 43), "screen"]
+    receipt = json.loads((tmp_path / "empty_rope_cat_check.json").read_text())
+    assert receipt["cases"] == results and len(receipt["cases"]) == 5
+    assert receipt["all_bitwise"] is (fault is None)
+    assert receipt["cache_writer"] == "cpu-control-writer"
+    assert receipt["cache_sha256"] == "cpu-control-cache"
+    assert receipt["vllm"] == "cpu-control-vllm" and receipt["flashinfer"] == "cpu-control-flashinfer"
+    assert receipt["image"] == "cpu-control-image" and receipt["tessera_head"] == "cpu-control-source"
+    assert receipt["tessera_state"] == "cpu-control-state" and receipt["pb_action"] == "cpu-control-action"
+    assert receipt["device"] == "CPU control" and receipt["capability"] == [0, 0]
+    output = capsys.readouterr().out.splitlines()
+    assert [json.loads(line) for line in output[:5]] == results
+    assert output[5:] == ["ALL_BITWISE" if fault is None else "NOT_BITWISE"]
 

@@ -3,17 +3,15 @@
 GLM-5.3 attention has ``qk_rope_head_dim == 0``. vLLM's MLA layer still passes
 the sparse backend a ``(q_nope, q_pe)`` tuple, ``q_pe`` zero wide, and
 ``FlashInferMLASparseSM120Impl.forward_mqa`` joins the two with ``torch.cat``.
-That copy is all of ``q_nope``. On a 2048-token prefill chunk at TP2 it moves a
-``[2048, 32, 512]`` bf16 tensor (67 MB) per MLA layer, 0.56 ms each on GB10,
-across 11 MLA layers (A8SESHMN served trace, 2026-10-01).
+That copy is all of ``q_nope``.
 
-When the second part is zero wide, ``torch.cat`` returns a new contiguous
+For an eligible pair, ``torch.cat`` returns a new contiguous
 tensor that holds exactly ``q_nope``'s bytes, with ``q_nope``'s shape and
 strides. When ``q_nope`` is itself contiguous and allocator-aligned, handing it
 to the kernel directly gives the kernel the same bytes, shape, strides and
-alignment at another address, so the kernel's output is bitwise equal.
-``experiments/t8r_speed/empty_rope_cat_check.py`` checks this on the GPU at the
-served shapes.
+alignment at another address. Output equality still needs a GPU receipt from
+``experiments/t8r_speed/empty_rope_cat_check.py`` at the served shapes; host-side
+eligibility alone does not establish it.
 
 The change is opt-in: set ``TESSERA_GLM53_SKIP_EMPTY_ROPE_CAT=1``.
 ``TesseraConfig.get_quant_method`` installs it. If the stock source's sha256
@@ -77,8 +75,9 @@ def skip_reason(q: Any) -> str | None:
     """None when ``torch.cat(q, dim=-1)`` would only copy ``q[0]``; else why not.
 
     ``q`` must be a ``(q_nope, q_pe)`` pair of tensors where ``q_pe`` is zero
-    wide in the last dimension, both parts agree on the leading shape, dtype
-    and device, and ``q_nope`` is contiguous and 512-byte aligned.
+    wide in the last dimension, both ranks are equal and positive, both parts
+    agree on the leading shape, dtype and device, and ``q_nope`` is contiguous
+    and 512-byte aligned.
     """
     if not isinstance(q, tuple) or len(q) != 2:
         return "query is not a 2-tuple"
@@ -117,14 +116,18 @@ def _report(line: str) -> None:
 
 def _inspect(module: Any):
     """Return the inspected class/method/digest with the existing decline policy."""
-    digest=_source_digest(module)
-    if digest is None:return None,None,digest,f"{_MODULE} has no source file to inspect"
-    if digest not in _INSPECTED_SHA256:return None,None,digest,f"{_MODULE} sha256 {digest[:12]} is not an inspected source"
-    impl=stock_attribute(module,_CLASS)
-    if impl is None:return None,None,digest,f"{_MODULE} has no {_CLASS}"
-    params=signature_parameters(impl,"forward_mqa")
-    if params!=_SIGNATURE:return None,None,digest,f"{_CLASS}.forward_mqa has parameters {params}, expected {_SIGNATURE}"
-    return impl,stock_attribute(impl,"forward_mqa"),digest,None
+    digest = _source_digest(module)
+    if digest is None:
+        return None, None, digest, f"{_MODULE} has no source file to inspect"
+    if digest not in _INSPECTED_SHA256:
+        return None, None, digest, f"{_MODULE} sha256 {digest[:12]} is not an inspected source"
+    impl = stock_attribute(module, _CLASS)
+    if impl is None:
+        return None, None, digest, f"{_MODULE} has no {_CLASS}"
+    params = signature_parameters(impl, "forward_mqa")
+    if params != _SIGNATURE:
+        return None, None, digest, f"{_CLASS}.forward_mqa has parameters {params}, expected {_SIGNATURE}"
+    return impl, stock_attribute(impl, "forward_mqa"), digest, None
 
 
 def _decline_reason(module: Any) -> str | None:
@@ -164,12 +167,14 @@ def install_for_current_config() -> bool:
             module = importlib.import_module(_MODULE)
         except Exception as exc:
             reason = f"{_MODULE} is not importable ({exc})"
-            module = None
         else:
-            impl = stock_attribute(module,_CLASS)
-            if impl is not None and stock_attribute(stock_attribute(impl,"forward_mqa"),_MARK,False):
-                return True
-            impl,original,digest,reason = _inspect(module)
+            try:
+                impl = stock_attribute(module, _CLASS)
+                if impl is not None and stock_attribute(stock_attribute(impl, "forward_mqa"), _MARK, False):
+                    return True
+                impl, original, digest, reason = _inspect(module)
+            except Exception as exc:
+                reason = f"{_MODULE}.{_CLASS}.forward_mqa is not inspectable ({type(exc).__name__}: {exc})"
         if reason is not None:
             _report(f"{_LEVER} declined, stock {_CLASS}.forward_mqa: {reason}")
             return False
