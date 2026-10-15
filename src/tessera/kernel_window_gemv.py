@@ -1004,7 +1004,8 @@ def lane_refusal_for_parsed(parsed) -> "str | None":
     refused by name rather than passed: absent evidence is not a pass.
     """
     from .serving.ext import WINDOW_GEMV_LANE, WINDOW_GEMV_MODULE_NAME
-    from .serving.scheme import decide_lane_requirements, wire_facts_of_parsed
+    from .metadata import decide_lane_requirements
+    from .serving.scheme import wire_facts_of_parsed
 
     refusals = decide_lane_requirements(
         WINDOW_GEMV_MODULE_NAME, WINDOW_GEMV_LANE["requires"],

@@ -1,5 +1,20 @@
 # Tessera plan-to-serve architecture
 
+Re-stamped 2026-10-15 for the public producer metadata boundary.
+`tessera.metadata` owns the smoke record grammar, smoke status and attribution
+rules, and lane requirement decisions. `METADATA_API_VERSION` is
+`tessera.producer-metadata.v1`. The module imports only the standard library
+and the pure `tessera.structure` names. It imports no serving, encoder, kernel,
+Torch or vLLM module. `serving.contract` and `serving.scheme` import these same
+function objects; producer consumers can use them without importing serving.
+`parse_smoke_record(record, *, control, where)` preserves null records and
+returns independent record, row-list and row-dictionary objects. Refusals retain
+the existing field paths and diagnostics. A null record leaves the smoke's
+asserted status unchanged. The API marker identifies callables and grants no
+serving admission. This extraction changes no runtime contract bytes, wire,
+default, qualification, scope or gate decision. Consumer pins still require
+an explicit reviewed producer commit and packaged contract digest.
+
 Re-stamped 2026-10-07 for shared window geometry in the offline planner (#1037), against base `19275e1e5`.
 `tessera.residency_plan` computes rank-local peaks from concrete tensor shapes, data types, placements, and allocation lifetimes.
 It includes explicit copies, padded shards, temporary buffers, and rank reserves.

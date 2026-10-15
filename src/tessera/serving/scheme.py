@@ -65,6 +65,8 @@ from __future__ import annotations
 import re
 from typing import Any, Mapping
 
+from ..metadata import decide_lane_requirements
+
 __all__ = [
     "NVFP4_ACTIVATION_CONTRACT",
     "FP8_ACTIVATION_CONTRACT",
@@ -1400,157 +1402,9 @@ def lane_rate_report(lane: str, rates, contract: "Mapping | None" = None) -> dic
             "offending": list(offending), "reachable": not offending}
 
 
-#: How each PUBLISHED lane requirement is decided against ONE parsed unit's
-#: facts: the requirement's own name -> (the fact it reads, how it is read).
-#: A requirement this table has not learned is REFUSED rather than skipped,
-#: which is the whole of #206 -- an offline checker that quietly evaluated the
-#: subset it knew published ``READABLE`` for wire its own loader rejects, and
-#: was therefore weaker than the plan-time gate it exists to double-check.
-#:
-#: This table and :func:`decide_lane_requirements` below are ONE HOME (#264):
-#: the byte-time report (:func:`lane_wire_report`), the plan-time gate
-#: (:func:`refuse_unreachable_lane`), the loader
-#: (``kernel_window_gemv.prepare_from_parsed``) and the route-side gate
-#: (``bf16_route.gemv_refusal_for_unit``) all decide a unit through the same
-#: function over the same published requirements.  Before that, the contract
-#: published four conditions while the loader refused nine, so a TP row shard
-#: -- ``layout.slice_unit`` stamps ``initial_state`` -- read READABLE at
-#: preflight and fell back module by module at load.
-_LANE_WIRE_CHECKS = {
-    "column_rates": ("rates", "every_in"),
-    # Structure-scoped (tessera#694): the rates the lane's ROUTED-EXPERT launch
-    # reaches on the target, decided over ``facts["rates"]`` only when
-    # ``facts["structure"]`` is the routed-MoE structure; a caller that did
-    # not state the structure is refused by name, and any other structure is
-    # decided as not binding.  The fused window lane reads every rate of the
-    # wire (``column_rates``) on its one-table dense launch, but its two-table
-    # gate/up launch holds fewer word-stage words in sm_121's opt-in shared
-    # memory, and the value library's dense launch reaches rates (9..14,
-    # tessera#750 item 4) its routed launches are not built for, so a stack
-    # above this set keeps the compact adapter.
-    "column_rates_routed_moe": ("rates", "every_in_routed_moe"),
-    "window_bits": ("window_bits", "one_of"),
-    "body": ("body", "wire_spelling"),
-    "plane": ("plane", "wire_spelling"),
-    "release_overrides": ("release_overrides", "carries"),
-    "diagonals": ("diagonals", "carries"),
-    "start_state": ("start_state", "carries"),
-    "rotation": ("rotation", "state_in"),
-    "grid_arities": ("grid_arity", "one_of"),
-}
-
-#: What a ``carries``-mode refusal says, per requirement.  ``{n}`` is the
-#: fact's count where the fact carries one (RELEASE overrides), else elided.
-_CARRIES_REFUSALS = {
-    "release_overrides": (
-        "the unit carries {n}RELEASE override(s), and the lane decodes straight "
-        "off the wire with no override read"),
-    "diagonals": (
-        "the unit carries segment-2a diagonals, and the lane applies none"),
-    "start_state": (
-        "the unit carries a shard start state (INITIAL_STATE, layout.slice_unit), "
-        "and the lane supplies state_{{-1}} = 0 itself -- the L-bit pad that opens "
-        "a wire column is not stored, so a shard packed against the pinned start "
-        "would decode its first rows to plausible wrong weights; a lane that "
-        "threads the state (tessera.kernel_window) or the materialised path "
-        "serves this shard"),
-}
 
 
-def decide_lane_requirements(lane: str, requires: Mapping[str, Any],
-                             facts: Mapping[str, Any]) -> "list[str]":
-    """Refusals, by name, for ONE unit's facts against a lane's requirements.
 
-    THE HOME of the lane-readability decision (#264).  ``requires`` is the
-    published predicate (``native_extensions[].lane.requires``, or the
-    build's own copy ``ext.WINDOW_GEMV_LANE["requires"]`` -- the contract
-    validator pins the two equal); ``facts`` is one unit's wire facts in
-    :func:`wire_facts_of_parsed`'s vocabulary.  Every caller that answers
-    "can this lane read this unit" calls this: the byte-time and plan-time
-    gates, the loader and the bf16 route's gate, so the published predicate
-    and the loader agree by construction rather than by three restatements.
-
-    A requirement this function has not learned RAISES rather than being
-    skipped (#206), and a fact the caller did not supply is a refusal, never
-    a pass -- absent evidence is not evidence of absence.
-    """
-    from .contract import route_wire_spelling
-
-    unknown = sorted(set(requires) - set(_LANE_WIRE_CHECKS))
-    if unknown:
-        raise ValueError(
-            f"lane {lane!r} publishes requirement(s) {unknown} that this reader cannot "
-            f"decide (it decides {sorted(_LANE_WIRE_CHECKS)}). A checker that skipped a "
-            "published condition would call a unit readable that the loader refuses, so "
-            "it refuses to answer instead. Teach scheme._LANE_WIRE_CHECKS to read the "
-            "fact, and give it a case in tests/test_lane_reachability.py.")
-
-    refusals: "list[str]" = []
-    for name in sorted(requires):
-        fact_name, how = _LANE_WIRE_CHECKS[name]
-        if how == "every_in_routed_moe":
-            structure = facts.get("structure")
-            if structure is None:
-                refusals.append(
-                    f"the unit's structure was not read, so the lane's {name} requirement "
-                    f"({requires[name]!r}) cannot be decided; absent evidence is not a pass")
-                continue
-            if structure not in STRUCTURES:
-                refusals.append(
-                    f"the unit's structure {structure!r} is not one this build serves "
-                    f"({list(STRUCTURES)}), so the lane's {name} requirement cannot be decided")
-                continue
-            if structure != STRUCTURE_ROUTED_MOE:
-                continue                     # decided: the requirement binds expert stacks only
-            how = "every_in"
-        value = facts.get(fact_name)
-        if value is None or (how == "every_in" and not tuple(value)):
-            refusals.append(
-                f"the unit's {fact_name} was not read, so the lane's {name} requirement "
-                f"({requires[name]!r}) cannot be decided; absent evidence is not a pass")
-            continue
-        if how == "every_in":
-            supported = [int(r) for r in requires[name]]
-            offending = sorted({int(r) for r in value} - set(supported))
-            if offending and name == "column_rates_routed_moe":
-                refusals.append(
-                    f"{name} {offending} are outside the rates this lane's routed-expert "
-                    f"launches reach ({supported}); the lane reads the wire at these rates "
-                    "but its routed launches do not reach them on the target (the gate/up "
-                    "launch's two tables and word stages exceed the target's shared memory "
-                    "above that set), so the stack keeps the compact adapter")
-            elif offending:
-                refusals.append(
-                    f"{name} {offending} are outside the rates this lane reads "
-                    f"({supported}); the lane repacks each column at its own rate, "
-                    "so one column out of range refuses the whole unit")
-        elif how == "one_of":
-            allowed = [int(v) for v in requires[name]]
-            if int(value) not in allowed:
-                refusals.append(
-                    f"{name} {int(value)} is outside the {allowed} this lane reads")
-        elif how == "carries":
-            if bool(value) != bool(requires[name]):
-                if bool(requires[name]):
-                    refusals.append(
-                        f"{name}: the lane reads only units that carry this, "
-                        "and the unit does not")
-                else:
-                    count = "" if isinstance(value, bool) else f"{int(value)} "
-                    refusals.append(
-                        f"{name}: " + _CARRIES_REFUSALS[name].format(n=count))
-        elif how == "state_in":
-            allowed = [route_wire_spelling("rotation", v) for v in requires[name]]
-            if str(value) not in allowed:
-                refusals.append(
-                    f"{name} {value} is not among the {allowed} states this lane reads; "
-                    "the kernel decodes the wire without applying a rotation")
-        else:
-            wanted = route_wire_spelling(name, requires[name])
-            if str(value) != wanted:
-                refusals.append(
-                    f"{name} {value} is not the {wanted} {name} this lane reads")
-    return refusals
 
 
 def wire_facts_of_parsed(parsed) -> dict:
