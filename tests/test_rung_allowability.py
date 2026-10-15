@@ -133,6 +133,55 @@ class Admission(unittest.TestCase):
 
 
 
+class GeometryHarvestIsolation(unittest.TestCase):
+    def test_class_imports_restore_the_runtime_and_import_path(self):
+        import importlib.util
+        from pathlib import Path
+        if importlib.util.find_spec('torch') is None:
+            self.skipTest('torch is required by experiments/t8r_speed/bench_rates.py')
+        code = r"""
+import os, sys, types
+sys.path.insert(0, sys.argv[1])
+from test_rung_allowability import GeometryHarvest
+if sys.argv[2] == 'existing':
+    sys.modules['vllm'] = types.ModuleType('vllm')
+    sys.modules['vllm.config'] = types.ModuleType('vllm.config')
+def runtime_modules():
+    return {name: module for name, module in sys.modules.items()
+            if name == 'vllm' or name.startswith('vllm.')}
+before = runtime_modules()
+path_before = list(sys.path)
+mode_before = os.environ.get('TESSERA_SERVE_MODE')
+class ExplosiveModule(types.ModuleType):
+    def __getattr__(self, name):
+        raise AssertionError(f'unexpected module attribute lookup: {name}')
+opaque = object()
+try:
+    GeometryHarvest.setUpClass()
+    sys.modules['vllm.explosive'] = ExplosiveModule('vllm.explosive')
+    sys.modules['vllm.opaque'] = opaque
+    GeometryHarvest('test_bf16_true_step_and_wide_boundaries').debug()
+finally:
+    GeometryHarvest.doClassCleanups()
+assert not GeometryHarvest.tearDown_exceptions, GeometryHarvest.tearDown_exceptions
+after = runtime_modules()
+assert after.get('vllm.opaque') is opaque, 'unknown runtime entry removed'
+assert all(after.get(name) is module for name, module in before.items()), 'existing vLLM modules changed'
+assert {name: module for name, module in after.items()
+        if isinstance(module, types.ModuleType) and module.__dict__.get('__file__') is None} == {
+        name: module for name, module in before.items()
+        if isinstance(module, types.ModuleType) and module.__dict__.get('__file__') is None}, 'benchmark vLLM stubs leaked'
+assert sys.path == path_before, 'benchmark import path leaked'
+assert os.environ.get('TESSERA_SERVE_MODE') == mode_before, 'benchmark serve mode leaked'
+"""
+        tests = str(Path(__file__).resolve().parent)
+        for runtime in ('absent', 'existing'):
+            with self.subTest(runtime=runtime):
+                result = subprocess.run([sys.executable, '-c', code, tests, runtime],
+                                        capture_output=True, text=True)
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+
 class GeometryHarvest(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
@@ -140,7 +189,30 @@ class GeometryHarvest(unittest.TestCase):
         if importlib.util.find_spec('torch') is None:
             # bench_rates imports torch at module level; the hosted bytes-only run has none.
             raise unittest.SkipTest('torch is required by experiments/t8r_speed/bench_rates.py')
+        import os
+        import types
         from pathlib import Path
+        before = {name: module for name, module in sys.modules.items()
+                  if name == 'vllm' or name.startswith('vllm.')}
+        path_before = list(sys.path)
+        mode_before = os.environ.get('TESSERA_SERVE_MODE')
+
+        def restore_import_state():
+            # bench_rates imports bench_t8r, which installs stubs without vLLM.
+            # Keep real runtime imports: Torch registration cannot be undone.
+            for name, module in tuple(sys.modules.items()):
+                if ((name == 'vllm' or name.startswith('vllm.')) and name not in before
+                        and isinstance(module, types.ModuleType)):
+                    if module.__dict__.get('__file__') is None:
+                        del sys.modules[name]
+            sys.modules.update(before)
+            sys.path[:] = path_before
+            if mode_before is None:
+                os.environ.pop('TESSERA_SERVE_MODE', None)
+            else:
+                os.environ['TESSERA_SERVE_MODE'] = mode_before
+
+        cls.addClassCleanup(restore_import_state)
         sys.path.insert(0,str(Path(__file__).resolve().parents[1]/'experiments'/'t8r_speed'))
         import bench_rates, rung_allowability_table
         cls.rates,cls.harvest=bench_rates,rung_allowability_table
