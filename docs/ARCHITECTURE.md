@@ -1,5 +1,16 @@
 # Tessera plan-to-serve architecture
 
+Re-stamped 2026-10-07 for shared window geometry in the offline planner (#1037), against base `19275e1e5`.
+`tessera.residency_plan` computes rank-local peaks from concrete tensor shapes, data types, placements, and allocation lifetimes.
+It includes explicit copies, padded shards, temporary buffers, and rank reserves.
+Native dense and routed layouts reuse the existing `serving_parts` byte accountant.
+Native window layouts derive row padding from `window_geometry.TILE_ROWS`, shared with the compact loader.
+They use `window_geometry.require_window_geometry` to refuse rates wider than the declared window.
+The planner refuses a different declared row tile before byte pricing.
+The planner reports named capacity refusals before load.
+The planner adds no load hook. The shared geometry move preserves loader arithmetic, defaults, pins, and wire bytes.
+The README states its input and output contracts.
+
 Re-stamped 2026-10-15 for the public producer metadata boundary.
 `tessera.metadata` owns the smoke record grammar, smoke status and attribution
 rules, and lane requirement decisions. `METADATA_API_VERSION` is
@@ -14,17 +25,6 @@ asserted status unchanged. The API marker identifies callables and grants no
 serving admission. This extraction changes no runtime contract bytes, wire,
 default, qualification, scope or gate decision. Consumer pins still require
 an explicit reviewed producer commit and packaged contract digest.
-
-Re-stamped 2026-10-07 for shared window geometry in the offline planner (#1037), against base `19275e1e5`.
-`tessera.residency_plan` computes rank-local peaks from concrete tensor shapes, data types, placements, and allocation lifetimes.
-It includes explicit copies, padded shards, temporary buffers, and rank reserves.
-Native dense and routed layouts reuse the existing `serving_parts` byte accountant.
-Native window layouts derive row padding from `window_geometry.TILE_ROWS`, shared with the compact loader.
-They use `window_geometry.require_window_geometry` to refuse rates wider than the declared window.
-The planner refuses a different declared row tile before byte pricing.
-The planner reports named capacity refusals before load.
-The planner adds no load hook. The shared geometry move preserves loader arithmetic, defaults, pins, and wire bytes.
-The README states its input and output contracts.
 
 Re-stamped 2026-10-07 for dec-1007-074543-94b8 (D41 schema for the register-direct kernel).
 The v2 and v3 tables accept decoder kind `register_direct`, owned by `tessera.regdirect_routed`.
