@@ -483,7 +483,7 @@ def observe_runtime(runtime_image):
     import torch
     import tessera
     from tessera.cached_unit import encoder_source_sha256
-    from tessera.serving.runtime_image import declared_reference
+    from tessera.image_metadata import declared_reference
     declaration = declared_reference(runtime_image)
     props = torch.cuda.get_device_properties(torch.cuda.current_device())
     # Torch's _CUuuid omits NVIDIA-SMI's GPU- prefix. Join the actual UUID,

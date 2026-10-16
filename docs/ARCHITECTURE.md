@@ -34,6 +34,12 @@ refuses an unknown grid by name. Serving retains its separate ambiguous-grid
 refusal in `route_for_grid`; both queries read the same table. The route table,
 family order, direct buffer sizes and activation contracts are unchanged.
 
+`tessera.image_metadata` owns launcher declaration replay, its environment
+field names and `RuntimeImageError`. Replay reads the supplied environment
+without consulting Docker or a live pin. The live launcher and CLI in
+`serving.runtime_image` import the same parser and exception class. The five
+refusal reasons, their ordering and copied exception payload are unchanged.
+
 Re-stamped 2026-10-07 for dec-1007-074543-94b8 (D41 schema for the register-direct kernel).
 The v2 and v3 tables accept decoder kind `register_direct`, owned by `tessera.regdirect_routed`.
 Its execution scope is `register_direct_fragment` and its word ring is `register`.
