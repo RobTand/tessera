@@ -2826,7 +2826,7 @@ def main():
         partitions[module] = parts
         if module.endswith((".indexer.wk_weights_proj", ".kv_b_proj")):
             try:
-                from tessera.serving.projection_routes import direct_consumer_resident_bytes
+                from tessera.metadata import direct_consumer_resident_bytes
             except ImportError as exc:
                 raise SystemExit(f"{module}: the direct weight consumer needs its runtime adapter") from exc
             direct_consumer_costs[module] = direct_consumer_resident_bytes(

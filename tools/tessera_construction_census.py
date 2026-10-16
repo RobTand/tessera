@@ -575,9 +575,9 @@ def selected_config(baseline_path, model_path, table_path, family):
     import fnmatch
     import importlib
     from pathlib import Path
-    from tessera.metadata import fused_module
+    from tessera.metadata import direct_consumer_resident_bytes, fused_module
     from tessera.serving import dense_ownership
-    from tessera.serving.projection_routes import install, direct_consumer_resident_bytes
+    from tessera.serving.projection_routes import install
     from tessera.serving.weights_mapper import module_name_mapper
 
     baseline = json.loads(Path(baseline_path).read_text())

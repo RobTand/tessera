@@ -48,6 +48,14 @@ The explicit-config and source-name fallback rules retain their existing order.
 public role-name owner; the exporter and construction census use the public
 naming functions directly.
 
+`tessera.projection.direct_consumer_weight` owns the encoded-unit decoder for
+direct indexer and MLA weights. Importing the module loads only metadata; a
+decode call imports Torch and the producer codecs, never serving. FP8 decoding
+and folded BF16 materialization retain their existing order and final FP32 or
+BF16 dtype. Runtime bundle decoding, cache construction and vLLM callbacks
+remain in `serving.projection_routes`, which imports the same public decoder
+for existing external callers.
+
 Re-stamped 2026-10-07 for dec-1007-074543-94b8 (D41 schema for the register-direct kernel).
 The v2 and v3 tables accept decoder kind `register_direct`, owned by `tessera.regdirect_routed`.
 Its execution scope is `register_direct_fragment` and its word ring is `register`.
@@ -9501,7 +9509,7 @@ The direct consumer contract separates the head operation from its unused dense 
 The indexer head uses FP32 inputs and weights without activation quantization.
 The MLA split helper uses a BF16 matrix; the dense prefill path keeps its family contract.
 The producer reads direct_consumer_activation_contract from tessera.metadata.
-The direct_consumer_weight decoder remains in serving.projection_routes.
+The producer decodes direct weights through tessera.projection.direct_consumer_weight.
 T-16 direct weights use the existing folded BF16 arithmetic before any FP32 cast.
 
 The constructor census records stock and selected views separately.
