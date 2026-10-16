@@ -4,7 +4,7 @@ A BF16 module keeps its stock constructor and method. An explicit Tessera
 selection can supply the quantization config that the model omits.
 
 The indexer retains only its FP32 head-weight cache. MLA retains a BF16 matrix
-for the stock split helper. The byte rule below prices those same tensors.
+for the stock split helper. The producer metadata owner prices those same tensors.
 This module imports neither torch nor vLLM when a producer reads that rule.
 """
 from __future__ import annotations
@@ -14,41 +14,10 @@ import importlib
 import inspect
 from types import MethodType
 
-
-def _consumer(module: str) -> str | None:
-    if module.endswith(".indexer.wk_weights_proj"):
-        return "indexer"
-    if module.endswith(".kv_b_proj"):
-        return "mla"
-    return None
-
-
-def direct_consumer_resident_bytes(module, family, rows, columns, roles):
-    """Return the extra resident bytes that the selected direct consumer needs."""
-    from .scheme import TESSERA_FAMILIES
-
-    if family not in TESSERA_FAMILIES:
-        raise ValueError(f"{module}: no projection decoder exists for {family!r}")
-    consumer = _consumer(module)
-    extra = 0
-    if consumer == "indexer":
-        tail = [int(size) for name, size in roles if name == "weights_proj"]
-        if len(tail) != 1:
-            raise ValueError(f"{module}: the direct consumer needs one weights_proj role")
-        extra = tail[0] * int(columns) * 4
-    elif consumer == "mla":
-        extra = int(rows) * int(columns) * 2
-    return {"resident_bytes_resident_mode": extra, "resident_bytes_stock": extra}
-
-
-def direct_consumer_activation_contract(module, role):
-    """Return the direct role's arithmetic, not its unused dense output."""
-    consumer = _consumer(module)
-    if consumer == "indexer" and role == "weights_proj":
-        return "a32"
-    if consumer == "mla" and role == "kv_b_proj":
-        return "a16"
-    return None
+from ..metadata import (
+    _direct_consumer_kind as _consumer,
+    direct_consumer_activation_contract, direct_consumer_resident_bytes,
+)
 
 
 def direct_consumer_weight(blob, module, role, family, *, device="cpu"):

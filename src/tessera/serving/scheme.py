@@ -65,7 +65,11 @@ from __future__ import annotations
 import re
 from typing import Any, Mapping
 
-from ..metadata import decide_lane_requirements
+from ..metadata import (
+    BF16_ACTIVATION_CONTRACT, FP8_ACTIVATION_CONTRACT, NVFP4_ACTIVATION_CONTRACT,
+    ROUTES, TESSERA_BF16, TESSERA_FAMILIES, TESSERA_FP8, TESSERA_NVFP4,
+    decide_lane_requirements,
+)
 
 __all__ = [
     "NVFP4_ACTIVATION_CONTRACT",
@@ -136,23 +140,6 @@ __all__ = [
     "stack_effective_rungs",
     "parse_tessera_expert_blob",
 ]
-
-#: The A-side contract each route executes, in the vocabulary the packaged
-#: runtime contract publishes.  Defined here rather than beside the telemetry
-#: because a producer reads them from the contract on a machine with no torch:
-#: this module must stay importable without it.
-NVFP4_ACTIVATION_CONTRACT = "e2m1_group16_ue4m3_static"
-FP8_ACTIVATION_CONTRACT = "fp8_per_token_dynamic"
-#: W16A16.  There is no A-side quantiser to name -- the route hands ``x``
-#: to the stock bf16 GEMM as it arrives -- and the honest spelling of that is
-#: a contract that says so, not the absence of one.  A gate that reads this
-#: field must be able to tell "unquantised, by design" from "nobody filled it
-#: in", and only a value can carry that.
-BF16_ACTIVATION_CONTRACT = "bf16_unquantized"
-
-TESSERA_NVFP4 = "TESSERA_NVFP4"
-TESSERA_FP8 = "TESSERA_FP8"
-TESSERA_BF16 = "TESSERA_BF16"
 
 #: A scheme with ``family`` in ``TESSERA_FAMILIES`` is ours.
 TESSERA_SCHEME_KEY = "family"
@@ -239,85 +226,6 @@ MOE_BUILDERS: dict[str, tuple[str, str]] = {
     TESSERA_NVFP4: ("tessera.serving.nvfp4_moe_route", "build_tessera_nvfp4_moe_method"),
     TESSERA_BF16: ("tessera.serving.moe_route", "build_tessera_moe_method"),
 }
-
-#: What each route can hold, by Tessera's own names (``PayloadGrid.name``,
-#: ``ScalePlaneKind.name``).  NVFP4: grids whose codes are E2M1 nibbles (arity
-#: 1 or 2 over the E2M1 base) over the LUT plane the tile's ue4m3 block scales
-#: come from.  FP8: the scalar E4M3 grid over the CHANNEL plane the tile's
-#: per-row fp32 scale comes from.  ``tile`` is the stock tensor the route
-#: decodes to, ``columns_multiple`` the K quantum its mainloop needs,
-#: ``activation_contract`` what it executes on the A side, and ``gemm_symbol``
-#: the callable it actually invokes -- the route module stamps that field on
-#: every route record and the census compares against the same field, so
-#: "which GEMM ran" has one spelling and adding a route that calls something
-#: else cannot silently read as a refusal.
-#:
-#: ``body``/``span`` name the trellis body the route's decoder reads, and they
-#: are the same fact its own module already refuses by name at load
-#: (``nvfp4_route`` for NVFP4, ``fp8_route`` for FP8,
-#: ``bf16_route`` for BF16).  They are written here because the PRODUCER needs
-#: them too: ``refuse_unserveable_wire`` is the export-time half of the same
-#: rule, and the exporter used to carry its own copy in an if/elif -- a third
-#: statement about one decoder.
-ROUTES: dict[str, dict] = {
-    TESSERA_NVFP4: {
-        "grids": ("E2M1", "E2M1x2"), "plane": "LUT",
-        "body": "TCQ", "span": 2,
-        "short": "NVFP4",
-        "grid_kind": "an E2M1-based",
-        "builder": ("tessera.serving.nvfp4_route", "build_tessera_nvfp4_method"),
-        "tile": "nvfp4 (packed E2M1 codes, group-16 ue4m3 block scales, one global)",
-        "columns_multiple": 16,
-        "activation_contract": NVFP4_ACTIVATION_CONTRACT,
-        "gemm_symbol": "torch._scaled_mm",
-    },
-    TESSERA_FP8: {
-        "grids": ("E4M3",), "plane": "CHANNEL",
-        "body": "WINDOW", "span": 1,
-        "short": "FP8",
-        "grid_kind": "the scalar E4M3",
-        "builder": ("tessera.serving.fp8_route", "build_tessera_fp8_method"),
-        "tile": "fp8 per-channel (E4M3 bytes, one fp32 scale per row)",
-        "columns_multiple": 16,
-        "activation_contract": FP8_ACTIVATION_CONTRACT,
-        "gemm_symbol": "torch._scaled_mm",
-    },
-    TESSERA_BF16: {
-        "grids": ("BF16",), "plane": "CHANNEL",
-        # The SAME body and span the E4M3 route reads -- the 16-bit family is
-        # the window recipe with a wider alphabet, not a different trellis --
-        # and ``bf16_route._parse_unit`` refuses anything else by name at load.
-        # What differs between the two routes is the alphabet the window table
-        # snaps to and the tile the decode lands in, and neither is a body
-        # fact -- which is why this row is FP8's row here and in
-        # ``sharding.ROUTE_TP_AXES``, for the same reason in both places.
-        "body": "WINDOW", "span": 1,
-        "short": "BF16",
-        "grid_kind": "the scalar BF16",
-        "builder": ("tessera.serving.bf16_route", "build_tessera_bf16_method"),
-        "tile": "bf16 (the raw table values, one fp32 scale per row applied on the GEMM output)",
-        # No K quantum.  The other two routes decode to a PACKED tile whose
-        # mainloop reads groups -- a nibble pair, a group-16 block scale -- and
-        # 16 is that group.  A bf16 tile is one word per weight, so the GEMM
-        # takes any K, and asserting a quantum here would refuse a geometry
-        # this route serves.
-        "columns_multiple": 1,
-        "activation_contract": BF16_ACTIVATION_CONTRACT,
-        # NOT ``torch._scaled_mm``: there is no scale to hand a scaled GEMM.
-        # The row scale is an fp32 epilogue, so this route calls the stock
-        # matmul and says so.
-        "gemm_symbol": "torch.mm",
-    },
-}
-
-#: DERIVED from ``ROUTES``, never written twice.  FAMILY = ROUTE is the rule,
-#: so the set of families a build serves is exactly the set of routes it has:
-#: a third family (say a WINDOW/CHANNEL body whose alphabet is snapped to bf16
-#: and decoded to a bf16 tile for the stock GEMM) is one route module, one
-#: ``ROUTES`` entry naming its builder, and its contract rows -- and nothing
-#: here or in ``lane`` has to be edited to admit it.  A hand-written tuple was
-#: a fourth place to remember.
-TESSERA_FAMILIES = tuple(ROUTES)
 
 #: THE LAUNCHES EACH ROUTE MAKES, and the conditions under which it makes one.
 #:

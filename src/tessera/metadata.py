@@ -1,4 +1,4 @@
-"""Pure producer metadata grammar, smoke derivations and lane decisions.
+"""Pure producer metadata, ownership rules, smoke derivations and lane decisions.
 
 The public API reads JSON-shaped metadata without loading serving or numerical
 runtimes. Serving imports these same owners. The API marker grants no admission.
@@ -14,6 +14,8 @@ METADATA_API_VERSION = "tessera.producer-metadata.v1"
 __all__ = [
     "METADATA_API_VERSION", "parse_smoke_record", "smoke_status_is_derived",
     "derive_smoke_status", "derive_smoke_attribution", "decide_lane_requirements",
+    "route_family_for_grid", "direct_consumer_activation_contract",
+    "direct_consumer_resident_bytes",
 ]
 
 EVIDENCE_SMOKE_STATUSES = ("recorded", "repetitive", "not_recorded")
@@ -517,3 +519,111 @@ def decide_lane_requirements(lane: str, requires: Mapping[str, object],
                 refusals.append(
                     f"{name} {value} is not the {wanted} {name} this lane reads")
     return refusals
+
+
+NVFP4_ACTIVATION_CONTRACT = "e2m1_group16_ue4m3_static"
+
+FP8_ACTIVATION_CONTRACT = "fp8_per_token_dynamic"
+
+BF16_ACTIVATION_CONTRACT = "bf16_unquantized"
+
+TESSERA_NVFP4 = "TESSERA_NVFP4"
+
+TESSERA_FP8 = "TESSERA_FP8"
+
+TESSERA_BF16 = "TESSERA_BF16"
+
+ROUTES: dict[str, dict] = {
+    TESSERA_NVFP4: {
+        "grids": ("E2M1", "E2M1x2"), "plane": "LUT",
+        "body": "TCQ", "span": 2,
+        "short": "NVFP4",
+        "grid_kind": "an E2M1-based",
+        "builder": ("tessera.serving.nvfp4_route", "build_tessera_nvfp4_method"),
+        "tile": "nvfp4 (packed E2M1 codes, group-16 ue4m3 block scales, one global)",
+        "columns_multiple": 16,
+        "activation_contract": NVFP4_ACTIVATION_CONTRACT,
+        "gemm_symbol": "torch._scaled_mm",
+    },
+    TESSERA_FP8: {
+        "grids": ("E4M3",), "plane": "CHANNEL",
+        "body": "WINDOW", "span": 1,
+        "short": "FP8",
+        "grid_kind": "the scalar E4M3",
+        "builder": ("tessera.serving.fp8_route", "build_tessera_fp8_method"),
+        "tile": "fp8 per-channel (E4M3 bytes, one fp32 scale per row)",
+        "columns_multiple": 16,
+        "activation_contract": FP8_ACTIVATION_CONTRACT,
+        "gemm_symbol": "torch._scaled_mm",
+    },
+    TESSERA_BF16: {
+        "grids": ("BF16",), "plane": "CHANNEL",
+        # The SAME body and span the E4M3 route reads -- the 16-bit family is
+        # the window recipe with a wider alphabet, not a different trellis --
+        # and ``bf16_route._parse_unit`` refuses anything else by name at load.
+        # What differs between the two routes is the alphabet the window table
+        # snaps to and the tile the decode lands in, and neither is a body
+        # fact -- which is why this row is FP8's row here and in
+        # ``sharding.ROUTE_TP_AXES``, for the same reason in both places.
+        "body": "WINDOW", "span": 1,
+        "short": "BF16",
+        "grid_kind": "the scalar BF16",
+        "builder": ("tessera.serving.bf16_route", "build_tessera_bf16_method"),
+        "tile": "bf16 (the raw table values, one fp32 scale per row applied on the GEMM output)",
+        # No K quantum.  The other two routes decode to a PACKED tile whose
+        # mainloop reads groups -- a nibble pair, a group-16 block scale -- and
+        # 16 is that group.  A bf16 tile is one word per weight, so the GEMM
+        # takes any K, and asserting a quantum here would refuse a geometry
+        # this route serves.
+        "columns_multiple": 1,
+        "activation_contract": BF16_ACTIVATION_CONTRACT,
+        # NOT ``torch._scaled_mm``: there is no scale to hand a scaled GEMM.
+        # The row scale is an fp32 epilogue, so this route calls the stock
+        # matmul and says so.
+        "gemm_symbol": "torch.mm",
+    },
+}
+
+TESSERA_FAMILIES = tuple(ROUTES)
+
+
+def route_family_for_grid(grid: str) -> str:
+    """Return the first declared route family that holds a producer grid."""
+    for family, route in ROUTES.items():
+        if grid in route["grids"]:
+            return family
+    raise ValueError(f"no route family holds grid {grid!r}")
+
+
+def _direct_consumer_kind(module: str) -> str | None:
+    if module.endswith(".indexer.wk_weights_proj"):
+        return "indexer"
+    if module.endswith(".kv_b_proj"):
+        return "mla"
+    return None
+
+
+def direct_consumer_resident_bytes(module, family, rows, columns, roles):
+    """Return the extra resident bytes that the selected direct consumer needs."""
+    if family not in TESSERA_FAMILIES:
+        raise ValueError(f"{module}: no projection decoder exists for {family!r}")
+    consumer = _direct_consumer_kind(module)
+    extra = 0
+    if consumer == "indexer":
+        tail = [int(size) for name, size in roles if name == "weights_proj"]
+        if len(tail) != 1:
+            raise ValueError(f"{module}: the direct consumer needs one weights_proj role")
+        extra = tail[0] * int(columns) * 4
+    elif consumer == "mla":
+        extra = int(rows) * int(columns) * 2
+    return {"resident_bytes_resident_mode": extra, "resident_bytes_stock": extra}
+
+
+def direct_consumer_activation_contract(module, role):
+    """Return the direct role's arithmetic, not its unused dense output."""
+    consumer = _direct_consumer_kind(module)
+    if consumer == "indexer" and role == "weights_proj":
+        return "a32"
+    if consumer == "mla" and role == "kv_b_proj":
+        return "a16"
+    return None

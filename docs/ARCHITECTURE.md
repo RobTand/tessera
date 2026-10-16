@@ -26,6 +26,14 @@ serving admission. This extraction changes no runtime contract bytes, wire,
 default, qualification, scope or gate decision. Consumer pins still require
 an explicit reviewed producer commit and packaged contract digest.
 
+Re-stamped 2026-10-16 for the additional pure producer route queries.
+`metadata` owns the complete ordered route declarations used by `serving.scheme`,
+plus the direct-consumer activation and resident-byte rules used by the runtime
+adapter. `route_family_for_grid` returns the first declared family for a grid and
+refuses an unknown grid by name. Serving retains its separate ambiguous-grid
+refusal in `route_for_grid`; both queries read the same table. The route table,
+family order, direct buffer sizes and activation contracts are unchanged.
+
 Re-stamped 2026-10-07 for dec-1007-074543-94b8 (D41 schema for the register-direct kernel).
 The v2 and v3 tables accept decoder kind `register_direct`, owned by `tessera.regdirect_routed`.
 Its execution scope is `register_direct_fragment` and its word ring is `register`.
