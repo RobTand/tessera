@@ -27,7 +27,8 @@ from tessera.serving.scheme import (
     moe_census_symbol_base as census_symbol_base,
     validate_tessera_scheme)
 from tessera.serving.census import STRUCTURE_BY_RECORD_KIND
-from tessera.serving.dense_ownership import fused_module, partition_members
+from tessera.metadata import fused_module
+from tessera.serving.dense_ownership import partition_members
 from tessera.serving_parts import sha256_file, validate_explicit_plan
 from tools.tessera_route_census import (
     CHECKPOINT_SIDECAR_NAMES, all_structure_agreement, checkpoint_sidecar_hashes,

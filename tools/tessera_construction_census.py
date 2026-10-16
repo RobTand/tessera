@@ -575,6 +575,7 @@ def selected_config(baseline_path, model_path, table_path, family):
     import fnmatch
     import importlib
     from pathlib import Path
+    from tessera.metadata import fused_module
     from tessera.serving import dense_ownership
     from tessera.serving.projection_routes import install, direct_consumer_resident_bytes
     from tessera.serving.weights_mapper import module_name_mapper
@@ -601,7 +602,7 @@ def selected_config(baseline_path, model_path, table_path, family):
                      for member in descriptor["source_members"]}
             members = (checkpoint + ".weight",)
             for name in sorted(names):
-                owner = dense_ownership.fused_module(name, source["architectures"][0],
+                owner = fused_module(name, source["architectures"][0],
                                                      config=source, tensor_names=names)
                 if owner is not None and owner[0] == checkpoint:
                     members = owner[1]

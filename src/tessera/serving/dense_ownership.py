@@ -1,9 +1,7 @@
-"""Source tensor membership of a dense serving owner, shared by export and replay.
+"""Source tensor geometry of a dense serving owner, shared by export and replay.
 
-Two rules live here and they answer different questions.
-
-``fused_module`` is the NAME rule: which checkpoint tensors vLLM merges into
-one Linear, from tensor names and the source config. It requires no tensor runtime.
+``tessera.metadata.fused_module`` owns the name rule for checkpoint tensors
+merged into one Linear.
 
 ``partition_members`` is the GEOMETRY rule: how that Linear's rows are cut into
 the output partitions the runtime builds -- ``ColumnParallelLinear.output_sizes``,
@@ -20,88 +18,10 @@ weight_loader`` with ``loaded_shard_id=None``), which is the order used here.
 """
 from __future__ import annotations
 
-import re
 from dataclasses import dataclass
 from typing import Mapping, Sequence
 
-
-FUSED = (
-    (re.compile(r"^(.*\.self_attn\.)(q_proj|k_proj|v_proj)\.weight$"), "qkv_proj", ("q_proj", "k_proj", "v_proj")),
-    # NOT scoped to ``.mlp.``: a shared expert is its own MLP module
-    # (``...mlp.shared_experts.{gate,up,down}_proj`` in the checkpoint) and vLLM
-    # merges ITS gate/up too -- ``Glm5NextMLP`` takes ``prefix=f"{prefix}.gate_up_proj"``
-    # for whatever prefix it is built at (glm5next/nvidia/model.py:124, :216).
-    # Naming the unmerged leaves there declares two modules vLLM never builds
-    # and leaves the one it does build undeclared, which the plugin refuses at
-    # load.  The lookahead keeps ROUTED experts out: their gate/up merge into
-    # ``w13`` inside the FusedMoE, which is a different mechanism entirely.
-    (re.compile(r"^(?!.*\.experts\.\d+\.)(.*\.)(gate_proj|up_proj)\.weight$"), "gate_up_proj", ("gate_proj", "up_proj")),
-    # Lfm2MoeMlp uses w1/w3 source leaves for its dense gate/up pair and
-    # constructs one w13 Linear. Routed experts have an intervening
-    # .experts.INDEX segment and remain owned by the expert stack rule.
-    (re.compile(r"^(.*\.feed_forward\.)(w1|w3)\.weight$"), "w13", ("w1", "w3")),
-)
-
-# These architectures have no generic three-member qkv_proj owner.
-# GLM KDA uses its six-member input owner; MLA can keep a standalone query.
-SEPARATE_QKV_ARCHITECTURES = frozenset({"Glm5NextForConditionalGeneration"})
-
-
-# GLM member order follows the current loader's stacked_params_mapping.
-GLM_FUSED = (
-    (re.compile(r"^(.*\.self_attn\.)(q_proj|k_proj|v_proj|b_proj|f_a_proj|g_a_proj)\.weight$"),
-     "in_proj_qkvbfg_a", ("q_proj", "k_proj", "v_proj", "b_proj", "f_a_proj", "g_a_proj")),
-    (re.compile(r"^(.*\.self_attn\.)(q_a_proj|kv_a_proj_with_mqa)\.weight$"),
-     "fused_qkv_a_proj", ("q_a_proj", "kv_a_proj_with_mqa")),
-    (re.compile(r"^(.*\.self_attn\.indexer\.)(wk|weights_proj)\.weight$"),
-     "wk_weights_proj", ("wk", "weights_proj")),
-)
-
-
-def glm_attention_kind(tensor_name: str, config: Mapping | None) -> str | None:
-    """Read the layer kind from the checkpoint construction config."""
-    if config is None:
-        return None
-    text = config.get("text_config", config)
-    match = re.search(r"(?:^|\.)layers\.(\d+)\.self_attn\.", tensor_name)
-    kinds = text.get("layer_types", ())
-    if match and int(match.group(1)) < len(kinds):
-        return kinds[int(match.group(1))]
-    return None
-
-
-def fused_module(tensor_name: str, architecture: str | None = None, *,
-                 config: Mapping | None = None, tensor_names=None):
-    """Return the dense owner and its ordered checkpoint members.
-
-    GLM q_proj can be a KDA member or a standalone MLA projection.
-    The construction config identifies the layer; source names are the fallback.
-    Neither rule determines partition sizes.
-    """
-    separate_qkv = architecture in SEPARATE_QKV_ARCHITECTURES
-    if separate_qkv:
-        for pattern, fused, members in GLM_FUSED:
-            match = pattern.match(tensor_name)
-            if match is None:
-                continue
-            prefix = match.group(1)
-            if fused == "in_proj_qkvbfg_a":
-                kind = glm_attention_kind(tensor_name, config)
-                if kind != "linear_attention":
-                    if kind is not None or tensor_names is None or prefix + "b_proj.weight" not in tensor_names:
-                        continue
-            if fused == "fused_qkv_a_proj" and config is not None:
-                text = config.get("text_config", config)
-                if "q_lora_rank" in text and text["q_lora_rank"] is None:
-                    continue
-            return prefix + fused, tuple(prefix + m + ".weight" for m in members)
-    for pattern, fused, members in FUSED:
-        if separate_qkv and fused == "qkv_proj":
-            continue
-        match = pattern.match(tensor_name)
-        if match:
-            return match.group(1) + fused, tuple(match.group(1) + m + ".weight" for m in members)
-    return None
+from .. import metadata
 
 
 def source_padding_rows(module: str, members: Sequence[str], config: Mapping) -> dict[str, int]:
@@ -114,12 +34,6 @@ def source_padding_rows(module: str, members: Sequence[str], config: Mapping) ->
     pad = int(text.get("qk_rope_head_dim", 0))
     return {member: pad for member in members
             if member.endswith(".kv_a_proj_with_mqa.weight") and pad > 0}
-
-
-def role_name(tensor_name: str) -> str:
-    """The scheme role a whole checkpoint tensor is declared under: its leaf."""
-    module = tensor_name[: -len(".weight")] if tensor_name.endswith(".weight") else tensor_name
-    return module.rsplit(".", 1)[-1]
 
 
 @dataclass(frozen=True)
@@ -172,7 +86,7 @@ def partition_members(module: str, members: Sequence[str], tensor_rows: Mapping[
     if output_sizes is None:
         if any(padding_rows.values()):
             raise ValueError(f"{module}: padding rows require runtime output partitions")
-        return tuple(Member(role_name(t), t, 0, int(tensor_rows[t])) for t in members)
+        return tuple(Member(metadata.role_name(t), t, 0, int(tensor_rows[t])) for t in members)
     sizes = tuple(int(s) for s in output_sizes)
     if not sizes or any(s <= 0 for s in sizes):
         raise ValueError(f"{module}: attested output partitions must be positive, got {list(sizes)}")
@@ -186,7 +100,7 @@ def partition_members(module: str, members: Sequence[str], tensor_rows: Mapping[
                     f"{module}: member {tensor} has {rows} rows but the runtime builds its output "
                     f"partition with {size}; the checkpoint and the serve disagree about this "
                     f"module's geometry (attested partitions {list(sizes)})")
-            out.append(Member(role_name(tensor), tensor, 0, size, pad))
+            out.append(Member(metadata.role_name(tensor), tensor, 0, size, pad))
         return tuple(out)
     if len(members) == 1:
         if any(padding_rows.values()):
@@ -198,7 +112,7 @@ def partition_members(module: str, members: Sequence[str], tensor_rows: Mapping[
                 f"{module}: {tensor} has {rows} rows but the runtime's {len(sizes)} output "
                 f"partitions {list(sizes)} sum to {sum(sizes)}; the checkpoint and the serve "
                 "disagree about this module's geometry")
-        leaf = role_name(tensor)
+        leaf = metadata.role_name(tensor)
         out, offset = [], 0
         for index, size in enumerate(sizes):
             out.append(Member(f"{leaf}.{index}", tensor, offset, size))

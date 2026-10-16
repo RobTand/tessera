@@ -117,9 +117,10 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from export_tessera_serving import (  # noqa: E402
     MOE_ROUTER, VISION_LINEAR, MOE_SOURCE_UNPACKED, body_layer, expert_stacks, family_for,
-    fused_module, module_scheme_key,
+    module_scheme_key,
     packed_expert_stacks, project_expert_plan, quantizable,
 )
+from tessera.metadata import fused_module  # noqa: E402
 from tessera.serving_parts import SOURCE_ROSTER_FIELDS, source_roster_identity  # noqa: E402
 
 #: ``TESSERA_<BASE>_K<arity>_R<rung>`` -- the allocator's format spelling.
@@ -338,10 +339,10 @@ def fused_key(qname: str, architecture: str | None = None, *, model_config=None,
 
     ``architecture`` is the model's HF ``architectures[0]``, passed through
     to the exporter's rule so an architecture whose q/k/v stay separate
-    Linears (``dense_ownership.SEPARATE_QKV_ARCHITECTURES``, tessera#706)
+    Linears (``tessera.metadata.SEPARATE_QKV_ARCHITECTURES``, tessera#706)
     is not checked against a ``qkv_proj`` group vLLM never builds.
 
-    Delegated to ``export_tessera_serving.fused_module`` -- the exporter owns
+    Delegated to ``tessera.metadata.fused_module`` -- the producer metadata owns
     the roster of source leaves vLLM merges into one module (q/k/v, every
     non-routed gate/up including ``mlp.shared_experts``, LFM's dense
     ``feed_forward.w1/w3`` -> ``w13``), and a restatement here is how this

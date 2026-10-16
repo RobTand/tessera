@@ -40,6 +40,14 @@ without consulting Docker or a live pin. The live launcher and CLI in
 `serving.runtime_image` import the same parser and exception class. The five
 refusal reasons, their ordering and copied exception payload are unchanged.
 
+Dense checkpoint naming also lives in `metadata`: `fused_module` returns an
+owner and ordered source members, `role_name` names a source leaf, and
+`glm_fused_groups` projects the ordered GLM leaf groups without exposing regexes.
+The explicit-config and source-name fallback rules retain their existing order.
+`serving.dense_ownership` retains output partition geometry and reads the same
+public role-name owner; the exporter and construction census use the public
+naming functions directly.
+
 Re-stamped 2026-10-07 for dec-1007-074543-94b8 (D41 schema for the register-direct kernel).
 The v2 and v3 tables accept decoder kind `register_direct`, owned by `tessera.regdirect_routed`.
 Its execution scope is `register_direct_fragment` and its word ring is `register`.
@@ -3925,7 +3933,7 @@ constructed `feed_forward.w13`, for both quantized targets and explicit BF16
 passthroughs. Routed `feed_forward.experts.N.w1/w3` remain projection leaves
 owned by the MoE stack; no dense alias applies to them. This naming comes from
 the pinned LFM construction receipt, not a fallback in the serving plugin.
-`tessera.export_serving.fused_module` is the one statement of that roster --
+`tessera.metadata.fused_module` is the one statement of that roster --
 q/k/v, every non-routed gate/up including `mlp.shared_experts`, and `w13` --
 and the converter's `fused_key` delegates to it rather than restating two of
 its rows (tessera#211), so the plan-time fused check and the export-time one
@@ -9477,7 +9485,7 @@ BF16 passthrough keeps every original tensor and bias unchanged.
 An explicit plan can select the router and vision Linear units without a default change.
 The selected vision qkv target keeps the stock prefix.
 
-The direct consumer byte rule belongs to serving.projection_routes.
+The direct consumer byte rule belongs to tessera.metadata.
 The DSA head tail uses its stock FP32 cache.
 The MLA absorbed path uses one decoded BF16 matrix and the stock split helper.
 Their decoded buffers increase resident prices; they do not become compressed BMM routes.
@@ -9492,7 +9500,8 @@ It does not infer replication from a shape total.
 The direct consumer contract separates the head operation from its unused dense output.
 The indexer head uses FP32 inputs and weights without activation quantization.
 The MLA split helper uses a BF16 matrix; the dense prefill path keeps its family contract.
-The producer reads direct_consumer_activation_contract and direct_consumer_weight from the runtime owner.
+The producer reads direct_consumer_activation_contract from tessera.metadata.
+The direct_consumer_weight decoder remains in serving.projection_routes.
 T-16 direct weights use the existing folded BF16 arithmetic before any FP32 cast.
 
 The constructor census records stock and selected views separately.

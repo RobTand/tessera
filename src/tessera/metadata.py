@@ -5,6 +5,7 @@ runtimes. Serving imports these same owners. The API marker grants no admission.
 """
 from __future__ import annotations
 
+import re
 from typing import Any, Mapping
 
 from .structure import STRUCTURES, STRUCTURE_ROUTED_MOE
@@ -12,6 +13,7 @@ from .structure import STRUCTURES, STRUCTURE_ROUTED_MOE
 METADATA_API_VERSION = "tessera.producer-metadata.v1"
 
 __all__ = [
+    "fused_module", "role_name", "glm_fused_groups",
     "METADATA_API_VERSION", "parse_smoke_record", "smoke_status_is_derived",
     "derive_smoke_status", "derive_smoke_attribution", "decide_lane_requirements",
     "route_family_for_grid", "direct_consumer_activation_contract",
@@ -627,3 +629,94 @@ def direct_consumer_activation_contract(module, role):
     if consumer == "mla" and role == "kv_b_proj":
         return "a16"
     return None
+
+
+FUSED = (
+    (re.compile(r"^(.*\.self_attn\.)(q_proj|k_proj|v_proj)\.weight$"), "qkv_proj", ("q_proj", "k_proj", "v_proj")),
+    # NOT scoped to ``.mlp.``: a shared expert is its own MLP module
+    # (``...mlp.shared_experts.{gate,up,down}_proj`` in the checkpoint) and vLLM
+    # merges ITS gate/up too -- ``Glm5NextMLP`` takes ``prefix=f"{prefix}.gate_up_proj"``
+    # for whatever prefix it is built at (glm5next/nvidia/model.py:124, :216).
+    # Naming the unmerged leaves there declares two modules vLLM never builds
+    # and leaves the one it does build undeclared, which the plugin refuses at
+    # load.  The lookahead keeps ROUTED experts out: their gate/up merge into
+    # ``w13`` inside the FusedMoE, which is a different mechanism entirely.
+    (re.compile(r"^(?!.*\.experts\.\d+\.)(.*\.)(gate_proj|up_proj)\.weight$"), "gate_up_proj", ("gate_proj", "up_proj")),
+    # Lfm2MoeMlp uses w1/w3 source leaves for its dense gate/up pair and
+    # constructs one w13 Linear. Routed experts have an intervening
+    # .experts.INDEX segment and remain owned by the expert stack rule.
+    (re.compile(r"^(.*\.feed_forward\.)(w1|w3)\.weight$"), "w13", ("w1", "w3")),
+)
+
+# These architectures have no generic three-member qkv_proj owner.
+# GLM KDA uses its six-member input owner; MLA can keep a standalone query.
+SEPARATE_QKV_ARCHITECTURES = frozenset({"Glm5NextForConditionalGeneration"})
+
+
+# GLM member order follows the current loader's stacked_params_mapping.
+GLM_FUSED = (
+    (re.compile(r"^(.*\.self_attn\.)(q_proj|k_proj|v_proj|b_proj|f_a_proj|g_a_proj)\.weight$"),
+     "in_proj_qkvbfg_a", ("q_proj", "k_proj", "v_proj", "b_proj", "f_a_proj", "g_a_proj")),
+    (re.compile(r"^(.*\.self_attn\.)(q_a_proj|kv_a_proj_with_mqa)\.weight$"),
+     "fused_qkv_a_proj", ("q_a_proj", "kv_a_proj_with_mqa")),
+    (re.compile(r"^(.*\.self_attn\.indexer\.)(wk|weights_proj)\.weight$"),
+     "wk_weights_proj", ("wk", "weights_proj")),
+)
+
+
+def glm_attention_kind(tensor_name: str, config: Mapping | None) -> str | None:
+    """Read the layer kind from the checkpoint construction config."""
+    if config is None:
+        return None
+    text = config.get("text_config", config)
+    match = re.search(r"(?:^|\.)layers\.(\d+)\.self_attn\.", tensor_name)
+    kinds = text.get("layer_types", ())
+    if match and int(match.group(1)) < len(kinds):
+        return kinds[int(match.group(1))]
+    return None
+
+
+def fused_module(tensor_name: str, architecture: str | None = None, *,
+                 config: Mapping | None = None, tensor_names=None
+                 ) -> tuple[str, tuple[str, ...]] | None:
+    """Return the dense owner and its ordered checkpoint members.
+
+    GLM q_proj can be a KDA member or a standalone MLA projection.
+    The construction config identifies the layer; source names are the fallback.
+    Neither rule determines partition sizes.
+    """
+    separate_qkv = architecture in SEPARATE_QKV_ARCHITECTURES
+    if separate_qkv:
+        for pattern, fused, members in GLM_FUSED:
+            match = pattern.match(tensor_name)
+            if match is None:
+                continue
+            prefix = match.group(1)
+            if fused == "in_proj_qkvbfg_a":
+                kind = glm_attention_kind(tensor_name, config)
+                if kind != "linear_attention":
+                    if kind is not None or tensor_names is None or prefix + "b_proj.weight" not in tensor_names:
+                        continue
+            if fused == "fused_qkv_a_proj" and config is not None:
+                text = config.get("text_config", config)
+                if "q_lora_rank" in text and text["q_lora_rank"] is None:
+                    continue
+            return prefix + fused, tuple(prefix + m + ".weight" for m in members)
+    for pattern, fused, members in FUSED:
+        if separate_qkv and fused == "qkv_proj":
+            continue
+        match = pattern.match(tensor_name)
+        if match:
+            return match.group(1) + fused, tuple(match.group(1) + m + ".weight" for m in members)
+    return None
+
+
+def role_name(tensor_name: str) -> str:
+    """The scheme role a whole checkpoint tensor is declared under: its leaf."""
+    module = tensor_name[: -len(".weight")] if tensor_name.endswith(".weight") else tensor_name
+    return module.rsplit(".", 1)[-1]
+
+
+def glm_fused_groups() -> tuple[tuple[str, tuple[str, ...]], ...]:
+    """Return GLM target leaves and their ordered source member leaves."""
+    return tuple((target, members) for _pattern, target, members in GLM_FUSED)

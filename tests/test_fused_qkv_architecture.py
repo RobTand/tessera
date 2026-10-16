@@ -10,7 +10,7 @@ import importlib
 
 import pytest
 
-from tessera.serving import dense_ownership
+from tessera import metadata
 
 export = importlib.import_module("tessera.export_serving")
 
@@ -24,14 +24,14 @@ GLM5 = "Glm5NextForConditionalGeneration"
 
 
 def test_the_separate_qkv_set_is_explicit_data():
-    assert isinstance(dense_ownership.SEPARATE_QKV_ARCHITECTURES, frozenset)
-    assert GLM5 in dense_ownership.SEPARATE_QKV_ARCHITECTURES
+    assert isinstance(metadata.SEPARATE_QKV_ARCHITECTURES, frozenset)
+    assert GLM5 in metadata.SEPARATE_QKV_ARCHITECTURES
 
 
 @pytest.mark.parametrize("architecture", [None, "Qwen3ForCausalLM"])
 def test_default_and_fusing_architectures_still_name_qkv_proj(architecture):
     kwargs = {} if architecture is None else {"architecture": architecture}
-    got = dense_ownership.fused_module(K, **kwargs)
+    got = metadata.fused_module(K, **kwargs)
     assert got == QKV
     assert got is not None
     members = got[1]
@@ -40,21 +40,21 @@ def test_default_and_fusing_architectures_still_name_qkv_proj(architecture):
 
 
 def test_the_no_argument_call_is_the_default():
-    assert dense_ownership.fused_module(K) == dense_ownership.fused_module(K, architecture=None)
+    assert metadata.fused_module(K) == metadata.fused_module(K, architecture=None)
 
 
 @pytest.mark.parametrize("name", [Q, K, V])
 def test_a_separate_qkv_architecture_does_not_fuse_attention(name):
-    assert dense_ownership.fused_module(name, architecture=GLM5) is None
+    assert metadata.fused_module(name, architecture=GLM5) is None
 
 
 def test_a_separate_qkv_architecture_still_fuses_gate_up():
-    got = dense_ownership.fused_module(GATE, architecture=GLM5)
+    got = metadata.fused_module(GATE, architecture=GLM5)
     assert got is not None
     assert got[0] == "model.layers.0.mlp.gate_up_proj"
     assert got[1] == (GATE, "model.layers.0.mlp.up_proj.weight")
     # Identical to the default for that row: only the qkv row is scoped.
-    assert got == dense_ownership.fused_module(GATE)
+    assert got == metadata.fused_module(GATE)
 
 
 def test_export_shim_passes_the_architecture_through():

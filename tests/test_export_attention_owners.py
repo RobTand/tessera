@@ -69,7 +69,7 @@ def test_explicit_vision_projection_is_in_the_producer_roster(tmp_path):
 
 
 def test_mla_query_is_not_a_kda_or_generic_qkv_member():
-    from tessera.serving.dense_ownership import fused_module
+    from tessera.metadata import fused_module
     config = {"layer_types": ["deepseek_sparse_attention"], "q_lora_rank": None}
     name = "model.layers.0.self_attn.q_proj.weight"
     assert fused_module(name, "Glm5NextForConditionalGeneration", config=config) is None
