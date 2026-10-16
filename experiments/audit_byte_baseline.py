@@ -675,7 +675,8 @@ def projection_record(case: ProjectionCase) -> dict:
     from tessera.export import encode_linear_planes
     from tessera.export_serving import family_for
     from tessera.serving.dense_ownership import partition_members, source_padding_rows
-    from tessera.serving.projection_routes import direct_consumer_resident_bytes, direct_consumer_weight
+    from tessera.metadata import direct_consumer_resident_bytes
+    from tessera.projection import direct_consumer_weight
     from tessera.serving_parts import dense_resident_bytes_resident_mode
     from tessera.unit_artifact import parse_unit_artifact
     from tessera.window_geometry import TILE_ROWS

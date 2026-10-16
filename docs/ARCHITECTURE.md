@@ -53,8 +53,9 @@ direct indexer and MLA weights. Importing the module loads only metadata; a
 decode call imports Torch and the producer codecs, never serving. FP8 decoding
 and folded BF16 materialization retain their existing order and final FP32 or
 BF16 dtype. Runtime bundle decoding, cache construction and vLLM callbacks
-remain in `serving.projection_routes`, which imports the same public decoder
-for existing external callers.
+remain in `serving.projection_routes`. The adapter reads its actual pure rules
+from `metadata`; producer callers import the decoder and byte rules directly
+from their public owners. No serving compatibility decoder is retained.
 
 Re-stamped 2026-10-07 for dec-1007-074543-94b8 (D41 schema for the register-direct kernel).
 The v2 and v3 tables accept decoder kind `register_direct`, owned by `tessera.regdirect_routed`.

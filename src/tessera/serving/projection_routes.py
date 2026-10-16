@@ -14,11 +14,7 @@ import importlib
 import inspect
 from types import MethodType
 
-from ..metadata import (
-    _direct_consumer_kind as _consumer,
-    direct_consumer_activation_contract, direct_consumer_resident_bytes,
-)
-from ..projection import direct_consumer_weight
+from .. import metadata
 
 
 def _selected_config(prefix):
@@ -164,11 +160,11 @@ def _install_mla() -> None:
 
 def adapt_method(method, scheme, prefix, layer):
     """Compose a dense method with the adapter its direct consumer requires."""
-    consumer = _consumer(prefix)
+    consumer = metadata._direct_consumer_kind(prefix)
     if consumer is None:
         return method
     roles = tuple((name, int(size)) for name, size in scheme["roles"])
-    direct_consumer_resident_bytes(prefix, scheme["family"], scheme["rows"],
+    metadata.direct_consumer_resident_bytes(prefix, scheme["family"], scheme["rows"],
                                    scheme["columns"], roles)
     if consumer == "indexer":
         _install_indexer()

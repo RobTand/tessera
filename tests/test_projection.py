@@ -58,9 +58,7 @@ def encoded(request):
 def test_direct_decoder_cache_and_output_mse_match_core_codec(encoded, tmp_path, module, role,
                                                              dtype_name):
     decoder = api().direct_consumer_weight
-    from tessera.serving.projection_routes import direct_consumer_weight as compatibility_decoder
-
-    assert compatibility_decoder is decoder
+    assert decoder.__module__ == "tessera.projection"
     import torch
     from tessera.decode import materialize_bf16_folded, reconstruct_unit
     from tessera.unit_artifact import parse_unit_artifact
@@ -139,3 +137,13 @@ def test_blob_parser_refusal_precedes_unknown_family():
     with pytest.raises(type(expected.value)) as actual:
         decoder(b"invalid", INDEXER, "weights_proj", "unknown")
     assert str(actual.value) == str(expected.value)
+
+
+def test_serving_adapter_does_not_publish_the_producer_api():
+    from tessera import metadata
+    from tessera.serving import projection_routes
+
+    for name in ("direct_consumer_weight", "direct_consumer_activation_contract",
+                 "direct_consumer_resident_bytes"):
+        assert not hasattr(projection_routes, name), name
+    assert projection_routes.metadata is metadata

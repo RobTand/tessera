@@ -31,7 +31,7 @@ def test_replication_must_name_a_real_partition(bad):
 
 @pytest.mark.parametrize("family", ["TESSERA_FP8", "TESSERA_BF16", "TESSERA_NVFP4"])
 def test_indexer_storage_prices_only_the_fp32_head_cache(family):
-    from tessera.serving.projection_routes import direct_consumer_resident_bytes
+    from tessera.metadata import direct_consumer_resident_bytes
 
     result = direct_consumer_resident_bytes(
         "model.layers.3.self_attn.indexer.wk_weights_proj", family, 160, 4096,
@@ -41,7 +41,7 @@ def test_indexer_storage_prices_only_the_fp32_head_cache(family):
 
 
 def test_mla_storage_prices_the_actual_bf16_matrix():
-    from tessera.serving.projection_routes import direct_consumer_resident_bytes
+    from tessera.metadata import direct_consumer_resident_bytes
 
     result = direct_consumer_resident_bytes(
         "model.layers.3.self_attn.kv_b_proj", "TESSERA_FP8", 1024, 256,
@@ -51,7 +51,7 @@ def test_mla_storage_prices_the_actual_bf16_matrix():
 
 
 def test_ordinary_projection_has_no_decoded_resident_copy():
-    from tessera.serving.projection_routes import direct_consumer_resident_bytes
+    from tessera.metadata import direct_consumer_resident_bytes
 
     assert direct_consumer_resident_bytes(
         "model.layers.3.self_attn.o_proj", "TESSERA_BF16", 256, 256,
@@ -59,7 +59,7 @@ def test_ordinary_projection_has_no_decoded_resident_copy():
 
 
 def test_indexer_cost_refuses_a_missing_head_role():
-    from tessera.serving.projection_routes import direct_consumer_resident_bytes
+    from tessera.metadata import direct_consumer_resident_bytes
 
     with pytest.raises(ValueError, match="weights_proj"):
         direct_consumer_resident_bytes(
