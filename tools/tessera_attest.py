@@ -649,7 +649,12 @@ def ingest_receipt(path: str, kind: str, *, reads=()) -> dict:
         payload = json.loads(data)
     except ValueError as exc:
         return step(STATUS_FAILED, f"{path} is not JSON: {exc}", sha256=digest)
-    read = {key: payload.get(key) for key in reads if key in payload}
+    missing = [key for key in reads if not isinstance(payload, dict) or key not in payload]
+    if missing:
+        return step(STATUS_FAILED,
+                    f"{kind} receipt at {path} is missing requested keys: {', '.join(missing)}",
+                    sha256=digest)
+    read = {key: payload[key] for key in reads}
     return step(STATUS_RAN, None, receipt=os.path.abspath(path), sha256=digest, read=read)
 
 
@@ -885,7 +890,7 @@ def main(argv=None) -> int:
 
     steps[STEP_ROUTE_CENSUS] = (
         ingest_receipt(args.census_receipt, "census",
-                       reads=("schema", "engagement", "problems", "runtime_image"))
+                       reads=("schema", "lane_engagement", "problems", "runtime"))
         if args.census_receipt else step(STATUS_NOT_RUN, "no --census-receipt was given"))
     steps[STEP_SERVED_KL] = (
         ingest_receipt(args.kl_receipt, "KL", reads=("schema", "kl", "corpus", "regime"))
