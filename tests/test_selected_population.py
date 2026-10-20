@@ -271,6 +271,90 @@ def test_a_selection_that_cannot_be_run_is_refused_by_name(tmp_path, monkeypatch
     assert phrase in str(error.value)
 
 
+@pytest.mark.parametrize("master_ref", ["master", "origin/master"])
+@pytest.mark.parametrize("lifecycle,failed", [("submit", False), ("resume", True)])
+def test_submit_time_master_survives_a_ref_advance(
+        tmp_path, monkeypatch, master_ref, lifecycle, failed):
+    """#1227: shard assembly and a restarted submitter reuse submission evidence.
+
+    Pre-fix: AssertionError: master_head_at_submit must retain the
+    pre-dispatch observation, not assembly-time master (all four cases).
+    """
+
+    _dev_mode(monkeypatch)
+    world = _world(tmp_path, monkeypatch,
+                   state={"shard-01": ("failed", 1)} if failed else None)
+    git, ref, submitted, advanced = helpers._master_history(world.checkout, master_ref)
+    expected = _receipt(world)
+    monkeypatch.setattr(sp.merge_suite, "SHARED_ROOT", tmp_path)
+    monkeypatch.setattr(sp, "choose", lambda *args: dict(world.selection))
+
+    def dispatch(selection, args, receipt_dir):
+        assert receipt_dir == world.receipt_dir
+        git("update-ref", ref, advanced)
+        if lifecycle == "resume":
+            raise RuntimeError("submitter stopped before receipt assembly")
+        # The pool populations already exist; these are the clients' results.
+        for name in selection["shards"]:
+            sp.write_client_result(receipt_dir, name, {"returncode": 0})
+        return {}
+
+    monkeypatch.setattr(sp, "submit_all", dispatch)
+    argv = ["--checkout", str(world.checkout), "--out", str(world.receipt_dir),
+            "--pool-root", str(world.pool)]
+    runner = sp
+    if lifecycle == "resume":
+        with pytest.raises(RuntimeError, match="submitter stopped"):
+            sp.main(argv)
+        runner = _load("_selected_population_restarted", ROOT / "tools" / "selected_population.py")
+        # Neither module may retain in-memory state from the original submitter.
+        monkeypatch.setattr(runner, "merge_suite", helpers._module())
+        monkeypatch.setattr(runner, "submit_all", lambda *args: pytest.fail("resume submitted shards"))
+        argv += ["--resume", str(world.receipt_dir)]
+    status = runner.main(argv)
+    receipt = json.loads((world.receipt_dir / sp.RECEIPT).read_text())
+
+    assert git("rev-parse", "HEAD") == submitted
+    assert git("rev-parse", ref) == advanced
+    assert status == (1 if failed else 0)
+    for key in ("commits_measured", "verdict", "arm_results", "checkout_source", "population_problems"):
+        assert receipt[key] == expected[key], key
+    assert [arm["surface"] for arm in receipt["arms"]] == [arm["surface"] for arm in expected["arms"]]
+    population = receipt["population"]
+    assert population["master_head_at_submit"] == submitted, (
+        "master_head_at_submit must retain the pre-dispatch observation, not assembly-time master")
+    assert population["master_ref_used"] == master_ref
+    assert population["is_master_head"] is True
+    assert population["commit"] == submitted
+
+
+@pytest.mark.parametrize("old_receipt", [False, True])
+def test_submit_time_master_is_unknown_for_a_legacy_resume(tmp_path, monkeypatch, old_receipt):
+    """Legacy selection/receipt files cannot prove submission-time master.
+
+    Pre-fix (both cases): AssertionError: legacy runs have no submit-time
+    evidence; do not backfill from current master or an old receipt.
+    """
+
+    _dev_mode(monkeypatch)
+    world = _world(tmp_path, monkeypatch)
+    _, _, submitted, _ = helpers._master_history(world.checkout, "master")
+    expected = _receipt(world)
+    if old_receipt:
+        prior = {**expected, "population": {**expected["population"],
+                 "master_head_at_submit": submitted, "master_ref_used": "master", "is_master_head": True}}
+        (world.receipt_dir / sp.RECEIPT).write_text(json.dumps(prior))
+    monkeypatch.setattr(sp, "submit_all", lambda *args: pytest.fail("resume submitted shards"))
+    assert sp.main(["--checkout", str(world.checkout), "--resume", str(world.receipt_dir),
+                    "--pool-root", str(world.pool)]) == 0
+    receipt = json.loads((world.receipt_dir / sp.RECEIPT).read_text())
+    assert receipt["verdict"] == expected["verdict"]
+    assert receipt["commits_measured"] == expected["commits_measured"]
+    assert receipt["population"]["master_head_at_submit"] is None, (
+        "legacy runs have no submit-time evidence; do not backfill from current master or an old receipt")
+    assert receipt["population"]["is_master_head"] is None
+
+
 def test_resume_rebuilds_the_receipt_and_submits_nothing(tmp_path, monkeypatch, capsys):
     world = _world(tmp_path, monkeypatch)
 

@@ -289,7 +289,9 @@ def assemble(selection: dict, receipt_dir: Path, checkout: Path, *,
             record["submit_stderr_tail"] = sent.get("stderr_tail")
             record["pbrun"] = sent.get("pbrun")
         records.append(record)
-    receipt = merge_suite._assemble_receipt(records, checkout, assembled_by=assembled_by)
+    receipt = merge_suite._assemble_receipt(
+        records, checkout, assembled_by=assembled_by,
+        submission_master=merge_suite._read_submission_master(receipt_dir))
     head_source, source_problems = checkout_source(records, checkout)
     problems = population_problems(selection, records) + source_problems
     receipt["schema"] = "tessera.selected_population.v1"
@@ -380,6 +382,7 @@ def main(argv: list[str] | None = None) -> int:
         if not args.dry_run:
             receipt_dir.mkdir(parents=True, exist_ok=True)
             (receipt_dir / SELECTION).write_text(json.dumps(selection, indent=1) + "\n")
+            merge_suite._write_submission_master(args.checkout, receipt_dir)
         submitted = submit_all(selection, args, receipt_dir)
         if args.dry_run:
             for record in submitted.values():

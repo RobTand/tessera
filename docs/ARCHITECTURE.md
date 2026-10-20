@@ -940,6 +940,18 @@ digest. `stageprev_793_prerequisites` refuses a contract with open API problems.
 The version number stays in the record as provenance only.
 CPU refusal controls remove `PoolQueue.offers` and supply an incompatible signature.
 They exercise the observer and collector without a claim or GPU submission.
+The S7 probe uses `submission.validate_request`, `submission.placement_contract`
+and the invalid-scope refusal in `submission.prepare`, not retired CLI helpers;
+class placement remains distinct from an explicit `--here` hostname pin.
+For S7's delegated claim path the observer also binds `_prepare_host_claim`,
+`candidate_policy.never_fits` and `CandidateDenial` to their manifest file digests.
+It inspects the reservation-demand versus total-capacity predicate, the
+`never_fits_capacity` reason/evidence, and the claim loop's denial recording and
+fail-closed continuation together. Preparation must start with the inspected
+field bindings followed by the refusal: earlier exits and unrecognized input
+transformations (including alias mutation) refuse attestation. An unrecognized
+delegation or missing helper digest also refuses; no scheduling helper is
+executed to obtain evidence.
 
 Re-stamped 2026-10-04 (`v6/ts696-stock-runner-guard-20261004`, #696):
 the GLM53 NoPE runner-identity owner rejects the known stock V2 runner in
@@ -4022,6 +4034,25 @@ is not green. Each arm's own result stays readable in the receipt's
 `arm_results`, which is deliberately not the merge verdict and never sets the
 exit status.
 
+**Submission-time master provenance.** Before dispatching any arm or shard,
+`merge_suite.py` and `selected_population.py` use the shared merge-suite helper
+to write `submission-master.json` beside the run artifacts. This records the
+checkout commit, resolved master ref/head and their comparison before any client
+can outlive the submitter. Ref precedence remains `master`, `origin/master`, then
+`refs/remotes/origin/master`; this is a local observation, not a fetch or a claim
+of remote-master freshness. Assembly and a fresh-process `--resume` read that
+same observation rather than probing master again. Receipts retain its subject
+as `population.checkout_commit_at_submit`, separately from the current checkout
+`population.commit`. A ledger row inherits the comparison only when its own
+established measured commit matches that submission checkout; different or assumed
+measured commits report unknown even if they match the checkout at assembly.
+Missing submission evidence (including legacy directories with old submit-labelled
+receipts) leaves the submit-time head and comparison unknown; current refs and old
+receipts cannot reconstruct submission history. A failed checkout/master probe
+also leaves the comparison unknown. Dry runs do not persist this file. The observation is only
+provenance: it adds no identity seal or result gate and does not replace source
+validation or the measured commit reported by each population.
+
 A **resumed** receipt (`--resume <dir>`) rebuilds each arm from the population
 it published and, since tessera#218, borrows that arm's exit status from
 PrismaBuild's own outcome record -- shown as `0 (pool)`, never as a status this
@@ -5480,6 +5511,21 @@ witness neutral again, and the full identity rolls back only when the other
 fixture outputs do too. New shipping structures still add ordinary fixtures
 and re-base the identity; baseline-neutral witnesses are only for newly found
 blind spots inside a structure the live identity already claimed to cover.
+
+The LUT refit's `refit_gauss_seidel` and `refit_coupled_landing`
+admission gates share one pass-count-aware active-metric rule. Inner refits
+use `refit_metric`; the last uses `refit_metric_trailing`, inheriting the
+base when unset. With `scale_refit=1` only the trailing metric is active: an
+unused coupled base cannot admit either flag when that trailing metric is
+separable. Gauss–Seidel and coupled landing's `True`/`"every"` mode require
+at least one active metric that couples blocks; coupled landing's
+`"trailing"` mode requires that the trailing metric itself couples. Thus
+plain or separable inner refits followed by a coupled trailing refit remain
+valid, while a coupled base followed by a separable trailing refit admits
+`"every"` but not `"trailing"`. These options remain LUT-only and refuse
+no-metric and zero-refit requests. `scale_refit=0` still means one trellis
+pass without refitting; the execution schedule and numerical refits are
+unchanged by this admission rule.
 
 Issue #360 fixes cancellation in the CHANNEL refit's acceptance guard. The
 quadratic loss difference is evaluated as
@@ -8866,7 +8912,12 @@ through `bf16_route.prepare_tessera_bf16_module`, the GEMV against the
 decoded tile, package power through `amd-smi` when a driver exists. It does
 not recompute a census or a KL: those belong to
 `tools/tessera_route_census.py` and the KL harness, and the receipt ingests
-theirs by path and SHA-256 so the evidence travels with the claim.
+theirs by path and SHA-256 so the evidence travels with the claim. Census
+ingestion copies `schema`, `lane_engagement`, `problems` and `runtime`
+(including its nested `image` and `execution_mode`); KL ingestion copies
+`schema`, `kl`, `corpus` and `regime`. Both fail with status `failed` and a
+reason naming every absent requested top-level key. Presence, not truthiness,
+is required: explicit nulls and empty containers are copied unchanged.
 `docs/strix-halo-tester-protocol.md` is what a tester is sent;
 `tests/test_attest_receipt.py` holds the scope rule, the refusal and the
 receipt schema on CPU, with a stubbed device.

@@ -114,6 +114,38 @@ def test_temporary_repository_queries_still_read_changed_sources(tmp_path, monke
     assert "source.py" in unreadable
 
 
+@pytest.mark.parametrize("excluded_name", sorted(impacted.SKIP_DIRS))
+@pytest.mark.parametrize("placement", ["ancestor", "checkout-root"])
+def test_skip_directory_names_outside_checkout_do_not_filter_graph(
+    tmp_path, excluded_name, placement,
+):
+    """Only directories *inside* the checkout can exclude its Python sources."""
+    repo = tmp_path / excluded_name
+    if placement == "ancestor":
+        repo = repo / "checkout"
+    repo.mkdir(parents=True)
+    source = repo / "source.py"
+    source.write_text("VALUE = 1\n", encoding="utf-8")
+    consumer = repo / "tests" / "test_consumer.py"
+    consumer.parent.mkdir()
+    consumer.write_text("from source import VALUE\n", encoding="utf-8")
+
+    # Ancestor matching must not be repaired by dropping exclusions altogether,
+    # or by checking only the first directory below the checkout root.
+    for skipped in sorted(impacted.SKIP_DIRS):
+        for parent in (repo, repo / "nested"):
+            ignored = parent / skipped / "ignored.py"
+            ignored.parent.mkdir(parents=True, exist_ok=True)
+            ignored.write_text("from source import VALUE\n", encoding="utf-8")
+
+    nodes, importers = impacted.build_graph(repo)
+
+    assert set(nodes.values()) == {source, consumer}, (
+        "checkout placement erased sources or admitted excluded directories", nodes
+    )
+    assert "tests.test_consumer" in importers["source"]
+
+
 def _git(repo: Path, *args: str) -> str:
     completed = subprocess.run(
         ["git", "-C", str(repo), *args],
@@ -146,6 +178,38 @@ def _selector(repo: Path, ref: str) -> dict[str, object]:
     )
     assert completed.returncode == 0, completed.stderr
     return json.loads(completed.stdout)
+
+
+@pytest.mark.parametrize("placement", ["ancestor", "checkout-root"])
+def test_selector_under_worktrees_selects_transitive_python_consumer(tmp_path, placement):
+    """A source-only diff must reach a test even without a textual leaf match."""
+    parent = tmp_path / "worktrees" if placement == "ancestor" else tmp_path
+    parent.mkdir(parents=True, exist_ok=True)
+    repo, _ = _repo(parent)
+    if placement == "checkout-root":
+        repo = repo.rename(parent / "worktrees")
+    (repo / "leaf.py").write_text("VALUE = 1\n", encoding="utf-8")
+    (repo / "bridge.py").write_text("from leaf import VALUE\n", encoding="utf-8")
+    (repo / "tests").mkdir()
+    (repo / "tests" / "test_consumer.py").write_text(
+        "from bridge import VALUE\n\ndef test_value():\n    assert VALUE > 0\n",
+        encoding="utf-8",
+    )
+    (repo / "tests" / "test_other.py").write_text(
+        "def test_other():\n    assert True\n", encoding="utf-8",
+    )
+    _git(repo, "add", ".")
+    _git(repo, "commit", "-qm", "Python dependency chain")
+    base = _git(repo, "rev-parse", "HEAD")
+    (repo / "leaf.py").write_text("VALUE = 2\n", encoding="utf-8")
+    _git(repo, "add", "leaf.py")
+    _git(repo, "commit", "-qm", "change only the leaf")
+
+    result = _selector(repo, f"{base}..HEAD")
+
+    assert result["changed"] == 1
+    assert result["tests"] == ["tests/test_consumer.py"], result
+    assert result["verdict"] == "narrowed", result
 
 
 def test_parentless_snapshot_uses_a_direct_base_tree_comparison(

@@ -16,6 +16,7 @@ the test passes it an object shaped like ``torch``.
 """
 from __future__ import annotations
 
+import hashlib
 import importlib.util
 import json
 from pathlib import Path
@@ -273,6 +274,60 @@ def test_absent_power_is_a_field_and_never_an_exception():
     block = power.block()
     assert block["available"] is False and "not on PATH" in block["reason"]
     assert any("package power unavailable" in note for note in _receipt(power=block)["limitations"])
+
+
+# --- receipts read from other tools ---------------------------------------
+
+def test_main_copies_committed_census_lane_and_runtime(tmp_path, monkeypatch):
+    """Exercise the CLI's key selection, not a separately supplied reads list."""
+    census_path = ROOT / "experiments" / "results" / "glm53_x_stub_tp1_eager_census.json"
+    data = census_path.read_bytes()
+    census = json.loads(data)
+    # Use the existing CPU-only identity stub without probing this host's device.
+    identity = attest.probe_identity(_Torch())
+    monkeypatch.setattr(attest, "probe_identity", lambda: identity)
+    monkeypatch.setattr(attest, "versions_block", lambda identity: {})
+    out = tmp_path / "attestation.json"
+
+    assert attest.main(["--out", str(out), "--no-power",
+                        "--census-receipt", str(census_path)]) == 0
+    receipt = json.loads(out.read_text(encoding="utf-8"))
+    result = receipt["steps"][attest.STEP_ROUTE_CENSUS]
+    assert result["status"] == attest.STATUS_RAN
+    assert result["read"] == {
+        key: census[key] for key in ("schema", "lane_engagement", "problems", "runtime")
+    }
+    assert result["receipt"] == str(census_path.resolve())
+    assert result["sha256"] == hashlib.sha256(data).hexdigest()
+
+
+@pytest.mark.parametrize("kind,reads", [
+    ("census", ("schema", "lane_engagement", "problems", "runtime")),
+    ("KL", ("schema", "kl", "corpus", "regime")),
+])
+@pytest.mark.parametrize("missing_indices", [(0,), (1,), (2,), (3,), (1, 2, 3)])
+def test_ingest_receipt_refuses_every_absent_requested_key(
+        tmp_path, kind, reads, missing_indices):
+    """A missing key is a failed step naming every gap, not a partial success.
+
+    Presence, not truthiness, is the contract: explicit nulls and empty
+    containers remain valid values and must be copied unchanged.
+    """
+    path = tmp_path / "receipt.json"
+    payload = dict(zip(reads, ("example/1", None, [], {})))
+    path.write_text(json.dumps(payload), encoding="utf-8")
+    complete = attest.ingest_receipt(str(path), kind, reads=reads)
+    assert complete["status"] == attest.STATUS_RAN
+    assert complete["read"] == payload
+
+    missing = tuple(reads[index] for index in missing_indices)
+    for key in missing:
+        del payload[key]
+    path.write_text(json.dumps(payload), encoding="utf-8")
+    result = attest.ingest_receipt(str(path), kind, reads=reads)
+    assert result["status"] == attest.STATUS_FAILED, result
+    for key in missing:
+        assert key in result["reason"], result
 
 
 # --- the reference set ----------------------------------------------------

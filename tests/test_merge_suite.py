@@ -544,6 +544,134 @@ def test_the_receipt_states_which_tree_it_is_about(tmp_path, master_ref, at_mast
     assert "reading_note" in receipt
 
 
+def _master_history(checkout, master_ref):
+    """Two real master tips, with measured HEAD fixed at the first one.
+
+    May extend an existing fixture checkout. No remote, live pool, or runner's
+    default git branch/configuration is needed.
+    """
+
+    checkout.mkdir(exist_ok=True)
+
+    def git(*args):
+        return subprocess.check_output(
+            ["git", "-C", str(checkout), "-c", "user.name=Test",
+             "-c", "user.email=test@example.invalid", "-c", "commit.gpgsign=false",
+             *args], text=True).strip()
+
+    if not (checkout / ".git").exists():
+        git("init", "-q", "--initial-branch=measured")
+        git("commit", "-q", "--allow-empty", "-m", "measured source")
+    else:
+        git("checkout", "-q", "-B", "measured")
+    git("update-ref", "-d", "refs/heads/master")
+    git("update-ref", "-d", "refs/remotes/origin/master")
+    submitted = git("rev-parse", "HEAD")
+    advanced = git("commit-tree", "HEAD^{tree}", "-p", submitted, "-m", "master advances")
+    ref = "refs/heads/master" if master_ref == "master" else "refs/remotes/origin/master"
+    git("update-ref", ref, submitted)
+    return git, ref, submitted, advanced
+
+
+@pytest.mark.parametrize("master_ref", ["master", "origin/master"])
+@pytest.mark.parametrize("lifecycle,failed", [("submit", False), ("resume", True)])
+def test_submit_time_master_survives_a_ref_advance(
+        tmp_path, monkeypatch, master_ref, lifecycle, failed):
+    """#1227: master moves after dispatch, not the measured source.
+
+    The resume case stops the submitter before it can assemble anything and
+    resumes with a fresh module, so an in-memory snapshot or one saved only
+    after clients return cannot satisfy the submit-time claim.
+
+    Pre-fix: AssertionError: master_head_at_submit must retain the
+    pre-dispatch observation, not assembly-time master (all four cases).
+    """
+
+    merge = _module()
+    checkout = tmp_path / "checkout"
+    git, ref, submitted, advanced = _master_history(checkout, master_ref)
+    arm = _population("x86", commit=submitted)
+    if failed:
+        arm["returncode"] = 1
+        arm["surface"]["counts"]["failed"] = 1
+    expected = merge._assemble_receipt([arm], checkout, assembled_by="submit")
+    monkeypatch.setattr(merge, "SHARED_ROOT", tmp_path)
+    monkeypatch.setattr(merge, "DEFAULT_RECEIPT_ROOT", tmp_path / "runs")
+    observed = []
+
+    def client(name, config, args, receipt_dir):
+        observed.append(receipt_dir)
+        git("update-ref", ref, advanced)
+        if lifecycle == "resume":
+            raise RuntimeError("submitter stopped before receipt assembly")
+        return arm
+
+    monkeypatch.setattr(merge, "_submit", client)
+    argv = ["merge_suite", "--arm", "x86", "--checkout", str(checkout),
+            "--pool-root", str(tmp_path / "pool")]
+    monkeypatch.setattr(sys, "argv", argv)
+    if lifecycle == "resume":
+        with pytest.raises(RuntimeError, match="submitter stopped"):
+            merge.main()
+        merge = _module()  # discard all in-memory state of the submitter
+        monkeypatch.setattr(merge, "_resume", lambda *args: arm)
+        monkeypatch.setattr(merge, "_submit", lambda *args: pytest.fail("resume submitted an arm"))
+        monkeypatch.setattr(sys, "argv", [*argv, "--resume", str(observed[0])])
+    status = merge.main()
+    receipt = json.loads((observed[0] / "receipt.json").read_text())
+
+    assert git("rev-parse", "HEAD") == submitted
+    assert git("rev-parse", ref) == advanced
+    assert status == (1 if failed else 0)
+    for key in ("commits_measured", "verdict", "arm_results", "arms"):
+        assert receipt[key] == expected[key], key
+    population = receipt["population"]
+    assert population["master_head_at_submit"] == submitted, (
+        "master_head_at_submit must retain the pre-dispatch observation, not assembly-time master")
+    assert population["master_ref_used"] == master_ref
+    assert population["is_master_head"] is True
+    assert population["commit"] == submitted
+    ledger = tmp_path / "ledger.md"
+    merge._record_markdown(ledger, receipt)
+    row = next(line for line in ledger.read_text().splitlines() if "| x86 |" in line)
+    assert "| yes | x86 |" in row
+
+
+@pytest.mark.parametrize("old_receipt", [False, True])
+def test_submit_time_master_is_unknown_for_a_legacy_resume(tmp_path, monkeypatch, old_receipt):
+    """A prior submit-labelled receipt is not evidence of a genuine snapshot.
+
+    Pre-fix (both cases): AssertionError: legacy runs have no submit-time
+    evidence; do not backfill from current master or an old receipt.
+    """
+
+    merge = _module()
+    checkout = tmp_path / "checkout"
+    _, _, submitted, _ = _master_history(checkout, "master")
+    arm = _population("x86", commit=submitted)
+    receipt_dir = tmp_path / "legacy"
+    receipt_dir.mkdir()
+    if old_receipt:
+        prior = merge._assemble_receipt([arm], checkout, assembled_by="submit")
+        prior["population"].update(master_head_at_submit=submitted,
+                                   master_ref_used="master", is_master_head=True)
+        (receipt_dir / "receipt.json").write_text(json.dumps(prior))
+    monkeypatch.setattr(merge, "_resume", lambda *args: arm)
+    monkeypatch.setattr(merge, "_submit", lambda *args: pytest.fail("resume submitted an arm"))
+    monkeypatch.setattr(sys, "argv", ["merge_suite", "--arm", "x86", "--checkout", str(checkout),
+                                     "--resume", str(receipt_dir),
+                                     "--pool-root", str(tmp_path / "pool")])
+    assert merge.main() == 0
+    receipt = json.loads((receipt_dir / "receipt.json").read_text())
+    assert receipt["population"]["master_head_at_submit"] is None, (
+        "legacy runs have no submit-time evidence; do not backfill from current master or an old receipt")
+    assert receipt["population"]["is_master_head"] is None
+    ledger = tmp_path / "ledger.md"
+    merge._record_markdown(ledger, receipt)
+    row = next(line for line in ledger.read_text().splitlines() if "| x86 |" in line)
+    assert "| unknown | x86 |" in row
+
+
 def test_pr_ci_fetches_the_base_ref_that_population_identity_reads():
     """The PR checkout must contain master; absence is not a branch verdict."""
     workflow = (ROOT / ".github" / "workflows" / "ci.yml").read_text()
