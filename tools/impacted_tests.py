@@ -305,7 +305,8 @@ def import_graph(
     """
     files = [
         p for p in root.rglob("*.py")
-        if not any(part in SKIP_DIRS for part in p.parts)
+        # Only directories within the checkout participate in exclusions.
+        if not any(part in SKIP_DIRS for part in p.relative_to(root).parts[:-1])
     ]
     # Every file gets a node, and a node's identity is its file.  A dotted
     # name is only a *spelling*, and a spelling can name more than one file:
