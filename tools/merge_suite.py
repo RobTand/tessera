@@ -301,6 +301,7 @@ def _population_of(checkout: Path, submission_master: dict | None = None) -> dic
         "checkout": str(checkout),
         "commit": _git(checkout, "rev-parse", "HEAD"),
         "describe": _git(checkout, "log", "-1", "--pretty=%s"),
+        "checkout_commit_at_submit": observation.get("checkout_commit_at_submit"),
         "master_ref_used": observation.get("master_ref_used", "none resolved"),
         "master_head_at_submit": observation.get("master_head_at_submit"),
         "is_master_head": observation.get("is_master_head"),
@@ -1421,9 +1422,11 @@ a lone row there as "the other arm was not recorded", not as a whole result.
 
 `master head?` is whether the commit under test was master's tip at submit
 time. `yes` is a merge receipt; `no` is a branch's own run; `unknown` means
-submission evidence is missing or a checkout/master probe did not answer.
-New runs persist the comparison before dispatch and reuse it on resume; old
-submit-labelled receipts are not submission evidence. No remote freshness is implied.
+submission evidence is missing, a checkout/master probe did not answer, or the
+row's measured commit is assumed or differs from the captured submission checkout.
+New runs persist the comparison and its checkout commit before dispatch and reuse
+them on resume; old submit-labelled receipts are not submission evidence. No
+remote freshness is implied.
 
 `commit` is the tree that arm's own run reported measuring, which is not
 always the tree the receipt was assembled against: the arms are separate
@@ -1498,6 +1501,10 @@ def _record_markdown(path: Path, receipt: dict) -> None:
     population = receipt["population"]
     head = population["is_master_head"]
     head_text = "unknown" if head is None else ("yes" if head else "no")
+    # Older direct callers associated their supplied comparison with `commit`.
+    # Reassembled receipts always carry the explicit submission association,
+    # including None for missing evidence; never fall back from an unknown.
+    comparison_commit = population.get("checkout_commit_at_submit", population["commit"])
     rows = []
     for record in receipt["arms"]:
         surface = record.get("surface") or {}
@@ -1522,9 +1529,13 @@ def _record_markdown(path: Path, receipt: dict) -> None:
         source = _commits_measured([record])["effective_source"]["by_arm"][record["arm"]]
         if source:
             commit_text += f"<br>source `{source[:12]}`"
-        # ``master head?`` was answered against the population commit. If this
-        # arm ran a different tree, that answer is not about this row.
-        row_head = head_text if commit == population["commit"] else "unknown"
+        # The comparison belongs to the checkout observed before dispatch, not
+        # the checkout at assembly. Only an established matching measured commit
+        # can inherit it; an assumed commit is not submission evidence either.
+        if established and comparison_commit and commit == comparison_commit:
+            row_head = head_text
+        else:
+            row_head = "unknown"
         # An arm that published nothing measured nothing, so it has no
         # measurement time. Falling through to the receipt's own clock put a
         # timestamp in that cell that dated the bookkeeping and looked exactly

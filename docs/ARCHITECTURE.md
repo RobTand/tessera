@@ -4029,11 +4029,15 @@ checkout commit, resolved master ref/head and their comparison before any client
 can outlive the submitter. Ref precedence remains `master`, `origin/master`, then
 `refs/remotes/origin/master`; this is a local observation, not a fetch or a claim
 of remote-master freshness. Assembly and a fresh-process `--resume` read that
-same observation rather than probing master again. Missing submission evidence
-(including legacy directories with old submit-labelled receipts) leaves the
-submit-time head and comparison unknown; current refs and old receipts cannot
-reconstruct submission history. A failed checkout/master probe also leaves the
-comparison unknown. Dry runs do not persist this file. The observation is only
+same observation rather than probing master again. Receipts retain its subject
+as `population.checkout_commit_at_submit`, separately from the current checkout
+`population.commit`. A ledger row inherits the comparison only when its own
+established measured commit matches that submission checkout; different or assumed
+measured commits report unknown even if they match the checkout at assembly.
+Missing submission evidence (including legacy directories with old submit-labelled
+receipts) leaves the submit-time head and comparison unknown; current refs and old
+receipts cannot reconstruct submission history. A failed checkout/master probe
+also leaves the comparison unknown. Dry runs do not persist this file. The observation is only
 provenance: it adds no identity seal or result gate and does not replace source
 validation or the measured commit reported by each population.
 
