@@ -16,6 +16,7 @@ the test passes it an object shaped like ``torch``.
 """
 from __future__ import annotations
 
+import hashlib
 import importlib.util
 import json
 from pathlib import Path
@@ -273,6 +274,47 @@ def test_absent_power_is_a_field_and_never_an_exception():
     block = power.block()
     assert block["available"] is False and "not on PATH" in block["reason"]
     assert any("package power unavailable" in note for note in _receipt(power=block)["limitations"])
+
+
+# --- receipt ingestion ----------------------------------------------------
+
+def test_main_ingests_committed_census_lane_engagement_and_runtime(tmp_path, monkeypatch):
+    """Exercise the consumer's field selection, not a test-supplied reads list."""
+    census = ROOT / "experiments/results/glm53_x_stub_tp1_eager_census.json"
+    payload = json.loads(census.read_bytes())
+    out = tmp_path / "attestation.json"
+    identity = attest.probe_identity(_Torch())
+    monkeypatch.setattr(attest, "probe_identity", lambda: identity)
+    monkeypatch.setattr(attest, "versions_block", lambda identity: {"torch": identity["torch"]})
+
+    assert attest.main(["--out", str(out), "--no-power",
+                        "--census-receipt", str(census)]) == 0
+    receipt = json.loads(out.read_text(encoding="utf-8"))
+    census_step = receipt["steps"][attest.STEP_ROUTE_CENSUS]
+    assert census_step["status"] == attest.STATUS_RAN
+    for key in ("schema", "lane_engagement", "problems", "runtime"):
+        assert key in census_step["read"], f"census ingestion dropped {key}"
+        assert census_step["read"][key] == payload[key]
+    assert census_step["receipt"] == str(census.resolve())
+    assert census_step["sha256"] == hashlib.sha256(census.read_bytes()).hexdigest()
+
+
+@pytest.mark.parametrize("kind,payload,reads,missing", [
+    ("census", {"schema": "test", "problems": []},
+     ("schema", "lane_engagement", "problems", "runtime"),
+     ("lane_engagement", "runtime")),
+    ("census", {}, ("schema",), ("schema",)),
+    ("KL", {"schema": "test", "kl": None},
+     ("schema", "kl", "corpus", "regime"), ("corpus", "regime")),
+])
+def test_ingest_receipt_refuses_every_absent_requested_key(tmp_path, kind, payload,
+                                                         reads, missing):
+    path = tmp_path / "receipt.json"
+    path.write_text(json.dumps(payload), encoding="utf-8")
+    result = attest.ingest_receipt(str(path), kind, reads=reads)
+    assert result["status"] == attest.STATUS_FAILED, "partial receipt was accepted"
+    for key in missing:
+        assert key in result["reason"], f"refusal did not name missing key {key}"
 
 
 # --- the reference set ----------------------------------------------------
