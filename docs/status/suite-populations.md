@@ -12,8 +12,10 @@ with `--arm x86` wrote one row and said nothing about the GPU population. Read
 a lone row there as "the other arm was not recorded", not as a whole result.
 
 `master head?` is whether the commit under test was master's tip at submit
-time. `yes` is a merge receipt; `no` is a branch's own run; `unknown` means no
-master ref resolved in that checkout and the question was not answered.
+time. `yes` is a merge receipt; `no` is a branch's own run; `unknown` means
+submission evidence is missing or a checkout/master probe did not answer.
+New runs persist the comparison before dispatch and reuse it on resume; old
+submit-labelled receipts are not submission evidence. No remote freshness is implied.
 
 `commit` is the tree that arm's own run reported measuring, which is not
 always the tree the receipt was assembled against: the arms are separate
