@@ -240,34 +240,71 @@ def _git(checkout: Path, *args: str) -> str | None:
     return out.stdout.strip() if out.returncode == 0 else None
 
 
-def _population_of(checkout: Path) -> dict:
-    """What tree this receipt is about, stated so it cannot be mistaken.
+SUBMISSION_METADATA = "submission-master.json"
+_SUBMISSION_SCHEMA = "tessera.submission_master.v1"
 
-    A receipt from a feature branch is not a merge receipt.  Recording the head
-    of ``master`` alongside the commit under test makes that difference
-    readable rather than assumed.
+
+def _submission_master_of(checkout: Path) -> dict:
+    """Observe the checkout/master comparison once, before dispatch.
+
+    Ref precedence is retained; this does not fetch or establish freshness.
+    Compare against the same resolved head that is recorded, not a second
+    lookup of a potentially moving ref.
     """
 
     head = _git(checkout, "rev-parse", "HEAD")
-    # A clone made for a pool run has no local ``master`` -- only
-    # ``origin/master`` -- and a bare ``rev-parse master`` there returns
-    # nothing, which would silently make ``is_master_head`` false for the very
-    # commit that IS master.  Say which ref answered, so a null comparison
-    # reads as "not established" and never as "not master".
-    master, master_ref = "", ""
+    master, master_ref = None, "none resolved"
     for ref in ("master", "origin/master", "refs/remotes/origin/master"):
         master = _git(checkout, "rev-parse", ref)
         if master:
             master_ref = ref
             break
+    return {
+        "schema": _SUBMISSION_SCHEMA,
+        "checkout_commit_at_submit": head,
+        "master_ref_used": master_ref,
+        "master_head_at_submit": master or None,
+        "is_master_head": (head == master) if (head and master) else None,
+    }
+
+
+def _write_submission_master(checkout: Path, receipt_dir: Path) -> None:
+    """Persist before launching any client that can outlive this process."""
+
+    observation = _submission_master_of(checkout)
+    (receipt_dir / SUBMISSION_METADATA).write_text(
+        json.dumps(observation, indent=2) + "\n")
+
+
+def _read_submission_master(receipt_dir: Path) -> dict | None:
+    """Only the dedicated pre-dispatch observation is submission evidence.
+
+    Old receipts used the same labels for late probes; never adopt them or
+    backfill missing evidence from today's refs. This is provenance, no seal.
+    """
+
+    try:
+        observation = json.loads((receipt_dir / SUBMISSION_METADATA).read_text())
+    except (OSError, ValueError):
+        return None
+    if not isinstance(observation, dict) or observation.get("schema") != _SUBMISSION_SCHEMA:
+        return None
+    return observation
+
+
+def _population_of(checkout: Path, submission_master: dict | None = None) -> dict:
+    """Current checkout context, with submit-time fields only from evidence."""
+
+    observation = submission_master or {}
     dirty = _git(checkout, "status", "--porcelain")
     return {
         "checkout": str(checkout),
-        "commit": head,
+        "commit": _git(checkout, "rev-parse", "HEAD"),
         "describe": _git(checkout, "log", "-1", "--pretty=%s"),
-        "master_ref_used": master_ref or "none resolved",
-        "master_head_at_submit": master or None,
-        "is_master_head": (head == master) if (head and master) else None,
+        "checkout_commit_at_submit": observation.get("checkout_commit_at_submit"),
+        "master_ref_used": observation.get("master_ref_used", "none resolved"),
+        "master_head_at_submit": observation.get("master_head_at_submit"),
+        "is_master_head": observation.get("is_master_head"),
         # None where the probe did not answer: "not established", never "clean".
         "working_tree_dirty": (None if dirty is None else bool(dirty)),
     }
@@ -1384,8 +1421,12 @@ with `--arm x86` wrote one row and said nothing about the GPU population. Read
 a lone row there as "the other arm was not recorded", not as a whole result.
 
 `master head?` is whether the commit under test was master's tip at submit
-time. `yes` is a merge receipt; `no` is a branch's own run; `unknown` means no
-master ref resolved in that checkout and the question was not answered.
+time. `yes` is a merge receipt; `no` is a branch's own run; `unknown` means
+submission evidence is missing, a checkout/master probe did not answer, or the
+row's measured commit is assumed or differs from the captured submission checkout.
+New runs persist the comparison and its checkout commit before dispatch and reuse
+them on resume; old submit-labelled receipts are not submission evidence. No
+remote freshness is implied.
 
 `commit` is the tree that arm's own run reported measuring, which is not
 always the tree the receipt was assembled against: the arms are separate
@@ -1460,6 +1501,10 @@ def _record_markdown(path: Path, receipt: dict) -> None:
     population = receipt["population"]
     head = population["is_master_head"]
     head_text = "unknown" if head is None else ("yes" if head else "no")
+    # Older direct callers associated their supplied comparison with `commit`.
+    # Reassembled receipts always carry the explicit submission association,
+    # including None for missing evidence; never fall back from an unknown.
+    comparison_commit = population.get("checkout_commit_at_submit", population["commit"])
     rows = []
     for record in receipt["arms"]:
         surface = record.get("surface") or {}
@@ -1484,9 +1529,13 @@ def _record_markdown(path: Path, receipt: dict) -> None:
         source = _commits_measured([record])["effective_source"]["by_arm"][record["arm"]]
         if source:
             commit_text += f"<br>source `{source[:12]}`"
-        # ``master head?`` was answered against the population commit. If this
-        # arm ran a different tree, that answer is not about this row.
-        row_head = head_text if commit == population["commit"] else "unknown"
+        # The comparison belongs to the checkout observed before dispatch, not
+        # the checkout at assembly. Only an established matching measured commit
+        # can inherit it; an assumed commit is not submission evidence either.
+        if established and comparison_commit and commit == comparison_commit:
+            row_head = head_text
+        else:
+            row_head = "unknown"
         # An arm that published nothing measured nothing, so it has no
         # measurement time. Falling through to the receipt's own clock put a
         # timestamp in that cell that dated the bookkeeping and looked exactly
@@ -1567,7 +1616,8 @@ def use_pool_root(pool_root) -> None:
     POOL_CAS_REQUESTS = root / "cas" / "requests"
 
 
-def _assemble_receipt(arms: list[dict], checkout: Path, *, assembled_by: str) -> dict:
+def _assemble_receipt(arms: list[dict], checkout: Path, *, assembled_by: str,
+                      submission_master: dict | None = None) -> dict:
     """The receipt for these arm records: one owner for what a receipt says.
 
     ``main`` and every tool that submits arms of its own read the same fields
@@ -1581,7 +1631,7 @@ def _assemble_receipt(arms: list[dict], checkout: Path, *, assembled_by: str) ->
         "generated_utc": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
         "submitted_from": os.uname().nodename,
         "assembled_by": assembled_by,
-        "population": _population_of(checkout),
+        "population": _population_of(checkout, submission_master),
         "commits_measured": commits,
         "verdict": _verdict(arms, commits),
         # Each arm's own result, kept separate from the merge verdict on
@@ -1717,6 +1767,13 @@ def main() -> int:
         receipt_dir.mkdir(parents=True, exist_ok=True)
     out = Path(args.out) if args.out else receipt_dir / "receipt.json"
 
+    if args.dry_run and not args.resume:
+        submission_master = _submission_master_of(args.checkout)
+    else:
+        if not args.resume:
+            _write_submission_master(args.checkout, receipt_dir)
+        submission_master = _read_submission_master(receipt_dir)
+
     if args.resume:
         arms = [_resume(name, ARMS[name], receipt_dir) for name in wanted]
     else:
@@ -1727,7 +1784,8 @@ def main() -> int:
             arms = [futures[name].result() for name in wanted]
 
     receipt = _assemble_receipt(arms, args.checkout,
-                                assembled_by="resume" if args.resume else "submit")
+                                assembled_by="resume" if args.resume else "submit",
+                                submission_master=submission_master)
     out.parent.mkdir(parents=True, exist_ok=True)
     kept = _keep_any_previous(out)
     out.write_text(json.dumps(receipt, indent=2) + "\n")
