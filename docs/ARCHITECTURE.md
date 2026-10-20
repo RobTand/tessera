@@ -8866,7 +8866,12 @@ through `bf16_route.prepare_tessera_bf16_module`, the GEMV against the
 decoded tile, package power through `amd-smi` when a driver exists. It does
 not recompute a census or a KL: those belong to
 `tools/tessera_route_census.py` and the KL harness, and the receipt ingests
-theirs by path and SHA-256 so the evidence travels with the claim.
+theirs by path and SHA-256 so the evidence travels with the claim. Census
+ingestion copies `schema`, `lane_engagement`, `problems` and `runtime`
+(including its nested `image` and `execution_mode`); KL ingestion copies
+`schema`, `kl`, `corpus` and `regime`. Both fail with status `failed` and a
+reason naming every absent requested top-level key. Presence, not truthiness,
+is required: explicit nulls and empty containers are copied unchanged.
 `docs/strix-halo-tester-protocol.md` is what a tester is sent;
 `tests/test_attest_receipt.py` holds the scope rule, the refusal and the
 receipt schema on CPU, with a stubbed device.
