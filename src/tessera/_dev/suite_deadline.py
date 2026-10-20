@@ -60,11 +60,17 @@ def _kill_owned(process, kill_after_s):
 def run(command, timeout_s, kill_after_s):
     timeout_s, kill_after_s = positive_seconds(timeout_s), positive_seconds(kill_after_s)
     process = None
-    previous = {sig: signal.signal(sig, _interrupt) for sig in _INTERRUPT_SIGNALS}
-    # SIG_IGN auto-reaps children: wait() can then report0 for a failed child,
-    # and the leader's PID no longer anchors group ownership during grace.
-    previous[signal.SIGCHLD] = signal.signal(signal.SIGCHLD, signal.SIG_DFL)
+    # Snapshot every disposition before mutation: installation can raise after
+    # taking effect, and interruption cleanup ignores both interruption signals
+    # even if setup has not yet installed both handlers.
+    previous = {sig: signal.getsignal(sig)
+                for sig in (*_INTERRUPT_SIGNALS, signal.SIGCHLD)}
     try:
+        for sig in _INTERRUPT_SIGNALS:
+            signal.signal(sig, _interrupt)
+        # SIG_IGN auto-reaps children: wait() can then report 0 for a failed child,
+        # and the leader's PID no longer anchors group ownership during grace.
+        signal.signal(signal.SIGCHLD, signal.SIG_DFL)
         process = subprocess.Popen(command, start_new_session=True)
         try:
             code = process.wait(timeout=timeout_s)
