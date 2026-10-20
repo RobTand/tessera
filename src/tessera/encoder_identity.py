@@ -711,9 +711,6 @@ def _fixture_blob(case: Fixture) -> bytes:
         grid=case.grid,
         q256=case.q256,
         name=case.label,
-        # The exporter's weighting, not ``encode_unit``'s signature default:
-        # this identity is about the encoder an export runs.
-        trellis_weighting="scale",
         **kwargs,
         **case.encode,
     )
@@ -734,7 +731,7 @@ def _release_blob(case: Fixture) -> bytes:
     from .encode import encode_unit
     from .export import (
         DEFAULT_CODE, DEFAULT_GROUP, DEFAULT_HALF, DEFAULT_SCALE_REFIT,
-        _plan_for, wire_recipe,
+        DEFAULT_TRELLIS_WEIGHTING, _plan_for, wire_recipe,
     )
     from .manifest import ScalePlaneKind
     from .unit_artifact import build_unit_artifact
@@ -753,8 +750,8 @@ def _release_blob(case: Fixture) -> bytes:
         group=DEFAULT_GROUP, half=DEFAULT_HALF,
         scale_refit=DEFAULT_SCALE_REFIT, span=recipe.span,
         scale_plane=recipe.scale_plane,
-        # The exporter's weighting, for the reason ``_fixture_blob`` states.
-        trellis_weighting="scale",
+        # Match the exporter's default, not ``encode_unit``'s signature default.
+        trellis_weighting=DEFAULT_TRELLIS_WEIGHTING,
         body=recipe.body, window_bits=recipe.window_bits,
         window_seed=recipe.window_seed, window_sigma=recipe.window_sigma,
         channel_sigma=recipe.channel_sigma,

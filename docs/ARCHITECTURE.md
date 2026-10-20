@@ -5440,6 +5440,13 @@ every artifact already on disk is byte-identical across the bump. The wire is
 `docs/schema/prismaquant.tessera.v1.md` §1g, which also states what the fixture
 set is blind to.
 
+Ordinary fixtures inherit `encode_linear`'s effective trellis-weighting default
+by omitting the override. The hand-assembled release fixture, which cannot go
+through `encode_linear`, reads `export.DEFAULT_TRELLIS_WEIGHTING` at fixture
+build time. A future exporter default change therefore reaches the identity
+through both paths; this correction changes neither today's fixture bytes nor
+the identity, fixture roster, hash domain or compatibility baselines.
+
 The CPU identity still encodes every witness. Issue #364 reduces its cold
 startup by computing the CHANNEL spread objective's nearest scalar distance
 from the two sorted neighbours, in float64, rather than materializing the
