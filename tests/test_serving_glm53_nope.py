@@ -82,8 +82,10 @@ def test_configuration_and_device_guards():
 def test_registration_opt_in_preserves_stock_and_refuses_custom_collision(monkeypatch):
     from vllm.v1.attention.backends.registry import AttentionBackendEnum as Backend
     from vllm.v1.attention.backends.registry import register_backend
-    from tessera.serving import register
+    from tessera.serving import flags, register
 
+    flag = "TESSERA_RESEARCH_GLM53_NOPE"
+    flags.reset_for_tests(flag)
     previous = Backend.CUSTOM.get_path() if Backend.CUSTOM.is_overridden() else None
     stock = Backend.FLASHINFER_MLA_SPARSE_SM120.get_path()
     try:
@@ -91,6 +93,8 @@ def test_registration_opt_in_preserves_stock_and_refuses_custom_collision(monkey
         monkeypatch.delenv("TESSERA_RESEARCH_GLM53_NOPE", raising=False)
         register()
         assert not Backend.CUSTOM.is_overridden()
+        # Default-off and enabled are separate process configurations.
+        flags.reset_for_tests(flag)
         monkeypatch.setenv("TESSERA_RESEARCH_GLM53_NOPE", "1")
         register()
         register()
@@ -100,6 +104,7 @@ def test_registration_opt_in_preserves_stock_and_refuses_custom_collision(monkey
         with pytest.raises(RuntimeError, match="another CUSTOM backend"):
             register()
     finally:
+        flags.reset_for_tests(flag)
         Backend.CUSTOM.clear_override()
         if previous:
             register_backend(Backend.CUSTOM, previous)
