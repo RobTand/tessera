@@ -184,6 +184,131 @@ def positive_kind_refusal_branch(source):
     return False
 
 
+def _same_ast(left, right):
+    return ast.dump(left, include_attributes=False) == ast.dump(right, include_attributes=False)
+
+
+def _statements(source):
+    return ast.parse(textwrap.dedent(source)).body
+
+
+def delegated_positive_kind_refusal(decision_source, preparation_source, predicate_source):
+    """Recognize the inspected delegation without executing any scheduler code.
+
+    Deliberately narrow: unrecognized rewrites refuse rather than inferring a
+    denial from a helper name. The predicate, demand provenance, total-capacity
+    argument, returned reason/evidence and both recording paths must agree.
+    """
+    predicate = _statements(predicate_source)
+    expected_return = _statements('''
+        return any(total.get(kind, 0) < need for kind, need in reservation_demand.items())
+    ''')[0]
+    if (len(predicate) != 1 or not isinstance(predicate[0], ast.FunctionDef)
+            or [arg.arg for arg in predicate[0].args.args] != ['reservation_demand', 'total']
+            or predicate[0].args.posonlyargs or predicate[0].args.kwonlyargs
+            or predicate[0].args.vararg or predicate[0].args.kwarg
+            or predicate[0].decorator_list
+            or len(predicate[0].body) != 1
+            or not _same_ast(predicate[0].body[0], expected_return)):
+        return False
+    preparation = _statements(preparation_source)[0]
+    if not isinstance(preparation, ast.FunctionDef):
+        return False
+    expected_prefix = _statements('''
+        item = candidate.item
+        demand = candidate.demand.host
+        reservation_demand = candidate.demand.reservation
+        sealed_host_demand = candidate.demand.sealed_host
+        scratch_intent = candidate.scratch_intent
+        allowance = None
+        dependent_owner = candidate.dependent_owner
+        scratch_evidence = scratch_boundary = None
+        if candidate_policy.never_fits(reservation_demand, total):
+            return candidate_policy.CandidateDenial('never_fits_capacity', {
+                'capacity_total': total, 'demand': demand,
+                'reservation_demand': reservation_demand}, scan)
+    ''')
+    # Recognize the whole entry-to-refusal path, not disconnected statements.
+    # Only the inspected field bindings may precede the predicate: an earlier
+    # exit could bypass it, and arbitrary calls or assignments could mutate
+    # either input (including through aliases) without a reservation name store.
+    if (len(preparation.body) < len(expected_prefix)
+            or not all(_same_ast(actual, expected) for actual, expected
+                       in zip(preparation.body, expected_prefix))):
+        return False
+    expected_denial = _statements('''
+        if isinstance(prepared, candidate_policy.CandidateDenial):
+            order = prepared.order_before
+            if prepared.evidence is None:
+                self.record_denial(item, prepared.reason)
+            else:
+                self.record_denial(item, prepared.reason, prepared.evidence)
+            continue
+    ''')[0]
+    tree = ast.parse(textwrap.dedent(decision_source))
+    # The call and denial handling must be consecutive in the same block.
+    for parent in ast.walk(tree):
+        for field in ('body', 'orelse', 'finalbody'):
+            block = getattr(parent, field, [])
+            for call_statement, denial in zip(block, block[1:]):
+                if not _same_ast(denial, expected_denial):
+                    continue
+                if (not isinstance(call_statement, ast.Assign)
+                        or len(call_statement.targets) != 1
+                        or not _same_ast(call_statement.targets[0], ast.Name(id='prepared', ctx=ast.Store()))):
+                    continue
+                call = call_statement.value
+                if (isinstance(call, ast.Call)
+                        and _same_ast(call.func, ast.parse('self._prepare_host_claim', mode='eval').body)
+                        and len(call.args) == 2
+                        and all(k.arg is not None for k in call.keywords)
+                        and all(_same_ast(a, b) for a, b in zip(call.args, ast.parse('qualified, order', mode='eval').body.elts))
+                        and any(k.arg == 'total' and _same_ast(k.value, ast.parse('scan_pass.total', mode='eval').body)
+                                for k in call.keywords)):
+                    return True
+    return False
+
+
+def _observe_delegation(queue_cls, decision_source, runtime_manifest, root):
+    """Bind helper source to the loaded functions and their publication files."""
+    receipts = {}
+    try:
+        preparation = queue_cls._prepare_host_claim
+        policy = preparation.__globals__['candidate_policy']
+        if queue_cls._claim_pass.__globals__['candidate_policy'] is not policy:
+            return False, False, receipts
+        helpers = (preparation, policy.never_fits, policy.CandidateDenial)
+        paths = [Path(inspect.getsourcefile(helper)).resolve(strict=True) for helper in helpers]
+        expected_paths = [root / 'src/prismabuild/pool.py',
+                          root / 'src/prismabuild/candidate_policy.py',
+                          root / 'src/prismabuild/candidate_policy.py']
+        before = {path: path.read_bytes() for path in paths}
+        sources = [inspect.getsource(helper) for helper in helpers]
+        after = {path: path.read_bytes() for path in paths}
+        identity = paths == expected_paths and before == after
+        for path in paths:
+            key = path.relative_to(root).as_posix()
+            digest = hashlib.sha256(after[path]).hexdigest()
+            receipts[key] = digest
+            identity = identity and digest == runtime_manifest.get('files', {}).get(key)
+        identity = identity and all(helper.__module__ == module for helper, module in zip(
+            helpers, ('prismabuild.pool', 'prismabuild.candidate_policy', 'prismabuild.candidate_policy')))
+        # CandidateDenial must carry the returned reason and evidence unchanged.
+        denial_tree = _statements(sources[2])[0]
+        fields = [node.target.id for node in denial_tree.body
+                  if isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Name)]
+        decorator = ast.parse('dataclass(frozen=True)', mode='eval').body
+        denial_valid = (fields[:3] == ['reason', 'evidence', 'order_before']
+                        and len(denial_tree.decorator_list) == 1
+                        and _same_ast(denial_tree.decorator_list[0], decorator)
+                        and not any(isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+                                    for node in denial_tree.body))
+        semantic = denial_valid and delegated_positive_kind_refusal(decision_source, sources[0], sources[1])
+        return bool(identity), semantic, receipts
+    except (AttributeError, KeyError, TypeError, ValueError, OSError, SyntaxError):
+        return False, False, receipts
+
+
 def observe_current_claim_contract(runtime_manifest):
     from prismabuild import client
     from prismabuild.client import PoolQueue, SDK_VERSION
@@ -200,9 +325,14 @@ def observe_current_claim_contract(runtime_manifest):
     chain_verified = (_calls_self(ast.parse(textwrap.dedent(claim_source)), "_claim")
                       and _calls_self(ast.parse(textwrap.dedent(wrapper_source)), "_claim_pass"))
     predicate_verified = positive_kind_refusal_branch(decision_source)
+    helper_identity = True
+    helper_receipts = {}
+    if not predicate_verified:
+        helper_identity, predicate_verified, helper_receipts = _observe_delegation(
+            PoolQueue, decision_source, runtime_manifest, Path(PB_ROOT).resolve(strict=True))
     api_problems = required_api_problems(client)
     api_verified = api_problems == []
-    identity_verified = (api_verified and source_file == expected and before == after
+    identity_verified = (api_verified and helper_identity and source_file == expected and before == after
                          and digest == manifest_digest
                          and all(method.__module__ == "prismabuild.pool" for method in
                                  (PoolQueue.claim, PoolQueue._claim, PoolQueue._claim_pass)))
@@ -210,6 +340,7 @@ def observe_current_claim_contract(runtime_manifest):
             "pool_sha256": digest, "published_pool_sha256": manifest_digest,
             "generation": runtime_manifest.get("generation"),
             "sdk_version": SDK_VERSION, "api_verified": api_verified, "api_problems": api_problems,
+            "helper_source_sha256": helper_receipts,
             "identity_verified": identity_verified,
             "chain_verified": chain_verified,
             "positive_reservation_refusal_verified": predicate_verified,

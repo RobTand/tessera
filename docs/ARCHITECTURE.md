@@ -940,6 +940,18 @@ digest. `stageprev_793_prerequisites` refuses a contract with open API problems.
 The version number stays in the record as provenance only.
 CPU refusal controls remove `PoolQueue.offers` and supply an incompatible signature.
 They exercise the observer and collector without a claim or GPU submission.
+The S7 probe uses `submission.validate_request`, `submission.placement_contract`
+and the invalid-scope refusal in `submission.prepare`, not retired CLI helpers;
+class placement remains distinct from an explicit `--here` hostname pin.
+For S7's delegated claim path the observer also binds `_prepare_host_claim`,
+`candidate_policy.never_fits` and `CandidateDenial` to their manifest file digests.
+It inspects the reservation-demand versus total-capacity predicate, the
+`never_fits_capacity` reason/evidence, and the claim loop's denial recording and
+fail-closed continuation together. Preparation must start with the inspected
+field bindings followed by the refusal: earlier exits and unrecognized input
+transformations (including alias mutation) refuse attestation. An unrecognized
+delegation or missing helper digest also refuses; no scheduling helper is
+executed to obtain evidence.
 
 Re-stamped 2026-10-04 (`v6/ts696-stock-runner-guard-20261004`, #696):
 the GLM53 NoPE runner-identity owner rejects the known stock V2 runner in
