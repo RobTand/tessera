@@ -9,6 +9,7 @@ def test_explicit_mask_skip_flag_registers_stock_enum(monkeypatch):
     previous=backend.get_path() if backend.is_overridden() else None
     try:
         backend.clear_override();flags.reset_for_tests('TESSERA_RESEARCH_MLA_MASK_SKIP')
+        flags.reset_for_tests('TESSERA_RESEARCH_GLM53_NOPE')
         monkeypatch.delenv('TESSERA_RESEARCH_GLM53_NOPE',raising=False)
         monkeypatch.setenv('TESSERA_RESEARCH_MLA_MASK_SKIP','1')
         register()
@@ -16,6 +17,7 @@ def test_explicit_mask_skip_flag_registers_stock_enum(monkeypatch):
         assert backend.get_path()=='tessera.serving.mla_sparse_sm120.TesseraMLASparseSM120Backend'
     finally:
         backend.clear_override();flags.reset_for_tests('TESSERA_RESEARCH_MLA_MASK_SKIP')
+        flags.reset_for_tests('TESSERA_RESEARCH_GLM53_NOPE')
         if previous:
             from vllm.v1.attention.backends.registry import register_backend
             register_backend(backend,previous)
