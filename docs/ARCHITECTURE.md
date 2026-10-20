@@ -5481,6 +5481,21 @@ fixture outputs do too. New shipping structures still add ordinary fixtures
 and re-base the identity; baseline-neutral witnesses are only for newly found
 blind spots inside a structure the live identity already claimed to cover.
 
+The LUT refit's `refit_gauss_seidel` and `refit_coupled_landing`
+admission gates share one pass-count-aware active-metric rule. Inner refits
+use `refit_metric`; the last uses `refit_metric_trailing`, inheriting the
+base when unset. With `scale_refit=1` only the trailing metric is active: an
+unused coupled base cannot admit either flag when that trailing metric is
+separable. Gauss–Seidel and coupled landing's `True`/`"every"` mode require
+at least one active metric that couples blocks; coupled landing's
+`"trailing"` mode requires that the trailing metric itself couples. Thus
+plain or separable inner refits followed by a coupled trailing refit remain
+valid, while a coupled base followed by a separable trailing refit admits
+`"every"` but not `"trailing"`. These options remain LUT-only and refuse
+no-metric and zero-refit requests. `scale_refit=0` still means one trellis
+pass without refitting; the execution schedule and numerical refits are
+unchanged by this admission rule.
+
 Issue #360 fixes cancellation in the CHANNEL refit's acceptance guard. The
 quadratic loss difference is evaluated as
 `(new - old) * (A * (new + old) - 2 * B)`, rather than subtracting two
