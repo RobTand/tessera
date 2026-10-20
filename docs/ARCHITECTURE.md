@@ -7611,6 +7611,13 @@ and refuses a repeated tensor name across shards before aggregating their
 headers. It recomputes each group's maximum wire length from those headers. A missing
 projection cannot pass merely because another wire has the declared stride.
 
+`tools/tessera_attest.py` records the census receipt's `schema`,
+`lane_engagement`, `problems`, and `runtime`, copying the complete nested
+blocks alongside the source path and SHA-256. Receipt ingestion (for both
+census and KL) fails with a reason naming every absent requested top-level
+key rather than accepting a partial read. Presence, not truthiness, decides
+whether a requested key exists; empty or null values are still copied.
+
 The route census emits `tessera.serving.route_census/2` with its measured
 `runtime={image,execution_mode}`. Its `tessera.cell-launch-agreement.by-structure/1`
 aggregate contains `tessera.cell-launch-agreement/3` per-structure blocks under
