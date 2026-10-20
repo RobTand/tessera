@@ -947,8 +947,11 @@ For S7's delegated claim path the observer also binds `_prepare_host_claim`,
 `candidate_policy.never_fits` and `CandidateDenial` to their manifest file digests.
 It inspects the reservation-demand versus total-capacity predicate, the
 `never_fits_capacity` reason/evidence, and the claim loop's denial recording and
-fail-closed continuation together. An unrecognized delegation or missing helper
-digest refuses attestation; no scheduling helper is executed to obtain evidence.
+fail-closed continuation together. Preparation must start with the inspected
+field bindings followed by the refusal: earlier exits and unrecognized input
+transformations (including alias mutation) refuse attestation. An unrecognized
+delegation or missing helper digest also refuses; no scheduling helper is
+executed to obtain evidence.
 
 Re-stamped 2026-10-04 (`v6/ts696-stock-runner-guard-20261004`, #696):
 the GLM53 NoPE runner-identity owner rejects the known stock V2 runner in

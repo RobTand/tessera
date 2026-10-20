@@ -214,28 +214,27 @@ def delegated_positive_kind_refusal(decision_source, preparation_source, predica
     preparation = _statements(preparation_source)[0]
     if not isinstance(preparation, ast.FunctionDef):
         return False
-    expected = _statements('''
+    expected_prefix = _statements('''
+        item = candidate.item
+        demand = candidate.demand.host
         reservation_demand = candidate.demand.reservation
+        sealed_host_demand = candidate.demand.sealed_host
+        scratch_intent = candidate.scratch_intent
+        allowance = None
+        dependent_owner = candidate.dependent_owner
+        scratch_evidence = scratch_boundary = None
         if candidate_policy.never_fits(reservation_demand, total):
             return candidate_policy.CandidateDenial('never_fits_capacity', {
                 'capacity_total': total, 'demand': demand,
                 'reservation_demand': reservation_demand}, scan)
     ''')
-    # Require the reservation binding before the refusal, with no rebinding.
-    binding = None
-    refusal = None
-    for index, statement in enumerate(preparation.body):
-        if _same_ast(statement, expected[0]):
-            binding = index
-        if _same_ast(statement, expected[1]):
-            refusal = index
-            break
-    if binding is None or refusal is None or binding >= refusal:
-        return False
-    if any(isinstance(node, ast.Name) and node.id == 'reservation_demand'
-           and isinstance(node.ctx, ast.Store)
-           for statement in preparation.body[binding + 1:refusal]
-           for node in ast.walk(statement)):
+    # Recognize the whole entry-to-refusal path, not disconnected statements.
+    # Only the inspected field bindings may precede the predicate: an earlier
+    # exit could bypass it, and arbitrary calls or assignments could mutate
+    # either input (including through aliases) without a reservation name store.
+    if (len(preparation.body) < len(expected_prefix)
+            or not all(_same_ast(actual, expected) for actual, expected
+                       in zip(preparation.body, expected_prefix))):
         return False
     expected_denial = _statements('''
         if isinstance(prepared, candidate_policy.CandidateDenial):

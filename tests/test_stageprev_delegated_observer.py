@@ -1,5 +1,45 @@
 """Read-only semantic regressions against the configured publication's helpers."""
+import pytest
+
 from test_stageprev_793_prepare import _run_published_sdk
+
+
+@pytest.mark.parametrize('statement,position', [
+    pytest.param('reservation_demand.clear()', 'after_binding', id='mutated-reservation'),
+    pytest.param('total = {kind: need for kind, need in reservation_demand.items()}',
+                 'after_binding', id='inflated-total'),
+    pytest.param('return scan', 'before_binding', id='unreachable-refusal'),
+    pytest.param('total.clear()', 'entry', id='mutated-total-before-binding'),
+    pytest.param('candidate.demand.reservation.clear()', 'before_binding', id='mutated-alias'),
+    pytest.param('if total: return scan', 'before_refusal', id='conditional-bypass'),
+    pytest.param('reservation_demand.clear()', 'before_refusal', id='late-reservation-mutation'),
+    pytest.param('total = {}', 'before_refusal', id='late-total-rebinding'),
+])
+def test_preparation_refusal_rejects_input_mutations_and_unreachable_code(statement, position):
+    _run_published_sdk(f'''
+        import ast, inspect, textwrap
+        import stageprev_793_claim_contract as contract
+        from prismabuild.pool import candidate_policy
+
+        decision = inspect.getsource(client.PoolQueue._claim_pass)
+        preparation = inspect.getsource(client.PoolQueue._prepare_host_claim)
+        predicate = inspect.getsource(candidate_policy.never_fits)
+        assert contract.delegated_positive_kind_refusal(decision, preparation, predicate)
+        tree = ast.parse(textwrap.dedent(preparation))
+        body = tree.body[0].body
+        binding = next(i for i, node in enumerate(body)
+                       if isinstance(node, ast.Assign)
+                       and any(isinstance(target, ast.Name) and target.id == 'reservation_demand'
+                               for target in node.targets))
+        refusal = next(i for i, node in enumerate(body) if isinstance(node, ast.If))
+        # Whitespace and comments are not policy; changing control/data flow is.
+        assert contract.delegated_positive_kind_refusal(decision, ast.unparse(tree), predicate)
+        positions = dict(entry=0, before_binding=binding, after_binding=binding + 1,
+                         before_refusal=refusal)
+        body.insert(positions[{position!r}], ast.parse({statement!r}).body[0])
+        changed = ast.unparse(tree)
+        assert not contract.delegated_positive_kind_refusal(decision, changed, predicate), {statement!r}
+    ''')
 
 
 def test_delegated_semantics_refuse_broken_predicate_and_denial_paths():
