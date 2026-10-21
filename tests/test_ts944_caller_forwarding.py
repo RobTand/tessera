@@ -20,6 +20,7 @@ import os
 import json
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
 
 import pytest
@@ -53,9 +54,23 @@ def caller_mode(request, monkeypatch):
 
 
 def _run_caller(tmp_path, env):
-    return subprocess.run(
+    """Run the caller. What it keeps on a failed authentication lands in the test's own
+    TMPDIR; the caller's TMPDIR is shared by every run on the box (148 kept files were
+    left in one worker's on 2026-10-20)."""
+    shared = Path(tempfile.gettempdir())
+    before = set(shared.glob("gb-d1-producer-auth.*"))
+    done = subprocess.run(
         ["bash", str(CALLER)],
         env=env, cwd=CHECKOUT, capture_output=True, text=True, timeout=300)
+    left = sorted(set(shared.glob("gb-d1-producer-auth.*")) - before)
+    assert not left, f"the caller left {left} in the shared TMPDIR"
+    return done
+
+
+def _assert_stderr_kept(tmp_path, text):
+    """A failed authentication keeps its stderr on purpose, and the refusal names it."""
+    kept = list((tmp_path / "tmp").glob("gb-d1-producer-auth.*.err"))
+    assert len(kept) == 1 and f"stderr kept at {kept[0]}" in text, text
 
 
 def test_caller_refuses_missing_producer_before_any_work(tmp_path):
@@ -110,6 +125,7 @@ def test_caller_authenticates_before_any_submission(tmp_path):
     assert done.returncode == 2, f"expected refusal, got rc={done.returncode}\n{text}"
     assert "failed producer authentication" in text
     assert "TESSERA_PRODUCER_PYTHON" in text
+    _assert_stderr_kept(tmp_path, text)
 
 
 def test_caller_refuses_real_unqualified_interpreter(tmp_path):
@@ -126,6 +142,7 @@ def test_caller_refuses_real_unqualified_interpreter(tmp_path):
     text = done.stdout + done.stderr
     assert done.returncode == 2, f"expected refusal, got rc={done.returncode}\n{text}"
     assert "TESSERA_PRODUCER_PYTHON" in text or "TESSERA_PRODUCER_SOURCE" in text, text
+    _assert_stderr_kept(tmp_path, text)
 
 
 def test_caller_preserves_selectors_in_all_submissions(tmp_path):
