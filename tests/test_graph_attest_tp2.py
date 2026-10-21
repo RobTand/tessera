@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import os
 import pathlib
 import shlex
 import subprocess
@@ -256,6 +257,41 @@ def test_a_tensor_parallel_arm_needs_every_ranks_dispatch_log(tmp_path, files, t
     else:
         with pytest.raises(SystemExit, match="cannot show it replayed"):
             tool.require_every_rank(tmp_path, "aGR", tp)
+
+
+def _eq_pass(arm_dir, name):
+    """One equality pass as the arm writes it: a paused-admission summary and its one case."""
+    (arm_dir / f"{name}.eq.summary.json").write_text(json.dumps({"_admission": "paused", "b1_len1": {}}))
+    choice = {"prompt_token_ids": [1], "token_ids": [2], "logprobs": {"top_logprobs": [{"2": -0.5}]}}
+    (arm_dir / f"{name}.eq.b1_len1.json").write_text(json.dumps({"choices": [choice]}))
+
+
+@pytest.mark.parametrize("graph_logged, code, said", [
+    (True, 0, "verdict: equal"),
+    (False, 1, "cannot show it replayed"),                    # refused while the passes are read
+])
+def test_a_receipt_run_leaves_nothing_in_its_tmpdir(tmp_path, model, graph_logged, code, said):
+    """eq-member reads one directory, so receipt.py joins the arms' passes into one. That
+    view is read only while the arm records are built; nothing outlives the run, receipt
+    or refusal (3,645 views were left in one worker's TMPDIR on 2026-10-20)."""
+    receipts, tmp = tmp_path / "receipts", tmp_path / "tmp"
+    receipts.mkdir()
+    tmp.mkdir()
+    e1, g1 = _arm_dir(receipts, "e1", model=model), _arm_dir(receipts, "g1", model=model)
+    _dispatch(e1 / "e1.dispatch.1.json", replays_long=1)
+    if graph_logged:
+        _dispatch(g1 / "g1.dispatch.2.json", replays_long=1)
+    _eq_pass(e1, "e1")
+    _eq_pass(g1, "g1")
+    _eq_pass(g1, "g1-r2")
+    manifest = tmp_path / "manifest.json"
+    manifest.write_text("{}")
+    done = subprocess.run(
+        [sys.executable, str(ROOT / "experiments" / "graph_attest_702" / "receipt.py"), str(receipts),
+         str(manifest), str(tmp_path / "receipt.json"), "--eager", "e1", "--graph", "g1"],
+        env={**os.environ, "TMPDIR": str(tmp)}, capture_output=True, text=True, timeout=120)
+    assert done.returncode == code and said in done.stdout + done.stderr, done.stdout + done.stderr
+    assert sorted(p.name for p in tmp.iterdir()) == []
 
 
 # ------------------------------------------------------------------ v2: the fabric
