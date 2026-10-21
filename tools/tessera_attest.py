@@ -183,6 +183,108 @@ REQUIRED_CODE_PATH_STEPS = (
 )
 REQUIRED_DEVICE_PERF_STEPS = (STEP_SERVE_MODES, STEP_DECODE_TOK_S, STEP_PREFILL_TOK_S)
 
+# Consumer vocabulary pinned to the emitter's actual roles by the source audit.
+# Do not import the emitter here: reading evidence must not require vLLM.
+NATIVE_DECODER = "native_mg_mask_skip"
+STOCK_DECODER = "stock"
+NATIVE_SYMBOL = "tessera_mla_prefill_mg_l0"
+STOCK_SYMBOL = "stock"
+NATIVE_SCHEDULE = "mg_mask_skip_pass_buffers"
+STOCK_SCHEDULE = "stock_mg"
+MASK_SKIP_KIND = "attention_backend"
+MASK_SKIP_POLICY = "mla_mask_skip_eager_dispatch"
+MASK_SKIP_CONTRACT = "stock_kernel_overrides"
+MASK_SKIP_TRACE_SCHEMA = "tessera.route_trace/1"
+
+
+def audit_mla_mask_skip_traces(paths, world_size) -> dict:
+    """Read per-rank eager histograms and return a fail-closed JSON verdict.
+
+    Acceptance proves native dispatch and stock fallback presence only. Stock
+    fallback can be refused prefill: counts do not prove decode execution,
+    successful stock completion, CUDA correctness, performance or qualification.
+    Schedules are source-pinned vocabulary, not fields in these histograms.
+    """
+    problems = []
+    if type(world_size) is not int or world_size <= 0:
+        return {"ok": False, "problems": ["world_size must be a positive integer"]}
+    try:
+        paths = list(paths)
+    except TypeError:
+        return {"ok": False, "problems": ["paths must be an iterable of trace paths"]}
+
+    ranks = set()
+    symbols = {NATIVE_DECODER: NATIVE_SYMBOL, STOCK_DECODER: STOCK_SYMBOL}
+    for path in paths:
+        label = str(path)
+        try:
+            with open(path, encoding="utf-8") as handle:
+                document = json.load(handle)
+        except (OSError, ValueError, TypeError, RecursionError) as exc:
+            problems.append(f"{label}: cannot read trace: {exc}")
+            continue
+        if not isinstance(document, dict):
+            problems.append(f"{label}: trace must be a JSON object")
+            continue
+        if document.get("schema") != MASK_SKIP_TRACE_SCHEMA:
+            problems.append(f"{label}: foreign or missing trace schema")
+        rank = document.get("rank")
+        if type(rank) is not int or not 0 <= rank < world_size:
+            problems.append(f"{label}: rank must be an integer in [0, {world_size})")
+        elif rank in ranks:
+            problems.append(f"{label}: duplicate rank {rank}")
+        else:
+            ranks.add(rank)
+        world = document.get("world_size")
+        if type(world) is not int or world != world_size:
+            problems.append(f"{label}: world_size does not match {world_size}")
+        if "rank_conflict" not in document or document["rank_conflict"] is not None:
+            problems.append(f"{label}: rank conflict or unspecified conflict status")
+        coverage = document.get("dispatch_coverage")
+        if not isinstance(coverage, dict):
+            coverage = {}
+        for field, expected in (("python_dispatches_counted", True),
+                                ("torch_compile_tracing_counted", False),
+                                ("cuda_graph_replays_counted", False)):
+            if coverage.get(field) is not expected:
+                problems.append(f"{label}: {field} must be {expected} for eager evidence")
+
+        entries = document.get("entries")
+        if not isinstance(entries, list):
+            problems.append(f"{label}: entries must be a histogram list")
+            continue
+        launches = {NATIVE_DECODER: 0, STOCK_DECODER: 0}
+        for index, entry in enumerate(entries):
+            location = f"{label}: entry {index}"
+            if not isinstance(entry, dict):
+                problems.append(f"{location}: histogram entry must be an object")
+                continue
+            if entry.get("policy") != MASK_SKIP_POLICY:
+                continue
+            decoder = entry.get("decoder")
+            if not isinstance(decoder, str) or decoder not in symbols:
+                problems.append(f"{location}: unknown audited decoder {decoder!r}")
+                continue
+            if (entry.get("kind") != MASK_SKIP_KIND
+                    or entry.get("contract") != MASK_SKIP_CONTRACT
+                    or entry.get("symbol") != symbols[decoder]):
+                problems.append(f"{location}: mismatched kind, contract or symbol for {decoder}")
+                continue
+            count = entry.get("launches")
+            if type(count) is not int or count < 0:
+                problems.append(f"{location}: launches must be a nonnegative integer")
+                continue
+            launches[decoder] += count
+        for decoder, count in launches.items():
+            if count <= 0:
+                problems.append(f"{label}: missing positive {decoder} launches")
+
+    # Valid in-range unique identities plus this cardinality imply completeness.
+    if len(ranks) != world_size:
+        problems.append(f"expected {world_size} distinct ranks, found {len(ranks)}")
+    return {"ok": not problems, "problems": problems}
+
+
 # --- identity, scope, qualification: pure, and testable with a stub --------
 
 #: Identity is #452's, not this harness's.  ``tessera.serving.backend`` is
@@ -805,7 +907,11 @@ def build_receipt(*, identity: dict, steps: dict, power: dict, reference: dict,
 
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
-    ap.add_argument("--out", required=True, help="where to write the JSON receipt")
+    ap.add_argument("--mask-skip-traces", nargs="+", metavar="PATH",
+                    help="audit per-rank eager MLA dispatch histograms (not qualification)")
+    ap.add_argument("--world-size", type=int, default=None,
+                    help="expected number of ranks for --mask-skip-traces")
+    ap.add_argument("--out", help="where to write the JSON receipt")
     ap.add_argument("--expect-platform", default=None,
                     help="refuse before doing anything unless the device reads as this token")
     ap.add_argument("--claim-platform", default=None,
@@ -831,6 +937,13 @@ def main(argv=None) -> int:
     ap.add_argument("--power-interval", type=float, default=1.0)
     ap.add_argument("--no-power", action="store_true", help="do not sample package power at all")
     args = ap.parse_args(argv)
+
+    if args.mask_skip_traces is not None:
+        verdict = audit_mla_mask_skip_traces(args.mask_skip_traces, args.world_size)
+        print(json.dumps(verdict, sort_keys=True))
+        return 0 if verdict["ok"] else 1
+    if args.out is None:
+        ap.error("the following arguments are required: --out")
 
     identity = probe_identity()
     measured = identity.get("platform")
