@@ -12,6 +12,7 @@ the verdict are ``tessera.graph_receipt``'s. Exit 0 iff ``equal``.
 from __future__ import annotations
 
 import argparse
+import contextlib
 import hashlib
 import importlib.util
 import json
@@ -21,6 +22,7 @@ import shlex
 import sys
 import tempfile
 from collections import defaultdict
+from collections.abc import Iterator
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "src"))
@@ -80,15 +82,17 @@ def graph_record(arm_dir: pathlib.Path, arm: str) -> dict:
     return {"managers": managers, "classes": classes}
 
 
-def flat_dir(receipts: pathlib.Path, arms: list[str]) -> pathlib.Path:
-    """eq-member reads one directory; link every named arm's files into one."""
-    flat = pathlib.Path(tempfile.mkdtemp(prefix="ga702-flat-"))
-    for arm in arms:
-        for path in (receipts / arm).iterdir():
-            target = flat / path.name
-            if not target.exists():
-                target.symlink_to(path)
-    return flat
+@contextlib.contextmanager
+def flat_dir(receipts: pathlib.Path, arms: list[str]) -> Iterator[pathlib.Path]:
+    """eq-member reads one directory; link every named arm's files into one, removed on exit."""
+    with tempfile.TemporaryDirectory(prefix="ga702-flat-") as tmp:
+        flat = pathlib.Path(tmp)
+        for arm in arms:
+            for path in (receipts / arm).iterdir():
+                target = flat / path.name
+                if not target.exists():
+                    target.symlink_to(path)
+        yield flat
 
 
 def passes(flat: pathlib.Path, names: list[str], pool: list[str]) -> list[dict]:
@@ -275,11 +279,11 @@ def main() -> int:
     a = ap.parse_args()
     manifest = json.loads(a.manifest.read_text())
     eager, graph = a.eager.split(","), a.graph.split(",")
-    flat = flat_dir(a.receipts, eager + graph)
     legacy = json.loads(a.legacy_script_provenance.read_text()) if a.legacy_script_provenance else {}
-    pool_records = [arm_record(a.receipts, manifest, flat, e, [p for p in eager if p != e], legacy)
-                    for e in eager]
-    arms = [arm_record(a.receipts, manifest, flat, g, eager, legacy) for g in graph]
+    with flat_dir(a.receipts, eager + graph) as flat:
+        pool_records = [arm_record(a.receipts, manifest, flat, e, [p for p in eager if p != e], legacy)
+                        for e in eager]
+        arms = [arm_record(a.receipts, manifest, flat, g, eager, legacy) for g in graph]
     scope = one_measurement({name: arm_scope(a.receipts / name, name, legacy)
                              for name in eager + graph})
     if a.image is not None and a.image != scope["image"]:
