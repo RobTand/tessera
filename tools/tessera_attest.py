@@ -228,6 +228,13 @@ def audit_mla_mask_skip_traces(paths, world_size) -> dict:
             continue
         if document.get("schema") != MASK_SKIP_TRACE_SCHEMA:
             problems.append(f"{label}: foreign or missing trace schema")
+        # telemetry.py versions identity separately from the histogram schema.
+        # Preserve legacy unstamped traces, but never interpret an explicitly
+        # unsupported identity version as v1 rank/world semantics.
+        identity_version = document.get("identity_version", 1)
+        if type(identity_version) is not int or identity_version != 1:
+            problems.append(f"{label}: unsupported identity_version {identity_version!r}")
+            continue
         rank = document.get("rank")
         if type(rank) is not int or not 0 <= rank < world_size:
             problems.append(f"{label}: rank must be an integer in [0, {world_size})")
