@@ -42,6 +42,8 @@ def _caller_env(tmp_path, **over):
     env["PRODUCER_AUTHORITY"] = str(authority)
     env["PART_IMAGE"] = IMAGE
     env["CENSUS_ROOT"] = str(tmp_path / "census")
+    env["TMPDIR"] = str(tmp_path / "tmp")
+    (tmp_path / "tmp").mkdir(exist_ok=True)
     env["SUBMIT"] = "0"
     env["PRISMAQUANT_DEV_MODE"] = os.environ["PRISMAQUANT_DEV_MODE"]
     env.update({k: str(v) for k, v in over.items()})
