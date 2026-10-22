@@ -784,18 +784,25 @@ if _GA_DISPATCH_LOG:
     def _ga_capture_wrapper(original):
         def capture(self, *args, **kwargs):
             _ga_process()
-            key, owner = _ga_owner(self)
-            depth = _GA["depth"].get(key, 0)
+            with _GA["lock"]:
+                key, owner = _ga_owner(self)
+                depth = _GA["depth"].get(key, 0)
+                if depth == 0:
+                    # Replace, rather than mutate, the generation: an in-flight
+                    # old replay cannot add its return to this new capture.
+                    owner = dict(capture_complete=False, capture_error=None, captured=[],
+                                 replays=[], replay_failures=[])
+                    _GA["owner_evidence"][key] = owner
+                    _GA["captured"][key] = []
+                    _GA["dirty"] = True
+                _GA["depth"][key] = depth + 1
             if depth == 0:
-                owner.update(capture_complete=False, capture_error=None, captured=[],
-                             replays=[], replay_failures=[])
                 # Publish invalidation before capture work can fail or be interrupted.
-                _GA["dirty"] = True
                 try:
                     _ga_flush(force=True)
                 except Exception:
-                    _GA["dirty"] = True
-            _GA["depth"][key] = depth + 1
+                    pass  # _ga_flush retains dirty state for a later retry
+            completed = False
             try:
                 out = original(self, *args, **kwargs)
                 gg = _ga_sys.modules.get("tessera.serving.glm53_graphs")
@@ -803,32 +810,36 @@ if _GA_DISPATCH_LOG:
                 # Read the actual keys, never extrapolate a size-by-class product.
                 inventory = getattr(self, "_tessera_graphs_by_bound", None)
                 graphs = inventory.items() if inventory and bound is None else [(bound, self.graphs)]
-                for applied, captured in graphs:
-                    for desc in captured:
-                        record = _ga_descriptor(desc, applied)
+                records = [_ga_descriptor(desc, applied)
+                           for applied, captured in graphs for desc in captured]
+                with _GA["lock"]:
+                    for record in records:
                         if record not in owner["captured"]:
                             owner["captured"].append(record)
-                if not getattr(self, "_graphs_captured", False):
-                    owner["capture_error"] = owner["capture_error"] or "capture incomplete"
-                if depth == 0:
-                    owner["capture_complete"] = owner["capture_error"] is None
+                    if not getattr(self, "_graphs_captured", False):
+                        owner["capture_error"] = owner["capture_error"] or "capture incomplete"
+                    completed = True
                 return out  # None is a successful return too.
             except BaseException as exc:
-                owner["capture_complete"] = False
-                owner["capture_error"] = repr(exc)
+                with _GA["lock"]:
+                    owner["capture_complete"] = False
+                    owner["capture_error"] = repr(exc)
                 raise
             finally:
-                _GA["depth"][key] -= 1
+                with _GA["lock"]:
+                    _GA["depth"][key] -= 1
+                    if depth == 0:
+                        # self.graphs points at only the final bound after split
+                        # capture. This diagnostic is the actual inventory's token
+                        # marginal, not the final bound's or a Cartesian guess.
+                        _GA["captured"][key] = sorted({d["tokens"] for d in owner["captured"]})
+                        owner["capture_complete"] = completed and owner["capture_error"] is None
+                        _GA["dirty"] = True
                 if depth == 0:
-                    try:
-                        _GA["captured"][key] = self.captured_token_counts()
-                    except Exception as exc:
-                        _GA["captured"][key] = f"unreadable: {exc!r}"
-                    _GA["dirty"] = True
                     try:
                         _ga_flush(force=True)
                     except Exception:  # logging must not replace a capture outcome
-                        _GA["dirty"] = True
+                        pass
         # Serving's outer per-bound transaction composes the same observer.
         capture._ga_capture_wrapper = _ga_capture_wrapper
         return capture
@@ -838,7 +849,8 @@ if _GA_DISPATCH_LOG:
             _ga_process()
             if not getattr(_GA["serving"], "on", False):
                 return original(self, desc, *args, **kwargs)
-            _, owner = _ga_owner(self)
+            with _GA["lock"]:
+                _, owner = _ga_owner(self)
             bound = None
             for applied, graphs in (getattr(self, "_tessera_graphs_by_bound", None) or {}).items():
                 if self.graphs is graphs:
@@ -855,41 +867,51 @@ if _GA_DISPATCH_LOG:
                 records = owner["replays"]
                 return out
             finally:
-                for item in records:
-                    if all(item.get(k) == v for k, v in record.items()):
-                        item["count"] += 1
-                        break
-                else:
-                    records.append(dict(record, count=1))
-                _GA["dirty"] = True
+                with _GA["lock"]:
+                    for item in records:
+                        if all(item.get(k) == v for k, v in record.items()):
+                            item["count"] += 1
+                            break
+                    else:
+                        records.append(dict(record, count=1))
+                    _GA["dirty"] = True
         return run_fullgraph
 
     def _ga_flush(force=False):
         _ga_process()
-        now = _ga_time.monotonic()
-        if not force and now - _GA["last"] < 1.0:
-            return
-        _GA["last"] = now
-        with _GA["lock"]:
-            rec = {"pid": os.getpid(), "captured": dict(_GA["captured"]),
-                   "counts": dict(_GA["counts"]),
-                   "owner_evidence": _ga_json.loads(_ga_json.dumps(_GA["owner_evidence"]))}
-            _GA["dirty"] = False
-        # tessera#702: Tessera's per-max_seq_len-class capture, when installed.
-        gg = _ga_sys.modules.get("tessera.serving.glm53_graphs")
-        if gg is not None:
-            rec["tessera_classes"] = {
-                "captured": {m: {str(b): n for b, n in by.items()} for m, by in gg.CAPTURED.items()},
-                "replays": {f"{m}|{b}": n for (m, b), n in gg.REPLAYS.items()}}
-        path = f"{_GA_DISPATCH_LOG}.{os.getpid()}.json"
-        # The dispatch path and the flusher thread both write: one writer at a time, each
-        # with its own temporary, or one's rename can find the other's file gone (tessera#702
-        # rG2, 2026-10-04: FileNotFoundError inside execute_model killed the engine).
-        tmp = f"{path}.{_ga_threading.get_ident()}.tmp"
+        # Snapshot and atomic publication are ONE writer transaction. Taking
+        # the snapshot before this lock lets a delayed older writer overwrite
+        # a recapture's already-published invalidation with qualifying history.
         with _GA["write_lock"]:
-            with open(tmp, "w") as fh:
-                _ga_json.dump(rec, fh, indent=0, sort_keys=True)
-            os.replace(tmp, path)
+            now = _ga_time.monotonic()
+            with _GA["lock"]:
+                if not force and now - _GA["last"] < 1.0:
+                    return
+                _GA["last"] = now
+                rec = {"pid": os.getpid(), "captured": dict(_GA["captured"]),
+                       "counts": dict(_GA["counts"]),
+                       "owner_evidence": _ga_json.loads(_ga_json.dumps(_GA["owner_evidence"]))}
+                _GA["dirty"] = False
+            try:
+                # Do not nest the serving and observer state locks. Both are
+                # released before I/O, so accounting can continue during a write.
+                gg = _ga_sys.modules.get("tessera.serving.glm53_graphs")
+                if gg is not None:
+                    with gg._LOCK:
+                        rec["tessera_classes"] = {
+                            "captured": {m: {str(b): n for b, n in by.items()}
+                                         for m, by in gg.CAPTURED.items()},
+                            "replays": {f"{m}|{b}": n for (m, b), n in gg.REPLAYS.items()}}
+                path = f"{_GA_DISPATCH_LOG}.{os.getpid()}.json"
+                # Thread-local temporary + atomic replace preserve byte integrity.
+                tmp = f"{path}.{_ga_threading.get_ident()}.tmp"
+                with open(tmp, "w") as fh:
+                    _ga_json.dump(rec, fh, indent=0, sort_keys=True)
+                os.replace(tmp, path)
+            except Exception:
+                with _GA["lock"]:
+                    _GA["dirty"] = True
+                raise
 
     def _ga_patch_cudagraph(module):
         cls = module.CudaGraphManager
@@ -962,8 +984,14 @@ if _GA_DISPATCH_LOG:
         while True:
             _ga_time.sleep(1.0)
             gg = _ga_sys.modules.get("tessera.serving.glm53_graphs")
-            replays = sum(gg.REPLAYS.values()) if gg is not None else 0
-            if _GA["dirty"] or replays != seen:
+            if gg is not None:
+                with gg._LOCK:
+                    replays = sum(gg.REPLAYS.values())
+            else:
+                replays = 0
+            with _GA["lock"]:
+                dirty = _GA["dirty"]
+            if dirty or replays != seen:
                 seen = replays
                 try:
                     _ga_flush(force=True)

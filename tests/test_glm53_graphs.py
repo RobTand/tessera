@@ -376,3 +376,186 @@ def test_breakable_piecewise_graphs_are_an_eager_gap():
 
 def test_an_unpadded_eager_operator_serve_has_no_gap():
     assert gg.eager_gaps(_config(custom_ops=["all"], priority=EAGER_PRIORITY), breakable=False) == []
+
+
+# ------------------------------------------------------------------ observer publication
+
+_OWNER_REPAIR_SETUP = r'''
+import importlib.util
+import json
+import os
+from pathlib import Path
+import sys
+import threading
+from types import SimpleNamespace as NS
+from tessera.graph_receipt import replay_refusal
+
+hook, scratch = Path(sys.argv[1]), Path(sys.argv[2])
+sys.path.insert(0, str(scratch))
+spec = importlib.util.spec_from_file_location("owner_repair_probe", hook)
+observer = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(observer)
+# Keep the real daemon enabled. Competing writers below use the same flush path
+# with an event-controlled schedule, not a sleep-dependent stress test.
+from vllm.v1.worker.gpu.cudagraph_utils import ModelCudaGraphManager, Descriptor
+from vllm.v1.worker.gpu.model_runner import GPUModelRunner
+manager, runner = ModelCudaGraphManager(), GPUModelRunner()
+owner = f"ModelCudaGraphManager@{id(manager):x}"
+path = Path(f"{os.environ['GA_DISPATCH_LOG']}.{os.getpid()}.json")
+def read():
+    return json.loads(path.read_text())
+def refusal(record):
+    return replay_refusal({"dispatches": {f"graph.dispatch.{record['pid']}.json": record}}, "graph", 1)
+'''
+
+
+def _owner_repair_probe(tmp_path, script, *, manager_source=None):
+    """Reuse CPU stand-in definitions, never replace the real hook accounting."""
+    import json
+    from pathlib import Path
+    import subprocess
+    import sys
+    from child_env import child_env
+    from test_graph_owner_hooks import MANAGER, RUNNER, HOOK
+
+    package = tmp_path / "vllm/v1/worker/gpu"
+    package.mkdir(parents=True)
+    for directory in (package, package.parent, package.parent.parent,
+                      package.parent.parent.parent):
+        (directory / "__init__.py").write_text("")
+    (package / "cudagraph_utils.py").write_text(manager_source or MANAGER)
+    (package / "model_runner.py").write_text(RUNNER)
+    result = subprocess.run(
+        [sys.executable, "-c", _OWNER_REPAIR_SETUP + script, str(HOOK), str(tmp_path)],
+        env=child_env(GA_DISPATCH_LOG=str(tmp_path / "dispatch"), T508_DIGEST="",
+                      T508_CAPTURE_LOG="", T508_PROF_DIR="", T508_MOE_DETERMINISTIC="",
+                      T695_GC_BEFORE_DRAFTER="", T695_DRAFT_LOG=""),
+        capture_output=True, text=True, timeout=30)
+    assert result.returncode == 0, result.stdout + result.stderr
+    return json.loads(next(line.removeprefix("RECORD=") for line in result.stdout.splitlines()
+                           if line.startswith("RECORD=")))
+
+
+def test_owner_recapture_invalidation_cannot_be_overwritten_by_delayed_writer(tmp_path):
+    from test_graph_owner_hooks import MANAGER
+    source = MANAGER.replace("        import sys\n", """        if hasattr(self, "recapture_entered"):
+            self.recapture_entered.set()
+            assert self.finish_recapture.wait(10), "recapture release timed out"
+            raise ValueError("recapture-sentinel")
+        import sys
+""")
+    _owner_repair_probe(tmp_path, r'''
+manager.capture()
+for tokens in (1, 2):
+    runner.execute_model(manager, Descriptor(tokens))
+observer._ga_flush(force=True)
+assert refusal(read()) is None
+
+paused, release = threading.Event(), threading.Event()
+class GatedWriter:
+    def __init__(self, lock):
+        self.lock = lock
+    def __enter__(self):
+        if threading.current_thread().name == "delayed-flush":
+            paused.set()
+            assert release.wait(10), "writer release timed out"
+        self.lock.acquire()
+    def __exit__(self, *args):
+        self.lock.release()
+observer._GA["write_lock"] = GatedWriter(observer._GA["write_lock"])
+errors = []
+def delayed_flush():
+    try:
+        observer._ga_flush(force=True)
+    except BaseException as exc:
+        errors.append(repr(exc))
+def recapture():
+    try:
+        manager.capture()
+    except ValueError as exc:
+        if str(exc) != "recapture-sentinel":
+            errors.append(repr(exc))
+    except BaseException as exc:
+        errors.append(repr(exc))
+    else:
+        errors.append("recapture exception swallowed")
+manager.recapture_entered = threading.Event()
+manager.finish_recapture = threading.Event()
+writer = threading.Thread(target=delayed_flush, name="delayed-flush")
+capture = threading.Thread(target=recapture)
+writer.start()
+try:
+    assert paused.wait(10), "writer did not reach publication gate"
+    capture.start()
+    assert manager.recapture_entered.wait(10), "invalidation did not reach original capture"
+    assert read()["owner_evidence"][owner]["capture_complete"] is False
+    release.set()
+    writer.join(10)
+    assert not writer.is_alive() and not errors, errors
+    current = read()
+    why = refusal(current)
+    print("during incomplete recapture: published capture_complete=",
+          current["owner_evidence"][owner]["capture_complete"], "shared refusal=", why)
+    assert current["owner_evidence"][owner]["capture_complete"] is False
+    assert current["owner_evidence"][owner]["replays"] == []
+    assert why, "incomplete recapture regained qualifying replay credit"
+finally:
+    release.set()
+    manager.finish_recapture.set()
+    writer.join(10)
+    if capture.ident is not None:
+        capture.join(10)
+assert not capture.is_alive() and not errors, errors
+observer._ga_flush(force=True)
+record = read()
+assert "recapture-sentinel" in record["owner_evidence"][owner]["capture_error"]
+assert refusal(record)
+print("RECORD=" + json.dumps(record))
+''', manager_source=source)
+
+
+def test_owner_noncartesian_token_inventory_survives_producer_verify(tmp_path):
+    from test_graph_owner_hooks import MANAGER
+    from test_graph_replay_coverage import Measurement
+    import json
+
+    source = MANAGER.replace(
+        "self.graphs = {Descriptor(1): object(), Descriptor(2): object()}",
+        "self.graphs = {Descriptor(1 if gg._STATE.capture_bound == 192 else 2): object()}")
+    record = _owner_repair_probe(tmp_path / "hooks", r'''
+from tessera.serving import glm53_graphs as gg
+import vllm.v1.worker.gpu.cudagraph_utils as utils
+bounds = (192, 640, 8448)
+gg._STATE = NS(installed=True, bounds=bounds, capture_bound=None,
+               bound_applied=False, step_max_seq_len=None)
+gg._patch_managers(utils, (ModelCudaGraphManager,))
+manager.result = None  # Both layered capture and replay may return None successfully.
+assert manager.capture(NS(modules=lambda: [])) is None
+for bound, graphs in manager._tessera_graphs_by_bound.items():
+    gg._STATE.step_max_seq_len = bound
+    for desc in graphs:
+        assert runner.execute_model(manager, desc) is None
+observer._ga_flush(force=True)
+record = read()
+evidence = record["owner_evidence"][owner]
+assert {(d["tokens"], d["max_seq_len"]) for d in evidence["captured"]} == {
+    (1, 192), (2, 640), (2, 8448)}
+assert len(evidence["replays"]) == 3
+assert record["captured"][owner] == [1, 2], record
+assert refusal(record) is None, refusal(record)
+print("RECORD=" + json.dumps(record))
+''', manager_source=source)
+    measurement_root = tmp_path / "measurement"
+    measurement_root.mkdir()
+    measurement = Measurement(measurement_root, tp=1)
+    measurement.path().unlink()
+    path = measurement.graph_dir / measurement.basename(pid=record["pid"])
+    path.write_text(json.dumps(record))
+    measurement.valid()
+    measurement.require_retention()
+    evidence, = record["owner_evidence"].values()
+    replays = list(evidence["replays"])
+    for replay in replays:
+        evidence["replays"] = [d for d in replays if d != replay]
+        path.write_text(json.dumps(record))
+        measurement.refused()  # Each actual tuple matters; uncaptured cross-products do not.
