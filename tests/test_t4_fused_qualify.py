@@ -251,14 +251,21 @@ def test_prepare_inputs_declares_exact_ranges(tmp_path):
     args = qual.build_parser().parse_args(["--mode", "prepare-inputs", "--out", str(tmp_path / "prepared"),
                                          "--model-root", str(model), "--source-keys", key])
     result = qual.prepare_inputs(args)
-    manifest = json.loads(Path(result["data_manifest"]).read_text())
+    from prismabuild.client import manifest_read_entries, read_data_manifest
+
+    manifest, _encoding = read_data_manifest(result["data_manifest"])
+    entries = manifest_read_entries(manifest)
+    # This producer uses a v1 list-order timeline starting at zero. Public
+    # parsing alone does not validate its annotation phase coverage.
+    assert manifest["schema"] == "prismaquant.prismabuild.data_manifest.v1"
+    assert entries == manifest["entries"]
+    end_bytes = sum(entry["bytes"] for entry in entries)
+    assert end_bytes == manifest["total_bytes"]
+    assert manifest["annotations"]["phases"] == [
+        {"name": "full-units", "cumulative_bytes": end_bytes}]
     unit = result["units"][0]
-    from prismabuild.storage_tiers import manifest_phase_ranges
-    ranges = manifest_phase_ranges(manifest)
-    assert ranges[0]["start_bytes"] == 0
-    assert ranges[-1]["end_bytes"] == manifest["total_bytes"]
     assert unit["bytes"] == 32 * 256 * 4
-    declared = [e for e in manifest["entries"] if e["path"] == unit["path"] and e["offset"] == unit["offset"]]
+    declared = [e for e in entries if e["path"] == unit["path"] and e["offset"] == unit["offset"]]
     assert len(declared) == 1 and declared[0]["bytes"] == unit["bytes"]
 
 
