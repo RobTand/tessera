@@ -2246,8 +2246,12 @@ def test_only_the_silent_directory_read_is_listed(tmp_path, reader, why):
 # the accepted unnamed-base limit. A new read must name its base or raise
 # both relevant limits here with its reason (PB1496).
 # The endpoint producer consumes the loader's file list and adds no directory read.
-_UNNAMED_DIRECTORY_READ_MODULES = 114
-_UNNAMED_DIRECTORY_READ_SITES = 168
+# graph_equality.load_arm adds one class-2 runtime-parameter site: directory.iterdir()
+# enumerates caller-supplied receipt evidence to reject extra as well as missing raw
+# cases. It has no fixed repository base; keep it reported, not guessed or hidden.
+# docs/reports/unnamed-directory-reads-1014.md records this justified increment.
+_UNNAMED_DIRECTORY_READ_MODULES = 115
+_UNNAMED_DIRECTORY_READ_SITES = 169
 
 
 def _exceeds_unnamed_directory_read_ceiling(modules: int, sites: int) -> bool:

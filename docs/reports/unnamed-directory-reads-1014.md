@@ -22,6 +22,24 @@ An imported module's `__file__` is a runtime value, not proof of this checkout's
 External dependency packages have class 3 when the source identifies the external package.
 Temporary fixture helpers have class 4 when their callers supply `tmp_path` or a fixture derived from it.
 
+## Equality receipt runtime input (post-baseline addition)
+
+The complete-population repair adds one class 2 site at
+`src/tessera/graph_equality.py:124`: `directory.iterdir()` in
+`load_arm(directory, arm)`. The base is a runtime parameter supplied by the
+receipt producer's `--receipts` input (via its flattened evidence directory),
+or by a direct caller. It is not a fixed checkout directory. Enumeration is
+necessary to reject extra or substituted raw cases, not only absent expected
+files. Reading just the expected filenames would weaken that gate.
+
+Keep this site visible under `unnamed_directory_reads`; do not invent a static
+base, suppress it, or broaden the resolver. The existing runtime-base policy
+allows this justified one-module/one-site increment, from the corrected
+114-module/168-site census to ceilings of 115 modules and 169 sites. The original
+baseline table below is unchanged. Regression and action/source evidence for the
+release-gate repair is retained in
+[the equality-population receipt](../measurements/issue1258-complete-populations.md).
+
 ## Site classification
 
 | Path | Line | Class | Source evidence |
