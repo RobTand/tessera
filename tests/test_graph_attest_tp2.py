@@ -95,12 +95,20 @@ def _receipt_tool():
 
 
 def _dispatch(path, *, replays_long):
+    captured = [{"mode": "FULL", "tokens": n, "num_reqs": n // 2, "max_seq_len": bound}
+                for n in (2, 4, 6, 8) for bound in (2048, 8448)]
     path.write_text(json.dumps({
+        "pid": int(path.name.split(".")[-2]),
         "captured": {"ModelCudaGraphManager@1": [2, 4, 6, 8]},
         "counts": {f"ModelCudaGraphManager|FULL|tokens={n}|reqs={n // 2}": 3 for n in (2, 4, 6, 8)},
         "tessera_classes": {"captured": {"ModelCudaGraphManager": {"2048": 4, "8448": 4}},
                             "replays": {"ModelCudaGraphManager|2048": 40,
-                                        "ModelCudaGraphManager|8448": replays_long}}}))
+                                        "ModelCudaGraphManager|8448": replays_long}},
+        "owner_evidence": {"ModelCudaGraphManager@1": {
+            "capture_complete": True, "capture_error": None, "captured": captured,
+            "replays": [{**d, "count": replays_long if d["max_seq_len"] == 8448 else 1}
+                        for d in captured]}},
+    }))
 
 
 def test_each_rank_must_replay_what_it_captured(tmp_path):

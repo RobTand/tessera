@@ -9429,8 +9429,9 @@ at `max_model_len <= index_topk`, need no class split.
 serve)`. It sits outside `tessera.serving` so a producer (PrismaQuant's
 ship-card check) can import it without the serving plugin. An arm is equal
 when every choice of both passes of the tessera#508 equality set is
-bit-identical to some eager run of the same batch, and every captured size
-and class replayed. `verify` re-applies the rule and matches the serve's
+bit-identical to some eager run of the same batch, and **owner-local,
+descriptor-exact successful-return coverage** holds for every actual captured
+FULL descriptor on every required rank and every retained process/owner. `verify` re-applies the rule and matches the serve's
 image, model config digest, Tessera source digest, compilation config,
 speculative tokens, `max_model_len`, `max_num_seqs`, TP size and fabric
 exactly; nothing is extrapolated. The fabric (v2, CEO decision
@@ -9467,6 +9468,47 @@ replace artifact byte-integrity checks or add an identity seal; runtime pins,
 serving defaults and fabric comparability remain unchanged. It does not expand
 the batch/decode evidence boundary.
 
+The additive W2/W3 wire contract retains historical `pid`, `captured`, `counts`
+and optional `tessera_classes` diagnostics. They are not successful replay proof.
+Each dispatch adds `owner_evidence`, keyed by the full process-local
+`<ManagerClass>@<instance-hex>` owner. Each owner records boolean
+`capture_complete`, nullable `capture_error`, a nonempty `captured` descriptor
+list, and `replays` descriptors with successful-return `count`. Descriptors are
+`mode`, `tokens`, `num_reqs`, `max_seq_len`: FULL mode, positive integral token
+and request dimensions, and either null for unsplit capture or the actual
+positive applied capture bound. Optional `replay_failures` retains descriptor,
+error and count independently of successful returns. Counters must be
+nonnegative integers, not booleans, strings, fractions, NaN or infinities;
+unused diagnostic and replay entries are validated too.
+
+`graph.dispatches` retains complete parsed dispatch records keyed by their
+original basename. Configured arm/rank prefixes associate records to ranks;
+keys and filenames are bookkeeping, not identity seals. Every required rank
+must supply valid nonempty content, and each retained process and owner must
+qualify independently. Neither another manager/process nor positive size and
+class marginals may discharge a missing tuple. Actual inventories are
+authoritative, including non-Cartesian inventories: the gate does not invent
+a size-by-bound cross-product. Both producer and direct consumers use
+`tessera.graph_receipt`; edited verdicts do not bypass it. Receipt v2 remains
+the outer schema, but old counter-only receipts are insufficient and refuse;
+they cannot be upgraded by relabeling dispatch totals as successful returns.
+
+Dispatch selection earns no successful-return credit. Only return from the
+underlying replay call earns credit, preserving return values (including None)
+and exceptions. A new capture invalidates earlier inventory and replay credit;
+a failed/incomplete recapture cannot inherit qualifying success. Layered base,
+model and per-bound capture observation must not double-account or mistake a
+successful None return for failure. Forked children reset inherited accounting
+before their first event. Failed replays remain distinct and do not increment
+successful counts; a later successful return can cover that descriptor.
+These are host observations, not synchronization or device-completion evidence.
+Eager/dummy exclusion, target/drafter behavior, configured launch/rank association,
+image/model/source scope, fabric refusals, atomic publication and byte integrity
+remain unchanged. No GPU campaign, #1226 acceptance, #1159 measurement
+qualification, expanded batch/decode equality or compiled admission is implied.
+
+Implementation actions and pending combined review:
+[replay admission evidence](measurements/graph-replay-admission-implementation.md).
 Receipts: [graph equals eager on the release image](measurements/2026-10-04-glm-graph-equals-eager.md).
 
 ### 5.1.2b A task endpoint binds its served alias to loaded bytes (tessera#1056)
