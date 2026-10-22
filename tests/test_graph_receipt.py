@@ -27,9 +27,20 @@ def _arm(name="rGR", members=48, replays=1, class_replays=1, cc=None):
 
 
 def _receipt(*arms, fabric="none"):
+    # Supply the population context required by the repaired receipt gate without
+    # weakening any of the existing scope, fabric, replay or tampering assertions.
+    arms = list(arms) or [_arm()]
+    eager = []
+    for name in ("rE1", "rE2"):
+        record = _arm(name=name)
+        record.update(execution="eager", compilation_config=None,
+                      tensor_parallel_size=arms[0]["tensor_parallel_size"])
+        eager.append(record)
     return gr.finish({"schema": gr.SCHEMA, "runtime": {"image": IMAGE, "fabric": fabric},
                       "model": {"config_sha256": "m" * 64}, "tessera": {"src_sha256": "s" * 64},
-                      "arms": list(arms) or [_arm()]})
+                      "equality_set": {"name": "tessera#508", "choices_per_pass": 48,
+                                       "script_sha256": "e" * 64},
+                      "eager_pool": eager, "arms": arms})
 
 
 def _serve(**over):
