@@ -108,3 +108,16 @@ serving source before the final observer-only capture-entry flush addition.
 [Test evidence {"artifacts":{"stderr":{"digest":"e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855","size":0},"stdout":{"digest":"42c70c1fcba66bb3cec9057fcac5d705d9ccf57162b650e55c37fd587a04bec9","size":684}},"operation":"d0b994c3ba5bebe2431822b5ab3bbd0883054ecf7a83f39c9c8dd5465d704784","receipt":"e33fc1419aae5c60f711874e7d82b433f86f6789cb4d718e01a5622de00a9c51"}]
 
 [Test evidence {"artifacts":{"stderr":{"digest":"e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855","size":0},"stdout":{"digest":"f4b8098ea8f469167c8e606a9facf071d3b6fb1f7cb685e5adf550b552e4090e","size":490}},"operation":"d803ef9b772939de97f33c747b90c1da8371270ab5bc0373274db66172d427c8","receipt":"1ee8ac0f83088f4be4bf986a213b653617c18d91d0bab7f71cafd28d1dc68cbf"}]
+
+
+## Post-composition review repair
+
+The earlier piece-local integration disclaimer is historical. The completed
+combined source was separately reviewed and rejected for stale snapshot
+publication and final-bound-only token diagnostics. Both were reproduced and
+repaired, with unchanged final regressions failing before and passing after on
+both arms. The authoritative [combined repair appendix](graph-replay-admission-implementation.md#post-composition-review-repair-and-final-targeted-actions)
+retains the review disposition, hook/admission source digests, complete final
+O1/O2/O3 results (11/61/185 passed per arm), new two-case regression results, CPU
+population/skip facts and exact Test evidence lines. Normal-pipeline post-repair
+re-review remains requested, not self-certified as approval.

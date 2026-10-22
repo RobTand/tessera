@@ -9488,7 +9488,10 @@ must supply valid nonempty content, and each retained process and owner must
 qualify independently. Neither another manager/process nor positive size and
 class marginals may discharge a missing tuple. Actual inventories are
 authoritative, including non-Cartesian inventories: the gate does not invent
-a size-by-bound cross-product. Both producer and direct consumers use
+a size-by-bound cross-product. The historical `captured[owner]` token-size
+list is the union over that owner's complete observed descriptor inventory,
+not just the graph map left selected at the final capture bound. Both producer
+and direct consumers use
 `tessera.graph_receipt`; edited verdicts do not bypass it. Receipt v2 remains
 the outer schema, but old counter-only receipts are insufficient and refuse;
 they cannot be upgraded by relabeling dispatch totals as successful returns.
@@ -9496,7 +9499,9 @@ they cannot be upgraded by relabeling dispatch totals as successful returns.
 Dispatch selection earns no successful-return credit. Only return from the
 underlying replay call earns credit, preserving return values (including None)
 and exceptions. A new capture invalidates earlier inventory and replay credit;
-a failed/incomplete recapture cannot inherit qualifying success. Layered base,
+a failed/incomplete recapture cannot inherit qualifying success. Snapshot
+construction and atomic publication share one writer transaction, so a delayed
+older flush cannot overwrite a newer capture invalidation. Layered base,
 model and per-bound capture observation must not double-account or mistake a
 successful None return for failure. Forked children reset inherited accounting
 before their first event. Failed replays remain distinct and do not increment

@@ -821,7 +821,10 @@ if _GA_DISPATCH_LOG:
                 _GA["depth"][key] -= 1
                 if depth == 0:
                     try:
-                        _GA["captured"][key] = self.captured_token_counts()
+                        # Serving leaves self.graphs on the final bound. Derive
+                        # the additive token diagnostic from the same complete
+                        # observed inventory, including non-Cartesian branches.
+                        _GA["captured"][key] = sorted({d["tokens"] for d in owner["captured"]})
                     except Exception as exc:
                         _GA["captured"][key] = f"unreadable: {exc!r}"
                     _GA["dirty"] = True
@@ -866,27 +869,29 @@ if _GA_DISPATCH_LOG:
 
     def _ga_flush(force=False):
         _ga_process()
-        now = _ga_time.monotonic()
-        if not force and now - _GA["last"] < 1.0:
-            return
-        _GA["last"] = now
-        with _GA["lock"]:
-            rec = {"pid": os.getpid(), "captured": dict(_GA["captured"]),
-                   "counts": dict(_GA["counts"]),
-                   "owner_evidence": _ga_json.loads(_ga_json.dumps(_GA["owner_evidence"]))}
-            _GA["dirty"] = False
-        # tessera#702: Tessera's per-max_seq_len-class capture, when installed.
-        gg = _ga_sys.modules.get("tessera.serving.glm53_graphs")
-        if gg is not None:
-            rec["tessera_classes"] = {
-                "captured": {m: {str(b): n for b, n in by.items()} for m, by in gg.CAPTURED.items()},
-                "replays": {f"{m}|{b}": n for (m, b), n in gg.REPLAYS.items()}}
-        path = f"{_GA_DISPATCH_LOG}.{os.getpid()}.json"
-        # The dispatch path and the flusher thread both write: one writer at a time, each
-        # with its own temporary, or one's rename can find the other's file gone (tessera#702
-        # rG2, 2026-10-04: FileNotFoundError inside execute_model killed the engine).
-        tmp = f"{path}.{_ga_threading.get_ident()}.tmp"
+        # Serialize snapshot construction AND publication. A writer that copied
+        # qualifying evidence before recapture must not overwrite a newer forced
+        # invalidation after that invalidation has been published.
         with _GA["write_lock"]:
+            now = _ga_time.monotonic()
+            if not force and now - _GA["last"] < 1.0:
+                return
+            _GA["last"] = now
+            with _GA["lock"]:
+                rec = {"pid": os.getpid(), "captured": dict(_GA["captured"]),
+                       "counts": dict(_GA["counts"]),
+                       "owner_evidence": _ga_json.loads(_ga_json.dumps(_GA["owner_evidence"]))}
+                _GA["dirty"] = False
+            # tessera#702: Tessera's per-max_seq_len-class capture, when installed.
+            gg = _ga_sys.modules.get("tessera.serving.glm53_graphs")
+            if gg is not None:
+                rec["tessera_classes"] = {
+                    "captured": {m: {str(b): n for b, n in by.items()} for m, by in gg.CAPTURED.items()},
+                    "replays": {f"{m}|{b}": n for (m, b), n in gg.REPLAYS.items()}}
+            path = f"{_GA_DISPATCH_LOG}.{os.getpid()}.json"
+            # One temporary per writer also prevents rename collisions (tessera#702
+            # rG2, 2026-10-04: FileNotFoundError inside execute_model killed the engine).
+            tmp = f"{path}.{_ga_threading.get_ident()}.tmp"
             with open(tmp, "w") as fh:
                 _ga_json.dump(rec, fh, indent=0, sort_keys=True)
             os.replace(tmp, path)
