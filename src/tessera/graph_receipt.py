@@ -17,9 +17,10 @@ paused, 48 choices per pass, two passes per serve.  A graph choice is a
 MEMBER when its token ids and every top-20 list are bit-identical to the same
 choice of some eager run of the same batch.  An arm is ``equal`` when every
 choice of every pass is a member AND the serve replayed what it captured:
-each captured decode size at least once, and, when Tessera captured per
-``max_seq_len`` class (``glm53_graphs``), each class it captured.  A pass
-count without replays reads graphs that never ran.
+each actual FULL descriptor (mode, tokens, num_reqs, max_seq_len) has a
+successful replay return for its process-local owner on every required rank.
+Dispatch counts and size/class marginals cannot supply this proof; successful
+returns are host observations, not evidence of device completion.
 
 THE SCOPE.  An arm attests exactly the serve it ran: image, model (by config
 digest), Tessera source digest, ``compilation_config`` as given, speculative
@@ -57,7 +58,10 @@ Schema ``tessera.graph_equals_eager.v2`` (JSON object):
   compilation_config, speculative_tokens, max_model_len, max_num_seqs,
   tensor_parallel_size, resolved: {custom_ops, ir_op_priority},
   graph: {managers: {<manager class>: {captured_sizes, replayed_sizes}},
-  classes: {captured, replays}},
+  classes: {captured, replays}, dispatches: {<original basename>: <dispatch record>}},
+  where each dispatch retains pid/captured/counts diagnostics and owner_evidence:
+  {<Class@instance-hex>: {capture_complete, capture_error, captured: [descriptor],
+  replays: [descriptor with count], replay_failures?: [descriptor with error/count]}},
   passes: [{name, members, choices}], replayed_everything, equal}``;
 - ``attests``: one entry per ``equal`` arm, the scope :func:`verify` matches;
 - ``screens``, ``not_measured``.
@@ -65,6 +69,7 @@ Schema ``tessera.graph_equals_eager.v2`` (JSON object):
 from __future__ import annotations
 
 import json
+import re
 from typing import Any
 
 from tessera.graph_equality import CHOICES_PER_PASS
@@ -149,24 +154,140 @@ def arm_equal(arm: dict) -> bool:
             and bool(arm.get("replayed_everything")))
 
 
+def _integer(value: Any, *, positive: bool = False) -> None:
+    if type(value) is not int or value < (1 if positive else 0):
+        raise ValueError("expected a positive integer" if positive else "expected a nonnegative integer")
+
+
+def _descriptor(record: dict) -> tuple:
+    if not isinstance(record, dict) or record.get("mode") != "FULL":
+        raise ValueError("expected a FULL descriptor")
+    for field in ("tokens", "num_reqs"):
+        _integer(record.get(field), positive=True)
+    if "max_seq_len" not in record:
+        raise ValueError("missing max_seq_len")
+    if record["max_seq_len"] is not None:
+        _integer(record["max_seq_len"], positive=True)
+    return tuple(record[f] for f in ("mode", "tokens", "num_reqs", "max_seq_len"))
+
+
+def _size_key(value: Any) -> None:
+    if not isinstance(value, str) or not re.fullmatch(r"[1-9][0-9]*", value):
+        raise ValueError("invalid size key")
+
+
+def validate_dispatch_diagnostics(record: dict) -> None:
+    """Validate even unused historical counters; these never supply replay credit."""
+    for count in record.get("counts", {}).values():
+        _integer(count)
+    for owner, sizes in record["captured"].items():
+        if not isinstance(owner, str) or not isinstance(sizes, list):
+            raise ValueError("invalid capture diagnostic")
+        for size in sizes:
+            _integer(size, positive=True)
+    classes = record.get("tessera_classes", {})
+    for by_bound in classes.get("captured", {}).values():
+        for bound, count in by_bound.items():
+            _size_key(bound)
+            _integer(count)
+    for count in classes.get("replays", {}).values():
+        _integer(count)
+
+
+def replay_refusal(graph: dict, name: str | None = None,
+                   tensor_parallel_size: int | None = None) -> str | None:
+    """Owner-local descriptor-exact successful-return coverage, never marginal coverage.
+
+    finish supplies the authoritative arm and TP scope. The optional arguments
+    retain the historical graph-only diagnostic helper calling convention.
+    """
+    try:
+        # Validate additive aggregate diagnostics too, including unused entries.
+        for manager in graph.get("managers", {}).values():
+            for size in manager["captured_sizes"]:
+                _integer(size, positive=True)
+            for size, count in manager["replayed_sizes"].items():
+                if type(size) is int:
+                    _integer(size, positive=True)
+                else:
+                    _size_key(size)
+                _integer(count)
+        classes = graph.get("classes", {})
+        for bounds in classes.get("captured", {}).values():
+            for bound, count in bounds.items():
+                _size_key(bound)
+                _integer(count)
+        for count in classes.get("replays", {}).values():
+            _integer(count)
+        dispatches = graph["dispatches"]
+        if not isinstance(dispatches, dict) or not dispatches:
+            return "missing owner-local dispatch evidence"
+        ranks = set()
+        inferred_names = set()
+        for basename, record in dispatches.items():
+            match = re.fullmatch(r"(.+?)(?:\.rank([0-9]+))?\.dispatch\.([0-9]+)\.json", basename)
+            if not match or (name is not None and match[1] != name):
+                return "invalid dispatch arm/rank basename"
+            inferred_names.add(match[1])
+            rank = match[2]
+            ranks.add(rank)
+            if not isinstance(record, dict):
+                return "malformed dispatch record"
+            _integer(record.get("pid"), positive=True)
+            captured = record["captured"]
+            owners = record["owner_evidence"]
+            if not isinstance(captured, dict) or not isinstance(owners, dict) or not owners:
+                return "missing captured owner inventory"
+            if set(captured) != set(owners):
+                return "unknown or missing captured owner mapping"
+            validate_dispatch_diagnostics(record)
+            for owner, evidence in owners.items():
+                if not isinstance(owner, str) or not re.fullmatch(r"[A-Za-z_][A-Za-z_0-9]*@[0-9a-fA-F]+", owner):
+                    return "invalid process-local owner key"
+                if evidence.get("capture_complete") is not True or evidence.get("capture_error") is not None:
+                    return "failed or incomplete owner capture"
+                if "capture_error" not in evidence:
+                    return "missing owner capture status"
+                inventory, replays = evidence["captured"], evidence["replays"]
+                if not isinstance(inventory, list) or not inventory or not isinstance(replays, list):
+                    return "missing owner descriptor inventory or successful returns"
+                required = {_descriptor(d) for d in inventory}
+                if len(required) != len(inventory):
+                    return "duplicate capture descriptor"
+                if {d[1] for d in required} != set(captured[owner]):
+                    return "captured size diagnostic contradicts owner inventory"
+                successful = set()
+                for replay in replays:
+                    descriptor = _descriptor(replay)
+                    _integer(replay.get("count"))
+                    if replay["count"] > 0:
+                        successful.add(descriptor)
+                failures = evidence.get("replay_failures", [])
+                if not isinstance(failures, list):
+                    return "malformed replay failures"
+                for failure in failures:
+                    _descriptor(failure)
+                    _integer(failure.get("count"))
+                    if not isinstance(failure.get("error"), str) or not failure["error"]:
+                        return "missing replay failure error"
+                if not required <= successful:
+                    return "captured owner descriptor has no successful replay return"
+        if len(inferred_names) != 1:
+            return "dispatch records mix arm populations"
+        if tensor_parallel_size is None:
+            tensor_parallel_size = 1 if ranks == {None} else len(ranks)
+        _integer(tensor_parallel_size, positive=True)
+        want = {None} if tensor_parallel_size == 1 else {str(r) for r in range(tensor_parallel_size)}
+        if ranks != want:
+            return "dispatch evidence does not cover exactly the required ranks"
+    except (KeyError, TypeError, ValueError, AttributeError, IndexError, OverflowError) as exc:
+        return f"malformed replay evidence ({type(exc).__name__}: {exc})"
+    return None
+
+
 def replayed_everything(graph: dict) -> bool:
-    """Each manager's captured decode sizes replayed at least once, and each captured class too."""
-    managers = graph.get("managers") or {}
-    if not managers:
-        return False
-    for record in managers.values():
-        sizes = record.get("captured_sizes") or []
-        replayed = {int(k): v for k, v in (record.get("replayed_sizes") or {}).items()}
-        if not sizes or any(replayed.get(int(s), 0) < 1 for s in sizes):
-            return False
-    classes = graph.get("classes") or {}
-    captured = classes.get("captured") or {}
-    replays = classes.get("replays") or {}
-    for manager, by_bound in captured.items():
-        for bound in by_bound:
-            if replays.get(f"{manager}|{bound}", 0) < 1:
-                return False
-    return True
+    """Whether the recorded dispatch population covers every actual owner descriptor."""
+    return replay_refusal(graph) is None
 
 
 def attestation(receipt: dict, arm: dict) -> dict:
@@ -185,7 +306,8 @@ def finish(receipt: dict) -> dict:
     """Set each arm's ``equal``, the ``attests`` list and the ``verdict`` from the rule."""
     why = population_refusal(receipt)
     for arm in receipt["arms"]:
-        arm["replayed_everything"] = replayed_everything(arm["graph"])
+        arm["replayed_everything"] = replay_refusal(
+            arm["graph"], arm["name"], arm["tensor_parallel_size"]) is None
         arm["equal"] = why is None and arm_equal(arm)
     receipt["attests"] = [attestation(receipt, a) for a in receipt["arms"] if a["equal"]]
     receipt["verdict"] = ("equal" if receipt["arms"] and all(a["equal"] for a in receipt["arms"])
@@ -206,6 +328,13 @@ def verify(receipt: dict, serve: dict) -> str | None:
     if not isinstance(receipt, dict) or receipt.get("schema") != SCHEMA:
         schema = receipt.get("schema") if isinstance(receipt, dict) else type(receipt).__name__
         return f"schema {schema!r} is not {SCHEMA}"
+    try:
+        return _verify_serve(receipt, serve)
+    except (KeyError, TypeError, ValueError, AttributeError, IndexError, OverflowError) as exc:
+        return f"malformed receipt or serve ({type(exc).__name__}: {exc})"
+
+
+def _verify_serve(receipt: dict, serve: dict) -> str | None:
     missing = [f for f in SCOPE_FIELDS if f not in serve]
     if missing:
         return f"the serve does not name {missing}"

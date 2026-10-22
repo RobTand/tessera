@@ -51,11 +51,12 @@ def engine_args(arm_dir: pathlib.Path, arm: str) -> dict[str, str]:
 
 
 def graph_record(arm_dir: pathlib.Path, arm: str) -> dict:
-    """Captured and replayed FULL sizes per manager class, and Tessera's per-class counts.
+    """Retain owner evidence by original process/rank basename plus diagnostic marginals.
 
-    A tensor-parallel arm writes one dispatch log per rank; each rank's managers are
-    keyed ``rank<r>:<class>``, so every rank must replay what it captured on its own.
+    Only graph_receipt admits replay coverage. Class/size totals are kept for
+    historical consumers, never used to borrow another owner's successful returns.
     """
+    dispatches = {}
     captured, replayed = defaultdict(set), defaultdict(lambda: defaultdict(int))
     classes = {"captured": {}, "replays": {}}
     pattern = re.compile(_DISPATCH.format(arm=re.escape(arm)))
@@ -63,21 +64,30 @@ def graph_record(arm_dir: pathlib.Path, arm: str) -> dict:
         if not (found := pattern.fullmatch(path.name)):
             continue
         tag = f"rank{found['rank']}:" if found["rank"] is not None else ""
-        rec = json.loads(path.read_text())
-        for owner, sizes in rec.get("captured", {}).items():
-            if isinstance(sizes, list):
-                captured[tag + owner.split("@")[0]].update(int(s) for s in sizes)
-        for key, count in rec.get("counts", {}).items():
-            if (m := _COUNT.match(key)):
-                replayed[tag + m["manager"]][int(m["tokens"])] += count
-        tc = rec.get("tessera_classes") or {}
-        for manager, by_bound in tc.get("captured", {}).items():
-            classes["captured"].setdefault(tag + manager, {}).update(by_bound)
-        for key, count in tc.get("replays", {}).items():
-            classes["replays"][tag + key] = max(classes["replays"].get(tag + key, 0), count)
+        try:
+            rec = json.loads(path.read_text())
+        except (ValueError, OSError):
+            rec = None
+        dispatches[path.name] = rec
+        # Marginals remain diagnostics; malformed content is retained for the shared gate.
+        try:
+            graph_receipt.validate_dispatch_diagnostics(rec)
+            for owner, sizes in rec.get("captured", {}).items():
+                if isinstance(sizes, list):
+                    captured[tag + owner.split("@")[0]].update(int(s) for s in sizes)
+            for key, count in rec.get("counts", {}).items():
+                if (m := _COUNT.match(key)):
+                    replayed[tag + m["manager"]][int(m["tokens"])] += count
+            tc = rec.get("tessera_classes") or {}
+            for manager, by_bound in tc.get("captured", {}).items():
+                classes["captured"].setdefault(tag + manager, {}).update(by_bound)
+            for key, count in tc.get("replays", {}).items():
+                classes["replays"][tag + key] = max(classes["replays"].get(tag + key, 0), count)
+        except (TypeError, ValueError, AttributeError, KeyError, OverflowError):
+            continue
     managers = {m: {"captured_sizes": sorted(s), "replayed_sizes": dict(sorted(replayed[m].items()))}
                 for m, s in sorted(captured.items()) if s}
-    return {"managers": managers, "classes": classes}
+    return {"managers": managers, "classes": classes, "dispatches": dispatches}
 
 
 def flat_dir(receipts: pathlib.Path, arms: list[str]) -> pathlib.Path:
