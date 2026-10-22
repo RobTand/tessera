@@ -1320,6 +1320,17 @@ Current-base CPU owner controls `75e8d128`:43 passed, one explicit retained-bank
 skip, zero uncollected modules/CUDA allocations. The synthetic-readset fixture
 now uses its temporary root, not an undeclared box path. Issue874 remains open.
 
+Re-stamped 2026-10-22 for the numeric value-prefetch readset SDK boundary
+(#1310). `value_prefetch_numeric.validate_readset` uses only the published
+`prismabuild.client.read_data_manifest` and `manifest_read_entries` operations.
+It locally checks its producer's single `whole-synthetic-bank` phase ending
+at `total_bytes`, requires identity encoding and public read entries equal
+to the declared entries, and returns the manifest with the exact `[0,
+total_bytes)` range. Public-client doubles exercise admission and refusals
+without an installed SDK; they do not qualify PB's codec or GPU numerics.
+Original optional real-SDK checks, fixture bytes, frozen identities and
+numerical/deployment qualification remain unchanged.
+
 Re-stamped 2026-10-02 for successful native routed-owner retirement (#869).
 The selected fused owner retains immutable projection views of the words,
 scale and initial-state planes plus its composed native tables, run pairs,
