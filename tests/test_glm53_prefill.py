@@ -21,6 +21,18 @@ import pytest
 import torch
 
 from tessera.serving import glm53_prefill as gp
+from tessera.serving.flags import reset_for_tests
+
+
+@pytest.fixture(autouse=True)
+def _reset_prefill_flag_latches():
+    flags = ("TESSERA_GLM53_ONORM_CUDA", "TESSERA_GLM53_SP_MHC",
+             "TESSERA_GLM53_KDA_CONV_SPLIT")
+    for flag in flags:
+        reset_for_tests(flag)
+    yield
+    for flag in flags:
+        reset_for_tests(flag)
 
 
 # ------------------------------------------------------------------ config stand-ins
@@ -958,6 +970,8 @@ def test_kda_install_off_by_default_and_declines_on_digest_mismatch(monkeypatch,
     monkeypatch.setenv("TESSERA_GLM53_KDA_CONV_SPLIT", "sometimes")
     with pytest.raises(ValueError):
         gp.kda_conv_split_mode()
+    # The enabled installation is a separate process-configuration scenario.
+    reset_for_tests("TESSERA_GLM53_KDA_CONV_SPLIT")
     monkeypatch.setenv("TESSERA_GLM53_KDA_CONV_SPLIT", "on")
     mod = _kda_module(tmp_path, gp.KDA_STOCK_CONV_BLOCK.rstrip("\n"))
     conv = NS(__name__=gp.KDA_MODULES[1], __file__=str(tmp_path / "kda_fake.py"))
