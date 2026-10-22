@@ -9563,8 +9563,10 @@ installs it (`src/tessera/serving/config.py`). No vLLM or FlashInfer source
 file is edited. Each change checks the sha256 of every module it reads against
 an inspected interface (`_INTERFACES`: image `5be13705`, vLLM
 `0.30.1rc1.dev336+gaf5b4857e`). On any mismatch, or on a serve shape it was
-not measured on, it declines to the stock code with one warning and never
-raises.
+not measured on, it declines to the stock code with one warning. These
+interface/shape declines do not suppress configuration errors: invalid flag
+values raise `ValueError`, and changing a latched setting raises `RuntimeError`
+requiring a process restart.
 
 | Variable | Default | What it changes |
 |---|---|---|
@@ -9573,6 +9575,17 @@ raises.
 | `TESSERA_GLM53_SP_MHC_SPEC` | unset | `1` allows SP with speculative decoding. Without it, a speculative serve declines SP. |
 | `TESSERA_GLM53_MHC_FUSED` | unset | `1` installs `mhc_fusion` (contract `stock_kernel_overrides`, kind `model_method`): `Glm5NextDecoderLayer.hc_fused_post_pre` runs one fused post/GEMM/pre kernel per mHC site that stock runs at split 1, the split read at call time, so it composes with `TESSERA_GLM53_SP_MHC`. It must be bitwise to stock, and it stays default-off until the GPU gate and a served A/B land (#783). Unlike the rows above, an install whose contract entry has drifted raises instead of declining. |
 | `TESSERA_GLM53_KDA_CONV_SPLIT` | `off` | `on` rebinds `Glm5NextLinearAttention._forward` to run the KDA prefill's short conv once per q/k/v slice, so FlashKDA's three `.contiguous()` copies become no-ops. The rebind compiles the stock method's own source with one block replaced, and only when that block occurs exactly once. `glm53_prefill.py` reads and digest-checks the file; `src/tessera/serving/method_rebuild.py` compiles the text and reads no file. The #808 selector follows that helper call, so the generic source parameter remains unknown. The frozen `202d1f07` receipt established a static predecessor path through layout's lazy slicing import; the guarded-re-export analyzer now distinguishes direct layout names from slicing demands. Runtime callable reachability and source origin remain unproved. |
+
+ONORM, SP mHC and KDA conv split use the shared `serving.flags` latch on
+their first successfully parsed read, independently of installation caches.
+ONORM strips whitespace and accepts empty, `0` or `1` (only `1` enables it).
+SP accepts `auto`/`off`/`force` and KDA accepts `on`/`off`, with whitespace
+stripped and case normalized. Their `off` defaults apply only when the key is
+absent; explicit empty or whitespace-only modes are invalid. Invalid reads
+raise before latching and do not poison a later valid read. A changed valid
+setting, including unsetting an enabled flag, requires restart; equivalent
+normalized mode reads remain valid. `latched_mode` callers that do not opt
+into a default still require an explicit selector.
 
 The module docstring records the decline rules and the exactness argument.
 The SP source read set includes the CUDA communicator, AG/RS route rule,

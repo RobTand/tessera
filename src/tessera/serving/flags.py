@@ -2,8 +2,8 @@
 
 One rule, said once: a serving flag is parsed strictly (a typo raises and
 names the accepted spellings) and *latched* to the first value the process
-observed (a later change raises rather than mixing two dispatch behaviours
-inside one run).  Both halves are load-bearing.  A flag that silently ignores
+successfully parsed (a later change raises rather than mixing two dispatch
+behaviours inside one run).  Both halves are load-bearing.  A flag that silently ignores
 ``true`` or reads ``off`` as ON turns an intended A/B into an unlabelled run
 of the other arm, which is worse than a crash because the numbers look fine;
 and a residency mode that moved between two forwards would make the run's
@@ -84,13 +84,19 @@ def latched_path(flag: str, *, meaning: str = "this file") -> str | None:
     return value or None
 
 
-def latched_mode(flag: str, *, modes: tuple[str, ...], meaning: str, unset_help: str) -> str:
-    """A strictly parsed, process-stable multi-way selector with NO default.
+def latched_mode(flag: str, *, modes: tuple[str, ...], meaning: str, unset_help: str,
+                 default: str | None = None) -> str:
+    """A strictly parsed selector latched on its first successful read.
 
-    An unset flag is an error carrying ``unset_help``: this selector exists
-    for choices the plugin will not make on the operator's behalf.
+    Without ``default``, an unset flag is an error carrying ``unset_help``:
+    the plugin will not make that choice on the operator's behalf. An opt-in
+    ``default`` applies only when the environment key is absent, never to an
+    explicitly empty or whitespace-only value. Values are stripped and
+    lowercased before validation and latching; invalid reads do not latch.
     """
-    current = os.environ.get(flag, "").strip().lower()
+    raw = os.environ.get(flag)
+    current = (default if raw is None and default is not None else
+               (raw or "").strip().lower())
     if current not in modes:
         raise ValueError(
             f"{flag} must be one of {modes} to select {meaning}, got {current!r}. "
