@@ -7,9 +7,57 @@ itself (tessera#154).  The grace-period no-poll between SIGTERM and SIGKILL is
 deliberate and untouched.
 """
 
+import signal
 import subprocess
 
+import pytest
+
 from tessera._dev import suite_deadline
+
+
+@pytest.mark.parametrize("failed_signal", [signal.SIGINT, signal.SIGCHLD])
+def test_partial_handler_installation_restores_previous_dispositions(monkeypatch, failed_signal):
+    """A later installer failure must roll back an already-installed SIGTERM.
+
+    Exercise real dispositions with a one-shot failure, but always repair the
+    worker's signal state even when the regression assertion fails. No child
+    process or GPU work is started.
+    """
+    signals = (signal.SIGTERM, signal.SIGINT, signal.SIGCHLD)
+    original = {sig: signal.getsignal(sig) for sig in signals}
+    real_signal = signal.signal
+    sentinels = {sig: (lambda signum, frame: None) for sig in signals}
+    error = RuntimeError("injected handler installation failure")
+    failed = False
+    launches = []
+
+    def install(sig, handler):
+        nonlocal failed
+        if sig == failed_signal and not failed:
+            failed = True
+            raise error
+        return real_signal(sig, handler)
+
+    def unexpected_launch(*args, **kwargs):
+        launches.append((args, kwargs))
+        pytest.fail("deadline launched a child after incomplete signal setup")
+
+    try:
+        for sig, handler in sentinels.items():
+            real_signal(sig, handler)
+        monkeypatch.setattr(signal, "signal", install)
+        monkeypatch.setattr(suite_deadline.subprocess, "Popen", unexpected_launch)
+        with pytest.raises(RuntimeError) as raised:
+            suite_deadline.run(["unused-inert-child"], 1, 0.1)
+        assert raised.value is error
+        assert not launches
+        for sig, previous in sentinels.items():
+            assert signal.getsignal(sig) is previous, (
+                f"{sig.name} handler leaked after {failed_signal.name} installation failed")
+    finally:
+        for sig, previous in original.items():
+            real_signal(sig, previous)
+
 
 
 class _Unreapable:
