@@ -60,10 +60,22 @@ def _kill_owned(process, kill_after_s):
 def run(command, timeout_s, kill_after_s):
     timeout_s, kill_after_s = positive_seconds(timeout_s), positive_seconds(kill_after_s)
     process = None
-    previous = {sig: signal.signal(sig, _interrupt) for sig in _INTERRUPT_SIGNALS}
-    # SIG_IGN auto-reaps children: wait() can then report0 for a failed child,
-    # and the leader's PID no longer anchors group ownership during grace.
-    previous[signal.SIGCHLD] = signal.signal(signal.SIGCHLD, signal.SIG_DFL)
+    previous = {}
+    try:
+        for sig in _INTERRUPT_SIGNALS:
+            previous[sig] = signal.signal(sig, _interrupt)
+        # SIG_IGN auto-reaps children: wait() can then report0 for a failed child,
+        # and the leader's PID no longer anchors group ownership during grace.
+        previous[signal.SIGCHLD] = signal.signal(signal.SIGCHLD, signal.SIG_DFL)
+    except BaseException:
+        # Roll back only successful acquisitions, before any child can launch.
+        # Attempt every restoration without masking the original setup failure.
+        for sig, handler in reversed(previous.items()):
+            try:
+                signal.signal(sig, handler)
+            except BaseException:
+                pass
+        raise
     try:
         process = subprocess.Popen(command, start_new_session=True)
         try:
