@@ -145,6 +145,8 @@ def main(argv=None):
         plan, prepared = scoped_reuse_inputs(args, original, publish=not args.preflight)
         if prepared is not None:
             cached_all = prepared
+    elif not args.dense_only:
+        plan = supplemental_plan(original)
     if args.preflight:
         from tessera.export_serving import quantizable, load_producer_authority, check_recipe, grid_for
         from tessera.serving_plan import validate_serving_plan

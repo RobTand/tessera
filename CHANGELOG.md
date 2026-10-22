@@ -1,4 +1,11 @@
 # Changelog
+## 2026-10-22 — initialize cached-routed fixture export plans (issue #1124)
+
+Build the existing supplemental plan for cached-routed exports before preflight or backend dispatch.
+Preserve routed recipes, select the eleven dense supplements, and pass other tensors through.
+Dense-only and routed-reference modes, published fixture bytes, pins, and qualification state remain unchanged.
+Regression coverage and receipts are recorded in [the repair evidence](docs/measurements/pq2459-cached-routed-repair-20261022.md).
+
 ## 2026-10-10 — pure-check correction for PQ2459 fixtures (issue #1124)
 
 Name the pinned serve image through the contract field in scope.json, not a copied digest.
