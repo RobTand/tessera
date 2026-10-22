@@ -1626,7 +1626,13 @@ must establish eager/FULL_DECODE_ONLY prefill execution before a served claim.
 The stock Q power-of-two scale rounding and arithmetic order remain intact.
 The opt-in native call uses the pass-buffer schedule; decode, mixed and
 capture guards remain unchanged. Its runtime GPU fixture exercises the actual
-cached factory with a retained DSO and refuses compilation. Full-model and
+cached factory with a retained DSO and refuses compilation. Before importing
+Tessera, the runtime test imports all three declared vLLM prerequisites:
+`flashinfer_mla_sparse`, `flashinfer_mla_sparse_sm120` and `index_group` under
+`vllm.v1.attention.backends.mla`. A missing requested module or parent causes a
+dependency-specific module skip; unrelated transitive import failures remain
+collection errors. These collection guards do not establish numerical or
+capture validation. Full-model and
 actual vLLM-runtime validation are separate gates: the two-case eager/stock-
 capture fixture passed on the retained candidate; full-model serving remains
 unqualified.
