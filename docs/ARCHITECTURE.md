@@ -539,8 +539,14 @@ An imported module's source path remains runtime state, not proof of this checko
 
 Literal tuple, list, and set elements now supply separate loop-variable alternatives.
 This correction names the conftest's three import roots without a parameter guess or a scalar sequence conversion.
-`select()` now reports 114 modules and 168 sites.
-`tests/test_impacted_tests.py` holds both ceilings at those measured counts.
+After that correction, `select()` reported 114 modules and 168 sites.
+The equality-population repair adds one class-2 runtime-base read:
+`graph_equality.load_arm(directory, arm)` enumerates caller-supplied receipt
+evidence to reject extra raw cases as well as missing ones. Its base is not a
+fixed checkout path. The selector continues to report the site without guessing
+a dependency; `tests/test_impacted_tests.py` accounts for this justified increment
+with ceilings of 115 modules and 169 sites. The census report records the new
+site separately from its historical baseline.
 The merge-base smoke on master `572539ad224c` confirmed the same census and all 35 runtime-module consumer counts.
 The report records its PrismaBuild action and source evidence.
 Refused bases and source loaders retain their conservative selection.
@@ -9434,6 +9440,32 @@ sockets and one over RoCE are two serves, so a receipt on one attests no card
 on the other. A v1 receipt (no fabric) stays readable, but `verify` refuses it
 for a card. Contexts above `index_topk` are a screen only: there eager does
 not reproduce itself.
+
+`src/tessera/graph_equality.py` owns the import-safe authoritative case geometry
+and derives the per-case and total choice counts; the runner exposes its `CASES`
+without startup I/O. The producer validates every summary and raw case against
+that protocol, including prompt/generation geometry, unique choice indices and
+digests. Missing, substituted or conflicting equality basenames refuse, rather
+than selecting the first input directory; byte-identical copies are admissible.
+Both eager and graph populations must be complete, with exactly the distinct
+`<arm>` and `<arm>-r2` passes. Arm roles, arm names and expanded pass names must
+not overlap. The shared receipt gate rechecks those identities and complete
+integral counters independently of receipt-declared totals, `equal`, `verdict`
+or `attests` claims.
+
+Completeness does not require eager repeat-exactness or full membership in the
+other eager arms: graph membership still pools eager outcomes across cases and
+passes with identical whole-batch signatures (ordered prompt tokens and generation
+lengths). The runner requests top-20 logprobs in text-keyed maps, where distinct
+token IDs can decode to the same key; the gate therefore accepts nonempty finite
+maps with up to 21 keys (including a possible extra sampled token), not a minimum
+of 20 distinct keys. Membership and digests still compare the recorded maps
+exactly, without reconstructing lost IDs. Nonmember tokens or top-logprob outcomes
+still refuse. Long-context screens cannot repair incomplete equality evidence.
+This CPU-testable receipt contract does not confer compiled qualification,
+replace artifact byte-integrity checks or add an identity seal; runtime pins,
+serving defaults and fabric comparability remain unchanged. It does not expand
+the batch/decode evidence boundary.
 
 Receipts: [graph equals eager on the release image](measurements/2026-10-04-glm-graph-equals-eager.md).
 
