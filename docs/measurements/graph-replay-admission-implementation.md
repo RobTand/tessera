@@ -13,11 +13,12 @@ integers; legacy totals cannot be promoted into successful-return coverage.
 Malformed consumer inputs return refusal reasons. Scope, fabric, W1 population,
 producer identity and byte-integrity behavior remain in place.
 
-The hook/serving portion is separately owned. Its separate implementation
-evidence document must be linked here during composition; no hook-piece evidence
-document or completed hook implementation was supplied in this checkout at the
-time of these W3 actions. The architecture describes the agreed combined wire
-contract, not a claim that this piece alone implements capture observation.
+The hook/serving portion was separately owned at the time of the initial W3
+actions below. Composition and instrumentation repair are now validated in
+[owner outcomes evidence](graph-owner-outcomes-implementation.md), including
+both-arm O1/O2/O3 receipts, non-Cartesian producer/verify coverage and the completed
+initial implementation review's disposition. The architecture describes the
+combined wire contract; this W3 piece alone does not implement capture observation.
 
 Positive fixtures in test_graph_receipt.py, test_graph_receipt_population.py and
 test_graph_attest_tp2.py now contain owner evidence; zero-replay negatives also
@@ -74,19 +75,24 @@ PYTHONPATH=src OMP_NUM_THREADS=1 MKL_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 python
 ```
 Result: x86 27 passed in 7.32s; GPU arm 27 passed in 2.71s.
 
-## Composition and review still required
+## Composition and review disposition (updated after instrumentation repair)
 
-O1 and the full O3 selection have not been run for a composed hook/serving plus
-admission implementation here. The pipeline must run both brief selections on
-both arms after composition, retain their action receipts and actual populations,
-and link the hook piece's separate evidence document. Existing W1 protections
-were reused, not reimplemented. These independent W3 actions do not establish
-completed combined integration.
+The initial W3-only actions did not validate the composed O1/O3 paths. After
+composition, separate-session pipeline review `068cafcf80d34257a28c7fcfb7daa6f2`
+passed the prescribed selections but found stale-writer publication and final-bound
+size-diagnostic defects in the observer. It therefore refused O1/O4, not the
+shared admission rule. Both findings are now repaired and reproduced in retained
+regressions. [Owner outcomes evidence](graph-owner-outcomes-implementation.md)
+records their before/after receipts and final combined O1/O2/O3 validation on
+both arms: **11 / 61 / 187 passed per arm**, with zero skips, uncollected modules
+or device allocations. O3 includes the complete serving regression and two new
+repair cases. W1 protections and all protected acceptance files remain unchanged.
+These final observed results supersede the initial composition-pending status;
+they do not retroactively make the initial review an approval.
 
-O4 also requires substantive documentation review and a separate-session review
-of the completed combined implementation through the normal pipeline. That
-review is requested, not self-certified by this document or satisfied by the
-earlier research-test review. No publication or workflow transition was performed.
+Post-repair completed-contract review and its approval remain with the normal
+pipeline, not self-certified by these implementation documents or satisfied by
+the research-test review. No publication or workflow transition was performed.
 This work makes no device-completion, expanded equality, compiled qualification,
 #1159 measurement qualification or #1226 admission-acceptance claim.
 
