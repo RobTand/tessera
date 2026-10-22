@@ -739,9 +739,12 @@ if _DIGEST_PATH or _MOE_DET or (_PROF_DIR and _PROF_TRIGGER) or _CAPTURE_LOG:
 #     every ``CudaGraphManager.dispatch`` result inside a non-dummy
 #     ``GPUModelRunner.execute_model`` call, keyed by manager class, graph mode,
 #     token count and request count, plus each manager's captured token counts
-#     after its capture. Each engine process rewrites ``<prefix>.<pid>.json`` with
+#     after its capture. owner_evidence additionally records each owner's actual
+#     descriptors and successful/failed host replay returns, separately from
+#     dispatch attempts. Successful return is not device completion.
+#     Each engine process rewrites ``<prefix>.<pid>.json`` with
 #     the running totals at most once a second and after every capture, so an
-#     equality arm can show that each captured size was replayed. Host-side
+#     equality arm can check owner-local captured tuple coverage. Host-side
 #     bookkeeping only: no device work, no arithmetic change.
 _GA_DISPATCH_LOG = os.environ.get("GA_DISPATCH_LOG")
 
@@ -752,17 +755,125 @@ if _GA_DISPATCH_LOG:
     import threading as _ga_threading
     import time as _ga_time
 
-    _GA = {"counts": {}, "captured": {}, "serving": _ga_threading.local(), "last": 0.0,
-           "lock": _ga_threading.Lock(), "write_lock": _ga_threading.Lock(), "dirty": False}
+    def _ga_state():
+        return {"pid": os.getpid(), "counts": {}, "captured": {}, "owner_evidence": {},
+                "depth": {}, "serving": _ga_threading.local(), "last": 0.0,
+                "lock": _ga_threading.Lock(), "write_lock": _ga_threading.Lock(), "dirty": False}
+
+    _GA = _ga_state()
+
+    def _ga_process():
+        # Before *any* event, not just flush: inherited locks/history are not ours.
+        global _GA
+        if _GA["pid"] != os.getpid():
+            _GA = _ga_state()
+        gg = _ga_sys.modules.get("tessera.serving.glm53_graphs")
+        if gg is not None:
+            gg._ensure_accounting_process()
+
+    def _ga_owner(manager):
+        key = f"{type(manager).__name__}@{id(manager):x}"
+        return key, _GA["owner_evidence"].setdefault(key, dict(
+            capture_complete=False, capture_error=None, captured=[], replays=[], replay_failures=[]))
+
+    def _ga_descriptor(desc, bound):
+        return dict(mode=getattr(getattr(desc, "cg_mode", None), "name", "?"),
+                    tokens=getattr(desc, "num_tokens", None),
+                    num_reqs=getattr(desc, "num_reqs", None), max_seq_len=bound)
+
+    def _ga_capture_wrapper(original):
+        def capture(self, *args, **kwargs):
+            _ga_process()
+            key, owner = _ga_owner(self)
+            depth = _GA["depth"].get(key, 0)
+            if depth == 0:
+                owner.update(capture_complete=False, capture_error=None, captured=[],
+                             replays=[], replay_failures=[])
+                # Publish invalidation before capture work can fail or be interrupted.
+                _GA["dirty"] = True
+                try:
+                    _ga_flush(force=True)
+                except Exception:
+                    _GA["dirty"] = True
+            _GA["depth"][key] = depth + 1
+            try:
+                out = original(self, *args, **kwargs)
+                gg = _ga_sys.modules.get("tessera.serving.glm53_graphs")
+                bound = gg._STATE.capture_bound if gg is not None else None
+                # Read the actual keys, never extrapolate a size-by-class product.
+                inventory = getattr(self, "_tessera_graphs_by_bound", None)
+                graphs = inventory.items() if inventory and bound is None else [(bound, self.graphs)]
+                for applied, captured in graphs:
+                    for desc in captured:
+                        record = _ga_descriptor(desc, applied)
+                        if record not in owner["captured"]:
+                            owner["captured"].append(record)
+                if not getattr(self, "_graphs_captured", False):
+                    owner["capture_error"] = owner["capture_error"] or "capture incomplete"
+                if depth == 0:
+                    owner["capture_complete"] = owner["capture_error"] is None
+                return out  # None is a successful return too.
+            except BaseException as exc:
+                owner["capture_complete"] = False
+                owner["capture_error"] = repr(exc)
+                raise
+            finally:
+                _GA["depth"][key] -= 1
+                if depth == 0:
+                    try:
+                        _GA["captured"][key] = self.captured_token_counts()
+                    except Exception as exc:
+                        _GA["captured"][key] = f"unreadable: {exc!r}"
+                    _GA["dirty"] = True
+                    try:
+                        _ga_flush(force=True)
+                    except Exception:  # logging must not replace a capture outcome
+                        _GA["dirty"] = True
+        # Serving's outer per-bound transaction composes the same observer.
+        capture._ga_capture_wrapper = _ga_capture_wrapper
+        return capture
+
+    def _ga_replay_wrapper(original):
+        def run_fullgraph(self, desc, *args, **kwargs):
+            _ga_process()
+            if not getattr(_GA["serving"], "on", False):
+                return original(self, desc, *args, **kwargs)
+            _, owner = _ga_owner(self)
+            bound = None
+            for applied, graphs in (getattr(self, "_tessera_graphs_by_bound", None) or {}).items():
+                if self.graphs is graphs:
+                    bound = applied
+                    break
+            record = _ga_descriptor(desc, bound)
+            try:
+                out = original(self, desc, *args, **kwargs)
+            except BaseException as exc:
+                record["error"] = repr(exc)
+                records = owner["replay_failures"]
+                raise
+            else:
+                records = owner["replays"]
+                return out
+            finally:
+                for item in records:
+                    if all(item.get(k) == v for k, v in record.items()):
+                        item["count"] += 1
+                        break
+                else:
+                    records.append(dict(record, count=1))
+                _GA["dirty"] = True
+        return run_fullgraph
 
     def _ga_flush(force=False):
+        _ga_process()
         now = _ga_time.monotonic()
         if not force and now - _GA["last"] < 1.0:
             return
         _GA["last"] = now
         with _GA["lock"]:
             rec = {"pid": os.getpid(), "captured": dict(_GA["captured"]),
-                   "counts": dict(_GA["counts"])}
+                   "counts": dict(_GA["counts"]),
+                   "owner_evidence": _ga_json.loads(_ga_json.dumps(_GA["owner_evidence"]))}
             _GA["dirty"] = False
         # tessera#702: Tessera's per-max_seq_len-class capture, when installed.
         gg = _ga_sys.modules.get("tessera.serving.glm53_graphs")
@@ -783,9 +894,9 @@ if _GA_DISPATCH_LOG:
     def _ga_patch_cudagraph(module):
         cls = module.CudaGraphManager
         orig_dispatch = cls.dispatch
-        orig_capture = cls.capture
 
         def dispatch(self, *args, **kwargs):
+            _ga_process()
             desc = orig_dispatch(self, *args, **kwargs)
             if getattr(_GA["serving"], "on", False):
                 mode = getattr(getattr(desc, "cg_mode", None), "name", "?")
@@ -794,22 +905,20 @@ if _GA_DISPATCH_LOG:
                 with _GA["lock"]:
                     _GA["counts"][key] = _GA["counts"].get(key, 0) + 1
                     _GA["dirty"] = True
-                _ga_flush()
+                try:
+                    _ga_flush()
+                except Exception:  # a full disk must not stop the engine
+                    _GA["dirty"] = True
             return desc
 
-        def capture(self, *args, **kwargs):
-            out = orig_capture(self, *args, **kwargs)
-            try:
-                sizes = self.captured_token_counts()
-            except Exception as exc:  # recorded, never fatal
-                sizes = f"unreadable: {exc!r}"
-            with _GA["lock"]:
-                _GA["captured"][f"{type(self).__name__}@{id(self):x}"] = sizes
-            _ga_flush(force=True)
-            return out
-
         cls.dispatch = dispatch
-        cls.capture = capture
+        # A model override can fail before/after super().capture; observe both,
+        # with one transaction and one reset for the outermost call.
+        model = getattr(module, "ModelCudaGraphManager", None)
+        if model is not None and "capture" in model.__dict__:
+            model.capture = _ga_capture_wrapper(model.capture)
+        cls.capture = _ga_capture_wrapper(cls.capture)
+        cls.run_fullgraph = _ga_replay_wrapper(cls.run_fullgraph)
         _ga_threading.Thread(target=_ga_flusher, name="ga702-flush", daemon=True).start()
         print(f"[ga702] CudaGraphManager patched (pid {os.getpid()})", flush=True)
 
@@ -820,20 +929,26 @@ if _GA_DISPATCH_LOG:
         orig_exec, orig_sample = cls.execute_model, cls.sample_tokens
 
         def execute_model(self, *args, **kwargs):
+            _ga_process()
             if kwargs.get("dummy_run", False):
                 return orig_exec(self, *args, **kwargs)
+            previous = getattr(_GA["serving"], "on", False)
             _GA["serving"].on = True
             try:
                 return orig_exec(self, *args, **kwargs)
             finally:
-                _GA["serving"].on = False
+                _GA["serving"].on = previous
 
         def sample_tokens(self, *args, **kwargs):
+            _ga_process()
+            if kwargs.get("dummy_run", False):
+                return orig_sample(self, *args, **kwargs)
+            previous = getattr(_GA["serving"], "on", False)
             _GA["serving"].on = True
             try:
                 return orig_sample(self, *args, **kwargs)
             finally:
-                _GA["serving"].on = False
+                _GA["serving"].on = previous
 
         cls.execute_model = execute_model
         cls.sample_tokens = sample_tokens
