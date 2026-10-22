@@ -11441,6 +11441,10 @@
     "state": "CLOSED",
     "title": "Reap teacher serves before releasing ownership on exit"
    },
+   "1258": {
+    "state": "OPEN",
+    "title": "[P1] Require complete, independent equality populations in graph receipts"
+   },
    "126": {
     "state": "CLOSED",
     "title": "Scope MoE eligibility to the measured runtime image and execution mode"
@@ -11448,6 +11452,10 @@
    "127": {
     "state": "CLOSED",
     "title": "Integrate full-model MoE serving, partitioning, and coverage gates"
+   },
+   "1270": {
+    "state": "OPEN",
+    "title": "[P1] Require complete, independent equality populations in graph receipts"
    },
    "128": {
     "state": "CLOSED",

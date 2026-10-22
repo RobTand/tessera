@@ -149,3 +149,122 @@ worker hashes do not reconstruct agreement. Prior attempts' inability to locate
 durable raw per-case artifacts remains a historical limitation. The fresh retained
 operations above, not those incomplete historical records, supply this repair's
 individually retrievable before/after evidence.
+
+## Release-gate integration repair
+
+The release gate ejected implementation `59eefb7bbfbaee4bd266d57bc6abfafa2b18c2f7`
+for two repository-policy failures on each arm. Both were reproduced on the
+merged worktree at `cd96702e` before this follow-up:
+
+- The authoritative loader adds one correctly reported unknown-runtime-base
+  enumeration, `src/tessera/graph_equality.py:124`. The census guard still allowed
+  only 114 modules / 168 sites; the measured inventory is 115 / 169. The directory
+  is supplied by the caller, not a fixed repository path. Enumeration must remain
+  to reject extra raw cases. The guard explicitly permits a justified increment:
+  its ceilings now account for this single class-2 runtime input, with the reason
+  beside the counters, in the census report and in ARCHITECTURE. The selector
+  continues to report the read. No resolver exemption, invented static base or
+  equality-loader change was made.
+- The offline snapshot lacked the Tessera records for the two issues referenced
+  in this document's heading. Add only those actual records under
+  `repos["RobTand/tessera"]`, using the supplied issue metadata (both OPEN, both
+  titled `[P1] Require complete, independent equality populations in graph receipts`).
+  This is a targeted snapshot addition, not a claimed full live refresh. Do not
+  use the unrelated same-numbered PrismaQuant entries or hide the references.
+
+The production gate, authoritative CASES owner and producer remain byte-unchanged
+in this follow-up. Neither protected acceptance file was edited. The existing
+receipt/TP2 assertions, exact raw roster validation and unnamed-read growth
+comparison remain intact. The permitted census increment recognizes the runtime
+input rather than claiming a statically placed dependency.
+
+### Reproduced release failures
+
+Exact command, submitted once on x86 and once with `arm="gpu"` through `run_tests`:
+
+```sh
+PYTHONPATH=src OMP_NUM_THREADS=1 MKL_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 python -m pytest tests/test_impacted_tests.py::test_this_repository_does_not_gain_an_unnamed_directory_read tests/test_issue_refs.py::test_every_issue_reference_in_the_docs_resolves -q -n 2 --dist worksteal --durations=10 --basetemp="$TMPDIR/pytest"
+```
+
+Both runs exited 1 with exactly 2 failures (60.05 s x86; 25.38 s GPU), no skips,
+collection errors or observed CUDA allocations. The retained stdout contains the
+complete per-case assertion failures: 115/169 exceeded 114/168, and the only
+unresolved references were the heading's Tessera 1258/1270 records. The small
+stdout artifacts themselves retain both cases; no XML or population JSON was
+requested for these two-case reproductions. Consequently no source-span claim
+is inferred for them. Receipt provider identities are
+`bb85a8b51d2501bb8155ebfdda38baf46b09263a31c278eedae8f34913d2f970`
+(x86) and `63ddfb655e9e53d0268679a92102c4b24fa3c17d3d176eb86bae7a5bbc4789f5`
+(GPU). The original population failing-before artifacts above remain unchanged.
+
+[Test evidence {"artifacts":{"stderr":{"digest":"e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855","size":0},"stdout":{"digest":"35373477203261df592a233bd53f98735b663094a4bb57a9c50e56acfe9da225","size":4165}},"operation":"d8c2e6db3670b9285e59d128802b407e59c29ec24af7e7a865c493ffe6a2edb5","receipt":"b70e27958b583438cd3c1b31f484db909c1b1d1cfbd6a7070c9bd26aa9fabc61"}]
+
+[Test evidence {"artifacts":{"stderr":{"digest":"e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855","size":0},"stdout":{"digest":"cc5844366e13b2c1a81051a8f26e4a32081e7c5d30ec34e8693683bdc6f514f1","size":4034}},"operation":"5e18c8c0b272625b2a41ec83cadd9a0409ea7da66041799c10cc2e84c6c5b46d","receipt":"bc60d956aa0e870b6408baf0d013af546e14921451e0b96736c55f19c0c93ec5"}]
+
+### Passing integration checks and source bindings
+
+Exact command on both arms, without a nested launcher, private interpreter or
+environment repair. XML and population JSON are outside the measured checkout;
+the suffix prints them verbatim into retained stdout even if pytest fails:
+
+```sh
+PYTHONPATH=src OMP_NUM_THREADS=1 MKL_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 python -m pytest tests/test_graph_receipt_population.py tests/test_graph_receipt.py tests/test_graph_attest_tp2.py tests/test_impacted_tests.py tests/test_issue_refs.py -q -n 2 --dist worksteal --durations=10 --basetemp="$TMPDIR/pytest" --junitxml="$TMPDIR/issue1258-release-gate-after.xml" --surface-json="$TMPDIR/issue1258-release-gate-after.json"; status=$?; python -c 'import os,pathlib; root=pathlib.Path(os.environ["TMPDIR"]); [(print("RETAINED_RAW_BEGIN "+name), print((root/name).read_text()), print("RETAINED_RAW_END "+name)) for name in ("issue1258-release-gate-after.xml", "issue1258-release-gate-after.json") if (root/name).is_file()]'; exit "$status"
+```
+
+| Field | x86 | GPU |
+|---|---|---|
+| Action / provider identity | `83e3af7b773e876fb1525a32bf20233af21862bc80a8a1bdaa6b6d25a86d82ea` | `3d4ab88906261fecaee873a8f6c5d0dcaa7b8493838f8dc57a330de306d94919` |
+| Snapshot | `231479e0a171676ed0aefa6b662fe147efbf0692` | `187dc659ac6e584314272c665837f7e7cfb6ed91` |
+| Effective-source SHA256 | `b2effba204454f549231686a37eb99b6a85a33546d24ce1399a790b87bbbf8ad` | `8f752af1eb5eea5871638171740bf9547b21aa96af5b5af385d94bc5ef39d530` |
+| Outcome | 318 passed, exit 0, 123.20 s | 318 passed, exit 0, 55.58 s |
+| Runtime surface | torch 2.11.0+cpu, no CUDA device | torch 2.13.0+cu130, NVIDIA GB10 visible |
+
+Both receipts were inspected and report success. Both raw population records
+report source verification `verified`, matching entry/final hashes,
+`measurement_span.agrees=true`, and agreement from gw0 and gw1. Each run has zero
+failures, errors, skips, xfails, xpasses, uncollected modules and observed device
+allocations. The XML retains each of the 318 individual case outcomes, including
+all 106 cases in the required three receipt/population/TP2 files and the two
+previously failing release guards. Inspect the final 2000 bytes of each stdout
+for the population JSON, and page through the earlier XML with
+`read_test_artifact`. Delimiters are `RETAINED_RAW_BEGIN/END` plus the filenames
+shown in the command. Temporary paths alone are not the retention mechanism.
+The observed CUDA allocator count remains a floor metric; these tests do not
+establish compiled or GPU numerical qualification. These snapshots precede this
+append-only evidence narrative, which was not part of the measured source.
+
+[Test evidence {"artifacts":{"stderr":{"digest":"e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855","size":0},"stdout":{"digest":"3b54b63ceb2aa5cfbd9470900dae5a04dddede3c759b5740ace9f8da7981d528","size":50359}},"operation":"ad0eb49a0d8d50beb6e53b9a4827dc2f3ad6ff70f994a6cad6500ca0625fff69","receipt":"9d5ec812e3b0e83475b4cfc40652f4f541dcf134b4140d4fa2b2ed5671f7545c"}]
+
+[Test evidence {"artifacts":{"stderr":{"digest":"e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855","size":0},"stdout":{"digest":"04e359bca587eaa921bc742701f4f17d21eeb2d49ad2353e5718ca662a141141","size":50259}},"operation":"58abca7785445da619d939e0c0effc60ca5e5be54d483ad0439e4b5440c096fe","receipt":"e658a6486175e1345c3e196cf5c96ffc6d9d8cce3d8bdec2f2a84daca5e2ceda"}]
+
+The worktree impacted selector was also run against the exact valid base
+`e83b338234e6dfb0315e5d90c5662a0eea93ce5f` with
+`python3 tools/impacted_tests.py --ref e83b338234e6dfb0315e5d90c5662a0eea93ce5f --json`.
+It exited 0 with verdict `narrowed`, 420 selected tests, 115 unnamed-directory-read
+modules / 169 sites and the equality site's line `[124]` still reported. The
+five-file execution above covers the repaired policy and equality behavior; it
+is not an assertion that all 420 selected tests or the full release suite ran.
+The coordinator retains ownership of the full merge-result gate.
+
+### Fresh separate-session implementation and artifact review
+
+A new read-only review session, commissioned via `functions.task` after the
+follow-up source and evidence edits, returned **APPROVE**, with no blocking
+findings. It inspected the final gate, loader, runner, producer, unchanged
+membership predicate, architecture and complete five-file follow-up diff. It
+confirmed that the guard's existing policy permits this justified runtime-input
+increment, the site stays visible, and the issue snapshot adds only the two
+Tessera records. The protected-test working diff was empty and production source
+was unchanged from `59eefb7b`.
+
+The reviewer independently retrieved all four follow-up receipts, read both
+failure logs completely, and paged through all 50,359 x86 / 50,259 GPU passing
+stdout bytes, including the full XML and population records. It counted, per
+arm, 48 population, 27 receipt, 31 TP2, 209 selector and 3 issue-reference cases
+(318 total). It confirmed the documented identities, verified source spans,
+worker agreement and zero skip/error/observed-allocation disclosures. It ran no
+tests or publication actions and made no edits. Limitations remain explicit:
+the measured snapshot Git objects could not be resolved locally for a direct
+tree comparison; exact command submission/no-environment-repair assertions are
+session provenance rather than XML proof; the appended evidence narrative
+postdates measurement. No full-release or GPU numerical qualification is inferred.

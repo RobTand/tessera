@@ -539,8 +539,14 @@ An imported module's source path remains runtime state, not proof of this checko
 
 Literal tuple, list, and set elements now supply separate loop-variable alternatives.
 This correction names the conftest's three import roots without a parameter guess or a scalar sequence conversion.
-`select()` now reports 114 modules and 168 sites.
-`tests/test_impacted_tests.py` holds both ceilings at those measured counts.
+After that correction, `select()` reported 114 modules and 168 sites.
+The equality-population repair adds one class-2 runtime-base read:
+`graph_equality.load_arm(directory, arm)` enumerates caller-supplied receipt
+evidence to reject extra raw cases as well as missing ones. Its base is not a
+fixed checkout path. The selector continues to report the site without guessing
+a dependency; `tests/test_impacted_tests.py` accounts for this justified increment
+with ceilings of 115 modules and 169 sites. The census report records the new
+site separately from its historical baseline.
 The merge-base smoke on master `572539ad224c` confirmed the same census and all 35 runtime-module consumer counts.
 The report records its PrismaBuild action and source evidence.
 Refused bases and source loaders retain their conservative selection.
