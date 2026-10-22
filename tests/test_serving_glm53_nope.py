@@ -79,7 +79,24 @@ def test_configuration_and_device_guards():
     assert not TesseraGLM53NoPEBackend.supports_compute_capability(SimpleNamespace(major=12, minor=0))
 
 
-def test_registration_opt_in_preserves_stock_and_refuses_custom_collision(monkeypatch):
+@pytest.fixture
+def registration_flags(monkeypatch):
+    """Isolate the two process-stable flags read by the plugin entry point."""
+    from tessera.serving import flags
+
+    names = ("TESSERA_RESEARCH_GLM53_NOPE", "TESSERA_RESEARCH_MLA_MASK_SKIP")
+    for name in names:
+        flags.reset_for_tests(name)
+        monkeypatch.delenv(name, raising=False)
+    try:
+        yield
+    finally:
+        for name in names:
+            flags.reset_for_tests(name)
+
+
+def test_registration_opt_in_preserves_stock_and_refuses_custom_collision(monkeypatch, registration_flags):
+    from tessera.serving import flags
     from vllm.v1.attention.backends.registry import AttentionBackendEnum as Backend
     from vllm.v1.attention.backends.registry import register_backend
     from tessera.serving import register
@@ -91,6 +108,8 @@ def test_registration_opt_in_preserves_stock_and_refuses_custom_collision(monkey
         monkeypatch.delenv("TESSERA_RESEARCH_GLM53_NOPE", raising=False)
         register()
         assert not Backend.CUSTOM.is_overridden()
+        # The enabled arm represents a fresh process, not a live flag change.
+        flags.reset_for_tests("TESSERA_RESEARCH_GLM53_NOPE")
         monkeypatch.setenv("TESSERA_RESEARCH_GLM53_NOPE", "1")
         register()
         register()

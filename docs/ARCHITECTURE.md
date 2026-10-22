@@ -9274,8 +9274,11 @@ Selection additionally requires `--attention-backend CUSTOM --kv-cache-dtype
 fp8_ds_mla --kernel-config '{"enable_flashinfer_autotune":false}'`.
 This experimental attention extension is separate from checkpoint quantization
 selection and changes no stock backend registration. Another plugin's CUSTOM
-registration is refused. Without the environment setting, normal plugin loading
-is unchanged.
+registration is refused. The flag is parsed and latched inside `register()` by
+`flags.latched_bool`: unset/empty and `0` keep it disabled, `1` enables it, and
+surrounding whitespace is stripped. Other spellings raise; changing the latched
+setting requires a process restart. Without the environment setting, normal
+plugin loading is unchanged.
 
 **Execution modes are admitted by receipt** (`glm53_nope._execution_reason`,
 tessera#508). Eager, and compilation modes NONE, VLLM_COMPILE and
