@@ -24,7 +24,7 @@ from collections import defaultdict
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "src"))
-from tessera import graph_receipt  # noqa: E402
+from tessera import graph_receipt, graph_equality  # noqa: E402
 from tessera.serving.build_identity import read_serve_log  # noqa: E402
 
 QUAL = ROOT / "experiments" / "glm53_508_graph_qual"
@@ -86,23 +86,28 @@ def flat_dir(receipts: pathlib.Path, arms: list[str]) -> pathlib.Path:
     for arm in arms:
         for path in (receipts / arm).iterdir():
             target = flat / path.name
-            if not target.exists():
-                target.symlink_to(path)
+            if target.exists():
+                if ".eq." in path.name and target.read_bytes() != path.read_bytes():
+                    raise SystemExit(f"conflicting equality basename: {path.name}")
+            else:
+                target.symlink_to(path.resolve())
     return flat
 
 
-def passes(flat: pathlib.Path, names: list[str], pool: list[str]) -> list[dict]:
+def passes(flat: pathlib.Path, names: list[str], pool: list[str], *, screen=False) -> list[dict]:
+    # Long-context traffic remains a screen, outside the authoritative equality roster.
+    loader = eq_member.load_arm if screen else graph_equality.load_arm
     runs = {}
     for p in pool:
         for name in (p, f"{p}-r2"):
-            if (flat / f"{name}.eq.summary.json").exists():
-                runs[name] = eq_member.load_arm(flat, name)
+            if not screen or (flat / f"{name}.eq.summary.json").exists():
+                runs[name] = loader(flat, name)
     out = []
     for name in names:
         if not (flat / f"{name}.eq.summary.json").exists():
             out.append({"name": name, "members": 0, "choices": 0, "missing": True})
             continue
-        target = eq_member.load_arm(flat, name)
+        target = loader(flat, name)
         choices = sum(len(cs) for cs in target.values())
         out.append({"name": name, "members": len(eq_member.members(target, runs)),
                     "choices": choices})
@@ -252,7 +257,7 @@ def arm_record(receipts, manifest, flat, arm, pool, legacy_scripts=None) -> dict
         "resolved": serve.get("dispatch"), "enforce_eager": serve.get("enforce_eager"),
         "graph": graph_record(d, arm),
         "passes": passes(flat, [arm, f"{arm}-r2"], pool),
-        "screen_long": passes(flat, [f"{arm}-long"], [f"{p}-long" for p in pool]),
+        "screen_long": passes(flat, [f"{arm}-long"], [f"{p}-long" for p in pool], screen=True),
     }
 
 
@@ -275,6 +280,9 @@ def main() -> int:
     a = ap.parse_args()
     manifest = json.loads(a.manifest.read_text())
     eager, graph = a.eager.split(","), a.graph.split(",")
+    why = graph_receipt.names_refusal(eager, graph)
+    if why:
+        raise SystemExit(why)
     flat = flat_dir(a.receipts, eager + graph)
     legacy = json.loads(a.legacy_script_provenance.read_text()) if a.legacy_script_provenance else {}
     pool_records = [arm_record(a.receipts, manifest, flat, e, [p for p in eager if p != e], legacy)
@@ -296,7 +304,7 @@ def main() -> int:
         "model": {"path": model, "config_sha256": scope["model_config_sha256"],
                   "index_topk": text.get("index_topk")},
         "equality_set": {
-            "name": "tessera#508", "script_sha256": scope["equal_script_sha256"], "choices_per_pass": 48,
+            "name": "tessera#508", "script_sha256": scope["equal_script_sha256"], "choices_per_pass": graph_equality.CHOICES_PER_PASS,
             # Where each arm's script hash comes from: what the arm recorded, or legacy provenance.
             "script_provenance": {
                 n: ("recorded by the arm" if engine_args(a.receipts / n, n).get("equal_script_sha256")

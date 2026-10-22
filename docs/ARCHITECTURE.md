@@ -9435,6 +9435,32 @@ on the other. A v1 receipt (no fabric) stays readable, but `verify` refuses it
 for a card. Contexts above `index_topk` are a screen only: there eager does
 not reproduce itself.
 
+`src/tessera/graph_equality.py` owns the import-safe authoritative case geometry
+and derives the per-case and total choice counts; the runner exposes its `CASES`
+without startup I/O. The producer validates every summary and raw case against
+that protocol, including prompt/generation geometry, unique choice indices and
+digests. Missing, substituted or conflicting equality basenames refuse, rather
+than selecting the first input directory; byte-identical copies are admissible.
+Both eager and graph populations must be complete, with exactly the distinct
+`<arm>` and `<arm>-r2` passes. Arm roles, arm names and expanded pass names must
+not overlap. The shared receipt gate rechecks those identities and complete
+integral counters independently of receipt-declared totals, `equal`, `verdict`
+or `attests` claims.
+
+Completeness does not require eager repeat-exactness or full membership in the
+other eager arms: graph membership still pools eager outcomes across cases and
+passes with identical whole-batch signatures (ordered prompt tokens and generation
+lengths). The runner requests top-20 logprobs in text-keyed maps, where distinct
+token IDs can decode to the same key; the gate therefore accepts nonempty finite
+maps with up to 21 keys (including a possible extra sampled token), not a minimum
+of 20 distinct keys. Membership and digests still compare the recorded maps
+exactly, without reconstructing lost IDs. Nonmember tokens or top-logprob outcomes
+still refuse. Long-context screens cannot repair incomplete equality evidence.
+This CPU-testable receipt contract does not confer compiled qualification,
+replace artifact byte-integrity checks or add an identity seal; runtime pins,
+serving defaults and fabric comparability remain unchanged. It does not expand
+the batch/decode evidence boundary.
+
 Receipts: [graph equals eager on the release image](measurements/2026-10-04-glm-graph-equals-eager.md).
 
 ### 5.1.2b A task endpoint binds its served alias to loaded bytes (tessera#1056)
