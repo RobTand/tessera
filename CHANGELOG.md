@@ -1,4 +1,25 @@
 # Changelog
+## 2026-10-22 — initialize cached-routed fixture export plans (issue #1124)
+
+Build the existing supplemental plan for cached-routed exports before preflight or backend dispatch.
+Preserve routed recipes, select the eleven dense supplements, and pass other tensors through.
+Dense-only and routed-reference modes, published fixture bytes, pins, and qualification state remain unchanged.
+Regression coverage and receipts are recorded in [the repair evidence](docs/measurements/pq2459-cached-routed-repair-20261022.md).
+
+## 2026-10-10 — pure-check correction for PQ2459 fixtures (issue #1124)
+
+Name the pinned serve image through the contract field in scope.json, not a copied digest.
+Qualify the authorization note references as RobTand/prismaquant#2459 and rebind the packet scope digest.
+Wire bytes, cells, entry points, and qualification state stay unchanged.
+
+## 2026-10-09 — additive PQ2459 fixture inputs (issue #1124)
+
+Publish the eight-cell fixture input packet for PrismaQuant #2459.
+The packet binds actual wire bytes from three additive artifacts to family, structure, q256 rung, and rank-local shape.
+The A8S release artifact stays unchanged, and CPU fixtures qualify no cell.
+The eager tr3_batch, speed_batch, and speed_decode entry points name every permitted M value and c1/c4 concurrency.
+PrismaBuild CPU preflight verifies the actual parsers, sealed token reads, fixture geometry, and scorer imports.
+The dense supplement encodes eleven actual source tensors on CUDA under the accepted 9eef9fea6 producer source.
 
 ## 2026-10-11 — refuse tokenizer array roots (issue #1134)
 
