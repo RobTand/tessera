@@ -80,9 +80,9 @@ def register() -> None:
 
     # Separate, explicit research attention extension. It does not change the
     # quantization contract or replace a stock attention enum implementation.
-    import os
+    from .flags import latched_bool
 
-    if os.environ.get("TESSERA_RESEARCH_GLM53_NOPE") == "1":
+    if latched_bool("TESSERA_RESEARCH_GLM53_NOPE", meaning="GLM-5.3 NoPE CUSTOM backend registration"):
         from vllm.v1.attention.backends.registry import AttentionBackendEnum, register_backend
 
         backend = AttentionBackendEnum.CUSTOM
@@ -93,7 +93,6 @@ def register() -> None:
 
     # Independent default-off stock-backend override, published by the shared
     # contract. Its own install checks source identity and refuses conflicts.
-    from .flags import latched_bool
     if latched_bool("TESSERA_RESEARCH_MLA_MASK_SKIP", meaning="eager sparse-MLA prefill mask skip"):
         from .mla_sparse_sm120 import install
         install()
