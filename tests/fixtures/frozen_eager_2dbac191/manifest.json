@@ -1,0 +1,9 @@
+{
+  "source_commit": "2dbac1910c88254d9c6391f02a34c4b07e516803",
+  "archive_sha256": "547591c0f4ca1709c3ea0f28b9acfd3125a8e060458e920b31b48da992b7858d",
+  "export_sha256": "91f3a340e9e14068e448bbc150a702d16e913cdf70fc487e7acbe0a17fb272fb",
+  "generation_command": "git archive 2dbac1910c88254d9c6391f02a34c4b07e516803 src pyproject.toml tests/test_piece_major_reader_boundaries.py",
+  "generation_provenance": "Exported independently from the readable Tessera bare object database during implementation; compared with the research export digest. Compressed with Python gzip.GzipFile(filename=\"\", mtime=0, compresslevel=9).",
+  "export_bytes": 4362240,
+  "regular_files": 126
+}
