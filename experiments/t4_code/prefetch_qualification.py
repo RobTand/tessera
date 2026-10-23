@@ -100,22 +100,9 @@ def validate_bank_record(record, finalization, arm, *, source_module):
 
 
 def validate_readset(path):
-    from prismabuild import client
+    from pb_staged_store import validate_whole_phase_readset
 
-    manifest, encoding = client.read_data_manifest(path)
-    read_entries = client.manifest_read_entries(manifest)
-    total = manifest["total_bytes"]
-    expected = [{"name": PHASE, "start_bytes": 0, "end_bytes": total}]
-    # Validate only this producer's single whole-bank phase, not general PB plans.
-    # Decoding and consumption entries belong to the public client boundary.
-    annotations = manifest.get("annotations")
-    phases = annotations.get("phases") if isinstance(annotations, dict) else None
-    phase = phases[0] if isinstance(phases, list) and len(phases) == 1 else None
-    if (encoding != "identity" or not isinstance(phase, dict)
-            or phase.get("name") != PHASE
-            or type(phase.get("cumulative_bytes")) is not int
-            or phase["cumulative_bytes"] != total or total <= 0):
-        raise ValueError("native1 whole-phase ranges differ or are incomplete")
+    manifest, read_entries, expected = validate_whole_phase_readset(path, PHASE)
     if read_entries != manifest["entries"]:
         raise ValueError("native1 declared consumption order differs")
     required = native_members()
