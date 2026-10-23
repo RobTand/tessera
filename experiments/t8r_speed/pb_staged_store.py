@@ -19,6 +19,41 @@ import struct
 from pathlib import Path
 
 
+def validate_whole_phase_readset(path, phase_name):
+    """Assert this consumer's whole-bank phase after public SDK validation.
+
+    PB owns schema validation, coverage, entry alignment and consumption order.
+    Only the producer-specific phase name/range assertion lives here. No declared
+    artifact is opened. Return the manifest, public ordered reads and normalized
+    nonempty phase ranges (not the entry registry's unique-byte total in v2).
+    """
+    from prismabuild import client
+
+    manifest, encoding = client.read_data_manifest(path)
+    reads = client.manifest_read_entries(manifest)
+    # Invalid v1 phase tables can refuse by returning [] rather than raising.
+    if encoding != "identity" or not reads:
+        raise ValueError("whole-bank staging phase requires identity encoding and a valid readset")
+    if manifest["schema"] == "prismaquant.prismabuild.data_manifest.v2":
+        declaration = manifest["read_plan"]
+        total = declaration["read_bytes"]
+    else:
+        declaration = manifest["annotations"]
+        total = manifest["total_bytes"]
+    ranges = []
+    previous = 0
+    for phase in declaration["phases"]:
+        frontier = phase["cumulative_bytes"]
+        if frontier > previous:
+            ranges.append({"name": phase["name"], "start_bytes": previous,
+                           "end_bytes": frontier})
+        previous = frontier
+    expected = [{"name": phase_name, "start_bytes": 0, "end_bytes": total}]
+    if total <= 0 or ranges != expected:
+        raise ValueError("whole-bank staging phase differs or is incomplete")
+    return manifest, reads, ranges
+
+
 def verify_cached_frame(raw, role):
     """Verify the producer's cached unit inside the actual exported frame.
 
