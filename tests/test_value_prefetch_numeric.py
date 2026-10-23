@@ -5,6 +5,85 @@ import subprocess
 import pytest
 import torch
 from experiments.t8r_speed import value_prefetch_numeric as numeric
+from _whole_phase_sdk import whole_phase_sdk, manifest_value, write_manifest
+
+
+def _numeric_entries(tmp_path):
+    # Deliberately absent artifacts: validation may open only the manifest.
+    return [dict(path=str(tmp_path / "bank.pt"), offset=0, bytes=32, sha256="0" * 64),
+            dict(path=str(tmp_path / "source.so"), offset=0, bytes=16, sha256="1" * 64)]
+
+
+@pytest.mark.parametrize("schema,variant", [
+    ("v1", "whole"), ("v1", "trailing-zero"), ("v1", "v1-advisory-bytes"),
+    ("v2", "whole"), ("v2", "trailing-zero"), ("v2", "read-order"), ("v2", "resident"),
+])
+def test_whole_phase_public_schema_and_read_order(tmp_path, whole_phase_sdk, schema, variant):
+    entries = _numeric_entries(tmp_path)
+    path = write_manifest(tmp_path / "declared.json",
+                          manifest_value(entries, "whole-synthetic-bank", schema, variant))
+    validated, encoding = whole_phase_sdk.read_data_manifest(path)
+    assert encoding == "identity"
+    assert whole_phase_sdk.manifest_read_entries(validated) == entries
+    manifest, reads = numeric.validate_readset(path)
+    assert manifest == validated
+    assert reads == entries
+
+
+@pytest.mark.parametrize("schema", ["v1", "v2"])
+@pytest.mark.parametrize("variant", ["missing", "wrong", "split", "multiple", "incomplete", "leading-zero"])
+def test_whole_phase_public_phase_refusals(tmp_path, whole_phase_sdk, schema, variant):
+    entries = _numeric_entries(tmp_path)
+    path = write_manifest(tmp_path / "declared.json",
+                          manifest_value(entries, "whole-synthetic-bank", schema))
+    numeric.validate_readset(path)
+    write_manifest(path, manifest_value(entries, "whole-synthetic-bank", schema, variant))
+    with pytest.raises(ValueError):
+        numeric.validate_readset(path)
+
+
+def test_whole_phase_requires_identity_encoding(tmp_path, whole_phase_sdk):
+    import gzip
+    path = write_manifest(tmp_path / "declared.json",
+                          manifest_value(_numeric_entries(tmp_path), "whole-synthetic-bank", "v1"))
+    numeric.validate_readset(path)
+    path.write_bytes(gzip.compress(path.read_bytes()))
+    with pytest.raises(ValueError):
+        numeric.validate_readset(path)
+
+
+def test_repair_reports_ranges_while_validator_returns_reads(tmp_path, whole_phase_sdk, monkeypatch, capsys):
+    """Synthetic metadata probe only; do not bypass the real frozen-bank gate."""
+    import json
+
+    entries = _numeric_entries(tmp_path)
+    original_value = manifest_value(entries, "whole-synthetic-bank", "v1")
+    original_value["annotations"]["phases"][0]["cumulative_bytes"] -= 1
+    original = write_manifest(tmp_path / "original.json", original_value)
+    output = tmp_path / "repaired.json"
+    real_digest = numeric.digest
+    # Exercise repair with synthetic metadata, not the unavailable frozen bank.
+    # Only its original-file admission digest is substituted; output hashing,
+    # parsing, validation, exclusive creation and reporting are real.
+    monkeypatch.setattr(numeric, "digest", lambda path:
+                        "f8f880774c06a4bb8fa0f99d73469645f5521827b34928c8983d0dd33fe20dc5"
+                        if Path(path) == original else real_digest(path))
+    numeric.repair_readset(original, output)
+    report = json.loads(capsys.readouterr().out.splitlines()[-1])
+    checked, encoding = whole_phase_sdk.read_data_manifest(output)
+    assert encoding == "identity"
+    assert checked["entries"] == entries == original_value["entries"]
+    assert report == {"scope": numeric.SCOPE, "readset": str(output),
+                      "sha256": real_digest(output), "entry_count": 2,
+                      "total_bytes": 48,
+                      "phases": [{"name": "whole-synthetic-bank", "start_bytes": 0,
+                                  "end_bytes": 48}],
+                      "retained_entries_unchanged": True}
+    # These are deliberately different shapes: returning phases from the
+    # validator or serializing read entries under "phases" must both fail.
+    manifest, reads = numeric.validate_readset(output)
+    assert manifest == checked
+    assert reads == whole_phase_sdk.manifest_read_entries(checked) == entries
 
 
 @pytest.mark.parametrize("bad_source", [False, True], ids=["short-phase", "foreign-source"])
@@ -99,8 +178,7 @@ def test_synthetic_matrix_covers_every_routed_run_pair():
 
 
 @pytest.mark.parametrize("complete_phase", [False, True])
-def test_public_pb_readset_and_whole_bank_phase_contract(tmp_path, complete_phase):
-    pytest.importorskip("prismabuild", reason="exact public manifest/phase control requires the published PB SDK")
+def test_public_pb_readset_and_whole_bank_phase_contract(tmp_path, complete_phase, whole_phase_sdk):
     import json
     manifest = {"schema": "prismaquant.prismabuild.data_manifest.v1",
                 "produced_by": {"tool": "test"}, "mount_prefix": str(tmp_path),
@@ -110,9 +188,11 @@ def test_public_pb_readset_and_whole_bank_phase_contract(tmp_path, complete_phas
     path = tmp_path / "manifest.json"
     path.write_text(json.dumps(manifest))
     if complete_phase:
-        checked, phases = numeric.validate_readset(path)
+        checked, reads = numeric.validate_readset(path)
         assert checked == manifest
-        assert phases == [{"name": "whole-synthetic-bank", "start_bytes": 0, "end_bytes": 32}]
+        # Numeric consumers need the public SDK's ordered read entries. The
+        # repair CLI's separate "phases" field remains normalized ranges.
+        assert reads == manifest["entries"]
     else:
         with pytest.raises(ValueError, match="staging phase"):
             numeric.validate_readset(path)
