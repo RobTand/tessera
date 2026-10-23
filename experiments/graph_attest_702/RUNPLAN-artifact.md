@@ -36,6 +36,93 @@ artifact, whose true bytes and config digest must be supplied separately. Full
 artifact equality, compiled runtime cells, D13 serving pin, scientific quality,
 served profiling/power and ship-card qualification remain separate gates.
 
+## Batch-KL companion: integration only (tessera#1365)
+
+**Production disposition: unavailable, explicitly refused.** The existing live
+`LocalArm.probes` seam calls `collect_kl(arm, peer_meta)` exactly once when
+`config.batch_kl` is present, before writing successful probe status. The current
+implementation refuses even if a handoff declaration is configured: no supported
+live adapter has been supplied. The existing native protocol publishes failure
+and coupled abort, runs owned cleanup and copies partial outputs; it does not
+complete that arm or proceed to the next. No second serve or isolated scorer is
+run, no speculative guard is bypassed, and MTP1 remains unchanged.
+
+Owner-facing disposition for existing prismaquant#2566 / tessera#1318 (delivery
+and publication left to TrustLadder): the supplied PrismaQuant checkout
+`6d8288adc94b3c4b624c143ed372fb6513f32784` already has compiled execution and
+compilation configuration in `experiments/measure_glm_tr3_vllm.py`.
+`scorer_engine_kwargs` builds a separate engine with `max_num_seqs=1`; its
+no-spec qualification is not this live TP2/MTP1 c4 target-model measurement.
+The investigated #2566 handoff at
+`af1cae160d93bffb2a357ca8aaeae8d1ef59c468` on `prismaquant-2566` pairs
+eager/compiled dumps with `check_paired_execution_dumps`, but its documented
+scope is prefill, not graph-replayed decode. That helper is absent from the
+supplied current checkout. This historical handoff is context, not a landed or
+capable adapter. Required owner capability remains: attach to the already-live
+owned workers, distinguish target from drafter under MTP1, align requests and
+rows, emit complete batch dumps/results, and retain observed TP2 execution and
+both ranks' provenance. Reuse that owner's supported implementation when
+available; this change deliberately does not implement it. Compiled KL
+qualification stays with #1318/#1319, TP2 measurements with #1341/#1366, and
+graph-population/replay hardening with #1270/#1271; no duplicate campaign or
+intake decision is implied.
+
+### Configuration and normal evidence workflow
+
+The existing recipe environment accepts optional `BATCH_KL`, a nonempty JSON
+object retained verbatim as `inputs.json.config.batch_kl` during preparation.
+It is only permitted for graph-control, leaving benchmark modes unchanged.
+Deployment-specific `handoff`, `endpoint`, `tool`, and `output` declarations
+belong there, along with `scoring` (`corpus_sha256`, `teacher_sha256`,
+`tokenizer_sha256`, `regime`, positive `expected_rows`). There are no executable
+commands or deployment defaults inferred from this object, nor does a declared
+capability enable an adapter. Do not copy the acceptance fixture's synthetic
+full config digest, image or deployment strings into a production recipe.
+The nominated full config digest above, socket TP2, MTP1, resource caps,
+deadlines, gang ownership and both eager controls are unchanged.
+
+After the normal native window and cleanup, retain the existing
+`receipt-manifest.json` containing both member keys. Generate the normal graph
+receipt with `receipt.py` as below, preserving its scope/exclusions. Then run
+this explicit companion stage (paths are caller configuration, not defaults):
+
+```sh
+PYTHONPATH=src python experiments/graph_attest_702/window_driver.py \
+  experiments/graph_attest_702/plan-artifact.txt \
+  --bind-batch-kl "$ROOT" --graph-receipt "$GRAPH_RECEIPT"
+```
+
+This stage starts no model and writes `$ROOT/batch-kl-manifest.json`; exit zero
+means binding validity only. Nonzero retains actionable errors for missing,
+refused, stale, incomplete or mismatched evidence. The normalized adapter
+contract is `batch-kl.json` in each retained arm directory, referencing
+arm-relative raw JSONL/result files with SHA256 hashes. It binds prepared input
+hash/run, both native identities and owned containers, artifact/config/source,
+actual image, requested and observed flags, target provenance and scoring scope.
+The binder rehashes retained bytes, checks row completeness, and reuses the graph
+verifier's full equality/replay gate, not a stored `equal` verdict. It links the
+unchanged graph receipt by SHA256 without adding BF16 KL claims to it. A synthetic
+fixture qualifying here is **not scientific TP2 or KL qualification**. Without
+the supported live handoff, production collection refuses and the companion
+remains unqualified; an offline result is not an acceptable substitute.
+
+### CPU integration verification
+
+The protected `tests/test_graph_attest_batch_kl.py` module docstring retains the
+pre-fix assertion failures and earlier coverage receipts. Post-change check:
+
+```sh
+PYTHONPATH=src OMP_NUM_THREADS=1 MKL_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 NUMEXPR_NUM_THREADS=1 python -m pytest tests/test_graph_attest_batch_kl.py tests/test_graph_attest_tp2.py tests/test_graph_attest_managed_window.py tests/test_graph_receipt.py tests/test_issue_refs.py tests/test_impacted_tests.py -q -n 2 --dist worksteal --durations=10 --basetemp="$TMPDIR/pytest"
+```
+
+Observed x86 result: **341 passed, 9 skipped** in 127.60s; all nine skips require
+the published PB SDK. No CUDA device and zero tests allocated on a device. These
+are CPU orchestration/binding checks, not a GPU measurement; no new TP2/MTP1 or
+BF16 KL outcome is claimed. No GPU check or measurement campaign was run here.
+The handoff and CLI workflow require reviewer inspection as well as these tests.
+
+[Test evidence {"artifacts":{"stderr":{"digest":"e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855","size":0},"stdout":{"digest":"9a9ec443fc97e0fcf8f49e6e0707741fad177c6d6101bb161d051ad3bd1d43f5","size":2078}},"operation":"3e94c3a95d1335231dbfaa2b639b5974d98d5112158659198e2aa01af032040b","receipt":"900a873b77a3bba3cd1662ff2fa3e53877b2598462dbf251e922faf101379998"}]
+
 ## Reviewed v2 integration
 
 PR942 is merged as `39e3d950226f1c9fec38d4baaaccb59fc267e12b`; the reviewed eight

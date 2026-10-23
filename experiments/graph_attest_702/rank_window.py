@@ -389,6 +389,21 @@ class LocalArm:
             time.sleep(min(1, self.envelope.remaining()))
         raise TimeoutError("local serve readiness deadline")
 
+    def collect_kl(self, arm, peer_meta):
+        """Live attachment seam; no owner-supported TP2/MTP1 adapter is available.
+
+        Configuration is an intake declaration, never authority to execute an
+        arbitrary scorer or to bypass target/drafter attribution. An eventual
+        reviewed adapter must use this arm's container, tick and envelope.
+        """
+        self.tick()
+        self.envelope.remaining()
+        raise Refused(
+            "batch KL refused: #2566/#1318 handoff lacks owner-supported live "
+            "TP2/MTP1 target-model attachment, target/drafter attribution, "
+            "request/row alignment and complete batch outputs with observed "
+            "execution provenance; configured handoff is not an implemented adapter")
+
     def probes(self, arm, peer_meta):
         if self.config.get("window_mode") in recipe.BENCHMARK_PAIRS:
             from eager_benchmark import probes
@@ -432,8 +447,12 @@ class LocalArm:
         with (out / (name + ".metrics.txt")).open("w") as stream:
             self.command(["curl", "-sf", "-m", "10", "http://10.100.96.2:8142/metrics"],
                          stdout=stream, tick=self.tick, limit=12)
+        evidence = {}
+        if self.config.get("batch_kl") is not None:
+            evidence["batch_kl"] = self.collect_kl(arm, peer_meta)
         with (out / f"engine-args-{name}.txt").open("a") as stream:
             stream.write("rc=0\n")
+        return evidence
 
     def verify_profiles(self, arm, probe):
         command = [sys.executable, str(Path(self.config["client_source"]) / "comparison_inputs.py"),

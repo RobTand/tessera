@@ -13,6 +13,7 @@ import uuid
 from managed_window import (CLEANUP_SECONDS, WINDOW_SECONDS, HOSTS, MEMORY_POLICY, Refused, atomic_json,
                             seal_check, check_memory_policy, read_json, terminal_cleanup)
 import tp2_recipe as recipe
+from batch_kl import bind_batch_kl
 
 PB = Path("/mnt/shared/prismabuild-fleet/repo/tools")
 RANK_PYTHON = "/home/rob/venvs/pb-cpu/bin/python"
@@ -291,7 +292,18 @@ def main():
     ap.add_argument("--handoffs", type=Path)
     ap.add_argument("--submit", type=Path)
     ap.add_argument("--reviews", type=Path)
+    ap.add_argument("--bind-batch-kl", type=Path, metavar="ROOT",
+                    help="after receipt.py: bind retained three-arm KL evidence, without submission")
+    ap.add_argument("--graph-receipt", type=Path, help="unchanged graph receipt to bind")
     args = ap.parse_args()
+    if args.bind_batch_kl is not None or args.graph_receipt is not None:
+        if (args.bind_batch_kl is None or args.graph_receipt is None or args.submit or
+                args.prepare or args.dry_run or args.matrix_cell or args.preflight_output or
+                args.reviews or args.handoffs or args.census_key or args.prepare_role_preflight):
+            raise Refused("binding requires only PLAN --bind-batch-kl ROOT --graph-receipt PATH")
+        companion = bind_batch_kl(args.bind_batch_kl, args.graph_receipt)
+        print(json.dumps(companion, sort_keys=True))
+        return 0 if companion["qualified"] else 1
     env = dict(os.environ)
     if args.matrix_cell:
         if args.submit:
