@@ -4,9 +4,10 @@
 For each of the issue's shapes, at M = 1 and M = 8, this runs the raw
 baseline prefill schedule ``(BM, BN, BK) = (64, 64, 64)`` and every raw
 candidate ``BM in {16, 64} x BN in {32, 64, 128, 256}`` at ``BK = 64``,
-then the served path (``PreparedWindowGemm.__call__`` on the dispatch under
-test), which must match the raw schedule the dispatch selects, and reports
-per point:
+then the direct fallback wrapper (``PreparedWindowGemm.__call__``), which
+must match the raw schedule the wrapper selects, and reports per point.
+The legacy record label ``path='served'`` denotes this wrapper, not the
+default fused serving lane. Each record includes:
 
 * the kernel's device time per call from ``torch.profiler`` (CUDA activity,
   the ``_window_gemm_kernel`` events only);
@@ -41,6 +42,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "tests"))
 
 from tessera import kernel_window_gemv as kg    # noqa: E402
 from tessera import window_gemm as wg           # noqa: E402
+from tessera.window_geometry import decode_schedule  # noqa: E402
 import window_pack_reference as wpr             # noqa: E402
 
 L = 14
@@ -272,8 +274,8 @@ def main(argv=None) -> int:
                     "oracle_tol": _tol(baseline_out),
                 })
                 print(json.dumps(records[-1]), flush=True)
-            # The served path on the dispatch under test: it must match the
-            # raw schedule the dispatch selects.
+            # The direct fallback wrapper (legacy path='served'): it must
+            # match the raw schedule the wrapper selects.
             served = bundles[(64, 64)]
             out = torch.empty(m, rows, dtype=torch.bfloat16, device="cuda")
 
@@ -292,15 +294,20 @@ def main(argv=None) -> int:
             diff = (y - baseline_out).abs()
             max_abs = float(diff.max())
             denom = float(baseline_out.abs().max())
+            bm, bn, bk = decode_schedule(m, served.block_m, served.block_n, served.block_k)
+            grid = [triton.cdiv(served.rows, bn), triton.cdiv(m, bm)]
             records.append({
                 "rows": rows, "cols": cols, "q256": Q256, "m": m,
-                "block_m": 64, "block_n": 64, "block_k": BK,
+                "block_m": bm, "block_n": bn, "block_k": bk,
+                "prepared_block_m": served.block_m,
+                "prepared_block_n": served.block_n,
+                "prepared_block_k": served.block_k,
                 "path": "served",
                 "baseline": False,
                 "kernel_us": k_us, "wall_us": w_us,
                 "packed_bytes": packed_bytes,
                 "effective_gb_s": packed_bytes / (k_us * 1e-6) / 1e9,
-                "grid": None, "ctas": None,
+                "grid": grid, "ctas": grid[0] * grid[1],
                 "power_loop_calls": calls, "power_loop_seconds": elapsed,
                 "power_w_mean": watts, "power_samples": n_samples,
                 "oracle_max_abs_vs_baseline": max_abs,

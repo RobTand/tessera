@@ -13,29 +13,26 @@ TILE_ROWS = 512
 #: operand, so a smaller batch is served by masking (tessera#617).
 MIN_M_BLOCK = 16
 
-#: Batch rows at or below this run the dense GEMM's decode-regime schedule:
-#: the packed-weight decode costs the same for any small M, so the launch
-#: drops to the minimum M block instead of padding a prefill-shaped tile
-#: (tessera#617).
+#: Batch rows at or below this run the dense GEMM fallback's decode-regime
+#: schedule: the minimum M block and a narrow N block (tessera#617).
 DECODE_MAX_M = 16
 
-#: The N block the decode-regime schedule runs.  The GB10 sweep
-#: (``experiments/sweep_window_gemm_decode.py``) reads BN = 32 as best or
-#: tied at every issue shape at M = 1 and M = 8, and larger N blocks strand
-#: SMs (8 CTAs at 2048 rows, BN = 256) or serialize the decode per block.
+#: The N block selected for the decode-regime fallback. The GB10 sweep
+#: (``experiments/sweep_window_gemm_decode.py``) measured improved timings
+#: with BM16/BN32 versus BM64/BN64 at the tested shapes at M = 1 and M = 8.
+#: Those observations do not establish the M = 1 limiter.
 DECODE_BLOCK_N = 32
 
 
 def decode_schedule(m: int, block_m: int, block_n: int, block_k: int) -> tuple:
     """The dense GEMM's effective ``(BM, BN, BK)`` for a call with ``m`` rows.
 
-    At or below ``DECODE_MAX_M`` the call is weight-bound -- M = 8 costs the
-    same as M = 1 -- so it runs the minimum M block over a narrow N block:
-    the prefill M block wastes issue on masked dot rows, and a wide N block
-    strands SMs at small rows.  The K block never moves here, so the K-loop
-    order each output accumulates in is unchanged.  The N block never grows
-    beyond the prepared one.  Above ``DECODE_MAX_M`` the prepared blocks
-    serve unchanged.
+    At or below ``DECODE_MAX_M`` the fallback runs the minimum M block over
+    a narrow N block, following the isolated decode timing improvement. This
+    is not a limiter diagnosis or a claim about the default fused serving
+    lane. The K block never moves here, so the K-loop order each output
+    accumulates in is unchanged. The N block never grows beyond the prepared
+    one. Above ``DECODE_MAX_M`` the prepared blocks serve unchanged.
     """
     if int(m) <= DECODE_MAX_M:
         return (MIN_M_BLOCK, min(block_n, DECODE_BLOCK_N), block_k)
