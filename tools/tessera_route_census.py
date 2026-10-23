@@ -878,17 +878,22 @@ def phase_shape_problems(records_by_phase, *, phase_regimes, compiled=False,
     from tessera.serving.scheme import eager_regime_problem
     batch_phase, decode_phase = driven_phase_pair(phase_regimes)
     batch, decode = records_by_phase[batch_phase], records_by_phase[decode_phase]
+    if compiled:
+        # Trace-time M is symbolic. Children may differ between phases even
+        # under one declared owner, so validate records without pairing names.
+        bad = [(phase, name, record.get("shape"))
+               for phase in (batch_phase, decode_phase)
+               for name, record in sorted(records_by_phase[phase].items())
+               if not str(record.get("shape", "")).startswith("M*:")]
+        problems = ([f"compiled records must be shape-polymorphic (M*); got {bad[:3]}"]
+                    if bad else [])
+        if require_each_owner and (not batch or not decode):
+            problems.append("both driven phases need shape evidence")
+        return problems
     if not batch or not decode:
         return ["both driven phases need shape evidence"] if require_each_owner else []
     shapes = [(name, batch[name].get("shape", ""), decode[name].get("shape", ""))
               for name in batch if name in decode]
-    if compiled:
-        # Trace-time M is symbolic, so this proves polymorphic dispatch, not
-        # two concrete shapes. Campaign eager coverage never uses this arm.
-        bad = [p for _, p, d in shapes
-               if not (str(p).startswith("M*:") and str(d).startswith("M*:"))]
-        return ([f"compiled records must be shape-polymorphic (M*); got {bad[:3]}"]
-                if bad else [])
     problems = []
     if require_each_owner:
         missing = sorted(set(batch) ^ set(decode))
@@ -1402,6 +1407,7 @@ def validate_census_observations(*, phases_by_rank, identities, refusals_by_rank
     histogram_by_rank = []
     record_owner_by_rank = []
     tessera_by_rank = []
+    trace = torch_trace_active(compiled=compiled, compilation_config=compilation_config)
     for rank in range(world_size):
         tag = "" if world_size == 1 else f"rank {rank} "
         rank_histogram = {}
@@ -1461,6 +1467,10 @@ def validate_census_observations(*, phases_by_rank, identities, refusals_by_rank
             if expect_modules is not None and len(tess) != expect_modules:
                 problems.append(
                     f"{tag}{phase}: {len(tess)} Tessera modules, the checkpoint declares {expect_modules}")
+        # Shape evidence belongs to each participant, before world aggregation.
+        problems.extend(f"{tag}{m}" for m in phase_shape_problems(
+            rank_tessera, phase_regimes=phase_regimes, compiled=trace,
+            phase_plan=phase_plan))
         histogram_by_rank.append(rank_histogram)
         record_owner_by_rank.append(rank_owner)
         tessera_by_rank.append(rank_tessera)
@@ -1491,10 +1501,6 @@ def validate_census_observations(*, phases_by_rank, identities, refusals_by_rank
                 for rank, by_phase in enumerate(record_owner_by_rank)
                 for n, owner in by_phase[phase].items()}
         for phase in phases_by_rank}
-    trace = torch_trace_active(compiled=compiled, compilation_config=compilation_config)
-    problems.extend(phase_shape_problems(
-        tessera_by_phase, phase_regimes=phase_regimes, compiled=trace,
-        phase_plan=phase_plan))
     if compiled and not trace:
         problems.append(
             "cuda-graph-only capture states capture time only: replay runs no Python, "
