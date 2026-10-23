@@ -130,12 +130,22 @@ def prepare(bank, native_root, sanitizer, runner):
 
 
 def validate_readset(path):
-    from prismabuild import client, storage_tiers
+    from prismabuild import client
     manifest, encoding = client.read_data_manifest(path)
-    expected = [{"name": "whole-synthetic-bank", "start_bytes": 0, "end_bytes": manifest["total_bytes"]}]
-    if encoding != "identity" or storage_tiers.manifest_phase_ranges(manifest) != expected:
+    read_entries = client.manifest_read_entries(manifest)
+    total = manifest["total_bytes"]
+    expected = [{"name": "whole-synthetic-bank", "start_bytes": 0, "end_bytes": total}]
+    # This producer declares one whole-bank phase, not a general PB read plan.
+    # Leave manifest decoding and read-order validation at the public boundary.
+    annotations = manifest.get("annotations")
+    phases = annotations.get("phases") if isinstance(annotations, dict) else None
+    phase = phases[0] if isinstance(phases, list) and len(phases) == 1 else None
+    if (encoding != "identity" or not isinstance(phase, dict)
+            or phase.get("name") != "whole-synthetic-bank"
+            or type(phase.get("cumulative_bytes")) is not int
+            or phase["cumulative_bytes"] != total or total <= 0):
         raise ValueError("synthetic whole-bank staging phase differs")
-    if client.manifest_read_entries(manifest) != manifest["entries"]:
+    if read_entries != manifest["entries"]:
         raise ValueError("synthetic staging read order differs")
     return manifest, expected
 
