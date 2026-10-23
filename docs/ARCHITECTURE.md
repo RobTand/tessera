@@ -3944,6 +3944,11 @@ KILL after a five-second grace. The leader remains unreaped during the grace,
 so its PID cannot be reused and a resistant child is killed even if the leader
 exits on TERM. The supervisor explicitly owns/restores SIGCHLD disposition;
 inherited auto-reaping cannot erase child failure status or that PID anchor.
+Before changing any handler it snapshots the exact caller TERM, INT and CHLD
+dispositions. Installation shares the protected execution/cleanup lifecycle:
+partial setup restores those snapshots even when a setter mutates then raises,
+and TERM/INT during setup returns the usual 143/130 without launching a child.
+Setup rollback attempts every restoration without masking the original failure.
 Every wait after KILL is bounded by that same grace: a leader that cannot be
 reaped (a D-state process on a wedged GPU) is reported on stderr and the
 attempt exits 137, so the deadline that bounds the run is itself bounded.
