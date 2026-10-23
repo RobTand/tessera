@@ -3,7 +3,7 @@
 The hosted `pure` check enforces branch rule 12 for pull requests.
 The branch must match `tessera-<issue>` or `tessera-<issue>-<word>` and link that issue in the body.
 The suffix follows `[a-z0-9][a-z0-9-]*`. The script reads local references and GitHub issue URLs from the event JSON.
-Branches with `ig/` or `release` prefixes are exempt. Pull requests created before `2026-10-09T17:00:00Z` are also exempt.
+Branches with `ig/`, `tl/` or `release` prefixes are exempt. TrustLadder releases from `tl/release-<operation>` branches. Pull requests created before `2026-10-09T17:00:00Z` are also exempt.
 The workflow checks new commits and body edits. The cutoff itself requires the check.
 The script uses only the Python standard library and never treats pull request fields as shell source.
 
@@ -37,6 +37,13 @@ Re-stamped 2026-10-09 for the pure metadata boundary correction (issue #1018).
 Version two and version three input-table metadata use the alphabet's pure grid owner.
 The existing version one conversion and actual raw-input normalization retain their owner paths.
 The meaningful hosted pure test stays active. No measurement or qualification changes.
+
+Re-stamped 2026-10-11 for the graph-gap evidence claim (tessera#1152).
+Contract v67 cites the open graph gap in every decode cell (tessera#1152).
+Each decode cell carries one `graph_equality` record naming `2026-09-30-glm-nightly-cells-and-graph-equivalence.md`.
+The record is decode-only, carries no top-K number, and grades `route_only`.
+No decode cell claims a compiled KL or a compiled scope.
+Batch cells and eager scopes are byte-identical.
 
 Contract v66 admits R768 and table [3] on the two base routed E4M3 cells (tessera#1080, PR #1045).
 The base-image TP2 receipt proves decoder `native_routed_window_classes_e4m3mma` on both ranks in decode M1 and batch M64.
@@ -109,9 +116,9 @@ The byte audit retains both the fragment checks and the projection checks.
 The CUDA source, numerical checks, tolerances and default-off selection stay unchanged.
 The retained graphics processor evidence does not establish serving qualification.
 
-Re-stamped 2026-10-08 for the graph witness contract (issue #1062).
+Re-stamped 2026-10-10 for the graph-only census separation (issue #1062).
 
---compiled names Torch compilation only. Mode NONE keeps CUDA graphs but disables the Torch trace. Its records keep capture shapes. Replay runs no Python. The census refuses that combination before any load. Real compiled records still carry M star. Phase cover still requires current logical rows. No default, pin, gate or admission changes.
+--compiled names a non-eager engine. A real Torch trace takes the shape-polymorphic arm and still requires M star records. Mode NONE means CUDA graphs only: records keep concrete capture shapes, the census checks them as concrete, and every graph-only census states capture time only with no logical row credit. Replay runs no Python. Phase, owner, route, decoder, dtype and cell checks run on both paths. No default, pin or admission changes.
 
 Re-stamped 2026-10-08 for replay-free native matrix selection (issue #1061).
 
@@ -532,8 +539,14 @@ An imported module's source path remains runtime state, not proof of this checko
 
 Literal tuple, list, and set elements now supply separate loop-variable alternatives.
 This correction names the conftest's three import roots without a parameter guess or a scalar sequence conversion.
-`select()` now reports 114 modules and 168 sites.
-`tests/test_impacted_tests.py` holds both ceilings at those measured counts.
+After that correction, `select()` reported 114 modules and 168 sites.
+The equality-population repair adds one class-2 runtime-base read:
+`graph_equality.load_arm(directory, arm)` enumerates caller-supplied receipt
+evidence to reject extra raw cases as well as missing ones. Its base is not a
+fixed checkout path. The selector continues to report the site without guessing
+a dependency; `tests/test_impacted_tests.py` accounts for this justified increment
+with ceilings of 115 modules and 169 sites. The census report records the new
+site separately from its historical baseline.
 The merge-base smoke on master `572539ad224c` confirmed the same census and all 35 runtime-module consumer counts.
 The report records its PrismaBuild action and source evidence.
 Refused bases and source loaders retain their conservative selection.
@@ -933,6 +946,18 @@ digest. `stageprev_793_prerequisites` refuses a contract with open API problems.
 The version number stays in the record as provenance only.
 CPU refusal controls remove `PoolQueue.offers` and supply an incompatible signature.
 They exercise the observer and collector without a claim or GPU submission.
+The S7 probe uses `submission.validate_request`, `submission.placement_contract`
+and the invalid-scope refusal in `submission.prepare`, not retired CLI helpers;
+class placement remains distinct from an explicit `--here` hostname pin.
+For S7's delegated claim path the observer also binds `_prepare_host_claim`,
+`candidate_policy.never_fits` and `CandidateDenial` to their manifest file digests.
+It inspects the reservation-demand versus total-capacity predicate, the
+`never_fits_capacity` reason/evidence, and the claim loop's denial recording and
+fail-closed continuation together. Preparation must start with the inspected
+field bindings followed by the refusal: earlier exits and unrecognized input
+transformations (including alias mutation) refuse attestation. An unrecognized
+delegation or missing helper digest also refuses; no scheduling helper is
+executed to obtain evidence.
 
 Re-stamped 2026-10-04 (`v6/ts696-stock-runner-guard-20261004`, #696):
 the GLM53 NoPE runner-identity owner rejects the known stock V2 runner in
@@ -943,6 +968,61 @@ admission retain their prior boundaries. Compilation, graph, drafter and
 eager-equivalence receipts remain independent. This is a correctness-only
 gate fix: no runtime image, public pin, serving cell, wire, numerical path,
 residency or performance default is promoted.
+
+CPU paired-K32 proofs (#857) execute the production admission expression,
+`pair_of`, `paired_k32_scope`, `launch_pair`, allocation owners, `check_slot`
+and consumer loop extracted from `routed_fused_window.cu`, using host-only
+tensor, launch, fragment, MMA and barrier shims. Pairing remains default-off
+and import-frozen: unset or exactly `0` disables it, exactly `1` enables the
+E4M3 MMA build define, and every other string is refused by selector name.
+Other library families receive no paired define. Admission requires an enabled
+paired build, FP8 E4M3 MMA, routed unsplit mode 0 or 2, legacy resident addressing, one R4 run,
+slot8, BMT128, K at least192 and divisible by64, and input rows at least512.
+The entry and dispatch proofs cover disabled builds, piece-major exclusion
+and existing width/family refusals. At default independent experimental
+controls the paired gate/up and down allocations are 76,240 and 59,664 bytes;
+the original allocations remain 57,552 and 40,976. The device-capacity shim
+checks the tensor's device and refuses one byte below the selected allocation.
+
+The consumer proof compares each scalar accumulator's K32 trace with the
+ordinary schedule and with increasing logical chunk indices, including all
+consumer lanes and row-block boundaries. Two microsteps share each alternating
+A/B pair slot and one FULL/EMPTY handoff. The producer proof retains alternating
+words/history slots, copy retirement, producer-reader and decoded-slot reuse,
+final-copy drain and delayed descriptor/scale epilogue reads across items.
+Its K128/two-pair failure control retains the reason for the K192 minimum.
+Both #855 terminal branches execute under delayed-consumer controls at paired
+quantum counts, including odd/even parity and zero work; releasing the other
+EMPTY parity alone cannot publish the sentinel. The FP4 branch is a protocol
+control, not a paired FP4 specialization. `_ext` executes with compiled-metadata
+fixtures in both selector mismatch directions. Torch-dependent Python proofs
+use an `importorskip` fixture; compiler-only proofs still run without torch.
+
+Temporary unsafe source mutations produced these retained failure excerpts
+under `pytest -s`; the production files were unchanged:
+
+```text
+unsafe disabled-build mutation: entry=1, dispatch=0, expected=0
+unsafe piece-major-entry mutation: entry=1, dispatch=0, expected=0
+unsafe piece-major-dispatch mutation: entry=0, dispatch=1, expected=0
+unsafe live-allocation mutation: guard admitted insufficient capacity: 1 1 76240
+unsafe live-allocation mutation: guard admitted insufficient capacity: 1 1 59664
+unsafe consumer order mutation: accumulator K32 order changed
+unsafe consumer early-empty mutation: EMPTY before final accumulator reader
+unsafe compiled-selector validation mutation: DID NOT RAISE GrammarError
+unsafe terminal 0/missing-wait, paired quanta=3: FULL reused before delayed consumer reset
+unsafe terminal 1/missing-wait, paired quanta=3: FULL reused before delayed consumer reset
+unsafe terminal 0/unused-wait, paired quanta=0: first-use terminal waited on nonexistent chunk
+unsafe terminal 1/unused-wait, paired quanta=0: first-use terminal waited on nonexistent chunk
+```
+
+These are CPU source/protocol and loader checks. They do not establish CUDA
+compilation or correctness, speedup, serving admission, runtime pinning,
+default promotion or an energy result. Fragment/MMA tags prove order and
+ownership rather than numerical output; metadata fixtures prove loader behavior
+rather than the identity of a compiled CUDA bank. Decoding, MMA instructions,
+epilogue, wire bytes and resident representation remain unchanged. Native builds
+and GPU qualification require separate receipts from the coordinator.
 
 Re-stamped 2026-10-04 for paired compiled-bank choice identity (#919).
 The paired 0/1 selector is strict and import-frozen, like the independent
@@ -1546,7 +1626,13 @@ must establish eager/FULL_DECODE_ONLY prefill execution before a served claim.
 The stock Q power-of-two scale rounding and arithmetic order remain intact.
 The opt-in native call uses the pass-buffer schedule; decode, mixed and
 capture guards remain unchanged. Its runtime GPU fixture exercises the actual
-cached factory with a retained DSO and refuses compilation. Full-model and
+cached factory with a retained DSO and refuses compilation. Before importing
+Tessera, the runtime test imports all three declared vLLM prerequisites:
+`flashinfer_mla_sparse`, `flashinfer_mla_sparse_sm120` and `index_group` under
+`vllm.v1.attention.backends.mla`. A missing requested module or parent causes a
+dependency-specific module skip; unrelated transitive import failures remain
+collection errors. These collection guards do not establish numerical or
+capture validation. Full-model and
 actual vLLM-runtime validation are separate gates: the two-case eager/stock-
 capture fixture passed on the retained candidate; full-model serving remains
 unqualified.
@@ -3960,6 +4046,25 @@ is not green. Each arm's own result stays readable in the receipt's
 `arm_results`, which is deliberately not the merge verdict and never sets the
 exit status.
 
+**Submission-time master provenance.** Before dispatching any arm or shard,
+`merge_suite.py` and `selected_population.py` use the shared merge-suite helper
+to write `submission-master.json` beside the run artifacts. This records the
+checkout commit, resolved master ref/head and their comparison before any client
+can outlive the submitter. Ref precedence remains `master`, `origin/master`, then
+`refs/remotes/origin/master`; this is a local observation, not a fetch or a claim
+of remote-master freshness. Assembly and a fresh-process `--resume` read that
+same observation rather than probing master again. Receipts retain its subject
+as `population.checkout_commit_at_submit`, separately from the current checkout
+`population.commit`. A ledger row inherits the comparison only when its own
+established measured commit matches that submission checkout; different or assumed
+measured commits report unknown even if they match the checkout at assembly.
+Missing submission evidence (including legacy directories with old submit-labelled
+receipts) leaves the submit-time head and comparison unknown; current refs and old
+receipts cannot reconstruct submission history. A failed checkout/master probe
+also leaves the comparison unknown. Dry runs do not persist this file. The observation is only
+provenance: it adds no identity seal or result gate and does not replace source
+validation or the measured commit reported by each population.
+
 A **resumed** receipt (`--resume <dir>`) rebuilds each arm from the population
 it published and, since tessera#218, borrows that arm's exit status from
 PrismaBuild's own outcome record -- shown as `0 (pool)`, never as a status this
@@ -5378,6 +5483,13 @@ every artifact already on disk is byte-identical across the bump. The wire is
 `docs/schema/prismaquant.tessera.v1.md` §1g, which also states what the fixture
 set is blind to.
 
+Ordinary fixtures inherit `encode_linear`'s effective trellis-weighting default
+by omitting the override. The hand-assembled release fixture, which cannot go
+through `encode_linear`, reads `export.DEFAULT_TRELLIS_WEIGHTING` at fixture
+build time. A future exporter default change therefore reaches the identity
+through both paths; this correction changes neither today's fixture bytes nor
+the identity, fixture roster, hash domain or compatibility baselines.
+
 The CPU identity still encodes every witness. Issue #364 reduces its cold
 startup by computing the CHANNEL spread objective's nearest scalar distance
 from the two sorted neighbours, in float64, rather than materializing the
@@ -5411,6 +5523,21 @@ witness neutral again, and the full identity rolls back only when the other
 fixture outputs do too. New shipping structures still add ordinary fixtures
 and re-base the identity; baseline-neutral witnesses are only for newly found
 blind spots inside a structure the live identity already claimed to cover.
+
+The LUT refit's `refit_gauss_seidel` and `refit_coupled_landing`
+admission gates share one pass-count-aware active-metric rule. Inner refits
+use `refit_metric`; the last uses `refit_metric_trailing`, inheriting the
+base when unset. With `scale_refit=1` only the trailing metric is active: an
+unused coupled base cannot admit either flag when that trailing metric is
+separable. Gauss–Seidel and coupled landing's `True`/`"every"` mode require
+at least one active metric that couples blocks; coupled landing's
+`"trailing"` mode requires that the trailing metric itself couples. Thus
+plain or separable inner refits followed by a coupled trailing refit remain
+valid, while a coupled base followed by a separable trailing refit admits
+`"every"` but not `"trailing"`. These options remain LUT-only and refuse
+no-metric and zero-refit requests. `scale_refit=0` still means one trellis
+pass without refitting; the execution schedule and numerical refits are
+unchanged by this admission rule.
 
 Issue #360 fixes cancellation in the CHANNEL refit's acceptance guard. The
 quadratic loss difference is evaluated as
@@ -7620,8 +7747,16 @@ scored in, the execution modes, the smoke on record, and the population. A
 decode cell is refused -- the confusion #133 is about), and `grade` is
 derived from the entries and checked, like `executes`: `route_only` when
 nothing attests quality in the cell's regime, else `kl_lower_bound`, else
-`kl_full_vocab`. On the shipped table every decode cell
-is `route_only`. Two were not: `tessera_e4m3_k1_dense_sm121_decode_streamed`
+`kl_full_vocab`. Contract v67 (tessera#1152) adds a third kind,
+`graph_equality`, for the decode compiled path. It is not a KL bound.
+The record cites the open graph gap and attests no equality, compiled KL, or compiled scope.
+A CUDA-graph serve replays decode batches, so the kind
+is decode-only and refused elsewhere. It carries no top-K number and never
+raises the grade. On the shipped table every decode cell
+is `route_only` and cites the open gap
+(`2026-09-30-glm-nightly-cells-and-graph-equivalence.md`) as one
+`graph_equality` record, and no decode cell claims a compiled KL. Two cells were not `route_only`:
+`tessera_e4m3_k1_dense_sm121_decode_streamed`
 (`tessera-decode-regime-kl-2026-09-03.md` eager,
 `tessera-compiled-decode-kl-r6-2026-09-04.md` compiled) and, from contract v24,
 `tessera_bf16_k1_dense_gfx1201_decode`
@@ -8789,7 +8924,12 @@ through `bf16_route.prepare_tessera_bf16_module`, the GEMV against the
 decoded tile, package power through `amd-smi` when a driver exists. It does
 not recompute a census or a KL: those belong to
 `tools/tessera_route_census.py` and the KL harness, and the receipt ingests
-theirs by path and SHA-256 so the evidence travels with the claim.
+theirs by path and SHA-256 so the evidence travels with the claim. Census
+ingestion copies `schema`, `lane_engagement`, `problems` and `runtime`
+(including its nested `image` and `execution_mode`); KL ingestion copies
+`schema`, `kl`, `corpus` and `regime`. Both fail with status `failed` and a
+reason naming every absent requested top-level key. Presence, not truthiness,
+is required: explicit nulls and empty containers are copied unchanged.
 `docs/strix-halo-tester-protocol.md` is what a tester is sent;
 `tests/test_attest_receipt.py` holds the scope rule, the refusal and the
 receipt schema on CPU, with a stubbed device.
@@ -9146,8 +9286,11 @@ Selection additionally requires `--attention-backend CUSTOM --kv-cache-dtype
 fp8_ds_mla --kernel-config '{"enable_flashinfer_autotune":false}'`.
 This experimental attention extension is separate from checkpoint quantization
 selection and changes no stock backend registration. Another plugin's CUSTOM
-registration is refused. Without the environment setting, normal plugin loading
-is unchanged.
+registration is refused. The flag is parsed and latched inside `register()` by
+`flags.latched_bool`: unset/empty and `0` keep it disabled, `1` enables it, and
+surrounding whitespace is stripped. Other spellings raise; changing the latched
+setting requires a process restart. Without the environment setting, normal
+plugin loading is unchanged.
 
 **Execution modes are admitted by receipt** (`glm53_nope._execution_reason`,
 tessera#508). Eager, and compilation modes NONE, VLLM_COMPILE and
@@ -9304,6 +9447,32 @@ on the other. A v1 receipt (no fabric) stays readable, but `verify` refuses it
 for a card. Contexts above `index_topk` are a screen only: there eager does
 not reproduce itself.
 
+`src/tessera/graph_equality.py` owns the import-safe authoritative case geometry
+and derives the per-case and total choice counts; the runner exposes its `CASES`
+without startup I/O. The producer validates every summary and raw case against
+that protocol, including prompt/generation geometry, unique choice indices and
+digests. Missing, substituted or conflicting equality basenames refuse, rather
+than selecting the first input directory; byte-identical copies are admissible.
+Both eager and graph populations must be complete, with exactly the distinct
+`<arm>` and `<arm>-r2` passes. Arm roles, arm names and expanded pass names must
+not overlap. The shared receipt gate rechecks those identities and complete
+integral counters independently of receipt-declared totals, `equal`, `verdict`
+or `attests` claims.
+
+Completeness does not require eager repeat-exactness or full membership in the
+other eager arms: graph membership still pools eager outcomes across cases and
+passes with identical whole-batch signatures (ordered prompt tokens and generation
+lengths). The runner requests top-20 logprobs in text-keyed maps, where distinct
+token IDs can decode to the same key; the gate therefore accepts nonempty finite
+maps with up to 21 keys (including a possible extra sampled token), not a minimum
+of 20 distinct keys. Membership and digests still compare the recorded maps
+exactly, without reconstructing lost IDs. Nonmember tokens or top-logprob outcomes
+still refuse. Long-context screens cannot repair incomplete equality evidence.
+This CPU-testable receipt contract does not confer compiled qualification,
+replace artifact byte-integrity checks or add an identity seal; runtime pins,
+serving defaults and fabric comparability remain unchanged. It does not expand
+the batch/decode evidence boundary.
+
 Receipts: [graph equals eager on the release image](measurements/2026-10-04-glm-graph-equals-eager.md).
 
 ### 5.1.2b A task endpoint binds its served alias to loaded bytes (tessera#1056)
@@ -9354,6 +9523,15 @@ These observations do not replace decoder agreement or scientific comparability 
 
 Tokenizer evidence includes the loaded backend, vocabulary mapping, special IDs, and actual local source bytes.
 The backend and mapping must agree with `tokenizer.json`.
+The backend and `tokenizer.json` roots must be JSON objects.
+The verifier refuses array roots before ByteLevel normalization.
+Nested Unigram vocabulary arrays remain supported.
+The comparison ignores the ByteLevel flags that no token ID depends on.
+These are a pre-tokenizer's `trim_offsets` and every flag on a ByteLevel decoder.
+transformers rewrites them when it loads the file, and the pinned vLLM image shows exactly these four differences.
+A pre-tokenizer's `add_prefix_space` and `use_regex` stay exact.
+This tolerance is a correctness rule for the byte join. It grants no D50 qualification.
+Re-stamped 2026-10-11 for the strict tokenizer root boundary (issue #1134).
 Special IDs must agree with the source tokenizer configuration.
 A vocabulary length or client tokenizer record supplies none of these facts.
 Unsupported loaders, missing observations, incomplete coverage, and in-place reloads leave the evidence incomplete.
@@ -9423,8 +9601,10 @@ installs it (`src/tessera/serving/config.py`). No vLLM or FlashInfer source
 file is edited. Each change checks the sha256 of every module it reads against
 an inspected interface (`_INTERFACES`: image `5be13705`, vLLM
 `0.30.1rc1.dev336+gaf5b4857e`). On any mismatch, or on a serve shape it was
-not measured on, it declines to the stock code with one warning and never
-raises.
+not measured on, it declines to the stock code with one warning. These
+interface/shape declines do not suppress configuration errors: invalid flag
+values raise `ValueError`, and changing a latched setting raises `RuntimeError`
+requiring a process restart.
 
 | Variable | Default | What it changes |
 |---|---|---|
@@ -9433,6 +9613,17 @@ raises.
 | `TESSERA_GLM53_SP_MHC_SPEC` | unset | `1` allows SP with speculative decoding. Without it, a speculative serve declines SP. |
 | `TESSERA_GLM53_MHC_FUSED` | unset | `1` installs `mhc_fusion` (contract `stock_kernel_overrides`, kind `model_method`): `Glm5NextDecoderLayer.hc_fused_post_pre` runs one fused post/GEMM/pre kernel per mHC site that stock runs at split 1, the split read at call time, so it composes with `TESSERA_GLM53_SP_MHC`. It must be bitwise to stock, and it stays default-off until the GPU gate and a served A/B land (#783). Unlike the rows above, an install whose contract entry has drifted raises instead of declining. |
 | `TESSERA_GLM53_KDA_CONV_SPLIT` | `off` | `on` rebinds `Glm5NextLinearAttention._forward` to run the KDA prefill's short conv once per q/k/v slice, so FlashKDA's three `.contiguous()` copies become no-ops. The rebind compiles the stock method's own source with one block replaced, and only when that block occurs exactly once. `glm53_prefill.py` reads and digest-checks the file; `src/tessera/serving/method_rebuild.py` compiles the text and reads no file. The #808 selector follows that helper call, so the generic source parameter remains unknown. The frozen `202d1f07` receipt established a static predecessor path through layout's lazy slicing import; the guarded-re-export analyzer now distinguishes direct layout names from slicing demands. Runtime callable reachability and source origin remain unproved. |
+
+ONORM, SP mHC and KDA conv split use the shared `serving.flags` latch on
+their first successfully parsed read, independently of installation caches.
+ONORM strips whitespace and accepts empty, `0` or `1` (only `1` enables it).
+SP accepts `auto`/`off`/`force` and KDA accepts `on`/`off`, with whitespace
+stripped and case normalized. Their `off` defaults apply only when the key is
+absent; explicit empty or whitespace-only modes are invalid. Invalid reads
+raise before latching and do not poison a later valid read. A changed valid
+setting, including unsetting an enabled flag, requires restart; equivalent
+normalized mode reads remain valid. `latched_mode` callers that do not opt
+into a default still require an explicit selector.
 
 The module docstring records the decline rules and the exactness argument.
 The SP source read set includes the CUDA communicator, AG/RS route rule,
@@ -9605,33 +9796,95 @@ for the first folded call and one for the first kept call.
 
 The flag is off by default. No route, contract or artifact changes.
 
+`experiments/t8r_speed/shared_fold_check.py --out DIR --base-source PATH`
+qualifies the fold against the retained original pre-fold
+`routed_fused_window.cu`; it does not infer a baseline from this checkout's
+parent. Missing or unreadable `--base-source` produces a named refusal,
+a failed receipt and a nonzero exit before GPU execution. The harness and
+CPU controls use the same numeric and SASS decision functions.
+
+Numeric qualification requires exactly one case per `routed_fused.LIBRARIES`
+entry, T in `{1, 2, 3, 4, 5, 6, 7, 8, 512, 2048, 2049}`, and data form
+`served_scale` or `adversarial`, at H=4096 and top-k=8. Every case executes
+stock/fold/stock/fold, compares int16 views exactly to the first stock output,
+and checks the targeted answers on every adversarial execution. Missing,
+duplicate, unexpected or errored cases fail. The CUDA unit matrix covers
+every routed library at T in `{1, 2, 4, 2048}` with both data forms.
+
+SASS qualification uses `experiments/t4_code/sass_dump.py`'s kernel-name
+normalization and comparison report for every library it declares, including
+E2M1. Every original kernel must be classified `identical`: equal ordered
+instruction sequences after addresses and encodings are stripped. Multiset
+agreement, changed or removed kernels, absent libraries, empty original
+coverage, failed commands and malformed reports fail. Each library must add
+exactly one kernel whose demangled unqualified function name is exactly
+`token_sum_shared_kernel`; other additions fail. This stricter decision is
+local to the shared-fold harness.
+
+`DIR/shared_fold_check.json` retains numeric runs, SASS command results,
+provenance and timing screens, records both source SHA-256 digests, and adds
+`qualification.passed` and `qualification.failure_reasons`. Exit zero requires
+complete numeric coverage and successful SASS qualification; omitted evidence
+fails. The `sass-before/`, `sass-after/` dumps and `sass-compare.json` are
+retained beside the receipt. Profiler and CUDA-event timing remain `[S]`
+screens and establish no served saving or energy benefit. Matched TP2 served
+arms must still establish baseline-identical TR3 KL, removal of eligible
+separate adds in per-rank profiler traces, and measured latency and work per
+joule on both hosts. Default-on adoption remains Rob's separate decision.
+
 ### 5.1.3 Opt-in: skip the zero-width RoPE query cat (tessera#796)
 
 GLM-5.3 attention has `qk_rope_head_dim == 0`. The stock
 `FlashInferMLASparseSM120Impl.forward_mqa` still joins `(q_nope, q_pe)` with
-`torch.cat`, which copies all of `q_nope`: 11 copies of 67 MB per 2048-token
-prefill chunk at TP 2, about 6.4 ms.
+`torch.cat`, which copies all of `q_nope`.
 
 With `TESSERA_GLM53_SKIP_EMPTY_ROPE_CAT=1`, `TesseraConfig.get_quant_method`
 rebinds that method (`serving.glm53_empty_rope`). The rebind passes `q_nope`
-itself when the cat would only copy it: a 2-tuple, a zero-wide second part,
-matching leading shape, dtype and device, and a contiguous, 512-byte-aligned
-`q_nope`. The kernel then reads the same bytes, shape, strides and alignment.
-Every other query reaches the stock code unchanged.
+itself exactly when the query satisfies `isinstance(q, tuple)` and has length
+two, both parts satisfy `isinstance(part, torch.Tensor)`, their ranks are equal
+and positive, the second part's final dimension is zero, and their leading
+shapes, dtypes and devices match. `q_nope` must also be contiguous and its data
+pointer divisible by 512. Every other query reaches the stock code by identity.
 
-The rebind installs only on a stock source whose sha256 is in the inspected
-set (image `5be13705`); any other source keeps the stock method. Each process
-logs one line: `installed`, `declined` (with the reason) or `off`. It also logs
-whether the first tuple query skipped the cat.
+The only permitted rebind is
+`vllm.v1.attention.backends.mla.flashinfer_mla_sparse_sm120.FlashInferMLASparseSM120Impl.forward_mqa`,
+on stock module source SHA-256
+`102ca08793d567f95598eefeb34c3f6ec50b3b9d704f162d1402b97b12b5777b`
+(inspected image `5be13705`) with parameter sequence
+`self, q, kv_c_and_k_pe_cache, attn_metadata, layer`. Unavailable imports,
+classes or methods, unreadable or unknown sources, and uninspectable or changed
+signatures decline without rebinding. Installation is idempotent; the wrapper
+retains `__wrapped_stock__` and calls stock exactly once, preserving the other
+arguments, result and exceptions.
 
-The flag is off by default. No route, contract or artifact changes.
+Each process logs one installation line: `installed`, `declined` (with the
+reason) or `off`, retaining source/image provenance on installation. The first
+tuple query reports `cat skipped` or `cat kept (reason)` once; earlier
+non-tuple queries do not consume that report.
+
+The flag is off by default. It uses `latched_bool`: after whitespace stripping,
+`1` enables it; unset, empty and `0` disable it. Other spellings raise
+`ValueError` naming the flag; changing its normalized value after latching
+raises `RuntimeError`. No route, contract or artifact changes.
 
 The GPU qualification probe `experiments/t8r_speed/empty_rope_cat_check.py`
 requires the stock `concat_and_cache_mla` producer and successful CUDA
 completion before recording cache provenance. Import, writer and completion
 failures propagate; synthetic cache bytes never replace a failed stock writer
-(tessera#887). CPU failure controls cover this refusal only, not GPU arithmetic
-or the matched served TR3/cat-trace gate required by #796.
+(tessera#887). Its five cases are prefill positions 0–2047 and 6144–8191, and
+decode batches 1, 2 and 4 at position 8191, with 32 heads and latent width 512.
+Each runs cat/direct/cat/direct against the same stock-produced cache and
+compares every output through an `int16` view to the first cat output. The
+helper must return `q_nope` itself on every call. Each case and `all_bitwise`
+are recorded in JSON; any case failure makes the exit status nonzero.
+
+CPU controls verify eligibility, propagation and receipt refusal/aggregation;
+they do not establish GPU arithmetic or the matched served TR3/cat-trace gate
+required by #796. Those need the qualified GPU receipt and matched TP2 served
+arms against the same BF16 teacher and artifact bytes. Timing must be measured
+before and after on the delivered source; this unit guarantees no saving.
+Default-on promotion requires a separate decision after served evidence.
+
 ### 5.2 What the wheel ships besides Python
 
 Two non-Python files are opened at run time, and each is declared in

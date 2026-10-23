@@ -1,6 +1,6 @@
 {
  "schema": "tessera.runtime-contract.v1",
- "contract_version": 66,
+ "contract_version": 67,
  "quant_method": {
   "canonical": "tessera",
   "accepted": [
@@ -962,7 +962,15 @@
     "evidence": {
      "artifact": null,
      "grade": "route_only",
-     "kl": [],
+     "kl": [
+      {
+       "kind": "graph_equality",
+       "top_k": null,
+       "regime": "decode",
+       "execution_modes": ["eager"],
+       "receipt": "docs/measurements/2026-09-30-glm-nightly-cells-and-graph-equivalence.md"
+      }
+     ],
      "smoke": {
       "status": "not_recorded",
       "receipt": null,
@@ -1144,7 +1152,15 @@
     "evidence": {
      "artifact": null,
      "grade": "route_only",
-     "kl": [],
+     "kl": [
+      {
+       "kind": "graph_equality",
+       "top_k": null,
+       "regime": "decode",
+       "execution_modes": ["eager"],
+       "receipt": "docs/measurements/2026-09-30-glm-nightly-cells-and-graph-equivalence.md"
+      }
+     ],
      "smoke": {
       "status": "not_recorded",
       "receipt": null,
@@ -1356,7 +1372,15 @@
     "evidence": {
      "artifact": null,
      "grade": "route_only",
-     "kl": [],
+     "kl": [
+      {
+       "kind": "graph_equality",
+       "top_k": null,
+       "regime": "decode",
+       "execution_modes": ["eager"],
+       "receipt": "docs/measurements/2026-09-30-glm-nightly-cells-and-graph-equivalence.md"
+      }
+     ],
      "smoke": {
       "status": "not_recorded",
       "receipt": null,
@@ -1511,7 +1535,15 @@
     "evidence": {
      "artifact": null,
      "grade": "route_only",
-     "kl": [],
+     "kl": [
+      {
+       "kind": "graph_equality",
+       "top_k": null,
+       "regime": "decode",
+       "execution_modes": ["eager"],
+       "receipt": "docs/measurements/2026-09-30-glm-nightly-cells-and-graph-equivalence.md"
+      }
+     ],
      "smoke": {
       "status": "not_recorded",
       "receipt": null,
@@ -1650,7 +1682,15 @@
     "evidence": {
      "artifact": null,
      "grade": "route_only",
-     "kl": [],
+     "kl": [
+      {
+       "kind": "graph_equality",
+       "top_k": null,
+       "regime": "decode",
+       "execution_modes": ["eager"],
+       "receipt": "docs/measurements/2026-09-30-glm-nightly-cells-and-graph-equivalence.md"
+      }
+     ],
      "smoke": {
       "status": "not_recorded",
       "receipt": null,
@@ -2434,6 +2474,11 @@
   }
  },
  "changelog": [
+  {
+   "contract_version": 67,
+   "date": "2026-10-09",
+   "change": "Decode cells cite the open graph gap (tessera#1152). Each decode cell carries one graph_equality record naming docs/measurements/2026-09-30-glm-nightly-cells-and-graph-equivalence.md. The record is decode-only, carries no top-K number, and grades route_only. No decode cell claims a compiled KL or a compiled scope. Batch cells and eager scopes are byte-identical."
+  },
   {
    "contract_version": 66,
    "date": "2026-10-09",

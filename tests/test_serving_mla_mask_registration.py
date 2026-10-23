@@ -4,7 +4,21 @@ pytest.importorskip('vllm.v1.attention.backends.registry')
 from tessera.serving import flags, register
 from vllm.v1.attention.backends.registry import AttentionBackendEnum
 
-def test_explicit_mask_skip_flag_registers_stock_enum(monkeypatch):
+@pytest.fixture
+def registration_flags(monkeypatch):
+    """Isolate both flags read by register(), including its default-off arm."""
+    names = ('TESSERA_RESEARCH_GLM53_NOPE', 'TESSERA_RESEARCH_MLA_MASK_SKIP')
+    for name in names:
+        flags.reset_for_tests(name)
+        monkeypatch.delenv(name, raising=False)
+    try:
+        yield
+    finally:
+        for name in names:
+            flags.reset_for_tests(name)
+
+
+def test_explicit_mask_skip_flag_registers_stock_enum(monkeypatch, registration_flags):
     backend=AttentionBackendEnum.FLASHINFER_MLA_SPARSE_SM120
     previous=backend.get_path() if backend.is_overridden() else None
     try:

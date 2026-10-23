@@ -21,6 +21,36 @@ The eager tr3_batch, speed_batch, and speed_decode entry points name every permi
 PrismaBuild CPU preflight verifies the actual parsers, sealed token reads, fixture geometry, and scorer imports.
 The dense supplement encodes eleven actual source tensors on CUDA under the accepted 9eef9fea6 producer source.
 
+## 2026-10-11 — refuse tokenizer array roots (issue #1134)
+
+Require dictionary roots before the endpoint witness normalizes ByteLevel flags.
+Reject malformed `tokenizer.json` arrays even when their pairs form the same object.
+Keep the four allowed flag differences and nested Unigram vocabulary arrays unchanged.
+CPU and offline CLI proof grant no current endpoint or served-quality qualification.
+
+## 2026-10-11 — restore the intake import probe state, issue #1031
+
+The guard probe removes the cached intake module before it checks the activation import.
+It restores the prior consumer and every vLLM binding after the probe.
+It checks the exact activation refusal instead of any skip.
+CPU allocation tests require both vllm.config and the fused MoE activation module.
+The six CPU configuration refusal cases use the shared configuration module without a vLLM guard.
+No GPU or served-output qualification follows from these CPU tests.
+
+## 2026-10-10 — graph-only census separation (issue #1062)
+
+--compiled now names a non-eager engine, not a Torch trace. A run with compilation mode NONE loads and measures CUDA graphs only. Its records keep concrete capture shapes. The census checks those shapes as concrete and no longer requires M star. A real Torch trace still requires shape-polymorphic M star records in both driven phases. Every graph-only census states capture time only and grants no logical row credit. Replay runs no Python. Phase, owner, route, decoder, dtype and cell checks run on both paths. The receipt attests capture_time_shapes_unattested for graph-only runs. No admission follows from this change.
+
+## 2026-10-10 — isolate vLLM stub state in the test co-run (issue #1015)
+
+Guard the three remaining vLLM consumers on the submodule they import, not on the bare package.
+A leaked bare vLLM stub now skips those files instead of failing them with `'vllm' is not a package`.
+The benchmark regression checks import-state preservation with and without real vLLM.
+The existing ddd2137 repair moves the benchmark installer from import time to its command entry point.
+Both dispatch fixtures restore the prior bindings after a setup import or installer fails.
+The setup regression checks real configuration imports and exact module and package bindings.
+No serving default, qualifier, wire, or timing rule changes.
+
 ## 2026-10-10 — admit the served L14 WINDOW in the opt-in packed reader (issue #1166)
 
 Admit the served fourteen bit WINDOW beside the research twelve bit WINDOW in `prepare_a4_wire_compact`.

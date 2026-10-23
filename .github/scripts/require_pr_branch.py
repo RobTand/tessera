@@ -40,7 +40,7 @@ def require_branch(pull_request: dict, repository: str) -> None:
     """Refuse a branch that does not match a linked issue, except legacy PRs."""
     branch = pull_request["head"]["ref"]
     created_at = datetime.fromisoformat(pull_request["created_at"].replace("Z", "+00:00"))
-    if branch.startswith(("ig/", "release")) or created_at < CUTOFF:
+    if branch.startswith(("ig/", "tl/", "release")) or created_at < CUTOFF:
         return
 
     issues = linked_issues(pull_request["body"] or "", repository)

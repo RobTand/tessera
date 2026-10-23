@@ -295,7 +295,7 @@ def test_pr_branch_matches_a_linked_issue(tmp_path, branch, body):
 @pytest.mark.parametrize("branch", [
     "fix/something", "tessera-124", "tessera-123-", "tessera-123--gpu",
     "tessera-123-GPU", "tessera-123-gpu_test", "tessera-123-gpu/test",
-    "tessera-123\n", "tessera-0123",
+    "tessera-123\n", "tessera-0123", "tlx/release-operation", "tl",
 ])
 def test_pr_branch_refusal_names_the_rule_and_expected_branch(tmp_path, branch):
     done = _run_branch_check(tmp_path, branch, "Closes #123.")
@@ -305,9 +305,17 @@ def test_pr_branch_refusal_names_the_rule_and_expected_branch(tmp_path, branch):
     assert "tessera-123" in done.stderr
 
 
-@pytest.mark.parametrize("branch", ["ig/train/x-9", "ig/old-work", "release", "release-1.0"])
+@pytest.mark.parametrize("branch", [
+    "ig/train/x-9", "ig/old-work", "release", "release-1.0",
+    "tl/release-operation", "tl/other-operation",
+])
 def test_pr_branch_prefix_exemptions_need_no_issue(tmp_path, branch):
     done = _run_branch_check(tmp_path, branch, None)
+    assert done.returncode == 0, done.stdout + done.stderr
+
+
+def test_pr_branch_accepts_trustladder_release_with_batch_references(tmp_path):
+    done = _run_branch_check(tmp_path, "tl/release-operation", "Refs #123\nRefs #124")
     assert done.returncode == 0, done.stdout + done.stderr
 
 

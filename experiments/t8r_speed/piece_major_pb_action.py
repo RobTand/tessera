@@ -72,37 +72,40 @@ def main():
     from paired_k32_action import run_direct_arm, owned_cleanup
     def interrupted(signum, frame):
         raise KeyboardInterrupt("PM timing interrupted: " + str(signum))
-    signal.signal(signal.SIGTERM, interrupted)
-    env = dict(os.environ, **window["env"])
-    env["PB_ACTION_KEY"] = os.environ["PRISMABUILD_ACTION_KEY"]
-    started = time.time()
-    result = {"schema": "tessera.pm_pb_timing_terminal.v1", "action_key": env["PB_ACTION_KEY"],
-              "packet_sha256": args.packet_sha256, "go": go, "start_unix": started,
-              "assigned_affinity": sorted(os.sched_getaffinity(0)), "returncode": None,
-              "energy_status": "HOLD_pending_independent_coverage_clock_and_instrument_review"}
+    previous_sigterm = signal.signal(signal.SIGTERM, interrupted)
     try:
-        with (root / "controller.log").open("xb") as log:
-            result["returncode"] = run_direct_arm(window["argv"], env, log, out,
-                                                   root / "pressure-guard.jsonl", deadline_s=600)
-    except BaseException as error:
-        result["error"] = type(error).__name__ + ": " + str(error)
-        raise
+        env = dict(os.environ, **window["env"])
+        env["PB_ACTION_KEY"] = os.environ["PRISMABUILD_ACTION_KEY"]
+        started = time.time()
+        result = {"schema": "tessera.pm_pb_timing_terminal.v1", "action_key": env["PB_ACTION_KEY"],
+                  "packet_sha256": args.packet_sha256, "go": go, "start_unix": started,
+                  "assigned_affinity": sorted(os.sched_getaffinity(0)), "returncode": None,
+                  "energy_status": "HOLD_pending_independent_coverage_clock_and_instrument_review"}
+        try:
+            with (root / "controller.log").open("xb") as log:
+                result["returncode"] = run_direct_arm(window["argv"], env, log, out,
+                                                       root / "pressure-guard.jsonl", deadline_s=600)
+        except BaseException as error:
+            result["error"] = type(error).__name__ + ": " + str(error)
+            raise
+        finally:
+            result["end_unix"] = time.time()
+            result["measurement_retention"] = ("benchmark_receipt_present" if (out / "bench_t8r.json").is_file()
+                else "benchmark_not_published_partial_inprocess_events_not_retained")
+            result["cleanup"] = owned_cleanup(out)
+            (root / "action-window.txt").write_text(f"{started} {result['end_unix']}\n")
+            (root / "terminal.json").write_text(json.dumps(result, indent=2) + "\n")
+            print(json.dumps(result), flush=True)
+        if result["returncode"]:
+            return result["returncode"]
+        (root / "timing").symlink_to(out, target_is_directory=True)
+        subprocess.run([sys.executable, "experiments/t8r_speed/routed_gate_netdata.py", str(root)], check=True)
+        evidence = {str(p): digest(p) for p in [out / "bench_t8r.json", root / "netdata.json", *sorted(out.glob("torch-*.json"))]}
+        (root / "evidence-sha256.json").write_text(json.dumps(evidence, indent=2) + "\n")
+        print(json.dumps({"action_key": env["PB_ACTION_KEY"], "evidence_sha256": evidence}), flush=True)
+        return 0
     finally:
-        result["end_unix"] = time.time()
-        result["measurement_retention"] = ("benchmark_receipt_present" if (out / "bench_t8r.json").is_file()
-            else "benchmark_not_published_partial_inprocess_events_not_retained")
-        result["cleanup"] = owned_cleanup(out)
-        (root / "action-window.txt").write_text(f"{started} {result['end_unix']}\n")
-        (root / "terminal.json").write_text(json.dumps(result, indent=2) + "\n")
-        print(json.dumps(result), flush=True)
-    if result["returncode"]:
-        return result["returncode"]
-    (root / "timing").symlink_to(out, target_is_directory=True)
-    subprocess.run([sys.executable, "experiments/t8r_speed/routed_gate_netdata.py", str(root)], check=True)
-    evidence = {str(p): digest(p) for p in [out / "bench_t8r.json", root / "netdata.json", *sorted(out.glob("torch-*.json"))]}
-    (root / "evidence-sha256.json").write_text(json.dumps(evidence, indent=2) + "\n")
-    print(json.dumps({"action_key": env["PB_ACTION_KEY"], "evidence_sha256": evidence}), flush=True)
-    return 0
+        signal.signal(signal.SIGTERM, previous_sigterm)
 
 
 if __name__ == "__main__":

@@ -17,9 +17,9 @@ Shapes (per rank, TP2): routed gate/up (4096 to 2 x 1024, launch mode 0) and
 down (1024 to 4096, mode 2); dense ``o_proj`` 4096 to 4096, ``q_b`` 1536 to
 8192, and KDA ``in_proj_qkvbfg_a`` at its pinned contract total from
 ``bench_dense_module.MODULES`` (tessera#1020: the sweep timed a short proxy
-and dropped replicated rows). The dense identity needs rows in multiples of
-128, so the full KDA total refuses there by name; the full module times
-per role in ``bench_dense_module.py``.
+and dropped replicated rows). The dense identity uses the reader's
+``DENSE_ROW_QUANTUM`` and supports a partial final BN block, including the
+full KDA total; ``bench_dense_module.py`` also times the module per role.
 
 M: 1, 64, 512 and 8192.  Routed cells use balanced routing (token t picks
 experts (8t + j) mod 288) and, when ``--routing`` names the recorded prefill
@@ -383,8 +383,8 @@ class Sweep:
         n_hi = 0 if frac is None else round(cols * frac)
         head = {"kind": "dense", "q256": q, "shape": shape, "rows": rows, "cols": cols, "r_lo": r_lo,
                 "n_hi": n_hi, "geometry": geometry(rf, r_lo, frac, 2, self.mma8)}
-        if rows % rf.BN:
-            head["refused"] = f"{rows} rows; the dense identity needs a multiple of {rf.BN}"
+        if rows % rf.DENSE_ROW_QUANTUM:
+            head["refused"] = f"{rows} rows; the dense identity needs a multiple of {rf.DENSE_ROW_QUANTUM}"
             return head, None, None
         p = build_projection(rf, 1, rows, cols, r_lo, n_hi, zlib.crc32(f"paired:{shape}".encode()),
                              self.dev, self.mma8, bf16_table=not self.fp8)
