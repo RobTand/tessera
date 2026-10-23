@@ -171,6 +171,18 @@ def _bind_arm(root, setup, graph, record, arm, members, input_sha):
     _complete(directory, report, rows)
     # Reapply the authoritative gate, not receipt.verdict or its cached attests.
     if not flags["enforce_eager"]:
+        # The shared gate checks every manager present, but cannot infer a
+        # missing native rank. Establish the TP population here, without
+        # changing the graph receipt contract or duplicating its replay rule.
+        managers = record["graph"]["managers"]
+        _require(isinstance(managers, dict), "graph replay managers must be a mapping")
+        _require(all(isinstance(name, str) and ":" in name and name.split(":", 1)[1]
+                     for name in managers), "graph replay managers require rank-qualified names")
+        required = {f"rank{member['rank']}" for member in members}
+        present = {name.split(":", 1)[0] for name in managers}
+        _require(present == required,
+                 f"graph replay population missing {sorted(required - present)}; "
+                 f"unexpected {sorted(present - required)}; required {sorted(required)}")
         serve = {key: flags[key] for key in ("compilation_config", "speculative_tokens", "tensor_parallel_size", "max_num_seqs", "max_model_len", "fabric")}
         serve.update({key: scope[key] for key in ("image", "model_config_sha256", "tessera_src_sha256")})
         why = graph_receipt.verify(graph, serve)

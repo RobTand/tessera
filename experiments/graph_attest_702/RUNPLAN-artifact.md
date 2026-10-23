@@ -71,7 +71,9 @@ intake decision is implied.
 
 The existing recipe environment accepts optional `BATCH_KL`, a nonempty JSON
 object retained verbatim as `inputs.json.config.batch_kl` during preparation.
-It is only permitted for graph-control, leaving benchmark modes unchanged.
+It is forwarded unchanged into both native action environments, so rank startup
+reconstructs the same declaration before scope/comparability validation. It is
+only permitted for graph-control, leaving benchmark modes unchanged.
 Deployment-specific `handoff`, `endpoint`, `tool`, and `output` declarations
 belong there, along with `scoring` (`corpus_sha256`, `teacher_sha256`,
 `tokenizer_sha256`, `regime`, positive `expected_rows`). There are no executable
@@ -99,9 +101,12 @@ contract is `batch-kl.json` in each retained arm directory, referencing
 arm-relative raw JSONL/result files with SHA256 hashes. It binds prepared input
 hash/run, both native identities and owned containers, artifact/config/source,
 actual image, requested and observed flags, target provenance and scoring scope.
-The binder rehashes retained bytes, checks row completeness, and reuses the graph
-verifier's full equality/replay gate, not a stored `equal` verdict. It links the
-unchanged graph receipt by SHA256 without adding BF16 KL claims to it. A synthetic
+The binder rehashes retained bytes, checks row completeness, and requires a
+rank-qualified graph replay manager population covering both native ranks before
+reusing the graph verifier's full equality/replay gate, not a stored `equal`
+verdict. The shared verifier alone checks only managers present and cannot detect
+an entirely omitted rank; this companion boundary supplies that TP2 requirement.
+It links the unchanged graph receipt by SHA256 without adding BF16 KL claims to it. A synthetic
 fixture qualifying here is **not scientific TP2 or KL qualification**. Without
 the supported live handoff, production collection refuses and the companion
 remains unqualified; an offline result is not an acceptable substitute.
@@ -122,6 +127,58 @@ BF16 KL outcome is claimed. No GPU check or measurement campaign was run here.
 The handoff and CLI workflow require reviewer inspection as well as these tests.
 
 [Test evidence {"artifacts":{"stderr":{"digest":"e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855","size":0},"stdout":{"digest":"9a9ec443fc97e0fcf8f49e6e0707741fad177c6d6101bb161d051ad3bd1d43f5","size":2078}},"operation":"3e94c3a95d1335231dbfaa2b639b5974d98d5112158659198e2aa01af032040b","receipt":"900a873b77a3bba3cd1662ff2fa3e53877b2598462dbf251e922faf101379998"}]
+
+### Review repair: prepared configuration and replay population
+
+Added `tests/test_graph_attest_batch_kl_binding.py`, reusing the protected
+normalized fixture without changing it. Before the repair, this command on
+`011036a1522c4630b12ae2701dec2769b16dc1af` plus the new tests reproduced **3 failed,
+1 passed**: enabled configuration raised `Window4 rank: control
+scope/geometry/comparability differs`; deleting either rank's manager failed
+`assert bound["qualified"] is False` because the companion still qualified.
+The batch-KL-disabled configuration case passed.
+
+```sh
+PYTHONPATH=src OMP_NUM_THREADS=1 MKL_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 NUMEXPR_NUM_THREADS=1 python -m pytest tests/test_graph_attest_batch_kl_binding.py -q -n 2 --dist worksteal --durations=10 --basetemp="$TMPDIR/pytest"
+```
+
+[Test evidence {"artifacts":{"stderr":{"digest":"e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855","size":0},"stdout":{"digest":"7ea3a334dff5d2aad1a02789ebe18e37bc6e684a6dd666dc960b59fae8c4c833","size":7467}},"operation":"eeb94961c3b54cc5ccdc377fab8ec7f5b69bab3b7d312f5162e9942290f76755","receipt":"8068c961378ec55fc99ef44fe27649787771e1c661c03aa66088024d7d2c3c83"}]
+
+The repair forwards `BATCH_KL` in the existing optional native action environment
+allowlist and establishes a manager population for both native ranks at the
+companion boundary. It retains the existing graph verifier and graph receipt
+contract. Post-repair x86 checks:
+
+```sh
+PYTHONPATH=src OMP_NUM_THREADS=1 MKL_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 NUMEXPR_NUM_THREADS=1 python -m pytest tests/test_graph_attest_batch_kl_binding.py tests/test_graph_attest_batch_kl.py tests/test_graph_attest_tp2.py tests/test_graph_attest_managed_window.py tests/test_graph_receipt.py -q -n 2 --dist worksteal --durations=10 --basetemp="$TMPDIR/pytest"
+```
+
+**133 passed, 9 skipped** in 23.15s, with all skips requiring the published PB SDK.
+
+[Test evidence {"artifacts":{"stderr":{"digest":"e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855","size":0},"stdout":{"digest":"dcdc33cc3a2e5396347891b252ec8e90dbed3f0dd6bb3e0aafe47be6109acd8b","size":1883}},"operation":"c91b2cfca82fbf6c51390cdef1fb12ebdbcd8d43846e548ec502de3651085b39","receipt":"920f4bdde9600a355973ef853063bcbe2d7bce256f5b9bb57fc9bdb380eddbd7"}]
+
+```sh
+PYTHONPATH=src OMP_NUM_THREADS=1 MKL_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 NUMEXPR_NUM_THREADS=1 python -m pytest tests/test_issue_refs.py tests/test_impacted_tests.py -q -n 2 --dist worksteal --durations=10 --basetemp="$TMPDIR/pytest"
+```
+
+**212 passed** in 175.37s.
+
+[Test evidence {"artifacts":{"stderr":{"digest":"e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855","size":0},"stdout":{"digest":"f5112f837a01f20da455bc444b947e773b6d005e687b11b3f821102e52e981ab","size":1781}},"operation":"2f2a0b5431fdd082f39379e6fdb3ec23a0d65a280c5eaa3481b49f0cc5e2780c","receipt":"421b91b7a57b3b1be2620fb04ad93f2c7d97da2fc5662b0712dbdcefd474355b"}]
+
+A broader optional x86 selection did **not run**: runner setup exited 124 before
+executing the command, so it supplies no test result. Its command excluded the
+reviewer's already identified unrelated historical-object dependency; no test
+was changed or claimed passing on that basis.
+
+```sh
+PYTHONPATH=src OMP_NUM_THREADS=1 MKL_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 NUMEXPR_NUM_THREADS=1 python -m pytest tests/test_graph_attest*.py tests/test_graph_receipt.py tests/test_graph_receipt_population.py tests/test_issue_refs.py tests/test_impacted_tests.py -k 'not test_frozen_2db_flags_reach_different_runtime_selectors' -q -n 2 --dist worksteal --durations=10 --basetemp="$TMPDIR/pytest"
+```
+
+[Test evidence {"artifacts":{"stderr":{"digest":"7290f2480a8579752fe0e7641f2fba61cb0065f1a3df82f30581ce650e52f410","size":40},"stdout":{"digest":"e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855","size":0}},"operation":"0b2c39f3aa504a9e506a4cb8ff0da6a1f6bea73dee3712a4a708452537ca070f","receipt":"ad01c805fc02b697b78969781829a6ac821c0b69ea88689677ab1a7f24b439fc"}]
+
+All completed checks above are CPU orchestration checks with zero device
+allocations. No GPU run or scientific measurement was attempted for this repair.
+Production collection still explicitly refuses the unsupported live handoff.
 
 ## Reviewed v2 integration
 

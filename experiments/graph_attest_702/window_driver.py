@@ -69,7 +69,7 @@ def rows(root: Path, config: dict, env: dict) -> list[dict]:
                            container_images=[config["image"]], timeout_s=config.get("window_seconds", WINDOW_SECONDS),
                            env={**{key: env[key] for key in ("TS", "ARTIFACT", "RECEIPTS", "FABRIC",
                                                           "SOURCE_COMMIT", "SOURCE_SHA256", "PRODUCER_COMMIT", "PRODUCER_SHA256")},
-                                **{key: env[key] for key in ("WINDOW_MODE", "ARTIFACT_MANIFEST", "PQ_PIN_COMMIT", "CONTROL_ROOT", "PROFILE_MANIFEST", "DATA_MANIFEST", "MATRIX_CELLS") if key in env},
+                                **{key: env[key] for key in ("WINDOW_MODE", "ARTIFACT_MANIFEST", "PQ_PIN_COMMIT", "CONTROL_ROOT", "PROFILE_MANIFEST", "DATA_MANIFEST", "MATRIX_CELLS", "BATCH_KL") if key in env},
                                 "GRAPH_WINDOW_INPUT_SHA256": recipe.sha(root / "inputs.json"),
                                 "GRAPH_PEER_WAIT_SECONDS": str(config.get("peer_wait_seconds", 3600)),
                                 **{key: "1" for key in ("OMP_NUM_THREADS", "MKL_NUM_THREADS", "OPENBLAS_NUM_THREADS",
