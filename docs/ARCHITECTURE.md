@@ -1320,6 +1320,21 @@ Current-base CPU owner controls `75e8d128`:43 passed, one explicit retained-bank
 skip, zero uncollected modules/CUDA allocations. The synthetic-readset fixture
 now uses its temporary root, not an undeclared box path. Issue874 remains open.
 
+Readset SDK boundary repair: `value_prefetch_numeric.validate_readset`
+and `prefetch_qualification.validate_readset` use only the published
+`prismabuild.client.read_data_manifest` and `manifest_read_entries` operations.
+Each locally validates its producer's single whole-bank v1 phase (respectively
+`whole-synthetic-bank` and the T4 `PHASE` constant): identity encoding, exactly
+one correctly named phase, and an integer (not boolean) cumulative frontier
+equal to positive `total_bytes`. They return the exact `[0, total_bytes)` range
+and require public consumption entries to equal declared entries. This is not
+a general PB manifest parser. T4 still requires unique offset-zero qualified
+whole-file members in exact normalized order, with its existing optional
+sanitizer-tool prefix and artifact checks. Controlled public-client regressions
+do not qualify PB's codec or native/GPU numerics; the original optional SDK
+tests, frozen identities, image/source bindings, staging lifetimes and
+default-off behavior remain unchanged.
+
 Re-stamped 2026-10-02 for successful native routed-owner retirement (#869).
 The selected fused owner retains immutable projection views of the words,
 scale and initial-state planes plus its composed native tables, run pairs,
