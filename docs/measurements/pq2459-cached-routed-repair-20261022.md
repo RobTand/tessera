@@ -91,3 +91,108 @@ At that point it saw the one tracked exporter change and returned `verdict: none
 existing relevant gate files were explicitly selected above regardless.
 The full merge-result suite is left to the coordinator; the byte-baseline audit
 was not run because rendering, planes, and wire layout did not change.
+
+## Hosted pure dependency follow-up
+
+The release-batch failure occurred after the plan repair, at
+`tests/test_pq2459_fixture_export.py`'s body-local `import torch` in both
+preflight parameters. The hosted `pure` workflow deliberately installs neither
+Torch nor the other tensor dependencies. Its import-time collection probe
+cannot discover a dependency used only inside a test body.
+
+The preflight test now uses function-local `pytest.importorskip` for Torch,
+NumPy, and `safetensors.torch`. These are dependencies of the real sealed-source
+preflight and its tiny checkpoint writer, not CUDA-availability conditions.
+Both device parameters still execute the real parsers on dependency-equipped
+CPU workers. The two pure backend-dispatch tests remain unconditional. The
+existing Torch-free body regression now includes this module; no new harness
+or source fixture was needed. Application code, packet, archive, wire bytes,
+runtime pins, and the zero-qualified-cells state remain unchanged.
+
+### Pre-fix regression
+
+With the module added to the existing body-probe roster, before changing its
+imports, the following x86 command failed:
+
+```sh
+PYTHONPATH=src OMP_NUM_THREADS=1 MKL_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 python -m pytest tests/test_collection_probe.py::test_a_collectable_module_does_not_reach_torch_inside_a_test_body -q -n 2 --dist worksteal --durations=10 --basetemp="$TMPDIR/pytest"
+```
+
+The guard failed at `assert proc.returncode == 0`: its Torch-blocked child
+reported both `test_cached_routed_preflight_uses_sealed_parsers[cpu]` and
+`[cuda]` as failures, with **2 failed, 81 passed, 15 skipped**. The outer
+regression reported **1 failed in 28.58s**, NO CUDA (torch 2.11.0+cpu), zero
+outer skips/uncollected modules and zero device allocations.
+
+[Test evidence {"artifacts":{"stderr":{"digest":"e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855","size":0},"stdout":{"digest":"3a436761243c258262211f7797b7d85e61993d006ad73888ec67fe63d1179f97","size":3269}},"operation":"0d3d4bd51bbc2192b06d32e56c5d1ec1eb6f983bcf5172f6d2dc1e030956e1c6","receipt":"d81bb1a57603e3d4c2b5065c45c302b0f3e306af4d297f6d45daf3ec495cabb5"}]
+
+### Post-fix x86 checks
+
+```sh
+PYTHONPATH=src OMP_NUM_THREADS=1 MKL_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 python -m pytest tests/test_pq2459_fixture_export.py tests/test_collection_probe.py tests/test_pq2459_fixture_inputs.py tests/test_issue_refs.py tests/test_runtime_image_pin.py tests/test_impacted_tests.py -q -n 2 --dist worksteal --durations=10 --basetemp="$TMPDIR/pytest"
+```
+
+Result: **261 passed in 168.14s**. NO CUDA, torch 2.11.0+cpu, zero skips,
+zero uncollected modules and zero device allocations. This includes the real
+sealed-parser preflights as well as the now-passing Torch-free child probe.
+
+[Test evidence {"artifacts":{"stderr":{"digest":"e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855","size":0},"stdout":{"digest":"19c5120a91c0cbee512ca51d1869644174fe6d91a358f863031e4de290f77b18","size":1855}},"operation":"b3ae177d9347853a831f0d9dd9c565d4b026eaf41f178efa02dced17fa4d24ba","receipt":"22b65091860a6a87a00f640f3f7728878afb0631b439297822153fab7c33da3c"}]
+
+A direct Torch-blocked run makes the retained pure coverage explicit:
+
+```sh
+PYTHONPATH=src TESSERA_COLLECTION_PROBE=1 OMP_NUM_THREADS=1 MKL_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 python -c 'import sys; sys.modules["torch"] = None; import pytest; raise SystemExit(pytest.main(sys.argv[1:]))' tests/test_pq2459_fixture_export.py -q -rs -p no:xdist -p no:cacheprovider --durations=10 --basetemp="$TMPDIR/pytest"
+```
+
+Result: **2 passed, 2 skipped in 1.11s**; all four cases collected. Both
+preflight cases skipped with the verbatim reason
+`could not import 'torch': import of torch halted; None in sys.modules`.
+Both dispatch cases passed. NO CUDA, no Torch in this child interpreter, zero
+uncollected modules and zero device allocations. The import block must stay in
+this process, so this small diagnostic runs without xdist. This reproduces the
+missing-Torch condition, not a full hosted-CI environment or hosted workflow run.
+
+[Test evidence {"artifacts":{"stderr":{"digest":"e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855","size":0},"stdout":{"digest":"3c28683b1451a334fe88db55f24797d6ba900bb9f361a573ca78cea91042b1f4","size":1331}},"operation":"7ef9a10c530463d32ae9d0eec4502416a125a9777731ddd64769442955cd3a38","receipt":"ec6b1ec10afe30a6f80e37ea519a157736befa8245d1e43e84fe910672c11664"}]
+
+### GPU-arm validation plan (recorded before execution)
+
+Decision: ensure the function-local guards still run both real parser cases,
+rather than skipping, with the GPU arm's Python 3.12 and CUDA Torch packages.
+The x86 Python 3.14/CPU Torch environment cannot establish that dependency
+combination. The smallest check is the four cases in
+`tests/test_pq2459_fixture_export.py`, with two workstealing workers, native
+threads limited to one, and temporary files under the action's `$TMPDIR`.
+Expected GPU-arm occupation: less than one minute; expected device allocations:
+zero. No encoding, engine, scorer, numerical qualification or sweep is planned.
+
+### GPU-arm result and scope of verification
+
+```sh
+PYTHONPATH=src OMP_NUM_THREADS=1 MKL_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 python -m pytest tests/test_pq2459_fixture_export.py -q -n 2 --dist worksteal --durations=10 --basetemp="$TMPDIR/pytest"
+```
+
+Result on `arm="gpu"`: **4 passed in 4.53s**. CUDA Torch 2.13.0+cu130,
+NVIDIA GB10 visible, zero skips/uncollected modules and zero device allocations.
+Both parser cases executed. This is interpreter/dependency and parser coverage,
+not GPU numerical coverage or qualification.
+
+[Test evidence {"artifacts":{"stderr":{"digest":"e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855","size":0},"stdout":{"digest":"ed4a39a6bf95f2d0825612579fa0a9ee2caf71cda4ced997fd32ff8d081ef885","size":701}},"operation":"3a7e84114d02619ad9cecfd7ae222729831cfb7a489417c490fcb844f5a42e6f","receipt":"c6c0083b23817bc73450cc753147e82df16d904c789a8786219d26f3470e3789"}]
+
+Measured source: base `c8d94b943ec42add0db470b2d8bdba52300186a8` plus
+this four-file follow-up (two tests, this appended evidence, and CHANGELOG).
+The selector command
+`python3 tools/impacted_tests.py --ref c8d94b943ec42add0db470b2d8bdba52300186a8 --json`
+returned `narrowed`, four changed files, 420 selected test files and no
+`forces_full`; both modified tests were selected. Its unresolved-loader and
+unplaced-read conservatism also selected many unrelated consumers. That entire
+broad selection was not rerun for this test-only dependency correction; the
+focused checks above were run, and the full merge-result/hosted suite remains
+with the coordinator. `git diff --check` passed. No claim is made that hosted
+CI itself has rerun, or that parent workload/scorer or GPU qualification ran.
+
+After the documentation edits, the x86 guards were rechecked with
+`PYTHONPATH=src OMP_NUM_THREADS=1 MKL_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 python -m pytest tests/test_issue_refs.py tests/test_runtime_image_pin.py -q -n 2 --dist worksteal --durations=10 --basetemp="$TMPDIR/pytest"`:
+**40 passed in 12.08s**, NO CUDA, zero skips/uncollected modules and zero device
+allocations.
+
+[Test evidence {"artifacts":{"stderr":{"digest":"e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855","size":0},"stdout":{"digest":"bd3e6ef57734ac7f897a648802a6ea89b633acc954598218e790d0ec7b97f2f0","size":1580}},"operation":"67c7cd424c0686bb4cf6a594bd928f91de70713c4a9975f76966f6aa1913308b","receipt":"0f5e39b40201fc3d5974964aaad49b300081fa3a1cecf0e8fc357b673b11aae9"}]

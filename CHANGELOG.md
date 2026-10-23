@@ -1,4 +1,12 @@
 # Changelog
+## 2026-10-22 — keep PQ2459 preflight tests dependency-aware (issue #1124)
+
+Skip only the sealed-parser preflight cases when tensor dependencies are absent.
+Keep both backend-dispatch cases runnable in the Torch-free hosted pure job,
+and include this module in the existing missing-Torch body regression.
+Published fixture bytes, source archive, pins, and qualification state are unchanged.
+Verification is appended to [the repair evidence](docs/measurements/pq2459-cached-routed-repair-20261022.md).
+
 ## 2026-10-22 — initialize cached-routed fixture export plans (issue #1124)
 
 Build the existing supplemental plan for cached-routed exports before preflight or backend dispatch.

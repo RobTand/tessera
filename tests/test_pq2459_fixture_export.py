@@ -72,8 +72,10 @@ def invocation(tmp_path):
 
 @pytest.mark.parametrize("device", ["cpu", "cuda"])
 def test_cached_routed_preflight_uses_sealed_parsers(invocation, tmp_path, device):
-    import torch
-    from safetensors.torch import save_file
+    # Keep the dispatch probes runnable in the dependency-free hosted pure job.
+    torch = pytest.importorskip("torch")
+    pytest.importorskip("numpy")
+    save_file = pytest.importorskip("safetensors.torch").save_file
 
     names = [*DENSE_RECIPES, UNSELECTED,
              *(ROUTED + ".0." + role + ".weight"
