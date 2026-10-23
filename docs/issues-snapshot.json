@@ -11489,6 +11489,10 @@
     "state": "CLOSED",
     "title": "serving: contract hygiene - unread predicates, duplicated kernel source"
    },
+   "1348": {
+    "state": "OPEN",
+    "title": "[P0] Reconcile the full coverage matrix and measure the exact 2500 tok/s serving target"
+   },
    "135": {
     "state": "CLOSED",
     "title": "export: a routed-MoE rung is gated against the dense route's range"
@@ -11497,9 +11501,21 @@
     "state": "CLOSED",
     "title": "export: the packed 3-D expert write path is checked at name level only"
    },
+   "1369": {
+    "state": "OPEN",
+    "title": "[P1] Complete the opcode-aware f16 prefetch decision gate and correct its evidence"
+   },
    "137": {
     "state": "CLOSED",
     "title": "export: the legacy merge guard requires three fields no exporter writes"
+   },
+   "1370": {
+    "state": "OPEN",
+    "title": "[P1] Gate f16 chunk-loop cp.async staging to one-run routed launches and prove its speed gate"
+   },
+   "1371": {
+    "state": "OPEN",
+    "title": "[P1] Establish PC-level scoreboard reduction on the qualified f16 ring binary"
    },
    "138": {
     "state": "CLOSED",
