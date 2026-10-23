@@ -88,9 +88,14 @@ def _arm(receipts, model, name, eager):
         "".join(f"{k}={v}\n" for k, v in args.items()))
     (directory / f"{name}.engine.log").write_text(
         f"Initializing a V1 LLM engine (v0.fixture) with config: enforce_eager={eager}\n")
+    descriptor = {"mode": "FULL", "tokens": 1, "num_reqs": 1, "max_seq_len": None}
     _write(directory / f"{name}.dispatch.1.json", {
-        "captured": {"ModelCudaGraphManager@fixture": [1]},
+        "pid": 1,
+        "captured": {"ModelCudaGraphManager@a": [1]},
         "counts": {"ModelCudaGraphManager|FULL|tokens=1|reqs=1": 1},
+        "owner_evidence": {"ModelCudaGraphManager@a": {
+            "capture_complete": True, "capture_error": None,
+            "captured": [descriptor], "replays": [{**descriptor, "count": 1}]}},
     })
     for p in (name, f"{name}-r2"):
         _pass(directory, p)

@@ -11,11 +11,33 @@ IMAGE = "localhost/prismaquant/spark-vllm-nccl230@sha256:" + "5be13705" + "0" * 
 RELEASE_CC = {"mode": "NONE", "cudagraph_mode": "FULL_DECODE_ONLY"}
 
 
+def _dispatch(replays, class_replays):
+    owner = "ModelCudaGraphManager@a"
+    captured = [{"mode": "FULL", "tokens": n, "num_reqs": n, "max_seq_len": bound}
+                for n in (1, 2, 4, 8) for bound in (2048, 8448)]
+    return {
+        "pid": 1,
+        "captured": {owner: [1, 2, 4, 8]},
+        "counts": {f"ModelCudaGraphManager|FULL|tokens={n}|reqs={n}": count
+                   for n, count in ((1, replays), (2, 3), (4, 2), (8, 1))},
+        "tessera_classes": {
+            "captured": {"ModelCudaGraphManager": {"2048": 4, "8448": 4}},
+            "replays": {"ModelCudaGraphManager|2048": 40,
+                        "ModelCudaGraphManager|8448": class_replays}},
+        "owner_evidence": {owner: {
+            "capture_complete": True, "capture_error": None, "captured": captured,
+            "replays": [{**d, "count": 0 if (d["tokens"] == 1 and replays == 0)
+                        or (d["max_seq_len"] == 8448 and class_replays == 0) else 1}
+                        for d in captured]}},
+    }
+
+
 def _arm(name="rGR", members=48, replays=1, class_replays=1, cc=None):
     return {
         "name": name, "compilation_config": cc or dict(RELEASE_CC), "speculative_tokens": 0,
         "max_model_len": 8448, "max_num_seqs": 8, "tensor_parallel_size": 1,
-        "graph": {"managers": {"ModelCudaGraphManager": {"captured_sizes": [1, 2, 4, 8],
+        "graph": {"dispatches": {f"{name}.dispatch.1.json": _dispatch(replays, class_replays)},
+                  "managers": {"ModelCudaGraphManager": {"captured_sizes": [1, 2, 4, 8],
                                                          "replayed_sizes": {"1": replays, "2": 3,
                                                                             "4": 2, "8": 1}}},
                   "classes": {"captured": {"ModelCudaGraphManager": {"2048": 4, "8448": 4}},
@@ -32,7 +54,7 @@ def _receipt(*arms, fabric="none"):
     arms = list(arms) or [_arm()]
     eager = []
     for name in ("rE1", "rE2"):
-        record = _arm(name=name)
+        record = (_tp2_arm if arms[0]["tensor_parallel_size"] == 2 else _arm)(name=name)
         record.update(execution="eager", compilation_config=None,
                       tensor_parallel_size=arms[0]["tensor_parallel_size"])
         eager.append(record)
@@ -125,6 +147,12 @@ def test_a_malformed_receipt_is_refused_with_a_reason_not_an_exception(damage):
 def _tp2_arm(**over):
     arm = _arm(**over)
     arm["tensor_parallel_size"] = 2
+    dispatch = arm["graph"]["dispatches"].pop(f"{arm['name']}.dispatch.1.json")
+    arm["graph"]["dispatches"] = {
+        f"{arm['name']}.rank{rank}.dispatch.{rank + 1}.json": {
+            **copy.deepcopy(dispatch), "pid": rank + 1}
+        for rank in range(2)
+    }
     return arm
 
 
