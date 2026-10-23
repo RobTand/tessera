@@ -118,7 +118,7 @@ The retained graphics processor evidence does not establish serving qualificatio
 
 Re-stamped 2026-10-10 for the graph-only census separation (issue #1062).
 
---compiled names a non-eager engine. A real Torch trace takes the shape-polymorphic arm and still requires M star records. Mode NONE means CUDA graphs only: records keep concrete capture shapes, the census checks them as concrete, and every graph-only census states capture time only with no logical row credit. Replay runs no Python. Phase, owner, route, decoder, dtype and cell checks run on both paths. No default, pin or admission changes.
+--compiled names a non-eager engine. A real Torch trace takes the shape-polymorphic arm and requires M star evidence on every record in each driven phase, checked per rank before aggregation. Children of one declared owner may have different names across phases; neither disjoint names nor partial overlap exempts a record. Mode NONE means CUDA graphs only: records keep concrete capture shapes, the census checks them as concrete, and every graph-only census states capture time only with no logical row credit. Replay runs no Python. Phase, owner, route, decoder, dtype and cell checks run on both paths. No default, pin or admission changes.
 
 Re-stamped 2026-10-08 for replay-free native matrix selection (issue #1061).
 
