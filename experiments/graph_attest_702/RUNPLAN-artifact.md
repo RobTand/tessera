@@ -70,10 +70,17 @@ intake decision is implied.
 ### Configuration and normal evidence workflow
 
 The existing recipe environment accepts optional `BATCH_KL`, a nonempty JSON
-object retained verbatim as `inputs.json.config.batch_kl` during preparation.
-It is forwarded unchanged into both native action environments, so rank startup
-reconstructs the same declaration before scope/comparability validation. It is
-only permitted for graph-control, leaving benchmark modes unchanged.
+object retained as the parsed `inputs.json.config.batch_kl` during preparation.
+Its exact JSON string is forwarded unchanged into both native action environments
+in `manifest.json`, so rank startup reconstructs the same declaration before
+scope/comparability validation. Submission restores that string from the prepared
+manifest, not the submitting shell: an inline preparation declaration or separate
+preparation origin needs no re-export at `--submit`. Both rank declarations must
+match exactly and parse to the prepared configuration; missing or inconsistent
+declarations refuse. A disabled prepared window stays disabled even if the
+submitting shell has `BATCH_KL`. The complete manifest identity seal and resource
+checks still apply; neither prepared file is rewritten. It is only permitted for
+graph-control, leaving benchmark modes unchanged.
 Deployment-specific `handoff`, `endpoint`, `tool`, and `output` declarations
 belong there, along with `scoring` (`corpus_sha256`, `teacher_sha256`,
 `tokenizer_sha256`, `regime`, positive `expected_rows`). There are no executable
@@ -179,6 +186,86 @@ PYTHONPATH=src OMP_NUM_THREADS=1 MKL_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 NUMEXP
 All completed checks above are CPU orchestration checks with zero device
 allocations. No GPU run or scientific measurement was attempted for this repair.
 Production collection still explicitly refuses the unsupported live handoff.
+
+### Review repair: fresh-environment submission
+
+`submit()` now restores `BATCH_KL` from both prepared manifest rows, preserving
+its exact string instead of reserializing the parsed input object. The submitting
+shell cannot enable, disable or substitute it. Missing/inconsistent declarations
+refuse in both modes; the real configuration comparison and full manifest seal
+remain intact. Added `test_submit_*` regressions use real parsing/rows/seals with
+inert source authentication, stopping at the review-read boundary before native
+publication. They cover both modes, enabled/disabled windows, missing/malformed
+ambient declarations, noncanonical JSON spelling, rank disagreement (including
+equivalent objects with different spelling), wrong input scope and an unrelated
+certified manifest mutation. Neither prepared file is rewritten.
+
+Pre-fix x86 reproduction, before changing `submit()`:
+
+```sh
+PYTHONPATH=src OMP_NUM_THREADS=1 MKL_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 NUMEXPR_NUM_THREADS=1 python -m pytest tests/test_graph_attest_batch_kl_binding.py -k 'test_submit_restores_exact_prepared_batch_kl and None' -q -n 2 --dist worksteal --durations=10 --basetemp="$TMPDIR/pytest"
+```
+
+**2 failed, 2 passed**: both enabled cases raised `Window4 submission: control
+scope/geometry/comparability differs` at `tp2_recipe.py:108`; disabled controls
+reached the review boundary.
+
+[Test evidence {"artifacts":{"stderr":{"digest":"e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855","size":0},"stdout":{"digest":"684f41db969044c3c63149feecc3b565476906a6daf84f019544961cb8e0dff8","size":6867}},"operation":"3ffec8d3a1cf7f8592de3f1f589798b112af25f86883a9e8328d03dcfcf20a0f","receipt":"701255ff6f57823a61b9062522a85524b08f9963fcf9ddbbd95783e80a08461f"}]
+
+An intermediate implementation used the object-only protocol reader for the
+list-valued manifest (**25 failed, 4 passed**). Keeping the existing `json.loads`
+manifest read corrected this implementation error without weakening any test.
+
+[Test evidence {"artifacts":{"stderr":{"digest":"e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855","size":0},"stdout":{"digest":"9fa827b89cde306175e3e67e379dc54b8ef902b140bfe441917769d4969294d3","size":51076}},"operation":"836521982979672efbb50f101a040a9e76c776071f92f1d8ab62d407c7246c46","receipt":"cdd87c2e87c3586a6b9f555d50890e34ce9f425edede78a2af71513422db854b"}]
+
+Corrected targeted check: same environment/options, entire
+`tests/test_graph_attest_batch_kl_binding.py`: **29 passed**, no skips.
+
+[Test evidence {"artifacts":{"stderr":{"digest":"e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855","size":0},"stdout":{"digest":"0c0f5221aacf99e0a6ba5cdaea232f401411dda68e118075e5049689b32b4b6a","size":1857}},"operation":"a56c1444056a2c71258429555d88fc3c4e584c4bb0cbe7cb905839e92d81570c","receipt":"915bb8f8196a13cb034da36016a883b782383902d1850e0fbe9d24476e8b4a0a"}]
+
+Current x86 acceptance, repair, submission and mandatory guards:
+
+```sh
+PYTHONPATH=src OMP_NUM_THREADS=1 MKL_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 NUMEXPR_NUM_THREADS=1 python -m pytest tests/test_graph_attest_batch_kl.py tests/test_graph_attest_batch_kl_binding.py tests/test_graph_attest_tp2.py tests/test_graph_attest_managed_window.py tests/test_graph_receipt.py tests/test_graph_attest_producer_identity.py tests/test_graph_attest_headroom_preflight.py tests/test_issue_refs.py tests/test_impacted_tests.py -q -n 2 --dist worksteal --durations=10 --basetemp="$TMPDIR/pytest"
+```
+
+**414 passed, 9 skipped** (published PB SDK required). All checks above allocated
+zero tests on a device; they establish CPU orchestration/binding only.
+
+[Test evidence {"artifacts":{"stderr":{"digest":"e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855","size":0},"stdout":{"digest":"ad077eedc6feabcc3e4c9601633cd1510aff14b5f4646581e46cc5c347085113","size":2168}},"operation":"50237696ea2e7e19266655bf3b48a8a8ec64be215e429e931291d44341fc4af7","receipt":"f8ec40ac1536fd3419c910f6bdc82495d544a3b31436e02e63758e0eb2568106"}]
+
+GPU-arm check plan, recorded before execution: the repaired binding regression
+plus all brief acceptance files in the configured pinned image, without CPU-only
+guard sweeps. It decides Python 3.12/image compatibility, which x86 Python 3.14
+cannot establish. These remain CPU orchestration tests with zero expected device
+allocations; expected elapsed GPU-host time is under one minute. No GPU measurement
+or TP2 campaign.
+
+Executed the x86 command above with only its first five test files on `arm="gpu"`:
+**158 passed, 9 skipped** (published PB SDK required), in **14.13s**, zero tests
+allocated on the device. The configured image reported CUDA torch 2.13.0+cu130
+and NVIDIA GB10 visibility; neither visibility nor these CPU cases measure TP2.
+
+[Test evidence {"artifacts":{"stderr":{"digest":"e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855","size":0},"stdout":{"digest":"9de12f4e1b8b553f9fb3e7ae4e465743c8be75c0d689bc569d10c142641ea678","size":1871}},"operation":"6b6a72527683b7b7a367ffa5408f5782ca4fcf1db8d145c8dac70f30dd7bd5c1","receipt":"eb926e757b63bec8d2328b07bfddf5ab2612b56715cd4ef3c277b514f000b4cc"}]
+
+Impacted-test selection attempted through the check runner with
+`python tools/impacted_tests.py --ref 5b8d19410adf708b6ee69fe7e3cd3c94d03600d5 --json`
+could not analyze that base: the snapshot lacks the repair-parent git object
+(`fatal: bad object`). This is not a passing selector result or a test failure.
+
+[Test evidence {"artifacts":{"stderr":{"digest":"1545979a800c3de879dff522eb99f7c7ae30d87e1f20c5c8cc006125b926d167","size":117},"stdout":{"digest":"e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855","size":0}},"operation":"e4b20bffa0c0540f6d4010f9cdd274e5ee0a57c5a091e82d0a2acfb07494fce2","receipt":"708f0b86e6b63186b1447a65ca744355b5ba4c24d197633dcfbff7a904635d2b"}]
+
+The same selector (not a test command) completed in the actual working checkout
+using that exact available base: exit 0, `verdict=narrowed`, four changed files,
+423 selected test files. Its bulky JSON remains in computation scratch, not the
+repository. Only the targeted suites above were run; the full merge-result suite
+is left to the coordinator. Production live collection still refuses the missing
+owner-supported handoff; no scientific batch-KL or TP2 outcome is claimed.
+
+After the workflow documentation edits, reran `tests/test_issue_refs.py` with the
+same x86 environment/options: **3 passed**, no skips, zero device allocations.
+
+[Test evidence {"artifacts":{"stderr":{"digest":"e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855","size":0},"stdout":{"digest":"308536cc1819e29d41f17bc60ba873a1fca1526466e8dad14de5de2c2e926498","size":744}},"operation":"b0db161f60dde6c4811cdd9c7034aa1b1a0c70c1346346e7b2ef1a8624348040","receipt":"1f010da6099527c3b13efe3a2f3b6621aa94ab29be0180597d54c0e0f2e2955a"}]
 
 ## Reviewed v2 integration
 

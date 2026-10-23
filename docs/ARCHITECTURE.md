@@ -761,7 +761,10 @@ identity drift, and no format pin or serving default moves. Regressions:
 
 The optional graph-control `BATCH_KL` recipe declaration is retained in window
 inputs and forwarded to both native action environments for rank startup's
-configuration comparison. At the existing live `LocalArm.probes` seam,
+configuration comparison. Submission recovers the exact declaration string from
+both prepared manifest rows, independent of the submitting shell, and checks it
+against the parsed inputs without weakening the full manifest seal. At the
+existing live `LocalArm.probes` seam,
 collection currently refuses: no owner-supported live TP2/MTP1 target-model
 attachment handoff is available.
 It does not invoke an isolated scorer, launch another serve or disable MTP.

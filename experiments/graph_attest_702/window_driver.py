@@ -191,12 +191,24 @@ def submit(root: Path, reviews: Path):
             env[key] = setup["config"][field]
     if "matrix_cells" in setup["config"]:
         env["MATRIX_CELLS"] = json.dumps(setup["config"]["matrix_cells"])
+    stored_rows = json.loads((root / "manifest.json").read_text())
+    # The prepared declaration, not the submitting shell, owns this scope.
+    # Recover its exact string: reserializing inputs.config.batch_kl would
+    # change the action environments covered by the full manifest seal below.
+    env.pop("BATCH_KL", None)
+    if "batch_kl" in setup["config"]:
+        declarations = [row.get("env", {}).get("BATCH_KL") for row in stored_rows]
+        if (len(declarations) != 2 or not isinstance(declarations[0], str)
+                or declarations[0] != declarations[1]):
+            raise Refused("prepared BATCH_KL must match exactly in both native action environments")
+        env["BATCH_KL"] = declarations[0]
+    elif any("BATCH_KL" in row.get("env", {}) for row in stored_rows):
+        raise Refused("prepared BATCH_KL manifest differs from the disabled window")
     recipe.require_producer(Path(__file__).resolve().parents[2], env["PRODUCER_COMMIT"],
                             env["PRODUCER_SHA256"], exact_head=True)
     current = recipe.inputs(env, live=True)
     recipe.check_control_record(setup["config"], current, where="Window4 submission",
                               refusal=Refused("prepared source/control changed; never restamp or resume an old window"))
-    stored_rows = json.loads((root / "manifest.json").read_text())
     expected_rows = rows(root, setup["config"], env)
     safety_keys = ("tags", "demand", "gpu_memory_gb", "exclusive", "measurement", "host_class",
                    "max_attempts", "priority", "timeout_s", "residency", "residency_ram", "residency_share")
