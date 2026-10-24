@@ -1576,7 +1576,13 @@ actual DRAM traffic have not been measured. The stock small-batch path, an
 incompatible method or dispatch interface, and a layer whose op is not on
 `forward_cuda` stay stock. Recorded source and predicted library-path
 differences stamp and continue in development mode under D32; actual
-interface, shape, launch and safety checks remain active. Required identity
+interface, shape, launch and safety checks remain active. Before rebinding,
+the three stock dispatch helpers must have inspectable signatures that bind
+the wrapper's exact positional calls (three arguments for each split helper,
+zero for `is_deep_gemm_supported`), without executing them. Compatible optional
+extensions are accepted in both modes; incompatible or uninspectable helpers
+leave the stock method untouched. Actual fused launch failures still propagate.
+Required identity
 `bitwise_vs_stock` uses integer-view comparisons in
 `experiments/mhc/mhc_fused_probe.py` and `tests/test_mhc_fusion_cuda.py`.
 The stock TFLOAT32 tensor-map conversion was measured on GB10 as nearest,

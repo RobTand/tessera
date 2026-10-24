@@ -36,6 +36,7 @@ from __future__ import annotations
 
 import ctypes
 import hashlib
+import inspect
 import logging
 import os
 from pathlib import Path
@@ -312,6 +313,18 @@ def make_hc_fused_post_pre(stock: Callable, op_cls: Any, lib_getter: Callable[[]
     return hc_fused_post_pre
 
 
+def _accepts_positional_call(helper: Any, nargs: int) -> bool:
+    """Check the wrapper's call without running a stock dispatch helper."""
+    if not callable(helper):
+        return False
+    try:
+        inspect.signature(helper).bind(*([None] * nargs))
+    except (TypeError, ValueError):
+        # An incompatible or uninspectable interface cannot safely install.
+        return False
+    return True
+
+
 _DECIDED: dict[int, bool] = {}
 
 
@@ -357,9 +370,11 @@ def install_mhc_fusion(config: Any) -> bool:
                         "hc_fn", "hc_scale", "hc_base", "norm_weight", "norm_eps"):
                     reasons = ["stock mHC method signature differs"]
                 elif not callable(stock_attribute(op, "forward_cuda")) or any(
-                        not callable(stock_attribute(owner, name)) for owner, name in (
-                            (kernels, "compute_num_split"), (kernels, "mhc_fused_post_pre_split_config"),
-                            (deep_gemm, "is_deep_gemm_supported"))):
+                        not _accepts_positional_call(stock_attribute(owner, name), nargs)
+                        for owner, name, nargs in (
+                            (kernels, "compute_num_split", 3),
+                            (kernels, "mhc_fused_post_pre_split_config", 3),
+                            (deep_gemm, "is_deep_gemm_supported", 0))):
                     reasons = ["stock mHC dispatch interface unavailable"]
     if reasons:
         _log.warning("tessera.mhc_fusion: declined, stock mHC: %s", "; ".join(reasons))
