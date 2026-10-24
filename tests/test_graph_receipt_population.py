@@ -1,4 +1,4 @@
-"""CPU population/independence regressions for #1258, through the real producer.
+"""CPU population/independence regressions for #1258: producer and verifier.
 
 These are protocol fixtures, not GPU/compiled qualification. The legacy AST
 fallback reads the runner's own roster without executing its unsafe startup;
@@ -359,8 +359,34 @@ def test_producer_refuses_conflicting_equality_basenames_in_either_order(inputs,
     "overlap", "pass-alias", "duplicate-eager", "duplicate-graph", "declared-total-only",
     "eager-negative-members", "eager-excess-members", "eager-bool-members",
 ])
-def test_verify_rejects_forged_population_and_independence_claims(inputs, attack):
-    receipt = copy.deepcopy(_valid(inputs))
+def test_verify_rejects_forged_population_and_independence_claims(attack):
+    # Verifier-only protocol example: no runner roster, raw files or producer.
+    # The protocol requires 48 choices and exactly two independently named passes.
+    def arm(name):
+        return {
+            "name": name, "compilation_config": dict(CC), "speculative_tokens": 0,
+            "max_model_len": 8448, "max_num_seqs": 8, "tensor_parallel_size": 1,
+            "graph": {"managers": {"ModelCudaGraphManager": {
+                "captured_sizes": [1], "replayed_sizes": {"1": 1}}}},
+            "passes": [{"name": name, "members": 48, "choices": 48},
+                       {"name": f"{name}-r2", "members": 48, "choices": 48}],
+            "equal": True, "replayed_everything": True,
+        }
+
+    eager = [arm("e1"), arm("e2")]
+    for entry in eager:
+        entry.update(execution="eager", compilation_config=None)
+    receipt = {
+        "schema": gr.SCHEMA, "runtime": {"image": IMAGE, "fabric": "none"},
+        "model": {"config_sha256": "a" * 64}, "tessera": {"src_sha256": "b" * 64},
+        "equality_set": {"name": "tessera#508", "choices_per_pass": 48,
+                         "script_sha256": "c" * 64},
+        "eager_pool": eager, "arms": [arm("g")], "verdict": "equal",
+    }
+    receipt["attests"] = [gr.attestation(receipt, receipt["arms"][0])]
+    serve = _serve(receipt)
+    assert gr.verify(receipt, serve) is None
+
     graph = receipt["arms"][0]
     passes = graph["passes"]
     if attack in {"partial", "declared-total", "bool-counters", "float-counters"}:
@@ -406,5 +432,7 @@ def test_verify_rejects_forged_population_and_independence_claims(inputs, attack
         arm["equal"] = True
         arm["replayed_everything"] = True
     receipt["attests"] = [gr.attestation(receipt, arm) for arm in receipt["arms"]]
-    why = gr.verify(receipt, _serve(receipt))
+    why = gr.verify(receipt, serve)
     assert isinstance(why, str) and why, f"verify accepted forged {attack} receipt"
+    if attack == "extra-pass":
+        assert "malformed population for arm g" in why
