@@ -438,9 +438,14 @@ def test_real_rank_lifecycle_restarts_both_ranks_and_retains_mismatch_without_fa
     root.mkdir()
     mode = MODE if phase == "control" else PIECE_MAJOR_MODE
     if phase == "pm":
-        baseline = tmp_path / "control-run"
-        store_population(baseline, NAMES[0])
-        store_population(baseline, NAMES[1])
+        # This entry point is also called directly by the protected regression;
+        # pytest does not apply this module's autouse fixture to that call.
+        benchmark, client = local_generation_reader(tmp_path / "parent-client")
+        with pytest.MonkeyPatch.context() as patch:
+            patch.setattr(benchmark, "CLIENT", client)
+            baseline = tmp_path / "control-run"
+            store_population(baseline, NAMES[0])
+            store_population(baseline, NAMES[1])
     arms = recipe.plan(phase_plan(tmp_path, mode), mode=mode)
     start = PROTOCOL_EPOCH
     identities = [make_identity(rank, start, start + 20) for rank in (0, 1)]
@@ -670,10 +675,16 @@ if __name__ == "__main__":
                     output, _ = process.communicate("stop\n", timeout=WATCHDOG_SECONDS)
                     assert process.returncode == 0 and output == "stopped\n", output
                 finally:
-                    if process.poll() is None:
-                        process.kill()
-                    process.wait(timeout=WATCHDOG_SECONDS)
-                    self.server = None
+                    try:
+                        if process.poll() is None:
+                            process.kill()
+                        process.wait(timeout=WATCHDOG_SECONDS)
+                    finally:
+                        # communicate closes pipes on success, not on timeout.
+                        for pipe in (process.stdin, process.stdout):
+                            if pipe is not None:
+                                pipe.close()
+                        self.server = None
             return dict(containers_empty=True, gpu_descendants_empty=True,
                         scope_id=self.owned["scope_id"])
 
