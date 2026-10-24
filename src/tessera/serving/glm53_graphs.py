@@ -66,6 +66,7 @@ its cells were measured on.
 from __future__ import annotations
 
 import logging
+import os
 import threading
 from collections import Counter
 from types import SimpleNamespace
@@ -123,7 +124,20 @@ PERSISTENT_TOPK_RADIX_THRESHOLD = 32768
 REPLAYS: Counter = Counter()
 CAPTURED: dict[str, dict[int, int]] = {}
 
+_ACCOUNTING_PID = os.getpid()
 _LOCK = threading.Lock()
+
+
+def _ensure_accounting_process():
+    """Fork children start new host accounting before their first event."""
+    global _ACCOUNTING_PID, _LOCK
+    if _ACCOUNTING_PID != os.getpid():
+        _ACCOUNTING_PID = os.getpid()
+        _LOCK = threading.Lock()
+        REPLAYS.clear()
+        CAPTURED.clear()
+
+
 _STATE = SimpleNamespace(installed=False, bounds=None, capture_bound=None, bound_applied=False,
                          step_max_seq_len=None)
 
@@ -381,9 +395,11 @@ def _patch_managers(cudagraph_utils: Any, managers: tuple[type, ...]) -> None:
     extrapolate = cudagraph_utils._extrapolate_full_graph_memory
 
     def per_class_capture(self, *args, **kwargs):
+        _ensure_accounting_process()
         if not isinstance(self, managers):
             return capture(self, *args, **kwargs)
         bounds = _STATE.bounds
+        self._tessera_graphs_by_bound = None
         by_bound = {}
         for bound in bounds:
             self.graphs = {}
@@ -407,6 +423,7 @@ def _patch_managers(cudagraph_utils: Any, managers: tuple[type, ...]) -> None:
                      _manager_name(self), CAPTURED[_manager_name(self)])
 
     def per_class_run_fullgraph(self, desc):
+        _ensure_accounting_process()
         by_bound = getattr(self, "_tessera_graphs_by_bound", None)
         if by_bound is not None:
             seq = _STATE.step_max_seq_len
@@ -415,9 +432,11 @@ def _patch_managers(cudagraph_utils: Any, managers: tuple[type, ...]) -> None:
                                    "recorded; the class it needs is unknown")
             bound = branch_bound(tuple(by_bound), seq)
             self.graphs = by_bound[bound]
+        out = run_fullgraph(self, desc)
+        if by_bound is not None:
             with _LOCK:
                 REPLAYS[(_manager_name(self), bound)] += 1
-        return run_fullgraph(self, desc)
+        return out
 
     def per_class_release(self):
         release(self)
@@ -434,9 +453,12 @@ def _patch_managers(cudagraph_utils: Any, managers: tuple[type, ...]) -> None:
         _indexer_topk_check(model)
         return model_capture(self, model, *args, **kwargs)
 
-    model_manager.capture = checked_model_capture
-    base.capture = per_class_capture
-    base.run_fullgraph = per_class_run_fullgraph
+    observe_model_capture = getattr(model_capture, "_ga_capture_wrapper", lambda fn: fn)
+    model_manager.capture = observe_model_capture(checked_model_capture)
+    observe_capture = getattr(capture, "_ga_capture_wrapper", lambda fn: fn)
+    base.capture = observe_capture(per_class_capture)
+    observe_replay = getattr(run_fullgraph, "_ga_replay_wrapper", lambda fn: fn)
+    base.run_fullgraph = observe_replay(per_class_run_fullgraph)
     base.release_graphs = per_class_release
     cudagraph_utils._extrapolate_full_graph_memory = per_class_extrapolate
 
