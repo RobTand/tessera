@@ -3,10 +3,10 @@
 ## Scope and source
 
 Base: `70a409bd2ed22c5eea391890d7a8732c02e5b60d`.
-Final tested source SHA-256:
+Source SHA-256 (test implementation unchanged by the guidance repair):
 
 - `tests/test_graph_attest_d30_memory_guard.py`: `610d3dbc9dc98fa38bf0f2c965bc18c963db382b5a7be2b2a256c87a26a3bbc9`
-- `AGENTS.md`: `f68ff359bb293771813e9a02604de4daa1db9fd15de11efe1b42f813e5a18769`
+- `AGENTS.md` after guidance repair: `ce4db69d79514d3c19ee9d811e2098bcac1584f88f37cc35cac95e99a1c51697`
 - Protected, unchanged `tests/test_d30_cleanup_test_contract.py`: `19a28b425d6230264f7ecad28a100b3cb040c61e690752dd887438fad126af95`
 - Unchanged production `experiments/graph_attest_702/managed_window.py`: `39457455ac667685c8bbe900f51c1c4d04866fc2ad4b056eb0e1d3a422a6b842`
 
@@ -23,7 +23,40 @@ allows one controlled 50 ms poll of quantization, never host timing.
 Removed obsolete child program strings, PID polling/death helpers and threading
 import. No tests removed; no tautological tests identified in the target file.
 Other existing tests, including delayed reap and Docker integration, remain.
-Guidance is additive and leaves submission/deployment instructions intact.
+The guidance was missing from reviewed revision
+`cb487f68787c493c31b3bf3ae039051fa673a2ab`: its `AGENTS.md` SHA-256 was
+`f8131409f937d773bc3ee67f1abf65baf77a84ecb09af4840228c9bccf9a3aa9`.
+The previous claim that guidance had been added, and its recorded hash, were
+incorrect. This documentation-only repair adds the normative **Deterministic
+test authoring** section to `AGENTS.md`, preserving all existing policy and
+submission/deployment instructions. It covers explicit readiness/events,
+injected clocks, no host elapsed assertions or sleep-to-wait, generous failure
+bounds, host/order/filesystem independence, seeded randomness, no network calls,
+`tmp_path`, worker/native-thread limits, prohibited flake workarounds and real
+policy exercised through observable boundary models, with the D30 example.
+These requirements are verified by inspecting the section and its additive
+diff; behavioral test passes do not prove authoring guidance is present.
+
+## Guidance repair verification
+
+Repair starts from reviewed revision `cb487f68787c493c31b3bf3ae039051fa673a2ab`
+and changes only `AGENTS.md` and this report. The cleanup implementation,
+protected acceptance file and production code are unchanged; the earlier
+five-serial-plus-xdist receipts below still identify the same test source.
+No tests were added, removed or weakened in this repair. No new GPU run or
+whole-repository suite was needed for this documentation-only change.
+
+Rechecked the protected probes and both repository guards on x86 using:
+
+```sh
+PYTHONPATH=src OMP_NUM_THREADS=1 MKL_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 python -m pytest tests/test_d30_cleanup_test_contract.py tests/test_issue_refs.py tests/test_impacted_tests.py -q -n 2 --dist worksteal --durations=10 --basetemp="$TMPDIR/pytest"
+```
+
+Observed and read retained stdout: **215 passed**, zero skips/uncollected
+modules, NO CUDA, zero device allocations. `git diff --check` also passed.
+O3 itself is established by reading the normative section, not these probes.
+
+[Test evidence {"artifacts":{"stderr":{"digest":"e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855","size":0},"stdout":{"digest":"c9d6158d044ad13c27d4e87e82eb2134436650a76b52103462cff90090ec091b","size":1923}},"operation":"aa0fe525a5edc004b7846869bd4a0f3302e3aad9ecc9f29e58027b2aa2851024","receipt":"b12fbfd460f60a3df297fca71f59c7dd98aadcd1dc4252270b3d9ebc7795a0d4"}]
 
 ## Prior RED and implementation correction
 
