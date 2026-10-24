@@ -198,6 +198,7 @@ def test_subsequent_sigterm_reaches_previous_handler_in_subprocess(tmp_path):
 import os
 from pathlib import Path
 import runpy
+import select
 import signal
 import sys
 import pytest
@@ -205,21 +206,36 @@ import pytest
 helpers = runpy.run_path(sys.argv[1])
 patch = pytest.MonkeyPatch()
 seen = []
+receipt_read, receipt_write = os.pipe()
 def prior(signum, frame):
     seen.append(signum)
-original = signal.signal(signal.SIGTERM, prior)
+    os.write(receipt_write, b'!')
+original = signal.getsignal(signal.SIGTERM)
 try:
+    signal.signal(signal.SIGTERM, prior)
     owner, evidence, out, calls = helpers['_inert_controller'](Path(sys.argv[2]), patch)
     assert owner.main() == 1
     os.kill(os.getpid(), signal.SIGTERM)
+    # Sending does not acknowledge Python-level dispatch: observe the callback.
+    ready, _, _ = select.select([receipt_read], [], [], 30)
+    assert ready == [receipt_read], 'previous SIGTERM handler did not acknowledge receipt'
+    assert os.read(receipt_read, 1) == b'!'
     assert seen == [signal.SIGTERM], seen
     assert signal.getsignal(signal.SIGTERM) is prior
     print('previous SIGTERM handler received signal', flush=True)
 finally:
-    signal.signal(signal.SIGTERM, original)
-    patch.undo()
+    try:
+        signal.signal(signal.SIGTERM, original)
+    finally:
+        try:
+            patch.undo()
+        finally:
+            try:
+                os.close(receipt_read)
+            finally:
+                os.close(receipt_write)
 '''
     result = subprocess.run([sys.executable, '-c', code, str(TEST_SOURCE), str(tmp_path)],
-                            capture_output=True, text=True, timeout=30)
+                            capture_output=True, text=True, timeout=90)
     assert result.returncode == 0, result.stdout + result.stderr
     assert 'previous SIGTERM handler received signal' in result.stdout
