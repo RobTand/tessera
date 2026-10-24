@@ -869,6 +869,11 @@ if _GA_DISPATCH_LOG:
                 return original(self, desc, *args, **kwargs)
             with _GA["lock"]:
                 key, owner = _ga_owner(self)
+                # Invalidation replaces the owner before underlying capture
+                # replaces the installed maps. A call entering that transition
+                # may still replay old graphs, even if it returns after capture
+                # completes. Freeze eligibility here, not at return.
+                success_eligible = _GA["depth"].get(key, 0) == 0
             active = getattr(_GA["serving"], "replaying", None)
             if active is None:
                 active = _GA["serving"].replaying = {}
@@ -886,18 +891,19 @@ if _GA_DISPATCH_LOG:
                 records = owner["replay_failures"]
                 raise
             else:
-                records = owner["replays"]
+                records = owner["replays"] if success_eligible else None
                 return out
             finally:
                 del active[key]
-                with _GA["lock"]:
-                    for item in records:
-                        if all(item.get(k) == v for k, v in record.items()):
-                            item["count"] += 1
-                            break
-                    else:
-                        records.append(dict(record, count=1))
-                    _GA["dirty"] = True
+                if records is not None:
+                    with _GA["lock"]:
+                        for item in records:
+                            if all(item.get(k) == v for k, v in record.items()):
+                                item["count"] += 1
+                                break
+                        else:
+                            records.append(dict(record, count=1))
+                        _GA["dirty"] = True
         run_fullgraph._ga_replay_wrapper = lambda fn: _ga_replay_wrapper(fn, layered=True)
         return run_fullgraph
 

@@ -7,6 +7,8 @@ import json
 import subprocess
 import sys
 
+import pytest
+
 from child_env import child_env
 from test_graph_owner_hooks import HOOK, MANAGER, RUNNER
 
@@ -56,7 +58,86 @@ def await_replays(count):
         time.sleep(0.025)
     return record
 
-if scenario == "missing-step":
+if scenario.startswith("transition-"):
+    import threading
+    assert manager.capture() is manager.result
+    assert step() is manager.result  # invalidation must also discard prior credit
+    old_graphs = manager.graphs
+    invalidated, resume_capture = threading.Event(), threading.Event()
+    replay_entered, resume_replay = threading.Event(), threading.Event()
+    errors, results = [], []
+    original_flush = observer._ga_flush
+
+    def pause_after_invalidation(force=False):
+        original_flush(force)
+        if threading.current_thread() is capture_thread and not invalidated.is_set():
+            current = read()["owner_evidence"][owner]
+            assert current["capture_complete"] is False and not current["replays"], current
+            invalidated.set()
+            assert resume_capture.wait(5), "recapture was not released"
+
+    def capture_again():
+        try:
+            assert manager.capture() is manager.result
+        except BaseException as exc:
+            errors.append(exc)
+
+    def replay_old_graph():
+        try:
+            results.append(step())
+        except LookupError as exc:
+            assert scenario == "transition-failed" and str(exc) == "replay-sentinel"
+            results.append("failed")
+        except BaseException as exc:
+            errors.append(exc)
+
+    # Only the stand-in replay is gated; import-hook accounting remains real.
+    manager.replay_gate = (replay_entered, resume_replay)
+    manager.replay_fail = scenario == "transition-failed"
+    if scenario == "transition-late":
+        manager.result = None  # a successful None return must retain eligibility semantics
+    observer._ga_flush = pause_after_invalidation
+    capture_thread = threading.Thread(target=capture_again)
+    replay_thread = threading.Thread(target=replay_old_graph)
+    capture_thread.start()
+    try:
+        assert invalidated.wait(5), "recapture did not publish invalidation"
+        assert manager.graphs is old_graphs
+        replay_thread.start()
+        assert replay_entered.wait(5), "serving replay did not enter the old graph"
+        if scenario == "transition-early":
+            resume_replay.set()
+            replay_thread.join(5)
+            assert not replay_thread.is_alive()
+        resume_capture.set()
+        capture_thread.join(5)
+        assert not capture_thread.is_alive()
+        assert manager.graphs is not old_graphs
+        assert manager.graphs[desc] is not old_graphs[desc]
+    finally:
+        resume_capture.set()
+        resume_replay.set()
+        capture_thread.join(5)
+        if replay_thread.ident is not None:
+            replay_thread.join(5)
+        observer._ga_flush = original_flush
+    assert not errors, errors
+    assert results == (["failed"] if manager.replay_fail else [manager.result]), results
+    assert manager.observed_graph is old_graphs[desc]
+    observer._ga_flush(force=True)
+    current = read()["owner_evidence"][owner]
+    assert current["capture_complete"] is True, current
+    assert not current["replays"], "old graph replay was credited to replacement capture generation: " + repr(current)
+    if manager.replay_fail:
+        assert current["replay_failures"][0]["count"] == 1, current
+        assert "replay-sentinel" in current["replay_failures"][0]["error"], current
+    else:
+        assert not current["replay_failures"], current
+    # A real replay after the replacement capture must still earn credit.
+    manager.replay_gate = None
+    manager.replay_fail = False
+    assert step() is manager.result
+elif scenario == "missing-step":
     from tessera.serving import glm53_graphs as gg
     import vllm.v1.worker.gpu.cudagraph_utils as utils
     gg._STATE = NS(installed=True, bounds=(192, 640, 8448), capture_bound=None,
@@ -110,6 +191,16 @@ def _probe(tmp_path, scenario):
                       package.parent.parent.parent):
         (directory / "__init__.py").write_text("")
     manager_source, runner_source = MANAGER, RUNNER
+    if scenario.startswith("transition-"):
+        manager_source = MANAGER.replace(
+            "    def run_fullgraph(self, desc):\n",
+            "    def run_fullgraph(self, desc):\n"
+            "        self.observed_graph = self.graphs[desc]\n"
+            "        if self.replay_gate is not None:\n"
+            "            self.replay_gate[0].set()\n"
+            "            assert self.replay_gate[1].wait(5), 'replay was not released'\n")
+        manager_source = manager_source.replace(
+            "        self.result = object()", "        self.result = object()\n        self.replay_gate = None")
     if scenario == "pruned-capture":
         manager_source = MANAGER.replace(
             "        return super().capture(*args)",
@@ -182,6 +273,15 @@ def test_fork_child_automatically_publishes_fresh_successful_replay(tmp_path):
     assert sum(child["counts"].values()) == 1
     assert not evidence["capture_complete"] and not evidence["captured"]
     assert not evidence["replay_failures"]
+
+
+@pytest.mark.parametrize("scenario", ["transition-early", "transition-late", "transition-failed"])
+def test_replay_entered_during_recapture_cannot_credit_replacement(tmp_path, scenario):
+    result = _probe(tmp_path, scenario)
+    owner = _owner(result)
+    _assert_inventory(owner)
+    assert [(d["tokens"], d["count"]) for d in owner["replays"]] == [(1, 1)]
+    assert sum(d["count"] for d in owner["replay_failures"]) == (scenario == "transition-failed")
 
 
 def test_missing_step_bound_preserves_error_and_records_unselected_failure(tmp_path):

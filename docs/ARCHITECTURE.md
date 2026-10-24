@@ -9519,9 +9519,15 @@ owner generation, clears its inventory and replay credit, and publishes
 into one outer transaction. Any inner incomplete/failed branch or outer check
 failure keeps it non-qualifying, even if other branches or earlier generations
 succeeded. Replay outcomes join the owner generation at entry, so an old
-in-flight return cannot credit a replacement generation. Only an underlying
-serving replay's successful return earns success credit, including a return of
-`None`; exceptions retain their behavior and separate failure records. Target
+in-flight return cannot credit a replacement generation. Success eligibility is
+also fixed at entry: a replay entering during the outer capture transaction
+cannot earn replacement-generation credit, because old maps may still be
+installed after invalidation. This exclusion holds even if capture completes
+before the replay returns; failures remain separate diagnostics. It does not
+serialize capture/replay execution or assert device concurrency safety. Only an
+eligible underlying serving replay's successful return earns success credit,
+including a return of `None`; exceptions retain their behavior and separate
+failure records. Target
 and drafter class counters likewise increment only after return. Dispatch-only,
 dummy (including nested dummy), and out-of-serving-scope calls earn no success
 credit. Eager behavior and original returns/exceptions are preserved.

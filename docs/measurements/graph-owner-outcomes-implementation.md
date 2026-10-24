@@ -104,3 +104,80 @@ files (including conservative unnamed-path consumers). That broad selection
 was not run; verification here is the targeted contract/serving selection and
 cheap guards above. Full merge-result integration belongs to the coordinator.
 Final `git diff --check` passed, and protected acceptance files have no diff.
+
+## Review repair: replay entry during recapture
+
+The subsequent independent review of head `28018edea173` found an additional
+ordering not covered by the earlier passing selection: after invalidation
+replaces the owner, old graph maps can remain installed until underlying capture
+runs. A serving replay entering then joined the replacement owner and could
+qualify its completed capture without ever replaying its new graphs. This finding
+supersedes the earlier completed-contract pass for that ordering.
+
+The retained regression uses event gates after the real invalidation flush and
+inside the stand-in replay, leaving import-hook accounting unchanged. It checks
+success returned both before and after capture completion (the latter returns
+`None`), proves different old/new graph objects, and checks that only a subsequent
+replacement-graph replay earns credit. A failure variant preserves the existing
+exception/failure diagnostic as a control. Before repair:
+
+```sh
+PYTHONPATH=src OMP_NUM_THREADS=1 MKL_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 python -m pytest tests/test_graph_owner_lifecycle.py -k replay_entered_during_recapture -q -n 2 --dist worksteal --durations=10 --basetemp="$TMPDIR/pytest"
+```
+
+Observed: 2 failed, 1 passed in 7.03 seconds. Both success variants failed with
+`old graph replay was credited to replacement capture generation`, showing
+`capture_complete=True` and successful count 1. The failure control already
+passed and is retained to prevent loss of failure diagnostics in this repair.
+NO CUDA; zero skips, uncollected modules and device allocations.
+
+[Test evidence {"artifacts":{"stderr":{"digest":"e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855","size":0},"stdout":{"digest":"e3f93fc0b0b8a7f266e035dae4eea984507fefec4056b690b64bf15c12e7cbea","size":10054}},"operation":"896292ba105c79de6819d3ac9897c949535d2f6bf4d3aec20be6d9786c4476a8","receipt":"73c44cc2c693ea3d9785d4df3336fb8169be4780bc29e1f44fbb3db2d83ecb7a"}]
+
+The repair freezes success eligibility under the observer lock at owner entry:
+nonzero outer capture depth excludes a successful outcome even if capture ends
+before return. Failure accounting and underlying execution/returns are unchanged.
+Calls entering before invalidation keep the previous owner object; calls entering
+after the transaction retain normal eligibility. This is evidence attribution,
+not capture/replay execution synchronization. No consumer conversion is included.
+
+Post-repair selection:
+
+```sh
+PYTHONPATH=src OMP_NUM_THREADS=1 MKL_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 python -m pytest tests/test_graph_owner_hooks.py tests/test_graph_owner_publication.py tests/test_graph_owner_lifecycle.py tests/test_glm53_graphs.py -q -n 2 --dist worksteal --durations=10 --basetemp="$TMPDIR/pytest"
+```
+
+75 passed on x86 in 9.31 seconds, NO CUDA; zero skips, uncollected modules and
+device allocations.
+
+[Test evidence {"artifacts":{"stderr":{"digest":"e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855","size":0},"stdout":{"digest":"212b2f801bb8543caf0558a4955b61612d3f581425c86265e11a574aa633f217","size":1769}},"operation":"2fabbf8618479eb52669b7ea336bc8290507fc214f9657da56b69c85648fa7c1","receipt":"8840cfd5359252d8582888362a42b650bb0075f95242280dd2639384f50efb56"}]
+
+A fresh separate-session read-only review inspected the repair, surrounding
+composition, architecture and retained pre-/post-fix results: PASS, no blocking
+findings. It confirmed entry-fixed exclusion, no inner-layer upgrade, original
+returns/exceptions and transition failure retention. Caveats: layered transition
+and pre-invalidation/late-return paths were inspected rather than added as new
+parameter cases, and no GPU execution safety or W3 admission is established.
+
+Before GPU-arm submission: repeat the minimal 75-test host-only selection above
+to establish compatibility in the configured Python 3.12 image, which the x86
+Python 3.14 result cannot prove. Expected GPU-host time below two minutes, zero
+device allocations; no numerical campaign or sweep.
+
+Observed configured GPU-arm result: 75 passed in 4.62 seconds; torch
+2.13.0+cu130, GB10 visible, zero skips/uncollected modules/device allocations.
+This is host-code compatibility only.
+
+[Test evidence {"artifacts":{"stderr":{"digest":"e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855","size":0},"stdout":{"digest":"0c056799c717299a263dee8d789beb3dc2abd641855a42a81c637aa733d0dec3","size":1696}},"operation":"0746b9b0872b78456e0682dfb1229ff77c1c979931dad3490f59ea42f4baa6fe","receipt":"6cc8bcea74600dab60e2e486176d065a3439b9f32d2c9bb0edc1eab2e68f6c9d"}]
+
+The cheap x86 guard command above was rerun on the repair: 212 passed in
+86.99 seconds; NO CUDA, zero skips/uncollected modules/device allocations.
+
+[Test evidence {"artifacts":{"stderr":{"digest":"e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855","size":0},"stdout":{"digest":"782ec91e423826a185d3bcc9cced80cac8e78b3d844a5c218a78c4bf06008516","size":1845}},"operation":"d687f6bdb253616891a6dd359f7dc928f662cf69340add4cff312d11f2618ade","receipt":"c7f4a90ae658bc86f0ddfe3b48ccdad5e121776f720848ba993856e55859ea64"}]
+
+Repair selector: `python3 tools/impacted_tests.py --ref
+28018edea173ac2cb1af3d77c558043107177eb6 --json` returned `narrowed`, four
+changed paths and 424 selected test files. That broader conservative selection
+was not run; the checks above cover the repair and required acceptance/serving
+surface. Full integration remains coordinator-owned. Final diff inspection and
+`git diff --check` passed; protected acceptance and producer/verifier files are
+unchanged by this repair.
