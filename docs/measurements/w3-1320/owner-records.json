@@ -1,0 +1,72 @@
+{
+  "handoff": "tessera#1320",
+  "status": "PENDING-GPU",
+  "purpose": "Retrieved owner issue scopes and comments, not a qualification packet or execution authorization",
+  "retrieval": "Read-only unauthenticated HTTPS GET from GitHub REST API during review repair",
+  "records": [
+    {
+      "path": "docs/measurements/w3-1320/owner-records/1320.json",
+      "sha256": "25907c6717d13c20464aa5d48ac1fa2c219ab17ed8fde27065a5375473b68e78",
+      "bytes": 7651,
+      "source_url": "https://api.github.com/repos/RobTand/tessera/issues/1320",
+      "comment_count": 1
+    },
+    {
+      "path": "docs/measurements/w3-1320/owner-records/1320-comments.json",
+      "sha256": "7fa7ad70ab522968ed99cd28ec0a6f7688407248ce948c357bdd068cf99cd21d",
+      "bytes": 2278,
+      "source_url": "https://api.github.com/repos/RobTand/tessera/issues/1320/comments",
+      "comment_count": 1
+    },
+    {
+      "path": "docs/measurements/w3-1320/owner-records/1492.json",
+      "sha256": "465fd3ca0bae5f2ad4663ce2a16a5d9677b1e380d072d499a7066fba3748ffe1",
+      "bytes": 4268,
+      "source_url": "https://api.github.com/repos/RobTand/tessera/issues/1492",
+      "comment_count": 1
+    },
+    {
+      "path": "docs/measurements/w3-1320/owner-records/1492-comments.json",
+      "sha256": "86b3875abe57e6b6a13c0dc7feb8c37bed802d965ddac5123f868eeeb17ff8cf",
+      "bytes": 1957,
+      "source_url": "https://api.github.com/repos/RobTand/tessera/issues/1492/comments",
+      "comment_count": 1
+    },
+    {
+      "path": "docs/measurements/w3-1320/owner-records/1493.json",
+      "sha256": "bccdb762d2389ef8b58abf8c5bd48095e7b1361af92b9a4bfeecb1ce322ac1dc",
+      "bytes": 4349,
+      "source_url": "https://api.github.com/repos/RobTand/tessera/issues/1493",
+      "comment_count": 1
+    },
+    {
+      "path": "docs/measurements/w3-1320/owner-records/1493-comments.json",
+      "sha256": "41ecb2119321ea816a9602cf95e27d81a219569c4e322cc9d4e25b47925bd932",
+      "bytes": 1881,
+      "source_url": "https://api.github.com/repos/RobTand/tessera/issues/1493/comments",
+      "comment_count": 1
+    },
+    {
+      "path": "docs/measurements/w3-1320/owner-records/1484.json",
+      "sha256": "10c3ea3fa8d69cb47eceaae0d0b4b735a73f06289affcba9edf5b299e7e3f351",
+      "bytes": 3320,
+      "source_url": "https://api.github.com/repos/RobTand/tessera/issues/1484",
+      "comment_count": 3
+    },
+    {
+      "path": "docs/measurements/w3-1320/owner-records/1484-comments.json",
+      "sha256": "65af1da7e95b94407b38ee84febf84d1095efae9a07e4c130bd7982821104a4c",
+      "bytes": 6552,
+      "source_url": "https://api.github.com/repos/RobTand/tessera/issues/1484/comments",
+      "comment_count": 3
+    }
+  ],
+  "qualification_packet_verified": false,
+  "independent_owner_confirmation_obtained": false,
+  "authorized_execution_tuples": [],
+  "limitations": [
+    "Issue statements and recorded stops do not supply successful setup/adoption artifacts or a fresh tuple decision",
+    "No exact native invocation, complete W3 protocol or independently reviewed execution evidence was recovered",
+    "No owner overlap agreement or current artifact accessibility review was obtained"
+  ]
+}
