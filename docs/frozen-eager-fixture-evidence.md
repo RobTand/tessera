@@ -66,3 +66,24 @@ No tests removed or tautological tests found in the changed eager-levers module.
 Only the old optional Torch skip was removed so missing required dependencies
 fail visibly. The benchmark pin and historical selector assertions are unchanged.
 Full merge-result validation remains the coordinator's responsibility.
+
+## O4 review repair
+
+Rechecked the review finding against `d463c410`: `AGENTS.md` had no change
+relative to master, despite the earlier implementation report. Added the
+preventive historical-input and deterministic-test section directly to that
+tracked file, and reconciled its dependency-installation/legacy submission
+wording with the plain-command TrustLadder runner contract. Verified that
+`git diff -- AGENTS.md` now contains the guidance; reviewed it as prose, not
+with keyword assertions. No runtime, fixture or acceptance-test edits were
+needed. The existing O1–O3 evidence above is preserved; no GPU rerun is
+justified for this documentation-only repair.
+
+Executed the mandatory x86 guards after the guidance change:
+`PYTHONPATH=src OMP_NUM_THREADS=1 MKL_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1
+python -m pytest tests/test_issue_refs.py tests/test_impacted_tests.py -q
+-n 2 --dist worksteal --durations=10 --basetemp="$TMPDIR/pytest"`.
+Result: 212 passed, zero skips, zero uncollected modules, zero device allocations;
+Torch 2.11.0+cpu, NO CUDA. No tests added, removed or modified in this repair.
+
+[Test evidence {"artifacts":{"stderr":{"digest":"e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855","size":0},"stdout":{"digest":"fd32b7ad45ee169b596cc62e5fc3159b820b823fa4647622457dfc92b4a50821","size":1738}},"operation":"559b7bd88fdbda19b929bae3434e9352576ba5f19d0c4af591d958bbdbc39fa5","receipt":"4920e26b0272c96e9af8e602177edcc358b16b8f2d1bd6055e03dd6c61b13c3d"}]
