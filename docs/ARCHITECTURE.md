@@ -9493,6 +9493,60 @@ replace artifact byte-integrity checks or add an identity seal; runtime pins,
 serving defaults and fabric comparability remain unchanged. It does not expand
 the batch/decode evidence boundary.
 
+#### Additive owner evidence (W2 handoff to W3)
+
+The optional `GA_DISPATCH_LOG` observer retains `pid`, `captured`, `counts`
+and `tessera_classes` diagnostics and adds `owner_evidence`. This mapping uses
+process-local `<ManagerClass>@<instance-hex>` keys consistently for capture and
+replay. Each current owner contains `capture_complete` (boolean), `capture_error`
+(null or an error string), `captured` (descriptor records), `replays` (successful
+host-return records) and `replay_failures` (failed-call records). A descriptor has
+`mode`, `tokens`, `num_reqs`, and `max_seq_len`; the last is null for unsplit
+capture or the actual applied branch bound. Outcome records add `count`, and
+failure records add `error`. A failure before branch selection has a null bound,
+not the bound left selected by an earlier replay.
+
+Inventories describe actual descriptor/bound tuples, not a Cartesian product.
+The completed outer capture's final graph maps are authoritative; intermediate
+inner inventories cannot add graphs removed by a model override. The legacy
+`captured[owner]` token list is the union across the complete inventory, not
+merely the last selected bound's graph map. `counts` remains dispatch-selection
+diagnostics; neither it nor class totals prove successful tuple coverage.
+
+Before entering underlying recapture work, the observer replaces the current
+owner generation, clears its inventory and replay credit, and publishes
+`capture_complete=false`. Base, model and serving per-bound wrappers compose
+into one outer transaction. Any inner incomplete/failed branch or outer check
+failure keeps it non-qualifying, even if other branches or earlier generations
+succeeded. Replay outcomes join the owner generation at entry, so an old
+in-flight return cannot credit a replacement generation. Only an underlying
+serving replay's successful return earns success credit, including a return of
+`None`; exceptions retain their behavior and separate failure records. Target
+and drafter class counters likewise increment only after return. Dispatch-only,
+dummy (including nested dummy), and out-of-serving-scope calls earn no success
+credit. Eager behavior and original returns/exceptions are preserved.
+
+Fork children reset inherited histories, locks and thread-local scope before
+their first event and establish their own background publisher. Snapshot
+construction and atomic replacement share one ordered writer transaction:
+atomic rename alone would not prevent an older snapshot from overwriting a
+newer recapture invalidation. Logging I/O failures do not replace serving or
+capture outcomes; dirty evidence is retried by the publisher.
+
+Owner keys and generations are local joins, not identity seals. Rank association
+continues through the configured rank-specific `GA_DISPATCH_LOG` prefixes in
+`experiments/graph_attest_702/tp2_recipe.py` and existing rank/PID filename handling
+in `receipt.py`; no rank count or deployment identity is introduced here.
+Main's producer still aggregates legacy diagnostics unchanged. Strict admission
+of every rank/process/owner's successful descriptor coverage belongs to W3;
+this additive emitter does not implement or claim that consumer conversion.
+These CPU-validated host returns are not device completion, synchronization,
+compiled qualification, a GPU campaign or expanded equality coverage. Runtime
+pins, serving defaults, fabric/scope and byte-integrity boundaries are unchanged.
+
+Implementation and review evidence:
+[owner outcomes](measurements/graph-owner-outcomes-implementation.md).
+
 Receipts: [graph equals eager on the release image](measurements/2026-10-04-glm-graph-equals-eager.md).
 
 ### 5.1.2b A task endpoint binds its served alias to loaded bytes (tessera#1056)
