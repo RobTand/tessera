@@ -1,0 +1,54 @@
+{
+  "status": "partial recovery only; not readiness or generated-artifact inventory",
+  "files": [
+    {
+      "path": "docs/measurements/issue1358-recovery/original-roster.json",
+      "sha256": "bb07140cb5c23ad574f32e138333942e95df5be31b2510afe0971aa32539e1d8",
+      "bytes": 22241,
+      "source": "/mnt/shared/tessera-measurements/fold-tp2-1204/roster.json",
+      "kind": "verbatim retained historical evidence"
+    },
+    {
+      "path": "docs/measurements/issue1358-recovery/original-inputs.json",
+      "sha256": "97e0e87cff428452d46e5eeb310acb40dfa500288bfad9286bbafd5570c9a6a0",
+      "bytes": 1761,
+      "source": "/mnt/shared/tessera-measurements/fold-tp2-1204/fold1204-base-20261010T071354Z/inputs.json",
+      "kind": "verbatim retained historical evidence"
+    },
+    {
+      "path": "docs/measurements/issue1358-recovery/original-engine.json",
+      "sha256": "e20f2c4bb9d4c015237bfe631dc88036dd47ec280d567a2678dc14ffef53ddf2",
+      "bytes": 3769,
+      "source": "/mnt/shared/tessera-measurements/fold-tp2-1204/fold1204-base-20261010T071354Z/engine.json",
+      "kind": "verbatim retained historical evidence"
+    },
+    {
+      "path": "docs/measurements/issue1358-recovery/original-gang.json",
+      "sha256": "0d4863d0717fd52a7d09b1678e50110fbdd9407b44617753db2aa2acd5d4ffe1",
+      "bytes": 1613,
+      "source": "/mnt/shared/tessera-measurements/fold-tp2-1204/fold1204-base-20261010T071354Z/gang.json",
+      "kind": "verbatim retained historical evidence"
+    },
+    {
+      "path": "docs/measurements/issue1358-recovery/original-rank0.log",
+      "sha256": "2cd740e418053ce67b0fefbb4a4be59f07a100bb0ca51b36adfe10fd3e56f861",
+      "bytes": 9114,
+      "source": "/mnt/shared/tessera-measurements/fold-tp2-1204/fold1204-base-20261010T071354Z/fold-base/logs/p-rank0.log",
+      "kind": "verbatim retained historical evidence"
+    },
+    {
+      "path": "docs/measurements/issue1358-recovery/original-export-request.json",
+      "sha256": "a04d7f03fe54c773da322700a7cd4049a104a33b43ff9275e9d2e58efa72ea09",
+      "bytes": 5080,
+      "source": "/mnt/shared/prismabuild-fleet/cas/requests/ad/ad87b7c860f116d50cc63af767aa9524cc5dfa22221eaa46c56ab7b43a6f846b.json",
+      "kind": "verbatim retained historical evidence"
+    },
+    {
+      "path": "docs/measurements/issue1358-recovery/original-export-outcome-projection.json",
+      "sha256": "08465a8f794a13f4238aba91bd15be4c8c12a9dee1db953ded79e006f7a7299d",
+      "bytes": 1474,
+      "source": "/mnt/shared/prismabuild-fleet/pb-queue/done/ad87b7c860f116d50cc63af767aa9524cc5dfa22221eaa46c56ab7b43a6f846b.json",
+      "kind": "selected JSON fields; see source digest"
+    }
+  ]
+}

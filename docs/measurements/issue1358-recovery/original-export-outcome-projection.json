@@ -1,0 +1,35 @@
+{
+  "source": {
+    "path": "/mnt/shared/prismabuild-fleet/pb-queue/done/ad87b7c860f116d50cc63af767aa9524cc5dfa22221eaa46c56ab7b43a6f846b.json",
+    "sha256": "8ac0a79c1012ac757d49e6523c727306c3522b327c5aa6599d63fa69c193914f",
+    "bytes": 92306
+  },
+  "note": "Selected fields only; resource-scope bearer tokens and bulk progress stdout omitted. Not an independently verified CAS receipt.",
+  "outcome": {
+    "schema": "prismaquant.prismabuild.pool_outcome.v1",
+    "action_key": "ad87b7c860f116d50cc63af767aa9524cc5dfa22221eaa46c56ab7b43a6f846b",
+    "status": "executed",
+    "checkout_snapshot": {
+      "commit": "3725c1b111f73475b479662aac7ef4f1aabf6504",
+      "input": {
+        "bytes": 10572757,
+        "id": "pbrun.checkout-snapshot",
+        "sha256": "bac045bee5e605ca8be10049fe08f5c1f4cf47d562a0d53e8eb2ef411d8fa93e"
+      },
+      "parent": "af7a86d43da3487179b7d16606ef0f5a3046d73c",
+      "refs": {},
+      "schema": "prismaquant.prismabuild.pbrun_checkout_snapshot.v2",
+      "subdirectory": "."
+    },
+    "claimed_host": "sparky",
+    "claimed_unix": 1790402902.6503356,
+    "finished_host": "sparky",
+    "finished_unix": 1790405815.77368
+  },
+  "execution": {
+    "status": "executed",
+    "returncode": 0,
+    "elapsed_s": 2912.352590560913
+  },
+  "stdout_plan_line": "plan: /mnt/shared/tessera-runs/moe/glm53-x-picks-full-6be66bc/tessera_plan.json sha256=2c63c7564fe0e631eccd2c6e6df2e7d26de4c108f526bbce1515c5b2cc6bb789 (584 entries), read once"
+}

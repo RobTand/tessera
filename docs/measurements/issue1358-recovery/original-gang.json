@@ -1,0 +1,62 @@
+{
+ "priority": 0,
+ "priority_reason": "tessera#1204 served fold arm; CEO dec-1010-040208-6b0b (120 GPU-min); main campaign GPU work first at 10",
+ "timeout_s": 7200,
+ "skew_s": 300,
+ "members": [
+  {
+   "tag": "sparklina",
+   "demand": {
+    "cpu": 8,
+    "mem_gb": 104,
+    "gpu": 1
+   },
+   "gpu_memory_gb": 102,
+   "exclusive": true,
+   "measurement": true,
+   "host_class": "gb10",
+   "container_images": [
+    "localhost/prismaquant/spark-vllm-nccl230@sha256:5be13705acaecc7b4aaf342a84f80d67844c9970ff8375bf9fbeecc9c98ce84a"
+   ],
+   "max_attempts": 1,
+   "env": {
+    "FOLD_INPUT_SHA256": "97e0e87cff428452d46e5eeb310acb40dfa500288bfad9286bbafd5570c9a6a0"
+   },
+   "argv": [
+    "/home/rob/venvs/pb-cpu/bin/python",
+    "experiments/graph_attest_702/fold_tp2_arm.py",
+    "--rank",
+    "0",
+    "--run",
+    "/mnt/shared/tessera-measurements/fold-tp2-1204/fold1204-base-20261010T071354Z"
+   ]
+  },
+  {
+   "tag": "sparky",
+   "demand": {
+    "cpu": 6,
+    "mem_gb": 104,
+    "gpu": 1
+   },
+   "gpu_memory_gb": 102,
+   "exclusive": true,
+   "measurement": true,
+   "host_class": "gb10",
+   "container_images": [
+    "localhost/prismaquant/spark-vllm-nccl230@sha256:5be13705acaecc7b4aaf342a84f80d67844c9970ff8375bf9fbeecc9c98ce84a"
+   ],
+   "max_attempts": 1,
+   "env": {
+    "FOLD_INPUT_SHA256": "97e0e87cff428452d46e5eeb310acb40dfa500288bfad9286bbafd5570c9a6a0"
+   },
+   "argv": [
+    "/home/rob/venvs/pb-cpu/bin/python",
+    "experiments/graph_attest_702/fold_tp2_arm.py",
+    "--rank",
+    "1",
+    "--run",
+    "/mnt/shared/tessera-measurements/fold-tp2-1204/fold1204-base-20261010T071354Z"
+   ]
+  }
+ ]
+}
