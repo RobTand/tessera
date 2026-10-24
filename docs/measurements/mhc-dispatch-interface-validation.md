@@ -75,3 +75,65 @@ The supplied open-list title for issue number 1491 cannot establish overlap. The
 shared-expert resource charging, so that stale snapshot cannot authenticate
 the current matched-TP2 lever/source either. No packet was shared and no
 parallel measurement campaign was opened on the basis of the generic title.
+
+## Qualification-custody follow-up
+
+At checkout `8db522bbecbbd35df9b4c570e8256ddcb8eed557`, a read-only
+inspection independently recovered the existing native probe at
+`/mnt/shared/tessera-measurements/mhc-fusion-783/takeover-894146476-20261006/capacity16/native/mhc_fused_probe.json`.
+Its SHA256 is
+`4bcf075576ef3021a13018dc1c5ef6618231cc2d4a70d9072b8d6f1df446abd5`.
+The receipt records PB action
+`403c665b2ebd7844542efbfbbfebb14ed32c858019b2ffe86b404eb86a2fbdf4`,
+source checkout `2cbc4e274fb6c04c393fdc51ed5d57eac277a5d5`, build ID
+`54fffa63e0f7c4d2dcbb0e1d4eae3dcffee83115c20e14585b35d29afb55ded9`,
+and GB10 execution on sparklina. Its recorded CUDA source SHA256 matches
+this checkout's independently calculated
+`0ebf0f43304f01439204855a6bfa6ae7e7e6b20aee6fd05814aa428978c29a30`.
+The JSON records 60 cases and `bitwise.passed: true`, including
+`residual_cur`, `post_mix`, `comb_mix`, and `layer_input` comparisons,
+stock/fused split metadata, determinism and tile comparisons. This upgrades
+the native probe reference above to an inspected raw result, not to a new
+execution or whole-checkout serving qualification. Existing numerical
+assertions remain unchanged.
+
+The probe ran `--parts bitwise` and includes historical Netdata charts and
+an NVML sampler declaration. Those are not paired stock/fused, both-Spark
+energy evidence; their presence does not establish work/J or a speed delta.
+No current-source performance or KL acceptance follows from this receipt.
+
+A bounded search of the served PrismaBuild checkout
+`9dce28460e76d4115c925bac8efc4f397160f9cf` found no literal `mhc`
+references. Listings of the fleet evidence and results directories exposed
+no named mHC decision packet. This is not an exhaustive proof of absence:
+no recorded qualification/adoption/fresh exact-tuple decision was located
+in the inspected material. No owner communication or adoption decision was
+made through these file inspections. The current identity of issue 1491
+remains unverified; no packet was shared with it.
+
+O2 and the remaining O3 legs are still **unmet**, not waived. Continue custody
+through the existing v6 Kernels Lead and qualification owners, with the v6
+Review and Integration Lead as integrator; the supplied open list already
+tracks qualification custody in issue 1521. The required handoff is the
+recorded PrismaBuild decision and source/build/config-bound raw receipts
+for native/quality qualification, matched per-rank L8192 chunk and L512 step
+profiles (including fallback calls and actual SP shapes), byte/roofline
+assumptions, aligned both-Spark Netdata against 140 W, work/J and served TP2
+cross-check. The campaign tuple remains TESSERA_E4M3_K1 GLM-5.3-Flash,
+L8192 c1 TP2 max_num_batched_tokens=2048. Cache-based byte estimates must
+not be presented as measured DRAM traffic. An inconclusive or negative
+served result must remain so. No GPU run, new campaign, external runner,
+environment repair, adoption or pin change was performed in this follow-up.
+
+Documentation guards were run on x86:
+
+```sh
+PYTHONPATH=src OMP_NUM_THREADS=1 MKL_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 python -m pytest tests/test_issue_refs.py tests/test_impacted_tests.py -q -n 2 --dist worksteal --durations=10 --basetemp="$TMPDIR/pytest"
+```
+
+Observed after the custody documentation edit: 212 passed in 111.08 s, no skips or uncollected modules, no CUDA
+device and zero device allocations. This validates the documentation guards,
+not O2/O3. No GPU check was submitted; the missing external qualification
+legs require the recorded owner decision before execution.
+
+[Test evidence {"artifacts":{"stderr":{"digest":"e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855","size":0},"stdout":{"digest":"48dd0318b3727c8f65a77e215932d0a9e0227fbb432678cb0cd103acdcc39cf9","size":1814}},"operation":"0bd24dca4d5e762ef457999f898e6f40895b3f3a40c174a4c4c21879d0125c75","receipt":"af993503d02f339616c2ad636ad810dfb013b12275e5f88f87c22a2cb4be6ade"}]
