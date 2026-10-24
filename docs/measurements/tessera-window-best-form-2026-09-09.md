@@ -438,3 +438,52 @@ Pull request 1016 remains draft and issue 652 remains open. Hosted `pure`
 was observed successful only on documentation head
 `a35f0c93ae9bca5b1e268d6f992c6b6bf6d2b7ea`; parent approval, current-master
 refresh and integration-head checks are not claimed for this later addition.
+
+### Historical evidence disposition — 2026-10-24 (pending owner handoff)
+
+The [retained eight-action inventory](issue-652-owner-disposition.json) is owned
+through the existing [qualification/adoption issue](https://github.com/RobTand/tessera/issues/1387),
+with [integration custody](https://github.com/RobTand/tessera/issues/1398).
+This documentation record is not an executable admission API or an approval.
+All eight historical dispositions remain **deferred**, and `owner_decision` is
+null: no authentic superseding decision was recovered in this bounded evidence.
+The supplied [owner-handoff discussion](https://github.com/RobTand/tessera/issues/1404#issuecomment-6377598020)
+is provenance for the outstanding dependency, not qualification authority.
+
+Direct action-bound receipt validation and raw snapshot/result checks succeeded.
+Canonical receipt-body and manifest identities are recorded separately from
+raw-file hashes. All sixteen standalone log reads failed with ENOENT, while
+all sixteen untruncated embedded completion-record strings independently matched
+their declared UTF-8 byte lengths and SHA-256 hashes; the inventory retains
+precise recovery references without claiming the original paths are readable.
+Hardened CAS lookup/input_path verification was unavailable during research due
+to filesystem-root permission denial, and is not claimed by these direct checks.
+Effective-source equality remains unestablished despite a common parent label;
+all eight snapshots differ, all admissions were nonexclusive, and zero exit
+establishes only the recorded generated-input execution scope. Nsight replayed,
+cache-controlled samples are not full joined-workload or unflushed roofline proof.
+
+The JSON contains a reciprocal disposition-link handoff for **TrustLadder to
+publish**, not a published comment; its resulting custody reference remains null.
+Existing execution and Netdata ownership is preserved. The launch gate remains
+CLOSED, no native work was launched, and campaign O1–O4 completion is not claimed.
+Completion depends on an attributable dated owner/integrator decision through
+the existing custody workflow, including its exact approved tuple and scope;
+structural tests cannot supply or authenticate that consent.
+
+Documentary verification on 2026-10-24 (x86 only):
+
+```sh
+PYTHONPATH=src OMP_NUM_THREADS=1 MKL_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 python -m pytest tests/test_issue652_owner_disposition.py tests/test_issue_refs.py tests/test_impacted_tests.py -q -n 2 --dist worksteal --durations=10 --basetemp="$TMPDIR/pytest"
+```
+
+Observed **214 passed, 1 failed**: the eight-action inventory and narrative-link
+checks passed, as did both cheap guard suites (212 tests). The owner-decision
+check failed at line 104 (`Pending/recommended is not owner approval`) because
+`owner_decision` is deliberately null. This is an unmet external evidence
+handoff, not a test defect or a completed issue. No collection/setup errors,
+skips or device allocations were reported. GPU checks and native qualification
+were not run; these documentary results establish neither consent nor numerical
+coverage.
+
+[Test evidence {"artifacts":{"stderr":{"digest":"e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855","size":0},"stdout":{"digest":"42cae2847ff00710bb58ad1001ab0149d4b052f204b7e60d605cb22ad06126a3","size":2626}},"operation":"85561f544059c8b9bbea8d7e73d4de1a9e95989a35c358fb1069010b8c5c61a6","receipt":"58947c82425c1e71d7c4985157c0b2c3c50ebcd1ddf31884e6d89510abfa4611"}]

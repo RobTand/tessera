@@ -1,0 +1,894 @@
+{
+  "schema": "tessera.issue652.owner_disposition.v1",
+  "observed_date": "2026-10-24",
+  "status": "pending_owner_handoff",
+  "owner_issue": "https://github.com/RobTand/tessera/issues/1387",
+  "custody_issue": "https://github.com/RobTand/tessera/issues/1398",
+  "packet": {
+    "reference": "/mnt/shared/tessera-measurements/issue-652-geometry-sol-20261006/issue652-before-profile-packet-final.json",
+    "raw_file_sha256": "490b4fd62e20be1cbf832c7720ce6f4ab65119ab6dbc2743ec40c15f41f9567a",
+    "verification": "2026-10-24: direct read and hashlib.sha256 of raw bytes; matches research identity."
+  },
+  "source_reconciliation": "Effective-source equality remains unestablished. Eight different raw snapshot identities are preserved. Common parent 2b711e0e7498802954bf75cfdabe7b93c6f47737 is not proof of equal effective source; no independent source/native/input qualification or owner adoption has been established.",
+  "owner_decision": null,
+  "decision_dependency": {
+    "status": "unavailable_in_bounded_evidence",
+    "source": "https://github.com/RobTand/tessera/issues/1404#issuecomment-6377598020",
+    "provenance": "Supplied RobTand discussion dated 2026-10-24T00:35:14Z requests an accessible attributable decision; it does not grant one. Local docs/issues-snapshot.json predates these Tessera issues; same-number PrismaQuant entries are not authority. No remote decision independently recovered.",
+    "required": "Existing owner/integrator through 1387/1398 must supply dated decision, authority/delegation references, approved effective source, harness/configuration, input artifacts/digests, runtime/device conditions, exact historical subset and remaining measurements. Authenticate scope and custody independently before retaining approval."
+  },
+  "verification_limits": {
+    "direct_records": "Per-action record validation with served PrismaBuild core.PrismaBuildCAS._validate_receipt validates action, canonical manifest, producer attestation and canonical receipt body binding. Direct blob/log checks establish bytes, not owner consent or qualification.",
+    "served_contract": "prismabuild main 9dce28460e76d4115c925bac8efc4f397160f9cf src/prismabuild/core.py::_validate_receipt; client.cas_receipt_self_check alone is narrower.",
+    "hardened_cas": "Research reported lookup/input_path unavailable: filesystem-root permission denial. Not successful; no infrastructure repair or application workaround attempted. This session repeats only direct record/blob checks.",
+    "log_inventory": "Standalone log paths and embedded copies have separate availability. Recovery references identify exact completion-record JSON fields, not repaired standalone files."
+  },
+  "launch_authorized": false,
+  "historical_admissions": [
+    {
+      "action_key": "df7dc3ca89f1e763a11c80b06cf682330664104a874ea308d3d8657994d2d597",
+      "name": "Unprofiled q1088 rows2048",
+      "snapshot_sha256": "6a0f3e23b61d7f9ece87ff8c2339614592e1911601f2aa40abc048b1a1a18b00",
+      "snapshot": {
+        "reference": "/mnt/shared/prismabuild-fleet/cas/blobs/6a/6a0f3e23b61d7f9ece87ff8c2339614592e1911601f2aa40abc048b1a1a18b00",
+        "sha256": "6a0f3e23b61d7f9ece87ff8c2339614592e1911601f2aa40abc048b1a1a18b00",
+        "bytes": 13523528,
+        "verification": "2026-10-24: direct read; raw SHA-256 and byte count match declared contract. Not hardened input_path/lookup verification.",
+        "commit": "4451a18f8c8db2128baec0f4bb8846d71c5eef01",
+        "parent": "2b711e0e7498802954bf75cfdabe7b93c6f47737"
+      },
+      "admission": {
+        "gpu_exclusive": false,
+        "scope": "Recorded GPU admission only; exclusive=false and manifest gpu_exclusive=false. Empty members_before is not exclusive reservation or whole-run isolation.",
+        "reference": "/mnt/shared/prismabuild-fleet/pb-queue/done/df7dc3ca89f1e763a11c80b06cf682330664104a874ea308d3d8657994d2d597.json#/gpu_admission"
+      },
+      "completion": {
+        "returncode": 0,
+        "status": "executed",
+        "scope": "Recorded generated-input timing/profiling command only; zero exit does not establish qualification. Nsight sampled/replayed/cache-controlled launches are not a full joined workload or unflushed production roofline.",
+        "reference": "/mnt/shared/prismabuild-fleet/pb-queue/done/df7dc3ca89f1e763a11c80b06cf682330664104a874ea308d3d8657994d2d597.json#/detail",
+        "record_raw_file_sha256": "8baac29c4a32ece399239f14c9f4afa2efa472fabbe015bf757a6c536bc7241d"
+      },
+      "receipt": {
+        "reference": "/mnt/shared/prismabuild-fleet/cas/actions/v3/df/df7dc3ca89f1e763a11c80b06cf682330664104a874ea308d3d8657994d2d597.json",
+        "canonical_sha256": "40914fb09e48449ade9c8fc701d3e13486140e59bfeb266b83ff6ae9c262b9d3",
+        "raw_file_sha256": "4e3ca72d88292e39799a3a714032a16e89331b72cacedda811a2b1abf046fa91",
+        "verification": "2026-10-24: direct JSON read; served core._validate_receipt succeeded against recorded action manifest, including producer binding and canonical-body digest. Raw-file SHA-256 computed independently."
+      },
+      "manifest": {
+        "reference": "/mnt/shared/prismabuild-fleet/cas/requests/df/df7dc3ca89f1e763a11c80b06cf682330664104a874ea308d3d8657994d2d597.json",
+        "sha256": "31cde377b01409cab6afefeb1c862b8b63d0c118eb57b6a0cb91489564e5545b",
+        "raw_file_sha256": "ed1521e90d4332b0eeed6b98bc07f9b6f8fdccedb449915abf0294a0c7ee70b1",
+        "verification": "2026-10-24: served canonical_sha256 of parsed manifest matches receipt.action_manifest_sha256; distinct from raw-file hash."
+      },
+      "payload": {
+        "reference": "/mnt/shared/prismabuild-fleet/cas/blobs/bf/bfbce9a12be83a6491c87291631b7adc628500480a3fc3fe73539bf29bb213b2",
+        "sha256": "bfbce9a12be83a6491c87291631b7adc628500480a3fc3fe73539bf29bb213b2",
+        "bytes": 4673,
+        "verification": "2026-10-24: direct read; raw SHA-256 and byte count match declared contract. Not hardened input_path/lookup verification."
+      },
+      "recorded_tuple": {
+        "harness_configuration": [
+          "/home/rob/venvs/pq-pb461728e4-tessera-09d6559d/bin/python",
+          "experiments/window_viterbi_best_form_ab.py",
+          "--g2",
+          "--mode",
+          "time",
+          "--blocks",
+          "3",
+          "--min-block-s",
+          "5",
+          "--configs",
+          "G2-q1088-2048",
+          "--out",
+          "/mnt/shared/tessera-measurements/issue-652-geometry-sol-20261006/before-time-q1088-2048.json"
+        ],
+        "inputs": [
+          {
+            "bytes": 13523528,
+            "id": "pbrun.checkout-snapshot",
+            "sha256": "6a0f3e23b61d7f9ece87ff8c2339614592e1911601f2aa40abc048b1a1a18b00"
+          }
+        ],
+        "runtime_device_conditions": {
+          "manifest_reference": "/mnt/shared/prismabuild-fleet/cas/requests/df/df7dc3ca89f1e763a11c80b06cf682330664104a874ea308d3d8657994d2d597.json#/environment",
+          "producer_reference": "/mnt/shared/prismabuild-fleet/cas/actions/v3/df/df7dc3ca89f1e763a11c80b06cf682330664104a874ea308d3d8657994d2d597.json#/producer",
+          "completion_reference": "/mnt/shared/prismabuild-fleet/pb-queue/done/df7dc3ca89f1e763a11c80b06cf682330664104a874ea308d3d8657994d2d597.json#/detail"
+        }
+      },
+      "disposition": "deferred",
+      "disposition_scope": "Retained as bounded generated-input execution/integrity evidence only, not owner-accepted qualification/adoption. No historical subset accepted here; owner decision and independent effective-source reconciliation outstanding.",
+      "logs": [
+        {
+          "stream": "stdout",
+          "linked_reference": "/mnt/shared/prismabuild-fleet/pb-queue/attempts/df7dc3ca89f1e763a11c80b06cf682330664104a874ea308d3d8657994d2d597/9e98beb51e5a0e078d80458e47af40142d83ceeca18daf4a72cfe43cd5b3486e/00000001.stdout.a225f2d660d7fa5c1c3f25a2394737eec22f2eebca8e9c92647c6c2f3b0471e5.log",
+          "sha256": "a225f2d660d7fa5c1c3f25a2394737eec22f2eebca8e9c92647c6c2f3b0471e5",
+          "bytes": 7985,
+          "availability": "unavailable",
+          "verification": "2026-10-24: Direct read failed: ENOENT. Original standalone path is not readable in this view.",
+          "recovered_copy": {
+            "reference": "/mnt/shared/prismabuild-fleet/pb-queue/done/df7dc3ca89f1e763a11c80b06cf682330664104a874ea308d3d8657994d2d597.json#/detail/stdout",
+            "sha256": "a225f2d660d7fa5c1c3f25a2394737eec22f2eebca8e9c92647c6c2f3b0471e5",
+            "bytes": 7985,
+            "verification": "2026-10-24: completion-record embedded string encoded as UTF-8 independently reproduces declared SHA-256 and byte length; recorded truncated=false."
+          }
+        },
+        {
+          "stream": "stderr",
+          "linked_reference": "/mnt/shared/prismabuild-fleet/pb-queue/attempts/df7dc3ca89f1e763a11c80b06cf682330664104a874ea308d3d8657994d2d597/9e98beb51e5a0e078d80458e47af40142d83ceeca18daf4a72cfe43cd5b3486e/00000001.stderr.6ae22e28d8e7d3c9541ecc30e0edf8b3931838f003d6d63a9b15a9f79f0f4b0f.log",
+          "sha256": "6ae22e28d8e7d3c9541ecc30e0edf8b3931838f003d6d63a9b15a9f79f0f4b0f",
+          "bytes": 43,
+          "availability": "unavailable",
+          "verification": "2026-10-24: Direct read failed: ENOENT. Original standalone path is not readable in this view.",
+          "recovered_copy": {
+            "reference": "/mnt/shared/prismabuild-fleet/pb-queue/done/df7dc3ca89f1e763a11c80b06cf682330664104a874ea308d3d8657994d2d597.json#/detail/stderr",
+            "sha256": "6ae22e28d8e7d3c9541ecc30e0edf8b3931838f003d6d63a9b15a9f79f0f4b0f",
+            "bytes": 43,
+            "verification": "2026-10-24: completion-record embedded string encoded as UTF-8 independently reproduces declared SHA-256 and byte length; recorded truncated=false."
+          }
+        }
+      ]
+    },
+    {
+      "action_key": "32dc9e7144502ac241ac9490488de7ec2122a07f5ef13c4cf53ac252c59e0769",
+      "name": "Unprofiled q1088 rows4096",
+      "snapshot_sha256": "6e6de6abb87a1e760890cfde39f80edc59243e361c2bbd0f354094f12cf208be",
+      "snapshot": {
+        "reference": "/mnt/shared/prismabuild-fleet/cas/blobs/6e/6e6de6abb87a1e760890cfde39f80edc59243e361c2bbd0f354094f12cf208be",
+        "sha256": "6e6de6abb87a1e760890cfde39f80edc59243e361c2bbd0f354094f12cf208be",
+        "bytes": 13523528,
+        "verification": "2026-10-24: direct read; raw SHA-256 and byte count match declared contract. Not hardened input_path/lookup verification.",
+        "commit": "84fee1aff1588cfad4edf2ac237963084fd60621",
+        "parent": "2b711e0e7498802954bf75cfdabe7b93c6f47737"
+      },
+      "admission": {
+        "gpu_exclusive": false,
+        "scope": "Recorded GPU admission only; exclusive=false and manifest gpu_exclusive=false. Empty members_before is not exclusive reservation or whole-run isolation.",
+        "reference": "/mnt/shared/prismabuild-fleet/pb-queue/done/32dc9e7144502ac241ac9490488de7ec2122a07f5ef13c4cf53ac252c59e0769.json#/gpu_admission"
+      },
+      "completion": {
+        "returncode": 0,
+        "status": "executed",
+        "scope": "Recorded generated-input timing/profiling command only; zero exit does not establish qualification. Nsight sampled/replayed/cache-controlled launches are not a full joined workload or unflushed production roofline.",
+        "reference": "/mnt/shared/prismabuild-fleet/pb-queue/done/32dc9e7144502ac241ac9490488de7ec2122a07f5ef13c4cf53ac252c59e0769.json#/detail",
+        "record_raw_file_sha256": "6c3f53d221b87808a12a476798bc8860af663d83053b64257e95e4c612daa1e2"
+      },
+      "receipt": {
+        "reference": "/mnt/shared/prismabuild-fleet/cas/actions/v3/32/32dc9e7144502ac241ac9490488de7ec2122a07f5ef13c4cf53ac252c59e0769.json",
+        "canonical_sha256": "3e186fe8eb903fefd0a85f1463a26fa4386f5ff8ce8f7451669db43a6b387596",
+        "raw_file_sha256": "b06ac1027ba55d3637b8e0c051376af86ac3fb35b9f721c726ed59b4872e99d5",
+        "verification": "2026-10-24: direct JSON read; served core._validate_receipt succeeded against recorded action manifest, including producer binding and canonical-body digest. Raw-file SHA-256 computed independently."
+      },
+      "manifest": {
+        "reference": "/mnt/shared/prismabuild-fleet/cas/requests/32/32dc9e7144502ac241ac9490488de7ec2122a07f5ef13c4cf53ac252c59e0769.json",
+        "sha256": "296da5bdc59ce2acd8234271b68d72dbdd4677e361f4460028787bb613fdb486",
+        "raw_file_sha256": "21bf0927204d2906990429075c3d116b0e24f359c24523156e1fa94a6eab2cd4",
+        "verification": "2026-10-24: served canonical_sha256 of parsed manifest matches receipt.action_manifest_sha256; distinct from raw-file hash."
+      },
+      "payload": {
+        "reference": "/mnt/shared/prismabuild-fleet/cas/blobs/d5/d5de64b1912d2d3bfc6720dbbb5a45778395f56dbe2e41884985bb8bcc2683d3",
+        "sha256": "d5de64b1912d2d3bfc6720dbbb5a45778395f56dbe2e41884985bb8bcc2683d3",
+        "bytes": 4681,
+        "verification": "2026-10-24: direct read; raw SHA-256 and byte count match declared contract. Not hardened input_path/lookup verification."
+      },
+      "recorded_tuple": {
+        "harness_configuration": [
+          "/home/rob/venvs/pq-pb461728e4-tessera-09d6559d/bin/python",
+          "experiments/window_viterbi_best_form_ab.py",
+          "--g2",
+          "--mode",
+          "time",
+          "--blocks",
+          "3",
+          "--min-block-s",
+          "5",
+          "--configs",
+          "G2-q1088-4096",
+          "--out",
+          "/mnt/shared/tessera-measurements/issue-652-geometry-sol-20261006/before-time-q1088-4096.json"
+        ],
+        "inputs": [
+          {
+            "bytes": 13523528,
+            "id": "pbrun.checkout-snapshot",
+            "sha256": "6e6de6abb87a1e760890cfde39f80edc59243e361c2bbd0f354094f12cf208be"
+          }
+        ],
+        "runtime_device_conditions": {
+          "manifest_reference": "/mnt/shared/prismabuild-fleet/cas/requests/32/32dc9e7144502ac241ac9490488de7ec2122a07f5ef13c4cf53ac252c59e0769.json#/environment",
+          "producer_reference": "/mnt/shared/prismabuild-fleet/cas/actions/v3/32/32dc9e7144502ac241ac9490488de7ec2122a07f5ef13c4cf53ac252c59e0769.json#/producer",
+          "completion_reference": "/mnt/shared/prismabuild-fleet/pb-queue/done/32dc9e7144502ac241ac9490488de7ec2122a07f5ef13c4cf53ac252c59e0769.json#/detail"
+        }
+      },
+      "disposition": "deferred",
+      "disposition_scope": "Retained as bounded generated-input execution/integrity evidence only, not owner-accepted qualification/adoption. No historical subset accepted here; owner decision and independent effective-source reconciliation outstanding.",
+      "logs": [
+        {
+          "stream": "stdout",
+          "linked_reference": "/mnt/shared/prismabuild-fleet/pb-queue/attempts/32dc9e7144502ac241ac9490488de7ec2122a07f5ef13c4cf53ac252c59e0769/5da89668762daef9e579176741f67ae131b315aafead58f0484ecb75b8707cfe/00000001.stdout.87ff3faddba4c06f98d70021ef65809f5d73ee1da69504ab49e816e95614bdff.log",
+          "sha256": "87ff3faddba4c06f98d70021ef65809f5d73ee1da69504ab49e816e95614bdff",
+          "bytes": 7993,
+          "availability": "unavailable",
+          "verification": "2026-10-24: Direct read failed: ENOENT. Original standalone path is not readable in this view.",
+          "recovered_copy": {
+            "reference": "/mnt/shared/prismabuild-fleet/pb-queue/done/32dc9e7144502ac241ac9490488de7ec2122a07f5ef13c4cf53ac252c59e0769.json#/detail/stdout",
+            "sha256": "87ff3faddba4c06f98d70021ef65809f5d73ee1da69504ab49e816e95614bdff",
+            "bytes": 7993,
+            "verification": "2026-10-24: completion-record embedded string encoded as UTF-8 independently reproduces declared SHA-256 and byte length; recorded truncated=false."
+          }
+        },
+        {
+          "stream": "stderr",
+          "linked_reference": "/mnt/shared/prismabuild-fleet/pb-queue/attempts/32dc9e7144502ac241ac9490488de7ec2122a07f5ef13c4cf53ac252c59e0769/5da89668762daef9e579176741f67ae131b315aafead58f0484ecb75b8707cfe/00000001.stderr.6ae22e28d8e7d3c9541ecc30e0edf8b3931838f003d6d63a9b15a9f79f0f4b0f.log",
+          "sha256": "6ae22e28d8e7d3c9541ecc30e0edf8b3931838f003d6d63a9b15a9f79f0f4b0f",
+          "bytes": 43,
+          "availability": "unavailable",
+          "verification": "2026-10-24: Direct read failed: ENOENT. Original standalone path is not readable in this view.",
+          "recovered_copy": {
+            "reference": "/mnt/shared/prismabuild-fleet/pb-queue/done/32dc9e7144502ac241ac9490488de7ec2122a07f5ef13c4cf53ac252c59e0769.json#/detail/stderr",
+            "sha256": "6ae22e28d8e7d3c9541ecc30e0edf8b3931838f003d6d63a9b15a9f79f0f4b0f",
+            "bytes": 43,
+            "verification": "2026-10-24: completion-record embedded string encoded as UTF-8 independently reproduces declared SHA-256 and byte length; recorded truncated=false."
+          }
+        }
+      ]
+    },
+    {
+      "action_key": "127fd4230045041e7974027024ce8d637d44322f5e8f6bedd8dceb5556ddac85",
+      "name": "Unprofiled q1152 rows2048",
+      "snapshot_sha256": "748a5d0f6153f01dbf3427ee177bbc4bfbad2104c82cfba88d8a78534d83b0fb",
+      "snapshot": {
+        "reference": "/mnt/shared/prismabuild-fleet/cas/blobs/74/748a5d0f6153f01dbf3427ee177bbc4bfbad2104c82cfba88d8a78534d83b0fb",
+        "sha256": "748a5d0f6153f01dbf3427ee177bbc4bfbad2104c82cfba88d8a78534d83b0fb",
+        "bytes": 13523528,
+        "verification": "2026-10-24: direct read; raw SHA-256 and byte count match declared contract. Not hardened input_path/lookup verification.",
+        "commit": "059ea1f276a303916ca430e8ec174e9e0d6ee5dc",
+        "parent": "2b711e0e7498802954bf75cfdabe7b93c6f47737"
+      },
+      "admission": {
+        "gpu_exclusive": false,
+        "scope": "Recorded GPU admission only; exclusive=false and manifest gpu_exclusive=false. Empty members_before is not exclusive reservation or whole-run isolation.",
+        "reference": "/mnt/shared/prismabuild-fleet/pb-queue/done/127fd4230045041e7974027024ce8d637d44322f5e8f6bedd8dceb5556ddac85.json#/gpu_admission"
+      },
+      "completion": {
+        "returncode": 0,
+        "status": "executed",
+        "scope": "Recorded generated-input timing/profiling command only; zero exit does not establish qualification. Nsight sampled/replayed/cache-controlled launches are not a full joined workload or unflushed production roofline.",
+        "reference": "/mnt/shared/prismabuild-fleet/pb-queue/done/127fd4230045041e7974027024ce8d637d44322f5e8f6bedd8dceb5556ddac85.json#/detail",
+        "record_raw_file_sha256": "085173b295287ecc52f0133b82cf3127e8e962720838a59de29e9d6deb5b67c8"
+      },
+      "receipt": {
+        "reference": "/mnt/shared/prismabuild-fleet/cas/actions/v3/12/127fd4230045041e7974027024ce8d637d44322f5e8f6bedd8dceb5556ddac85.json",
+        "canonical_sha256": "4e34eed1ae4819643a3900af6a5c00559cf2c2043a5288366cc61e273818d5de",
+        "raw_file_sha256": "8f437aa84197936b0b56a1f886dba9386c8ffef06ed521a74b52942e5450db74",
+        "verification": "2026-10-24: direct JSON read; served core._validate_receipt succeeded against recorded action manifest, including producer binding and canonical-body digest. Raw-file SHA-256 computed independently."
+      },
+      "manifest": {
+        "reference": "/mnt/shared/prismabuild-fleet/cas/requests/12/127fd4230045041e7974027024ce8d637d44322f5e8f6bedd8dceb5556ddac85.json",
+        "sha256": "504ee02a15259f3b7957288e57e6b8e594b54d18f39809b99cc568c8264c0d36",
+        "raw_file_sha256": "6bfef0e16f85d080e219b0a781f1b3907d01a4070f9276850c08c4b10bd7b035",
+        "verification": "2026-10-24: served canonical_sha256 of parsed manifest matches receipt.action_manifest_sha256; distinct from raw-file hash."
+      },
+      "payload": {
+        "reference": "/mnt/shared/prismabuild-fleet/cas/blobs/d5/d5a7077e86451c4b261fa2787ad58d0842817277973727e8ac1f3c7989ff3f12",
+        "sha256": "d5a7077e86451c4b261fa2787ad58d0842817277973727e8ac1f3c7989ff3f12",
+        "bytes": 4679,
+        "verification": "2026-10-24: direct read; raw SHA-256 and byte count match declared contract. Not hardened input_path/lookup verification."
+      },
+      "recorded_tuple": {
+        "harness_configuration": [
+          "/home/rob/venvs/pq-pb461728e4-tessera-09d6559d/bin/python",
+          "experiments/window_viterbi_best_form_ab.py",
+          "--g2",
+          "--mode",
+          "time",
+          "--blocks",
+          "3",
+          "--min-block-s",
+          "5",
+          "--configs",
+          "G2-q1152-2048",
+          "--out",
+          "/mnt/shared/tessera-measurements/issue-652-geometry-sol-20261006/before-time-q1152-2048.json"
+        ],
+        "inputs": [
+          {
+            "bytes": 13523528,
+            "id": "pbrun.checkout-snapshot",
+            "sha256": "748a5d0f6153f01dbf3427ee177bbc4bfbad2104c82cfba88d8a78534d83b0fb"
+          }
+        ],
+        "runtime_device_conditions": {
+          "manifest_reference": "/mnt/shared/prismabuild-fleet/cas/requests/12/127fd4230045041e7974027024ce8d637d44322f5e8f6bedd8dceb5556ddac85.json#/environment",
+          "producer_reference": "/mnt/shared/prismabuild-fleet/cas/actions/v3/12/127fd4230045041e7974027024ce8d637d44322f5e8f6bedd8dceb5556ddac85.json#/producer",
+          "completion_reference": "/mnt/shared/prismabuild-fleet/pb-queue/done/127fd4230045041e7974027024ce8d637d44322f5e8f6bedd8dceb5556ddac85.json#/detail"
+        }
+      },
+      "disposition": "deferred",
+      "disposition_scope": "Retained as bounded generated-input execution/integrity evidence only, not owner-accepted qualification/adoption. No historical subset accepted here; owner decision and independent effective-source reconciliation outstanding.",
+      "logs": [
+        {
+          "stream": "stdout",
+          "linked_reference": "/mnt/shared/prismabuild-fleet/pb-queue/attempts/127fd4230045041e7974027024ce8d637d44322f5e8f6bedd8dceb5556ddac85/498631dcd12ec00f7d6ce3c5fc61b7efa91cc3ad2b4c3ee98928a289ee2a6294/00000001.stdout.856c94bc756754cc4531902f15397348688749d2f01704dae346f360a10b5aec.log",
+          "sha256": "856c94bc756754cc4531902f15397348688749d2f01704dae346f360a10b5aec",
+          "bytes": 7985,
+          "availability": "unavailable",
+          "verification": "2026-10-24: Direct read failed: ENOENT. Original standalone path is not readable in this view.",
+          "recovered_copy": {
+            "reference": "/mnt/shared/prismabuild-fleet/pb-queue/done/127fd4230045041e7974027024ce8d637d44322f5e8f6bedd8dceb5556ddac85.json#/detail/stdout",
+            "sha256": "856c94bc756754cc4531902f15397348688749d2f01704dae346f360a10b5aec",
+            "bytes": 7985,
+            "verification": "2026-10-24: completion-record embedded string encoded as UTF-8 independently reproduces declared SHA-256 and byte length; recorded truncated=false."
+          }
+        },
+        {
+          "stream": "stderr",
+          "linked_reference": "/mnt/shared/prismabuild-fleet/pb-queue/attempts/127fd4230045041e7974027024ce8d637d44322f5e8f6bedd8dceb5556ddac85/498631dcd12ec00f7d6ce3c5fc61b7efa91cc3ad2b4c3ee98928a289ee2a6294/00000001.stderr.6ae22e28d8e7d3c9541ecc30e0edf8b3931838f003d6d63a9b15a9f79f0f4b0f.log",
+          "sha256": "6ae22e28d8e7d3c9541ecc30e0edf8b3931838f003d6d63a9b15a9f79f0f4b0f",
+          "bytes": 43,
+          "availability": "unavailable",
+          "verification": "2026-10-24: Direct read failed: ENOENT. Original standalone path is not readable in this view.",
+          "recovered_copy": {
+            "reference": "/mnt/shared/prismabuild-fleet/pb-queue/done/127fd4230045041e7974027024ce8d637d44322f5e8f6bedd8dceb5556ddac85.json#/detail/stderr",
+            "sha256": "6ae22e28d8e7d3c9541ecc30e0edf8b3931838f003d6d63a9b15a9f79f0f4b0f",
+            "bytes": 43,
+            "verification": "2026-10-24: completion-record embedded string encoded as UTF-8 independently reproduces declared SHA-256 and byte length; recorded truncated=false."
+          }
+        }
+      ]
+    },
+    {
+      "action_key": "cdb631626dd1f9f76160b5a507965f73b91598aa4da303ae724d30290f4bcb7d",
+      "name": "Unprofiled q1152 rows4096",
+      "snapshot_sha256": "5e401424e65cefba21243a4874e4b0dccfec2b10f2eff1a1c077c053eb0998df",
+      "snapshot": {
+        "reference": "/mnt/shared/prismabuild-fleet/cas/blobs/5e/5e401424e65cefba21243a4874e4b0dccfec2b10f2eff1a1c077c053eb0998df",
+        "sha256": "5e401424e65cefba21243a4874e4b0dccfec2b10f2eff1a1c077c053eb0998df",
+        "bytes": 13523528,
+        "verification": "2026-10-24: direct read; raw SHA-256 and byte count match declared contract. Not hardened input_path/lookup verification.",
+        "commit": "db5c0fc79dbd88c45a734eefa9d819682ae1601f",
+        "parent": "2b711e0e7498802954bf75cfdabe7b93c6f47737"
+      },
+      "admission": {
+        "gpu_exclusive": false,
+        "scope": "Recorded GPU admission only; exclusive=false and manifest gpu_exclusive=false. Empty members_before is not exclusive reservation or whole-run isolation.",
+        "reference": "/mnt/shared/prismabuild-fleet/pb-queue/done/cdb631626dd1f9f76160b5a507965f73b91598aa4da303ae724d30290f4bcb7d.json#/gpu_admission"
+      },
+      "completion": {
+        "returncode": 0,
+        "status": "executed",
+        "scope": "Recorded generated-input timing/profiling command only; zero exit does not establish qualification. Nsight sampled/replayed/cache-controlled launches are not a full joined workload or unflushed production roofline.",
+        "reference": "/mnt/shared/prismabuild-fleet/pb-queue/done/cdb631626dd1f9f76160b5a507965f73b91598aa4da303ae724d30290f4bcb7d.json#/detail",
+        "record_raw_file_sha256": "88f5e01e2fb9c8de2fee91d7a82c0318f99aacb04e2a1c5e1a71d16520496e06"
+      },
+      "receipt": {
+        "reference": "/mnt/shared/prismabuild-fleet/cas/actions/v3/cd/cdb631626dd1f9f76160b5a507965f73b91598aa4da303ae724d30290f4bcb7d.json",
+        "canonical_sha256": "5520408d810f5a14a8202e23a578e42b854ad1b4b54cf0f8c8508310e229960c",
+        "raw_file_sha256": "010f8db9ce75b7d446532aca7ebd8adfb61ef0cfd3f7420935fc1e847d2cb29f",
+        "verification": "2026-10-24: direct JSON read; served core._validate_receipt succeeded against recorded action manifest, including producer binding and canonical-body digest. Raw-file SHA-256 computed independently."
+      },
+      "manifest": {
+        "reference": "/mnt/shared/prismabuild-fleet/cas/requests/cd/cdb631626dd1f9f76160b5a507965f73b91598aa4da303ae724d30290f4bcb7d.json",
+        "sha256": "3b389ab728cf5a7bc71d012070f3b9424cc45689c3967a424db3712b98f1aa1a",
+        "raw_file_sha256": "491a684b787f2235253a17b35d23399bca2eaadd256c2e52c954c2051d7e2995",
+        "verification": "2026-10-24: served canonical_sha256 of parsed manifest matches receipt.action_manifest_sha256; distinct from raw-file hash."
+      },
+      "payload": {
+        "reference": "/mnt/shared/prismabuild-fleet/cas/blobs/07/0783bbefc7dd608149652a9d7419945395631d10633aee9d9c6cc960c92308a7",
+        "sha256": "0783bbefc7dd608149652a9d7419945395631d10633aee9d9c6cc960c92308a7",
+        "bytes": 4698,
+        "verification": "2026-10-24: direct read; raw SHA-256 and byte count match declared contract. Not hardened input_path/lookup verification."
+      },
+      "recorded_tuple": {
+        "harness_configuration": [
+          "/home/rob/venvs/pq-pb461728e4-tessera-09d6559d/bin/python",
+          "experiments/window_viterbi_best_form_ab.py",
+          "--g2",
+          "--mode",
+          "time",
+          "--blocks",
+          "3",
+          "--min-block-s",
+          "5",
+          "--configs",
+          "G2-q1152-4096",
+          "--out",
+          "/mnt/shared/tessera-measurements/issue-652-geometry-sol-20261006/before-time-q1152-4096.json"
+        ],
+        "inputs": [
+          {
+            "bytes": 13523528,
+            "id": "pbrun.checkout-snapshot",
+            "sha256": "5e401424e65cefba21243a4874e4b0dccfec2b10f2eff1a1c077c053eb0998df"
+          }
+        ],
+        "runtime_device_conditions": {
+          "manifest_reference": "/mnt/shared/prismabuild-fleet/cas/requests/cd/cdb631626dd1f9f76160b5a507965f73b91598aa4da303ae724d30290f4bcb7d.json#/environment",
+          "producer_reference": "/mnt/shared/prismabuild-fleet/cas/actions/v3/cd/cdb631626dd1f9f76160b5a507965f73b91598aa4da303ae724d30290f4bcb7d.json#/producer",
+          "completion_reference": "/mnt/shared/prismabuild-fleet/pb-queue/done/cdb631626dd1f9f76160b5a507965f73b91598aa4da303ae724d30290f4bcb7d.json#/detail"
+        }
+      },
+      "disposition": "deferred",
+      "disposition_scope": "Retained as bounded generated-input execution/integrity evidence only, not owner-accepted qualification/adoption. No historical subset accepted here; owner decision and independent effective-source reconciliation outstanding.",
+      "logs": [
+        {
+          "stream": "stdout",
+          "linked_reference": "/mnt/shared/prismabuild-fleet/pb-queue/attempts/cdb631626dd1f9f76160b5a507965f73b91598aa4da303ae724d30290f4bcb7d/eb0dc1a5c39fec8ec20d57d2f0cc1579c8c6b40389e4a12e91fbba79521e0f4c/00000001.stdout.39413defd022693911a0657da96d4b47d12213d3491dd2f5a6990c571b94ab45.log",
+          "sha256": "39413defd022693911a0657da96d4b47d12213d3491dd2f5a6990c571b94ab45",
+          "bytes": 8010,
+          "availability": "unavailable",
+          "verification": "2026-10-24: Direct read failed: ENOENT. Original standalone path is not readable in this view.",
+          "recovered_copy": {
+            "reference": "/mnt/shared/prismabuild-fleet/pb-queue/done/cdb631626dd1f9f76160b5a507965f73b91598aa4da303ae724d30290f4bcb7d.json#/detail/stdout",
+            "sha256": "39413defd022693911a0657da96d4b47d12213d3491dd2f5a6990c571b94ab45",
+            "bytes": 8010,
+            "verification": "2026-10-24: completion-record embedded string encoded as UTF-8 independently reproduces declared SHA-256 and byte length; recorded truncated=false."
+          }
+        },
+        {
+          "stream": "stderr",
+          "linked_reference": "/mnt/shared/prismabuild-fleet/pb-queue/attempts/cdb631626dd1f9f76160b5a507965f73b91598aa4da303ae724d30290f4bcb7d/eb0dc1a5c39fec8ec20d57d2f0cc1579c8c6b40389e4a12e91fbba79521e0f4c/00000001.stderr.6ae22e28d8e7d3c9541ecc30e0edf8b3931838f003d6d63a9b15a9f79f0f4b0f.log",
+          "sha256": "6ae22e28d8e7d3c9541ecc30e0edf8b3931838f003d6d63a9b15a9f79f0f4b0f",
+          "bytes": 43,
+          "availability": "unavailable",
+          "verification": "2026-10-24: Direct read failed: ENOENT. Original standalone path is not readable in this view.",
+          "recovered_copy": {
+            "reference": "/mnt/shared/prismabuild-fleet/pb-queue/done/cdb631626dd1f9f76160b5a507965f73b91598aa4da303ae724d30290f4bcb7d.json#/detail/stderr",
+            "sha256": "6ae22e28d8e7d3c9541ecc30e0edf8b3931838f003d6d63a9b15a9f79f0f4b0f",
+            "bytes": 43,
+            "verification": "2026-10-24: completion-record embedded string encoded as UTF-8 independently reproduces declared SHA-256 and byte length; recorded truncated=false."
+          }
+        }
+      ]
+    },
+    {
+      "action_key": "a7fc61ae6ef7ab2e274839d15739e73537e8a6ca620ccb59a9213c6b99bc9b5b",
+      "name": "Torch profile q1088 rows4096",
+      "snapshot_sha256": "680794177ac4e3c5ae59e3c7c97a861c499110e62aa7e8fc8a958cff33525602",
+      "snapshot": {
+        "reference": "/mnt/shared/prismabuild-fleet/cas/blobs/68/680794177ac4e3c5ae59e3c7c97a861c499110e62aa7e8fc8a958cff33525602",
+        "sha256": "680794177ac4e3c5ae59e3c7c97a861c499110e62aa7e8fc8a958cff33525602",
+        "bytes": 13523528,
+        "verification": "2026-10-24: direct read; raw SHA-256 and byte count match declared contract. Not hardened input_path/lookup verification.",
+        "commit": "2da06c426a97fbc4accd26c653eee4e5360d684b",
+        "parent": "2b711e0e7498802954bf75cfdabe7b93c6f47737"
+      },
+      "admission": {
+        "gpu_exclusive": false,
+        "scope": "Recorded GPU admission only; exclusive=false and manifest gpu_exclusive=false. Empty members_before is not exclusive reservation or whole-run isolation.",
+        "reference": "/mnt/shared/prismabuild-fleet/pb-queue/done/a7fc61ae6ef7ab2e274839d15739e73537e8a6ca620ccb59a9213c6b99bc9b5b.json#/gpu_admission"
+      },
+      "completion": {
+        "returncode": 0,
+        "status": "executed",
+        "scope": "Recorded generated-input timing/profiling command only; zero exit does not establish qualification. Nsight sampled/replayed/cache-controlled launches are not a full joined workload or unflushed production roofline.",
+        "reference": "/mnt/shared/prismabuild-fleet/pb-queue/done/a7fc61ae6ef7ab2e274839d15739e73537e8a6ca620ccb59a9213c6b99bc9b5b.json#/detail",
+        "record_raw_file_sha256": "91093c9be104fbe4af180e7ed482e5c9c4fc9cdbec35fe61904699c16278a9ef"
+      },
+      "receipt": {
+        "reference": "/mnt/shared/prismabuild-fleet/cas/actions/v3/a7/a7fc61ae6ef7ab2e274839d15739e73537e8a6ca620ccb59a9213c6b99bc9b5b.json",
+        "canonical_sha256": "8d7ae2b8018b10550d973340003880c9e0f3b3a4750e03e8ce18e18a3ff34cdf",
+        "raw_file_sha256": "a9e2b3da5f7006394c727cc7dbdc3a5332b6d5195cc1ba9a8bec426a51567c28",
+        "verification": "2026-10-24: direct JSON read; served core._validate_receipt succeeded against recorded action manifest, including producer binding and canonical-body digest. Raw-file SHA-256 computed independently."
+      },
+      "manifest": {
+        "reference": "/mnt/shared/prismabuild-fleet/cas/requests/a7/a7fc61ae6ef7ab2e274839d15739e73537e8a6ca620ccb59a9213c6b99bc9b5b.json",
+        "sha256": "212d60e4c2aae595d3f7218ca0a69a2d833e250897f96a6d8083d1685b388b12",
+        "raw_file_sha256": "867ab927b685124e36ace34cb48a1562be6012896560ca42480688cc59f826f1",
+        "verification": "2026-10-24: served canonical_sha256 of parsed manifest matches receipt.action_manifest_sha256; distinct from raw-file hash."
+      },
+      "payload": {
+        "reference": "/mnt/shared/prismabuild-fleet/cas/blobs/80/80ef42332d2cb8c05f124ee4349e2a91f9bc8360db6dbbfaaa4b0fcc32142b39",
+        "sha256": "80ef42332d2cb8c05f124ee4349e2a91f9bc8360db6dbbfaaa4b0fcc32142b39",
+        "bytes": 2427,
+        "verification": "2026-10-24: direct read; raw SHA-256 and byte count match declared contract. Not hardened input_path/lookup verification."
+      },
+      "recorded_tuple": {
+        "harness_configuration": [
+          "/home/rob/venvs/pq-pb461728e4-tessera-09d6559d/bin/python",
+          "experiments/window_viterbi_best_form_ab.py",
+          "--g2",
+          "--mode",
+          "pbprofile",
+          "--configs",
+          "G2-q1088-4096",
+          "--out",
+          "/mnt/shared/tessera-measurements/issue-652-geometry-sol-20261006/before-torch-q1088-4096.json"
+        ],
+        "inputs": [
+          {
+            "bytes": 13523528,
+            "id": "pbrun.checkout-snapshot",
+            "sha256": "680794177ac4e3c5ae59e3c7c97a861c499110e62aa7e8fc8a958cff33525602"
+          }
+        ],
+        "runtime_device_conditions": {
+          "manifest_reference": "/mnt/shared/prismabuild-fleet/cas/requests/a7/a7fc61ae6ef7ab2e274839d15739e73537e8a6ca620ccb59a9213c6b99bc9b5b.json#/environment",
+          "producer_reference": "/mnt/shared/prismabuild-fleet/cas/actions/v3/a7/a7fc61ae6ef7ab2e274839d15739e73537e8a6ca620ccb59a9213c6b99bc9b5b.json#/producer",
+          "completion_reference": "/mnt/shared/prismabuild-fleet/pb-queue/done/a7fc61ae6ef7ab2e274839d15739e73537e8a6ca620ccb59a9213c6b99bc9b5b.json#/detail"
+        }
+      },
+      "disposition": "deferred",
+      "disposition_scope": "Retained as bounded generated-input execution/integrity evidence only, not owner-accepted qualification/adoption. No historical subset accepted here; owner decision and independent effective-source reconciliation outstanding.",
+      "logs": [
+        {
+          "stream": "stdout",
+          "linked_reference": "/mnt/shared/prismabuild-fleet/pb-queue/attempts/a7fc61ae6ef7ab2e274839d15739e73537e8a6ca620ccb59a9213c6b99bc9b5b/3995bed1c200da2b10ff672aa24cf2ebfec7681837daecfc2c92c622ebf6f4d0/00000001.stdout.9c68a9f12547ec6c70fee5cb0e16c75a907a050465398db4920a74cda8993987.log",
+          "sha256": "9c68a9f12547ec6c70fee5cb0e16c75a907a050465398db4920a74cda8993987",
+          "bytes": 6262,
+          "availability": "unavailable",
+          "verification": "2026-10-24: Direct read failed: ENOENT. Original standalone path is not readable in this view.",
+          "recovered_copy": {
+            "reference": "/mnt/shared/prismabuild-fleet/pb-queue/done/a7fc61ae6ef7ab2e274839d15739e73537e8a6ca620ccb59a9213c6b99bc9b5b.json#/detail/stdout",
+            "sha256": "9c68a9f12547ec6c70fee5cb0e16c75a907a050465398db4920a74cda8993987",
+            "bytes": 6262,
+            "verification": "2026-10-24: completion-record embedded string encoded as UTF-8 independently reproduces declared SHA-256 and byte length; recorded truncated=false."
+          }
+        },
+        {
+          "stream": "stderr",
+          "linked_reference": "/mnt/shared/prismabuild-fleet/pb-queue/attempts/a7fc61ae6ef7ab2e274839d15739e73537e8a6ca620ccb59a9213c6b99bc9b5b/3995bed1c200da2b10ff672aa24cf2ebfec7681837daecfc2c92c622ebf6f4d0/00000001.stderr.6ae22e28d8e7d3c9541ecc30e0edf8b3931838f003d6d63a9b15a9f79f0f4b0f.log",
+          "sha256": "6ae22e28d8e7d3c9541ecc30e0edf8b3931838f003d6d63a9b15a9f79f0f4b0f",
+          "bytes": 43,
+          "availability": "unavailable",
+          "verification": "2026-10-24: Direct read failed: ENOENT. Original standalone path is not readable in this view.",
+          "recovered_copy": {
+            "reference": "/mnt/shared/prismabuild-fleet/pb-queue/done/a7fc61ae6ef7ab2e274839d15739e73537e8a6ca620ccb59a9213c6b99bc9b5b.json#/detail/stderr",
+            "sha256": "6ae22e28d8e7d3c9541ecc30e0edf8b3931838f003d6d63a9b15a9f79f0f4b0f",
+            "bytes": 43,
+            "verification": "2026-10-24: completion-record embedded string encoded as UTF-8 independently reproduces declared SHA-256 and byte length; recorded truncated=false."
+          }
+        }
+      ]
+    },
+    {
+      "action_key": "0b79337e87335b97de41650d776b5ac14bf8a69094758921e06152d1995e2ea6",
+      "name": "Python sampling profile q1088 rows4096",
+      "snapshot_sha256": "a65bbc7c9c5e9cef5a4d4c86bd7540eead6eefe1f81cf5b34d7a8c44a2f4a0d8",
+      "snapshot": {
+        "reference": "/mnt/shared/prismabuild-fleet/cas/blobs/a6/a65bbc7c9c5e9cef5a4d4c86bd7540eead6eefe1f81cf5b34d7a8c44a2f4a0d8",
+        "sha256": "a65bbc7c9c5e9cef5a4d4c86bd7540eead6eefe1f81cf5b34d7a8c44a2f4a0d8",
+        "bytes": 13523528,
+        "verification": "2026-10-24: direct read; raw SHA-256 and byte count match declared contract. Not hardened input_path/lookup verification.",
+        "commit": "a5218fe5db2483fd24ab5ca2d503bb656e44d3f0",
+        "parent": "2b711e0e7498802954bf75cfdabe7b93c6f47737"
+      },
+      "admission": {
+        "gpu_exclusive": false,
+        "scope": "Recorded GPU admission only; exclusive=false and manifest gpu_exclusive=false. Empty members_before is not exclusive reservation or whole-run isolation.",
+        "reference": "/mnt/shared/prismabuild-fleet/pb-queue/done/0b79337e87335b97de41650d776b5ac14bf8a69094758921e06152d1995e2ea6.json#/gpu_admission"
+      },
+      "completion": {
+        "returncode": 0,
+        "status": "executed",
+        "scope": "Recorded generated-input timing/profiling command only; zero exit does not establish qualification. Nsight sampled/replayed/cache-controlled launches are not a full joined workload or unflushed production roofline.",
+        "reference": "/mnt/shared/prismabuild-fleet/pb-queue/done/0b79337e87335b97de41650d776b5ac14bf8a69094758921e06152d1995e2ea6.json#/detail",
+        "record_raw_file_sha256": "ccddf3f5a29707ba9f5309dcd23ea9aed8f04b306a905b5782aeae82f0eca385"
+      },
+      "receipt": {
+        "reference": "/mnt/shared/prismabuild-fleet/cas/actions/v3/0b/0b79337e87335b97de41650d776b5ac14bf8a69094758921e06152d1995e2ea6.json",
+        "canonical_sha256": "5a60a3901646f78c28b0d749ca0dec617d8df264c4dfbcadd59f9a5d64cf817f",
+        "raw_file_sha256": "55ed6f38754935f668a635d9ac76918634fead86f78d2428d230e57eda3c5457",
+        "verification": "2026-10-24: direct JSON read; served core._validate_receipt succeeded against recorded action manifest, including producer binding and canonical-body digest. Raw-file SHA-256 computed independently."
+      },
+      "manifest": {
+        "reference": "/mnt/shared/prismabuild-fleet/cas/requests/0b/0b79337e87335b97de41650d776b5ac14bf8a69094758921e06152d1995e2ea6.json",
+        "sha256": "77ef0f426a73aabc5d82352c646e97a83ec9bb86de412be567901013493a2b3d",
+        "raw_file_sha256": "e83c33cd721f816887f3cb9e9746b00f62c50f6869bb960c442983000bb4f5ec",
+        "verification": "2026-10-24: served canonical_sha256 of parsed manifest matches receipt.action_manifest_sha256; distinct from raw-file hash."
+      },
+      "payload": {
+        "reference": "/mnt/shared/prismabuild-fleet/cas/blobs/ff/ff5cc20e5288a35fc5dd4ea5d0e0001a19225bd004bcd3cf60c57974801e046d",
+        "sha256": "ff5cc20e5288a35fc5dd4ea5d0e0001a19225bd004bcd3cf60c57974801e046d",
+        "bytes": 3762,
+        "verification": "2026-10-24: direct read; raw SHA-256 and byte count match declared contract. Not hardened input_path/lookup verification."
+      },
+      "recorded_tuple": {
+        "harness_configuration": [
+          "/home/rob/venvs/pq-pb461728e4-tessera-09d6559d/bin/python",
+          "experiments/window_viterbi_best_form_ab.py",
+          "--g2",
+          "--mode",
+          "time",
+          "--blocks",
+          "2",
+          "--min-block-s",
+          "4",
+          "--configs",
+          "G2-q1088-4096",
+          "--out",
+          "/mnt/shared/tessera-measurements/issue-652-geometry-sol-20261006/before-pyspy-run.json"
+        ],
+        "inputs": [
+          {
+            "bytes": 13523528,
+            "id": "pbrun.checkout-snapshot",
+            "sha256": "a65bbc7c9c5e9cef5a4d4c86bd7540eead6eefe1f81cf5b34d7a8c44a2f4a0d8"
+          }
+        ],
+        "runtime_device_conditions": {
+          "manifest_reference": "/mnt/shared/prismabuild-fleet/cas/requests/0b/0b79337e87335b97de41650d776b5ac14bf8a69094758921e06152d1995e2ea6.json#/environment",
+          "producer_reference": "/mnt/shared/prismabuild-fleet/cas/actions/v3/0b/0b79337e87335b97de41650d776b5ac14bf8a69094758921e06152d1995e2ea6.json#/producer",
+          "completion_reference": "/mnt/shared/prismabuild-fleet/pb-queue/done/0b79337e87335b97de41650d776b5ac14bf8a69094758921e06152d1995e2ea6.json#/detail"
+        }
+      },
+      "disposition": "deferred",
+      "disposition_scope": "Retained as bounded generated-input execution/integrity evidence only, not owner-accepted qualification/adoption. No historical subset accepted here; owner decision and independent effective-source reconciliation outstanding.",
+      "logs": [
+        {
+          "stream": "stdout",
+          "linked_reference": "/mnt/shared/prismabuild-fleet/pb-queue/attempts/0b79337e87335b97de41650d776b5ac14bf8a69094758921e06152d1995e2ea6/3e330b35ba398dfc6e3c552add483645ae28ac7cacdc2db00a3450d5d457e1a7/00000001.stdout.ead7957e9b1f5aeedf13ed9bfc8601ec99ed4c4d96c20fce4b3d5579e21b69c0.log",
+          "sha256": "ead7957e9b1f5aeedf13ed9bfc8601ec99ed4c4d96c20fce4b3d5579e21b69c0",
+          "bytes": 8043,
+          "availability": "unavailable",
+          "verification": "2026-10-24: Direct read failed: ENOENT. Original standalone path is not readable in this view.",
+          "recovered_copy": {
+            "reference": "/mnt/shared/prismabuild-fleet/pb-queue/done/0b79337e87335b97de41650d776b5ac14bf8a69094758921e06152d1995e2ea6.json#/detail/stdout",
+            "sha256": "ead7957e9b1f5aeedf13ed9bfc8601ec99ed4c4d96c20fce4b3d5579e21b69c0",
+            "bytes": 8043,
+            "verification": "2026-10-24: completion-record embedded string encoded as UTF-8 independently reproduces declared SHA-256 and byte length; recorded truncated=false."
+          }
+        },
+        {
+          "stream": "stderr",
+          "linked_reference": "/mnt/shared/prismabuild-fleet/pb-queue/attempts/0b79337e87335b97de41650d776b5ac14bf8a69094758921e06152d1995e2ea6/3e330b35ba398dfc6e3c552add483645ae28ac7cacdc2db00a3450d5d457e1a7/00000001.stderr.6ae22e28d8e7d3c9541ecc30e0edf8b3931838f003d6d63a9b15a9f79f0f4b0f.log",
+          "sha256": "6ae22e28d8e7d3c9541ecc30e0edf8b3931838f003d6d63a9b15a9f79f0f4b0f",
+          "bytes": 43,
+          "availability": "unavailable",
+          "verification": "2026-10-24: Direct read failed: ENOENT. Original standalone path is not readable in this view.",
+          "recovered_copy": {
+            "reference": "/mnt/shared/prismabuild-fleet/pb-queue/done/0b79337e87335b97de41650d776b5ac14bf8a69094758921e06152d1995e2ea6.json#/detail/stderr",
+            "sha256": "6ae22e28d8e7d3c9541ecc30e0edf8b3931838f003d6d63a9b15a9f79f0f4b0f",
+            "bytes": 43,
+            "verification": "2026-10-24: completion-record embedded string encoded as UTF-8 independently reproduces declared SHA-256 and byte length; recorded truncated=false."
+          }
+        }
+      ]
+    },
+    {
+      "action_key": "925589c5cad78e160e34f1a3f2a366c677f31c3978f1f7ffcdd9e149c5abf889",
+      "name": "Nsight best",
+      "snapshot_sha256": "9a04c0905e962e24b631108e089e9441679d32c0a9d3159f78a17c6ef0352c45",
+      "snapshot": {
+        "reference": "/mnt/shared/prismabuild-fleet/cas/blobs/9a/9a04c0905e962e24b631108e089e9441679d32c0a9d3159f78a17c6ef0352c45",
+        "sha256": "9a04c0905e962e24b631108e089e9441679d32c0a9d3159f78a17c6ef0352c45",
+        "bytes": 13523526,
+        "verification": "2026-10-24: direct read; raw SHA-256 and byte count match declared contract. Not hardened input_path/lookup verification.",
+        "commit": "53eb557746b5921e4c2d6162485303e531f57a06",
+        "parent": "2b711e0e7498802954bf75cfdabe7b93c6f47737"
+      },
+      "admission": {
+        "gpu_exclusive": false,
+        "scope": "Recorded GPU admission only; exclusive=false and manifest gpu_exclusive=false. Empty members_before is not exclusive reservation or whole-run isolation.",
+        "reference": "/mnt/shared/prismabuild-fleet/pb-queue/done/925589c5cad78e160e34f1a3f2a366c677f31c3978f1f7ffcdd9e149c5abf889.json#/gpu_admission"
+      },
+      "completion": {
+        "returncode": 0,
+        "status": "executed",
+        "scope": "Recorded generated-input timing/profiling command only; zero exit does not establish qualification. Nsight sampled/replayed/cache-controlled launches are not a full joined workload or unflushed production roofline.",
+        "reference": "/mnt/shared/prismabuild-fleet/pb-queue/done/925589c5cad78e160e34f1a3f2a366c677f31c3978f1f7ffcdd9e149c5abf889.json#/detail",
+        "record_raw_file_sha256": "6e9032bf86f4888d5580eda93a156fbe4f36df3fb6cd4144b3e1e75a249f4095"
+      },
+      "receipt": {
+        "reference": "/mnt/shared/prismabuild-fleet/cas/actions/v3/92/925589c5cad78e160e34f1a3f2a366c677f31c3978f1f7ffcdd9e149c5abf889.json",
+        "canonical_sha256": "19b13e7fb676ef83d8b4e2c0ce3ec0657944ae7c63032ba54a297c2dccc67c8d",
+        "raw_file_sha256": "9dc05d2510ec5c6425c8800fcba4b8b7722a7f62fffb4a696b5b8913bf19f53a",
+        "verification": "2026-10-24: direct JSON read; served core._validate_receipt succeeded against recorded action manifest, including producer binding and canonical-body digest. Raw-file SHA-256 computed independently."
+      },
+      "manifest": {
+        "reference": "/mnt/shared/prismabuild-fleet/cas/requests/92/925589c5cad78e160e34f1a3f2a366c677f31c3978f1f7ffcdd9e149c5abf889.json",
+        "sha256": "428877aaab5f7687598745c8434f1915427a0fa9efff8f622f9b2ad0b535ae35",
+        "raw_file_sha256": "787b86402fbf1e2bcf7280ae9c7bad16c903cfdf391011175948593972674777",
+        "verification": "2026-10-24: served canonical_sha256 of parsed manifest matches receipt.action_manifest_sha256; distinct from raw-file hash."
+      },
+      "payload": {
+        "reference": "/mnt/shared/prismabuild-fleet/cas/blobs/fd/fdf4ee52342e29bd72385b42bfce8ee3708322734451b123e15a3bedfe4817f8",
+        "sha256": "fdf4ee52342e29bd72385b42bfce8ee3708322734451b123e15a3bedfe4817f8",
+        "bytes": 2013,
+        "verification": "2026-10-24: direct read; raw SHA-256 and byte count match declared contract. Not hardened input_path/lookup verification."
+      },
+      "recorded_tuple": {
+        "harness_configuration": [
+          "/opt/nvidia/nsight-compute/2025.3.1/target/linux-desktop-t210-a64/ncu",
+          "--profile-from-start",
+          "off",
+          "--target-processes",
+          "all",
+          "-k",
+          "regex:_step_best",
+          "--launch-count",
+          "8",
+          "--set",
+          "detailed",
+          "--export",
+          "/mnt/shared/tessera-measurements/issue-652-geometry-sol-20261006/ncu-best-q1088-4096.ncu-rep",
+          "-f",
+          "/home/rob/venvs/pq-pb461728e4-tessera-09d6559d/bin/python",
+          "experiments/window_viterbi_best_form_ab.py",
+          "--g2",
+          "--mode",
+          "ncu",
+          "--configs",
+          "G2-q1088-4096",
+          "--out",
+          "/mnt/shared/tessera-measurements/issue-652-geometry-sol-20261006/ncu-best-run.json"
+        ],
+        "inputs": [
+          {
+            "bytes": 13523526,
+            "id": "pbrun.checkout-snapshot",
+            "sha256": "9a04c0905e962e24b631108e089e9441679d32c0a9d3159f78a17c6ef0352c45"
+          }
+        ],
+        "runtime_device_conditions": {
+          "manifest_reference": "/mnt/shared/prismabuild-fleet/cas/requests/92/925589c5cad78e160e34f1a3f2a366c677f31c3978f1f7ffcdd9e149c5abf889.json#/environment",
+          "producer_reference": "/mnt/shared/prismabuild-fleet/cas/actions/v3/92/925589c5cad78e160e34f1a3f2a366c677f31c3978f1f7ffcdd9e149c5abf889.json#/producer",
+          "completion_reference": "/mnt/shared/prismabuild-fleet/pb-queue/done/925589c5cad78e160e34f1a3f2a366c677f31c3978f1f7ffcdd9e149c5abf889.json#/detail"
+        }
+      },
+      "disposition": "deferred",
+      "disposition_scope": "Retained as bounded generated-input execution/integrity evidence only, not owner-accepted qualification/adoption. No historical subset accepted here; owner decision and independent effective-source reconciliation outstanding.",
+      "logs": [
+        {
+          "stream": "stdout",
+          "linked_reference": "/mnt/shared/prismabuild-fleet/pb-queue/attempts/925589c5cad78e160e34f1a3f2a366c677f31c3978f1f7ffcdd9e149c5abf889/e187dbbb7828d39ee37d34574c3118446e0bc552602f0b2844cc2b783f7dab32/00000001.stdout.c1f0ed4bb091af407b736023db55ffa04b0eed7dbfffdf69f0b4014853bf276f.log",
+          "sha256": "c1f0ed4bb091af407b736023db55ffa04b0eed7dbfffdf69f0b4014853bf276f",
+          "bytes": 5319,
+          "availability": "unavailable",
+          "verification": "2026-10-24: Direct read failed: ENOENT. Original standalone path is not readable in this view.",
+          "recovered_copy": {
+            "reference": "/mnt/shared/prismabuild-fleet/pb-queue/done/925589c5cad78e160e34f1a3f2a366c677f31c3978f1f7ffcdd9e149c5abf889.json#/detail/stdout",
+            "sha256": "c1f0ed4bb091af407b736023db55ffa04b0eed7dbfffdf69f0b4014853bf276f",
+            "bytes": 5319,
+            "verification": "2026-10-24: completion-record embedded string encoded as UTF-8 independently reproduces declared SHA-256 and byte length; recorded truncated=false."
+          }
+        },
+        {
+          "stream": "stderr",
+          "linked_reference": "/mnt/shared/prismabuild-fleet/pb-queue/attempts/925589c5cad78e160e34f1a3f2a366c677f31c3978f1f7ffcdd9e149c5abf889/e187dbbb7828d39ee37d34574c3118446e0bc552602f0b2844cc2b783f7dab32/00000001.stderr.6ae22e28d8e7d3c9541ecc30e0edf8b3931838f003d6d63a9b15a9f79f0f4b0f.log",
+          "sha256": "6ae22e28d8e7d3c9541ecc30e0edf8b3931838f003d6d63a9b15a9f79f0f4b0f",
+          "bytes": 43,
+          "availability": "unavailable",
+          "verification": "2026-10-24: Direct read failed: ENOENT. Original standalone path is not readable in this view.",
+          "recovered_copy": {
+            "reference": "/mnt/shared/prismabuild-fleet/pb-queue/done/925589c5cad78e160e34f1a3f2a366c677f31c3978f1f7ffcdd9e149c5abf889.json#/detail/stderr",
+            "sha256": "6ae22e28d8e7d3c9541ecc30e0edf8b3931838f003d6d63a9b15a9f79f0f4b0f",
+            "bytes": 43,
+            "verification": "2026-10-24: completion-record embedded string encoded as UTF-8 independently reproduces declared SHA-256 and byte length; recorded truncated=false."
+          }
+        }
+      ]
+    },
+    {
+      "action_key": "5e12c1972a2583bb3574819cbce5c74a0c70db54a08f77e2808feb8cdcbfd5ab",
+      "name": "Nsight front",
+      "snapshot_sha256": "c6084d6f84fca387f8cd855c6bc47fbd89fbb4ca0a2456d672cc877ca7889be1",
+      "snapshot": {
+        "reference": "/mnt/shared/prismabuild-fleet/cas/blobs/c6/c6084d6f84fca387f8cd855c6bc47fbd89fbb4ca0a2456d672cc877ca7889be1",
+        "sha256": "c6084d6f84fca387f8cd855c6bc47fbd89fbb4ca0a2456d672cc877ca7889be1",
+        "bytes": 13523529,
+        "verification": "2026-10-24: direct read; raw SHA-256 and byte count match declared contract. Not hardened input_path/lookup verification.",
+        "commit": "37db7e1fe9fff4c5e7dec4cc4a481a1cc4a5c1e2",
+        "parent": "2b711e0e7498802954bf75cfdabe7b93c6f47737"
+      },
+      "admission": {
+        "gpu_exclusive": false,
+        "scope": "Recorded GPU admission only; exclusive=false and manifest gpu_exclusive=false. Empty members_before is not exclusive reservation or whole-run isolation.",
+        "reference": "/mnt/shared/prismabuild-fleet/pb-queue/done/5e12c1972a2583bb3574819cbce5c74a0c70db54a08f77e2808feb8cdcbfd5ab.json#/gpu_admission"
+      },
+      "completion": {
+        "returncode": 0,
+        "status": "executed",
+        "scope": "Recorded generated-input timing/profiling command only; zero exit does not establish qualification. Nsight sampled/replayed/cache-controlled launches are not a full joined workload or unflushed production roofline.",
+        "reference": "/mnt/shared/prismabuild-fleet/pb-queue/done/5e12c1972a2583bb3574819cbce5c74a0c70db54a08f77e2808feb8cdcbfd5ab.json#/detail",
+        "record_raw_file_sha256": "e78fdbc96dd354467b868e981790ba8dbafb4a135937d3f3f792e822e89777df"
+      },
+      "receipt": {
+        "reference": "/mnt/shared/prismabuild-fleet/cas/actions/v3/5e/5e12c1972a2583bb3574819cbce5c74a0c70db54a08f77e2808feb8cdcbfd5ab.json",
+        "canonical_sha256": "46a04c3885bd9774e2ca20eef3b0a13972cbcc4b2f589ce2476fc0601064b4f1",
+        "raw_file_sha256": "3f8ce9ee6ec9fd2783394e461b6d7b2af30c6cd4471808ff266ded6eba7cd7ce",
+        "verification": "2026-10-24: direct JSON read; served core._validate_receipt succeeded against recorded action manifest, including producer binding and canonical-body digest. Raw-file SHA-256 computed independently."
+      },
+      "manifest": {
+        "reference": "/mnt/shared/prismabuild-fleet/cas/requests/5e/5e12c1972a2583bb3574819cbce5c74a0c70db54a08f77e2808feb8cdcbfd5ab.json",
+        "sha256": "1c24b02df4425b6200e1289ab321822a28aa5c08eaef2785546c7b1fa53a21db",
+        "raw_file_sha256": "9d5d811fb74083963757d7ac5480e1e7a6af2e92bd569d5339e65b1a299702fd",
+        "verification": "2026-10-24: served canonical_sha256 of parsed manifest matches receipt.action_manifest_sha256; distinct from raw-file hash."
+      },
+      "payload": {
+        "reference": "/mnt/shared/prismabuild-fleet/cas/blobs/b0/b04d542d4f7d1e8792292092e4f5bbe682dc5efd961cf710443ce2a0035103f2",
+        "sha256": "b04d542d4f7d1e8792292092e4f5bbe682dc5efd961cf710443ce2a0035103f2",
+        "bytes": 1975,
+        "verification": "2026-10-24: direct read; raw SHA-256 and byte count match declared contract. Not hardened input_path/lookup verification."
+      },
+      "recorded_tuple": {
+        "harness_configuration": [
+          "/opt/nvidia/nsight-compute/2025.3.1/target/linux-desktop-t210-a64/ncu",
+          "--profile-from-start",
+          "off",
+          "--target-processes",
+          "all",
+          "-k",
+          "regex:_step$",
+          "--launch-count",
+          "8",
+          "--set",
+          "detailed",
+          "--export",
+          "/mnt/shared/tessera-measurements/issue-652-geometry-sol-20261006/ncu-front-q1088-4096.ncu-rep",
+          "-f",
+          "/home/rob/venvs/pq-pb461728e4-tessera-09d6559d/bin/python",
+          "experiments/window_viterbi_best_form_ab.py",
+          "--g2",
+          "--mode",
+          "ncu",
+          "--configs",
+          "G2-q1088-4096",
+          "--out",
+          "/mnt/shared/tessera-measurements/issue-652-geometry-sol-20261006/ncu-front-run.json"
+        ],
+        "inputs": [
+          {
+            "bytes": 13523529,
+            "id": "pbrun.checkout-snapshot",
+            "sha256": "c6084d6f84fca387f8cd855c6bc47fbd89fbb4ca0a2456d672cc877ca7889be1"
+          }
+        ],
+        "runtime_device_conditions": {
+          "manifest_reference": "/mnt/shared/prismabuild-fleet/cas/requests/5e/5e12c1972a2583bb3574819cbce5c74a0c70db54a08f77e2808feb8cdcbfd5ab.json#/environment",
+          "producer_reference": "/mnt/shared/prismabuild-fleet/cas/actions/v3/5e/5e12c1972a2583bb3574819cbce5c74a0c70db54a08f77e2808feb8cdcbfd5ab.json#/producer",
+          "completion_reference": "/mnt/shared/prismabuild-fleet/pb-queue/done/5e12c1972a2583bb3574819cbce5c74a0c70db54a08f77e2808feb8cdcbfd5ab.json#/detail"
+        }
+      },
+      "disposition": "deferred",
+      "disposition_scope": "Retained as bounded generated-input execution/integrity evidence only, not owner-accepted qualification/adoption. No historical subset accepted here; owner decision and independent effective-source reconciliation outstanding.",
+      "logs": [
+        {
+          "stream": "stdout",
+          "linked_reference": "/mnt/shared/prismabuild-fleet/pb-queue/attempts/5e12c1972a2583bb3574819cbce5c74a0c70db54a08f77e2808feb8cdcbfd5ab/c9bb64155b03283b3c5657d5a442a51455cae2c1c282f1755c5f8146b4a2bf5e/00000001.stdout.3e96c4fa6d375ce7e04de7f8a3e4540c139f3ca9e7abaed5ae657b1b4e87e49b.log",
+          "sha256": "3e96c4fa6d375ce7e04de7f8a3e4540c139f3ca9e7abaed5ae657b1b4e87e49b",
+          "bytes": 5281,
+          "availability": "unavailable",
+          "verification": "2026-10-24: Direct read failed: ENOENT. Original standalone path is not readable in this view.",
+          "recovered_copy": {
+            "reference": "/mnt/shared/prismabuild-fleet/pb-queue/done/5e12c1972a2583bb3574819cbce5c74a0c70db54a08f77e2808feb8cdcbfd5ab.json#/detail/stdout",
+            "sha256": "3e96c4fa6d375ce7e04de7f8a3e4540c139f3ca9e7abaed5ae657b1b4e87e49b",
+            "bytes": 5281,
+            "verification": "2026-10-24: completion-record embedded string encoded as UTF-8 independently reproduces declared SHA-256 and byte length; recorded truncated=false."
+          }
+        },
+        {
+          "stream": "stderr",
+          "linked_reference": "/mnt/shared/prismabuild-fleet/pb-queue/attempts/5e12c1972a2583bb3574819cbce5c74a0c70db54a08f77e2808feb8cdcbfd5ab/c9bb64155b03283b3c5657d5a442a51455cae2c1c282f1755c5f8146b4a2bf5e/00000001.stderr.6ae22e28d8e7d3c9541ecc30e0edf8b3931838f003d6d63a9b15a9f79f0f4b0f.log",
+          "sha256": "6ae22e28d8e7d3c9541ecc30e0edf8b3931838f003d6d63a9b15a9f79f0f4b0f",
+          "bytes": 43,
+          "availability": "unavailable",
+          "verification": "2026-10-24: Direct read failed: ENOENT. Original standalone path is not readable in this view.",
+          "recovered_copy": {
+            "reference": "/mnt/shared/prismabuild-fleet/pb-queue/done/5e12c1972a2583bb3574819cbce5c74a0c70db54a08f77e2808feb8cdcbfd5ab.json#/detail/stderr",
+            "sha256": "6ae22e28d8e7d3c9541ecc30e0edf8b3931838f003d6d63a9b15a9f79f0f4b0f",
+            "bytes": 43,
+            "verification": "2026-10-24: completion-record embedded string encoded as UTF-8 independently reproduces declared SHA-256 and byte length; recorded truncated=false."
+          }
+        }
+      ]
+    }
+  ],
+  "remaining_measurements": [
+    "No captured G2 calibration block or complete encoder-unit before measurement is present. Generated weighted targets are the observed input scope.",
+    "Only q1088 with 4096 rows has sampled Nsight Compute captures. They use eight filtered launches and nineteen replay passes, with the documented default cache flush and base-clock controls.",
+    "Neither detailed report contains direct DRAM-controller counters. L2 system-memory fill and write rates are retained as proxies, not substituted for the missing DRAM measurements.",
+    "The sampled-kernel traffic rates are not an unflushed production-resident bandwidth ceiling or an end-to-end GB10 roofline. No causal limiting-resource conclusion is established.",
+    "Torch and Python sampling profiles cover the generated workload, startup and reference checks. Their observations do not isolate actual host compute overhead for a complete encoder unit.",
+    "No new production candidate, before/after improvement, explicit adversarial tie-breaking test population or packed-wire byte comparison was implemented or measured.",
+    "No full-unit matched before/after seconds and joules, remaining-limiter explanation, serving qualification or issue 652 closure is delivered.",
+    "Draft pull request 1016 requires parent source and receipt review, refresh onto current master by the parent or integrator, and checks applicable to its eventual integration head. No self-approval or borrowed green is claimed."
+  ],
+  "integration_handoff": {
+    "publish_by": "TrustLadder only",
+    "target": "https://github.com/RobTand/tessera/issues/1387",
+    "status": "prepared_not_published",
+    "resulting_custody_reference": null,
+    "body": "Prepared reciprocal linkage: docs/measurements/issue-652-owner-disposition.json retains all eight historical nonexclusive admissions, digest contracts and sixteen embedded log recovery references. Standalone log paths remain unavailable. All dispositions are deferred and owner_decision is null. Please retain/authenticate the existing owner/integrator decision through https://github.com/RobTand/tessera/issues/1387 and https://github.com/RobTand/tessera/issues/1398, including exact approved tuple, historical subset and remaining work, then return the published custody reference for retention. Existing execution owners https://github.com/RobTand/tessera/issues/1351 and https://github.com/RobTand/tessera/issues/1353 and Netdata owner https://github.com/RobTand/tessera/issues/1392 remain unchanged. Gate remains CLOSED; no new launches authorized; no campaign O1\u2013O4 completion claimed."
+  }
+}
