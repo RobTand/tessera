@@ -311,6 +311,98 @@ def test_a_compiled_census_refuses_concrete_capture_shapes():
     assert problems and "shape-polymorphic" in problems[0], problems
 
 
+@pytest.mark.parametrize("shared_child", [False, True], ids=["disjoint", "partial-overlap"])
+@pytest.mark.parametrize("bad_phase", tuple(CENSUS_PHASE_REGIMES))
+@pytest.mark.parametrize("bad_shape", ["M64:N64:K64", None], ids=["concrete", "missing"])
+def test_compiled_shapes_check_phase_only_children(shared_child, bad_phase, bad_shape):
+    """One owner can have different child names; every trace record still needs M*.
+
+    These are synthetic shape-gate controls, not runtime or cell qualification.
+    Partial overlap must not hide an unchecked child behind a valid shared one.
+    """
+    tool = _tool()
+    records = {
+        phase: {f"owner.child{index}": _record("*", kind="moe")}
+        for index, phase in enumerate(CENSUS_PHASE_REGIMES)
+    }
+    if shared_child:
+        for per_phase in records.values():
+            per_phase["owner.common"] = _record("*", kind="moe")
+    for per_phase in records.values():
+        owners, problems = tool.join_records_to_declared(per_phase, {"owner": "TESSERA_FP8"})
+        assert not problems and set(owners) == set(per_phase)
+        assert set(owners.values()) == {"owner"}
+    # Different child names are legitimate: do not fix the hole by requiring
+    # identical per-phase names or rejecting valid symbolic records.
+    assert tool.phase_shape_problems(
+        records, phase_regimes=CENSUS_PHASE_REGIMES, compiled=True) == []
+    child = next(name for name in records[bad_phase] if name != "owner.common")
+    if bad_shape is None:
+        records[bad_phase][child].pop("shape")
+    else:
+        records[bad_phase][child]["shape"] = bad_shape
+    problems = tool.phase_shape_problems(
+        records, phase_regimes=CENSUS_PHASE_REGIMES, compiled=True)
+    assert "shape-polymorphic" in " ".join(problems), (
+        f"compiled {bad_phase} record {child} escaped the M* gate: {problems}")
+
+
+@pytest.mark.parametrize("bad_rank", [0, 1])
+@pytest.mark.parametrize("bad_phase", tuple(CENSUS_PHASE_REGIMES))
+def test_compiled_validator_checks_each_rank_and_phase_only_child(bad_rank, bad_phase):
+    """The full validator cannot grant clean status to disjoint concrete children.
+
+    Expectations come from the route owner, not the observations. Real current
+    cells and declared rungs are supplied; their compiled status is unattested,
+    never promoted to cell agreement by these synthetic controls.
+    """
+    from tessera.serving import moe_route
+    from tessera.serving.scheme import (
+        ROUTES, TESSERA_FAMILIES, TESSERA_FP8, moe_census_symbol_base)
+
+    tool = _tool()
+    family = TESSERA_FP8
+    cells = load_serving_contract()["lane_eligibility"]["cells"]
+    cell = next(c for c in cells if c["id"] ==
+                "tessera_e4m3_k1_routed_moe_sm121_decode_resident")
+    phases_by_rank = {
+        phase: [{f"owner.child{index}": _record(
+            "*", kind="moe", contract=moe_route.ACTIVATION_CONTRACT,
+            symbol="tessera.routed_fused.FusedRoutedWindowMoE.__call__",
+            decoder="native_routed_window_classes_e4m3mma")} for _ in range(2)]
+        for index, phase in enumerate(CENSUS_PHASE_REGIMES)
+    }
+
+    def validate():
+        return tool.validate_census_observations(
+            phases_by_rank=phases_by_rank,
+            identities=[{"rank": 0}, {"rank": 1}], refusals_by_rank=[{}, {}],
+            declared={"owner": family}, declared_rungs={"owner": 768},
+            phase_plan=tool.census_phase_plan(None), mode="resident", platform="sm_121",
+            runtime_image=cell["runtime"]["image"],
+            kernel_build=cell["runtime"]["kernel_build"],
+            execution_mode="compiled", compiled=True, compilation_config={"mode": 3},
+            cells=cells, contract_for={family: moe_route.ACTIVATION_CONTRACT},
+            expected=lambda fam, regime, kind: tool.expected_pairs(
+                fam, regime, kind, compiled=True, platform="sm_121"),
+            symbol_for={fam: ROUTES[fam]["gemm_symbol"] for fam in TESSERA_FAMILIES},
+            symbol_base=moe_census_symbol_base, families_by_route=PAYLOAD_FAMILY_BY_ROUTE,
+            policy_prefixes=tuple(f"{fam}:" for fam in TESSERA_FAMILIES))
+
+    control = validate()
+    assert control["problems"] == [], control["problems"]
+    assert control["cell_launch_agreement"]["agrees"] is None
+    for phase in CENSUS_PHASE_REGIMES:
+        owners = control["record_owner"][phase]
+        assert owners and set(owners.values()) == {"owner"}
+    per_rank = phases_by_rank[bad_phase][bad_rank]
+    child = next(iter(per_rank))
+    per_rank[child]["shape"] = "M64:N64:K64"
+    problems = validate()["problems"]
+    assert "shape-polymorphic" in " ".join(problems), (
+        f"compiled rank {bad_rank} {bad_phase} {child} escaped the M* gate: {problems}")
+
+
 def _witness_map(prefill_m, decode_m):
     """Concrete shapes per phase, mirroring the retained R768 eager/capture pair."""
     out = {}
