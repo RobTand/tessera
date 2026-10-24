@@ -739,9 +739,12 @@ if _DIGEST_PATH or _MOE_DET or (_PROF_DIR and _PROF_TRIGGER) or _CAPTURE_LOG:
 #     every ``CudaGraphManager.dispatch`` result inside a non-dummy
 #     ``GPUModelRunner.execute_model`` call, keyed by manager class, graph mode,
 #     token count and request count, plus each manager's captured token counts
-#     after its capture. Each engine process rewrites ``<prefix>.<pid>.json`` with
+#     after its capture. owner_evidence additionally records each owner's actual
+#     descriptors and successful/failed host replay returns, separately from
+#     dispatch attempts. Successful return is not device completion.
+#     Each engine process rewrites ``<prefix>.<pid>.json`` with
 #     the running totals at most once a second and after every capture, so an
-#     equality arm can show that each captured size was replayed. Host-side
+#     equality arm can check owner-local captured tuple coverage. Host-side
 #     bookkeeping only: no device work, no arithmetic change.
 _GA_DISPATCH_LOG = os.environ.get("GA_DISPATCH_LOG")
 
@@ -752,40 +755,200 @@ if _GA_DISPATCH_LOG:
     import threading as _ga_threading
     import time as _ga_time
 
-    _GA = {"counts": {}, "captured": {}, "serving": _ga_threading.local(), "last": 0.0,
-           "lock": _ga_threading.Lock(), "write_lock": _ga_threading.Lock(), "dirty": False}
+    def _ga_state():
+        return {"pid": os.getpid(), "counts": {}, "captured": {}, "owner_evidence": {},
+                "flusher_started": False, "depth": {}, "serving": _ga_threading.local(), "last": 0.0,
+                "lock": _ga_threading.Lock(), "write_lock": _ga_threading.Lock(), "dirty": False}
 
-    def _ga_flush(force=False):
-        now = _ga_time.monotonic()
-        if not force and now - _GA["last"] < 1.0:
-            return
-        _GA["last"] = now
-        with _GA["lock"]:
-            rec = {"pid": os.getpid(), "captured": dict(_GA["captured"]),
-                   "counts": dict(_GA["counts"])}
-            _GA["dirty"] = False
-        # tessera#702: Tessera's per-max_seq_len-class capture, when installed.
+    _GA = _ga_state()
+
+    def _ga_process():
+        # Before *any* event, not just flush: inherited locks/history are not ours.
+        global _GA
+        if _GA["pid"] != os.getpid():
+            _GA = _ga_state()
         gg = _ga_sys.modules.get("tessera.serving.glm53_graphs")
         if gg is not None:
-            rec["tessera_classes"] = {
-                "captured": {m: {str(b): n for b, n in by.items()} for m, by in gg.CAPTURED.items()},
-                "replays": {f"{m}|{b}": n for (m, b), n in gg.REPLAYS.items()}}
-        path = f"{_GA_DISPATCH_LOG}.{os.getpid()}.json"
-        # The dispatch path and the flusher thread both write: one writer at a time, each
-        # with its own temporary, or one's rename can find the other's file gone (tessera#702
-        # rG2, 2026-10-04: FileNotFoundError inside execute_model killed the engine).
-        tmp = f"{path}.{_ga_threading.get_ident()}.tmp"
+            gg._ensure_accounting_process()
+        with _GA["lock"]:
+            start = not _GA["flusher_started"]
+            _GA["flusher_started"] = True
+        if start:
+            # Only the forking thread survives in a child. Reestablish its
+            # publisher as well as its process-local history and locks.
+            _ga_threading.Thread(target=_ga_flusher, name="ga702-flush", daemon=True).start()
+
+    def _ga_owner(manager):
+        key = f"{type(manager).__name__}@{id(manager):x}"
+        return key, _GA["owner_evidence"].setdefault(key, dict(
+            capture_complete=False, capture_error=None, captured=[], replays=[], replay_failures=[]))
+
+    def _ga_descriptor(desc, bound):
+        return dict(mode=getattr(getattr(desc, "cg_mode", None), "name", "?"),
+                    tokens=getattr(desc, "num_tokens", None),
+                    num_reqs=getattr(desc, "num_reqs", None), max_seq_len=bound)
+
+    def _ga_capture_wrapper(original):
+        def capture(self, *args, **kwargs):
+            _ga_process()
+            with _GA["lock"]:
+                key, owner = _ga_owner(self)
+                depth = _GA["depth"].get(key, 0)
+                if depth == 0:
+                    # Replace, rather than mutate, the generation: an in-flight
+                    # old replay cannot add its return to this new capture.
+                    owner = dict(capture_complete=False, capture_error=None, captured=[],
+                                 replays=[], replay_failures=[])
+                    _GA["owner_evidence"][key] = owner
+                    _GA["captured"][key] = []
+                    _GA["dirty"] = True
+                _GA["depth"][key] = depth + 1
+            if depth == 0:
+                # Publish invalidation before capture work can fail or be interrupted.
+                try:
+                    _ga_flush(force=True)
+                except Exception:
+                    pass  # _ga_flush retains dirty state for a later retry
+            completed = False
+            try:
+                out = original(self, *args, **kwargs)
+                gg = _ga_sys.modules.get("tessera.serving.glm53_graphs")
+                bound = gg._STATE.capture_bound if gg is not None else None
+                # Read the actual keys, never extrapolate a size-by-class product.
+                inventory = getattr(self, "_tessera_graphs_by_bound", None)
+                graphs = inventory.items() if inventory and bound is None else [(bound, self.graphs)]
+                records = [_ga_descriptor(desc, applied)
+                           for applied, captured in graphs for desc in captured]
+                with _GA["lock"]:
+                    if depth == 0:
+                        # The outer result is authoritative: a model override
+                        # may remove/replace graphs after an inner capture.
+                        owner["captured"] = records
+                    else:
+                        for record in records:
+                            if record not in owner["captured"]:
+                                owner["captured"].append(record)
+                    if not getattr(self, "_graphs_captured", False):
+                        owner["capture_error"] = owner["capture_error"] or "capture incomplete"
+                    completed = True
+                return out  # None is a successful return too.
+            except BaseException as exc:
+                with _GA["lock"]:
+                    owner["capture_complete"] = False
+                    owner["capture_error"] = repr(exc)
+                raise
+            finally:
+                with _GA["lock"]:
+                    _GA["depth"][key] -= 1
+                    if depth == 0:
+                        # self.graphs points at only the final bound after split
+                        # capture. This diagnostic is the actual inventory's token
+                        # marginal, not the final bound's or a Cartesian guess.
+                        _GA["captured"][key] = sorted({d["tokens"] for d in owner["captured"]})
+                        owner["capture_complete"] = completed and owner["capture_error"] is None
+                        _GA["dirty"] = True
+                if depth == 0:
+                    try:
+                        _ga_flush(force=True)
+                    except Exception:  # logging must not replace a capture outcome
+                        pass
+        # Serving's outer per-bound transaction composes the same observer.
+        capture._ga_capture_wrapper = _ga_capture_wrapper
+        return capture
+
+    def _ga_replay_bound(manager):
+        for applied, graphs in (getattr(manager, "_tessera_graphs_by_bound", None) or {}).items():
+            if manager.graphs is graphs:
+                return applied
+        return None
+
+    def _ga_replay_wrapper(original, layered=False):
+        def run_fullgraph(self, desc, *args, **kwargs):
+            _ga_process()
+            if not getattr(_GA["serving"], "on", False):
+                return original(self, desc, *args, **kwargs)
+            with _GA["lock"]:
+                key, owner = _ga_owner(self)
+                # Invalidation replaces the owner before underlying capture
+                # replaces the installed maps. A call entering that transition
+                # may still replay old graphs, even if it returns after capture
+                # completes. Freeze eligibility here, not at return.
+                success_eligible = _GA["depth"].get(key, 0) == 0
+            active = getattr(_GA["serving"], "replaying", None)
+            if active is None:
+                active = _GA["serving"].replaying = {}
+            if key in active:
+                # The inner call sees the map selected by serving. The outer
+                # observer owns the outcome, including failures before selection.
+                active[key]["max_seq_len"] = _ga_replay_bound(self)
+                return original(self, desc, *args, **kwargs)
+            record = _ga_descriptor(desc, None if layered else _ga_replay_bound(self))
+            active[key] = record
+            try:
+                out = original(self, desc, *args, **kwargs)
+            except BaseException as exc:
+                record["error"] = repr(exc)
+                records = owner["replay_failures"]
+                raise
+            else:
+                records = owner["replays"] if success_eligible else None
+                return out
+            finally:
+                del active[key]
+                if records is not None:
+                    with _GA["lock"]:
+                        for item in records:
+                            if all(item.get(k) == v for k, v in record.items()):
+                                item["count"] += 1
+                                break
+                        else:
+                            records.append(dict(record, count=1))
+                        _GA["dirty"] = True
+        run_fullgraph._ga_replay_wrapper = lambda fn: _ga_replay_wrapper(fn, layered=True)
+        return run_fullgraph
+
+    def _ga_flush(force=False):
+        _ga_process()
+        # Snapshot and atomic publication are ONE writer transaction. Taking
+        # the snapshot before this lock lets a delayed older writer overwrite
+        # a recapture's already-published invalidation with qualifying history.
         with _GA["write_lock"]:
-            with open(tmp, "w") as fh:
-                _ga_json.dump(rec, fh, indent=0, sort_keys=True)
-            os.replace(tmp, path)
+            now = _ga_time.monotonic()
+            with _GA["lock"]:
+                if not force and now - _GA["last"] < 1.0:
+                    return
+                _GA["last"] = now
+                rec = {"pid": os.getpid(), "captured": dict(_GA["captured"]),
+                       "counts": dict(_GA["counts"]),
+                       "owner_evidence": _ga_json.loads(_ga_json.dumps(_GA["owner_evidence"]))}
+                _GA["dirty"] = False
+            try:
+                # Do not nest the serving and observer state locks. Both are
+                # released before I/O, so accounting can continue during a write.
+                gg = _ga_sys.modules.get("tessera.serving.glm53_graphs")
+                if gg is not None:
+                    with gg._LOCK:
+                        rec["tessera_classes"] = {
+                            "captured": {m: {str(b): n for b, n in by.items()}
+                                         for m, by in gg.CAPTURED.items()},
+                            "replays": {f"{m}|{b}": n for (m, b), n in gg.REPLAYS.items()}}
+                path = f"{_GA_DISPATCH_LOG}.{os.getpid()}.json"
+                # Thread-local temporary + atomic replace preserve byte integrity.
+                tmp = f"{path}.{_ga_threading.get_ident()}.tmp"
+                with open(tmp, "w") as fh:
+                    _ga_json.dump(rec, fh, indent=0, sort_keys=True)
+                os.replace(tmp, path)
+            except Exception:
+                with _GA["lock"]:
+                    _GA["dirty"] = True
+                raise
 
     def _ga_patch_cudagraph(module):
         cls = module.CudaGraphManager
         orig_dispatch = cls.dispatch
-        orig_capture = cls.capture
 
         def dispatch(self, *args, **kwargs):
+            _ga_process()
             desc = orig_dispatch(self, *args, **kwargs)
             if getattr(_GA["serving"], "on", False):
                 mode = getattr(getattr(desc, "cg_mode", None), "name", "?")
@@ -794,23 +957,21 @@ if _GA_DISPATCH_LOG:
                 with _GA["lock"]:
                     _GA["counts"][key] = _GA["counts"].get(key, 0) + 1
                     _GA["dirty"] = True
-                _ga_flush()
+                try:
+                    _ga_flush()
+                except Exception:  # a full disk must not stop the engine
+                    _GA["dirty"] = True
             return desc
 
-        def capture(self, *args, **kwargs):
-            out = orig_capture(self, *args, **kwargs)
-            try:
-                sizes = self.captured_token_counts()
-            except Exception as exc:  # recorded, never fatal
-                sizes = f"unreadable: {exc!r}"
-            with _GA["lock"]:
-                _GA["captured"][f"{type(self).__name__}@{id(self):x}"] = sizes
-            _ga_flush(force=True)
-            return out
-
         cls.dispatch = dispatch
-        cls.capture = capture
-        _ga_threading.Thread(target=_ga_flusher, name="ga702-flush", daemon=True).start()
+        # A model override can fail before/after super().capture; observe both,
+        # with one transaction and one reset for the outermost call.
+        model = getattr(module, "ModelCudaGraphManager", None)
+        if model is not None and "capture" in model.__dict__:
+            model.capture = _ga_capture_wrapper(model.capture)
+        cls.capture = _ga_capture_wrapper(cls.capture)
+        cls.run_fullgraph = _ga_replay_wrapper(cls.run_fullgraph)
+        _ga_process()
         print(f"[ga702] CudaGraphManager patched (pid {os.getpid()})", flush=True)
 
     def _ga_patch_runner(module):
@@ -820,20 +981,22 @@ if _GA_DISPATCH_LOG:
         orig_exec, orig_sample = cls.execute_model, cls.sample_tokens
 
         def execute_model(self, *args, **kwargs):
-            if kwargs.get("dummy_run", False):
-                return orig_exec(self, *args, **kwargs)
-            _GA["serving"].on = True
+            _ga_process()
+            previous = getattr(_GA["serving"], "on", False)
+            _GA["serving"].on = not kwargs.get("dummy_run", False)
             try:
                 return orig_exec(self, *args, **kwargs)
             finally:
-                _GA["serving"].on = False
+                _GA["serving"].on = previous
 
         def sample_tokens(self, *args, **kwargs):
-            _GA["serving"].on = True
+            _ga_process()
+            previous = getattr(_GA["serving"], "on", False)
+            _GA["serving"].on = not kwargs.get("dummy_run", False)
             try:
                 return orig_sample(self, *args, **kwargs)
             finally:
-                _GA["serving"].on = False
+                _GA["serving"].on = previous
 
         cls.execute_model = execute_model
         cls.sample_tokens = sample_tokens
@@ -847,8 +1010,14 @@ if _GA_DISPATCH_LOG:
         while True:
             _ga_time.sleep(1.0)
             gg = _ga_sys.modules.get("tessera.serving.glm53_graphs")
-            replays = sum(gg.REPLAYS.values()) if gg is not None else 0
-            if _GA["dirty"] or replays != seen:
+            if gg is not None:
+                with gg._LOCK:
+                    replays = sum(gg.REPLAYS.values())
+            else:
+                replays = 0
+            with _GA["lock"]:
+                dirty = _GA["dirty"]
+            if dirty or replays != seen:
                 seen = replays
                 try:
                     _ga_flush(force=True)
