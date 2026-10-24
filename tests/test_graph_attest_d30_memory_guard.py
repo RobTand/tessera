@@ -6,7 +6,7 @@ CPU-only and deterministic: the boundary, cadence and ownership tests drive the
 real ``LocalArm.headroom``/``tick``/``_term_server``/``_stop_server`` and the
 real ``Rendezvous``/``run_rank`` failure path on a fake clock, substituting
 only the physical Docker, /proc/meminfo and subprocess boundaries. The
-real-process tests spawn actual children: a TERM-ignoring process group must be
+controlled process-group tests exercise real Envelope cleanup: a TERM-ignoring process group must be
 SIGKILLed only after the full ten-second grace, a cooperative child must exit
 within the grace without any SIGKILL, and a finite cleanup deadline must
 shorten the grace. Exactly one test needs real Docker inside an admitted PB
@@ -27,7 +27,6 @@ import socket
 import subprocess
 import sys
 import time
-import threading
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -166,19 +165,6 @@ def stub_boundaries(adapter, monkeypatch):
 def reports(adapter):
     path = adapter.rdv / f"headroom-preflight-rank{adapter.rank}.jsonl"
     return [json.loads(line) for line in path.read_text().splitlines()]
-
-
-def alive(pid):
-    try:
-        return Path(f"/proc/{pid}/stat").read_text().split()[2] != "Z"
-    except (FileNotFoundError, ProcessLookupError, IndexError):
-        return False
-
-
-def await_dead(pids, deadline):
-    """SIGKILL teardown is asynchronous; death is awaited, never sampled once."""
-    while time.monotonic() < deadline and any(alive(pid) for pid in pids):
-        time.sleep(.05)
 
 
 # --- the deterministic 107 GiB start boundary -------------------------------
@@ -357,117 +343,154 @@ def test_peer_abort_failure_propagates_and_rejects_the_run(tmp_path, monkeypatch
     assert not (adapter.work / "aGR").exists()
 
 
-# --- real Envelope children: TERM, the ten-second grace, and the SIGKILL -----
+# --- real Envelope policy on controlled process-group events -----------------
 
-STUBBORN_CHILD = (
-    "import json,os,signal,subprocess,sys,time\n"
-    "signal.signal(signal.SIGTERM, signal.SIG_IGN)\n"
-    "grand = subprocess.Popen([sys.executable, '-c',\n"
-    "    \"import signal,time;signal.signal(signal.SIGTERM, signal.SIG_IGN);time.sleep(120)\"])\n"
-    "open(sys.argv[1], 'w').write(json.dumps(dict(child=os.getpid(), grandchild=grand.pid)))\n"
-    "time.sleep(120)\n"
-)
+class CleanupProcesses(FakeClock):
+    """Physical boundaries only: signals change live membership and exit status.
 
-COOPERATIVE_CHILD = (
-    "import os,signal,sys,time\n"
-    "log = open(sys.argv[1], 'a')\n"
-    "log.write(f'pid {os.getpid()}\\n'); log.flush()\n"
-    "def on_term(signum, frame):\n"
-    "    log.write(f'TERM {time.monotonic():.3f}\\n'); log.flush(); time.sleep(3)\n"
-    "    log.write('graceful-exit\\n'); log.flush(); raise SystemExit(0)\n"
-    "signal.signal(signal.SIGTERM, on_term)\n"
-    "time.sleep(120)\n"
-)
+    Groups are ready when created (including descendant handlers). Cooperative
+    TERM schedules completion three virtual seconds later; ignoring groups have
+    no completion event until KILL. No Envelope policy is implemented here.
+    """
 
-STUBBORN_ALONE_CHILD = (
-    "import os,signal,sys,time\n"
-    "signal.signal(signal.SIGTERM, signal.SIG_IGN)\n"
-    "open(sys.argv[1], 'w').write(str(os.getpid()))\n"
-    "time.sleep(120)\n"
-)
+    def __init__(self, monkeypatch, *, cooperative=False, descendants=False):
+        super().__init__()
+        self.cooperative = cooperative
+        self.groups = {4242: {4242, 4243} if descendants else {4242}, 9000: {9000}}
+        self.returncode = None
+        self.pid = 4242
+        self.exit_at = None
+        self.events = []
+        self.reaped = False
+        self.launches = []
+        self.communications = []
+        monkeypatch.setattr(window, "time", self)
+        # Replace module-local objects, not shared stdlib attributes: the probe
+        # deliberately forwards forbidden ambient actions through these seams.
+        monkeypatch.setattr(window, "subprocess", SimpleNamespace(
+            Popen=self.launch, PIPE=subprocess.PIPE, DEVNULL=subprocess.DEVNULL,
+            STDOUT=subprocess.STDOUT, TimeoutExpired=subprocess.TimeoutExpired,
+            CompletedProcess=subprocess.CompletedProcess))
+        monkeypatch.setattr(window, "os", SimpleNamespace(killpg=self.killpg))
+
+    def time(self):
+        # Derive the epoch from the single monotonic clock; repeated fractional
+        # communicate waits must not accumulate a second independent float drift.
+        return 1_800_000_000 + (self.monotonic() - 100)
+
+    def launch(self, argv, **kwargs):
+        self.launches.append((argv, kwargs))
+        return self
+
+    def advance(self, seconds):
+        super().advance(seconds)
+        if self.exit_at is not None and self.monotonic() >= self.exit_at:
+            self.groups[self.pid].clear()
+            self.returncode = 0
+            self.events.append(("graceful-exit", self.exit_at))
+            self.exit_at = None
+
+    def sleep(self, seconds):
+        self.sleeps.append(seconds)
+        assert seconds >= 0
+        self.advance(seconds)
+
+    def communicate(self, *, input, timeout):
+        self.communications.append((input, timeout))
+        self.advance(timeout)
+        raise subprocess.TimeoutExpired("controlled-child", timeout)
+
+    def poll(self):
+        return self.returncode
+
+    def killpg(self, pgid, sig):
+        members = self.groups[pgid]
+        if not members:
+            raise ProcessLookupError(pgid)
+        if not sig:
+            return
+        self.events.append((sig.name, self.monotonic(), pgid, frozenset(members)))
+        if sig == signal.SIGTERM and self.cooperative:
+            self.exit_at = self.monotonic() + 3
+        elif sig == signal.SIGKILL:
+            members.clear()
+            self.returncode = -signal.SIGKILL
+
+    def wait(self, *, timeout):
+        if self.returncode is None:
+            raise subprocess.TimeoutExpired("controlled-child", timeout)
+        self.reaped = True
+        self.events.append(("reaped", self.monotonic()))
+        return self.returncode
 
 
 def signal_names(record):
     return [event["signal"] for event in record["signals"]]
 
 
-def test_term_ignoring_child_group_is_killed_only_after_the_full_grace(tmp_path):
-    sentinel = subprocess.Popen([sys.executable, "-c", "import time;time.sleep(120)"],
-                                start_new_session=True)
-    pids = tmp_path / "group.json"
-    envelope = window.Envelope(time.time() + 60, cleanup_seconds=15)
-    errors = []
-    def run():
-        try:
-            envelope.run([sys.executable, "-c", STUBBORN_CHILD, str(pids)], limit=1.0)
-        except TimeoutError:
-            return
-        except BaseException as exc:
-            errors.append(exc)
-        else:
-            errors.append(AssertionError("TERM-resistant child unexpectedly completed"))
-    thread = threading.Thread(target=run)
-    try:
-        thread.start()
-        until = time.monotonic() + 3
-        while not pids.exists() and time.monotonic() < until:
-            time.sleep(.02)
-        ids = json.loads(pids.read_text())
-        time.sleep(5)  # observe DURING Envelope.run's grace, not after it returns
-        assert alive(ids["child"]) and alive(ids["grandchild"])
-        assert alive(sentinel.pid), "an unrelated session sentinel is never touched"
-        thread.join(timeout=12)
-        assert not thread.is_alive() and not errors, errors
-        await_dead(list(ids.values()), time.monotonic() + 2)
-        assert not any(alive(pid) for pid in ids.values())
-        assert alive(sentinel.pid)
-        (record,) = envelope.terminations
-        assert record["pid"] == ids["child"]
-        assert signal_names(record) == ["SIGTERM", "SIGKILL"]
-        assert record["signals"][1]["monotonic"] - record["signals"][0]["monotonic"] >= 10.0
-        assert record["returncode"] == -9
-    finally:
-        if pids.exists():
-            try:
-                os.killpg(json.loads(pids.read_text())["child"], signal.SIGKILL)
-            except ProcessLookupError:
-                pass
-        thread.join(timeout=3)
-        sentinel.terminate()
-        sentinel.wait(timeout=3)
-
-
-def test_cooperative_child_exits_within_grace_without_a_kill(tmp_path):
-    marker = tmp_path / "cooperative.log"
-    envelope = window.Envelope(time.time() + 300, cleanup_seconds=30)
-    with pytest.raises(TimeoutError):
-        envelope.run([sys.executable, "-c", COOPERATIVE_CHILD, str(marker)], limit=2.0)
-    child = int(marker.read_text().splitlines()[0].split()[1])
-    assert not alive(child)
-    assert "graceful-exit" in marker.read_text(), "the cooperative handler ran to completion"
+def test_term_ignoring_child_group_is_killed_only_after_the_full_grace(monkeypatch):
+    model = CleanupProcesses(monkeypatch, descendants=True)
+    envelope = window.Envelope(model.time() + 60, cleanup_seconds=15)
+    with pytest.raises(TimeoutError, match="subprocess deadline: controlled-child"):
+        envelope.run(["controlled-child"], limit=1)
+    # Independently fixed instants: start=100, work=1, grace=10.
+    assert model.events == [
+        ("SIGTERM", 101, 4242, frozenset({4242, 4243})),
+        ("SIGKILL", 111, 4242, frozenset({4242, 4243})),
+        ("reaped", 111),
+    ]
+    assert model.groups == {4242: set(), 9000: {9000}}
+    assert model.reaped
     (record,) = envelope.terminations
-    grace = record["ended_unix"] - record["signals"][0]["unix"]
-    assert 2.5 <= grace <= 9.5, "the cooperative handler gets its actual TERM grace"
-    assert record["pid"] == child
-    assert signal_names(record) == ["SIGTERM"], "a cooperative exit needs no SIGKILL"
-    assert record["returncode"] == 0
-
-
-def test_finite_cleanup_deadline_shortens_the_kill_grace(tmp_path):
-    pids = tmp_path / "stubborn.pid"
-    envelope = window.Envelope(time.time() + 8, cleanup_seconds=2)
-    started = time.monotonic()
-    with pytest.raises(TimeoutError):
-        envelope.run([sys.executable, "-c", STUBBORN_ALONE_CHILD, str(pids)], limit=1.0, cleanup=True)
-    child = int(pids.read_text())
-    # SIGKILL is asynchronous. Keep the original elapsed bound for physical death.
-    await_dead([child], started + 9.5)
-    elapsed = time.monotonic() - started
-    assert not alive(child)
-    assert 7 <= elapsed <= 9.5, "termination respects the original eight-second envelope"
-    (record,) = envelope.terminations
+    assert record["pid"] == 4242 and record["argv"] == ["controlled-child"]
     assert signal_names(record) == ["SIGTERM", "SIGKILL"]
+    assert [event["monotonic"] for event in record["signals"]] == [101, 111]
+    assert record["returncode"] == -9
+    assert record["deadline_shortened_grace"] is False
+    assert record["reap_timed_out"] is False
+    assert record["started_unix"] == 1_800_000_001
+    assert record["ended_unix"] == 1_800_000_011
+
+
+def test_cooperative_child_exits_within_grace_without_a_kill(monkeypatch):
+    model = CleanupProcesses(monkeypatch, cooperative=True)
+    envelope = window.Envelope(model.time() + 300, cleanup_seconds=30)
+    with pytest.raises(TimeoutError, match="subprocess deadline: controlled-child"):
+        envelope.run(["controlled-child"], limit=2)
+    assert [event[0] for event in model.events] == ["SIGTERM", "graceful-exit", "reaped"]
+    assert model.events[0] == ("SIGTERM", 102, 4242, frozenset({4242}))
+    assert model.events[1] == ("graceful-exit", 105)
+    assert model.groups == {4242: set(), 9000: {9000}}
+    assert model.reaped
+    (record,) = envelope.terminations
+    assert record["pid"] == 4242
+    assert signal_names(record) == ["SIGTERM"]
+    assert record["returncode"] == 0
+    assert record["reap_timed_out"] is False
+    assert record["ended_unix"] == pytest.approx(1_800_000_005, abs=.051, rel=0)
+
+
+def test_finite_cleanup_deadline_shortens_the_kill_grace(monkeypatch):
+    model = CleanupProcesses(monkeypatch)
+    envelope = window.Envelope(model.time() + 8, cleanup_seconds=2)
+    with pytest.raises(TimeoutError, match="subprocess deadline: controlled-child"):
+        envelope.run(["controlled-child"], limit=1, cleanup=True)
+    assert model.events == [
+        ("SIGTERM", 101, 4242, frozenset({4242})),
+        ("SIGKILL", 108, 4242, frozenset({4242})),
+        ("reaped", 108),
+    ]
+    assert model.groups == {4242: set(), 9000: {9000}}
+    assert model.reaped
+    (record,) = envelope.terminations
+    assert record["pid"] == 4242
+    assert signal_names(record) == ["SIGTERM", "SIGKILL"]
+    assert [event["monotonic"] for event in record["signals"]] == [101, 108]
     assert record["deadline_shortened_grace"] is True
+    assert record["returncode"] == -9
+    assert record["reap_timeout_seconds"] == .01
+    assert record["reap_timed_out"] is False
+    assert record["ended_unix"] == 1_800_000_008
 
 
 def test_delayed_kill_reap_preserves_deadline_and_records_cleanup(monkeypatch):
