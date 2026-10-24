@@ -255,6 +255,47 @@ def test_actual_missing_dispatch_still_declines_in_dev_mode(monkeypatch):
 
 
 @pytest.mark.parametrize("certified", [False, True])
+@pytest.mark.parametrize("module_index,helper_name", [
+    (3, "compute_num_split"),
+    (3, "mhc_fused_post_pre_split_config"),
+    (4, "is_deep_gemm_supported"),
+])
+def test_incompatible_dispatch_signature_declines_to_stock(
+        monkeypatch, certified, module_index, helper_name):
+    """Callable is not sufficient: each helper must accept the wrapper's call.
+
+    Development mode skips historical source seals, not executable-interface
+    checks. Certified mode must make the same decision after a source match.
+    Inspect signatures without executing helpers at installation: they can
+    depend on the actual call's token count or the live CUDA context.
+    """
+    monkeypatch.setenv("PRISMAQUANT_DEV_MODE", "0" if certified else "1")
+    monkeypatch.setattr(mf, "match_modules", lambda *args: (
+        SimpleNamespace(name="test-matching-source"), ""))
+
+    def compatible(*args, optional_extension=None):
+        raise AssertionError("installation must not execute dispatch helpers")
+
+    # An optional upstream extension remains call-compatible; do not demand an
+    # exact roster of parameter names or reject every unfamiliar signature.
+    config, _, modules = _install_modules(monkeypatch)
+    setattr(modules[module_index], helper_name, compatible)
+    assert mf.install_mhc_fusion(config) is True
+
+    def incompatible(*args, required_extension):
+        raise AssertionError("installation must not execute dispatch helpers")
+
+    other_config, layer, other_modules = _install_modules(monkeypatch)
+    setattr(other_modules[module_index], helper_name, incompatible)
+    original = layer.hc_fused_post_pre
+    assert mf.install_mhc_fusion(other_config) is False, (
+        f"{helper_name} requires an argument the fused wrapper never supplies; "
+        "the incompatible override must decline before rebinding the stock method")
+    assert layer.hc_fused_post_pre is original
+    assert layer().hc_fused_post_pre(None, None, None, None, None, None, None) == "stock"
+
+
+@pytest.mark.parametrize("certified", [False, True])
 def test_compiler_path_identity_uses_returned_library_or_refuses(monkeypatch, tmp_path, capsys, certified):
     import torch.utils.cpp_extension as cpp
     monkeypatch.setenv("PRISMAQUANT_DEV_MODE", "0" if certified else "1")
