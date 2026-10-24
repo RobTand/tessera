@@ -1,0 +1,36 @@
+{
+  "status": "uncompleted",
+  "scope": "BF16 dense TP1 eager current-source census",
+  "census_executed": false,
+  "disposition": "Stop at the missing documented artifact/config prerequisite; no environment repair, substitute image, export or serve was attempted.",
+  "probe": {
+    "operation": "c632b7327414f7480661251a4bf92dae087c20f9647d46cd0bf801d63e252d4b",
+    "receipt_sha256": "c01365429c4c1b5d6332308a7846d934c10a9f886594d6399cc32f89e3d2b4d0",
+    "arm": "gpu",
+    "exit_status": 0,
+    "meaning_of_exit_status": "Metadata probe completed, not a successful serve or census",
+    "candidate": "/mnt/shared/tessera-runs/bf16/qwen0.6b-bf16-r7",
+    "candidate_exists": false,
+    "config_exists": false
+  },
+  "retained_files": {
+    "prerequisite.stdout": "f9804536bece24324477ef1dbc64610acd8dd381d28ff2e9e60dd36153d20aca"
+  },
+  "retention": "Copied from verified retained stdout during repair; byte count and digest match the original operation. This is not a new GPU run or a pre-run plan receipt.",
+  "expected_pair_not_observed": [
+    "tessera::fused_window_dense",
+    "native_fused_window_dense_bf16"
+  ],
+  "unobserved": [
+    "artifact geometry, current recipe admission and prepared-role support predicates",
+    "artifact-derived expected module count and phase coverage",
+    "actual fused or fallback owner selection and lane_reason",
+    "executing source/import/native binary/compiler identity",
+    "immutable observed image, CUDA/driver and device identity",
+    "configured serialization acquisition and engine eager/TP/residency settings",
+    "effective serving argv/environment and split-K configuration",
+    "receipt-bound pre-run ordering"
+  ],
+  "objectives_unmet": ["O1", "O2", "O3"],
+  "limits": "Not census.json or serving provenance. No cell attestation, folded-claim restoration, numerical/performance qualification, contract publication or pin authority."
+}
