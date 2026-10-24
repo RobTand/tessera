@@ -1245,6 +1245,14 @@ stages. At 0 the layout is master's and the SASS is master's up to commuted
 only into MMA8 compile flags, and checked against the loaded export. The value
 and `f16` libraries are untouched.
 
+The separate f16 prefetch decision gate remains inconclusive for a fully
+version-attested supported compiler tuple. Retained SM121 disassembly contains
+`CCTL.E.PF1` hints; a zero literal `prefetch` text count did not prove removal.
+See the [append-only evidence correction](measurements/2026-10-10-f16-ptxas-probe.md).
+This static evidence grants no cp.async implementation, qualification or pin
+change. A usable supported retained-hint alternative must stop that implementation
+before starting and return the gate to TrustLadder for owner replanning.
+
 Re-stamped 2026-10-08 for the default-on routed R4 piece-major resident layout (Refs #739 and #750).
 Rob approved this default. An unset TESSERA_ROUTED_PIECE_MAJOR selects only a uniform R4 stack with the E4M3 MMA reader.
 Explicit 0 retains legacy placement. Explicit 1 still refuses a non-uniform stack before intake.
