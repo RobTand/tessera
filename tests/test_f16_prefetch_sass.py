@@ -1,8 +1,8 @@
 """Static instruction controls for the f16 prefetch decision gate (tessera#1369).
 
-Synthetic cuobjdump fixtures, not GPU/timing evidence. PF1 and IVALL spellings
-and the negated predicate/offset form were observed in the retained paired
-sm_121 disassembly. Addresses and kernel names below are deliberately synthetic.
+Synthetic cuobjdump fixtures, not GPU/timing evidence. PF1 and IVALL are
+instruction-classification controls; these fixtures do not attest the contents
+of any retained paired disassembly. Addresses and kernel names are synthetic.
 No historical checkout, compiler, artifact mount or CUDA device is needed.
 
 Additive API in experiments/t4_code/sass_dump.py:
@@ -128,3 +128,28 @@ def test_unsupported_or_mismatched_architecture_and_unknown_control_fail_closed(
     assert result["status"] == "inconclusive", result
     assert result["hint_count"] is None, result
     assert result["errors"], result
+
+
+@pytest.mark.parametrize("operands", ["", "[R16", "[]"])
+def test_hint_opcode_with_malformed_address_is_not_retention_evidence(operands):
+    # A mnemonic match is insufficient if the instruction itself is unusable.
+    text = POSITIVE.replace("CCTL.E.PF1 [R16] ;", f"CCTL.E.PF1 {operands} ;")
+    result = analyze(text)
+    assert result["status"] == "inconclusive", result
+    assert result["hint_count"] is None, result
+    assert result["errors"], result
+
+
+def test_function_local_pcs_do_not_merge_distinct_hint_sites():
+    # Both functions contain the same instruction PCs. Keep their identities:
+    # a whole-binary count must not be misreported as target-kernel retention.
+    second = POSITIVE.replace("_Z6targetv", "_Z5otherv")
+    result = analyze(POSITIVE + second)
+    assert result["status"] == "complete", result
+    assert result["hint_count"] == 4, result
+    hints = [row for row in result["instructions"] if row["opcode"] == "CCTL.E.PF1"]
+    assert sorted((row["kernel"], row["pc"]) for row in hints) == [
+        ("_Z5otherv", 0x50), ("_Z5otherv", 0x60),
+        ("_Z6targetv", 0x50), ("_Z6targetv", 0x60),
+    ]
+    assert not result["errors"], result
