@@ -1,0 +1,151 @@
+{
+  "issue": "https://github.com/RobTand/tessera/issues/1402",
+  "status": "HOLD",
+  "ready_for_serving_submission": false,
+  "serving_submitted": false,
+  "hold_reason": "The original #1392 package custodian must supply the stopped contracts, retained review and source-bound receipts. Execution owners #1351/#1353 must supply their current reconciled configuration, two-host placement/telemetry receipts and exact-pair admission and authorization including issuer, budget and valid window. Neither historical preparations nor offline structural checks authorize serving. This handoff does not complete the parent comparison; no Rob-only physical action is established.",
+  "scope": {
+    "window_mode": "ship-graph-mnbt-matrix",
+    "matrix_cells": [[2048, 8192, 1], [4096, 8192, 1]],
+    "tp": 2,
+    "serve_mode": "resident",
+    "fabric": "socket",
+    "max_num_seqs": 8,
+    "max_model_len": 8448,
+    "graph_decode": true,
+    "mtp": false,
+    "lever_env": {
+      "TESSERA_E4M3_DECODE_ONCE": "1",
+      "TESSERA_GLM53_KDA_CONV_SPLIT": "on",
+      "TESSERA_ROUTED_PIECE_MAJOR": "1"
+    },
+    "selection_handoff": "Use WINDOW_MODE=ship-graph-mnbt-matrix and repeated --matrix-cell 2048:8192:1 --matrix-cell 4096:8192:1 with window_driver.py's existing --prepare ROOT --handoffs JSON lifecycle and plan-graph-mnbt-matrix.txt. ROOT, handoffs and deployment bindings must come from the execution owners. Selection belongs to prepare; a later authorized submit consumes that prepared selection. This is an unexecuted selection description, not a command receipt or authorization. Request c1 does not change max-num-seqs=8. No new launcher or configuration rewrite."
+  },
+  "stop_references": [
+    "https://github.com/RobTand/tessera/issues/1392#issuecomment-6366265912",
+    "https://github.com/RobTand/tessera/issues/1392#issuecomment-6374882352",
+    "https://github.com/RobTand/tessera/issues/1392#issuecomment-6377512201"
+  ],
+  "recovery": {
+    "O2": {
+      "value": null,
+      "references": ["https://github.com/RobTand/tessera/issues/1392#issuecomment-6366265912", "https://github.com/RobTand/tessera/issues/1392"],
+      "missing": {"issue": "https://github.com/RobTand/tessera/issues/1392", "deliverable": "Original package custodian's complete original O2 definition, revision and acceptance evidence requirements, linked to the stopped package; not a reconstruction from campaign prose."}
+    },
+    "comparison_O3": {
+      "value": null,
+      "references": ["https://github.com/RobTand/tessera/issues/1392#issuecomment-6366265912", "https://github.com/RobTand/tessera/issues/1392#issuecomment-6375464714"],
+      "missing": {"issue": "https://github.com/RobTand/tessera/issues/1392", "deliverable": "Original package custodian's complete comparison-O3 definition and its baseline/candidate, population, instruments and acceptance rules, with durable package/revision reference. Later requirements do not establish the full original definition."}
+    },
+    "retained_record": {
+      "value": null,
+      "references": ["https://github.com/RobTand/tessera/issues/1392#issuecomment-6366265912"],
+      "missing": {"issue": "https://github.com/RobTand/tessera/issues/1392", "deliverable": "Stopped package's retained HOLD measurement record, review, artifact locations and byte identities, with custody and links to its original objectives and both arm receipts."}
+    },
+    "configuration_checks": {
+      "value": null,
+      "references": ["https://github.com/RobTand/tessera/issues/1392#issuecomment-6366265912"],
+      "missing": {"issue": "https://github.com/RobTand/tessera/issues/1392", "deliverable": "Both original reported 264-check receipts (x86 and GPU), raw and effective source identities including overlays, exact commands, dependency/runtime identities, outcomes and collected/skipped/uncollected/device-allocation populations, tied to retained artifacts and original review."},
+      "reported_count_per_arm": 264,
+      "reuse_disposition": "withheld",
+      "identity_reconciliation": "The stop reports counts but not measured identities. Neither the historical Q3 producer/source nor this inspected checkout identifies those checks. Reuse only after raw/effective sources, commands, dependencies and populations match; do not restart configuration work to replace missing custody."
+    }
+  },
+  "configuration_checks_are_serving_evidence": false,
+  "recovery_investigation": "Public GitHub issue bodies and every reported comment for #1392, #1351, #1353, #1341, #1348, #1508 and #1509 were read on 2026-10-24 around 04:17 UTC (8, 0, 1, 0, 0, 1 and 1 comments respectively). The stop and subsequent HOLD notices do not locate the original complete O2/comparison-O3 contracts, retained record or source identities of the 264 checks. docs/issues-snapshot.json predates the issues and cannot establish their current contracts. Focused measurement-store discovery inspected the two historical leads below, d38-q3-preflight.json, digest-history.md, mnbt-reuse-review-sol-20261009/review-evidence.json, mnbt-reuse-parent-takeover-20261009/parent-final-surface.json, mnbt-selected-cells-5eb1e9585-20261008T1432Z/source-surface.json and the Q2 receipt-manifest.json. The surfaces report 41 passed and 388 passed/9 skipped respectively, not the reported 264 checks. The preflight is CPU arguments/imports/input shapes, not served parity. Focused MNBT discovery was truncated; inherited research also reports focused accessible fleet-evidence non-recovery. This is scoped non-recovery, not proof the artifacts do not exist. Seek the original #1392 package custodian rather than reconstructing definitions or replacing provenance with reruns.",
+  "inspected_source": {
+    "commit": "593d1efdffa1cab7a88fd8dfe42398735262d2e4",
+    "tree": "6aa15fab36d365a73fccd08df9761ad2ea656181",
+    "identity_scope": "Implementation checkout before this documentation addition; NOT actual executing/effective source or the source of the reported 264 checks. Research inspected 17b3fdb396410698c9a142615345f046d2f94a5d (tree f8236273abde8c426c84218082ef4a251b83df48); the issue's 4897b63469acea4fc39342060280d380f197c8db is another historical inspection.",
+    "references": [
+      "experiments/graph_attest_702/window_driver.py:282-330",
+      "experiments/graph_attest_702/tp2_recipe.py:123-150",
+      "experiments/graph_attest_702/tp2_recipe.py:301-324",
+      "experiments/graph_attest_702/eager_benchmark.py:21-47",
+      "experiments/graph_attest_702/plan-graph-mnbt-matrix.txt",
+      "src/tessera/serving/runtime_contract.json",
+      "src/tessera/serving/runtime_image.py:36-42"
+    ]
+  },
+  "configuration_reconciliation": "Inspected source already accepts repeated matrix-cell selections in prepare and rejects selection during submit. Matrix recipe retains resident/socket TP2, max-num-seqs=8, max-model-len=8448, graph compilation and no speculative config; eager_benchmark.py declares both MNBT arms and all three levers ON. These are intended comparison invariants, not proof of deployment. Actual owner configuration remains unavailable. Historical Q3 inputs use runtime-contract digest 47f180efaf97faa5c411df5d48f9da7dff4b9c9fc0c3ddbf9f815bcd4d0aed78 and image digest 5be13705acaecc7b4aaf342a84f80d67844c9970ff8375bf9fbeecc9c98ce84a. Current src/tessera/serving/runtime_contract.json is version 67, SHA256 76f61f130f59355e2bf67e65343f3478bbe53aa29c18fd9e05fe059f44ed9c63; versions.default_serve_image has digest 61fc8a896b0a4fbbbdc063bc4b0dbc25ce98e02b5050c24aeb7830ac02039b14. runtime_image.py identifies that owning field. Neither available historical image nor current default establishes the intended executing runtime. Owners must reconcile selected image, contract, dependencies, source/producer and model with their actual prepared configuration and receipts. Consume existing configuration without changing it or embedding deployment values in application logic.",
+  "historical_leads": [
+    {
+      "reference": "/mnt/shared/tessera-measurements/mnbt-q3q4-exec-evidence-20261009/evidence-packet.json",
+      "sha256": "e870690c34e9e685c8d4bb9bab2f8bb84ea705e2d04548d123c96657b4ac8de2",
+      "disposition": "Disk bytes hash verified during this investigation. Historical Q3/Q4 packet, not current admission, #1392 receipt identity or complete scientific acceptance. Packet excludes served quality/KL/default changes/source qualification/shipping claims."
+    },
+    {
+      "reference": "/mnt/shared/tessera-measurements/mnbt-q3-62f5093f-20261009/inputs.json",
+      "sha256": "e3411db1b9c0ffe1174f3972c0a78a4ac119dc3923f6f115d46416808e09900d",
+      "source_commit": "2dbac1910c88254d9c6391f02a34c4b07e516803",
+      "producer_commit": "62f5093ffae3591638bebd72783c083231c4d891",
+      "matrix_cells": [[4096, 2048, 8], [4096, 8192, 1]],
+      "disposition": "Disk bytes hash verified. Recorded source and producer are distinct and not established identities of #1392's checks or current execution. This Q3 selection lacks MNBT2048 and is not the requested pair. Do not substitute its source pins, budget or runtime. Inherited research cautions that historical timing telemetry excludes profile windows, is not quiet-host certified and has a timestamp caveat; no complete aligned work/J or current authorization claim is made."
+    }
+  ],
+  "bindings": {
+    "source_effective_source": {
+      "value": null,
+      "references": ["https://github.com/RobTand/tessera/issues/1351", "https://github.com/RobTand/tessera/issues/1392"],
+      "missing": {"issue": "https://github.com/RobTand/tessera/issues/1351", "deliverable": "Owner's exact executing raw commit/tree and effective-source digest including overlays/native resources, shared by both arms/ranks and bound to prepared inputs, commands and execution receipts; reconcile against inspected source separately."}
+    },
+    "producer": {
+      "value": null,
+      "references": ["https://github.com/RobTand/tessera/issues/1351"],
+      "missing": {"issue": "https://github.com/RobTand/tessera/issues/1351", "deliverable": "Actual owner-selected producer commit and byte digest, including preparation/receipt tooling, linked to the exact source, model and prepared pair; not inferred from historical Q3 producer."}
+    },
+    "model_artifact": {
+      "value": null,
+      "references": ["https://github.com/RobTand/tessera/issues/1351"],
+      "missing": {"issue": "https://github.com/RobTand/tessera/issues/1351", "deliverable": "Owner's accepted model artifact/config and content identities, producer lineage and verified visibility on both participants, bound to this pair's effective configuration."}
+    },
+    "runtime_dependencies": {
+      "value": null,
+      "references": ["src/tessera/serving/runtime_contract.json", "src/tessera/serving/runtime_image.py", "https://github.com/RobTand/tessera/issues/1353"],
+      "missing": {"issue": "https://github.com/RobTand/tessera/issues/1353", "deliverable": "Owner-reconciled intended runtime image digest, contract bytes and imported dependency/native/cache identities on both ranks, with actual configuration and execution receipts resolving historical-prepared versus current-default drift."}
+    },
+    "participants": {
+      "value": null,
+      "references": ["https://github.com/RobTand/tessera/issues/1351", "https://github.com/RobTand/tessera/issues/1353"],
+      "missing": {"issue": "https://github.com/RobTand/tessera/issues/1351", "deliverable": "Current host-required two-GB10 allocation and verified rank-to-worker/GPU placement for resident/socket TP2, including both participant identities and receipts; historical gang machinery is insufficient."}
+    },
+    "instruments_collection_scope": {
+      "value": null,
+      "references": ["https://github.com/RobTand/tessera/issues/1353#issuecomment-6353553300", "https://github.com/RobTand/tessera/issues/1341"],
+      "missing": {"issue": "https://github.com/RobTand/tessera/issues/1353", "deliverable": "Fresh configured Netdata acquisition from the actual measurement namespace on both hosts, recording worker/GPU/source/runtime, query windows and returned telemetry; bind instrument versions and profiler/timing/energy collection and exclusion windows for both exact cells. Qualify alignment and limitations before work/J reuse."}
+    },
+    "execution_owner": {
+      "value": null,
+      "references": ["https://github.com/RobTand/tessera/issues/1351", "https://github.com/RobTand/tessera/issues/1353#issuecomment-6353553300"],
+      "missing": {"issue": "https://github.com/RobTand/tessera/issues/1353", "deliverable": "Existing execution owners' explicit matching handoff naming the responsible execution authority, actual owning configuration and admitted two-host path for this source-bound pair. Issue ownership alone is not deployed-path evidence."}
+    },
+    "budget_window": {
+      "value": null,
+      "references": ["https://github.com/RobTand/tessera/issues/1392#issuecomment-6366265912", "https://github.com/RobTand/tessera/issues/1351"],
+      "missing": {"issue": "https://github.com/RobTand/tessera/issues/1351", "deliverable": "Execution authority's current exact-pair budget and valid execution window, including cleanup/reservation scope, issuer and binding references; stopped-package over-budget status and old window estimates grant no budget."}
+    },
+    "admission": {
+      "value": null,
+      "references": ["https://github.com/RobTand/tessera/issues/1351", "https://github.com/RobTand/tessera/issues/1353", "https://github.com/RobTand/tessera/issues/1392#issuecomment-6377512201"],
+      "missing": {"issue": "https://github.com/RobTand/tessera/issues/1351", "deliverable": "Authenticated admission covering exactly [[2048,8192,1],[4096,8192,1]] and unchanged geometry/levers, with issuer, issued-at, valid window and references binding actual source/producer/model/runtime/participants/instruments and prerequisite qualification decisions."}
+    },
+    "authorization": {
+      "value": null,
+      "references": ["https://github.com/RobTand/tessera/issues/1353", "https://github.com/RobTand/tessera/issues/1392#issuecomment-6374882352"],
+      "missing": {"issue": "https://github.com/RobTand/tessera/issues/1353", "deliverable": "Current execution authority's explicit permission to submit this exact source-bound pair, scoped issuer/time/window/budget and full binding references, reconciling outstanding qualification/approval HOLD. No serving probe may be used to discover authorization."}
+    }
+  },
+  "execution_owner_issues": ["https://github.com/RobTand/tessera/issues/1351", "https://github.com/RobTand/tessera/issues/1353"],
+  "campaign_owner_issue": "https://github.com/RobTand/tessera/issues/1348",
+  "evidence_reuse_1341": {
+    "value": null,
+    "references": ["https://github.com/RobTand/tessera/issues/1341"],
+    "missing": {"issue": "https://github.com/RobTand/tessera/issues/1341", "deliverable": "Retained trace/collective evidence packet and identity/instrument-scope reconciliation for this exact comparison: effective source, binary/image, model, ranks/fabric, traced message sizes and profiler/energy windows. Only explicitly matched evidence may be reused."},
+    "reuse_disposition": "withheld; potential evidence supplier, not admission or a replacement campaign"
+  },
+  "owner_review": {
+    "references": ["https://github.com/RobTand/tessera/issues/1353#issuecomment-6353553300", "https://github.com/RobTand/tessera/issues/1392#issuecomment-6377512201", "https://github.com/RobTand/tessera/issues/1508#issuecomment-6378687505", "https://github.com/RobTand/tessera/issues/1509#issuecomment-6378687812"],
+    "disposition": "Current public owner threads still require host-required placement and reachable configured telemetry with receipts; no matching resolved exact-pair configuration/authorization was recovered. #1348 retains broader campaign ownership. #1508/#1509 attached recovery concerns #1358 refresh and #1204 pinned-consumer readiness: capability overlap, not established duplicates or delivery of this pair's prerequisites. No new overlapping finding, scheduler, fleet or telemetry implementation is created. Latest #1392 comment remains HOLD and requests further numerical/correctness receipts; it is not current admission."
+  },
+  "verification_policy": "Offline acceptance validates record completeness and conservative disposition only. O4 requires reviewer inspection of referenced bytes and actual owner authority; no shell command or structurally passing JSON authenticates external approval. Keep unavailable bindings null and HOLD until that inspection and matching owner delivery. No GPU run or serving submission is needed for this documentation handoff."
+}
