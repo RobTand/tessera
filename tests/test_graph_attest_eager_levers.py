@@ -1,12 +1,22 @@
 """D30 eager selector/output controls; no GPU numerical or served qualification."""
 import copy
+import gzip
 import hashlib
+import io
 import json
-from pathlib import Path
+from pathlib import Path, PurePosixPath
+import tarfile
+import zlib
 import subprocess
 import sys
 
 import pytest
+
+# Independent source pins: editable manifest labels cannot authorize new bytes.
+FROZEN_COMMIT = "2dbac1910c88254d9c6391f02a34c4b07e516803"
+FROZEN_ARCHIVE_SHA256 = "547591c0f4ca1709c3ea0f28b9acfd3125a8e060458e920b31b48da992b7858d"
+FROZEN_EXPORT_SHA256 = "91f3a340e9e14068e448bbc150a702d16e913cdf70fc487e7acbe0a17fb272fb"
+FROZEN_FIXTURE = Path(__file__).resolve().parent / "fixtures/frozen_eager_2dbac191"
 
 HERE = Path(__file__).resolve().parents[1] / "experiments/graph_attest_702"
 sys.path.insert(0, str(HERE))
@@ -135,6 +145,44 @@ def local_generation_reader(tmp_path, monkeypatch):
     monkeypatch.setattr(benchmark, "CLIENT", client)
 
 
+def _load_frozen_runtime(destination, *, archive_path=FROZEN_FIXTURE / "runtime.tar.gz",
+                         manifest_path=FROZEN_FIXTURE / "manifest.json"):
+    """Authenticate all bytes and validate all members before writing any files."""
+    compressed = Path(archive_path).read_bytes()
+    try:
+        manifest = json.loads(Path(manifest_path).read_text())
+        if not isinstance(manifest, dict) or not (
+            manifest.get("source_commit") == benchmark.RUNTIME_COMMIT == FROZEN_COMMIT
+            and manifest.get("archive_sha256") == FROZEN_ARCHIVE_SHA256
+            == hashlib.sha256(compressed).hexdigest()
+            and manifest.get("export_sha256") == FROZEN_EXPORT_SHA256
+        ):
+            raise ValueError("frozen runtime identity/digest mismatch")
+        exported = gzip.decompress(compressed)
+        if hashlib.sha256(exported).hexdigest() != FROZEN_EXPORT_SHA256:
+            raise ValueError("frozen runtime export digest mismatch")
+        with tarfile.open(fileobj=io.BytesIO(exported)) as tar:
+            members = tar.getmembers()
+            destination = Path(destination)
+            root = destination.resolve()
+            seen = set()
+            for member in members:
+                path = PurePosixPath(member.name)
+                target = destination / member.name
+                if (path.is_absolute() or ".." in path.parts or "\\" in member.name
+                        or not path.parts or member.name in seen
+                        or not (member.isfile() or member.isdir())
+                        or not target.resolve().is_relative_to(root)):
+                    raise ValueError(f"unsafe frozen archive member: {member.name}")
+                # Refuse pre-existing symlinks, including ones pointing inside root.
+                if any(part.is_symlink() for part in (target, *target.parents)):
+                    raise ValueError(f"symlink in extraction destination: {target}")
+                seen.add(member.name)
+            tar.extractall(destination, members=members, filter="data")
+    except (gzip.BadGzipFile, EOFError, zlib.error, tarfile.TarError) as exc:
+        raise ValueError("invalid frozen runtime archive") from exc
+
+
 def _frozen_flag_paths():
     import os
     import torch
@@ -166,18 +214,14 @@ def _frozen_flag_paths():
 
 
 def test_frozen_2db_flags_reach_different_runtime_selectors(tmp_path):
-    pytest.importorskip("torch")
     import inspect
-    import io
     import os
-    import tarfile
-    # Import only the runtime's archived source in a fresh process. Future
-    # changes to the producer's src do not change or stale this pin check.
-    archive = subprocess.check_output(["git", "archive", benchmark.RUNTIME_COMMIT, "src", "pyproject.toml",
-                                       "tests/test_piece_major_reader_boundaries.py"], cwd=HERE.parents[1])
-    with tarfile.open(fileobj=io.BytesIO(archive)) as tar:
-        tar.extractall(tmp_path, filter="data")
-    env = dict(os.environ, PYTHONPATH=os.pathsep.join(str(tmp_path / part) for part in ("src", "tests")))
+    # Missing or invalid historical inputs are failures, never optional skips.
+    _load_frozen_runtime(tmp_path)
+    # Frozen source wins, while sealed third-party dependency paths survive.
+    roots = [str(tmp_path / part) for part in ("src", "tests")]
+    ambient = os.environ.get("PYTHONPATH", "").split(os.pathsep)
+    env = dict(os.environ, PYTHONPATH=os.pathsep.join(roots + [p for p in ambient if p]))
     program = inspect.getsource(_frozen_flag_paths) + "\n_frozen_flag_paths()\n"
     done = subprocess.run([sys.executable, "-c", program], cwd=tmp_path, env=env,
                           capture_output=True, text=True, timeout=30)
