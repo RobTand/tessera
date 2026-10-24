@@ -118,7 +118,7 @@ The retained graphics processor evidence does not establish serving qualificatio
 
 Re-stamped 2026-10-10 for the graph-only census separation (issue #1062).
 
---compiled names a non-eager engine. A real Torch trace takes the shape-polymorphic arm and still requires M star records. Mode NONE means CUDA graphs only: records keep concrete capture shapes, the census checks them as concrete, and every graph-only census states capture time only with no logical row credit. Replay runs no Python. Phase, owner, route, decoder, dtype and cell checks run on both paths. No default, pin or admission changes.
+--compiled names a non-eager engine. A real Torch trace takes the shape-polymorphic arm and requires M star evidence on every record in each driven phase, checked per rank before aggregation. Children of one declared owner may have different names across phases; neither disjoint names nor partial overlap exempts a record. Mode NONE means CUDA graphs only: records keep concrete capture shapes, the census checks them as concrete, and every graph-only census states capture time only with no logical row credit. Replay runs no Python. Phase, owner, route, decoder, dtype and cell checks run on both paths. No default, pin or admission changes.
 
 Re-stamped 2026-10-08 for replay-free native matrix selection (issue #1061).
 
@@ -758,6 +758,29 @@ identity drift, and no format pin or serving default moves. Regressions:
 `tests/test_graph_attest_producer_identity.py` and
 `tests/test_graph_attest_headroom_preflight.py`. See
 `experiments/graph_attest_702/RUNPLAN-artifact.md`.
+
+The optional graph-control `BATCH_KL` recipe declaration is retained in window
+inputs and forwarded to both native action environments for rank startup's
+configuration comparison. Submission recovers the exact declaration string from
+both prepared manifest rows, independent of the submitting shell, and checks it
+against the parsed inputs without weakening the full manifest seal. At the
+existing live `LocalArm.probes` seam,
+collection currently refuses: no owner-supported live TP2/MTP1 target-model
+attachment handoff is available.
+It does not invoke an isolated scorer, launch another serve or disable MTP.
+Collector exceptions use the native coupled-abort and owned-cleanup lifecycle.
+After graph-receipt creation, `window_driver.py --bind-batch-kl ROOT
+--graph-receipt PATH` (with the existing plan argument) writes a separate
+`batch-kl-manifest.json`. The binder rehashes retained raw/result bytes, compares
+all three arms against prepared inputs and both native members, and requires
+replay managers for both native ranks before rerunning the existing
+equality/per-rank replay gate. A completely omitted rank cannot evade that gate
+at this binding boundary. Regressions reuse the normalized fixture in
+`tests/test_graph_attest_batch_kl_binding.py`. This is binding validity, not
+scientific KL qualification; the graph receipt and its exclusions remain unchanged.
+Production remains unqualified until the existing scorer owner supplies the
+missing capability. The reconciled handoff disposition, configuration and
+normal workflow are in `experiments/graph_attest_702/RUNPLAN-artifact.md`.
 
 Both live TP2 ranks must agree on image, source digest and config digest before
 either local launch, in dev and certified modes alike. This is execution
@@ -1642,9 +1665,10 @@ The stock Q power-of-two scale rounding and arithmetic order remain intact.
 The opt-in native call uses the pass-buffer schedule; decode, mixed and
 capture guards remain unchanged. Its runtime GPU fixture exercises the actual
 cached factory with a retained DSO and refuses compilation. Before importing
-Tessera, the runtime test imports all three declared vLLM prerequisites:
-`flashinfer_mla_sparse`, `flashinfer_mla_sparse_sm120` and `index_group` under
-`vllm.v1.attention.backends.mla`. A missing requested module or parent causes a
+Tessera, both runtime and registration tests import all three declared vLLM
+prerequisites: `flashinfer_mla_sparse`, `flashinfer_mla_sparse_sm120` and
+`index_group` under `vllm.v1.attention.backends.mla`; registration also guards
+`vllm.v1.attention.backends.registry`. A missing requested module or parent causes a
 dependency-specific module skip; unrelated transitive import failures remain
 collection errors. These collection guards do not establish numerical or
 capture validation. Full-model and
@@ -1897,10 +1921,19 @@ T4 activation-prefetch experiment (2026-10-02, #875):
 * First numeric gate is the staged driver
   experiments/t4_code/prefetch_qualification.py consume, which reuses the exact
   native1 0/4 ELFs through the existing StagedInputs/NativeCallback owners.
-  Public client.read_data_manifest, manifest_read_entries and
-  storage_tiers.manifest_phase_ranges must bind exactly three native files
+  The shared pb_staged_store.validate_whole_phase_readset assertion uses public
+  client.read_data_manifest and client.manifest_read_entries to validate coverage,
+  alignment and consumption order before inspecting v1 annotations.phases or v2
+  read_plan.phases. It requires identity encoding and one nonempty native1-whole
+  range using cumulative frontiers, accepting PB-valid trailing empty phases
+  and ignoring advisory v1 bytes. T4 additionally binds exactly three native files
   (or those files plus the nine qualified sanitizer files), offset zero,
-  unique ordered whole-file members and one complete native1-whole phase.
+  unique ordered whole-file members and registry/read-order agreement. It returns
+  normalized phase ranges; the numeric validator uses the same assertion but
+  returns public ordered read entries (v2 need not follow registry order).
+  Numeric repair reports retain normalized ranges under JSON phases independently
+  of that validator return. These metadata checks open no declared native files;
+  snapshot SDK tests are not deployed-SDK or GPU numerical qualification.
   Both libraries load ONCE in one process from distinct held SDK FDs, not
   original-path reopens; direct diagnostic mapping is NOT serving _ext admission.
   The existing producer ABI rule is shared by _ext and diagnostic consumers.
@@ -9492,6 +9525,66 @@ This CPU-testable receipt contract does not confer compiled qualification,
 replace artifact byte-integrity checks or add an identity seal; runtime pins,
 serving defaults and fabric comparability remain unchanged. It does not expand
 the batch/decode evidence boundary.
+
+#### Additive owner evidence (W2 handoff to W3)
+
+The optional `GA_DISPATCH_LOG` observer retains `pid`, `captured`, `counts`
+and `tessera_classes` diagnostics and adds `owner_evidence`. This mapping uses
+process-local `<ManagerClass>@<instance-hex>` keys consistently for capture and
+replay. Each current owner contains `capture_complete` (boolean), `capture_error`
+(null or an error string), `captured` (descriptor records), `replays` (successful
+host-return records) and `replay_failures` (failed-call records). A descriptor has
+`mode`, `tokens`, `num_reqs`, and `max_seq_len`; the last is null for unsplit
+capture or the actual applied branch bound. Outcome records add `count`, and
+failure records add `error`. A failure before branch selection has a null bound,
+not the bound left selected by an earlier replay.
+
+Inventories describe actual descriptor/bound tuples, not a Cartesian product.
+The completed outer capture's final graph maps are authoritative; intermediate
+inner inventories cannot add graphs removed by a model override. The legacy
+`captured[owner]` token list is the union across the complete inventory, not
+merely the last selected bound's graph map. `counts` remains dispatch-selection
+diagnostics; neither it nor class totals prove successful tuple coverage.
+
+Before entering underlying recapture work, the observer replaces the current
+owner generation, clears its inventory and replay credit, and publishes
+`capture_complete=false`. Base, model and serving per-bound wrappers compose
+into one outer transaction. Any inner incomplete/failed branch or outer check
+failure keeps it non-qualifying, even if other branches or earlier generations
+succeeded. Replay outcomes join the owner generation at entry, so an old
+in-flight return cannot credit a replacement generation. Success eligibility is
+also fixed at entry: a replay entering during the outer capture transaction
+cannot earn replacement-generation credit, because old maps may still be
+installed after invalidation. This exclusion holds even if capture completes
+before the replay returns; failures remain separate diagnostics. It does not
+serialize capture/replay execution or assert device concurrency safety. Only an
+eligible underlying serving replay's successful return earns success credit,
+including a return of `None`; exceptions retain their behavior and separate
+failure records. Target
+and drafter class counters likewise increment only after return. Dispatch-only,
+dummy (including nested dummy), and out-of-serving-scope calls earn no success
+credit. Eager behavior and original returns/exceptions are preserved.
+
+Fork children reset inherited histories, locks and thread-local scope before
+their first event and establish their own background publisher. Snapshot
+construction and atomic replacement share one ordered writer transaction:
+atomic rename alone would not prevent an older snapshot from overwriting a
+newer recapture invalidation. Logging I/O failures do not replace serving or
+capture outcomes; dirty evidence is retried by the publisher.
+
+Owner keys and generations are local joins, not identity seals. Rank association
+continues through the configured rank-specific `GA_DISPATCH_LOG` prefixes in
+`experiments/graph_attest_702/tp2_recipe.py` and existing rank/PID filename handling
+in `receipt.py`; no rank count or deployment identity is introduced here.
+Main's producer still aggregates legacy diagnostics unchanged. Strict admission
+of every rank/process/owner's successful descriptor coverage belongs to W3;
+this additive emitter does not implement or claim that consumer conversion.
+These CPU-validated host returns are not device completion, synchronization,
+compiled qualification, a GPU campaign or expanded equality coverage. Runtime
+pins, serving defaults, fabric/scope and byte-integrity boundaries are unchanged.
+
+Implementation and review evidence:
+[owner outcomes](measurements/graph-owner-outcomes-implementation.md).
 
 Receipts: [graph equals eager on the release image](measurements/2026-10-04-glm-graph-equals-eager.md).
 
