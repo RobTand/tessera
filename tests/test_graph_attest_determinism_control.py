@@ -16,6 +16,39 @@ from eager_determinism import (FLAGS, MODE, MODES, NAMES, PHASE_MODES, PHASE_PEE
 
 CONTROL_ARMS, PM_ARMS = NAMES[:2], NAMES[2:]
 
+# One epoch for claims, rendezvous records and both controllers. Protocol time
+# does not advance in these success simulations; real waits only detect hangs.
+PROTOCOL_EPOCH = 1000.0
+WATCHDOG_SECONDS = 120
+
+
+class ProtocolClock:
+    @staticmethod
+    def time():
+        return PROTOCOL_EPOCH
+
+    @staticmethod
+    def monotonic():
+        return 0.0
+
+    @staticmethod
+    def sleep(seconds):
+        # Production rendezvous polls an explicit file condition. Do not change
+        # its algorithm or patch the process-wide time module used by Popen.
+        import threading
+        threading.Event().wait(seconds)
+
+
+PAYLOAD = """
+import sys
+print('ready', flush=True)
+command = sys.stdin.readline()
+if command == 'stop\\n':
+    print('stopped', flush=True)
+else:
+    raise SystemExit(1)
+"""
+
 
 def local_generation_reader(directory):
     """Point the control at the real maintained validator without a box artifact.
@@ -399,7 +432,6 @@ def test_real_rank_lifecycle_restarts_both_ranks_and_retains_mismatch_without_fa
     import os
     import signal
     import subprocess
-    import time
     import managed_window as window
     from test_graph_attest_window_scenarios import alive, make_identity, write_claim
     root, queue = tmp_path / "run", tmp_path / "queue"
@@ -410,7 +442,7 @@ def test_real_rank_lifecycle_restarts_both_ranks_and_retains_mismatch_without_fa
         store_population(baseline, NAMES[0])
         store_population(baseline, NAMES[1])
     arms = recipe.plan(phase_plan(tmp_path, mode), mode=mode)
-    start = time.time()
+    start = PROTOCOL_EPOCH
     identities = [make_identity(rank, start, start + 20) for rank in (0, 1)]
     for identity in identities:
         identity["peer_wait_seconds"] = PHASE_PEER_WAIT_SECONDS
@@ -426,7 +458,7 @@ def test_real_rank_lifecycle_restarts_both_ranks_and_retains_mismatch_without_fa
                                        stdout=log, stderr=subprocess.STDOUT)
             children.append((process, log))
         for process, log in children:
-            process.wait(timeout=25)
+            process.wait(timeout=WATCHDOG_SECONDS)
             log.close()
         outcomes = [window.read_json(root / f"outcome-rank{rank}.json") for rank in (0, 1)]
         pids = [int(path.read_text()) for path in root.glob("*.pid")]
@@ -605,12 +637,46 @@ if __name__ == "__main__":
     benchmark.CLIENT = client
     root, queue = parent / "run", parent / "queue"
     owned = window.read_json(parent / f"identity{rank}.json")
+    window.time = rank_window.time = ProtocolClock()
     envelope = window.Envelope(owned["window_end_unix"], cleanup_seconds=1)
     config = dict(window_mode=mode, fabric="socket")
     if phase == "pm":
         config["control_root"] = str(parent / "control-run")
 
     class ControlArm(CpuArm):
+        def start(self, arm):
+            import subprocess
+            import select
+            from child_env import child_env
+            self.tick()
+            self.server = subprocess.Popen(
+                [sys.executable, "-u", "-c", PAYLOAD],
+                stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                text=True, env=child_env(), start_new_session=True,
+            )
+            # A pipe handshake, not elapsed time, establishes launch readiness.
+            readable, _, _ = select.select([self.server.stdout], [], [], WATCHDOG_SECONDS)
+            if not readable or self.server.stdout.readline() != "ready\n":
+                raise AssertionError("payload did not acknowledge readiness")
+            self.active = arm["arm"]
+            (self.root / f"{self.active}.rank{self.owned['rank']}.pid").write_text(str(self.server.pid))
+            return dict(pid=self.server.pid, owned=True)
+
+        def cleanup(self, arm):
+            # The child has no expiry. Only owned cleanup ends its lifetime.
+            if self.server is not None:
+                process = self.server
+                try:
+                    output, _ = process.communicate("stop\n", timeout=WATCHDOG_SECONDS)
+                    assert process.returncode == 0 and output == "stopped\n", output
+                finally:
+                    if process.poll() is None:
+                        process.kill()
+                    process.wait(timeout=WATCHDOG_SECONDS)
+                    self.server = None
+            return dict(containers_empty=True, gpu_descendants_empty=True,
+                        scope_id=self.owned["scope_id"])
+
         def probes(self, arm, peer):
             name = arm["arm"]
             store_population(root, name,
