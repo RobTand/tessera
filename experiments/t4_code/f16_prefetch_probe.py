@@ -285,6 +285,9 @@ def main(argv=None):
             for side in ("off", "on"):
                 compile_side(side, getattr(args, side).resolve(), args, runner, manifest)
             manifest["comparison"] = compare(manifest["sides"])
+            if any(row["status"] in {"only_off", "only_on"}
+                   for row in manifest["comparison"].values()):
+                raise RuntimeError("unpaired kernels; no complete corresponding hint comparison")
             # Revalidate inputs after BOTH compiles, including shared headers.
             for rec in manifest["sides"].values():
                 for path, expected in {rec["source"]: {k: rec[k] for k in ("sha256", "bytes")},

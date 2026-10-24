@@ -307,3 +307,61 @@ source identity; actual source retention, diff, failure status and artifact
 custody assertions remain. No existing test was removed or acceptance file edited.
 
 [Test evidence {"artifacts":{"stderr":{"digest":"e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855","size":0},"stdout":{"digest":"25a82aa410dc964e09f8f2127e84f388b89ae4522c4d21c65b830fac8454e921","size":1845}},"operation":"9f8829c9b616945c786f3d20096d95fc34b780fc4d9a9de100847c7fa36f4bdd","receipt":"dd950d4a5cebf8065d905bf7b1c4003fd1fc5e7e5c293371f8c0007031820eae"}]
+
+## Review repair, 2026-10-24: malformed PCs and paired symbol boundaries
+
+Review found two local evidence-generation defects despite the earlier passing
+fixtures. Regressions added outside the protected acceptance file reproduced
+both against the reviewed implementation at eb70fcf3f5ec5d7d11f693453310f257d949062d:
+malformed-PC comments such as `/*0010 */` and bare known/unknown CCTL lines were
+silently skipped after a valid EXIT, returning complete/zero. Also, anonymous
+namespace normalization left the Itanium source-name length and could greedily
+consume a following function length/name. Synthetic valid `base.cu`/`new.cu`
+symbols therefore failed to pair. The pre-repair regression run observed six
+failures and four passes, including all four new missing/malformed-PC examples
+and two independent namespace-key expectations.
+
+[Test evidence {"artifacts":{"stderr":{"digest":"e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855","size":0},"stdout":{"digest":"04d6df5a4dfefe4dc200ffa7eec8207edae979ad8b5b48e82ee7e442839d2783","size":8845}},"operation":"8027c9d6a2289573cb75644ec83b9d7c620ab61d072da5fd8347c33764edb76d","receipt":"7640bafe1e25a70a069ebcaa5d24795cf26d952eb89710b55d80f34a10f05eef"}]
+
+The analyzer now rejects executable-looking CCTL leftovers after comment
+stripping with inconclusive/null PC diagnostics. Genuine comment decoys and
+encoding continuations remain ignored. Namespace normalization reads the whole
+length-delimited root nvcc source-name component and replaces its length and
+payload together, preserving the entire following specialization. Unsupported
+or malformed namespace forms are left unchanged, not guessed; collision refusal
+remains. Compiles continue to use the original source paths, so relative include
+semantics are unchanged. The paired probe now fails a packet with any only-off
+or only-on kernel, retaining its comparison diagnostics instead of reporting a
+complete corresponding-kernel result.
+
+Synthetic paired-output controls exercise the actual compile-side parsing,
+manifest assembly and comparison for unequal source basenames, including a
+hex-leading function name and a deliberately different template specialization.
+They establish Python behavior only, not fresh compiler output, historical
+retention, toolkit availability or adoption. Targeted analyzer/probe plus the
+existing dump/compare consumer checks passed 103 tests on x86 (zero skips,
+zero device allocations). No acceptance assertions or production settings were
+changed; no test was removed.
+
+[Test evidence {"artifacts":{"stderr":{"digest":"e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855","size":0},"stdout":{"digest":"29795ba0742497cdbf98f0502b1e36b0761c45181c74cd0aebcab7dde53aa08f","size":1652}},"operation":"27c8b9f7cf3ab8dd92e0531ff6feb9c42c1eca9bd291271c678fa484c8978d7d","receipt":"dd6449caa5911555313d2143267e017b676edede278b5646a9d450ab9e8d0510"}]
+
+No new GPU-arm/compiler probe was needed to decide either deterministic Python
+defect. The earlier raw artifact observations, unavailable version-attested
+compilation and owner-facing inconclusive gate remain as stated above. This
+repair does not turn synthetic pairing into a fresh supported-toolchain result,
+change the runtime pin, or authorize cp.async implementation or qualification.
+
+Final repair verification (plain command, native threads limited to one):
+
+```bash
+PYTHONPATH=src OMP_NUM_THREADS=1 MKL_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 python -m pytest tests/test_f16_prefetch_sass.py tests/test_f16_prefetch_probe.py tests/test_glm53_shared_fold_check.py tests/test_issue_refs.py tests/test_impacted_tests.py -q -n 2 --dist worksteal --durations=10 --basetemp="$TMPDIR/pytest"
+```
+
+Observed 315 passed on x86, zero skips/uncollected modules and zero device
+allocations; both mandatory guards passed. This verifies local Python/static
+behavior and the existing dump/compare consumer, not CUDA compilation. Retained
+stdout was read back to verify the result. No new GPU, timing or compiler
+availability result is claimed. The prior exact-base selector unavailability
+is not reclassified as a pass; no historical lookup was added to tests.
+
+[Test evidence {"artifacts":{"stderr":{"digest":"e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855","size":0},"stdout":{"digest":"76bf7061ba1e156d1406cd259ff166378aaf3ca782f3135eac03608919d4985f","size":1929}},"operation":"77e004d354b1ebb75d73d817cc2d40cc6ab62fe47e4e61bfa08ded30e6643fd6","receipt":"0160497321bb18cd55170822bf92f5ef4f922a8074f1e114a1695e88ffe2adb7"}]

@@ -167,6 +167,11 @@ def analyze_prefetch_sass(text: str, *, architecture: str) -> dict:
                 errors.append(f"line {lineno}: function has no architecture header")
             continue
         if not re.search(r"/\*[0-9a-fA-F]{4,}\*/", line):
+            # A malformed address comment may have been stripped above. Bare
+            # executable cache controls are not metadata, nor evidence of zero
+            # hints. Comments and encoding continuations have no such remainder.
+            if re.match(r"^\s*(?:@\S+\s+)?CCTL[A-Z0-9_.]*(?=\s|;|$)", line):
+                errors.append(f"line {lineno}: cache control has missing or malformed PC")
             continue
         parsed = instruction.fullmatch(line)
         if parsed is None:
@@ -288,10 +293,21 @@ _ANON = re.compile(r"_GLOBAL__N__[0-9a-f]+_\d+_\w+?_cu_[0-9a-f]+")
 
 
 def _kernel_name(name: str) -> str:
-    """The mangled name with the anonymous namespace's per-file hash removed:
-    nvcc hashes the translation unit into it, so an edit anywhere in the file
-    renames every kernel."""
-    return _ANON.sub("_GLOBAL__N_", name)
+    """Normalize the complete root nvcc anonymous source-name component.
+
+    Its Itanium length includes the basename and per-file hashes. Read that
+    boundary before matching: a hash regex alone also consumes the following
+    decimal function-name length (and hex-leading function names). Leave other
+    or malformed manglings unchanged rather than guessing their boundaries.
+    """
+    root = re.match(r"_ZN([1-9][0-9]*)(?=_GLOBAL__N__)", name)
+    if root is None or len(root.group(1)) > len(str(len(name))):
+        return name
+    end = root.end() + int(root.group(1))
+    if end > len(name) or _ANON.fullmatch(name[root.end():end]) is None:
+        return name
+    namespace = "_GLOBAL__N_"
+    return name[:root.start(1)] + str(len(namespace)) + namespace + name[end:]
 
 
 def _kernels(path: str) -> dict:
