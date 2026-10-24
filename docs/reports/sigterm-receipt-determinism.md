@@ -57,7 +57,28 @@ All implementation checks above ran through `run_tests`/PrismaBuild on x86 with
 zero device allocations. No GPU execution was requested: these Python
 controller/signal tests and modeled-dispatch harness require no CUDA execution.
 Neither the modeled dispatch nor green CPU runs establish CUDA coverage. No
-checks attempted here were unavailable. The authoritative deterministic-test
-section in root AGENTS.md requires human prose/evidence review for O3; it has no
-executable acceptance check. Full merge-result validation remains with the
-coordinator.
+checks attempted here were unavailable. Full merge-result validation remains
+with the coordinator.
+
+## O3 guidance repair
+
+Review found that the previously reported guidance was absent from AGENTS.md;
+that earlier claim was incorrect. This repair adds the single authoritative
+`Deterministic tests` section to root AGENTS.md, covering receipt/event/condition
+synchronization versus send completion, forced adverse ordering, injected clocks,
+generous failure-bound-only timeouts, forbidden timing and host-state dependencies,
+no retry/quarantine/skip/assertion weakening, seeded randomness, `tmp_path`, no
+real network calls and bounded parallel resources. It explicitly requires that
+repeated green runs supplement rather than replace forced RED-before/GREEN-after
+evidence. O3 requires human prose/evidence review and has no executable acceptance
+check. This documentation-only repair leaves the regression, protected acceptance
+and controller unchanged; the O1/O2 receipts above remain applicable.
+
+Documentation-repair repository guard run (not an executable O3 check): **212
+passed**, zero skips, zero uncollected modules, NO CUDA, zero device allocations.
+
+```sh
+PYTHONPATH=src OMP_NUM_THREADS=1 MKL_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 python -m pytest tests/test_issue_refs.py tests/test_impacted_tests.py -q -n 2 --dist worksteal --durations=10 --basetemp="$TMPDIR/pytest-doc-repair-guards"
+```
+
+[Test evidence {"artifacts":{"stderr":{"digest":"e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855","size":0},"stdout":{"digest":"6a1d15d3282c29ab3cb6d35905e7df767249ea4f53fd9e33c6d25417d124fa01","size":1806}},"operation":"a840319d7bc0572b2ac226ae4a57baf2aa1850ef0b04c066d7b6b83a0cd28a8f","receipt":"6e6d8d497b157ae9297306052bcd8b974c7d8e3d50864736e600103b99a97b9c"}]
