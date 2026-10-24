@@ -70,11 +70,44 @@ adoption was performed or authorized here. Before any later authorized GPU
 run, its owner must record the decision, CPU insufficiency, smallest case and
 expected minutes (target about ten before a sweep).
 
-The supplied open-list title for issue number 1491 cannot establish overlap. The local
-`docs/issues-snapshot.json` instead associates that number with Stage A
-shared-expert resource charging, so that stale snapshot cannot authenticate
-the current matched-TP2 lever/source either. No packet was shared and no
-parallel measurement campaign was opened on the basis of the generic title.
+The supplied open-list title for Tessera issue number 1491 cannot establish
+overlap. The only `1491` entry in `docs/issues-snapshot.json` belongs to
+`RobTand/prismaquant`, not Tessera, and concerns Stage A shared-expert resource
+charging. It provides no evidence about the live Tessera issue's lever/source.
+No packet was shared and no parallel measurement campaign was opened on the
+basis of the generic title.
+
+## Review repair disposition
+
+Rechecked at `0ae947fa407037f23b19fef1f5e8731cff2bd6e4` without changing
+application code or numerical tests. The native JSON digest and CUDA-source
+match reported below were independently reproduced; all 60 cases retain zero
+differing words for the four outputs. This remains a `--parts bitwise` result.
+A focused read of the five named historical timing packets under
+`/mnt/shared/tessera-measurements/mhc-fusion-783/timing-*` found none with the
+native packet's CUDA-source hash. In particular, `timing-c52a7602` and
+`timing-5e04726c` record `043cce073fef...`, not `0ebf0f43304f...`.
+They cannot repair the current-source performance gap.
+
+The review's O2/O3 failures are confirmed: no reusable complete packet or
+recorded execution decision was established by this recheck. Documentation
+and CPU tests cannot supply those missing measurements or authorize them.
+The accepted O1 implementation is preserved; **O2/O3 are not repaired**.
+Reuse existing custody issue 1521 rather than filing a duplicate or starting
+an unauthorized qualification campaign.
+
+Revalidated O1 and documentation guards on x86 after the review-disposition
+edit:
+
+```sh
+PYTHONPATH=src OMP_NUM_THREADS=1 MKL_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 python -m pytest tests/test_mhc_fusion.py tests/test_issue_refs.py tests/test_impacted_tests.py -q -n 2 --dist worksteal --durations=10 --basetemp="$TMPDIR/pytest"
+```
+
+Observed: 252 passed in 138.31 s; no skips, uncollected modules, CUDA device
+or device allocations. Retained stdout was read back and verified. No new
+GPU/native/serving check was submitted; this run does not satisfy O2/O3.
+
+[Test evidence {"artifacts":{"stderr":{"digest":"e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855","size":0},"stdout":{"digest":"2d2046ab67dd3ec2076d7b7210f942225bc00a05d9f15c5919586d2b9ea001c1","size":1859}},"operation":"d8e9368b68b19788ec9d71d5f1857664f998ae20899b9ff8302daa8ea866c69b","receipt":"b5dcd74c1c124649c3bde61de27fe82c6facec22c8032a201662f77fc4c52091"}]
 
 ## Qualification-custody follow-up
 
