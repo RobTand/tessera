@@ -2,12 +2,15 @@
 
 ## Final repair scope and source
 
-Repair base HEAD: `e4ccf3b14b29c802e4eb9ecc4bf6a1574b3f5adc`.
-The exact tested files on that base have these SHA-256 digests:
+Harness repair base HEAD: `e4ccf3b14b29c802e4eb9ecc4bf6a1574b3f5adc`.
+Documentation-only O4 follow-up base HEAD: `ac5d430e84379e3f12f5bf3dfe463039e5db5096`.
+The harness and protected-source SHA-256 digests below still match the sources
+used by the retained post-fix receipts. The AGENTS.md digest instead identifies
+the guidance added in this follow-up, not the file present in those earlier runs:
 
 - `tests/test_graph_attest_determinism_control.py`: `e29ba55196cd0c61fae332cf4c95df8bedea924b80f026483c20e7eed0c98a9d`
 - `tests/test_graph_attest_determinism_lifecycle_regression.py`: `072cb1bd4ab66eb89bc28ec9fa2622eda4ac1b2f396341594305fb53308fc5a7`
-- `AGENTS.md`: `7797c94e557ac7c4ac71924b90b21656fd98b44276ef07845f15f6c4a74ebc70`
+- `AGENTS.md`: `a413a0fc8ea4a9aee42ce5629d122f3a10b1371612d90e6a864678fa4d876d24`
 - Protected `tests/test_graph_attest_control_clock_isolation.py` (unchanged): `ccf55ba42935beef1f2ea02c9adcc30ef497c741287d9c0727fae3fe4301a821`
 
 The harness still uses real Envelope/run_rank controllers and rendezvous
@@ -37,8 +40,16 @@ benchmark.CLIENT, both protocol clocks, sys.path, argv, Envelope and run_rank.
 Two further cases prove restoration after normal exit and interrupted capture.
 The lifecycle regression population is now 11 cases, up from the four broken
 cases in the reviewed patch; no tests or meaningful assertions were removed.
-No tautological tests were found. Normative deterministic-test guidance is now
-present in AGENTS.md, including direct-call setup and runpy isolation.
+No tautological tests were found in the reviewed harness repair. Its report
+incorrectly claimed normative guidance was already present in AGENTS.md.
+This documentation-only O4 follow-up adds the missing
+`## Deterministic test authoring` section: consistent injected clocks,
+event/condition synchronization,
+generous failure-only watchdogs, bounded workers/native threads, cleanup even on
+assertion failure, and isolated prerequisites/state (including direct calls and
+runpy). It explicitly prohibits retries, timing thresholds, sleeping to wait,
+self-expiring fixture processes and assertion weakening. No test, production or
+shared scenario source is changed by this follow-up.
 
 ## Earlier evidence and corrections
 
@@ -46,9 +57,13 @@ Research's RED demonstrated ambient-clock work-deadline exhaustion in both
 protected cases. Exact attribution of the historical two excusals is still
 uncertain. The previous implementation's x86-only passes did not establish
 GPU-arm hermeticity and omitted the broken teardown regression. Its claimed
-AGENTS.md digest did not match the reviewed tree; the hashes above supersede
-that account. Review receipts established GPU failures before controller launch
-and four teardown failures plus shared-state leakage, all rechecked against
+AGENTS.md digest and guidance-completion claim did not match the reviewed tree:
+before this O4 follow-up, AGENTS.md still hashed to
+`f8131409f937d773bc3ee67f1abf65baf77a84ecb09af4840228c9bccf9a3aa9`
+and had no deterministic-test section. The source identities and completion
+account above correct that error. Review receipts established GPU failures
+before controller launch and four teardown failures plus shared-state leakage,
+all rechecked against
 source for this repair. The new results below supersede those failures, not
 retries or ignored failures of unchanged code.
 
@@ -58,7 +73,13 @@ Research RED:
 Review GPU-arm O1 failure (1 failed, 74 passed):
 [Test evidence {"artifacts":{"stderr":{"digest":"e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855","size":0},"stdout":{"digest":"b4370035432eb8e55781752c059e337e216a9a8d59536557366ae7ce1c9dfe6f","size":5089}},"operation":"d406fd8c604a28dfe2533452d55e77e69b6e72b21ea98c5e763a0bbffaed83d0","receipt":"f2488f8594b692aaa82beb3826c61890fa8a8808567d072448543074e47f89e6"}]
 
-## Fresh post-repair checks
+## Post-harness-repair checks (retained receipts)
+
+These runs predate the documentation-only O4 follow-up; the tested harness and
+protected-source hashes are unchanged. Both five-invocation stdout artifacts
+were read back again during this follow-up and confirm the per-attempt counts
+below. Fresh documentation-follow-up verification is recorded separately at
+the end of this report.
 
 All checks use plain commands through run_tests, already admitted PrismaBuild
 actions. Native threads are limited to one; xdist uses two workstealing workers.
@@ -154,3 +175,35 @@ allocations. The final diff and source hashes were rechecked with
 `git diff --check` and `sha256sum`; the protected source remains unchanged.
 
 [Test evidence {"artifacts":{"stderr":{"digest":"e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855","size":0},"stdout":{"digest":"5f0bde30f1f3c2626fbc90da468eaeb4cee293d443f05a1ac61c121841f26eb5","size":2098}},"operation":"c6797eb24587eee5f0bdcf2d5d3c24f0a776340b8fdd63c8afb7bdc58a58ec03","receipt":"b06661ebac3fc48a6391530be26282be28bb6005c5646b7ce7308ff6aef26a71"}]
+
+## Documentation-only O4 follow-up verification
+
+The missing normative section is now in AGENTS.md, not just claimed here.
+Its final SHA-256 is recorded above. This follow-up changes only AGENTS.md and
+this report; harness, lifecycle-regression and protected-source hashes remain
+identical to those used for the five-invocation and bounded-xdist receipts.
+No tests or assertions were removed.
+
+Fresh x86 check through run_tests:
+
+```sh
+PYTHONPATH=src OMP_NUM_THREADS=1 MKL_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 python -m pytest tests/test_graph_attest_control_clock_isolation.py tests/test_graph_attest_determinism_control.py tests/test_graph_attest_determinism_lifecycle_regression.py tests/test_issue_refs.py tests/test_impacted_tests.py -q -n 2 --dist worksteal --durations=10 --basetemp="$TMPDIR/pytest"
+```
+
+298 passed in 174.68s: 73 original target cases, 2 protected ambient-clock
+cases, 11 lifecycle regressions and 212 mandatory guard cases. Zero deselected
+or skipped tests, zero uncollected modules and zero device allocations. The
+retained stdout was read back to verify the population. x86 reported NO CUDA
+with CPU torch 2.11.0; this is CPU simulation, not CUDA numerical coverage.
+No GPU run or full integration suite was repeated for this documentation-only
+change; the unchanged harness's prior two-arm receipts remain above.
+
+The in-worktree selector command
+`python3 tools/impacted_tests.py --ref ac5d430e84379e3f12f5bf3dfe463039e5db5096`
+reported `narrowed` (2 changed documentation files, 423 selected test files),
+with out-of-tree and unnamed-directory diagnostics. That broad selection was
+not executed as a suite and is not claimed as passing; this follow-up's executed
+population is the 298 scoped cases above. Full integration remains with the
+coordinator. `git diff --check` passed and the final file hashes were rechecked.
+
+[Test evidence {"artifacts":{"stderr":{"digest":"e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855","size":0},"stdout":{"digest":"9fffb811a9438cd06eec1b2d0b67306aac38dda721979761c9a61edb5c0f739b","size":2101}},"operation":"f367472a7bb59707df975218464a7f533ccb14bc2425aed499b45e9e4c8a8711","receipt":"71593ebcf25892e4574b59b7e291cf46aa742d3eb2a8c40a0cf22c51e197f104"}]
