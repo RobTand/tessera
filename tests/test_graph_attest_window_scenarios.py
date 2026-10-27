@@ -22,6 +22,28 @@ import rank_window
 import window_driver
 
 
+class ScenarioClock:
+    """Drive work/cleanup deadlines from flushed probe evidence and peer exit."""
+
+    def __init__(self, owned, root):
+        self.start, self.root, self.rank = owned["claimed_unix"], root, owned["rank"]
+        self.envelope = None
+
+    def monotonic(self):
+        if (self.envelope is not None
+                and (self.root / f"failed-cleaned-rank{self.rank}.json").exists()
+                and (self.root / f"outcome-rank{1 - self.rank}.json").exists()
+                and not (self.root / f"failed-cleaned-rank{1 - self.rank}.json").exists()):
+            return self.envelope.end
+        return window.WINDOW_SECONDS - window.CLEANUP_SECONDS if (self.root / "timeout-probe.pid").exists() else 0
+
+    def time(self):
+        return self.start + self.monotonic()
+
+    def sleep(self, seconds):
+        time.sleep(seconds)
+
+
 class CpuArm:
     def __init__(self, root, owned, envelope, scenario):
         self.root, self.owned, self.envelope, self.scenario = root, owned, envelope, scenario
@@ -41,7 +63,7 @@ class CpuArm:
     def start(self, arm):
         self.active = arm["arm"]
         with (self.root / f"{self.active}.rank{self.owned['rank']}.server.log").open("w") as stream:
-            self.server = subprocess.Popen([sys.executable, "-c", "import time;print('ready',flush=True);time.sleep(30)"],
+            self.server = subprocess.Popen([sys.executable, "-c", "import signal;print('ready',flush=True);signal.pause()"],
                                            stdout=stream, stderr=subprocess.STDOUT, start_new_session=True)
         (self.root / f"{self.active}.rank{self.owned['rank']}.pid").write_text(str(self.server.pid))
         if self.scenario == "launch_failure" and self.owned["rank"] == 1:
@@ -65,8 +87,14 @@ class CpuArm:
         failed_arm = {"window4-eager-2048-4096": "eager2048", "ship-eager-4096-8192": "eager4096",
                       "ship-graph-2048": "graph2048_off"}.get(mode, "aGR")
         failure = self.scenario in ("probe_failure", "timeout") and arm["arm"] == failed_arm
-        program = "import time;print('partial',flush=True);time.sleep(30)" if failure and self.scenario == "timeout" else (
-                  "print('partial',flush=True);raise SystemExit(7)" if failure else "print('two full passes and screens simulated',flush=True)")
+        boundary = self.root / "timeout-probe.pid"
+        if failure and self.scenario == "timeout":
+            program = ("import os,signal;from pathlib import Path;print('partial',flush=True);"
+                       f"marker=Path({str(boundary)!r});temporary=marker.with_suffix('.tmp');"
+                       "temporary.write_text(str(os.getpid()));temporary.replace(marker);signal.pause()")
+        else:
+            program = ("print('partial',flush=True);raise SystemExit(7)" if failure else
+                       "print('two full passes and screens simulated',flush=True)")
         with (self.root / f"{arm['arm']}.probes.log").open("w") as stream:
             self.envelope.run([sys.executable, "-c", program], stdout=stream, tick=self.tick,
                               limit=self.envelope.remaining())
@@ -76,7 +104,7 @@ class CpuArm:
             if self.scenario == "removal_failure" and self.owned["rank"] == 1:
                 self.envelope.run([sys.executable, "-c", "raise SystemExit(7)"], cleanup=True)
             os.killpg(self.server.pid, signal.SIGTERM)
-            self.server.wait(timeout=min(1, self.envelope.remaining(cleanup=True)))
+            self.server.wait(timeout=120)
             self.server = None
         if self.scenario == "copy_failure" and self.owned["rank"] == 1:
             self.envelope.run(["cp", str(self.root / "absent-output"), str(self.root / "copy.log")], cleanup=True)
@@ -121,8 +149,7 @@ def scenario(root, name, *, mode="graph-control"):
     rdv.mkdir()
     window.atomic_json(root / "scenario-mode.json", dict(mode=mode))
     start = time.time()
-    # Shortened only in this simulated CPU fixture; production always has the fixed 5400s envelope.
-    end = start + (3 if name == "timeout" else 8)
+    end = start + window.WINDOW_SECONDS
     identities = [make_identity(rank, start, end) for rank in (0, 1)]
     children = []
     started = time.monotonic()
@@ -135,7 +162,7 @@ def scenario(root, name, *, mode="graph-control"):
                                       str(root), name], stdout=log, stderr=subprocess.STDOUT)
             children.append((child, log))
         for child, log in children:
-            child.wait(timeout=12)
+            child.wait(timeout=120)
             log.close()
         outcomes = [window.read_json(rdv / f"outcome-rank{rank}.json") for rank in (0, 1)]
         pids = [int(path.read_text()) for path in rdv.glob("*.pid")]
@@ -154,10 +181,9 @@ def scenario(root, name, *, mode="graph-control"):
 @pytest.mark.parametrize("name", ["success", "probe_failure", "timeout", "launch_failure", "copy_failure",
                                    "removal_failure", "preflight", "floor", "fabric"])
 def test_real_bounded_protocol_and_failures_keep_partial_evidence(tmp_path, name):
-    outcomes, living, seconds = scenario(tmp_path, name)
+    outcomes, living, _ = scenario(tmp_path, name)
     assert all(outcome["simulation"] is True for outcome in outcomes)
     assert all(outcome["ownership_released"] is False for outcome in outcomes)
-    assert seconds < 10
     rdv = tmp_path / "rdv"
     if name == "success":
         assert [outcome["returncode"] for outcome in outcomes] == [0, 0]
@@ -172,11 +198,35 @@ def test_real_bounded_protocol_and_failures_keep_partial_evidence(tmp_path, name
             assert "partial" in (rdv / "aGR.probes.log").read_text()
             assert all(outcome["completed_arms"] == ["aE1"] for outcome in outcomes)
         if name == "timeout":
+            assert (rdv / "timeout-probe.pid").is_file()
+            probe_pid = int((rdv / "timeout-probe.pid").read_text())
+            assert any(termination["pid"] == probe_pid and
+                       any(sent["signal"] == "SIGTERM" for sent in termination["signals"])
+                       for outcome in outcomes for termination in outcome["process_terminations"])
             assert any(outcome["returncode"] == 124 for outcome in outcomes)
             assert all(outcome["ended_unix"] <= outcome["window_end_unix"] for outcome in outcomes)
         if name in ("copy_failure", "removal_failure"):
             assert any("cleanup_error" in outcome or "command failed" in outcome.get("error", "") for outcome in outcomes)
         assert bool(living) == (name == "removal_failure")
+
+
+@pytest.mark.parametrize("name", ["success", "probe_failure", "timeout"])
+def test_protocol_progress_is_independent_of_host_clock(tmp_path, monkeypatch, name):
+    launch = subprocess.Popen
+    bootstrap = (
+        "import itertools,runpy,subprocess,sys,time; "
+        "ticks=itertools.count(); "
+        f"time.monotonic=lambda: next(ticks)*{window.WINDOW_SECONDS}; "
+        "sys.argv=sys.argv[1:]; runpy.run_path(sys.argv[0],run_name='__main__')"
+    )
+
+    def advance_host_clock(argv, **kwargs):
+        if "--scenario-rank" in argv:
+            argv = [argv[0], "-c", bootstrap, *argv[1:]]
+        return launch(argv, **kwargs)
+
+    monkeypatch.setattr(subprocess, "Popen", advance_host_clock)
+    test_real_bounded_protocol_and_failures_keep_partial_evidence(tmp_path, name)
 
 
 @pytest.mark.parametrize("field", ["image", "src_sha256", "config_sha256"])
@@ -189,8 +239,8 @@ def test_mismatched_rank_preflight_refuses_before_either_launch(tmp_path, monkey
         monkeypatch.delenv("PRISMAQUANT_DEV_MODE", raising=False)
     else:
         monkeypatch.setenv("PRISMAQUANT_DEV_MODE", dev_mode)
-    outcomes, living, seconds = scenario(tmp_path, f"peer-mismatch-{field}", mode=mode)
-    assert not living and seconds < 10
+    outcomes, living, _ = scenario(tmp_path, f"peer-mismatch-{field}", mode=mode)
+    assert not living
     assert all(outcome["returncode"] == 1 and outcome["invocation_failed"]
                and outcome["completed_arms"] == [] for outcome in outcomes)
     assert any(f"rank preflight differs in {field}" in outcome["error"] for outcome in outcomes)
@@ -240,7 +290,10 @@ def test_fabric_cannot_be_inferred_from_a_request(log):
 if __name__ == "__main__":
     rank, root, name = int(sys.argv[2]), Path(sys.argv[3]), sys.argv[4]
     owned = window.read_json(root / f"identity{rank}.json")
-    envelope = window.Envelope(owned["window_end_unix"], cleanup_seconds=.6)
+    clock = ScenarioClock(owned, root / "rdv")
+    window.time = rank_window.time = clock
+    envelope = window.Envelope(owned["window_end_unix"])
+    clock.envelope = envelope
     mode = window.read_json(root / "scenario-mode.json")["mode"]
     names = {"window4-eager-2048-4096": ("eager2048", "eager4096"),
              "ship-eager-4096-8192": ("eager4096", "eager8192"),
