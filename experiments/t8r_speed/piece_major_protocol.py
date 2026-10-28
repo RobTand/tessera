@@ -12,6 +12,7 @@ DUAL_B_NUMERIC_SCHEMA = "tessera.routed_mma8_dual_b_numeric.v1"
 ARTIFACT = "/mnt/shared/tessera-runs/moe/glm53-a8-bf16menu-20260930/release/exported"
 GROUP = "experts.R1024.L10"
 ORDER = ["legacy", "piece_major", "piece_major", "legacy"]
+TP_SIZE, TP_RANK = 2, 0
 
 
 def hashed_json(path, digest=None):
@@ -115,8 +116,8 @@ def load(path):
     return doc, digest
 
 
-def harness_identity(doc):
-    root = Path(__file__).resolve().parents[2]
+def harness_identity(doc, root=None):
+    root = Path(__file__).resolve().parents[2] if root is None else Path(root)
     for relative, digest in doc["harness"].items():
         if hashlib.sha256((root / relative).read_bytes()).hexdigest() != digest:
             raise ValueError(f"comparison harness changed: {relative}")
@@ -202,16 +203,21 @@ def require_profile_receipt(doc, numeric):
     return profile
 
 
+def _file_identity(path):
+    with Path(path).open("rb") as stream:
+        stat = os.fstat(stream.fileno())
+        return {"sha256": hashlib.file_digest(stream, "sha256").hexdigest(),
+                "bytes": stat.st_size, "mtime_ns": stat.st_mtime_ns}
+
+
 def source_identity(doc, source_root):
     manifest, _ = hashed_json(doc["source_manifest"]["path"], doc["source_manifest"]["sha256"])
     root = Path(source_root).resolve().parent
     observed = {}
     for relative, expected in manifest["files"].items():
         path = root / relative
-        stat = path.stat()
-        digest = hashlib.sha256(path.read_bytes()).hexdigest()
-        if (digest != expected["sha256"] or stat.st_size != expected["bytes"]
-                or stat.st_mtime_ns != expected["mtime_ns"]):
+        actual = _file_identity(path)
+        if any(actual[field] != expected[field] for field in actual):
             raise ValueError(f"comparison source bytes/timestamps differ: {relative}")
         observed[relative] = dict(expected)
     kernel = observed["src/tessera/serving/csrc/routed_fused_window.cu"]["sha256"]
@@ -226,14 +232,32 @@ def native_bank_identity(expected):
     for name, binding in expected["files"].items():
         if Path(name).name != name:
             raise ValueError("native recipe member must be a basename")
-        p = path.parent / name
-        st = p.stat()
-        observed = {"sha256": hashlib.sha256(p.read_bytes()).hexdigest(),
-                    "bytes": st.st_size, "mtime_ns": st.st_mtime_ns}
+        observed = _file_identity(path.parent / name)
         if observed != binding:
             raise ValueError(f"comparison native bank changed: {name}")
         files[name] = observed
     return files
+
+
+def preparation_identity(doc, source_root):
+    """Observe the finite protocol's inputs without loading native code or CUDA."""
+    validate(doc)
+    harness_identity(doc, Path(source_root).resolve().parent)
+    hashed_json(doc["input_manifest"]["path"], doc["input_manifest"]["sha256"])
+    source = source_identity(doc, source_root)
+    files = native_bank_identity(doc["native"])
+    for field in ("path", "origin_path"):
+        if _file_identity(doc["native"][field])["sha256"] != doc["native"]["sha256"]:
+            raise ValueError(f"comparison native {field} digest differs")
+    if _file_identity(doc["routing"]["path"])["sha256"] != doc["routing"]["sha256"]:
+        raise ValueError("comparison routing differs from the bound capture")
+    return {"source": source, "harness": dict(doc["harness"]),
+            "native": {"path": doc["native"]["path"], "origin_path": doc["native"]["origin_path"],
+                       "sha256": doc["native"]["sha256"], "files": files},
+            "artifact": {"path": doc["artifact"], "group": doc["group"],
+                         "input_manifest": dict(doc["input_manifest"])},
+            "routing": dict(doc["routing"]), "tp": [TP_RANK, TP_SIZE],
+            "scope": "CPU identity preparation only; FP8/BF16 and T4 GPU qualification not measured"}
 
 
 def mapped_native_identity(lib, expected):
