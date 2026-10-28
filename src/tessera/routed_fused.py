@@ -864,7 +864,7 @@ def has_one_rate_four_run(b, e: int) -> bool:
     return n_hi == 0 and r_lo == 4 and n_lo == int(b.cols)
 
 
-def _run_stack_reason(name: str, b, e: int) -> "str | None":
+def _run_stack_reason(name: str, b, e: int, *, rate_max: int = RATE_MAX) -> "str | None":
     """The wire checks every fused window lane makes on one projection's
     stack: words by expert, one run table for the stack that is the kernel's
     run pair, the packer's column order, the tile stride and the start
@@ -888,7 +888,7 @@ def _run_stack_reason(name: str, b, e: int) -> "str | None":
     runs_e = runs.reshape(e, per, 4)
     if not bool((runs_e == runs_e[:1]).all()):
         return f"{name} experts disagree on their run tables; the lane reads one schedule per stack"
-    pair, why = run_pair(runs_e[0], b.cols)
+    pair, why = run_pair(runs_e[0], b.cols, rate_max=rate_max)
     if pair is None:
         return f"{name} {why}"
     n_lo = int(pair[2])
@@ -919,6 +919,11 @@ def fused_routed_window_supported(gate, up, down) -> "str | None":
     experts in that class and for both gate and up. Unsupported classes
     refuse with this reason; there is no compact runtime substitute.
     """
+    return _routed_window_reason(gate, up, down, rate_max=RATE_MAX, split=False)
+
+
+def _routed_window_reason(gate, up, down, *, rate_max: int, split: bool) -> "str | None":
+    """Shared wire validation with an explicit launch ceiling and table geometry."""
     bundles = {"gate": gate, "up": up, "down": down}
     fam = down.family
     if fam not in ("value", "e4m3"):
@@ -965,7 +970,7 @@ def fused_routed_window_supported(gate, up, down) -> "str | None":
             return f"{name} was prepared without the native activation quantizer"
         if b.cols % BK != 0 or b.cols < MIN_COLS:
             return f"{name} has {b.cols} columns; the lane needs a multiple of {BK} and at least {MIN_COLS}"
-        why = _run_stack_reason(name, b, e)
+        why = _run_stack_reason(name, b, e, rate_max=rate_max)
         if why is not None:
             return why
         if b.scale_all.dtype != torch.float32 or tuple(b.scale_all.shape) != (e, b.rows):
@@ -974,11 +979,12 @@ def fused_routed_window_supported(gate, up, down) -> "str | None":
         return f"gate rows {gate.rows}, up rows {up.rows} and down cols {down.cols} disagree"
     if gate.cols != up.cols:
         return f"gate cols {gate.cols} != up cols {up.cols}"
-    if gate.rows % HALF != 0:
-        return f"the intermediate size {gate.rows} is not a multiple of {HALF}"
+    row_quantum = BN if split else HALF
+    if gate.rows % row_quantum != 0:
+        return f"the intermediate size {gate.rows} is not a multiple of {row_quantum}"
     if down.rows % BN != 0:
         return f"the hidden size {down.rows} is not a multiple of {BN}"
-    if int(gate.tile_words[0]) != int(up.tile_words[0]):
+    if not split and int(gate.tile_words[0]) != int(up.tile_words[0]):
         return (f"gate tile_words {int(gate.tile_words[0])} != up tile_words {int(up.tile_words[0])}; "
                 "the gate/up launch reads one tile stride for both")
     # The word-stage slot each launch needs, against the device's shared memory.
@@ -986,15 +992,17 @@ def fused_routed_window_supported(gate, up, down) -> "str | None":
         library = library_for(fam)
     except GrammarError as exc:
         return str(exc)
-    for mode, bs in ((0, (gate, up)), (2, (down,))):
-        slot = max(slot_words_for_pair(run_pair(b.runs_all.reshape(e, -1, 4)[0], b.cols)[0]) for b in bs)
+    projections = ((2, (gate,)), (2, (up,)), (2, (down,))) if split else ((0, (gate, up)), (2, (down,)))
+    for mode, bs in projections:
+        slot = max(slot_words_for_pair(run_pair(b.runs_all.reshape(e, -1, 4)[0], b.cols,
+                                               rate_max=rate_max)[0]) for b in bs)
         why = smem_reason(mode, slot, down.device, library)
         if why is not None:
             return why
     return None
 
 
-def projection_tables(bundle) -> "tuple[torch.Tensor, torch.Tensor, int, int]":
+def projection_tables(bundle, *, rate_max: int = RATE_MAX) -> "tuple[torch.Tensor, torch.Tensor, int, int]":
     """The launch tables the lane builds for one projection's bundle.
 
     ``(runs, bdesc, tile_words, slot_words)``: the stack's run pair broadcast
@@ -1005,10 +1013,11 @@ def projection_tables(bundle) -> "tuple[torch.Tensor, torch.Tensor, int, int]":
     two of the tensors its ``resident_bytes`` counts, so the exporter's price
     (``serving_parts.routed_fused_unit_bytes``) is tested against this
     function rather than a restatement.  The caller has admitted the stack
-    (:func:`fused_routed_window_supported`).
+    (:func:`fused_routed_window_supported`, or the experimental split owner
+    with its explicit one-table ``rate_max``).
     """
     e = int(bundle.experts)
-    pair, why = run_pair(bundle.runs_all.reshape(e, -1, 4)[0], bundle.cols)
+    pair, why = run_pair(bundle.runs_all.reshape(e, -1, 4)[0], bundle.cols, rate_max=rate_max)
     if pair is None:
         raise GrammarError(f"the fused routed window lane refuses this projection: {why}")
     return (pair.reshape(1, 8).expand(e, 8).contiguous(),

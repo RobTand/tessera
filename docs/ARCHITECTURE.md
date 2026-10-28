@@ -177,6 +177,24 @@ The routed-pair oracle reads raw BF16 values and separate FP32 row scales.
 Its FP64 reference applies the scale after the dot and reads decoder names from telemetry.
 Historical stock profiles remain controls, not the numerical reference.
 
+`t16_routed_split.SplitT16RoutedMoE` is an explicit experimental owner, not a
+production dispatcher or a qualified serving cell. It reuses the one-table
+raw-value BF16 reader for separate routed gate, up and matching down launches.
+Its rate ceiling is the existing value-family one-table ceiling (14), not a new
+wire or profile. Uniform and adjacent mixed-rate tables retain their own stride
+and start states; rates 15/16 remain excluded, with no BF16-passthrough claim.
+The bounded geometry requires 128-row projection multiples, the existing
+column constraints, and 64-route superblocks. Gate/up outputs are flat BF16;
+the native SwiGLU stage applies the existing FP32 clamp/activation arithmetic
+and restores sorted-route order. Down uses that order and the existing
+fixed-order token sum. Three BF16 intermediates cost `6 * routes * intermediate`
+bytes before allocator effects; `named_tensors` enumerates retained storage.
+Resource bounds are derived from the existing one-table layout, not measured
+register, peak-allocator, timing or power evidence. CUDA real-wire numerics,
+TP2 rank-1 and changed-population graph regressions remain qualification work
+until run on an authorized exact tuple. Production predicates, contract,
+default and admission remain unchanged at their existing routed rate ceiling.
+
 The routed census reads the native owner’s retained class inventory.
 Its consumer passes that owner explicitly. Each class reports its real tables, words, scales, runs and descriptors.
 
