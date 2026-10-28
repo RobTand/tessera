@@ -365,22 +365,21 @@ class PreparedDenseNativeModule:
     @property
     def launch_pair(self):
         """The ``(symbol, decoder)`` of this module's window lane (every M
-        without a decoded copy; M below ``e4m3_prefill.MIN_M`` with one)."""
+        without a decoded copy; M below the copy owner's ``min_m`` with one)."""
         return (self.symbol, self.decoder)
 
     @property
     def decoded(self):
-        """The decode-once E4M3 copy (``e4m3_prefill.DecodedE4M3``), or ``None``."""
+        """The family-owned decode-once copy, or ``None``."""
         return self.__decoded
 
     def attach_decoded(self, decoded) -> None:
         """Hold ``decoded`` (made from THIS module) and serve large M from it.
 
-        Once per module, E4M3 family only, shape-checked against the module;
-        the route decides whether to attach (``e4m3_prefill.enabled`` and the
-        resident mode)."""
-        if self.__family != "e4m3":
-            raise ValueError(f"a decode-once copy serves the E4M3 family, not {self.__family!r}")
+        Once per module, family- and shape-checked against the module;
+        the route owns the opt-in and residency policy."""
+        if self.__family != decoded.family:
+            raise ValueError(f"a decode-once copy serves {decoded.family!r}, not {self.__family!r}")
         if self.__decoded is not None:
             raise ValueError("this module already holds a decode-once copy")
         if tuple(decoded.weight.shape) != (self.__rows, self.__columns) \
@@ -392,12 +391,8 @@ class PreparedDenseNativeModule:
 
     def launch_pair_for(self, m: int):
         """The ``(symbol, decoder)`` ``apply`` runs for an ``m``-row input."""
-        from .e4m3_prefill import MIN_M
-        from .scheme import DECODE_ONCE_DENSE_SYMBOL
-        from .telemetry import DECODER_NATIVE_WINDOW_DECODE_ONCE_E4M3
-
-        if self.__decoded is not None and int(m) >= MIN_M:
-            return (DECODE_ONCE_DENSE_SYMBOL, DECODER_NATIVE_WINDOW_DECODE_ONCE_E4M3)
+        if self.__decoded is not None and int(m) >= self.__decoded.min_m:
+            return self.__decoded.launch_pair
         return self.launch_pair
     @property
     def role_names(self): return tuple(role.name for role in self.__roles)
@@ -439,24 +434,23 @@ class PreparedDenseNativeModule:
         call, so the contract's quantizer is the one that ran).  On the fused
         lane one custom-op node serves the whole module; on the Triton lane one
         node per role.  No host-side data-dependent work on either.  A module
-        holding a decode-once copy serves M >= ``e4m3_prefill.MIN_M`` from it
+        holding a decode-once copy serves M >= its family owner's ``min_m`` from it
         (:meth:`launch_pair_for` names which ran).  That branch reads M on the
         host, so the decode-once lane is EAGER-ONLY.  The gate is the route's
-        LOAD (``fp8_route`` refuses to attach a copy when vLLM compiles the
+        LOAD (the family route refuses to attach a copy when vLLM compiles the
         forward); the raise below is a backstop for a direct caller, and under
         ``torch.compile`` without ``fullgraph`` it is a graph break Dynamo may
         run around.  A CUDA-graph capture sees a concrete M and records the
         branch that ran for it.
         """
         if self.__decoded is not None:
-            from .e4m3_prefill import FLAG, MIN_M, prefill_apply
-
             if torch.compiler.is_compiling():
                 raise RuntimeError(
-                    f"the decode-once E4M3 lane is eager-only ({FLAG}=1); serve with "
-                    f"compilation mode NONE or set {FLAG}=0")
-            if int(x.shape[0]) >= MIN_M:
-                return prefill_apply(self.__decoded, x, a_scale)
+                    f"the decode-once {self.__family} lane is eager-only "
+                    f"({self.__decoded.flag}=1); serve with compilation mode NONE "
+                    f"or set {self.__decoded.flag}=0")
+            if int(x.shape[0]) >= self.__decoded.min_m:
+                return self.__decoded.apply(x, a_scale)
         if self.__lane == LANE_FUSED:
             fused = self.__fused
             return _fused_window_dense(
@@ -497,8 +491,8 @@ class PreparedDenseNativeModule:
         for index, fused in enumerate(self.__fused):
             for name, tensor in fused.named_tables():
                 yield f"roles.{index}.{name}", tensor
-        # The decode-once copy, when the route attached one: one E4M3 byte per
-        # weight and the fp32 row scale it is served with (tessera#931).
+        # The family-owned decode-once copy and its FP32 row scale: E4M3
+        # retains one byte per weight, value retains two unscaled BF16 bytes.
         if self.__decoded is not None:
             yield "decoded.weight", self.__decoded.weight
             yield "decoded.scale", self.__decoded.scale

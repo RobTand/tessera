@@ -52,13 +52,9 @@ import triton.language as tl
 
 from .errors import GrammarError
 from .kernel_window_gemv import WindowGemvUnit
-from .window_geometry import TILE_ROWS
+from .window_geometry import MIN_BLOCK, TILE_ROWS
 
 __all__ = ["window_gemm", "prepare_window_gemm", "PreparedWindowGemm", "MIN_BLOCK"]
-
-#: ``tl.dot`` needs a 16-row minimum operand; any M is served by masking.
-MIN_BLOCK = 16
-
 
 @triton.jit
 def _window_gemm_kernel(

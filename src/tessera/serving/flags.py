@@ -16,7 +16,7 @@ from __future__ import annotations
 
 import os
 
-__all__ = ["latched_bool", "latched_mode", "latched_path", "reset_for_tests"]
+__all__ = ["latched_bool", "latched_mode", "latched_path", "latched_positive_int", "reset_for_tests"]
 
 #: flag name -> the raw string this process latched.  One dict rather than a
 #: module-level variable per flag, so ``reset_for_tests`` cannot miss one.
@@ -64,6 +64,14 @@ def latched_bool(flag: str, *, default: bool = False, meaning: str = "this behav
     if value == "":
         return default
     return value in _TRUE
+
+
+def latched_positive_int(flag: str, *, meaning: str) -> int:
+    """An explicit positive integer, fixed for the life of the process."""
+    current = os.environ.get(flag, "").strip()
+    if not current.isdecimal() or int(current) <= 0:
+        raise ValueError(f"{flag} must be an explicit positive integer for {meaning}")
+    return int(_latch(flag, current))
 
 
 def latched_path(flag: str, *, meaning: str = "this file") -> str | None:

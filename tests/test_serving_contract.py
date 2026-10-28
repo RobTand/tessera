@@ -713,21 +713,19 @@ def test_the_dense_launch_table_is_the_launch_apply_makes(monkeypatch):
              telemetry.DECODER_NATIVE_FUSED_WINDOW_DENSE_BF16)):
         assert module.DENSE_LAUNCH == (WINDOW_GEMM_SYMBOL, decoder)
         assert module.DENSE_FUSED_LAUNCH == (FUSED_WINDOW_DENSE_SYMBOL, fused_decoder)
-        # the E4M3 family's dense identity on its own instruction is a third
-        # launch the FP8 route makes (attested since contract v47)
-        # ...and, on the FP8 route, the decode-once prefill lane (contract
-        # v56, tessera#931): default-off, resident only, experimental.
-        extra = ((module.DENSE_FUSED_MMA_E4M3_LAUNCH, module.DENSE_DECODE_ONCE_LAUNCH)
-                 if module is fp8_route else ())
-        decode_once = set()
+        extra = ((module.DENSE_FUSED_MMA_E4M3_LAUNCH,) if module is fp8_route else ())
+        extra += (module.DENSE_DECODE_ONCE_LAUNCH,)
+        decode_once = {module.DENSE_DECODE_ONCE_LAUNCH}
         if module is fp8_route:
             assert module.DENSE_FUSED_MMA_E4M3_LAUNCH == (
                 FUSED_WINDOW_DENSE_SYMBOL, telemetry.DECODER_NATIVE_FUSED_WINDOW_DENSE_E4M3MMA)
             assert module.DENSE_FUSED_MMA_E4M3_LAUNCH not in scheme.EXPERIMENTAL_LAUNCHES
             assert module.DENSE_DECODE_ONCE_LAUNCH == (
                 scheme.DECODE_ONCE_DENSE_SYMBOL, telemetry.DECODER_NATIVE_WINDOW_DECODE_ONCE_E4M3)
-            assert module.DENSE_DECODE_ONCE_LAUNCH in scheme.EXPERIMENTAL_LAUNCHES
-            decode_once = {module.DENSE_DECODE_ONCE_LAUNCH}
+        else:
+            assert module.DENSE_DECODE_ONCE_LAUNCH == (
+                scheme.BF16_PREFILL_SYMBOL, telemetry.DECODER_NATIVE_WINDOW_DECODE_ONCE_BF16)
+        assert decode_once <= scheme.EXPERIMENTAL_LAUNCHES
         assert module.DENSE_LAUNCHES == (module.DENSE_LAUNCH, module.DENSE_FUSED_LAUNCH, *extra)
         assert launch_pairs(route, structure=STRUCTURE_DENSE,
                             include_experimental=True) == set(module.DENSE_LAUNCHES), route

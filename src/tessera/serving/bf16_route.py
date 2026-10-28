@@ -50,16 +50,19 @@ from typing import List, Optional, Sequence
 
 import torch
 
-from .compile_identity import note_traced_dispatch
+from . import bf16_prefill
+from .compile_identity import declared_forward_is_compiled, note_traced_dispatch
 from .ext import WINDOW_GEMV_MODULE_NAME
 from .lane import MODES
 from .residency import layer_resident_tensors
 from .native_window import prepare_dense_native_module
-from .scheme import (FUSED_WINDOW_DENSE_SYMBOL, ROUTES, TESSERA_BF16, WINDOW_GEMM_SYMBOL,
+from .scheme import (BF16_PREFILL_SYMBOL, EAGER_ONLY_LAUNCHES, FUSED_WINDOW_DENSE_SYMBOL,
+                     ROUTES, TESSERA_BF16, WINDOW_GEMM_SYMBOL,
                      WINDOW_GEMV_SYMBOL, launch_pairs, parse_compact_blob_for_scheme,
                      validate_tessera_scheme)
 from .sharding import plan_shard_for_layer, require_axis_supported
 from .telemetry import (DECODER_NATIVE_FUSED_WINDOW_DENSE_BF16,
+                        DECODER_NATIVE_WINDOW_DECODE_ONCE_BF16,
                         DECODER_NATIVE_WINDOW_GEMM_BF16, DECODER_TORCH_WINDOW,
                         DECODER_WINDOW_GEMV, emit_route, route_shape)
 from .window import (PreparedModuleAxis, PreparedWindow, _fingerprint, prepare_window,
@@ -110,7 +113,8 @@ GEMM_SYMBOL = ROUTES[TESSERA_BF16]["gemm_symbol"]
 #: ``routed_fused.fused_dense_window_supported`` admits.
 DENSE_LAUNCH = (WINDOW_GEMM_SYMBOL, DECODER_NATIVE_WINDOW_GEMM_BF16)
 DENSE_FUSED_LAUNCH = (FUSED_WINDOW_DENSE_SYMBOL, DECODER_NATIVE_FUSED_WINDOW_DENSE_BF16)
-DENSE_LAUNCHES = (DENSE_LAUNCH, DENSE_FUSED_LAUNCH)
+DENSE_DECODE_ONCE_LAUNCH = (BF16_PREFILL_SYMBOL, DECODER_NATIVE_WINDOW_DECODE_ONCE_BF16)
+DENSE_LAUNCHES = (DENSE_LAUNCH, DENSE_FUSED_LAUNCH, DENSE_DECODE_ONCE_LAUNCH)
 
 #: The JIT module name the GEMV load path asks for -- ``ext``'s constant, so the
 #: contract table and the load call cannot drift (the same string ``fp8_gemv`` reads).
@@ -718,12 +722,14 @@ def census_expected(*, compiled: bool, platform=None):
     """The ``(symbol, decoder)`` pairs a BF16 module may report, by regime.
 
     The route registry owns these pairs. Dense dispatch uses its prepared
-    native bundle in both regimes, including compiled forwards; compilation
-    does not add the retired materialised GEMM/GEMV combination. ``compiled``
-    remains an accepted argument for census callers, not an extra launch.
+    native bundle in both regimes. Compiled forwards exclude decode-once,
+    which refuses at load; no retired materialised GEMM/GEMV is added.
     """
     decode = launch_pairs(TESSERA_BF16, regime="decode", include_experimental=True)
     batch = launch_pairs(TESSERA_BF16, regime="batch", include_experimental=True)
+    if compiled:
+        decode = tuple(pair for pair in decode if pair not in EAGER_ONLY_LAUNCHES)
+        batch = tuple(pair for pair in batch if pair not in EAGER_ONLY_LAUNCHES)
     pairs = {"decode": decode, "batch": batch}
     from .census import platform_expectation
 
@@ -807,6 +813,9 @@ def build_tessera_bf16_method(scheme, prefix: str, mode: str):
             device = layer.wire_bytes.device
             if device.type != "cuda":
                 device = torch.device("cuda")
+            decode_once = bf16_prefill.enabled()
+            if decode_once:
+                bf16_prefill.require_kernel()
             roles = parse_compact_blob_for_scheme(
                 blob.contiguous().numpy().tobytes(), scheme, prefix, device=device)
             prepared = prepare_dense_native_module(
@@ -818,6 +827,14 @@ def build_tessera_bf16_method(scheme, prefix: str, mode: str):
                 raise RuntimeError(
                     f"{prefix}: the prepared Tessera BF16 module runs "
                     f"{prepared.launch_pair!r}, the route publishes {DENSE_LAUNCHES!r}")
+            if decode_once:
+                if layer.tessera_mode != "resident" or declared_forward_is_compiled():
+                    raise RuntimeError(
+                        f"{prefix}: {bf16_prefill.FLAG}=1 requires resident weights and "
+                        "compilation mode NONE (--enforce-eager); CUDA graph capture "
+                        "is a separate, unqualified execution mode")
+                min_m = bf16_prefill.minimum_m()
+                prepared.attach_decoded(bf16_prefill.decode_bf16(prepared, min_m=min_m))
             layer.tessera_native = prepared
             layer.tessera_decoder = prepared.decoder
             layer.tessera_symbol = prepared.symbol
@@ -833,7 +850,9 @@ def build_tessera_bf16_method(scheme, prefix: str, mode: str):
                                   persistent=False)
             del layer.wire_bytes
             # One graph, one op, declared here: the FP8 route's rule (#91).
-            note_traced_dispatch(prefix, prepared.symbol)
+            note_traced_dispatch(prefix, prepared.symbol if prepared.decoded is None else
+                                 f"{prepared.symbol}|{BF16_PREFILL_SYMBOL}:"
+                                 f"min_m={prepared.decoded.min_m}")
 
         # -- residency declaration (#580) -------------------------------
         def resident_tensors(self, layer):
@@ -861,7 +880,7 @@ def build_tessera_bf16_method(scheme, prefix: str, mode: str):
                     "(tessera_native missing); refusing to fall back to a "
                     "materialised weight path this build no longer wires")
             y = native.apply(x2.contiguous())
-            (symbol, decoder), tile_m = native.launch_pair, 0
+            (symbol, decoder), tile_m = native.launch_pair_for(x2.shape[0]), 0
             try:
                 emit_route(
                     layer, kind="dense", policy=f"{TESSERA_BF16}:{layer.tessera_mode}",
