@@ -95,6 +95,7 @@ __all__ = [
     "DECODER_NATIVE_FUSED_WINDOW_DENSE",
     "DECODER_NATIVE_FUSED_WINDOW_DENSE_E4M3MMA",
     "DECODER_NATIVE_WINDOW_DECODE_ONCE_E4M3",
+    "DECODER_NATIVE_WINDOW_DECODE_ONCE_BF16",
     "DECODER_NATIVE_FUSED_WINDOW_DENSE_BF16",
     "DECODER_NATIVE_FUSED_WINDOW_DENSE_E2M1",
     "DECODER_NATIVE_ROUTED_FUSED_WINDOW_E2M1",
@@ -211,6 +212,7 @@ DECODER_NATIVE_FUSED_WINDOW_DENSE_E4M3MMA = "native_fused_window_dense_e4m3mma"
 #: ``torch._scaled_mm`` row-wise at large M.  Same function of the wire, a
 #: different launch and accumulation order, so its own string.
 DECODER_NATIVE_WINDOW_DECODE_ONCE_E4M3 = "native_window_decode_once_e4m3"
+DECODER_NATIVE_WINDOW_DECODE_ONCE_BF16 = "native_window_decode_once_bf16"
 # Actual execution identities only; no serving contract row is qualified here.
 DECODER_NATIVE_ROUTED_WINDOW_CLASSES = "native_routed_window_classes"
 DECODER_NATIVE_ROUTED_WINDOW_CLASSES_E4M3MMA = "native_routed_window_classes_e4m3mma"
@@ -234,7 +236,8 @@ DECODERS = frozenset((DECODER_NATIVE_SPAN2, DECODER_TORCH_STOCK, DECODER_TORCH_W
                       DECODER_NATIVE_FUSED_WINDOW_DENSE, DECODER_NATIVE_FUSED_WINDOW_DENSE_BF16,
                       DECODER_NATIVE_ROUTED_FUSED_WINDOW_E4M3MMA,
                       DECODER_NATIVE_FUSED_WINDOW_DENSE_E4M3MMA,
-                      DECODER_NATIVE_WINDOW_DECODE_ONCE_E4M3,))
+                      DECODER_NATIVE_WINDOW_DECODE_ONCE_E4M3,
+                      DECODER_NATIVE_WINDOW_DECODE_ONCE_BF16,))
 
 ATTR_PREFIX = "_tessera_route_"
 

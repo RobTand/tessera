@@ -1626,6 +1626,57 @@ This source default does not add a qualified cell or change a serving pin.
 The existing served-census and quality holds remain. No new performance or quality result follows from this default.
 Prior operator evidence: docs/measurements/2026-10-04-e4m3-decode-once-prefill.md.
 
+Re-stamped 2026-10-27 for the default-off current-arithmetic T16 dense prefill
+experiment (#1331). `TESSERA_BF16_DECODE_ONCE=1` opts resident BF16 modules into
+a load-time raw BF16 copy through `native_window`'s existing preparation and
+residency owner. It also requires an explicit positive
+`TESSERA_BF16_DECODE_ONCE_MIN_M`; there is no measured T16 crossover default.
+Both settings are process-latched. Unset/0 keeps the existing packed path.
+The flag, metadata, census and CPU reference interfaces do not import Triton.
+The Triton implementation is loaded only at opted-in route preparation, decode
+or an actual prefill launch; a missing kernel dependency refuses by the opt-in
+flag before native preparation or decoded/output tensor allocation.
+Explicit opt-in refuses streamed residency and compiled forwards at load.
+It does not alter the E4M3 default, wire, recipe, encoder profile or runtime pin.
+
+The family-owned decoded-copy interface keeps E4M3 and value dispatch separate.
+Each BF16 role is decoded in bounded identity chunks by its existing packed
+Triton reader with unit FP32 row scales, in original input-column order. No
+already-scaled BF16 weight is materialized. At or above the explicit crossover,
+`tessera::bf16_prefill` computes raw BF16 dot products into an FP32 accumulator,
+multiplies the FP32 row scale once, and stores BF16 output. Smaller M retains
+the module's existing window lane. `launch_pair_for(M)`, route telemetry and
+the compile-cache dispatch fact name this same decision, including its threshold.
+The new decoder is `native_window_decode_once_bf16`; its pair remains in
+`EXPERIMENTAL_LAUNCHES` and `EAGER_ONLY_LAUNCHES`, resident only, with no
+qualified serving cell or pin/default adoption. Rates 15/16 remain excluded by
+the unchanged `compact_prep.DENSE_WINDOW_RATE_MAX`; this experiment does not
+choose their native-versus-exact-passthrough disposition.
+
+All packed/fused buffers remain resident. The additional named decoded tensors
+cost exactly `2 * rows * columns + 4 * rows` bytes (raw BF16 weights and copied
+FP32 row scales), included in `named_tensors`, `packed_bytes` and route residency
+enumeration. During load, `bf16_prefill.decode_scratch_bytes` prices the peak
+live transient tensor storage beyond those copies: for
+`C = min(chunk, columns)` and `R = max(role.rows)`,
+`4*C*columns + 2*C*R + 4*R + 4` bytes. This includes the BF16 identity and
+permuted input, BF16 decoder output, unit FP32 row scales and the decoder's
+one-element FP32 activation-scale placeholder. Chunks/role temporaries are
+released before their replacements. This is not an allocator-reserved or
+measured process-memory bound. The prefill forward allocates only its BF16
+`M * rows` output; the accumulator is kernel-local, not a global scratch copy.
+
+The prefill launch is an opaque functional custom op with shape-only fake
+implementation and no host reads of tensor contents. The CUDA regressions
+exercise warmed-up eager execution, graph replay with changed activations,
+real-wire per-element dtype-derived bounds, all dense rates/adjacent mixtures,
+MLP/shared-expert shapes and the full-K MLA output geometry through M8192.
+These tests are not a qualification receipt merely because they exist or
+collect on a CPU box. GPU build/numerics/graph results, G3 v2 where changed,
+D41 equal-byte comparisons, served census and before/after power/work-per-joule
+evidence still require their own authorized exact tuple and PB allocation.
+There is no performance, energy, served-quality or promotion claim here.
+
 Re-stamped 2026-10-02 for the default-off eager sparse-MLA prefill override
 (contract v55, Refs #812). `TESSERA_RESEARCH_MLA_MASK_SKIP=1` registers a
 subclass for the stock `FLASHINFER_MLA_SPARSE_SM120` enum through the plugin.

@@ -61,6 +61,25 @@ class DecodedE4M3:
     scale: torch.Tensor    # fp32 [rows], ``PreparedDenseNativeModule.row_scale()``
 
     @property
+    def family(self): return "e4m3"
+
+    @property
+    def flag(self): return FLAG
+
+    @property
+    def min_m(self): return MIN_M
+
+    @property
+    def launch_pair(self):
+        from .scheme import DECODE_ONCE_DENSE_SYMBOL
+        from .telemetry import DECODER_NATIVE_WINDOW_DECODE_ONCE_E4M3
+
+        return DECODE_ONCE_DENSE_SYMBOL, DECODER_NATIVE_WINDOW_DECODE_ONCE_E4M3
+
+    def apply(self, inputs, a_scale=None):
+        return prefill_apply(self, inputs, a_scale)
+
+    @property
     def nbytes(self) -> int:
         return (self.weight.numel() * self.weight.element_size()
                 + self.scale.numel() * self.scale.element_size())

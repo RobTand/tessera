@@ -102,6 +102,7 @@ __all__ = [
     "FUSED_WINDOW_DENSE_SYMBOL",
     "EXPERIMENTAL_LAUNCHES",
     "DECODE_ONCE_DENSE_SYMBOL",
+    "BF16_PREFILL_SYMBOL",
     "EAGER_ONLY_LAUNCHES",
     "experimental_launch_pairs",
     "parse_compact_blob_for_scheme",
@@ -500,6 +501,7 @@ FUSED_WINDOW_DENSE_SYMBOL = "tessera::fused_window_dense"
 #: served by ``torch._scaled_mm`` row-wise for M at or above
 #: ``e4m3_prefill.MIN_M``.  Below that M the module's window lane runs.
 DECODE_ONCE_DENSE_SYMBOL = "tessera.serving.e4m3_prefill.prefill_apply"
+BF16_PREFILL_SYMBOL = "tessera::bf16_prefill"
 #: The entry point the expert route calls. Its recorded backend suffix is
 #: selected by vLLM at runtime and remains in the census receipt.
 MOE_GEMM_SYMBOL = "vllm.fused_moe.modular_kernel"
@@ -547,6 +549,7 @@ _DECODER_NATIVE_FUSED_WINDOW_DENSE_E4M3MMA = "native_fused_window_dense_e4m3mma"
 _DECODER_NATIVE_FUSED_WINDOW_DENSE_E2M1 = "native_fused_window_dense_e2m1"
 _DECODER_NATIVE_ROUTED_FUSED_WINDOW_E2M1 = "native_routed_fused_window_e2m1"
 _DECODER_NATIVE_WINDOW_DECODE_ONCE_E4M3 = "native_window_decode_once_e4m3"
+_DECODER_NATIVE_WINDOW_DECODE_ONCE_BF16 = "native_window_decode_once_bf16"
 
 _ALL_REGIMES = ("batch", "decode")
 _ALL_MODES = ("resident", "streamed")
@@ -683,6 +686,9 @@ ROUTE_LAUNCHES: dict[str, tuple[dict, ...]] = {
     TESSERA_BF16: _dense_native_window_launch(
         _DECODER_NATIVE_WINDOW_GEMM_BF16, _DECODER_NATIVE_FUSED_WINDOW_DENSE_BF16,
         "tessera_routed_fused_value") + (
+        {"symbol": BF16_PREFILL_SYMBOL, "decoder": _DECODER_NATIVE_WINDOW_DECODE_ONCE_BF16,
+         "regimes": _ALL_REGIMES, "modes": ("resident",), "lane": None,
+         "structures": (STRUCTURE_DENSE,), "when_lane_absent": False},
         WINDOW_CLASS_LAUNCHES["value"], WINDOW_UNIFORM_LAUNCHES["value"],
     ),
 }
@@ -815,6 +821,7 @@ ROUTE_LAUNCHES: dict[str, tuple[dict, ...]] = {
 #:
 # The current native class and dense BF16 pairs need new serving receipts.
 EXPERIMENTAL_LAUNCHES: frozenset = frozenset({
+    (BF16_PREFILL_SYMBOL, _DECODER_NATIVE_WINDOW_DECODE_ONCE_BF16),
     (DECODE_ONCE_DENSE_SYMBOL, _DECODER_NATIVE_WINDOW_DECODE_ONCE_E4M3),
     (WINDOW_GEMM_SYMBOL, _DECODER_NATIVE_WINDOW_GEMM_BF16),
     (FUSED_WINDOW_DENSE_SYMBOL, _DECODER_NATIVE_FUSED_WINDOW_DENSE_BF16),
@@ -828,6 +835,7 @@ EXPERIMENTAL_LAUNCHES: frozenset = frozenset({
 #: contract v56: the decode-once dense prefill lane, whose M branch is host
 #: Python (``native_window.PreparedDenseNativeModule.apply``).
 EAGER_ONLY_LAUNCHES: frozenset = frozenset({
+    (BF16_PREFILL_SYMBOL, _DECODER_NATIVE_WINDOW_DECODE_ONCE_BF16),
     (DECODE_ONCE_DENSE_SYMBOL, _DECODER_NATIVE_WINDOW_DECODE_ONCE_E4M3),
 })
 
