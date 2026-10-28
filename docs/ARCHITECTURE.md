@@ -10286,6 +10286,17 @@ Every unselected BF16 module keeps its stock method, prefix, bias, and dtype.
 The KDA shard planner reads replicated_shard_ids from the actual layer.
 It does not infer replication from a shape total.
 
+`tools/tessera_projection_cpu.py` checks explicit layer fixtures through that
+same shard planner. With a wire and its declared SHA-256 it uses the production
+scheme reader and role slicer, then checks exact CPU decoded source slices.
+Its packet binds the normalized scheme and supplied layer fixture alongside
+per-role placement, shapes and decoded digests. Without a
+wire it records geometry only, allowing the KDA12576x4096 fixture without a
+full-size allocation. Both forms keep `weights_loaded` and `forward_executed`
+false: fixture declarations are not observed vLLM constructors or route traces.
+These packets do not qualify serving cells, direct-consumer caches or absorbed
+MLA BMMs, and supply no graph, G3, D41, power or work-per-joule evidence.
+
 The direct consumer contract separates the head operation from its unused dense output.
 The indexer head uses FP32 inputs and weights without activation quantization.
 The MLA split helper uses a BF16 matrix; the dense prefill path keeps its family contract.
