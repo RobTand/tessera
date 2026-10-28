@@ -45,6 +45,8 @@ import zlib
 
 import torch
 
+from piece_major_protocol import TP_SIZE, TP_RANK
+
 
 def _install_vllm_stubs():
     """Inert stand-ins for the two vLLM symbols the route classes subclass, used
@@ -99,7 +101,6 @@ ARTIFACT = "/mnt/shared/tessera-measurements/pact-e4m3-accuracy-20260928/release
 REPLAY_ARTIFACT = "/mnt/shared/tessera-runs/moe/glm53-a8-bf16menu-20260930/release/exported"
 P = "model.language_model.layers."
 TOP_K, EXPERTS, SWIGLU_LIMIT = 8, 288, 10.0
-TP_SIZE, TP_RANK = 2, 0
 ENVELOPE_W = 140.0
 HIDDEN = 4096
 

@@ -52,11 +52,17 @@ def main():
         raise ValueError("timing output already exists; no automatic retries")
     root = Path(packet["evidence_root"])
     if args.prepare:
+        import piece_major_protocol as pp
+        identities = pp.preparation_identity(protocol, Path(window["worktree"]) / "src")
+        numeric = window["numeric_qualification"]
+        pp.require_numeric_receipt(numeric["receipt"], numeric["receipt_sha256"],
+                                   pp.numeric_protocol_sha256(protocol, window["protocol_sha256"]))
         root.mkdir(exist_ok=False)
         result = {"schema": "tessera.pm_pb_preparation.v1", "action_key": os.environ["PRISMABUILD_ACTION_KEY"],
                   "packet_sha256": args.packet_sha256, "bindings": bindings,
                   "original_window_sha256": packet["window_sha256"],
-                  "benchmark_executed": False, "numeric_qualification_reused": True}
+                  "benchmark_executed": False, "numeric_qualification_reused": True,
+                  "identities": identities}
         (root / "prepare.json").write_text(json.dumps(result, indent=2) + "\n")
         print(json.dumps(result), flush=True)
         return 0

@@ -1275,7 +1275,19 @@ sealed timing packet and explicit coordinator GPU GO inside an exclusive
 measurement attempt, importing the existing containment owner rather than
 launching a second dispatcher. Held original FDs retain the existing outer/inner
 checks, native load/fence checks and close-before-publication behavior. CPU
-checks and builds also use PB. Seeded activations and uniform routing weights
+checks run locally when they are fast relevant development checks; GPU work,
+benchmarks and large or long builds require PrismaBuild admission.
+CPU-only PM preparation reuses `piece_major_protocol` to verify the current
+source closure (including the kernel), harness, native bank and origin bytes,
+captured routing and input manifest before publishing its identities. The
+finite TP rank/size are shared with the benchmark owner, not inferred from a
+result label. Artifact identity binds its root, group and authenticated readset
+manifest; actual wire range validation remains the existing held-input owner's
+job at execution. Preparation verifies the bound prior numeric receipt before
+recording reuse. It does not execute native code, qualify FP8/BF16 or T4,
+authorize a GPU GO, or establish served correctness or performance. T4 remains
+a separate qualification, never inherited from E4M3 R4 results.
+Seeded activations and uniform routing weights
 are geometry
 controls, not served decode or quality measurements. Every timed arm retains
 raw events, Torch profiler traces and power windows; both-host Netdata and
