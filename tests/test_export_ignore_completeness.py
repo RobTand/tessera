@@ -68,10 +68,6 @@ def _checkpoint():
     t[f"{P}.mlp.gate_proj.weight"] = torch.zeros(2 * HIDDEN, HIDDEN)
     t[f"{P}.mlp.up_proj.weight"] = torch.zeros(2 * HIDDEN, HIDDEN)
     t[f"{P}.mlp.down_proj.weight"] = torch.zeros(HIDDEN, 2 * HIDDEN)
-    t[f"{P}.mlp.gate.weight"] = torch.zeros(4, HIDDEN)
-    t[f"{P}.mlp.shared_experts.gate_proj.weight"] = torch.zeros(HIDDEN, HIDDEN)
-    t[f"{P}.mlp.shared_experts.up_proj.weight"] = torch.zeros(HIDDEN, HIDDEN)
-    t[f"{P}.mlp.shared_experts.down_proj.weight"] = torch.zeros(HIDDEN, HIDDEN)
     t["model.language_model.embed_tokens.weight"] = torch.zeros(256, HIDDEN)
     t["lm_head.weight"] = torch.zeros(256, HIDDEN)
     # The vision tower, outside BODY_LAYER.  Names and roles as on disk.
