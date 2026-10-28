@@ -334,6 +334,15 @@ T4 keeps its historical native times but waits for performance admission.
 Quality uses whole-anchor chords, not per-rung sample gates.
 This work starts no graphics processor campaign and makes no serving or speed qualification claim.
 
+Re-stamped 2026-10-28 for issue #1372: the default-off D41 T4
+quality producer `bench_geometry_e2m1.quality` emits each rung's canonical
+`rung_quality.quality_scope` from the grid, q256 and recipe actually encoded.
+Applicable dense/routed kernel kinds require exact served-recipe equality;
+the requested structure and original sample metadata and hashes remain explicit.
+A matching rung alone cannot bind historical TCQ or L12 quality to served L14.
+This CPU unweighted weight-space screen is not served KL or serving qualification.
+Existing unscoped populations are not retagged by this producer correction (#1372).
+
 Re-stamped 2026-10-06 for issue #1005: the default-off D41 T4
 `--packed-reader` measures mixed span-two TCQ, research twelve-bit WINDOW
 and served fourteen-bit WINDOW recipes. `compact_prep.prepare_a4_wire_compact`
