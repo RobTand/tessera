@@ -56,7 +56,7 @@ Replan at main 4897b63469acea4fc39342060280d380f197c8db:
   claim that fixture implementation or frozen selector execution passed.
 - First GPU attempt: 1 expected-red test, but an additional controller-side
   bootstrap boundary was discovered. FROZEN_GUARD_READY proves the fresh-child
-  bootstrap succeeded; main then imports Torch in the controller, invoking
+  boundary works on CUDA; main's parent-side importorskip('torch') then hit
   ldconfig under CheckedChild. Read the retained traceback. The controller now
   also initializes genuine dependencies under network denial before wrapping
   Popen. No fixture/selector work is prewarmed in either interpreter.
