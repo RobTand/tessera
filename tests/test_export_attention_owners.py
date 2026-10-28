@@ -175,16 +175,29 @@ def test_explicit_vision_bytes_roles_and_rank_slices(tmp_path, monkeypatch, patt
     import torch
     from safetensors.torch import load_file
     from tessera.decode import reconstruct_unit
+    from tessera.fused import parse_fused
     from tessera.serving.scheme import parse_compact_blob_for_scheme, parse_tessera_blob_for_scheme
     from tessera.serving.sharding import plan_shard, shard_parsed_roles
 
     module, tensors, members, sizes, expected_roles, entry = _vision_fixture(monkeypatch, pattern)
-    encoded_inputs = []
+    expected_partitions = {}
+    row_offset = 0
+    for index, (role, size) in enumerate(zip(expected_roles, sizes)):
+        member = members[0] if len(members) == 1 else members[index]
+        start = row_offset if len(members) == 1 else 0
+        stop = start + size
+        unit_name = member if size == tensors[member].shape[0] else f"{member}[{start}:{stop}]"
+        expected_partitions[role] = (unit_name, tensors[member][start:stop].float())
+        row_offset += size
+    encoded_units = {}
     original_encode = exporter.encode_linear_planes
 
     def observe_encode(weight, **kwargs):
-        encoded_inputs.append(weight.clone())
-        return original_encode(weight, **kwargs)
+        unit_name = kwargs["name"]
+        assert unit_name not in encoded_units
+        result = original_encode(weight, **kwargs)
+        encoded_units[unit_name] = (weight.clone(), result[0].blob)
+        return result
 
     monkeypatch.setattr(exporter, "encode_linear_planes", observe_encode)
     plan = {name: {"grid": grid, "q256": 1024} for name in members}
@@ -204,13 +217,16 @@ def test_explicit_vision_bytes_roles_and_rank_slices(tmp_path, monkeypatch, patt
     assert "model.visual.blocks.1.attn.proj" in config["ignore"]
     assert module not in config["ignore"]
     assert all(name.removesuffix(".weight") not in config["ignore"] for name in members)
-    source = torch.cat([tensors[name].float() for name in members])
-    expected_inputs = list(source.split(sizes))
-    assert len(encoded_inputs) == len(expected_inputs)
-    for encoded, expected in zip(encoded_inputs, expected_inputs):
-        assert torch.equal(encoded, expected)
+    assert set(encoded_units) == {name for name, _weight in expected_partitions.values()}
+    for unit_name, expected in expected_partitions.values():
+        assert torch.equal(encoded_units[unit_name][0], expected), unit_name
     blob = written[module + ".wire_bytes"].numpy().tobytes()
     assert len(blob) == scheme["wire_bytes"] == manifest["modules"][module]["container_bytes"]
+    framed = parse_fused(blob)
+    assert [member.name for member in framed] == expected_roles
+    for member in framed:
+        unit_name, _weight = expected_partitions[member.name]
+        assert member.blob == encoded_units[unit_name][1], (module, member.name, unit_name)
     compact = parse_compact_blob_for_scheme(blob, scheme, module, device="cpu")
     parsed = parse_tessera_blob_for_scheme(blob, scheme, module, device="cpu")
     assert [name for name, _wire in compact] == expected_roles
@@ -232,6 +248,7 @@ def test_explicit_vision_bytes_roles_and_rank_slices(tmp_path, monkeypatch, patt
                                     input_size=32, output_size=sum(sizes))
             assert shard_plan.axis == axis
             sharded = shard_parsed_roles(parsed, shard_plan)
+            assert [role for role, _shard in sharded] == expected_roles, (module, axis, rank)
             for (role, parent), (shard_role, shard) in zip(parsed, sharded):
                 assert shard_role == role
                 decoded = reconstruct_unit(parent.unit, parent.forests, parent.code)
