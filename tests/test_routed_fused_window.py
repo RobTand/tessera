@@ -836,7 +836,7 @@ TP2_INTER = 768
 
 
 @functools.lru_cache(maxsize=None)
-def _tp2_rank1_role(grid_family, rows, cols, q256, seed, axis):
+def _tp2_rank1_role(grid_family, rows, cols, q256, seed, axis, *, rate_max=None):
     """One role's TP2 rank-1 shard as the routed intake builds it, and its
     ground truth from the WHOLE unit.
 
@@ -881,9 +881,11 @@ def _tp2_rank1_role(grid_family, rows, cols, q256, seed, axis):
     by_rows = plan.axis == AXIS_ROWS
     assert by_rows == (axis == "row") and (lo, hi) != (0, rows if by_rows else cols)
     wire = parse_compact_wire(blob, device="cuda", name="w")
+    ceiling = {} if rate_max is None else {"rate_max": rate_max}
     cut = prepare_window_compact(wire, device="cuda", family=grid_family,
+                                 **ceiling,
                                  **({"rows": (lo, hi)} if by_rows else {"cols": (lo, hi)}))
-    whole = prepare_window_compact(wire, device="cuda", family=grid_family)
+    whole = prepare_window_compact(wire, device="cuda", family=grid_family, **ceiling)
     parsed = parse_unit_artifact(blob, device="cuda")
     assert int(parsed.unit.window_bits) == L == rf.WINDOW_BITS
     rates = tuple(int(r) for r in parsed.unit.rates)
@@ -898,14 +900,16 @@ def _tp2_rank1_role(grid_family, rows, cols, q256, seed, axis):
         truth = SimpleNamespace(states=states[:, lo:hi], values=whole.table,
                                 scale=whole.scale, unit=whole)
         rates = rates[lo:hi]
+    truth.rows, truth.cols = truth.states.shape
     return cut, truth, rates
 
 
-def _tp2_rank1_stacks(grid_family, q256):
+def _tp2_rank1_stacks(grid_family, q256, *, rate_max=None):
     """``(units, truths)``: gate, up (rank 1's rows of ``[2 * TP2_INTER,
     HIDDEN]``) and down (rank 1's columns of ``[HIDDEN, 2 * TP2_INTER]``) per
     expert, each from its own encode."""
-    roles = [[_tp2_rank1_role(grid_family, *shape, q256, 7000 + 10 * e + i, axis)
+    roles = [[_tp2_rank1_role(grid_family, *shape, q256, 7000 + 10 * e + i, axis,
+                            rate_max=rate_max)
               for e in range(TP2_EXPERTS)]
              for i, (shape, axis) in enumerate((((2 * TP2_INTER, HIDDEN), "row"),
                                                 ((2 * TP2_INTER, HIDDEN), "row"),

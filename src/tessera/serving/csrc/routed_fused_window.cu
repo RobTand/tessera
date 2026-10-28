@@ -406,13 +406,20 @@ __host__ __device__ constexpr bool has_width(bool fp8, bool mma8, int mode, int 
 // target's block at its word stages.  Every launch reaches every rate and pair
 // of its range on sm_121: the two-table gate/up launch of the 16-bit libraries
 // at two word stages for the pairs that read a rate-7 or rate-8 run, three
-// elsewhere; the value family's dense launch at three up to rate 14 (80,144 B).
+// elsewhere; the value family's dense and explicit single-projection routed
+// launches at three up to rate 14 (80,144 B). The latter never widens the
+// production routed launch's rate bound.
 // Only these pairs are instantiated; the host refuses any other before a
 // launch (``launch``), as ``routed_fused.fused_routed_window_supported`` and
 // ``fused_dense_window_supported`` do first.
-__host__ __device__ constexpr bool launch_decodes(int mode, int r_lo, bool two, bool dense = false) {
-    return r_lo >= RATE_MIN && r_lo + (two ? 1 : 0) <= (dense ? RATE_MAX : ROUTED_RATE_MAX)
+__host__ __device__ constexpr bool launch_decodes(int mode, int r_lo, bool two, bool dense = false,
+                                               bool single = false) {
+    return (!single || (!FAMILY_FP8 && !FAMILY_FP4 && mode == 2 && !dense))
+        && r_lo >= RATE_MIN && r_lo + (two ? 1 : 0) <= ((dense || single) ? RATE_MAX : ROUTED_RATE_MAX)
         && smem_bytes(mode, pair_slot_words(r_lo, two)) <= SM121_SMEM_OPTIN;
+}
+__host__ __device__ constexpr bool single_projection_decodes(int r_lo, bool two) {
+    return launch_decodes(2, r_lo, two, false, true);
 }
 // The run pair a launch's ``tile_words`` fixes.  A 512-row tile holds 16 words
 // per unit of column rate, so ``tile_words / 16`` is the sum of the column
@@ -856,7 +863,9 @@ __global__ void __launch_bounds__(THREADS, 1) routed_fused_kernel(const Params p
     static_assert(!PAIRED || (!PM && FP8 && FAMILY_MMA8 && !DENSE && !SPLIT
                   && (MODE == 0 || MODE == 2) && RL == 4 && !TWO && BMT == BM_WIDE),
                   "paired specialization is legacy words only, named only inside its matching family/scope");
-    static_assert(launch_decodes(MODE, RL, TWO, DENSE), "only the pairs the launch decodes are instantiated");
+    static_assert(launch_decodes(MODE, RL, TWO, DENSE)
+                  || (MODE == 2 && single_projection_decodes(RL, TWO)),
+                  "only the pairs the launch decodes are instantiated");
     static_assert(has_width(FP8, FAMILY_MMA8, MODE, BMT) && !(SPLIT && BMT != BM),
                   "wide superblocks: the launches ``has_width`` names, unsplit");
     static_assert(launch_smem_bytes(MODE, pair_slot_words(RL, TWO), BMT, PAIRED) <= SM121_SMEM_OPTIN,
@@ -2000,8 +2009,10 @@ void launch_pair(const Params& p, int grid, cudaStream_t stream) {
 // (``launch_decodes``) is refused here, before any launch; the Python owner
 // refuses it first (``fused_routed_window_supported``: the device's shared
 // memory; ``run_pair``: adjacency).
-template <bool FP8, int MODE, bool DENSE = false, bool SPLIT = false, int BMT = BM>
+template <bool FP8, int MODE, bool DENSE = false, bool SPLIT = false, int BMT = BM, bool SINGLE = false>
 void launch(const Params& p, int grid, cudaStream_t stream) {
+    static_assert(!SINGLE || (!FP8 && !FAMILY_FP4 && MODE == 2 && !DENSE && !SPLIT && BMT == BM),
+                  "single projection is the bounded value routed launch only");
     const PairKey k = pair_of(p.tile_words, p.K);
     // One case per (r_lo, two); a two-run key is offset past every rate.
     constexpr int KEY_TWO = 16;
@@ -2027,7 +2038,7 @@ void launch(const Params& p, int grid, cudaStream_t stream) {
     switch (k.two ? KEY_TWO + k.r_lo : k.r_lo) {
 #define TESSERA_ROUTED_FUSED_PAIR(R, T)                                                        \
         case (T ? KEY_TWO : 0) + R:                                                            \
-            if constexpr (launch_decodes(MODE, R, T, DENSE)) {                                 \
+            if constexpr (launch_decodes(MODE, R, T, DENSE, SINGLE)) {                         \
                 launch_pair<FP8, MODE, DENSE, SPLIT, R, T, BMT>(p, grid, stream);              \
                 return;                                                                        \
             }                                                                                  \
@@ -2052,7 +2063,7 @@ void launch(const Params& p, int grid, cudaStream_t stream) {
     TORCH_CHECK(false, "the ", (MODE == 2 ? (DENSE ? "dense" : "down") : "gate/up"),
                 " launch does not decode the run pair (r_lo ", k.r_lo, (k.two ? ", two runs" : ", one run"),
                 ") that tile_words ", p.tile_words, " fixes at K ", p.K, "; rates ", RATE_MIN, "..",
-                (DENSE ? RATE_MAX : ROUTED_RATE_MAX), ", and the pair's word slot must fit the block's shared memory");
+                ((DENSE || SINGLE) ? RATE_MAX : ROUTED_RATE_MAX), ", and the pair's word slot must fit the block's shared memory");
 }
 
 // The word tensors both host entries take: int32 [E, words_stride], 16-byte
@@ -3053,7 +3064,7 @@ void check_fp4_slot(int mode, int64_t slot_words, const torch::Tensor& on) {
 // One launch of the persistent kernel.  ``mode``: 0 gate/up + SwiGLU (out is
 // the sorted [routes, I] activation), 1 gate/up preserved (out is [T, top_k,
 // 2I] by route), 2 down (out is [routes, H] by route, bf16-rounded, weighted).
-void routed_fused_forward(
+void routed_fused_forward_impl(
     int64_t mode, bool fp8,
     torch::Tensor x, torch::Tensor a_scale,
     torch::Tensor words0, torch::Tensor words1,
@@ -3068,8 +3079,10 @@ void routed_fused_forward(
     torch::Tensor offsets, torch::Tensor flat_sorted, torch::Tensor rw_sorted,
     torch::Tensor item_off, torch::Tensor counter,
     int64_t top_k, int64_t a_row_mode, bool mul_weight, double limit,
-    torch::Tensor out, int64_t grid, int64_t bm) {
+    torch::Tensor out, int64_t grid, int64_t bm, bool single) {
     TORCH_CHECK(mode >= 0 && mode <= 2, "mode must be 0, 1 or 2");
+    TORCH_CHECK(!single || (!FAMILY_FP8 && !FAMILY_FP4 && !fp8 && mode == 2 && !piece_major && bm == BM),
+                "single projection is legacy value routed execution at BM only");
     // ``bm``: the routes per superblock ``item_off`` counts (the prefix sum of
     // ceil(routes_e / bm)); BM_WIDE only where the library has that launch.
     TORCH_CHECK(has_width(FAMILY_FP8, FAMILY_MMA8, (int)mode, (int)bm), "bm ", bm, " has no ",
@@ -3133,8 +3146,9 @@ void routed_fused_forward(
     } else {
         TORCH_CHECK(out.dim() == 2 && out.size(0) == P && out.size(1) == N, "mode 2 out must be [P, H]");
     }
-    TORCH_CHECK(tile_words >= K * 16 * RATE_MIN && tile_words <= K * 16 * ROUTED_RATE_MAX && tile_words % 16 == 0,
-                "tile_words must be 16 * (sum of the column rates), rates ", RATE_MIN, "..", ROUTED_RATE_MAX);
+    const int rate_max = single ? RATE_MAX : ROUTED_RATE_MAX;
+    TORCH_CHECK(tile_words >= K * 16 * RATE_MIN && tile_words <= K * 16 * rate_max && tile_words % 16 == 0,
+                "tile_words must be 16 * (sum of the column rates), rates ", RATE_MIN, "..", rate_max);
     TORCH_CHECK(grid >= 1, "grid must be positive");
 
     Params p{};
@@ -3195,7 +3209,10 @@ void routed_fused_forward(
     const int g = (int)grid;
     TORCH_CHECK(fp8 == FAMILY_FP8, "this library serves the ", FAMILY_FP8 ? "E4M3" : "value",
                 " family only; the other family's library is a separate native extension");
-    if (bm == BM) {
+    if (single) {
+        if constexpr (!FAMILY_FP8 && !FAMILY_FP4)
+            launch<false, 2, false, false, BM, true>(p, g, stream);
+    } else if (bm == BM) {
         if (mode == 0) launch<FAMILY_FP8, 0>(p, g, stream);
         else if (mode == 1) launch<FAMILY_FP8, 1>(p, g, stream);
         else launch<FAMILY_FP8, 2>(p, g, stream);
@@ -3208,6 +3225,77 @@ void routed_fused_forward(
             else launch<FAMILY_FP8, 1, false, false, BM_WIDE>(p, g, stream);
         }
     }
+}
+
+void routed_fused_forward(
+    int64_t mode, bool fp8, torch::Tensor x, torch::Tensor a_scale,
+    torch::Tensor words0, torch::Tensor words1, torch::Tensor table0, torch::Tensor table1,
+    torch::Tensor init0, torch::Tensor init1, torch::Tensor has_init0, torch::Tensor has_init1,
+    torch::Tensor wscale0, torch::Tensor wscale1, torch::Tensor runs0, torch::Tensor runs1,
+    torch::Tensor bdesc0, torch::Tensor bdesc1, int64_t tile_words, int64_t slot_words,
+    bool piece_major, torch::Tensor offsets, torch::Tensor flat_sorted, torch::Tensor rw_sorted,
+    torch::Tensor item_off, torch::Tensor counter, int64_t top_k, int64_t a_row_mode,
+    bool mul_weight, double limit, torch::Tensor out, int64_t grid, int64_t bm) {
+    routed_fused_forward_impl(mode, fp8, x, a_scale, words0, words1, table0, table1,
+        init0, init1, has_init0, has_init1, wscale0, wscale1, runs0, runs1, bdesc0, bdesc1,
+        tile_words, slot_words, piece_major, offsets, flat_sorted, rw_sorted, item_off,
+        counter, top_k, a_row_mode, mul_weight, limit, out, grid, bm, false);
+}
+
+void routed_single_forward(
+    torch::Tensor x, torch::Tensor words, torch::Tensor table, torch::Tensor init,
+    torch::Tensor has_init, torch::Tensor wscale, torch::Tensor runs, torch::Tensor bdesc,
+    int64_t tile_words, int64_t slot_words, torch::Tensor offsets, torch::Tensor flat_sorted,
+    torch::Tensor rw_sorted, torch::Tensor item_off, torch::Tensor counter, int64_t top_k,
+    int64_t a_row_mode, bool mul_weight, torch::Tensor out, int64_t grid, int64_t bm) {
+    TORCH_CHECK(top_k > 0 && a_row_mode >= 0 && a_row_mode <= 2,
+                "top_k must be positive and a_row_mode must be 0, 1 or 2");
+    for (const auto& tensor : {x, words, table, init, has_init, wscale, runs, bdesc,
+                              offsets, flat_sorted, rw_sorted, item_off, counter, out})
+        TORCH_CHECK(tensor.is_cuda() && tensor.device() == x.device(),
+                    "single projection tensors must share x's CUDA device");
+    routed_fused_forward_impl(2, false, x, x, words, words, table, table, init, init,
+        has_init, has_init, wscale, wscale, runs, runs, bdesc, bdesc, tile_words, slot_words,
+        false, offsets, flat_sorted, rw_sorted, item_off, counter, top_k, a_row_mode,
+        mul_weight, std::numeric_limits<float>::infinity(), out, grid, bm, true);
+}
+
+__global__ void split_swiglu_kernel(const uint16_t* gate, const uint16_t* up,
+                                  const int32_t* flat_sorted, uint16_t* out,
+                                  long elements, int width, float limit) {
+    const long index = (long)blockIdx.x * blockDim.x + threadIdx.x;
+    if (index >= elements) return;
+    const long position = index / width;
+    const long source = (long)flat_sorted[position] * width + index % width;
+    float gf = __uint_as_float((uint32_t)gate[source] << 16);
+    float uf = __uint_as_float((uint32_t)up[source] << 16);
+    gf = fminf(gf, limit);
+    uf = fmaxf(fminf(uf, limit), -limit);
+    out[index] = bf16_bits_rn(__fmul_rn(gf / (1.0f + expf(-gf)), uf));
+}
+
+void split_swiglu(torch::Tensor gate, torch::Tensor up, torch::Tensor flat_sorted,
+                  double limit, torch::Tensor out) {
+    TORCH_CHECK(gate.is_cuda() && gate.dim() == 2 && gate.size(1) > 0
+                && gate.scalar_type() == torch::kBFloat16 && gate.is_contiguous(),
+                "gate must be contiguous CUDA bf16 [P, I]");
+    for (const auto& tensor : {up, out})
+        TORCH_CHECK(tensor.device() == gate.device() && tensor.sizes() == gate.sizes()
+                    && tensor.scalar_type() == torch::kBFloat16 && tensor.is_contiguous(),
+                    "up and out must match gate");
+    TORCH_CHECK(flat_sorted.device() == gate.device() && flat_sorted.dim() == 1
+                && flat_sorted.scalar_type() == torch::kInt32 && flat_sorted.is_contiguous()
+                && flat_sorted.numel() == gate.size(0), "flat_sorted must be CUDA int32 [P]");
+    TORCH_CHECK(limit > 0 && !std::isnan(limit), "SwiGLU limit must be positive");
+    const long elements = gate.numel();
+    if (!elements) return;
+    const c10::cuda::CUDAGuard guard(gate.device());
+    auto stream = at::cuda::getCurrentCUDAStream();
+    split_swiglu_kernel<<<(elements + 255) / 256, 256, 0, stream>>>(
+        reinterpret_cast<const uint16_t*>(gate.data_ptr()),
+        reinterpret_cast<const uint16_t*>(up.data_ptr()), i32_ptr(flat_sorted),
+        reinterpret_cast<uint16_t*>(out.data_ptr()), elements, (int)gate.size(1), (float)limit);
+    C10_CUDA_KERNEL_LAUNCH_CHECK();
 }
 
 // The dense launch: the roles of a dense Linear (route m = row m, no weight)
@@ -3702,6 +3790,9 @@ PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
     m.def("token_sum_shared", &token_sum_shared);
 #if !TESSERA_ROUTED_FUSED_FP4
     m.def("routed_fused_forward", &routed_fused_forward);
+    m.def("routed_single_forward", &routed_single_forward);
+    m.def("single_projection_decodes", &single_projection_decodes);
+    m.def("split_swiglu", &split_swiglu);
     m.def("dense_forward", &dense_forward);
     if constexpr (FAMILY_FP8) m.def("dense_forward_roles", &dense_forward_roles);
     m.attr("MAX_ROLES") = MAX_ROLES;
