@@ -56,7 +56,7 @@ Replan at main 4897b63469acea4fc39342060280d380f197c8db:
   claim that fixture implementation or frozen selector execution passed.
 - First GPU attempt: 1 expected-red test, but an additional controller-side
   bootstrap boundary was discovered. FROZEN_GUARD_READY proves the fresh-child
-  boundary works on CUDA; main's parent-side importorskip('torch') then hit
+  bootstrap succeeded; main then imports Torch in the controller, invoking
   ldconfig under CheckedChild. Read the retained traceback. The controller now
   also initializes genuine dependencies under network denial before wrapping
   Popen. No fixture/selector work is prewarmed in either interpreter.
@@ -361,7 +361,12 @@ def test_actual_target_executes_offline_without_history(tmp_path):
                if line.startswith("FROZEN_RESULT=")]
     assert len(records) == 1, done.stdout + done.stderr
     if records[0]["status"] == "skip":
-        import torch
-        assert not torch.cuda.is_available(), "configured GPU target must execute, not skip: " + records[0]["reason"]
+        try:
+            import torch
+        except ModuleNotFoundError as exc:
+            if exc.name != "torch":
+                raise
+        else:
+            assert not torch.cuda.is_available(), "configured GPU target must execute, not skip: " + records[0]["reason"]
         pytest.skip("CPU frozen-selector dependency: " + records[0]["reason"])
     assert records[0]["status"] == "executed"
