@@ -10489,6 +10489,10 @@
    }
   },
   "RobTand/tessera": {
+   "1369": {
+    "state": "OPEN",
+    "title": "[P1] Complete the opcode-aware f16 prefetch decision gate and correct its evidence"
+   },
    "1": {
     "state": "CLOSED",
     "title": "Allocated Tessera checkpoint is 2.00x worse served KL than a byte-matched uniform arm"
