@@ -169,6 +169,32 @@ Honorable: Law of Demeter · fail fast / illegal states unrepresentable · optim
 
 Treat as constraints. Violate slogans when judgment says so.
 
+## Deterministic test authoring
+
+- Synchronize with explicit readiness/events or bounded condition polls with
+  generous failure bounds, never readiness sleeps. Timeouts bound failure;
+  they are not the expected result. Assert time policy with injected clocks,
+  not elapsed host time.
+- Seed randomness, use fake network transports instead of network calls, and
+  isolate filesystem state with `tmp_path`. Expectations must not depend on
+  host load, CPU count, incidental execution or enumeration order, or host
+  filesystem identity.
+- Declare CPU and memory admission limits through existing configuration;
+  bound workers by those limits and use one native math/build thread per
+  worker. Resource limits govern admission, not CPU-count-dependent expected
+  answers. Do not add launchers or deployment-specific assumptions.
+- Controlled clock/process/signal models must drive observable state
+  transitions while real policy executes. Do not configure expected policy
+  answers into fakes, compare an answer with itself, or copy implementation
+  expectations. The retained D30 example in
+  `tests/test_graph_attest_d30_memory_guard.py` uses `CleanupProcesses` to
+  drive process membership and return codes while real `Envelope.run` /
+  `_terminate` exercises owned descendants versus an unrelated group,
+  cooperative exit without KILL, full grace, absolute-deadline truncation,
+  signal ordering and cleanup evidence.
+- Repair flakes at their source, never with retries, skips, quarantine or
+  weakened assertions.
+
 ## Before finishing
 
 - Run independent selected tests concurrently. Use pytest-xdist with
