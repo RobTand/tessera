@@ -4,6 +4,7 @@ import json
 import os
 from pathlib import Path
 import struct
+import subprocess
 import sys
 from types import ModuleType
 
@@ -91,6 +92,111 @@ def _call(producer, source, tmp_path, cache=None):
     return json.loads(output.read_text())
 
 
+def _producer_child(mode, source, cache, output, report):
+    for dependency in _producer_stubs():
+        sys.modules[dependency.__name__] = dependency
+    from tessera import producer_plan
+
+    source = Path(source)
+    output = Path(output)
+    timestamps = [timestamp for shard in source.glob("*.safetensors")
+                  for timestamp in (shard.stat().st_mtime_ns, shard.stat().st_ctime_ns)]
+    source_digest_cache.time.time_ns = lambda: max(timestamps) + int(
+        source_digest_cache.DEFAULT_QUIESCENT_SECONDS * 1e9)
+    reads = []
+    original = serving_parts.sha256_file
+
+    def counted(path):
+        reads.append(Path(path).name)
+        return original(path)
+
+    serving_parts.sha256_file = counted
+    plan = source.parent / "stack-plan.json"
+    receipt = None
+    if mode == "cli":
+        argv = [str(source), "--stack-plan", str(plan), "--out", str(output)]
+        if cache:
+            argv += ["--source-digest-cache", cache]
+        status = producer_plan.main(argv)
+        if status != 0:
+            raise SystemExit(status)
+        receipt = json.loads(output.read_text()).get("source_digest_cache")
+    else:
+        digest_cache = (source_digest_cache.SourceDigestCache(Path(cache), source=source)
+                        if cache else None)
+        projected = producer_plan.producer_projection(source, plan, digest_cache=digest_cache)
+        output.write_text(json.dumps(projected, indent=2) + "\n")
+        if digest_cache is not None:
+            receipt = digest_cache.receipt()
+    Path(report).write_text(json.dumps({"reads": reads, "receipt": receipt, "pid": os.getpid()}))
+
+
+def _fresh_producer(mode, source, tmp_path, label, cache=None):
+    output = tmp_path / f"{label}.json"
+    report = tmp_path / f"{label}-report.json"
+    environment = os.environ.copy()
+    environment["PYTHONPATH"] = str(ROOT / "src")
+    environment["TMPDIR"] = str(tmp_path)
+    completed = subprocess.run(
+        [sys.executable, "-c",
+         "import runpy, sys; runpy.run_path(sys.argv[1])['_producer_child'](*sys.argv[2:])",
+         str(Path(__file__).resolve()), mode, str(source), str(cache) if cache else "",
+         str(output), str(report)],
+        cwd=tmp_path, env=environment, capture_output=True, text=True, timeout=30)
+    assert completed.returncode == 0, completed.stdout + completed.stderr
+    return output.read_bytes(), json.loads(report.read_text())
+
+
+@pytest.mark.parametrize("mode", ["projection", "cli"])
+def test_producer_cache_survives_fresh_interpreters(mode, source, tmp_path, cache_directory):
+    header = json.dumps({"model.layers.1.norm.weight": {
+        "dtype": "BF16", "shape": [1], "data_offsets": [0, 2]}}).encode()
+    changed_shard = source / "second.safetensors"
+    changed_shard.write_bytes(struct.pack("<Q", len(header)) + header + b"\0\0")
+    shard_names = {shard.name for shard in source.glob("*.safetensors")}
+    expected_bytes, _ = _fresh_producer("projection", source, tmp_path, "uncached")
+    cold_bytes, cold = _fresh_producer(mode, source, tmp_path, "cold", cache_directory)
+    warm_bytes, warm = _fresh_producer(mode, source, tmp_path, "warm", cache_directory)
+
+    previous_stat = changed_shard.stat()
+    changed_shard.write_bytes(changed_shard.read_bytes()[:-2] + b"\0\1")
+    os.utime(changed_shard, ns=(previous_stat.st_atime_ns, previous_stat.st_mtime_ns + 1))
+    changed_bytes, changed = _fresh_producer(mode, source, tmp_path, "changed", cache_directory)
+    changed_expected, _ = _fresh_producer("projection", source, tmp_path, "changed-uncached")
+    assert json.loads(changed_expected)["source"] != json.loads(expected_bytes)["source"]
+
+    for actual, report, expected, hashed in (
+            (cold_bytes, cold, expected_bytes, shard_names),
+            (warm_bytes, warm, expected_bytes, set()),
+            (changed_bytes, changed, changed_expected, {changed_shard.name})):
+        receipt = report["receipt"]
+        if mode == "cli":
+            expected_projection = json.loads(expected)
+            expected_projection["source_digest_cache"] = receipt
+            expected = (json.dumps(expected_projection, indent=2) + "\n").encode()
+        assert actual == expected
+        reads = report["reads"]
+        assert {name for name in reads if name in shard_names} == hashed
+        assert all(reads.count(name) == 1 for name in hashed)
+        assert {"config.json", "tokenizer_config.json"} <= set(reads)
+        assert receipt["schema"] == source_digest_cache.RECEIPT_SCHEMA
+        assert receipt["cache"] == str(cache_directory)
+        assert receipt["hashed_shards"] == len(hashed)
+        assert receipt["cached_shards"] == len(shard_names - hashed)
+        assert receipt["mode"] == ("hashed" if hashed == shard_names else "stat-bound")
+        rows = {row["shard"]: row for row in receipt["shards"]}
+        assert set(rows) == shard_names
+        assert len(receipt["shards"]) == len(shard_names)
+        for name, row in rows.items():
+            assert row["how"] == ("hashed" if name in hashed else "cached")
+            if name in hashed:
+                assert row["recorded"] is True
+            else:
+                assert row["writer"]["pid"] == cold["pid"]
+                assert row["writer"]["quiescent_seconds"] == (
+                    source_digest_cache.DEFAULT_QUIESCENT_SECONDS)
+
+
 def test_cli_without_cache_keeps_legacy_output_bytes(producer, source, tmp_path):
     expected = {"projection": "control", "source": serving_parts.source_identity(source)}
     _call(producer, source, tmp_path)
@@ -127,7 +233,7 @@ def test_public_projection_cache_hit_is_byte_identical_to_uncached_projection(
     assert hash_reads.count("model.safetensors") == 1
     assert cold_cache.receipt()["hashed_shards"] == 1
     hash_reads.clear()
-    # A new instance models a subsequent producer process, not in-memory reuse.
+    # A new instance checks on-disk reuse within this interpreter.
     warm_cache = source_digest_cache.SourceDigestCache(cache_directory, source=source)
     warm = producer.producer_projection(source, plan, digest_cache=warm_cache)
     assert (json.dumps(warm, indent=2) + "\n").encode() == expected_bytes
