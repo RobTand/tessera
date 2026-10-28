@@ -38,6 +38,7 @@ HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE.parent / "t8r_speed"))
 from bench_geometry import pick_recorded, time_call
 from bench_rates import sha
+from rung_quality import quality_scope
 from bench_t8r import (PowerSampler, balanced_routing, kernel_profile,
                        recorded_routing)
 from tessera.alphabet import SERIALISABLE_GRIDS, grid_for_name
@@ -186,9 +187,11 @@ def quality(args, grid, samples, metadata):
               "rungs": {}, "start_unix": time.time()}
     for q in args.qs:
         recipe = served_recipe(grid, q, args.quality_structure)
+        recipe_config = recipe.to_config()
         row = {"measurement_status": "measured", "source_kind": result["source_kind"], "device": "cpu",
                "arity": grid.arity, "grid": grid.name, "rung_q256": q,
-               "structure": args.quality_structure, "recipe": recipe.to_config(), "samples": [], "anomaly_flags": []}
+               "structure": args.quality_structure, "recipe": recipe_config,
+               "scope": quality_scope(grid, q, recipe), "samples": [], "anomaly_flags": []}
         for role, weight in samples.items():
             unit = encode_linear(weight, grid=grid, q256=q, **recipe_kwargs(recipe))
             decoded = read_unit_artifact(unit.blob).double()
@@ -201,7 +204,7 @@ def quality(args, grid, samples, metadata):
             row["samples"].append({**metadata[role], "relative_sse": sse / metadata[role]["source_squared_norm"],
                 "squared_error": sse, "exact_bytes": unit.exact_bytes, "accounted_bits": rational(bits),
                 "grid": grid.name, "arity": grid.arity, "rung_q256": q,
-                "structure": args.quality_structure, "recipe": recipe.to_config(),
+                "structure": args.quality_structure, "recipe": recipe_config,
                 "encoder_blob_sha256": hashlib.sha256(unit.blob).hexdigest()})
         result["rungs"][str(q)] = row
         dump(Path(args.out) / "quality.json", result)
