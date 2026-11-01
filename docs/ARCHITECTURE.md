@@ -10231,7 +10231,7 @@ fallback one. A census (`tools/tessera_route_census.py`) that reads
 `gate` on authenticated Mergify batch drafts or same-repository canaries.
 Both test the bytes-only and torch CPU populations on hosted x64 and ARM.
 Neither covers CUDA-gated tests. [The gate reference](ci_gate.md) describes
-selection, hosted-duration file sharding and xdist groups derived from module fixture scopes,
+selection that falls back to full on silent output for changed paths, hosted-duration file sharding and xdist groups derived from module fixture scopes,
 with scheduling costs and bootstrap limits refreshed from retained hosted JUnit
 and an 80-second default derived from twice the measured 39.884-second
 cold planning cost on the two architecture assignments,

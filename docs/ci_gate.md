@@ -1,7 +1,8 @@
 # Hosted CPU merge gate
 
 Every PR push selects tests with `tools/impacted_tests.py`, Tessera's reverse
-import graph. Selector errors select the full population. Changes to gate or
+import graph. Selector errors and empty selector output for changed paths select
+the full population. Changes to gate or
 workflow files, and the selector itself, also select the full population.
 Documentation-only changes outside `docs/schema/` select the fast standalone,
 packaging and provenance tier. Ordinary changes retain reverse-import and

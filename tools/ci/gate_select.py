@@ -58,6 +58,8 @@ def select_files(root, base, head, execute=subprocess.run):
         if result.returncode:
             raise ValueError(result.stderr or f'selector exit {result.returncode}')
         if not result.stdout.strip():
+            if diff.stdout.strip():
+                raise ValueError('selector returned no verdict for changed paths')
             return {'verdict': 'none', 'tests': [], 'reason': 'no changed paths'}
         selection = json.loads(result.stdout)
         if selection['verdict'] == 'full':
