@@ -55,3 +55,14 @@ def test_workflow_executes_the_tested_batch_decision(tmp_path, change, expected)
     assert output.read_text().strip() == 'mode=' + expected
     assert "needs.plan.outputs.mode == 'full'" in workflow
     assert "needs.plan.outputs.mode != 'full'" in workflow
+
+
+def test_final_summary_quotes_skip_uncollected_and_cuda_population():
+    actions = load('gate_actions')
+    record = {'lane': 'bytes', 'surface': {'counts': {'passed': 10, 'skipped': 3},
+              'not_collected': ['test_gpu.py'], 'skip_reasons': {'requires CUDA': 3},
+              'device': 'no torch in this interpreter (ImportError)',
+              'cuda_surface': {'executed': 0}}}
+    text = actions.population_summary([record])
+    for value in ['10 passed', '3 skipped', '1 uncollected', 'CUDA not covered', '0 allocated', 'requires CUDA']:
+        assert value in text
