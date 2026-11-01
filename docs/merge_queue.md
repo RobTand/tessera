@@ -9,17 +9,16 @@ through PrismaBuild; cite their action keys and results in the PR body.
 
 1. Follow branch rule 12. Name your branch `tessera-<issue>` or
    `tessera-<issue>-<word>`, with lowercase letters, digits and hyphens in
-   the suffix, for example `tessera-1559-tl3-node-7`.
-2. Reference the same issue in the PR body, for example `Refs #1559.`.
+   the suffix, for example `tessera-<issue>-tl3-<node>`.
+2. Reference the same issue in the PR body, for example `Refs #<issue>.`.
    Rule 12 checks that the branch number names a linked issue in this
    repository. Use a closing reference only when the PR completes the issue.
-3. Wait for the branch-rule check and `pr-gate` to pass.
+3. Wait for the `branch rule` check and `pr-gate` to pass.
 
-Classic branch protection also applies. At preparation time it requires
-`pure`, which includes branch rule 12 and tests. The gate rollout owner must
-migrate that legacy requirement to the separate branch-rule check before this
-queue configuration goes live; Mergify injects required checks into the
-queue's conditions. The gate rollout also validates Mergify's draft branches.
+Classic branch protection requires `branch rule` only. Mergify does not
+inject it into the queues; the queue conditions name `branch rule` and
+`pr-gate` themselves, and the batch draft is judged by `gate` alone. `pure`
+still runs on every pull request and inside `gate`.
 
 ## Queue and dequeue
 
