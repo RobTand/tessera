@@ -1897,10 +1897,19 @@ T4 activation-prefetch experiment (2026-10-02, #875):
 * First numeric gate is the staged driver
   experiments/t4_code/prefetch_qualification.py consume, which reuses the exact
   native1 0/4 ELFs through the existing StagedInputs/NativeCallback owners.
-  Public client.read_data_manifest, manifest_read_entries and
-  storage_tiers.manifest_phase_ranges must bind exactly three native files
+  V1 whole-bank consumers require SDK reads in declared registry order; v2
+  consumption order may differ from that registry.
+  The shared pb_staged_store.validate_whole_phase_readset assertion uses public
+  client.read_data_manifest and client.manifest_read_entries to validate coverage,
+  alignment and consumption order before inspecting v1 annotations.phases or v2
+  read_plan.phases. It requires identity encoding and one nonempty native1-whole
+  range using cumulative frontiers, accepting PB-valid trailing empty phases
+  and ignoring advisory v1 bytes. T4 additionally binds exactly three native files
   (or those files plus the nine qualified sanitizer files), offset zero,
-  unique ordered whole-file members and one complete native1-whole phase.
+  unique ordered whole-file members and registry/read-order agreement. Both validators return
+  normalized phase ranges while the shared assertion validates public read order.
+  Numeric repair reports retain those ranges under JSON phases. These metadata checks open no declared native files;
+  snapshot SDK tests are not deployed-SDK or GPU numerical qualification.
   Both libraries load ONCE in one process from distinct held SDK FDs, not
   original-path reopens; direct diagnostic mapping is NOT serving _ext admission.
   The existing producer ABI rule is shared by _ext and diagnostic consumers.
