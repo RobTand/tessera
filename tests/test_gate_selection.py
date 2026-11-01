@@ -50,3 +50,24 @@ def test_documentation_uses_only_the_fast_boundary_tier(tmp_path, path):
         execute=lambda command, **kwargs: SimpleNamespace(returncode=0, stdout=path+'\n', stderr=''))
     assert result['verdict'] == 'narrowed'
     assert result['tests'] == ['tests/test_standalone_boundary.py']
+
+
+def test_unknown_data_read_does_not_activate_a_guarded_lazy_import(tmp_path):
+    select = load(ROOT / 'tools/impacted_tests.py')
+    (tmp_path / 'pkg').mkdir()
+    (tmp_path / 'pkg/__init__.py').write_text('')
+    (tmp_path / 'pkg/layout.py').write_text(
+        'BASE = 1\n_NAMES = frozenset({"slice"})\n'
+        'def __getattr__(name):\n'
+        '    if name in _NAMES:\n'
+        '        from . import slicing as _slicing\n'
+        '        return getattr(_slicing, name)\n'
+        '    raise AttributeError(name)\n')
+    (tmp_path / 'pkg/slicing.py').write_text(
+        'from pathlib import Path\ndef slice(): return Path("/outside/data.json").read_text()\n')
+    (tmp_path / 'tests').mkdir()
+    (tmp_path / 'tests/test_base.py').write_text('from pkg.layout import BASE\ndef test_base(): assert BASE == 1\n')
+    (tmp_path / 'tests/test_slice.py').write_text('from pkg.layout import slice\ndef test_slice(): pass\n')
+    (tmp_path / 'other.py').write_text('VALUE = 1\n')
+    assert select.select(tmp_path, ['other.py'])['tests'] == ['tests/test_slice.py']
+    assert 'tests/test_slice.py' in select.select(tmp_path, ['pkg/slicing.py'])['tests']
