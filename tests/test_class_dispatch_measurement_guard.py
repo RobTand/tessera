@@ -38,10 +38,12 @@ def test_running_treats_a_vanishing_process_as_not_running(monkeypatch):
 
 
 @pytest.mark.parametrize("handler_delay", [0, .3])
-@pytest.mark.parametrize("trigger", ["floor", "read_error", "launcher_exit"])
+@pytest.mark.parametrize("trigger", ["floor", "read_error", "launcher_exit", "startup_error"])
 def test_guard_stops_workload_after_launcher_exit(tmp_path, monkeypatch, trigger, handler_delay):
     guard = load_guard()
     pidfile = tmp_path / "workload.pid"
+    if trigger == "startup_error":
+        pidfile.write_text("")
     termfile = tmp_path / "workload.term"
     leaf = ("import os,signal,sys,time;from pathlib import Path;"
             f"signal.signal(signal.SIGTERM,lambda *_:(time.sleep({handler_delay!r}),Path({str(termfile)!r}).write_text('TERM'),sys.exit(0)));"
@@ -59,6 +61,8 @@ def test_guard_stops_workload_after_launcher_exit(tmp_path, monkeypatch, trigger
         reads += 1
         if reads == 1:
             return guard.FLOOR_BYTES + 1
+        if trigger == "startup_error":
+            raise OSError("memory reader failed before workload readiness")
         deadline = time.monotonic() + 10
         while not (pidfile.exists() and pidfile.read_text()):
             assert time.monotonic() < deadline, "The workload did not start."
@@ -72,6 +76,10 @@ def test_guard_stops_workload_after_launcher_exit(tmp_path, monkeypatch, trigger
                                       "--", sys.executable, "-c", launcher])
     pid = None
     try:
+        if trigger == "startup_error":
+            with pytest.raises(OSError, match="memory reader failed before workload readiness"):
+                guard.main()
+            return
         if trigger == "read_error":
             with pytest.raises(OSError, match="memory reader failed"):
                 guard.main()
