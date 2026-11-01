@@ -33,7 +33,7 @@ def select_files(root, base, head, execute=subprocess.run):
     try:
         result = execute([sys.executable, str(root / 'tools/impacted_tests.py'),
                           '--ref', f'{base}...{head}', '--json'], cwd=root,
-                         capture_output=True, text=True, check=False)
+                         capture_output=True, text=True, check=False, timeout=120)
         if result.returncode:
             raise ValueError(result.stderr or f'selector exit {result.returncode}')
         if not result.stdout.strip():
@@ -45,7 +45,7 @@ def select_files(root, base, head, execute=subprocess.run):
               not set(selection['tests']) <= set(all_files)):
             raise ValueError('selector returned an invalid verdict or unknown files')
         return selection
-    except (OSError, ValueError, KeyError, TypeError) as error:
+    except (OSError, ValueError, KeyError, TypeError, subprocess.TimeoutExpired) as error:
         return {'verdict': 'full', 'tests': all_files, 'reason': str(error)}
 
 
@@ -67,7 +67,7 @@ def quarantine(config, *, issue_state=issue_state):
                 raise ValueError('quarantine requires an exact test node')
             number = owners.get(nodeid)
             if type(number) is not int or number < 1:
-                raise ValueError('quarantine needs an owning issue for ' + nodeid)
+                raise ValueError('quarantine needs an owner issue for ' + nodeid)
     for number in set(owners[nodeid] for nodes in lanes.values() for nodeid in nodes):
         if issue_state(number) != 'open':
             raise ValueError(f'quarantine owner #{number} must remain open')
@@ -85,7 +85,8 @@ def main():
     parser.add_argument('--matrix', type=Path, required=True)
     args = parser.parse_args()
     root = Path.cwd()
-    selection = select_files(root, args.base, args.head)
+    selection = ({'verdict': 'full', 'tests': population(root), 'reason': 'full CPU gate'}
+                 if args.mode == 'full' else select_files(root, args.base, args.head))
     files = population(root) if args.mode == 'full' else selection['tests']
     # Gate tooling changes require complete coverage, independently of graph edges.
     diff = subprocess.run(['git', 'diff', '--name-only', args.base, args.head],

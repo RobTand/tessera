@@ -77,3 +77,10 @@ Passing records require both timing evidence and a controller population with
 no CUDA execution. The quarantine planner checks that every excluded node has
 an owning issue that remains open. Reruns swap the architectures by shard index
 so each file can be qualified on both architectures.
+
+`tools/ci/gate_evidence.py --manifest RUNS.json --output REPORT.json` reads
+retained JUnit repeats and their CPU populations. `--durations-output` writes
+the per-lane median file times. `--budget-output` builds a bootstrap exception
+list from hosted observations, using twice each measured maximum rounded up.
+Every source JUnit digest is retained. The manifest records lane, repeat,
+JUnit path, surface path, and the PB action key or hosted run and artifact.
