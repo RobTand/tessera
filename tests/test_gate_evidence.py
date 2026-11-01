@@ -75,3 +75,17 @@ def test_canary_timing_uses_final_gate_and_preserves_setup_and_failures():
     assert shard['other_seconds'] == 20
     assert shard['runners'] == ['ubuntu-24.04-arm']
     assert evidence.analyze_canaries([])['p90_seconds'] is None
+
+
+def test_skipped_canary_jobs_do_not_report_negative_work():
+    evidence = load('gate_evidence')
+    result = evidence.analyze_canaries([{
+        'run': {'id': 1, 'status': 'completed', 'conclusion': 'failure',
+                'created_at': '2026-11-01T00:00:00Z'},
+        'jobs': [{'name': 'shard-unused-a2', 'conclusion': 'skipped',
+                  'started_at': '2026-11-01T00:00:10Z',
+                  'completed_at': '2026-11-01T00:00:09Z'}]}])
+    assert result['runs'][0]['shards'] == []
+    assert result['runs'][0]['wall_seconds'] is None
+    assert result['passing_runs'] == 0
+    assert evidence._elapsed('2026-11-01T00:00:10Z', '2026-11-01T00:00:09Z') is None
