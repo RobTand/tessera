@@ -1,0 +1,6 @@
+{
+  "seconds": 20,
+  "slow": {},
+  "enforce": false,
+  "source": "Measurement only until hosted canaries establish the exception list."
+}

@@ -1,6 +1,7 @@
 # Tessera plan-to-serve architecture
 
-The hosted `pure` check enforces branch rule 12 for pull requests.
+The hosted `branch rule` check enforces branch rule 12 for pull requests.
+`pure` retains the same step during the required-check transition.
 The branch must match `tessera-<issue>` or `tessera-<issue>-<word>` and link that issue in the body.
 The suffix follows `[a-z0-9][a-z0-9-]*`. The script reads local references and GitHub issue URLs from the event JSON.
 Branches with `ig/`, `tl/` or `release` prefixes are exempt. TrustLadder releases from `tl/release-<operation>` branches. Pull requests created before `2026-10-09T17:00:00Z` are also exempt.
@@ -10091,12 +10092,18 @@ The decoder that actually ran is the `decoder` field on every route record
 fallback one. A census (`tools/tessera_route_census.py`) that reads
 `substituted` on a module is reporting a serve the contract does not attest.
 
-### 5.4 The two hosted jobs, and what each does not prove
+### 5.4 Hosted checks and their populations
 
-`.github/workflows/ci.yml` has two jobs.
+`.github/workflows/ci.yml` provides `branch rule`, `pure`, and tag-only
+`publish`. `.github/workflows/gate.yml` adds `pr-gate` on PR pushes and
+`gate` on authenticated Mergify batch drafts or same-repository canaries.
+Both test the bytes-only and torch CPU populations on hosted x64 and ARM.
+Neither covers CUDA-gated tests. [The gate reference](ci_gate.md) describes
+selection, per-file sharding, verdict retries, budgets, quarantine, and the
+required-check transition.
 
 **`pure`** runs on every push to master and every pull request, in an
-interpreter with pytest and nothing else: the bytes-only tests (whatever
+interpreter with pytest, xdist, and jsonschema, without torch: the bytes-only tests (whatever
 `tests/conftest.py` can collect without torch, reported with the modules it
 could not -- the collector reads a module's *import*, so a test body that
 reaches torch inside a torch-free module says `pytest.importorskip("torch")`,
