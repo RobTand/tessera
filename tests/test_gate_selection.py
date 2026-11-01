@@ -84,3 +84,31 @@ def test_empty_selector_output_for_a_real_change_runs_full_population(tmp_path):
     result = gate.select_files(tmp_path, 'base', 'head', execute=execute)
     assert result['verdict'] == 'full'
     assert result['tests'] == ['tests/test_one.py']
+
+
+@pytest.mark.parametrize('path', ['README.md', 'docs/ARCHITECTURE.md'])
+def test_docs_only_changes_include_repository_documentation_readers(path):
+    gate = load(ROOT / 'tools/ci/gate_select.py')
+    result = gate.select_files(ROOT, 'base', 'head',
+        execute=lambda command, **kwargs: SimpleNamespace(returncode=0, stdout=path+'\n', stderr=''))
+    assert result['verdict'] == 'narrowed'
+    assert {'tests/test_doc_scope_69.py', 'tests/test_issue_refs.py',
+            'tests/test_attest_receipt.py', 'tests/test_merge_suite.py',
+            'tests/test_cell_evidence.py', 'tests/test_serving_contract.py',
+            'tests/test_tp2_reference_kl_514.py', 'tests/test_contract_platform_axis.py',
+            'tests/test_doc_alphabet_70.py', 'tests/test_audit_sec2.py'} <= set(result['tests'])
+    assert len(result['tests']) < len(gate.population(ROOT))
+
+
+@pytest.mark.parametrize('input_path', ['README.md', 'docs/notes.rst', 'docs/issues-snapshot.json'])
+def test_docs_tier_discovers_new_named_readers(tmp_path, input_path):
+    gate = load(ROOT / 'tools/ci/gate_select.py')
+    subprocess.run(['git', 'init', '-q', str(tmp_path)], check=True)
+    (tmp_path / 'tests').mkdir()
+    (tmp_path / 'tests/test_reader.py').write_text(
+        'from pathlib import Path\nROOT = Path(__file__).resolve().parents[1]\n'
+        f'def test_reads(): assert (ROOT / {input_path!r}).read_text()\n')
+    (tmp_path / 'tests/test_unrelated.py').write_text('def test_ok(): pass\n')
+    result = gate.select_files(tmp_path, 'base', 'head',
+        execute=lambda command, **kwargs: SimpleNamespace(returncode=0, stdout='README.md\n', stderr=''))
+    assert result['tests'] == ['tests/test_reader.py']
