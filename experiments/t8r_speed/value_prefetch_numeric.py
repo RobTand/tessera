@@ -132,9 +132,9 @@ def prepare(bank, native_root, sanitizer, runner):
 
 
 def validate_readset(path):
-    manifest, read_entries, _ = validate_whole_phase_readset(
+    manifest, _, ranges = validate_whole_phase_readset(
         path, "whole-synthetic-bank")
-    return manifest, read_entries
+    return manifest, ranges
 
 
 def repair_readset(original, output):

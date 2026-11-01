@@ -1904,11 +1904,9 @@ T4 activation-prefetch experiment (2026-10-02, #875):
   range using cumulative frontiers, accepting PB-valid trailing empty phases
   and ignoring advisory v1 bytes. T4 additionally binds exactly three native files
   (or those files plus the nine qualified sanitizer files), offset zero,
-  unique ordered whole-file members and registry/read-order agreement. It returns
-  normalized phase ranges; the numeric validator uses the same assertion but
-  returns public ordered read entries (v2 need not follow registry order).
-  Numeric repair reports retain normalized ranges under JSON phases independently
-  of that validator return. These metadata checks open no declared native files;
+  unique ordered whole-file members and registry/read-order agreement. Both validators return
+  normalized phase ranges while the shared assertion validates public read order.
+  Numeric repair reports retain those ranges under JSON phases. These metadata checks open no declared native files;
   snapshot SDK tests are not deployed-SDK or GPU numerical qualification.
   Both libraries load ONCE in one process from distinct held SDK FDs, not
   original-path reopens; direct diagnostic mapping is NOT serving _ext admission.

@@ -188,8 +188,6 @@ def test_public_pb_readset_and_whole_bank_phase_contract(tmp_path, complete_phas
     if complete_phase:
         checked, phases = numeric.validate_readset(path)
         assert checked == manifest
-        # Numeric consumers need the public SDK's ordered read entries. The
-        # repair CLI's separate "phases" field remains normalized ranges.
         assert phases == [{"name": "whole-synthetic-bank", "start_bytes": 0, "end_bytes": 32}]
     else:
         with pytest.raises(ValueError, match="staging phase"):
