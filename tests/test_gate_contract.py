@@ -184,7 +184,7 @@ def test_gate_builds_a_module_fixture_once_across_workers(tmp_path, monkeypatch,
         'def shared():\n'
         f'    with pathlib.Path({str(marker)!r}).open("a") as log: log.write("build\\n")\n'
         '    return 1\n'
-         + ('@pytest.mark.xdist_group(name="test_shared")\n' if grouped else '')
+        + ('@pytest.mark.xdist_group(name="test_shared")\n' if grouped else '')
         + '@pytest.mark.parametrize("case", range(8))\n'
         'def test_consumer(shared, case): assert shared == 1\n'
         '@pytest.mark.parametrize("case", range(8))\n'

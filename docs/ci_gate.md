@@ -22,8 +22,8 @@ The torch lane installs CPU torch 2.11.0 and Triton 3.8.0 from pinned
 requirements. Triton is needed to import native owners for CPU metadata tests;
 it does not make these runs CUDA qualification. Both set `CUDA_VISIBLE_DEVICES`
 to the empty string. They use four xdist workers, `--dist loadgroup`, and one native thread per
-worker, within inherited CPU affinity. The five matched-reach grid consumers share an explicit xdist group, so their
-module-scoped fixture builds once. Other cases can share all workers.
+worker, within inherited CPU affinity. The collector groups consumers of module-scoped fixtures by file, so each
+shared fixture builds once. Cases without module fixtures can share all workers.
 Files enter the scheduler longest first; `--no-loadscope-reorder` preserves
 that duration order instead of sorting files by their test counts.
 
@@ -77,7 +77,7 @@ Six A4 CPU wire nodes depend on unpublished archived artifacts, owned by
 [the portable A4 fixtures issue](https://github.com/RobTand/tessera/issues/1568).
 One Stageprev receiver-name proof also requires the published PB source tree,
 owned by [the observer contract issue](https://github.com/RobTand/tessera/issues/1562).
-All matched-reach tests remain active. An explicit worker group builds
+All matched-reach tests remain active. A worker group derived from fixture scopes builds
 their shared grid fixture once. The fixture also reuses standard-normal inverse-CDF
 samples across sigma searches, then applies the original scalar multiplication.
 Bit-for-bit tests compare it with the encoder's source at every tested width.
