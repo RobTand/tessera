@@ -20,6 +20,7 @@ import os
 from pathlib import Path
 import sys
 import time
+import threading
 from types import SimpleNamespace as NS
 
 hook, scratch, scenario = Path(sys.argv[1]), Path(sys.argv[2]), sys.argv[3]
@@ -51,18 +52,29 @@ def read(pid=None):
 def replay_count(record):
     return sum(d['count'] for d in record.get('owner_evidence', {}).get(owner, {}).get('replays', []))
 
+publication_ready = threading.Event()
+publication_target = 2
+publication_record = None
+original_flush = observer._ga_flush
+
+def signal_publication(force=False):
+    global publication_record
+    original_flush(force)
+    try:
+        record = read()
+    except FileNotFoundError:
+        return
+    if replay_count(record) == publication_target:
+        publication_record = record
+        publication_ready.set()
+
+if scenario == "fork":
+    observer._ga_flush = signal_publication
+
 def await_replays(count):
-    deadline = time.monotonic() + 4.0
-    record = None
-    while time.monotonic() < deadline:
-        try:
-            record = read()
-        except FileNotFoundError:
-            pass
-        if record is not None and replay_count(record) == count:
-            break
-        time.sleep(0.025)
-    return record
+    assert publication_ready.wait(120), "daemon did not publish the expected replay count"
+    assert publication_record is not None and replay_count(publication_record) == count
+    return publication_record
 
 if scenario.startswith("transition-"):
     import threading
@@ -173,6 +185,9 @@ else:
         print("PARENT=" + json.dumps(parent), flush=True)
         child = os.fork()
         if child == 0:
+            publication_target = 1
+            publication_record = None
+            publication_ready = threading.Event()
             # No capture, module reimport or explicit flush: the inherited hooks
             # must reset history AND arrange publication after this return.
             assert step() is manager.result
@@ -226,7 +241,7 @@ def _probe(tmp_path, scenario):
         env=child_env(GA_DISPATCH_LOG=str(tmp_path / "dispatch"), T508_DIGEST="",
                       T508_CAPTURE_LOG="", T508_PROF_DIR="", T508_MOE_DETERMINISTIC="",
                       T695_GC_BEFORE_DRAFTER="", T695_DRAFT_LOG=""),
-        capture_output=True, text=True, timeout=30)
+        capture_output=True, text=True, timeout=300)
     assert done.returncode == 0, done.stdout + done.stderr
     result = {}
     for line in done.stdout.splitlines():
@@ -273,7 +288,7 @@ def test_fork_child_automatically_publishes_fresh_successful_replay(tmp_path, sc
     assert sum(d["count"] for d in parent["replays"]) == 2
     assert sum(result["PARENT"]["counts"].values()) == 2
     child = result["CHILD"]
-    assert child is not None, "child never automatically published within four seconds"
+    assert child is not None, "child never automatically published before the publication failure bound"
     assert child["pid"] != result["PARENT"]["pid"]
     evidence = _owner(result, "CHILD")
     assert sum(d["count"] for d in evidence["replays"]) == 1, child

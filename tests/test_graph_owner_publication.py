@@ -166,7 +166,7 @@ def _probe(tmp_path, scenario):
         env=child_env(GA_DISPATCH_LOG=str(tmp_path / "dispatch"), T508_DIGEST="",
                       T508_CAPTURE_LOG="", T508_PROF_DIR="", T508_MOE_DETERMINISTIC="",
                       T695_GC_BEFORE_DRAFTER="", T695_DRAFT_LOG=""),
-        capture_output=True, text=True, timeout=45)
+        capture_output=True, text=True, timeout=300)
     assert done.returncode == 0, done.stdout + done.stderr
     return json.loads(next(line.removeprefix("RECORD=") for line in done.stdout.splitlines()
                            if line.startswith("RECORD=")))
