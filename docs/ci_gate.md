@@ -64,7 +64,9 @@ measured in retained hosted canary reports. Exceptions use twice the largest
 observed case duration, rounded up. The default and exception list cannot
 grow against the event's base commit. Enforcement uses PB's 1.5 tolerance.
 An unavailable base commit gives no verdict.
-Timings include setup and teardown through xunit1 JUnit. Scheduling group
+Bootstrap limits include cold-worker observations from both architecture
+assignments of the fixed partition. Timings include setup and teardown through
+xunit1 JUnit. Scheduling group
 suffixes are removed from test names before budget and evidence lookup;
 parameter values retain their original identity.
 
