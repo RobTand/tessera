@@ -166,3 +166,32 @@ def test_plan_refuses_a_quarantine_file_outside_the_population(tmp_path, monkeyp
         '--mode', 'full', '--shards', '2', '--output', 'plan.json', '--matrix', 'matrix.json'])
     with pytest.raises(ValueError, match='population'):
         select.main()
+
+
+def test_renaming_code_into_docs_cannot_hide_quarantine_growth(tmp_path, monkeypatch):
+    import json, subprocess, sys
+    subprocess.run(['git', 'init', '-q', str(tmp_path)], check=True)
+    for directory in ['tools/ci', 'tests', 'src', 'docs']:
+        (tmp_path / directory).mkdir(parents=True, exist_ok=True)
+    (tmp_path / 'src/owner.py').write_text('VALUE = 1\n')
+    (tmp_path / 'tests/test_one.py').write_text('def test_bad(): assert False\n')
+    config = tmp_path / 'tools/ci'
+    (config / 'gate_durations.json').write_text(json.dumps({'lanes': {'bytes': {}, 'torch': {}}}))
+    quarantine = config / 'gate_quarantine.json'
+    quarantine.write_text(json.dumps({'lanes': {'bytes': [], 'torch': []}, 'issues': {}}))
+    def commit(message):
+        subprocess.run(['git', 'add', '.'], cwd=tmp_path, check=True)
+        subprocess.run(['git', '-c', 'user.name=test', '-c', 'user.email=test@example.invalid',
+                        'commit', '-qm', message], cwd=tmp_path, check=True)
+        return subprocess.check_output(['git', 'rev-parse', 'HEAD'], cwd=tmp_path, text=True).strip()
+    base = commit('base')
+    (tmp_path / 'src/owner.py').rename(tmp_path / 'docs/owner.md')
+    quarantine.write_text(json.dumps({'lanes': {'bytes': [], 'torch': ['tests/test_one.py::test_bad']},
+                                     'issues': {'tests/test_one.py::test_bad': 3201}}))
+    head = commit('rename code and add quarantine')
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(select, 'check_quarantine_owners', lambda entries: None)
+    monkeypatch.setattr(sys, 'argv', ['gate_select', '--base', base, '--head', head,
+        '--mode', 'full', '--shards', '1', '--output', 'plan.json', '--matrix', 'matrix.json'])
+    with pytest.raises(ValueError, match='quarantine-only'):
+        select.main()
