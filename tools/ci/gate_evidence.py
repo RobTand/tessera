@@ -67,8 +67,9 @@ def analyze_runs(runs):
 def _elapsed(start, end):
     if not start or not end:
         return None
-    return (datetime.fromisoformat(end.replace('Z', '+00:00')) -
-            datetime.fromisoformat(start.replace('Z', '+00:00'))).total_seconds()
+    seconds = (datetime.fromisoformat(end.replace('Z', '+00:00')) -
+               datetime.fromisoformat(start.replace('Z', '+00:00'))).total_seconds()
+    return seconds if seconds >= 0 else None
 
 
 def analyze_canaries(runs):
@@ -84,7 +85,7 @@ def analyze_canaries(runs):
             passing.append(wall)
         shards = []
         for job in jobs:
-            if not job['name'].startswith('shard-'):
+            if not job['name'].startswith('shard-') or job.get('conclusion') == 'skipped':
                 continue
             steps = {step['name']: _elapsed(step.get('started_at'), step.get('completed_at'))
                      for step in job.get('steps', [])}
