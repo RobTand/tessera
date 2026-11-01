@@ -112,3 +112,35 @@ def test_docs_tier_discovers_new_named_readers(tmp_path, input_path):
     result = gate.select_files(tmp_path, 'base', 'head',
         execute=lambda command, **kwargs: SimpleNamespace(returncode=0, stdout='README.md\n', stderr=''))
     assert result['tests'] == ['tests/test_reader.py']
+
+
+def test_docs_only_receipt_edit_selects_helper_documentation_consumers():
+    gate = load(ROOT / 'tools/ci/gate_select.py')
+    receipt = 'docs/measurements/tessera-gfx1201-bf16-k1-served-2026-09-13.md'
+    result = gate.select_files(ROOT, 'base', 'head',
+        execute=lambda command, **kwargs: SimpleNamespace(returncode=0, stdout=receipt+'\n', stderr=''))
+    print(f"docs-only receipt: {len(result['tests'])}/{len(gate.population(ROOT))} files")
+    assert result['verdict'] == 'narrowed'
+    assert 'tests/test_census_cell_agreement.py' in result['tests']
+    assert {'tests/test_lfm_measured_cells.py', 'tests/test_route_census_regimes.py'} <= set(result['tests'])
+
+
+@pytest.mark.parametrize('imports', [
+    'from tests.bridge import read',
+    'from tests import bridge',
+    'import bridge',
+])
+def test_readme_selects_transitive_helper_readers_only(tmp_path, imports):
+    gate = load(ROOT / 'tools/ci/gate_select.py')
+    subprocess.run(['git', 'init', '-q', str(tmp_path)], check=True)
+    (tmp_path / 'tests').mkdir()
+    (tmp_path / 'tests/receipt.py').write_text(
+        'from pathlib import Path\ndef read(): return Path("docs/receipt.md").read_text()\n')
+    (tmp_path / 'tests/bridge.py').write_text('from .receipt import read\n')
+    (tmp_path / 'tests/test_reader.py').write_text(imports+'\ndef test_read(): pass\n')
+    (tmp_path / 'tests/test_unrelated.py').write_text('def test_ok(): pass\n')
+    (tmp_path / 'tests/unused.py').write_text('PATH = "docs/unused.md"\n')
+    result = gate.select_files(tmp_path, 'base', 'head',
+        execute=lambda command, **kwargs: SimpleNamespace(returncode=0, stdout='README.md\n', stderr=''))
+    assert result['verdict'] == 'narrowed'
+    assert result['tests'] == ['tests/test_reader.py']
