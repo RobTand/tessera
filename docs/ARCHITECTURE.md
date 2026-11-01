@@ -118,7 +118,7 @@ The retained graphics processor evidence does not establish serving qualificatio
 
 Re-stamped 2026-10-10 for the graph-only census separation (issue #1062).
 
---compiled names a non-eager engine. A real Torch trace takes the shape-polymorphic arm and still requires M star records. Mode NONE means CUDA graphs only: records keep concrete capture shapes, the census checks them as concrete, and every graph-only census states capture time only with no logical row credit. Replay runs no Python. Phase, owner, route, decoder, dtype and cell checks run on both paths. No default, pin or admission changes.
+--compiled names a non-eager engine. A real Torch trace takes the shape-polymorphic arm and requires M star evidence on every record in each driven phase, checked per rank before aggregation. Children of one declared owner may have different names across phases; neither disjoint names nor partial overlap exempts a record. Mode NONE means CUDA graphs only: records keep concrete capture shapes, the census checks them as concrete, and every graph-only census states capture time only with no logical row credit. Replay runs no Python. Phase, owner, route, decoder, dtype and cell checks run on both paths. No default, pin or admission changes.
 
 Re-stamped 2026-10-08 for replay-free native matrix selection (issue #1061).
 
@@ -758,6 +758,29 @@ identity drift, and no format pin or serving default moves. Regressions:
 `tests/test_graph_attest_producer_identity.py` and
 `tests/test_graph_attest_headroom_preflight.py`. See
 `experiments/graph_attest_702/RUNPLAN-artifact.md`.
+
+The optional graph-control `BATCH_KL` recipe declaration is retained in window
+inputs and forwarded to both native action environments for rank startup's
+configuration comparison. Submission recovers the exact declaration string from
+both prepared manifest rows, independent of the submitting shell, and checks it
+against the parsed inputs without weakening the full manifest seal. At the
+existing live `LocalArm.probes` seam,
+collection currently refuses: no owner-supported live TP2/MTP1 target-model
+attachment handoff is available.
+It does not invoke an isolated scorer, launch another serve or disable MTP.
+Collector exceptions use the native coupled-abort and owned-cleanup lifecycle.
+After graph-receipt creation, `window_driver.py --bind-batch-kl ROOT
+--graph-receipt PATH` (with the existing plan argument) writes a separate
+`batch-kl-manifest.json`. The binder rehashes retained raw/result bytes, compares
+all three arms against prepared inputs and both native members, and requires
+replay managers for both native ranks before rerunning the existing
+equality/per-rank replay gate. A completely omitted rank cannot evade that gate
+at this binding boundary. Regressions reuse the normalized fixture in
+`tests/test_graph_attest_batch_kl_binding.py`. This is binding validity, not
+scientific KL qualification; the graph receipt and its exclusions remain unchanged.
+Production remains unqualified until the existing scorer owner supplies the
+missing capability. The reconciled handoff disposition, configuration and
+normal workflow are in `experiments/graph_attest_702/RUNPLAN-artifact.md`.
 
 Both live TP2 ranks must agree on image, source digest and config digest before
 either local launch, in dev and certified modes alike. This is execution
@@ -1898,10 +1921,19 @@ T4 activation-prefetch experiment (2026-10-02, #875):
 * First numeric gate is the staged driver
   experiments/t4_code/prefetch_qualification.py consume, which reuses the exact
   native1 0/4 ELFs through the existing StagedInputs/NativeCallback owners.
-  Public client.read_data_manifest, manifest_read_entries and
-  storage_tiers.manifest_phase_ranges must bind exactly three native files
+  V1 whole-bank consumers require SDK reads in declared registry order; v2
+  consumption order may differ from that registry.
+  The shared pb_staged_store.validate_whole_phase_readset assertion uses public
+  client.read_data_manifest and client.manifest_read_entries to validate coverage,
+  alignment and consumption order before inspecting v1 annotations.phases or v2
+  read_plan.phases. It requires identity encoding and one nonempty native1-whole
+  range using cumulative frontiers, accepting PB-valid trailing empty phases
+  and ignoring advisory v1 bytes. T4 additionally binds exactly three native files
   (or those files plus the nine qualified sanitizer files), offset zero,
-  unique ordered whole-file members and one complete native1-whole phase.
+  unique ordered whole-file members and registry/read-order agreement. Both validators return
+  normalized phase ranges while the shared assertion validates public read order.
+  Numeric repair reports retain those ranges under JSON phases. These metadata checks open no declared native files;
+  snapshot SDK tests are not deployed-SDK or GPU numerical qualification.
   Both libraries load ONCE in one process from distinct held SDK FDs, not
   original-path reopens; direct diagnostic mapping is NOT serving _ext admission.
   The existing producer ABI rule is shared by _ext and diagnostic consumers.
