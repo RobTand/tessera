@@ -2,6 +2,8 @@
 from __future__ import annotations
 
 import importlib.util
+import json
+import sys
 from pathlib import Path
 import subprocess
 
@@ -104,3 +106,23 @@ def test_canary_rerun_timing_requires_its_own_request_timestamp():
     result = evidence.analyze_canaries([entry])
     assert result['runs'][0]['wall_seconds'] == 120
     assert result['p90_seconds'] == 120
+
+
+def test_budget_bootstrap_uses_measured_default_for_cold_consumers(tmp_path, monkeypatch):
+    evidence = load('gate_evidence')
+    junit = tmp_path / 'junit.xml'
+    junit.write_text('<testsuite>'
+        '<testcase file="tests/test_cpu.py" classname="tests.test_cpu" name="test_cold" time="39.884" />'
+        '<testcase file="tests/test_cpu.py" classname="tests.test_cpu" name="test_slow" time="100" />'
+        '</testsuite>')
+    manifest = tmp_path / 'manifest.json'
+    manifest.write_text(json.dumps([{'lane': 'torch', 'repeat': 1, 'junit': str(junit)}]))
+    budget = tmp_path / 'budget.json'
+    monkeypatch.setattr(sys, 'argv', ['gate_evidence', '--manifest', str(manifest),
+        '--output', str(tmp_path / 'report.json'), '--budget-output', str(budget),
+        '--budget-default-seconds', '80'])
+    assert evidence.main() == 0
+    policy = json.loads(budget.read_text())
+    assert policy['seconds'] == 80
+    assert policy['enforce'] is True
+    assert policy['slow'] == {'tests/test_cpu.py::test_slow': 200}
