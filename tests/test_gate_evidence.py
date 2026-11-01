@@ -150,3 +150,27 @@ def test_canary_timing_uses_verdict_and_completion_steps_when_job_clock_differs(
     assert run['verdict_completed_at'] == '2026-11-01T08:02:00Z'
     assert run['shards'][0]['job_seconds'] == 100
     assert run['shards'][0]['other_seconds'] == 20
+
+
+def test_canary_uses_job_clock_upper_bound_when_steps_precede_run_creation():
+    evidence = load('gate_evidence')
+    result = evidence.analyze_canaries([{
+        'run': {'id': 1, 'status': 'completed', 'conclusion': 'success',
+                'created_at': '2026-11-01T09:00:00Z'},
+        'jobs': [
+            {'name': 'gate', 'conclusion': 'success', 'completed_at': '2026-11-01T09:02:02Z',
+             'steps': [{'name': 'Require complete lane coverage and final verdicts',
+                        'completed_at': '2026-11-01T08:02:00Z'}]},
+            {'name': 'shard-0-torch-a1', 'conclusion': 'success',
+             'started_at': '2026-11-01T09:00:10Z', 'completed_at': '2026-11-01T09:01:52Z',
+             'steps': [{'name': 'Install pinned lane dependencies',
+                        'started_at': '2026-11-01T08:00:20Z', 'completed_at': '2026-11-01T08:00:50Z'},
+                       {'name': 'Run assigned population',
+                        'started_at': '2026-11-01T08:00:50Z', 'completed_at': '2026-11-01T08:01:40Z'},
+                       {'name': 'Complete job', 'completed_at': '2026-11-01T08:01:50Z'}]}]}])
+    run = result['runs'][0]
+    assert run['wall_seconds'] == 122
+    assert run['verdict_completed_at'] == '2026-11-01T08:02:00Z'
+    assert run['timing_basis'] == 'job_completion_upper_bound'
+    assert run['shards'][0]['job_seconds'] == 102
+    assert run['shards'][0]['other_seconds'] == 22
