@@ -57,7 +57,7 @@ def test_unknown_data_read_does_not_activate_a_guarded_lazy_import(tmp_path):
     (tmp_path / 'pkg').mkdir()
     (tmp_path / 'pkg/__init__.py').write_text('')
     (tmp_path / 'pkg/layout.py').write_text(
-        'BASE = 1\n_NAMES = frozenset({"slice"})\n'
+        'def base(): return 1\n_NAMES = frozenset({"slice"})\n'
         'def __getattr__(name):\n'
         '    if name in _NAMES:\n'
         '        from . import slicing as _slicing\n'
@@ -66,8 +66,8 @@ def test_unknown_data_read_does_not_activate_a_guarded_lazy_import(tmp_path):
     (tmp_path / 'pkg/slicing.py').write_text(
         'from pathlib import Path\ndef slice(): return Path("/outside/data.json").read_text()\n')
     (tmp_path / 'tests').mkdir()
-    (tmp_path / 'tests/test_base.py').write_text('from pkg.layout import BASE\ndef test_base(): assert BASE == 1\n')
-    (tmp_path / 'tests/test_slice.py').write_text('from pkg.layout import slice\ndef test_slice(): pass\n')
+    (tmp_path / 'tests/test_base.py').write_text('from pkg.layout import base\ndef test_base(): assert base() == 1\n')
+    (tmp_path / 'tests/test_slice.py').write_text('from pkg.layout import slice\ndef test_slice(): slice()\n')
     (tmp_path / 'other.py').write_text('VALUE = 1\n')
     assert select.select(tmp_path, ['other.py'])['tests'] == ['tests/test_slice.py']
     assert 'tests/test_slice.py' in select.select(tmp_path, ['pkg/slicing.py'])['tests']
