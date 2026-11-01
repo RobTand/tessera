@@ -1,11 +1,23 @@
 # Tessera plan-to-serve architecture
 
-The hosted `pure` check enforces branch rule 12 for pull requests.
+The hosted `branch rule` check enforces branch rule 12 for pull requests.
+`pure` retains the same step during the required-check transition.
 The branch must match `tessera-<issue>` or `tessera-<issue>-<word>` and link that issue in the body.
 The suffix follows `[a-z0-9][a-z0-9-]*`. The script reads local references and GitHub issue URLs from the event JSON.
 Branches with `ig/`, `tl/` or `release` prefixes are exempt. TrustLadder releases from `tl/release-<operation>` branches. Pull requests created before `2026-10-09T17:00:00Z` are also exempt.
 The workflow checks new commits and body edits. The cutoff itself requires the check.
 The script uses only the Python standard library and never treats pull request fields as shell source.
+
+The hosted gate compares quarantine with its PR base. Growth requires a change limited to quarantine and documentation; the initial policy is reviewed with the gate. The plan rejects files outside its tracked test population. Runtime collection matches whole files or exact nodes, and authenticated owner checks refuse closed issues and PRs. GitHub unavailability gives no verdict.
+
+The class guard integration test waits for explicit workload readiness and retains the production TERM grace; its cooperative handler records TERM before exiting. A deliberate handler pause covers slow scheduling without imposing a shorter cleanup policy.
+
+Documentation-only gate changes run the fast standalone, packaging and provenance tier, except wire schema documentation which still forces full. The reverse-import selector excludes only three named kernel-generated proc records from unknown repository reads; arbitrary external paths and proc aliases retain conservative consumers. Unknown data reads respect the same proven lazy import guards as unknown source loaders; explicit changed-module edges remain conservative. Selector edits force the full gate.
+
+The workflow executes the tested Python event-identity decision before planning and uses its output for both final check names. Torch lanes require a CPU torch installation and zero uncollected modules at both runner and aggregate boundaries.
+
+Final gate summaries report each CPU lane’s pass, failure, skip and uncollected counts, verbatim skip reasons, device details and zero CUDA allocation. CPU passes do not cover CUDA.
+
 
 Re-stamped 2026-10-09 for the migrated GB and D1 producer caller (tessera#944).
 Re-stamped 2026-10-09 for the canonical T4 performant menu (issue #1103).
@@ -10212,12 +10224,33 @@ The decoder that actually ran is the `decoder` field on every route record
 fallback one. A census (`tools/tessera_route_census.py`) that reads
 `substituted` on a module is reporting a serve the contract does not attest.
 
-### 5.4 The two hosted jobs, and what each does not prove
+### 5.4 Hosted checks and their populations
 
-`.github/workflows/ci.yml` has two jobs.
+`.github/workflows/ci.yml` provides `branch rule`, `pure`, and tag-only
+`publish`. `.github/workflows/gate.yml` adds `pr-gate` on PR pushes and
+`gate` on authenticated Mergify batch drafts or same-repository canaries.
+Both test the bytes-only and torch CPU populations on hosted x64 and ARM.
+Neither covers CUDA-gated tests. [The gate reference](ci_gate.md) describes
+selection that falls back to full on silent output for changed paths,
+a docs-only tier including documentation and issue-snapshot readers, hosted-duration file sharding and xdist groups derived from module fixture scopes,
+with scheduling costs and bootstrap limits refreshed from retained hosted JUnit
+and an 80-second default derived from twice the measured 39.884-second
+cold planning cost on the two architecture assignments,
+verdict retries, measured and enforced test budgets,
+issue-owned quarantine parsed once for growth, owner checks and deselection,
+with a strict lanes/issues schema and growth checks covering both paths of renames, restored matched-reach coverage with exact standard-sample
+reuse in its test fixture, and the required-check transition. Its evidence command computes
+hosted wall time through the final verdict step and separates setup from tests,
+retaining job timestamps alongside step timestamps when their clocks disagree.
+When steps precede workflow creation, job completion supplies a conservative
+upper bound without applying an inferred clock correction.
+Scheduling group suffixes do not change budget or evidence test identities.
+Recorded slow-node budgets also set their runtime timeouts when their
+1.5-times allowance exceeds the default 300-second pytest cap; the JSON
+limits and final budget checks are unchanged.
 
 **`pure`** runs on every push to master and every pull request, in an
-interpreter with pytest and nothing else: the bytes-only tests (whatever
+interpreter with pytest, xdist, pytest-timeout, and jsonschema, without torch: the bytes-only tests (whatever
 `tests/conftest.py` can collect without torch, reported with the modules it
 could not -- the collector reads a module's *import*, so a test body that
 reaches torch inside a torch-free module says `pytest.importorskip("torch")`,
@@ -10433,3 +10466,5 @@ The current GLM entry derives from actual T-8/T-16 constructor calls on the curr
 The topology specifies two nodes with one rank and one CUDA device per node.
 
 Defaults, serving pins, kernels, and the T-16 decode-once interface remain unchanged.
+
+The initial gate quarantine also excludes the single no-vLLM benchmark import probe whose newly added bare piece-major helper import fails under file-spec loading. Its open P2 owner tracks the import-context repair outside the gate footprint; other cohort isolation tests stay active.

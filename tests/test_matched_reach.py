@@ -24,6 +24,7 @@ the modules ``tests/conftest.py`` drops from the pure lane.
 """
 from __future__ import annotations
 
+from functools import cache
 import importlib.util
 import sys
 from pathlib import Path
@@ -44,16 +45,33 @@ from tessera.export import BF16_CHANNEL_SIGMA as SIGMA  # noqa: E402
 WIDTHS = [12, 14, 16]
 
 
+def _cached_gaussian_source(source):
+    """Reuse the sigma-independent inverse CDF with identical float operations."""
+    @cache
+    def standard(count):
+        return source(count, 1.0)
+
+    def scaled(count, sigma):
+        return tuple(sigma * value for value in standard(count))
+
+    return scaled
+
+
 @pytest.fixture(scope="module")
 def grid():
-    return matched_reach.reach_grid(BF16_GRID, WIDTHS, base_sigma=SIGMA)
+    from tessera import encode
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setattr(encode, 'GAUSSIAN_SOURCE', _cached_gaussian_source(encode.GAUSSIAN_SOURCE))
+        return matched_reach.reach_grid(BF16_GRID, WIDTHS, base_sigma=SIGMA)
 
 
+@pytest.mark.xdist_group(name="test_matched_reach")
 def test_own_reaches_are_the_shipped_ones(grid):
     """The reaches the #18 receipt names, from the code rather than the doc."""
     assert grid["own"] == {12: 3.671875, 14: 4.0, 16: 4.3125}
 
 
+@pytest.mark.xdist_group(name="test_matched_reach")
 def test_diagonal_is_the_shipped_ratio(grid):
     """A width asked for its own reach must accept ratio 1.0.
 
@@ -66,6 +84,7 @@ def test_diagonal_is_the_shipped_ratio(grid):
         assert lo <= 1.0 <= hi, (L, lo, hi)
 
 
+@pytest.mark.xdist_group(name="test_matched_reach")
 def test_every_cell_lands_on_its_target_exactly(grid):
     """The built table's realised reach equals the target, to the bit."""
     for (L, target_L), cell in grid["cells"].items():
@@ -74,6 +93,7 @@ def test_every_cell_lands_on_its_target_exactly(grid):
         assert cell["realised"] == grid["own"][target_L]
 
 
+@pytest.mark.xdist_group(name="test_matched_reach")
 def test_the_naive_division_misses(grid):
     """Why this module exists: ``target / own`` is not the matched ratio.
 
@@ -102,6 +122,7 @@ def test_unreachable_target_raises():
                                     lo=2.0, hi=8.0)
 
 
+@pytest.mark.xdist_group(name="test_matched_reach")
 def test_interval_is_narrow_enough_to_retype(grid):
     """The reported interval is what says how much precision the arm needs."""
     for cell in grid["cells"].values():
@@ -148,3 +169,24 @@ def test_the_diagnostic_reads_the_table_the_encoder_builds():
                 for h in (8, 16, 32)
             }
             assert len(reaches) == 1, (L, sigma, reaches)
+
+
+def test_grid_quantile_cache_calls_inverse_cdf_once_per_count():
+    calls = []
+    def source(count, sigma):
+        calls.append((count, sigma))
+        return tuple(sigma * value for value in range(count))
+    cached = _cached_gaussian_source(source)
+    assert cached(8, .5) == tuple(.5 * value for value in range(8))
+    assert cached(8, 1.25) == tuple(1.25 * value for value in range(8))
+    assert cached(16, 2.0) == tuple(2.0 * value for value in range(16))
+    assert calls == [(8, 1.0), (16, 1.0)]
+
+
+@pytest.mark.parametrize('count', [1 << width for width in WIDTHS])
+def test_grid_quantile_cache_matches_encoder_source_bit_for_bit(count):
+    from tessera.encode import GAUSSIAN_SOURCE
+    cached = _cached_gaussian_source(GAUSSIAN_SOURCE)
+    for sigma in (.125 * SIGMA, SIGMA, 8.0 * SIGMA):
+        assert tuple(value.hex() for value in cached(count, sigma)) == tuple(
+            value.hex() for value in GAUSSIAN_SOURCE(count, sigma))
