@@ -60,7 +60,7 @@ def test_guard_stops_workload_after_launcher_exit(tmp_path, monkeypatch, trigger
         if reads == 1:
             return guard.FLOOR_BYTES + 1
         deadline = time.monotonic() + 10
-        while not pidfile.exists():
+        while not (pidfile.exists() and pidfile.read_text()):
             assert time.monotonic() < deadline, "The workload did not start."
             time.sleep(.01)
         if trigger == "read_error":
