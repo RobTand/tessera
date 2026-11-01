@@ -15324,6 +15324,10 @@
    "999": {
     "state": "CLOSED",
     "title": "[P3] Do not read a function the file defines as a directory enumeration"
+   },
+   "1372": {
+    "state": "OPEN",
+    "title": "[P1] Complete measurement-source proof and bind actual quality outputs to their served recipe scope"
    }
   }
  }
