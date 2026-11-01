@@ -14,8 +14,13 @@
 #
 # Add "queue" to queue and remove it to dequeue. After a failure, comment
 # "@mergifyio queue"; toggling the label does not reset a dequeued PR.
-# The TL3 coordinator will add its separate label-and-approval queue path to
-# queue_conditions and pull_request_rules. This change reserves that work.
+# TL3 tests each change through PrismaBuild and reviews it, posts its "TL3
+# approval" check on the reviewed head, then adds "tl3-queue". TL3 follows
+# Mergify's queue check on the PR head and never reads pr-gate, so a pr-gate
+# condition would leave a failing TL3 PR unqueued without TL3 noticing. The
+# batch's full "gate" still decides every merge. The issue-link check stays:
+# TL3's branch names and "Refs #<issue>." bodies pass it. TL3 finds its rule's
+# check by name, so keep "Queue TL3-approved PRs".
 # TL3's App needs an explicit command allowance because installation does not
 # grant a human collaborator's write permission.
 # Mergify's default injection adds classic branch protection's required checks
@@ -66,10 +71,16 @@ queue_rules:
   - name: default
     queue_conditions:
       - base = master
-      - label = queue
       - -draft
-      - check-success = branch rule
-      - check-success = pr-gate
+      - or:
+          - and:
+              - label = queue
+              - check-success = branch rule
+              - check-success = pr-gate
+          - and:
+              - label = tl3-queue
+              - check-success = @tl3-robtand/TL3 approval
+              - check-success = branch rule
     merge_conditions:
       - check-success = gate
     merge_method: merge
@@ -94,3 +105,12 @@ pull_request_rules:
       - -draft
     actions:
       queue:
+  - name: Queue TL3-approved PRs
+    conditions:
+      - base = master
+      - label = tl3-queue
+      - -draft
+      - check-success = @tl3-robtand/TL3 approval
+    actions:
+      queue:
+        name: default
