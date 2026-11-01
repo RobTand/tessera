@@ -759,6 +759,29 @@ identity drift, and no format pin or serving default moves. Regressions:
 `tests/test_graph_attest_headroom_preflight.py`. See
 `experiments/graph_attest_702/RUNPLAN-artifact.md`.
 
+The optional graph-control `BATCH_KL` recipe declaration is retained in window
+inputs and forwarded to both native action environments for rank startup's
+configuration comparison. Submission recovers the exact declaration string from
+both prepared manifest rows, independent of the submitting shell, and checks it
+against the parsed inputs without weakening the full manifest seal. At the
+existing live `LocalArm.probes` seam,
+collection currently refuses: no owner-supported live TP2/MTP1 target-model
+attachment handoff is available.
+It does not invoke an isolated scorer, launch another serve or disable MTP.
+Collector exceptions use the native coupled-abort and owned-cleanup lifecycle.
+After graph-receipt creation, `window_driver.py --bind-batch-kl ROOT
+--graph-receipt PATH` (with the existing plan argument) writes a separate
+`batch-kl-manifest.json`. The binder rehashes retained raw/result bytes, compares
+all three arms against prepared inputs and both native members, and requires
+replay managers for both native ranks before rerunning the existing
+equality/per-rank replay gate. A completely omitted rank cannot evade that gate
+at this binding boundary. Regressions reuse the normalized fixture in
+`tests/test_graph_attest_batch_kl_binding.py`. This is binding validity, not
+scientific KL qualification; the graph receipt and its exclusions remain unchanged.
+Production remains unqualified until the existing scorer owner supplies the
+missing capability. The reconciled handoff disposition, configuration and
+normal workflow are in `experiments/graph_attest_702/RUNPLAN-artifact.md`.
+
 Both live TP2 ranks must agree on image, source digest and config digest before
 either local launch, in dev and certified modes alike. This is execution
 comparability, not recorded-versus-running identity; mismatched gang halves
