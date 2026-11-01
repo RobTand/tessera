@@ -18,9 +18,9 @@
     "tests/test_export_routed_resident_pricing.py::test_mtp_duplicate_is_its_own_line_item_and_the_total_is_the_sum[runtime]": 161,
     "tests/test_export_routed_resident_pricing.py::test_routed_stack_bytes_are_the_native_owner_allocation[reference]": 131,
     "tests/test_export_serving.py::test_a_selected_producer_seals_its_receipt_and_commit": 142,
-    "tests/test_export_serving.py::test_joined_expert_encodes_group_across_names_and_write_the_one_unit_bytes[2]": 248,
-    "tests/test_export_serving.py::test_joined_expert_encodes_group_across_names_and_write_the_one_unit_bytes[5]": 237,
-    "tests/test_export_serving.py::test_the_scale_binding_seals_the_bytes_the_roles_consumed": 47,
+    "tests/test_export_serving.py::test_joined_expert_encodes_group_across_names_and_write_the_one_unit_bytes[2]": 254,
+    "tests/test_export_serving.py::test_joined_expert_encodes_group_across_names_and_write_the_one_unit_bytes[5]": 247,
+    "tests/test_export_serving.py::test_the_scale_binding_seals_the_bytes_the_roles_consumed": 48,
     "tests/test_ig790_row_scripts.py::test_row_propagates_child_failure[tools-ig790-pqbridge-row.sh]": 41,
     "tests/test_ig790_row_scripts.py::test_row_propagates_child_failure[tools-ig790-verify-row.sh]": 41,
     "tests/test_impacted_manual_gate.py::test_real_gate_is_selected_as_a_pytest_target": 157,
@@ -31,7 +31,11 @@
     "tests/test_impacted_tests.py::test_this_repository_does_not_gain_an_unnamed_directory_read": 217,
     "tests/test_impacted_tests.py::test_this_repository_has_no_unreadable_source": 128,
     "tests/test_inductor_determinism_knob.py::test_two_fresh_cache_cpu_builds_per_arm_and_what_the_knob_did": 238,
-    "tests/test_kernel_shape_guards.py::test_the_prefill_gemm_copies_a_strided_activation_and_is_off_the_served_path": 106,
+    "tests/test_kernel_shape_guards.py::test_the_prefill_gemm_copies_a_strided_activation_and_is_off_the_served_path": 131,
+    "tests/test_matched_reach.py::test_every_cell_lands_on_its_target_exactly": 601,
+    "tests/test_matched_reach.py::test_interval_is_narrow_enough_to_retype": 534,
+    "tests/test_matched_reach.py::test_own_reaches_are_the_shipped_ones": 601,
+    "tests/test_matched_reach.py::test_the_naive_division_misses": 601,
     "tests/test_menu_selection_requirement.py::test_the_converter_sidecar_carries_the_selection_block": 77,
     "tests/test_merge_suite.py::test_a_real_runs_stdout_binds_to_the_population_it_wrote": 57,
     "tests/test_native_shape_time_scopes.py::test_request_accepts_routed_tp2": 65,
@@ -165,6 +169,54 @@
       "artifact": "gate-result-1-a1-0",
       "archive_sha256": "85c7b09abe0330341149d4f4b79b7a9ff1c8a08cccd51ccffe7504c6c4b32b58",
       "junit_sha256": "4658470b057d504acab248ec565f174029d8e9d4a84ba412c4f20e627d6e3ff1"
+    },
+    {
+      "run": 41278459987,
+      "artifact": "gate-result-1-a1-4",
+      "archive_sha256": "55192c4ad457d6f7ef596cc0437655d9c2fa1dd2aa2f90fcdc25e1014cf7dbb0",
+      "junit_sha256": "c94075b967cd72f4f7d73253a9aeba0c89851513df60ada8fc7510bef8c31f83"
+    },
+    {
+      "run": 41278459987,
+      "artifact": "gate-result-1-a1-1",
+      "archive_sha256": "43974e11a268c9365a3997c018d1b9be8f47546b4bbe8e16498687887b49773f",
+      "junit_sha256": "d10adf08b936e819947b00f7d4b13ef22f9099cd04cc071b35d8f5a9b30cfaaa"
+    },
+    {
+      "run": 41278459987,
+      "artifact": "gate-result-1-a1-6",
+      "archive_sha256": "3ba5398648a5957d11f08a51f3d7a60f911f47025320c011f2533b9575cb0914",
+      "junit_sha256": "6b656a272d36bda99be79810e7a566ff219ba0024f935c649bf983353c129c41"
+    },
+    {
+      "run": 41278459987,
+      "artifact": "gate-result-1-a1-2",
+      "archive_sha256": "5e77d0fae241ea8b0b93dc5e0b59c7d98a81d79ee8c6fbbfe23b36e84d1968ad",
+      "junit_sha256": "ae285491d6d464607a9d2b8e13bfaa8afbedf381c90dc9806c6aeb67bdc36c60"
+    },
+    {
+      "run": 41278459987,
+      "artifact": "gate-result-1-a1-5",
+      "archive_sha256": "c58ca2816550b6228931f278249d20e54b98de8767de5f5969ac1b1a1ce0844e",
+      "junit_sha256": "1bdd23fd6d43f2f94ab53fc2d77c4b546c727cdc0b51b2aa095e30314b577913"
+    },
+    {
+      "run": 41278459987,
+      "artifact": "gate-result-1-a1-3",
+      "archive_sha256": "bcea6d5a97a45895175cbd03e6c51aaf1c7e52546d00bbfd6bd5b6e2868143ad",
+      "junit_sha256": "4718bbee32fd905ce19e71559fb8aef1a27550b2c02d6605197e5e3678276916"
+    },
+    {
+      "run": 41278459987,
+      "artifact": "gate-result-1-a1-0",
+      "archive_sha256": "ab4009264c630eb26293f0c880bb94ffdc617cfe1b87b739bbf0d5fbde79dea1",
+      "junit_sha256": "c166e53644f12c33178f4490a51a7b34201bf20c88d31b2202327603add40ceb"
+    },
+    {
+      "run": 41278459987,
+      "artifact": "gate-result-1-a1-7",
+      "archive_sha256": "e57ed3b7280ccb859c78a9f36255dcbd975117ae0a6af6de195cda7a12f3a0c7",
+      "junit_sha256": "3c9201c6e231c03562796dfbcddd36cc14e92b287af2d2f0cd4734ced24f0866"
     }
   ]
 }
