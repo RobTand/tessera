@@ -148,3 +148,24 @@ def test_the_diagnostic_reads_the_table_the_encoder_builds():
                 for h in (8, 16, 32)
             }
             assert len(reaches) == 1, (L, sigma, reaches)
+
+
+def test_grid_quantile_cache_calls_inverse_cdf_once_per_count():
+    calls = []
+    def source(count, sigma):
+        calls.append((count, sigma))
+        return tuple(sigma * value for value in range(count))
+    cached = _cached_gaussian_source(source)
+    assert cached(8, .5) == tuple(.5 * value for value in range(8))
+    assert cached(8, 1.25) == tuple(1.25 * value for value in range(8))
+    assert cached(16, 2.0) == tuple(2.0 * value for value in range(16))
+    assert calls == [(8, 1.0), (16, 1.0)]
+
+
+@pytest.mark.parametrize('count', [1 << 12, 1 << 14, 1 << 16])
+def test_grid_quantile_cache_matches_encoder_source_bit_for_bit(count):
+    from tessera.encode import GAUSSIAN_SOURCE
+    cached = _cached_gaussian_source(GAUSSIAN_SOURCE)
+    for sigma in (.125 * SIGMA, SIGMA, 8.0 * SIGMA):
+        assert tuple(value.hex() for value in cached(count, sigma)) == tuple(
+            value.hex() for value in GAUSSIAN_SOURCE(count, sigma))
