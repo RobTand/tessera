@@ -149,3 +149,22 @@ def test_workflow_keeps_boundary_proofs_and_branch_check_separate():
     assert '37929162' in gate
     assert 'CUDA_VISIBLE_DEVICES' in gate
     assert 'self-hosted' not in gate
+
+
+def test_full_gate_refuses_an_empty_cpu_population(tmp_path, monkeypatch):
+    gate = load('gate_select')
+    subprocess.run(['git', 'init', '-q', str(tmp_path)], check=True)
+    (tmp_path / 'README.md').write_text('empty project\n')
+    subprocess.run(['git', 'add', '.'], cwd=tmp_path, check=True)
+    subprocess.run(['git', '-c', 'user.name=test', '-c', 'user.email=test@example.invalid',
+                    'commit', '-qm', 'base'], cwd=tmp_path, check=True)
+    sha = subprocess.check_output(['git', 'rev-parse', 'HEAD'], cwd=tmp_path, text=True).strip()
+    config = tmp_path / 'tools/ci'
+    config.mkdir(parents=True)
+    (config / 'gate_durations.json').write_text('{"lanes": {"bytes": {}, "torch": {}}}')
+    (config / 'gate_quarantine.json').write_text('{"lanes": {"bytes": [], "torch": []}, "issues": {}}')
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(sys, 'argv', ['gate_select', '--base', sha, '--head', sha,
+        '--mode', 'full', '--shards', '2', '--output', 'plan.json', '--matrix', 'matrix.json'])
+    with pytest.raises(ValueError, match='empty'):
+        gate.main()
