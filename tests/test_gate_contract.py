@@ -168,3 +168,33 @@ def test_full_gate_refuses_an_empty_cpu_population(tmp_path, monkeypatch):
         '--mode', 'full', '--shards', '2', '--output', 'plan.json', '--matrix', 'matrix.json'])
     with pytest.raises(ValueError, match='empty'):
         gate.main()
+
+
+def test_gate_builds_a_module_fixture_once_across_workers(tmp_path, monkeypatch):
+    runner = load('gate_run')
+    tests = tmp_path / 'tests'
+    tests.mkdir()
+    (tests / 'conftest.py').write_text(
+        'def pytest_addoption(parser): parser.addoption("--surface-json")\n')
+    marker = tmp_path / 'fixture-builds.txt'
+    (tests / 'test_shared.py').write_text(
+        'import pathlib, pytest\n'
+        '@pytest.fixture(scope="module")\n'
+        'def shared():\n'
+        f'    with pathlib.Path({str(marker)!r}).open("a") as log: log.write("build\\n")\n'
+        '    return 1\n'
+        '@pytest.mark.parametrize("case", range(8))\n'
+        'def test_consumer(shared, case): assert shared == 1\n')
+    monkeypatch.setattr(runner, '_budget_policy', lambda *args: {'seconds': 20, 'slow': {}, 'enforce': True})
+    monkeypatch.setattr(runner, 'cpu_population', lambda *args: {
+        'role': 'population', 'cuda': False, 'cuda_surface': {'executed': 0},
+        'not_collected': [], 'counts': {'passed': 8}})
+    output = tmp_path / 'output'
+    output.mkdir()
+    plan = {'mode': 'full', 'base_sha': 'base', 'head_sha': 'head',
+            'population': {'version': 'fixture-regression'},
+            'selected': [{'lane': 'torch', 'path': 'tests/test_shared.py', 'estimated_seconds': 1}]}
+    code = runner.run_plan(plan, root=tmp_path, output=output / 'result.json',
+                           junit=output / 'junit.xml', workers=2, affinity={0, 1})
+    assert code == 0
+    assert marker.read_text().splitlines() == ['build']
