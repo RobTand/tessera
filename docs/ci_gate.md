@@ -6,9 +6,12 @@ the full population. Changes to gate or
 workflow files, and the selector itself, also select the full population.
 Documentation-only changes outside `docs/schema/` select standalone, packaging
 and provenance checks plus all test modules naming Markdown, reStructuredText
-or issue-snapshot inputs. `tools/ci/gate_doc_readers.py` inventories those
-modules without importing them, including paths passed through helpers and
-receipt records. Comments and docstrings are citations, not input declarations.
+or issue-snapshot inputs, including tests that import such readers through
+helper modules. `tools/ci/gate_doc_readers.py` scans Python modules under
+`tests/` without importing them and follows their reverse import closure.
+It includes transitive helper imports, package and bare imports, relative
+imports and ambiguous module spellings. Only test files enter the selection;
+unrelated helpers do not. Comments and docstrings are citations, not input declarations.
 This conservatively retains fixture-only consumers too. Parse/read errors
 select the full population. Ordinary changes retain reverse-import and
 explicit data-read dependencies. Named kernel-generated boot ID, memory maps
