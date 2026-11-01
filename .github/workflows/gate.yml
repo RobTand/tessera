@@ -18,6 +18,9 @@ env:
   PYTHONPATH: src
 jobs:
   plan:
+    permissions:
+      contents: read
+      issues: read
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     outputs:
@@ -35,6 +38,7 @@ jobs:
       - name: Select population and balance both lanes
         id: plan
         env:
+          GITHUB_TOKEN: ${{ github.token }}
           GATE_BASE: ${{ github.event.pull_request.base.sha }}
           GATE_HEAD: ${{ github.event.pull_request.head.sha }}
           GATE_MODE: ${{ github.event.pull_request.head.repo.full_name == github.repository && ((startsWith(github.head_ref, 'mergify/merge-queue/') && github.event.pull_request.user.login == 'mergify[bot]' && github.event.pull_request.user.id == 37929162) || contains(github.event.pull_request.labels.*.name, 'gate-canary')) && 'full' || 'selection' }}

@@ -177,6 +177,8 @@ def run_plan(plan: dict, *, root: Path, output: Path, junit: Path,
         # setup-python exports loader overrides; proof capture must see the actual
         # installed interpreter rather than an ambient dynamic-loader override.
         environment = {name: value for name, value in environment.items() if not name.startswith('LD_')}
+        environment['GATE_DESELECT'] = json.dumps([target for target in plan.get('deselect', {}).get(lane, [])
+                                                  if target.split('::', 1)[0] in files])
         environment['GATE_ASSIGNED_FILES'] = json.dumps(files)
         environment['GATE_COLLECTION_DIR'] = str(output.parent.resolve())
         environment['PYTHONPATH'] = str(Path(__file__).resolve().parent) + os.pathsep + str(root / 'src') + os.pathsep + environment.get('PYTHONPATH', '')
@@ -184,8 +186,7 @@ def run_plan(plan: dict, *, root: Path, output: Path, junit: Path,
         profile = ['-X', 'importtime'] if os.environ.get('GATE_PROFILE_STARTUP') == '1' else []
         command = [sys.executable, *profile, '-m', 'pytest', '-n', str(workers), '--dist=loadgroup', '--no-loadscope-reorder',
                    '-q', '-ra', '--durations=30', '--timeout=300', '-p', 'gate_collect', '--surface-json=' + str(output.with_name('surface.json')), '--rootdir=' + str(root), '--junitxml=' + str(junit), '-o', 'junit_family=xunit1',
-                   *('--deselect=' + target for target in plan.get('deselect', {}).get(lane, [])
-                     if target.split('::', 1)[0] in files), str(root)]
+                   str(root)]
         if lane == 'bytes':
             record['boundary'] = {'status': 'pending'}
             proof = execute([sys.executable, 'tools/ci/gate_boundary.py', '--base', plan['base_sha']],

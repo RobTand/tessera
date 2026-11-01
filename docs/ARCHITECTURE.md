@@ -10450,3 +10450,5 @@ The current GLM entry derives from actual T-8/T-16 constructor calls on the curr
 The topology specifies two nodes with one rank and one CUDA device per node.
 
 Defaults, serving pins, kernels, and the T-16 decode-once interface remain unchanged.
+
+The hosted gate compares quarantine with its PR base. Growth requires a change limited to quarantine and documentation; the initial policy is reviewed with the gate. Runtime collection matches whole files or exact nodes, and authenticated owner checks refuse closed issues and PRs. GitHub unavailability gives no verdict.

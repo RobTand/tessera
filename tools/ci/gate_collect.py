@@ -31,7 +31,29 @@ class GateCollection:
             if candidate in self.ranks:
                 self.collected.add(candidate.relative_to(self.root).as_posix())
 
-    def pytest_collection_modifyitems(self, items):
+    @pytest.hookimpl(hookwrapper=True, tryfirst=True)
+    def pytest_collection_modifyitems(self, config, items):
+        targets = json.loads(os.environ.get('GATE_DESELECT', '[]'))
+        nodes = {item.nodeid for item in items}
+        files = {item.path.relative_to(self.root).as_posix() for item in items}
+        removed = []
+        for target in targets:
+            filename = target.split('::', 1)[0]
+            # The bytes lane cannot collect torch modules; the torch lane
+            # independently requires complete collection and validates these.
+            if filename not in self.collected and filename not in files:
+                continue
+            if target not in nodes and target not in files:
+                raise pytest.UsageError('quarantine is not an exact collected node or file: ' + target)
+        kept = []
+        for item in items:
+            filename = item.path.relative_to(self.root).as_posix()
+            (removed if item.nodeid in targets or filename in targets else kept).append(item)
+        items[:] = kept
+        if removed:
+            config.hook.pytest_deselected(items=removed)
+        yield
+
         items.sort(key=lambda item: self.ranks[item.path])
         for item in items:
             fixtures = item._fixtureinfo.name2fixturedefs.values()

@@ -6,8 +6,9 @@ import argparse
 import hashlib
 import os
 import urllib.request
+import urllib.error
 import json
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 import subprocess
 import sys
 
@@ -76,6 +77,95 @@ def quarantine(config, *, issue_state=issue_state):
     return lanes
 
 
+def exclusion_entries(config):
+    if 'entries' in config:
+        entries = config['entries']
+    else:
+        entries = [{'lane': lane, 'target': node, 'issue': config['issues'].get(node)}
+                   for lane, nodes in config['lanes'].items() for node in nodes]
+    seen = set()
+    for row in entries:
+        target = row.get('target', '')
+        path, *parts = target.split('::')
+        parsed = PurePosixPath(path)
+        if (not path.startswith('tests/') or not path.endswith('.py') or
+                parsed.is_absolute() or '..' in parsed.parts or str(parsed) != path or
+                any(not part for part in parts) or
+                target.count('[') != target.count(']') or
+                row.get('lane') not in ('bytes', 'torch')):
+            raise ValueError('quarantine requires a whole file or exact test node: ' + target)
+        if type(row.get('issue')) is not int or row['issue'] < 1:
+            raise ValueError('quarantine needs an owner issue for ' + target)
+        key = row['lane'], target
+        if key in seen:
+            raise ValueError('quarantine must list unique test nodes')
+        seen.add(key)
+    return entries
+
+
+QUARANTINE_PATH = 'tools/ci/gate_quarantine.json'
+
+
+def quarantine_policy(current: dict, baseline: dict | None, changed: list[str]) -> None:
+    entries = exclusion_entries(current)
+    if baseline is None:
+        return  # Initial policy, like the budget bootstrap, is reviewed with the gate.
+    previous = {(row['lane'], row['target']): row for row in exclusion_entries(baseline)}
+    def covered(row):
+        target = row['target']
+        old = previous.get((row['lane'], target), previous.get((row['lane'], target.split('::', 1)[0])))
+        return old is not None and row['issue'] == old['issue']
+    growth = [row['target'] for row in entries if not covered(row)]
+    isolated = QUARANTINE_PATH in changed and all(
+        path == QUARANTINE_PATH or path.startswith('docs/') and path.endswith(('.md', '.rst')) or
+        path in {'README.md', 'CHANGELOG.md'} for path in changed)
+    if growth and not isolated:
+        raise ValueError('Quarantine growth requires a quarantine-only PR with optional docs: ' + ', '.join(growth))
+
+
+def fetch_quarantine_owner(issue: int) -> dict:
+    headers = {'Accept': 'application/vnd.github+json', 'User-Agent': 'tessera-gate'}
+    # Anonymous REST shares a small per-IP limit across hosted runners; the
+    # workflow's read-only job token has its own allowance.
+    if token := os.environ.get('GITHUB_TOKEN'):
+        headers['Authorization'] = f'Bearer {token}'
+    request = urllib.request.Request(
+        f'https://api.github.com/repos/RobTand/tessera/issues/{issue}', headers=headers)
+    try:
+        with urllib.request.urlopen(request, timeout=10) as response:
+            return json.load(response)
+    except urllib.error.HTTPError as error:
+        if error.code in (404, 410):
+            raise ValueError(f'Quarantine owner #{issue} must be an open issue') from error
+        raise
+
+
+def check_quarantine_owners(entries: list[dict], *, fetch=fetch_quarantine_owner) -> None:
+    for issue in sorted({row['issue'] for row in entries}):
+        try:
+            owner = fetch(issue)
+        except urllib.error.HTTPError as error:
+            raise RuntimeError(f'Quarantine owner #{issue}: no verdict, GitHub HTTP {error.code}') from error
+        except (OSError, TimeoutError, json.JSONDecodeError) as error:
+            raise RuntimeError(f'Quarantine owner #{issue}: no verdict, GitHub unavailable: {error}') from error
+        if not isinstance(owner, dict) or owner.get('state') not in {'open', 'closed'}:
+            raise RuntimeError(f'Quarantine owner #{issue}: no verdict, invalid GitHub response')
+        if owner['state'] != 'open' or 'pull_request' in owner:
+            raise ValueError(f'Quarantine owner #{issue} must be an open issue')
+
+
+def base_quarantine(root: Path, base: str) -> dict | None:
+    subprocess.run(['git', 'cat-file', '-e', f'{base}^{{commit}}'], cwd=root,
+                   capture_output=True, check=True)
+    tree = subprocess.run(['git', 'ls-tree', base, '--', QUARANTINE_PATH], cwd=root,
+                          capture_output=True, text=True, check=True)
+    if not tree.stdout.strip():
+        return None
+    return json.loads(subprocess.check_output(['git', 'show', f'{base}:{QUARANTINE_PATH}'],
+                                             cwd=root, text=True))
+
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--base', required=True)
@@ -97,6 +187,9 @@ def main():
                           text=True, capture_output=True, check=True).stdout.splitlines()
     if any(path.startswith(('tools/ci/', '.github/')) for path in diff):
         files = population(root)
+    config = json.loads((root / QUARANTINE_PATH).read_text())
+    quarantine_policy(config, base_quarantine(root, args.base), diff)
+    check_quarantine_owners(exclusion_entries(config))
     durations = json.loads((root / 'tools/ci/gate_durations.json').read_text())['lanes']
     count = args.shards
     if args.mode == 'selection':
@@ -113,7 +206,7 @@ def main():
                            'cuda': 'not covered: CPU wheels, CUDA_VISIBLE_DEVICES empty'},
             'selected': [{'lane': lane, 'path': path, 'estimated_seconds': durations.get(lane, {}).get(path)}
                          for lane in ('bytes', 'torch') for path in files],
-            'deselect': quarantine(json.loads((root / 'tools/ci/gate_quarantine.json').read_text()))}
+            'deselect': config['lanes']}
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_text(json.dumps(plan, indent=2) + '\n')
     args.matrix.write_text(json.dumps(matrix, indent=2) + '\n')
@@ -123,4 +216,12 @@ def main():
 
 
 if __name__ == '__main__':
-    raise SystemExit(main())
+    try:
+        code = main()
+    except ValueError as error:
+        print('GATE_POLICY_FAILURE: ' + str(error), file=sys.stderr)
+        code = 1
+    except (OSError, RuntimeError, subprocess.CalledProcessError) as error:
+        print('NO_VERDICT: ' + str(error), file=sys.stderr)
+        code = 75
+    raise SystemExit(code)
