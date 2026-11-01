@@ -78,6 +78,7 @@ def test_preparation_records_observed_identities_without_qualifying(preparation)
     owner, doc, checkout, evidence = preparation
     assert owner.main() == 0
     record = json.loads((evidence / "prepare.json").read_text())
+    assert "identities" in record
     observed = record["identities"]
     assert observed["source"] == json.loads(Path(doc["source_manifest"]["path"]).read_bytes())["files"]
     assert observed["native"]["sha256"] == doc["native"]["sha256"]

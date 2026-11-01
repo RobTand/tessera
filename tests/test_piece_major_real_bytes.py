@@ -14,6 +14,7 @@ from tessera.slicing import slice_unit
 from tessera.unit_artifact import build_unit_artifact, parse_unit_artifact
 from window_lut_reference import prepare_reference, window_blob
 from window_pack_reference import pack_bitstream
+from test_piece_major_preparation import emit, identity, preparation
 
 
 DATA = Path(__file__).parent / "data/legacy"
@@ -40,6 +41,27 @@ def scalar_wire(path, q256):
     return blob, parse_unit_artifact(blob, device="cpu")
 
 
+def assert_preparation_binds_wire(preparation, blob):
+    from piece_major_protocol import preparation_identity
+
+    _, doc, checkout, evidence = preparation
+    wire_path = checkout.parent / "screen.tessera"
+    wire_path.write_bytes(blob)
+    manifest_path = Path(doc["input_manifest"]["path"])
+    doc["input_manifest"] = emit(manifest_path, {"entries": [
+        {"path": str(wire_path), "offset": 0, "bytes": len(blob),
+         "sha256": identity(wire_path)["sha256"]}]})
+    observed = preparation_identity(doc, checkout / "src")
+    assert observed["artifact"] == {"path": doc["artifact"], "group": doc["group"],
+                                    "input_manifest": doc["input_manifest"]}
+    assert observed["scope"] == "CPU identity preparation only; FP8/BF16 and T4 GPU qualification not measured"
+    assert not evidence.exists()
+    assert not (checkout.parent / "never-launched").exists()
+    manifest_path.write_bytes(manifest_path.read_bytes() + b"\n")
+    with pytest.raises(ValueError, match="digest differs"):
+        preparation_identity(doc, checkout / "src")
+
+
 def assert_body_and_values(parsed, unit, rep):
     recovered = kw.unpack_tile_words(rep).to(torch.uint8)
     assert torch.equal(recovered, unit.body_bits)
@@ -50,7 +72,7 @@ def assert_body_and_values(parsed, unit, rep):
 
 @pytest.mark.parametrize("path", SCALAR_FIXTURES, ids=lambda path: path.stem)
 @pytest.mark.parametrize("q256", RUNGS)
-def test_scalar_real_bytes_cover_routed_rates_and_layout_refusals(path, q256, monkeypatch):
+def test_scalar_real_bytes_cover_routed_rates_and_layout_refusals(path, q256, monkeypatch, preparation):
     blob, parsed = scalar_wire(path, q256)
     unit = parsed.unit
     rep = pack_bitstream(unit.body_bits, unit.rates)
@@ -78,12 +100,13 @@ def test_scalar_real_bytes_cover_routed_rates_and_layout_refusals(path, q256, mo
             rep.with_word_layout(kw.WORD_LAYOUT_PIECE_MAJOR)
     assert torch.equal(rep.words, original)
     assert parsed.manifest.payload_digest == parse_unit_artifact(blob, device="cpu").manifest.payload_digest
+    assert_preparation_binds_wire(preparation, blob)
 
 
 @pytest.mark.parametrize("path", SCALAR_FIXTURES, ids=lambda path: path.stem)
 @pytest.mark.parametrize("axis", ["rows", "cols"])
 @pytest.mark.parametrize("rank", range(2))
-def test_real_byte_tp2_shards_keep_history_and_values(path, axis, rank):
+def test_real_byte_tp2_shards_keep_history_and_values(path, axis, rank, preparation):
     blob, parsed = scalar_wire(path, 1024)
     extent = parsed.unit.body_bits.shape[0 if axis == "rows" else 1]
     shard = slice_unit(parsed, **{axis: (rank * extent // 2, (rank + 1) * extent // 2)})
@@ -109,12 +132,14 @@ def test_real_byte_tp2_shards_keep_history_and_values(path, axis, rank):
     else:
         assert reparsed.unit.initial_state is None
     assert parsed.manifest.payload_digest == parse_unit_artifact(blob, device="cpu").manifest.payload_digest
+    assert_preparation_binds_wire(preparation, shard_blob)
 
 
-def test_t4_real_bytes_cannot_inherit_scalar_piece_major_qualification(monkeypatch):
+def test_t4_real_bytes_cannot_inherit_scalar_piece_major_qualification(monkeypatch, preparation):
     from tessera import routed_fused_e2m1 as fp4
     from tessera.compact_prep import parse_compact_wire
-    wire = parse_compact_wire(window_blob(512, rows=128, cols=256))
+    blob = window_blob(512, rows=128, cols=256)
+    wire = parse_compact_wire(blob)
     unit = prepare_reference(wire)
     relaid = dataclasses.replace(unit, rep=unit.rep.with_word_layout(kw.WORD_LAYOUT_PIECE_MAJOR))
     def refuse_build(*args, **kwargs):
@@ -122,3 +147,4 @@ def test_t4_real_bytes_cannot_inherit_scalar_piece_major_qualification(monkeypat
     monkeypatch.setattr(fp4, "_ext", refuse_build)
     with pytest.raises(GrammarError, match="word order"):
         fp4.prepare_dense_role(relaid, 1.0)
+    assert_preparation_binds_wire(preparation, blob)
