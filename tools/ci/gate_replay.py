@@ -60,7 +60,8 @@ def main():
             head = spec['merge']
             base = subprocess.check_output(['git', 'rev-parse', head + '^1'], text=True).strip()
             checkout = temporary / head
-            subprocess.run(['git', 'worktree', 'add', '--detach', str(checkout), head], check=True, capture_output=True)
+            if not checkout.exists():
+                subprocess.run(['git', 'worktree', 'add', '--detach', str(checkout), head], check=True, capture_output=True)
             changed = subprocess.check_output(['git', 'diff', '--name-only', '--no-renames', base, head], text=True).splitlines()
             before = old.select(checkout, changed)
             after = selector.select(checkout, changed)
@@ -78,7 +79,7 @@ def main():
                     if commit in full:
                         continue
                     tree = checkout if commit == head else temporary / commit
-                    if tree != checkout:
+                    if not tree.exists():
                         subprocess.run(['git', 'worktree', 'add', '--detach', str(tree), commit], check=True, capture_output=True)
                     destination = args.output / commit
                     destination.mkdir(exist_ok=True)
