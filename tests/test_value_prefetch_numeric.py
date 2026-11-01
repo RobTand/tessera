@@ -25,9 +25,9 @@ def test_whole_phase_public_schema_and_read_order(tmp_path, whole_phase_sdk, sch
     validated, encoding = whole_phase_sdk.read_data_manifest(path)
     assert encoding == "identity"
     assert whole_phase_sdk.manifest_read_entries(validated) == entries
-    manifest, reads = numeric.validate_readset(path)
+    manifest, ranges = numeric.validate_readset(path)
     assert manifest == validated
-    assert reads == entries
+    assert ranges == [{"name": "whole-synthetic-bank", "start_bytes": 0, "end_bytes": 48}]
 
 
 @pytest.mark.parametrize("schema", ["v1", "v2"])
@@ -52,7 +52,7 @@ def test_whole_phase_requires_identity_encoding(tmp_path, whole_phase_sdk):
         numeric.validate_readset(path)
 
 
-def test_repair_reports_ranges_while_validator_returns_reads(tmp_path, whole_phase_sdk, monkeypatch, capsys):
+def test_repair_and_validator_preserve_phase_ranges(tmp_path, whole_phase_sdk, monkeypatch, capsys):
     """Synthetic metadata probe only; do not bypass the real frozen-bank gate."""
     import json
 
@@ -79,11 +79,9 @@ def test_repair_reports_ranges_while_validator_returns_reads(tmp_path, whole_pha
                       "phases": [{"name": "whole-synthetic-bank", "start_bytes": 0,
                                   "end_bytes": 48}],
                       "retained_entries_unchanged": True}
-    # These are deliberately different shapes: returning phases from the
-    # validator or serializing read entries under "phases" must both fail.
-    manifest, reads = numeric.validate_readset(output)
+    manifest, ranges = numeric.validate_readset(output)
     assert manifest == checked
-    assert reads == whole_phase_sdk.manifest_read_entries(checked) == entries
+    assert ranges == report["phases"]
 
 
 @pytest.mark.parametrize("bad_source", [False, True], ids=["short-phase", "foreign-source"])
@@ -188,11 +186,11 @@ def test_public_pb_readset_and_whole_bank_phase_contract(tmp_path, complete_phas
     path = tmp_path / "manifest.json"
     path.write_text(json.dumps(manifest))
     if complete_phase:
-        checked, reads = numeric.validate_readset(path)
+        checked, phases = numeric.validate_readset(path)
         assert checked == manifest
         # Numeric consumers need the public SDK's ordered read entries. The
         # repair CLI's separate "phases" field remains normalized ranges.
-        assert reads == manifest["entries"]
+        assert phases == [{"name": "whole-synthetic-bank", "start_bytes": 0, "end_bytes": 32}]
     else:
         with pytest.raises(ValueError, match="staging phase"):
             numeric.validate_readset(path)
