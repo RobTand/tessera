@@ -93,7 +93,8 @@ parameter values retain their original identity.
 The policy compares lane, target and owner against the PR base. Entries can
 only shrink, including narrowing a whole file to an exact node with the same
 owner. Growth or changing an owner requires a PR touching only the quarantine
-file and optional Markdown or reStructuredText docs. When the base has no policy,
+file and optional Markdown or reStructuredText docs. Rename checks include both
+the source and destination paths. When the base has no policy,
 the initial reviewed policy bootstraps with the gate. An unreadable base gives
 no verdict. The plan checks owners using its job token with `issues: read`;
 closed issues and PR numbers fail policy. GitHub unavailability gives exit 75.

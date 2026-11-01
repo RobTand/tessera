@@ -10236,7 +10236,7 @@ with scheduling costs and bootstrap limits refreshed from retained hosted JUnit
 and an 80-second default derived from twice the measured 39.884-second
 cold planning cost on the two architecture assignments,
 verdict retries, measured and enforced test budgets,
-issue-owned quarantine, restored matched-reach coverage with exact standard-sample
+issue-owned quarantine whose growth check includes both paths of renames, restored matched-reach coverage with exact standard-sample
 reuse in its test fixture, and the required-check transition. Its evidence command computes
 hosted wall time through the final verdict step and separates setup from tests,
 retaining job timestamps alongside step timestamps when their clocks disagree.

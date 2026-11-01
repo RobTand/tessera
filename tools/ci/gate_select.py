@@ -185,7 +185,7 @@ def main():
     if args.mode == 'full' and not files:
         raise ValueError('empty CPU population refused in full gate')
     # Gate tooling changes require complete coverage, independently of graph edges.
-    diff = subprocess.run(['git', 'diff', '--name-only', args.base, args.head],
+    diff = subprocess.run(['git', 'diff', '--name-only', '--no-renames', args.base, args.head],
                           text=True, capture_output=True, check=True).stdout.splitlines()
     if any(path.startswith(('tools/ci/', '.github/')) or path == 'tools/impacted_tests.py' for path in diff):
         files = population(root)
