@@ -126,3 +126,27 @@ def test_budget_bootstrap_uses_measured_default_for_cold_consumers(tmp_path, mon
     assert policy['seconds'] == 80
     assert policy['enforce'] is True
     assert policy['slow'] == {'tests/test_cpu.py::test_slow': 200}
+
+
+def test_canary_timing_uses_verdict_and_completion_steps_when_job_clock_differs():
+    evidence = load('gate_evidence')
+    result = evidence.analyze_canaries([{
+        'run': {'id': 1, 'status': 'completed', 'conclusion': 'success',
+                'created_at': '2026-11-01T08:00:00Z'},
+        'jobs': [
+            {'name': 'gate', 'conclusion': 'success', 'completed_at': '2026-11-01T09:02:02Z',
+             'steps': [{'name': 'Require complete lane coverage and final verdicts',
+                        'completed_at': '2026-11-01T08:02:00Z'}]},
+            {'name': 'shard-0-torch-a1', 'conclusion': 'success',
+             'started_at': '2026-11-01T08:00:10Z', 'completed_at': '2026-11-01T09:01:52Z',
+             'steps': [{'name': 'Install pinned lane dependencies',
+                        'started_at': '2026-11-01T08:00:20Z', 'completed_at': '2026-11-01T08:00:50Z'},
+                       {'name': 'Run assigned population',
+                        'started_at': '2026-11-01T08:00:50Z', 'completed_at': '2026-11-01T08:01:40Z'},
+                       {'name': 'Complete job', 'completed_at': '2026-11-01T08:01:50Z'}]}]}])
+    run = result['runs'][0]
+    assert run['wall_seconds'] == 120
+    assert run['gate_job_completed_at'] == '2026-11-01T09:02:02Z'
+    assert run['verdict_completed_at'] == '2026-11-01T08:02:00Z'
+    assert run['shards'][0]['job_seconds'] == 100
+    assert run['shards'][0]['other_seconds'] == 20
