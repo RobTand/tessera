@@ -170,7 +170,8 @@ def test_full_gate_refuses_an_empty_cpu_population(tmp_path, monkeypatch):
         gate.main()
 
 
-def test_gate_builds_a_module_fixture_once_across_workers(tmp_path, monkeypatch):
+@pytest.mark.parametrize('grouped', [True, False])
+def test_gate_builds_a_module_fixture_once_across_workers(tmp_path, monkeypatch, grouped):
     runner = load('gate_run')
     tests = tmp_path / 'tests'
     tests.mkdir()
@@ -179,7 +180,8 @@ def test_gate_builds_a_module_fixture_once_across_workers(tmp_path, monkeypatch)
     marker = tmp_path / 'fixture-builds.txt'
     (tests / 'test_shared.py').write_text(
         'import pathlib, pytest\n'
-        '@pytest.fixture(scope="module")\n'
+        + ('pytestmark = pytest.mark.xdist_group(name="test_shared")\n' if grouped else '')
+        + '@pytest.fixture(scope="module")\n'
         'def shared():\n'
         f'    with pathlib.Path({str(marker)!r}).open("a") as log: log.write("build\\n")\n'
         '    return 1\n'
@@ -197,7 +199,7 @@ def test_gate_builds_a_module_fixture_once_across_workers(tmp_path, monkeypatch)
     code = runner.run_plan(plan, root=tmp_path, output=output / 'result.json',
                            junit=output / 'junit.xml', workers=2, affinity={0, 1})
     assert code == 0
-    assert marker.read_text().splitlines() == ['build']
+    assert marker.read_text().splitlines() == ['build'] * (1 if grouped else 2)
 
 
 def test_file_scheduler_preserves_the_duration_order(tmp_path, monkeypatch):
@@ -214,3 +216,20 @@ def test_file_scheduler_preserves_the_duration_order(tmp_path, monkeypatch):
     command, files = commands[0]
     assert files == ['tests/test_long.py', 'tests/test_short.py']
     assert '--no-loadscope-reorder' in command
+
+
+@pytest.mark.parametrize('name, expected', [
+    ('test_cpu[value]@test_matched_reach', 'test_cpu[value]'),
+    ('test_cpu[email@test_matched_reach]', 'test_cpu[email@test_matched_reach]'),
+])
+def test_grouped_junit_keeps_exact_budget_and_evidence_identity(tmp_path, name, expected):
+    filename = 'tests/test_matched_reach.py'
+    nodeid = filename + '::' + expected
+    junit = tmp_path / 'junit.xml'
+    junit.write_text('<testsuite><testcase file="' + filename + '" '
+                     'classname="tests.test_matched_reach" name="' + name + '" '
+                     'time="177" /></testsuite>')
+    runner = load('gate_run')
+    assert runner._budget_timings(junit, [filename], {'seconds': 20, 'slow': {nodeid: 100}}) == [
+        {'nodeid': nodeid, 'seconds': 177, 'budget_seconds': 100}]
+    assert list(load('gate_evidence').cases(junit))[0]['nodeid'] == nodeid
