@@ -95,6 +95,7 @@ from __future__ import annotations
 
 import argparse
 import ast
+import copy
 import json
 import re
 import subprocess
@@ -198,6 +199,34 @@ def _read_python_source(
         return None
 
 
+# These kernel-generated records cannot be repository inputs. In particular,
+# /proc/self/root and /proc/self/fd are deliberately absent: they can alias
+# repository files and must retain their conservative data dependencies.
+KERNEL_RECORDS = {'/proc/sys/kernel/random/boot_id', '/proc/self/maps', '/proc/self/mountinfo'}
+
+
+def _without_kernel_reads(tree):
+    canonical = any(isinstance(node, ast.ImportFrom) and node.module == 'pathlib' and
+                    any(alias.name == 'Path' and alias.asname is None for alias in node.names)
+                    for node in tree.body)
+    rebound = any(isinstance(node, ast.Name) and node.id == 'Path' and isinstance(node.ctx, ast.Store)
+                  or isinstance(node, ast.arg) and node.arg == 'Path' for node in ast.walk(tree))
+    if not canonical or rebound:
+        return tree
+
+    class KernelReads(ast.NodeTransformer):
+        def visit_Call(self, node):
+            if (isinstance(node.func, ast.Attribute) and node.func.attr in {'read_text', 'read_bytes'} and
+                    isinstance(node.func.value, ast.Call)):
+                path = node.func.value
+                if (isinstance(path.func, ast.Name) and path.func.id == 'Path' and len(path.args) == 1 and
+                        isinstance(path.args[0], ast.Constant) and path.args[0].value in KERNEL_RECORDS):
+                    return ast.copy_location(ast.Constant(value=''), node)
+            return self.generic_visit(node)
+
+    return KernelReads().visit(copy.deepcopy(tree))
+
+
 def _imports(
     path: Path,
     own: str,
@@ -243,7 +272,7 @@ def _imports(
                 if statement_requests is None else statement_requests)
     unnamed: list[int] = []
     paths, unknown, unplaced = file_imports(
-        tree, path, root, executes_source=executes_source, unnamed=unnamed)
+        _without_kernel_reads(tree), path, root, executes_source=executes_source, unnamed=unnamed)
     if unnamed and unnamed_reads is not None:
         unnamed_reads[str(path.relative_to(root))] = unnamed
     loaded, data = set(), set()
@@ -801,7 +830,8 @@ def select(root: Path, changed: list[str], *, comparison: str = "") -> dict:
     # Text/documentation suffixes can carry bytes a refused reader consumes
     # too; only an empty diff proves there is no changed input (#355).
     unplaced = importers.get(DATA_WILDCARD, set()) if changed else set()
-    seeds.update(unplaced)
+    unplaced_consumers = _reverse_reachable(
+        unplaced, importers, skip=probes | guarded_edges.keys())
     # The probe edges are excluded HERE and nowhere else: a conftest's own
     # uncertainty still forces the population, but a test file's does not
     # become the conftest's by way of the conftest having exec'd it.
@@ -813,7 +843,7 @@ def select(root: Path, changed: list[str], *, comparison: str = "") -> dict:
                if f.endswith(".py") and not (root / f).exists()]
     # Reverse-reachable closure: everything that imports a changed module,
     # transitively.
-    seen = _reverse_reachable(seeds, importers) | uncertain_consumers
+    seen = _reverse_reachable(seeds, importers) | uncertain_consumers | unplaced_consumers
 
     # A module in `seen` may have no file in this checkout -- a test the branch
     # ADDS is exactly that case, and it is the one selection can least afford
@@ -868,7 +898,7 @@ def select(root: Path, changed: list[str], *, comparison: str = "") -> dict:
     # reason they are excluded from the escalation walk: a conftest that execs
     # the test files below it would otherwise make any one changed test file
     # select the whole population.
-    reached = _reverse_reachable(seeds, importers, skip=probes) | uncertain_consumers
+    reached = _reverse_reachable(seeds, importers, skip=probes) | uncertain_consumers | unplaced_consumers
     scopes = {by_name[name].parent for name in reached
               if name in by_name and by_name[name].name == "conftest.py"}
     scopes |= {(root / f).parent for f in changed if Path(f).name == "conftest.py"}
