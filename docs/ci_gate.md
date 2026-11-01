@@ -116,7 +116,11 @@ is a sizing trial, not a completed p90 qualification.
 `--canary-manifest CANARIES.json` also accepts retained GitHub metadata as a
 list of objects with `run` and `jobs` fields. `run` is the REST workflow-run
 response, and `jobs` is its jobs array. The report measures from run creation
-through completion of the final `gate` job, including scheduler delays. It
+through completion of the final `gate` job, including scheduler delays. A
+rerun entry must also supply `requested_at`, the UTC timestamp retained when
+its REST rerun request was sent. GitHub keeps the original `created_at` on
+reruns, so it cannot measure later attempts. Without that timestamp, a rerun
+has no wall-time verdict. The report
 reports p50 and nearest-rank p90 for completed passing runs and retains failed
 runs separately. Per-shard times separate dependency installation, the test
 step, and other job work. Missing timing evidence stays null. A timing report

@@ -78,7 +78,10 @@ def analyze_canaries(runs):
     for entry in runs:
         run, jobs = entry['run'], entry['jobs']
         gate = next((job for job in jobs if job['name'] == 'gate'), {})
-        wall = _elapsed(run['created_at'], gate.get('completed_at'))
+        origin = entry.get('requested_at')
+        if origin is None and run.get('run_attempt', 1) == 1:
+            origin = run['created_at']
+        wall = _elapsed(origin, gate.get('completed_at'))
         passed = (run['status'] == 'completed' and run.get('conclusion') == 'success'
                   and gate.get('conclusion') == 'success' and wall is not None)
         if passed:
@@ -99,7 +102,7 @@ def analyze_canaries(runs):
                            'dependency_setup_seconds': dependency,
                            'test_step_seconds': tests, 'other_seconds': other})
         measured.append({'run_id': run['id'], 'attempt': run.get('run_attempt'),
-                         'head_sha': run.get('head_sha'), 'status': run['status'],
+                         'head_sha': run.get('head_sha'), 'requested_at': origin, 'status': run['status'],
                          'conclusion': run.get('conclusion'), 'wall_seconds': wall,
                          'passed': passed, 'shards': shards})
     passing.sort()
