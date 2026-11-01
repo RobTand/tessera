@@ -1,6 +1,24 @@
 """Runtime-scoped causal plugin registration test; pinned stock vLLM required."""
+import importlib
 import pytest
-pytest.importorskip('vllm.v1.attention.backends.registry')
+# Match the runtime consumer's optional boundary before importing Tessera.
+# Do not hide unrelated failures inside an installed prerequisite.
+for dependency in (
+    'vllm.v1.attention.backends.registry',
+    'vllm.v1.attention.backends.mla.flashinfer_mla_sparse',
+    'vllm.v1.attention.backends.mla.flashinfer_mla_sparse_sm120',
+    'vllm.v1.attention.backends.mla.index_group',
+):
+    try:
+        importlib.import_module(dependency)
+    except ModuleNotFoundError as exc:
+        # An absent parent also means the requested prerequisite is unavailable.
+        if exc.name == dependency or (
+            exc.name and dependency.startswith(exc.name + '.')
+        ):
+            pytest.skip(f'requires optional MLA prerequisite {dependency}: {exc}',
+                        allow_module_level=True)
+        raise
 from tessera.serving import flags, register
 from vllm.v1.attention.backends.registry import AttentionBackendEnum
 

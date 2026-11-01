@@ -22,7 +22,7 @@ from types import ModuleType, SimpleNamespace
 import pytest
 
 root, scratch = Path(sys.argv[1]), Path(sys.argv[2])
-symbol, mode = sys.argv[3:5]
+symbol, mode, consumer = sys.argv[3:6]
 source = root / "src/tessera/serving/mla_sparse_sm120.py"
 imports = {alias.name: node.module
            for node in ast.walk(ast.parse(source.read_text()))
@@ -50,6 +50,8 @@ class VllmProbe(importlib.abc.MetaPathFinder, importlib.abc.Loader):
             raise ModuleNotFoundError(f"No module named '{unrelated}'", name=unrelated)
         module.__file__ = str(source)
         module.__dict__.update(classes)
+        # Registration collection only imports the enum; no registration runs.
+        module.AttentionBackendEnum = type("AttentionBackendEnum", (), {})
 
 sys.meta_path.insert(0, VllmProbe())
 torch = ModuleType("torch")
@@ -81,22 +83,39 @@ class Reports:
 
 reports = Reports()
 status = pytest.main([
-    str(root / "tests/test_serving_mla_mask_runtime_gpu.py"), str(peer),
+    str(root / "tests" / consumer), str(peer),
     "--collect-only", "--noconftest", "-q", "-rs", "-p", "no:cacheprovider",
     "--basetemp=" + str(scratch / "pytest"),
 ], plugins=[reports])
+staged_scopes = []
+if mode == "present" and status == 0:
+    from tessera.serving import mla_sparse_sm120 as adapter
+    torch.compiler = SimpleNamespace(is_compiling=lambda: False)
+    classes["FlashInferMLASparseSM120Impl"].forward_mqa = (
+        lambda self, *args: self._tessera_mla_context)
+    metadata = SimpleNamespace(num_decode_tokens=0, num_decodes=0,
+                               num_prefills=1, prefill=object())
+    for group_type in (classes["HiSparseMLAIndexGroup"],
+                       type("StagedSubclass", (classes["HiSparseMLAIndexGroup"],), {})):
+        impl = object.__new__(adapter.TesseraMLASparseSM120Impl)
+        impl.index_group = group_type()
+        previous, layer = object(), object()
+        impl._tessera_mla_context = previous
+        scope, seen_layer = impl.forward_mqa(object(), object(), metadata, layer)
+        staged_scopes.append(dict(scope=scope, layer_preserved=seen_layer is layer,
+                                  restored=impl._tessera_mla_context is previous))
 print("ISSUE1253=" + json.dumps(dict(
     status=int(status), missing=missing, unrelated=unrelated,
     skips=reports.skips, errors=reports.errors, items=reports.items,
-    peer=str(peer.resolve()))))
+    peer=str(peer.resolve()), staged_scopes=staged_scopes)))
 '''
 
 
-def _collect(tmp_path, symbol, mode):
+def _collect(tmp_path, symbol, mode, consumer):
     scratch = tmp_path / mode
-    scratch.mkdir()
+    scratch.mkdir(parents=True)
     result = subprocess.run(
-        [sys.executable, "-c", PROBE, str(ROOT), str(scratch), symbol, mode],
+        [sys.executable, "-c", PROBE, str(ROOT), str(scratch), symbol, mode, consumer],
         cwd=ROOT,
         env=child_env(PYTEST_DISABLE_PLUGIN_AUTOLOAD="1", PYTEST_ADDOPTS="",
                       TESSERA_STRICT_CUDA="0"),
@@ -109,20 +128,32 @@ def _collect(tmp_path, symbol, mode):
     return json.loads(rows[0])
 
 
+@pytest.mark.parametrize("consumer,expected_count", [
+    ("test_serving_mla_mask_runtime_gpu.py", 2),
+    ("test_serving_mla_mask_registration.py", 15),
+])
 @pytest.mark.parametrize("symbol", ["HiSparseMLAIndexGroup", "FlashInferMLASparseSM120Impl"])
-def test_runtime_collection_handles_partial_vllm(tmp_path, symbol):
-    runtime = str((ROOT / "tests/test_serving_mla_mask_runtime_gpu.py").resolve())
-    supported = _collect(tmp_path, symbol, "present")
+def test_runtime_collection_handles_partial_vllm(tmp_path, symbol, consumer, expected_count):
+    runtime = str((ROOT / "tests" / consumer).resolve())
+    supported = _collect(tmp_path, symbol, "present", consumer)
     assert supported["status"] == 0, supported
     assert not supported["skips"] and not supported["errors"], supported
-    assert sum(item["path"] == runtime for item in supported["items"]) == 2, supported
+    assert sum(item["path"] == runtime for item in supported["items"]) == expected_count, supported
+    assert supported["staged_scopes"] == [
+        dict(scope=False, layer_preserved=True, restored=True),
+        dict(scope=False, layer_preserved=True, restored=True),
+    ], supported
 
-    broken = _collect(tmp_path, symbol, "broken")
-    assert broken["status"] != 0, "unrelated transitive import failure was hidden"
-    assert not broken["skips"], broken
-    assert broken["unrelated"] in "\n".join(broken["errors"]), broken
+    # Reproduce the original import failure without requiring Git history in a
+    # fleet snapshot. This frozen boundary has only the old backend guard.
+    original = _collect(tmp_path / "unfixed", symbol, "missing",
+                        "fixtures/mla_runtime_original_imports.py")
+    assert original["status"] != 0 and not original["skips"], original
+    assert original["missing"] in "\n".join(original["errors"]), original
+    print(f"Unfixed guard {symbol}: status={original['status']}\n"
+          + "\n".join(original["errors"]))
 
-    missing = _collect(tmp_path, symbol, "missing")
+    missing = _collect(tmp_path, symbol, "missing", consumer)
     assert missing["status"] == 0, (
         "missing declared MLA prerequisite aborted suite collection: "
         + "\n".join(missing["errors"]))
@@ -134,3 +165,8 @@ def test_runtime_collection_handles_partial_vllm(tmp_path, symbol):
                and item["name"] == "test_other_gpu_module_can_collect"
                for item in missing["items"]), missing
     assert not any(item["path"] == runtime for item in missing["items"]), missing
+
+    broken = _collect(tmp_path, symbol, "broken", consumer)
+    assert broken["status"] != 0, "unrelated transitive import failure was hidden"
+    assert not broken["skips"], broken
+    assert broken["unrelated"] in "\n".join(broken["errors"]), broken
