@@ -46,7 +46,7 @@ jobs:
       - name: pull request branch rule 12
         if: github.event_name == 'pull_request' && !(github.event.pull_request.head.repo.full_name == github.repository && startsWith(github.head_ref, 'mergify/merge-queue/') && github.event.pull_request.user.login == 'mergify[bot]' && github.event.pull_request.user.id == 37929162)
         run: python .github/scripts/require_pr_branch.py "$GITHUB_EVENT_PATH" "$GITHUB_REPOSITORY"
-      - run: pip install pytest==8.4.2 pytest-xdist==3.8.0 jsonschema==4.25.1
+      - run: pip install pytest==8.4.2 pytest-xdist==3.8.0 pytest-timeout==2.4.0 jsonschema==4.25.1
       # The standalone-boundary allowlist only shrinks (decoupling step 0):
       # tests/test_standalone_boundary.py holds it equal to the code, and
       # this step refuses a pull request that adds a line to it.  A file

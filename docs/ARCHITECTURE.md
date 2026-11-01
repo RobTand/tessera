@@ -10105,7 +10105,7 @@ issue-owned quarantine, restored matched-reach coverage, and the required-check 
 hosted wall time through the final verdict and separates setup from tests.
 
 **`pure`** runs on every push to master and every pull request, in an
-interpreter with pytest, xdist, and jsonschema, without torch: the bytes-only tests (whatever
+interpreter with pytest, xdist, pytest-timeout, and jsonschema, without torch: the bytes-only tests (whatever
 `tests/conftest.py` can collect without torch, reported with the modules it
 could not -- the collector reads a module's *import*, so a test body that
 reaches torch inside a torch-free module says `pytest.importorskip("torch")`,
