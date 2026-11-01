@@ -19,13 +19,14 @@
 # TL3's App needs an explicit command allowance because installation does not
 # grant a human collaborator's write permission.
 # Mergify's default injection adds classic branch protection's required checks
-# to the queue conditions, never to the merge conditions, so the batch draft,
-# whose mergify/merge-queue/ branch and body cannot pass the issue rule, is
-# judged by "gate" alone. Once the gate has run on a real batch, classic
-# protection requires only "branch rule" (also named below); keep test checks
-# out of it, since one on the PR head would hold a pull request outside the
-# queue. (branch_protection_injection_mode: none would need a
-# merge_bot_account, which this repository does not use.)
+# to both queue and merge conditions, and merge conditions are judged on the
+# batch draft. "pure" and "branch rule" both skip branch rule 12 on an
+# authenticated mergify/merge-queue/ draft, so either passes there. Once the
+# gate has run on a real batch, classic protection requires only "branch rule"
+# (also named below). Keep test checks out of classic protection: one on the
+# PR head would hold a pull request outside the queue, and one the draft
+# can't pass would stall every batch. (branch_protection_injection_mode: none
+# would need a merge_bot_account, which this repository does not use.)
 commands_restrictions:
   queue:
     conditions:

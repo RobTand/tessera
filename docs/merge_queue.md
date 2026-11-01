@@ -16,10 +16,10 @@ through PrismaBuild; cite their action keys and results in the PR body.
 3. Wait for the `branch rule` check and `pr-gate` to pass.
 
 Classic branch protection requires `branch rule` only (until the first real
-batch has run `gate`, it still requires `pure`). Mergify adds it to the queue
-conditions, which also name `branch rule` and `pr-gate`, and never to the
-merge conditions, so the batch draft is judged by `gate` alone. `pure` still
-runs on every pull request and inside `gate`.
+batch has run `gate`, it still requires `pure`). Mergify applies classic
+required checks to your pull request and to the batch draft. Both checks skip
+branch rule 12 on an authenticated Mergify draft, so the draft is judged by
+`gate`. `pure` still runs on every pull request and inside `gate`.
 
 ## Queue and dequeue
 
