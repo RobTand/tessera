@@ -50,17 +50,23 @@ CPU population; an empty PR selection records that no tests were selected.
 
 ## Per-test budgets and quarantine
 
-`tools/ci/gate_budget.json` starts in measurement mode. The 20-second default
-and exception list cannot grow against the event's base commit. Enforcement
-uses PB's 1.5 tolerance. It starts only after hosted measurements establish
-which exceptions are needed. An unavailable base commit gives no verdict.
+`tools/ci/gate_budget.json` enforces a 20-second default, with exceptions
+measured in retained hosted canary reports. Exceptions use twice the largest
+observed case duration, rounded up. The default and exception list cannot
+grow against the event's base commit. Enforcement uses PB's 1.5 tolerance.
+An unavailable base commit gives no verdict.
 Timings include setup and teardown through xunit1 JUnit.
 
 `tools/ci/gate_quarantine.json` records exclusions and their owning issues.
 The three projection artifact mutation cases are excluded under open issue
 [the projection fixture issue](https://github.com/RobTand/tessera/issues/1566). Their module-scoped
 safetensors fixture contaminated later consumers in the first hosted canary;
-the consumer tests remain active. Hosted failures must be investigated and assigned
+the consumer tests remain active. One shape accounting node depends on a host-local
+PrismaQuant checkout, owned by [the portable accounting test issue](https://github.com/RobTand/tessera/issues/1567).
+Six A4 CPU wire nodes depend on unpublished archived artifacts, owned by
+[the portable A4 fixtures issue](https://github.com/RobTand/tessera/issues/1568).
+The remaining tests in those modules stay active. The T4 prepare-inputs tests
+use the pinned public PrismaBuild SDK instead of being quarantined. Hosted failures must be investigated and assigned
 an open issue before exclusion. No exclusion claims CUDA coverage.
 
 ## Branch protection transition
@@ -77,8 +83,9 @@ to its policy. This PR does not change repository protection or queue rules.
 
 The fixed-master inventory, hosted canaries, measured durations, budget
 exceptions, and quarantine owners are recorded with their source SHAs and
-PrismaBuild action keys during rollout. Measurement mode is not a completed
-budget qualification. No hosted timing claim is made before those runs finish.
+PrismaBuild action keys during rollout. Initial hosted measurements enable
+budget enforcement; three passing full canaries are still required before
+qualification is complete.
 
 Boundary-proof failures produce final failure records before pytest starts.
 Passing records require both timing evidence and a controller population with

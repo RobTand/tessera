@@ -3,3 +3,5 @@ torch==2.11.0+cpu
 triton==3.8.0
 numpy==2.3.4
 safetensors==0.6.2
+# Public SDK for prepare-inputs manifest validation.
+prismabuild @ https://github.com/RobTand/prismabuild/archive/f3b5f81d32f473d219ff6276a853f98dbf53eec8.tar.gz
