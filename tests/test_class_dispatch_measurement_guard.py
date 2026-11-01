@@ -45,7 +45,9 @@ def test_guard_stops_workload_after_launcher_exit(tmp_path, monkeypatch, trigger
     termfile = tmp_path / "workload.term"
     leaf = ("import os,signal,sys,time;from pathlib import Path;"
             f"signal.signal(signal.SIGTERM,lambda *_:(time.sleep({handler_delay!r}),Path({str(termfile)!r}).write_text('TERM'),sys.exit(0)));"
-            f"Path({str(pidfile)!r}).write_text(str(os.getpid()));print('READY',flush=True);time.sleep(120)")
+            # Widen creation-to-write so TERM cannot mistake an empty pid file for readiness.
+            f"f=open({str(pidfile)!r},'w');time.sleep(.2);f.write(str(os.getpid()));f.close();"
+            "print('READY',flush=True);time.sleep(120)")
     launcher = ("import signal,subprocess,sys,time;"
                 "signal.signal(signal.SIGTERM,lambda *_:sys.exit(0));"
                 f"p=subprocess.Popen([sys.executable,'-c',{leaf!r}],stdout=subprocess.PIPE);p.stdout.readline();"
