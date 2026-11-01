@@ -54,7 +54,11 @@ from both architecture assignments of retained file and grouped scheduling
 trials, excluding quarantined nodes. The optimized matched-reach fixture uses
 its hosted cached-fixture measurements. The earlier PrismaBuild estimate remains
 recorded as provenance.
-Unobserved files retain their PB estimates.
+The master-merged trial refreshes observed file sums from hosted JUnit;
+unobserved files retain their prior measured estimates.
+`tools/ci/gate_refresh.py --manifest MANIFEST.json` replays this bootstrap
+refresh from retained artifacts. Growth is allowed only while the gate policy
+is absent at the PR base; subsequent budget changes must only tighten.
 The partition sorts files by recorded duration, then path, and assigns each
 to the least-loaded shard. Unknown files use the known p90, or one second for
 an empty inventory. Small PR selections use one shard per lane.
@@ -142,7 +146,10 @@ qualification is complete.
 
 Boundary-proof failures produce final failure records before pytest starts.
 Passing records require both timing evidence and a controller population with
-no CUDA execution. The quarantine planner checks that every excluded node has
+no CUDA execution. The benchmark import probe added by current master is
+quarantined at one exact torch node under its open P2 owner because the probe
+and benchmark import are outside the gate repair footprint.
+The quarantine planner checks that every excluded node has
 an owning issue that remains open. Reruns swap the architectures by shard index
 so each file can be qualified on both architectures.
 
