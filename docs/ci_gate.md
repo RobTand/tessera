@@ -67,6 +67,10 @@ Six A4 CPU wire nodes depend on unpublished archived artifacts, owned by
 [the portable A4 fixtures issue](https://github.com/RobTand/tessera/issues/1568).
 One Stageprev receiver-name proof also requires the published PB source tree,
 owned by [the observer contract issue](https://github.com/RobTand/tessera/issues/1562).
+Five matched-reach cases share a CPU fixture that exceeded the 300-second
+hang bound after passing earlier trials. They are owned by
+[the matched-reach fixture cost issue](https://github.com/RobTand/tessera/issues/1569).
+The unreachable-target and encoder-table identity proofs remain active.
 The remaining tests in those modules stay active. The T4 prepare-inputs tests
 use the pinned public PrismaBuild SDK instead of being quarantined. Hosted failures must be investigated and assigned
 an open issue before exclusion. No exclusion claims CUDA coverage.
