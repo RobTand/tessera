@@ -4,6 +4,7 @@ import json
 from pathlib import Path
 import re
 import subprocess
+import sys
 
 import pytest
 
@@ -48,7 +49,7 @@ def test_workflow_executes_the_tested_batch_decision(tmp_path, change, expected)
     command = next(line.split('run: ', 1)[1] for line in workflow.splitlines()
                    if 'run: ' in line and '--print-mode' in line)
     result = subprocess.run(['bash', '-c', command], cwd=ROOT,
-                            env=dict(os.environ, GITHUB_EVENT_PATH=str(event),
+                            env=dict(os.environ, PATH=str(Path(sys.executable).parent) + os.pathsep + os.environ.get('PATH', ''), GITHUB_EVENT_PATH=str(event),
                                      GITHUB_REPOSITORY='RobTand/tessera', GITHUB_OUTPUT=str(output)),
                             capture_output=True, text=True)
     assert result.returncode == 0, result.stderr
