@@ -57,7 +57,7 @@ Timings include setup and teardown through xunit1 JUnit.
 
 `tools/ci/gate_quarantine.json` records exclusions and their owning issues.
 The three projection artifact mutation cases are excluded under open issue
-[#1566](https://github.com/RobTand/tessera/issues/1566). Their module-scoped
+[the projection fixture issue](https://github.com/RobTand/tessera/issues/1566). Their module-scoped
 safetensors fixture contaminated later consumers in the first hosted canary;
 the consumer tests remain active. Hosted failures must be investigated and assigned
 an open issue before exclusion. No exclusion claims CUDA coverage.
