@@ -52,8 +52,6 @@ class GateCollection:
         items[:] = kept
         if removed:
             config.hook.pytest_deselected(items=removed)
-        yield
-
         items.sort(key=lambda item: self.ranks[item.path])
         for item in items:
             fixtures = item._fixtureinfo.name2fixturedefs.values()
@@ -61,6 +59,7 @@ class GateCollection:
                    for definitions in fixtures for definition in definitions):
                 group = 'module_' + item.path.relative_to(self.root).as_posix().replace('/', '.')
                 item.add_marker(pytest.mark.xdist_group(name=group))
+        yield
 
     def pytest_collection_finish(self, session):
         destination = os.environ.get('GATE_COLLECTION_DIR')
