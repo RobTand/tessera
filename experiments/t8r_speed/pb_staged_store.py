@@ -23,7 +23,8 @@ def validate_whole_phase_readset(path, phase_name):
     """Assert this consumer's whole-bank phase after public SDK validation.
 
     PB owns schema validation, coverage, entry alignment and consumption order.
-    Only the producer-specific phase name/range assertion lives here. No declared
+    The v1 producer also requires reads in registry order; v2 may repeat or
+    reorder registry entries. No declared
     artifact is opened. Return the manifest, public ordered reads and normalized
     nonempty phase ranges (not the entry registry's unique-byte total in v2).
     """
@@ -38,6 +39,8 @@ def validate_whole_phase_readset(path, phase_name):
         declaration = manifest["read_plan"]
         total = declaration["read_bytes"]
     else:
+        if reads != manifest["entries"]:
+            raise ValueError("whole-bank staging read order differs")
         declaration = manifest["annotations"]
         total = manifest["total_bytes"]
     ranges = []

@@ -1897,6 +1897,8 @@ T4 activation-prefetch experiment (2026-10-02, #875):
 * First numeric gate is the staged driver
   experiments/t4_code/prefetch_qualification.py consume, which reuses the exact
   native1 0/4 ELFs through the existing StagedInputs/NativeCallback owners.
+  V1 whole-bank consumers require SDK reads in declared registry order; v2
+  consumption order may differ from that registry.
   The shared pb_staged_store.validate_whole_phase_readset assertion uses public
   client.read_data_manifest and client.manifest_read_entries to validate coverage,
   alignment and consumption order before inspecting v1 annotations.phases or v2
