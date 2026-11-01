@@ -37,7 +37,7 @@ pull request body with `Refs #<issue>.`, so `branch rule` passes as it
 does for every pull request. TL3 tests each change through PrismaBuild and
 reviews it, then posts its `TL3 approval` check on the reviewed head and adds
 the `tl3-queue` label. That pair queues the pull request in the default queue
-in place of `queue` and `pr-gate`; the issue-link check stays required. TL3
+in place of `queue` and `pr-gate`; `branch rule` stays required. TL3
 follows Mergify's queue check on the PR head and never reads `pr-gate`, so a
 `pr-gate` condition would leave a failing TL3 PR unqueued without TL3 noticing.
 The batch's full `gate` still decides every merge. A TL3 change that would
