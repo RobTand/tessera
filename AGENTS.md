@@ -169,6 +169,46 @@ Honorable: Law of Demeter · fail fast / illegal states unrepresentable · optim
 
 Treat as constraints. Violate slogans when judgment says so.
 
+## Deterministic test authoring
+
+- **Separate verifier units from producer integration.** Verifier-only tests
+  construct independent in-memory receipts with matching serve scope. Require
+  the real verifier to accept the positive control before mutating it and
+  checking rejection against that scope. Integration tests retain real producer
+  execution, raw-population fixtures and all existing integration assertions;
+  isolating a verifier test is not permission to replace integration coverage.
+  Producer coupling was demonstrated in the graph-receipt investigation
+  (#1535); the historical timeout mechanism remains unconfirmed.
+- **Drive boundaries, exercise real policy.** Use controlled process, signal
+  and clock models to cause observable state transitions while real policy
+  executes. Expectations must be independently known observable outcomes, not
+  self-comparisons, constant success, copied implementation expectations or
+  configured mock returns standing in for the result. The retained D30 rewrite
+  (`69b6ac4d7a205fd3a1c379699466168896c1783d`,
+  `tests/test_graph_attest_d30_memory_guard.py`) is the example:
+  `CleanupProcesses` drives process membership and return codes while real
+  `Envelope.run` / `_terminate` exercises owned descendants versus an unrelated
+  group, cooperative exit without KILL, full grace, absolute-deadline
+  truncation, signal ordering and cleanup evidence. Reference that retained
+  implementation; do not infer that it is already on the current base.
+- **Wait for state, not host time.** Use explicit readiness events or bounded
+  condition polls with generous failure bounds, never readiness sleeps. Inject
+  clocks for time-policy assertions; elapsed host time is not a correctness
+  oracle. Timeouts bound failure, not the expected result. Tests must not depend
+  on host load, CPU count, test order or incidental filesystem identity.
+- **Own test state.** Seed random state, isolate filesystem state with
+  `tmp_path`, and use fake network transports rather than network calls when
+  the network is not the integration boundary under test. Preserve real
+  integration boundaries and their assertions where they are the objective.
+- **Bound resources, never weaken evidence.** Declare CPU and memory budgets
+  through existing configuration mechanisms, bounding worker counts and native
+  math/build threads within those budgets; do not add launchers or
+  deployment-specific constants. Resource admission limits are not
+  CPU-count-dependent expected results. Retry-until-green, skips, quarantine
+  and weaker assertions are not flake repairs. All existing integration,
+  submission, xdist, device-population and operational evidence requirements
+  remain in force.
+
 ## Before finishing
 
 - Run independent selected tests concurrently. Use pytest-xdist with
