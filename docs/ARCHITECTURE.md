@@ -8,6 +8,17 @@ Branches with `ig/`, `tl/` or `release` prefixes are exempt. TrustLadder release
 The workflow checks new commits and body edits. The cutoff itself requires the check.
 The script uses only the Python standard library and never treats pull request fields as shell source.
 
+The hosted gate compares quarantine with its PR base. Growth requires a change limited to quarantine and documentation; the initial policy is reviewed with the gate. Runtime collection matches whole files or exact nodes, and authenticated owner checks refuse closed issues and PRs. GitHub unavailability gives no verdict.
+
+The class guard integration test waits for explicit workload readiness and retains the production TERM grace; its cooperative handler records TERM before exiting. A deliberate handler pause covers slow scheduling without imposing a shorter cleanup policy.
+
+Documentation-only gate changes run the fast standalone, packaging and provenance tier, except wire schema documentation which still forces full. The reverse-import selector excludes only three named kernel-generated proc records from unknown repository reads; arbitrary external paths and proc aliases retain conservative consumers. Unknown data reads respect the same proven lazy import guards as unknown source loaders; explicit changed-module edges remain conservative. Selector edits force the full gate.
+
+The workflow executes the tested Python event-identity decision before planning and uses its output for both final check names. Torch lanes require a CPU torch installation and zero uncollected modules at both runner and aggregate boundaries.
+
+Final gate summaries report each CPU lane’s pass, failure, skip and uncollected counts, verbatim skip reasons, device details and zero CUDA allocation. CPU passes do not cover CUDA.
+
+
 Re-stamped 2026-10-09 for the migrated GB and D1 producer caller (tessera#944).
 Re-stamped 2026-10-09 for the canonical T4 performant menu (issue #1103).
 CEO decision dec-1009-095820-aebb approves dense [896] and routed [896] as performance-only TCQ menus.
@@ -10450,13 +10461,3 @@ The current GLM entry derives from actual T-8/T-16 constructor calls on the curr
 The topology specifies two nodes with one rank and one CUDA device per node.
 
 Defaults, serving pins, kernels, and the T-16 decode-once interface remain unchanged.
-
-The hosted gate compares quarantine with its PR base. Growth requires a change limited to quarantine and documentation; the initial policy is reviewed with the gate. Runtime collection matches whole files or exact nodes, and authenticated owner checks refuse closed issues and PRs. GitHub unavailability gives no verdict.
-
-The class guard integration test waits for explicit workload readiness and retains the production TERM grace; its cooperative handler records TERM before exiting. A deliberate handler pause covers slow scheduling without imposing a shorter cleanup policy.
-
-Documentation-only gate changes run the fast standalone, packaging and provenance tier, except wire schema documentation which still forces full. The reverse-import selector excludes only three named kernel-generated proc records from unknown repository reads; arbitrary external paths and proc aliases retain conservative consumers. Selector edits force the full gate.
-
-The workflow executes the tested Python event-identity decision before planning and uses its output for both final check names. Torch lanes require a CPU torch installation and zero uncollected modules at both runner and aggregate boundaries.
-
-Final gate summaries report each CPU lane’s pass, failure, skip and uncollected counts, verbatim skip reasons, device details and zero CUDA allocation. CPU passes do not cover CUDA.

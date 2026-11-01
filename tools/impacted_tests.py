@@ -830,7 +830,8 @@ def select(root: Path, changed: list[str], *, comparison: str = "") -> dict:
     # Text/documentation suffixes can carry bytes a refused reader consumes
     # too; only an empty diff proves there is no changed input (#355).
     unplaced = importers.get(DATA_WILDCARD, set()) if changed else set()
-    seeds.update(unplaced)
+    unplaced_consumers = _reverse_reachable(
+        unplaced, importers, skip=probes | guarded_edges.keys())
     # The probe edges are excluded HERE and nowhere else: a conftest's own
     # uncertainty still forces the population, but a test file's does not
     # become the conftest's by way of the conftest having exec'd it.
@@ -842,7 +843,7 @@ def select(root: Path, changed: list[str], *, comparison: str = "") -> dict:
                if f.endswith(".py") and not (root / f).exists()]
     # Reverse-reachable closure: everything that imports a changed module,
     # transitively.
-    seen = _reverse_reachable(seeds, importers) | uncertain_consumers
+    seen = _reverse_reachable(seeds, importers) | uncertain_consumers | unplaced_consumers
 
     # A module in `seen` may have no file in this checkout -- a test the branch
     # ADDS is exactly that case, and it is the one selection can least afford
@@ -897,7 +898,7 @@ def select(root: Path, changed: list[str], *, comparison: str = "") -> dict:
     # reason they are excluded from the escalation walk: a conftest that execs
     # the test files below it would otherwise make any one changed test file
     # select the whole population.
-    reached = _reverse_reachable(seeds, importers, skip=probes) | uncertain_consumers
+    reached = _reverse_reachable(seeds, importers, skip=probes) | uncertain_consumers | unplaced_consumers
     scopes = {by_name[name].parent for name in reached
               if name in by_name and by_name[name].name == "conftest.py"}
     scopes |= {(root / f).parent for f in changed if Path(f).name == "conftest.py"}
