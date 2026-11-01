@@ -356,6 +356,7 @@ def test_compiled_validator_checks_each_rank_and_phase_only_child(bad_rank, bad_
     cells and declared rungs are supplied; their compiled status is unattested,
     never promoted to cell agreement by these synthetic controls.
     """
+    pytest.importorskip("torch", reason="compiled route integration requires optional torch")
     from tessera.serving import moe_route
     from tessera.serving.scheme import (
         ROUTES, TESSERA_FAMILIES, TESSERA_FP8, moe_census_symbol_base)
