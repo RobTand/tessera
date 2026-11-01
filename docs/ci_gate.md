@@ -40,8 +40,11 @@ remains the CUDA qualification, as described in `AGENTS.md`.
 The partition and retry code is adapted from PrismaBuild's hosted gate.
 `GATE_SHARDS` is the single per-lane shard setting, four. Full runs
 therefore use eight test jobs across `ubuntu-24.04` and `ubuntu-24.04-arm`.
-Hosted scheduling estimates use the larger architecture median per-file sum,
-excluding quarantined nodes. Unobserved files retain their PB estimates.
+Hosted scheduling estimates use the larger architecture median per-file sum
+from both architecture assignments of the file-based scheduling trial,
+excluding quarantined nodes. The optimized matched-reach fixture has a separate
+PrismaBuild scheduling estimate until hosted runs measure its new cost.
+Unobserved files retain their PB estimates.
 The partition sorts files by recorded duration, then path, and assigns each
 to the least-loaded shard. Unknown files use the known p90, or one second for
 an empty inventory. Small PR selections use one shard per lane.
