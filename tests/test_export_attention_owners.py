@@ -9,6 +9,7 @@ import json
 
 import pytest
 
+pytest.importorskip("torch", reason="vision export byte fixtures require optional torch")
 from tessera import export_serving as exporter
 
 
