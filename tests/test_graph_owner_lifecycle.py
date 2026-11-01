@@ -23,6 +23,12 @@ import time
 from types import SimpleNamespace as NS
 
 hook, scratch, scenario = Path(sys.argv[1]), Path(sys.argv[2]), sys.argv[3]
+if scenario == "fork-clock-jump":
+    scenario = "fork"
+    # The publication contract must depend on the record, not host-clock reads.
+    import itertools
+    clock_ticks = itertools.count()
+    time.monotonic = lambda: next(clock_ticks) * 10.0
 sys.path.insert(0, str(scratch))
 spec = importlib.util.spec_from_file_location("owner_lifecycle_probe", hook)
 observer = importlib.util.module_from_spec(spec)
@@ -259,8 +265,9 @@ def test_model_override_publishes_only_final_capture_inventory(tmp_path):
     assert result["RECORD"]["captured"][result["OWNER"]] == [1]
 
 
-def test_fork_child_automatically_publishes_fresh_successful_replay(tmp_path):
-    result = _probe(tmp_path, "fork")
+@pytest.mark.parametrize("scenario", ["fork", "fork-clock-jump"])
+def test_fork_child_automatically_publishes_fresh_successful_replay(tmp_path, scenario):
+    result = _probe(tmp_path, scenario)
     parent = _owner(result, "PARENT")
     _assert_inventory(parent)
     assert sum(d["count"] for d in parent["replays"]) == 2
