@@ -64,7 +64,7 @@ def _budget_timings(junit, files, config, require_all=True):
     for case in ET.parse(junit).iter('testcase'):
         filename, name = case.get('file', '').removeprefix('./'), case.get('name', '')
         classname = case.get('classname', '')
-        if not classname and case.find('skipped') is not None and name in files:
+        if not classname and case.find('skipped') is not None and (name in files or filename in files):
             continue  # A module-level importorskip is not a test timing.
         if filename not in files or not name:
             raise ValueError('JUnit timing has missing or unexpected test identity')
@@ -125,6 +125,22 @@ def cpu_population(path):
     return surface
 
 
+def collection_coverage(directory, files, surface, workers=1):
+    uncollected = {path if path.startswith('tests/') else 'tests/' + path
+                   for path in surface['not_collected']}
+    observed = set()
+    for index in range(workers):
+        path = directory / f'collection.gw{index}.json'
+        receipt = json.loads(path.read_text())
+        collected = set(receipt['collected'])
+        missing = set(files) - collected - uncollected
+        if missing:
+            raise ValueError('unaccounted assigned test files: ' + ', '.join(sorted(missing)))
+        observed.update(collected)
+    return {'status': 'pass', 'worker_receipts': workers, 'collected': sorted(observed),
+            'uncollected': sorted(set(files) & uncollected)}
+
+
 def run_plan(plan: dict, *, root: Path, output: Path, junit: Path,
              files: list[str] | None = None, workers: int | None = None, lane: str = 'torch',
              execute=subprocess.run, affinity=None) -> int:
@@ -158,6 +174,7 @@ def run_plan(plan: dict, *, root: Path, output: Path, junit: Path,
         # installed interpreter rather than an ambient dynamic-loader override.
         environment = {name: value for name, value in environment.items() if not name.startswith('LD_')}
         environment['GATE_ASSIGNED_FILES'] = json.dumps(files)
+        environment['GATE_COLLECTION_DIR'] = str(output.parent.resolve())
         environment['PYTHONPATH'] = str(Path(__file__).resolve().parent) + os.pathsep + str(root / 'src') + os.pathsep + environment.get('PYTHONPATH', '')
         junit.parent.mkdir(parents=True, exist_ok=True)
         profile = ['-X', 'importtime'] if os.environ.get('GATE_PROFILE_STARTUP') == '1' else []
@@ -190,11 +207,12 @@ def run_plan(plan: dict, *, root: Path, output: Path, junit: Path,
             if record['verdict'] != 'fail':
                 raise RuntimeError('JUnit verdict unavailable: ' + str(error)) from error
         if record['verdict'] != 'fail':
-            if result.returncode != 0:
+            if result.returncode not in (0, 5):
                 raise RuntimeError(f'pytest exited {result.returncode}, without a complete test verdict')
             record['verdict'] = 'pass'
         try:
             record['surface'] = cpu_population(output.with_name('surface.json'))
+            record['collection'] = collection_coverage(output.parent, files, record['surface'], workers)
             costs = _budget_timings(junit, files, config, require_all=False)
             overruns, warnings = [], []
             for row in costs:
@@ -235,6 +253,7 @@ def run_plan(plan: dict, *, root: Path, output: Path, junit: Path,
         code = NO_VERDICT
     output.parent.mkdir(parents=True, exist_ok=True)
     output.write_text(json.dumps(record, indent=2) + '\n')
+    print({0: 'GATE_PASS', 1: 'GATE_TEST_FAILURE', 75: 'NO_VERDICT'}[code], record.get('infrastructure_reason', ''), flush=True)
     return code
 
 

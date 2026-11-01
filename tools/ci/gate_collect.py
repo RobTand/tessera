@@ -11,7 +11,9 @@ import pytest
 
 class GateCollection:
     def __init__(self, root, files):
+        self.root = root
         self.ranks = {root / path: rank for rank, path in enumerate(files)}
+        self.collected = set()
         self.directories = {parent for path in self.ranks for parent in path.parents
                             if parent == root or root in parent.parents}
 
@@ -20,8 +22,28 @@ class GateCollection:
             return True
         return None
 
+    def pytest_collectreport(self, report):
+        path = report.nodeid.split('::', 1)[0]
+        if path and report.outcome in ('passed', 'skipped'):
+            candidate = Path(path)
+            if not candidate.is_absolute():
+                candidate = self.root / candidate
+            if candidate in self.ranks:
+                self.collected.add(candidate.relative_to(self.root).as_posix())
+
     def pytest_collection_modifyitems(self, items):
         items.sort(key=lambda item: self.ranks[item.path])
+
+    def pytest_collection_finish(self, session):
+        destination = os.environ.get('GATE_COLLECTION_DIR')
+        worker = os.environ.get('PYTEST_XDIST_WORKER')
+        if destination and worker:
+            counts = {path.relative_to(self.root).as_posix(): 0 for path in self.ranks}
+            for item in session.items:
+                counts[item.path.relative_to(self.root).as_posix()] += 1
+            path = Path(destination) / f'collection.{worker}.json'
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(json.dumps({'collected': sorted(self.collected), 'items': counts}) + '\n')
 
 
 @pytest.hookimpl(specname='pytest_configure')

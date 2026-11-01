@@ -86,3 +86,9 @@ the per-lane median file times. `--budget-output` builds a bootstrap exception
 list from hosted observations, using twice each measured maximum rounded up.
 Every source JUnit digest is retained. The manifest records lane, repeat,
 JUnit path, surface path, and the PB action key or hosted run and artifact.
+
+Each xdist worker publishes a collection receipt. Every assigned file must
+appear in that receipt or in the population's explicit missing-dependency
+list. Collected helper modules with no test items remain accounted for. An
+all-skipped or all-deselected assignment can pass with pytest exit 5 only when
+those collection and population checks complete. It never claims a CUDA pass.

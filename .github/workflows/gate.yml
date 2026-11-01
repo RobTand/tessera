@@ -104,6 +104,7 @@ jobs:
             .pytest_cache/gate-artifacts/result.json
             .pytest_cache/gate-artifacts/junit.xml
             .pytest_cache/gate-artifacts/surface*.json
+            .pytest_cache/gate-artifacts/collection*.json
           if-no-files-found: warn
           retention-days: 7
   retry-plan:
@@ -191,6 +192,7 @@ jobs:
             .pytest_cache/gate-artifacts/result.json
             .pytest_cache/gate-artifacts/junit.xml
             .pytest_cache/gate-artifacts/surface*.json
+            .pytest_cache/gate-artifacts/collection*.json
           if-no-files-found: warn
           retention-days: 7
   pr-gate:
