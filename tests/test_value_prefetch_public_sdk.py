@@ -10,6 +10,7 @@ from __future__ import annotations
 import builtins
 from pathlib import Path
 import json
+import os
 import sys
 from types import SimpleNamespace
 
@@ -103,7 +104,7 @@ def test_public_sdk_migration_preserves_readset_refusals(tmp_path, public_sdk, c
     manifest = {
         "schema": "prismaquant.prismabuild.data_manifest.v1",
         "total_bytes": total, "entry_count": len(entries),
-        "mount_prefix": "/", "produced_by": {"test": "public SDK boundary"},
+        "mount_prefix": os.path.commonpath([str(Path(entry["path"]).parent) for entry in entries]), "produced_by": {"test": "public SDK boundary"},
         "entries": entries,
         "annotations": {"phases": [
             {"name": phase_name, "cumulative_bytes": total},
