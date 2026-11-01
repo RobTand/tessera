@@ -10452,3 +10452,5 @@ The topology specifies two nodes with one rank and one CUDA device per node.
 Defaults, serving pins, kernels, and the T-16 decode-once interface remain unchanged.
 
 The hosted gate compares quarantine with its PR base. Growth requires a change limited to quarantine and documentation; the initial policy is reviewed with the gate. Runtime collection matches whole files or exact nodes, and authenticated owner checks refuse closed issues and PRs. GitHub unavailability gives no verdict.
+
+The class guard integration test waits for explicit workload readiness and retains the production TERM grace; its cooperative handler records TERM before exiting. A deliberate handler pause covers slow scheduling without imposing a shorter cleanup policy.

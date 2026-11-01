@@ -43,13 +43,13 @@ def test_guard_stops_workload_after_launcher_exit(tmp_path, monkeypatch, trigger
     guard = load_guard()
     pidfile = tmp_path / "workload.pid"
     termfile = tmp_path / "workload.term"
-    leaf = ("import os,signal,time;from pathlib import Path;"
-            f"signal.signal(signal.SIGTERM,lambda *_:(time.sleep({handler_delay!r}),Path({str(termfile)!r}).write_text('TERM')));"
-            f"Path({str(pidfile)!r}).write_text(str(os.getpid()));time.sleep(120)")
+    leaf = ("import os,signal,sys,time;from pathlib import Path;"
+            f"signal.signal(signal.SIGTERM,lambda *_:(time.sleep({handler_delay!r}),Path({str(termfile)!r}).write_text('TERM'),sys.exit(0)));"
+            f"Path({str(pidfile)!r}).write_text(str(os.getpid()));print('READY',flush=True);time.sleep(120)")
     launcher = ("import signal,subprocess,sys,time;"
                 "signal.signal(signal.SIGTERM,lambda *_:sys.exit(0));"
-                f"p=subprocess.Popen([sys.executable,'-c',{leaf!r}]);"
-                + ("time.sleep(.1)" if trigger == "launcher_exit" else "p.wait()"))
+                f"p=subprocess.Popen([sys.executable,'-c',{leaf!r}],stdout=subprocess.PIPE);p.stdout.readline();"
+                + ("pass" if trigger == "launcher_exit" else "p.wait()"))
     reads = 0
 
     def memory():
@@ -66,7 +66,6 @@ def test_guard_stops_workload_after_launcher_exit(tmp_path, monkeypatch, trigger
         return guard.FLOOR_BYTES + 1 if trigger == "launcher_exit" else 0
 
     monkeypatch.setattr(guard, "available_bytes", memory)
-    monkeypatch.setattr(guard, "TERM_GRACE_SECONDS", .2)
     monkeypatch.setattr(sys, "argv", ["memory_guard", "--out", str(tmp_path / "memory.json"),
                                       "--", sys.executable, "-c", launcher])
     pid = None
