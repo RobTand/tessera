@@ -180,13 +180,16 @@ def test_gate_builds_a_module_fixture_once_across_workers(tmp_path, monkeypatch,
     marker = tmp_path / 'fixture-builds.txt'
     (tests / 'test_shared.py').write_text(
         'import pathlib, pytest\n'
-        + ('pytestmark = pytest.mark.xdist_group(name="test_shared")\n' if grouped else '')
-        + '@pytest.fixture(scope="module")\n'
+        '@pytest.fixture(scope="module")\n'
         'def shared():\n'
         f'    with pathlib.Path({str(marker)!r}).open("a") as log: log.write("build\\n")\n'
         '    return 1\n'
+         + ('@pytest.mark.xdist_group(name="test_shared")\n' if grouped else '')
+        + '@pytest.mark.parametrize("case", range(8))\n'
+        'def test_consumer(shared, case): assert shared == 1\n'
         '@pytest.mark.parametrize("case", range(8))\n'
-        'def test_consumer(shared, case): assert shared == 1\n')
+        'def test_independent(case, worker_id):\n'
+        f'    with pathlib.Path({str(marker.with_name("independent-workers.txt"))!r}).open("a") as log: log.write(worker_id+"\\n")\n')
     monkeypatch.setattr(runner, '_budget_policy', lambda *args: {'seconds': 20, 'slow': {}, 'enforce': True})
     monkeypatch.setattr(runner, 'cpu_population', lambda *args: {
         'role': 'population', 'cuda': False, 'cuda_surface': {'executed': 0},
@@ -199,7 +202,8 @@ def test_gate_builds_a_module_fixture_once_across_workers(tmp_path, monkeypatch,
     code = runner.run_plan(plan, root=tmp_path, output=output / 'result.json',
                            junit=output / 'junit.xml', workers=2, affinity={0, 1})
     assert code == 0
-    assert marker.read_text().splitlines() == ['build'] * (1 if grouped else 2)
+    assert marker.read_text().splitlines() == ['build']
+    assert len(set(marker.with_name('independent-workers.txt').read_text().splitlines())) == 2
 
 
 def test_file_scheduler_preserves_the_duration_order(tmp_path, monkeypatch):
