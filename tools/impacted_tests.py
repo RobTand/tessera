@@ -95,6 +95,7 @@ from __future__ import annotations
 
 import argparse
 import ast
+import copy
 import json
 import re
 import subprocess
@@ -198,6 +199,34 @@ def _read_python_source(
         return None
 
 
+# These kernel-generated records cannot be repository inputs. In particular,
+# /proc/self/root and /proc/self/fd are deliberately absent: they can alias
+# repository files and must retain their conservative data dependencies.
+KERNEL_RECORDS = {'/proc/sys/kernel/random/boot_id', '/proc/self/maps', '/proc/self/mountinfo'}
+
+
+def _without_kernel_reads(tree):
+    canonical = any(isinstance(node, ast.ImportFrom) and node.module == 'pathlib' and
+                    any(alias.name == 'Path' and alias.asname is None for alias in node.names)
+                    for node in tree.body)
+    rebound = any(isinstance(node, ast.Name) and node.id == 'Path' and isinstance(node.ctx, ast.Store)
+                  or isinstance(node, ast.arg) and node.arg == 'Path' for node in ast.walk(tree))
+    if not canonical or rebound:
+        return tree
+
+    class KernelReads(ast.NodeTransformer):
+        def visit_Call(self, node):
+            if (isinstance(node.func, ast.Attribute) and node.func.attr in {'read_text', 'read_bytes'} and
+                    isinstance(node.func.value, ast.Call)):
+                path = node.func.value
+                if (isinstance(path.func, ast.Name) and path.func.id == 'Path' and len(path.args) == 1 and
+                        isinstance(path.args[0], ast.Constant) and path.args[0].value in KERNEL_RECORDS):
+                    return ast.copy_location(ast.Constant(value=''), node)
+            return self.generic_visit(node)
+
+    return KernelReads().visit(copy.deepcopy(tree))
+
+
 def _imports(
     path: Path,
     own: str,
@@ -243,7 +272,7 @@ def _imports(
                 if statement_requests is None else statement_requests)
     unnamed: list[int] = []
     paths, unknown, unplaced = file_imports(
-        tree, path, root, executes_source=executes_source, unnamed=unnamed)
+        _without_kernel_reads(tree), path, root, executes_source=executes_source, unnamed=unnamed)
     if unnamed and unnamed_reads is not None:
         unnamed_reads[str(path.relative_to(root))] = unnamed
     loaded, data = set(), set()

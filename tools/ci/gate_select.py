@@ -31,9 +31,27 @@ def population(root):
     return sorted(set(result.stdout.decode().rstrip('\0').split('\0')) - {''})
 
 
+FAST_BOUNDARY = {'tests/test_standalone_boundary.py', 'tests/test_packaging.py', 'tests/test_provenance.py'}
+
+
+def documentation_only(paths):
+    return bool(paths) and all(
+        not path.startswith('docs/schema/') and
+        (path in {'README.md', 'CHANGELOG.md'} or
+         path.startswith('docs/') and Path(path).suffix in {'.md', '.rst'})
+        for path in paths)
+
+
 def select_files(root, base, head, execute=subprocess.run):
     all_files = population(root)
     try:
+        diff = execute(['git', 'diff', '--name-only', '--no-renames', base, head, '--'],
+                       cwd=root, capture_output=True, text=True, check=False, timeout=30)
+        if diff.returncode:
+            raise ValueError(diff.stderr or 'diff unavailable')
+        if documentation_only(diff.stdout.splitlines()):
+            return {'verdict': 'narrowed', 'tests': sorted(set(all_files) & FAST_BOUNDARY),
+                    'reason': 'documentation-only change: fast boundary tier'}
         result = execute([sys.executable, str(root / 'tools/impacted_tests.py'),
                           '--ref', f'{base}...{head}', '--json'], cwd=root,
                          capture_output=True, text=True, check=False, timeout=120)
@@ -185,7 +203,7 @@ def main():
     # Gate tooling changes require complete coverage, independently of graph edges.
     diff = subprocess.run(['git', 'diff', '--name-only', args.base, args.head],
                           text=True, capture_output=True, check=True).stdout.splitlines()
-    if any(path.startswith(('tools/ci/', '.github/')) for path in diff):
+    if any(path.startswith(('tools/ci/', '.github/')) or path == 'tools/impacted_tests.py' for path in diff):
         files = population(root)
     config = json.loads((root / QUARANTINE_PATH).read_text())
     quarantine_policy(config, base_quarantine(root, args.base), diff)
