@@ -79,6 +79,29 @@ def assess_attempts(plan, assignments, attempts):
             'effective_attempts': effective, 'exit_code': 1 if failed else 75 if missing else 0}
 
 
+def population_summary(records):
+    lines = []
+    for lane in ('bytes', 'torch'):
+        reports = [row['surface'] for row in records if row.get('lane') == lane and row.get('surface')]
+        if not reports:
+            lines.append(f'{lane}: population unavailable; CUDA not covered')
+            continue
+        counts = Counter()
+        uncollected, reasons, devices = set(), Counter(), set()
+        allocated = 0
+        for surface in reports:
+            counts.update(surface.get('counts', {}))
+            uncollected.update(surface.get('not_collected', []))
+            reasons.update(surface.get('skip_reasons', {}))
+            devices.add(surface.get('device', 'unknown'))
+            allocated += surface.get('cuda_surface', {}).get('executed', 0)
+        lines.append(f"{lane}: {counts['passed']} passed, {counts['failed']} failed, "
+                     f"{counts['skipped']} skipped, {len(uncollected)} uncollected; "
+                     f"CUDA not covered, {allocated} allocated. Device: " + '; '.join(sorted(devices)))
+        lines.extend(f'  {reason}: {count}' for reason, count in sorted(reasons.items()))
+    return '\n'.join(lines)
+
+
 def _read_result(path):
     try:
         return json.loads(path.read_text())
@@ -126,10 +149,13 @@ def main(argv=None):
         args.output.write_text(json.dumps(result, indent=2) + '\n')
         marker = {0: 'GATE_PASS', 1: 'GATE_TEST_FAILURE', 75: 'NO_VERDICT'}[result['exit_code']]
         message = f"{marker}: failed shards {result['failed_indices']}; missing verdicts {result['missing_indices']}"
+        records = [attempts[attempt][index] for index, attempt in result['effective_attempts'].items()]
+        population = population_summary(records)
         print(message)
+        print(population)
         if args.summary:
             with args.summary.open('a') as handle:
-                handle.write('## Gate verdict\n\n' + message + '\n')
+                handle.write('## Gate verdict\n\n' + message + '\n\n```text\n' + population + '\n```\n')
         return result['exit_code']
     except (OSError, ValueError, KeyError, TypeError) as error:
         print('NO_VERDICT: ' + str(error), file=sys.stderr)

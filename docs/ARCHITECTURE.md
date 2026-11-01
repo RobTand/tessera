@@ -10458,3 +10458,5 @@ The class guard integration test waits for explicit workload readiness and retai
 Documentation-only gate changes run the fast standalone, packaging and provenance tier, except wire schema documentation which still forces full. The reverse-import selector excludes only three named kernel-generated proc records from unknown repository reads; arbitrary external paths and proc aliases retain conservative consumers. Selector edits force the full gate.
 
 The workflow executes the tested Python event-identity decision before planning and uses its output for both final check names. Torch lanes require a CPU torch installation and zero uncollected modules at both runner and aggregate boundaries.
+
+Final gate summaries report each CPU lane’s pass, failure, skip and uncollected counts, verbatim skip reasons, device details and zero CUDA allocation. CPU passes do not cover CUDA.
