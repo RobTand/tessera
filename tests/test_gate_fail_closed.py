@@ -58,11 +58,11 @@ def test_quarantine_requires_an_open_owner():
     gate = load('gate_select')
     config = {'lanes': {'bytes': [], 'torch': ['tests/test_a.py::test_a']}, 'issues': {}}
     with pytest.raises(ValueError, match='owner'):
-        gate.quarantine(config, issue_state=lambda number: 'open')
+        gate.exclusion_entries(config)
     config['issues']['tests/test_a.py::test_a'] = 123
     with pytest.raises(ValueError, match='open'):
-        gate.quarantine(config, issue_state=lambda number: 'closed')
-    assert gate.quarantine(config, issue_state=lambda number: 'open') == config['lanes']
+        gate.check_quarantine_owners(gate.exclusion_entries(config), fetch=lambda number: {'state': 'closed'})
+    gate.check_quarantine_owners(gate.exclusion_entries(config), fetch=lambda number: {'state': 'open'})
 
 
 def test_aggregate_rejects_a_cuda_population_on_a_cpu_lane(tmp_path):

@@ -70,31 +70,6 @@ def select_files(root, base, head, execute=subprocess.run):
         return {'verdict': 'full', 'tests': all_files, 'reason': str(error)}
 
 
-def issue_state(number):
-    request = urllib.request.Request(f'https://api.github.com/repos/RobTand/tessera/issues/{number}',
-                                     headers={'Accept': 'application/vnd.github+json'})
-    with urllib.request.urlopen(request, timeout=30) as response:
-        return json.load(response)['state']
-
-
-def quarantine(config, *, issue_state=issue_state):
-    lanes = config['lanes']
-    owners = config['issues']
-    for lane in ('bytes', 'torch'):
-        if not isinstance(lanes[lane], list) or len(lanes[lane]) != len(set(lanes[lane])):
-            raise ValueError('quarantine must list unique test nodes')
-        for nodeid in lanes[lane]:
-            if '::' not in nodeid or not nodeid.startswith('tests/'):
-                raise ValueError('quarantine requires an exact test node')
-            number = owners.get(nodeid)
-            if type(number) is not int or number < 1:
-                raise ValueError('quarantine needs an owner issue for ' + nodeid)
-    for number in set(owners[nodeid] for nodes in lanes.values() for nodeid in nodes):
-        if issue_state(number) != 'open':
-            raise ValueError(f'quarantine owner #{number} must remain open')
-    return lanes
-
-
 def exclusion_entries(config):
     if 'entries' in config:
         entries = config['entries']
