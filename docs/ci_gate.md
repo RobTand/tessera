@@ -4,8 +4,13 @@ Every PR push selects tests with `tools/impacted_tests.py`, Tessera's reverse
 import graph. Selector errors and empty selector output for changed paths select
 the full population. Changes to gate or
 workflow files, and the selector itself, also select the full population.
-Documentation-only changes outside `docs/schema/` select the fast standalone,
-packaging and provenance tier. Ordinary changes retain reverse-import and
+Documentation-only changes outside `docs/schema/` select standalone, packaging
+and provenance checks plus all test modules naming Markdown, reStructuredText
+or issue-snapshot inputs. `tools/ci/gate_doc_readers.py` inventories those
+modules without importing them, including paths passed through helpers and
+receipt records. Comments and docstrings are citations, not input declarations.
+This conservatively retains fixture-only consumers too. Parse/read errors
+select the full population. Ordinary changes retain reverse-import and
 explicit data-read dependencies. Named kernel-generated boot ID, memory maps
 and mount records create no repository dependency; arbitrary external paths
 and proc aliases retain conservative consumers. The final check is `pr-gate`.

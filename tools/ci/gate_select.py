@@ -14,6 +14,7 @@ import sys
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from gate_partition import lane_matrix, selection_shard_count
+from gate_doc_readers import documentation_readers
 
 
 def full_gate(pr, repository):
@@ -50,8 +51,8 @@ def select_files(root, base, head, execute=subprocess.run):
         if diff.returncode:
             raise ValueError(diff.stderr or 'diff unavailable')
         if documentation_only(diff.stdout.splitlines()):
-            return {'verdict': 'narrowed', 'tests': sorted(set(all_files) & FAST_BOUNDARY),
-                    'reason': 'documentation-only change: fast boundary tier'}
+            return {'verdict': 'narrowed', 'tests': sorted((set(all_files) & FAST_BOUNDARY) | set(documentation_readers(root, all_files))),
+                    'reason': 'documentation-only change: boundary and documentation readers'}
         result = execute([sys.executable, str(root / 'tools/impacted_tests.py'),
                           '--ref', f'{base}...{head}', '--json'], cwd=root,
                          capture_output=True, text=True, check=False, timeout=120)
@@ -68,7 +69,7 @@ def select_files(root, base, head, execute=subprocess.run):
               not set(selection['tests']) <= set(all_files)):
             raise ValueError('selector returned an invalid verdict or unknown files')
         return selection
-    except (OSError, ValueError, KeyError, TypeError, subprocess.TimeoutExpired) as error:
+    except (OSError, ValueError, SyntaxError, KeyError, TypeError, subprocess.TimeoutExpired) as error:
         return {'verdict': 'full', 'tests': all_files, 'reason': str(error)}
 
 
