@@ -149,6 +149,9 @@ It retains the job-level completion timestamp as well. On 2026-11-01, GitHub
 reported job completion about one hour later than the completed verdict and
 cleanup steps. The report uses the verdict step and each shard's `Complete job`
 step when present, falling back to job timestamps for older metadata. A
+step timestamp before the run origin or job start belongs to a different clock.
+In that case the report uses job completion as a conservative upper bound and
+names that timing basis. It never subtracts a guessed clock offset. A
 rerun entry must also supply `requested_at`, the UTC timestamp retained when
 its REST rerun request was sent. GitHub keeps the original `created_at` on
 reruns, so it cannot measure later attempts. Without that timestamp, a rerun

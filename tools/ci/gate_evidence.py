@@ -94,6 +94,10 @@ def analyze_canaries(runs):
             origin = run['created_at']
         verdict_completed = _step_completion(gate, 'Require complete lane coverage and final verdicts')
         wall = _elapsed(origin, verdict_completed)
+        timing_basis = 'verdict_step'
+        if wall is None:
+            wall = _elapsed(origin, gate.get('completed_at'))
+            timing_basis = 'job_completion_upper_bound'
         passed = (run['status'] == 'completed' and run.get('conclusion') == 'success'
                   and gate.get('conclusion') == 'success' and wall is not None)
         if passed:
@@ -106,6 +110,8 @@ def analyze_canaries(runs):
                      for step in job.get('steps', [])}
             completion = _step_completion(job, 'Complete job')
             total = _elapsed(job.get('started_at'), completion)
+            if total is None:
+                total = _elapsed(job.get('started_at'), job.get('completed_at'))
             dependency = steps.get('Install pinned lane dependencies')
             tests = steps.get('Run assigned population')
             other = (total - dependency - tests
@@ -118,6 +124,7 @@ def analyze_canaries(runs):
         measured.append({'run_id': run['id'], 'attempt': run.get('run_attempt'),
                          'gate_job_completed_at': gate.get('completed_at'),
                          'verdict_completed_at': verdict_completed,
+                         'timing_basis': timing_basis,
                          'head_sha': run.get('head_sha'), 'requested_at': origin, 'status': run['status'],
                          'conclusion': run.get('conclusion'), 'wall_seconds': wall,
                          'passed': passed, 'shards': shards})
