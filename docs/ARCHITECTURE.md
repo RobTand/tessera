@@ -8,7 +8,7 @@ Branches with `ig/`, `tl/` or `release` prefixes are exempt. TrustLadder release
 The workflow checks new commits and body edits. The cutoff itself requires the check.
 The script uses only the Python standard library and never treats pull request fields as shell source.
 
-The hosted gate compares quarantine with its PR base. Growth requires a change limited to quarantine and documentation; the initial policy is reviewed with the gate. Runtime collection matches whole files or exact nodes, and authenticated owner checks refuse closed issues and PRs. GitHub unavailability gives no verdict.
+The hosted gate compares quarantine with its PR base. Growth requires a change limited to quarantine and documentation; the initial policy is reviewed with the gate. The plan rejects files outside its tracked test population. Runtime collection matches whole files or exact nodes, and authenticated owner checks refuse closed issues and PRs. GitHub unavailability gives no verdict.
 
 The class guard integration test waits for explicit workload readiness and retains the production TERM grace; its cooperative handler records TERM before exiting. A deliberate handler pause covers slow scheduling without imposing a shorter cleanup policy.
 

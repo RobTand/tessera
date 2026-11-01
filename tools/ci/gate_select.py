@@ -190,8 +190,12 @@ def main():
     if any(path.startswith(('tools/ci/', '.github/')) or path == 'tools/impacted_tests.py' for path in diff):
         files = population(root)
     config = json.loads((root / QUARANTINE_PATH).read_text())
+    entries = exclusion_entries(config)
+    unknown = {row['target'].split('::', 1)[0] for row in entries} - set(population(root))
+    if unknown:
+        raise ValueError('quarantine files outside the test population: ' + ', '.join(sorted(unknown)))
     quarantine_policy(config, base_quarantine(root, args.base), diff)
-    check_quarantine_owners(exclusion_entries(config))
+    check_quarantine_owners(entries)
     durations = json.loads((root / 'tools/ci/gate_durations.json').read_text())['lanes']
     count = args.shards
     if args.mode == 'selection':

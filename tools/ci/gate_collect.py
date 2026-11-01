@@ -43,7 +43,7 @@ class GateCollection:
             # independently requires complete collection and validates these.
             if filename not in self.collected and filename not in files:
                 continue
-            if target not in nodes and target not in files:
+            if target not in nodes and target not in self.collected and target not in files:
                 raise pytest.UsageError('quarantine is not an exact collected node or file: ' + target)
         kept = []
         for item in items:
