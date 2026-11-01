@@ -10101,7 +10101,8 @@ Both test the bytes-only and torch CPU populations on hosted x64 and ARM.
 Neither covers CUDA-gated tests. [The gate reference](ci_gate.md) describes
 selection, hosted-duration file sharding and xdist groups derived from module fixture scopes,
 with scheduling costs and bootstrap limits refreshed from retained hosted JUnit
-and cold-worker costs measured on both architecture assignments,
+and an 80-second default derived from twice the measured 39.884-second
+cold planning cost on the two architecture assignments,
 verdict retries, measured and enforced test budgets,
 issue-owned quarantine, restored matched-reach coverage with exact standard-sample
 reuse in its test fixture, and the required-check transition. Its evidence command computes

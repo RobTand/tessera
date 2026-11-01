@@ -123,7 +123,10 @@ def main():
     parser.add_argument('--output', type=Path, required=True)
     parser.add_argument('--durations-output', type=Path)
     parser.add_argument('--budget-output', type=Path)
+    parser.add_argument('--budget-default-seconds', type=int, default=20)
     args = parser.parse_args()
+    if args.budget_default_seconds <= 0:
+        parser.error('--budget-default-seconds must be positive')
     if not args.manifest and not args.canary_manifest:
         parser.error('provide --manifest or --canary-manifest')
     runs = json.loads(args.manifest.read_text()) if args.manifest else []
@@ -141,8 +144,8 @@ def main():
         for lane in report['lanes'].values():
             for name, seconds in lane['largest_test_seconds'].items():
                 maximum[name] = max(maximum.get(name, 0), seconds)
-        args.budget_output.write_text(json.dumps({'seconds': 20, 'enforce': True,
-            'slow': {name: math.ceil(2 * seconds) for name, seconds in sorted(maximum.items()) if seconds > 20},
+        args.budget_output.write_text(json.dumps({'seconds': args.budget_default_seconds, 'enforce': True,
+            'slow': {name: math.ceil(2 * seconds) for name, seconds in sorted(maximum.items()) if seconds > args.budget_default_seconds},
             'source': [{'run': row.get('run_id'), 'artifact': row.get('artifact'),
                         'junit_sha256': row['junit_sha256']} for row in report['runs']]}, indent=2) + '\n')
     return 0

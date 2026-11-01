@@ -1,78 +1,251 @@
 {
-  "seconds": 20,
+  "seconds": 80,
   "enforce": true,
+  "default_source": {
+    "rule": "ceil(2 * maximum observed cold planning consumer)",
+    "maximum_observed_seconds": 39.884,
+    "observations": [
+      {
+        "run": "41282158208",
+        "attempt": 1,
+        "node": "tests/test_uniform_control.py::test_the_block_states_the_verdict_the_gate_exists_to_record",
+        "seconds": 38.816,
+        "runner": [
+          "ubuntu-24.04"
+        ]
+      },
+      {
+        "run": "41282158208",
+        "attempt": 1,
+        "node": "tests/test_uniform_control.py::test_the_layer_zero_separator_pair_weighs_what_the_receipt_weighed",
+        "seconds": 38.562,
+        "runner": [
+          "ubuntu-24.04"
+        ]
+      },
+      {
+        "run": "41282158208",
+        "attempt": 1,
+        "node": "tests/test_menu_selection_requirement.py::test_the_converter_sidecar_marks_a_uniform_plan_as_nothing_to_validate",
+        "seconds": 0.031,
+        "runner": [
+          "ubuntu-24.04-arm"
+        ]
+      },
+      {
+        "run": "41282158208",
+        "attempt": 1,
+        "node": "tests/test_plan_from_layer_config.py::test_a_plan_names_tensors_not_qnames",
+        "seconds": 17.252,
+        "runner": [
+          "ubuntu-24.04-arm"
+        ]
+      },
+      {
+        "run": "41282848906",
+        "attempt": 1,
+        "node": "tests/test_menu_selection_requirement.py::test_the_converter_sidecar_marks_a_uniform_plan_as_nothing_to_validate",
+        "seconds": 39.884,
+        "runner": [
+          "ubuntu-24.04"
+        ]
+      },
+      {
+        "run": "41282848906",
+        "attempt": 1,
+        "node": "tests/test_plan_from_layer_config.py::test_a_plan_names_tensors_not_qnames",
+        "seconds": 0.081,
+        "runner": [
+          "ubuntu-24.04"
+        ]
+      },
+      {
+        "run": "41282848906",
+        "attempt": 1,
+        "node": "tests/test_uniform_control.py::test_the_layer_zero_separator_pair_weighs_what_the_receipt_weighed",
+        "seconds": 17.414,
+        "runner": [
+          "ubuntu-24.04-arm"
+        ]
+      },
+      {
+        "run": "41282848906",
+        "attempt": 1,
+        "node": "tests/test_uniform_control.py::test_the_block_states_the_verdict_the_gate_exists_to_record",
+        "seconds": 15.071,
+        "runner": [
+          "ubuntu-24.04-arm"
+        ]
+      },
+      {
+        "run": "41282848906",
+        "attempt": 2,
+        "node": "tests/test_menu_selection_requirement.py::test_the_converter_sidecar_marks_a_uniform_plan_as_nothing_to_validate",
+        "seconds": 0.032,
+        "runner": [
+          "ubuntu-24.04-arm"
+        ]
+      },
+      {
+        "run": "41282848906",
+        "attempt": 2,
+        "node": "tests/test_plan_from_layer_config.py::test_a_plan_names_tensors_not_qnames",
+        "seconds": 17.329,
+        "runner": [
+          "ubuntu-24.04-arm"
+        ]
+      },
+      {
+        "run": "41282848906",
+        "attempt": 2,
+        "node": "tests/test_uniform_control.py::test_the_layer_zero_separator_pair_weighs_what_the_receipt_weighed",
+        "seconds": 0.059,
+        "runner": [
+          "ubuntu-24.04"
+        ]
+      },
+      {
+        "run": "41282848906",
+        "attempt": 2,
+        "node": "tests/test_uniform_control.py::test_the_block_states_the_verdict_the_gate_exists_to_record",
+        "seconds": 0.054,
+        "runner": [
+          "ubuntu-24.04"
+        ]
+      },
+      {
+        "run": "41284308847",
+        "attempt": 1,
+        "node": "tests/test_menu_selection_requirement.py::test_the_converter_sidecar_marks_a_uniform_plan_as_nothing_to_validate",
+        "seconds": 0.058,
+        "runner": [
+          "ubuntu-24.04"
+        ]
+      },
+      {
+        "run": "41284308847",
+        "attempt": 1,
+        "node": "tests/test_plan_from_layer_config.py::test_a_plan_names_tensors_not_qnames",
+        "seconds": 28.557,
+        "runner": [
+          "ubuntu-24.04"
+        ]
+      },
+      {
+        "run": "41284308847",
+        "attempt": 1,
+        "node": "tests/test_uniform_control.py::test_the_layer_zero_separator_pair_weighs_what_the_receipt_weighed",
+        "seconds": 17.461,
+        "runner": [
+          "ubuntu-24.04-arm"
+        ]
+      },
+      {
+        "run": "41284308847",
+        "attempt": 1,
+        "node": "tests/test_uniform_control.py::test_the_block_states_the_verdict_the_gate_exists_to_record",
+        "seconds": 15.059,
+        "runner": [
+          "ubuntu-24.04-arm"
+        ]
+      },
+      {
+        "run": "41284308847",
+        "attempt": 2,
+        "node": "tests/test_menu_selection_requirement.py::test_the_converter_sidecar_marks_a_uniform_plan_as_nothing_to_validate",
+        "seconds": 17.322,
+        "runner": [
+          "ubuntu-24.04-arm"
+        ]
+      },
+      {
+        "run": "41284308847",
+        "attempt": 2,
+        "node": "tests/test_plan_from_layer_config.py::test_a_plan_names_tensors_not_qnames",
+        "seconds": 17.412,
+        "runner": [
+          "ubuntu-24.04-arm"
+        ]
+      },
+      {
+        "run": "41284308847",
+        "attempt": 2,
+        "node": "tests/test_uniform_control.py::test_the_layer_zero_separator_pair_weighs_what_the_receipt_weighed",
+        "seconds": 0.063,
+        "runner": [
+          "ubuntu-24.04"
+        ]
+      },
+      {
+        "run": "41284308847",
+        "attempt": 2,
+        "node": "tests/test_uniform_control.py::test_the_block_states_the_verdict_the_gate_exists_to_record",
+        "seconds": 32.835,
+        "runner": [
+          "ubuntu-24.04"
+        ]
+      },
+      {
+        "run": "41284308847",
+        "attempt": 3,
+        "node": "tests/test_menu_selection_requirement.py::test_the_converter_sidecar_marks_a_uniform_plan_as_nothing_to_validate",
+        "seconds": 0.068,
+        "runner": [
+          "ubuntu-24.04"
+        ]
+      },
+      {
+        "run": "41284308847",
+        "attempt": 3,
+        "node": "tests/test_plan_from_layer_config.py::test_a_plan_names_tensors_not_qnames",
+        "seconds": 37.781,
+        "runner": [
+          "ubuntu-24.04"
+        ]
+      },
+      {
+        "run": "41284308847",
+        "attempt": 3,
+        "node": "tests/test_uniform_control.py::test_the_layer_zero_separator_pair_weighs_what_the_receipt_weighed",
+        "seconds": 17.444,
+        "runner": [
+          "ubuntu-24.04-arm"
+        ]
+      },
+      {
+        "run": "41284308847",
+        "attempt": 3,
+        "node": "tests/test_uniform_control.py::test_the_block_states_the_verdict_the_gate_exists_to_record",
+        "seconds": 17.349,
+        "runner": [
+          "ubuntu-24.04-arm"
+        ]
+      }
+    ]
+  },
   "slow": {
     "tests/test_audit_byte_baseline.py::test_cpu_class_export_read_roundtrip_preserves_source_wire_bytes[False]": 520,
     "tests/test_audit_byte_baseline.py::test_cpu_class_export_read_roundtrip_preserves_source_wire_bytes[True]": 522,
     "tests/test_audit_byte_baseline.py::test_projection_matrix_reaches_padding_and_all_direct_buffer_dtypes": 290,
-    "tests/test_audit_byte_baseline.py::test_resident_fragment_matrix_preserves_served_bytes": 46,
-    "tests/test_audit_byte_baseline.py::test_resident_matrix_reaches_piece_major_and_pins_wire_and_bijection": 45,
-    "tests/test_audit_byte_baseline.py::test_the_batch_matrix_joins_the_exporter_shape": 52,
-    "tests/test_audit_byte_baseline.py::test_the_layout_matrix_writes_every_plane_the_others_cannot": 43,
     "tests/test_bench_routed_load_nvfp4.py::test_a_layer_streams_with_a_bounded_read_ahead": 318,
     "tests/test_bench_routed_load_nvfp4.py::test_the_helpers_read_a_parts_directory": 434,
-    "tests/test_cached_producer.py::test_calibrated_packed_cached_cli_preserves_originals[out_first_chunked-digested]": 49,
-    "tests/test_cached_producer.py::test_committed_parallel_intake_is_byte_identical_to_digested_serial[True]": 50,
-    "tests/test_collection_probe.py::test_a_collectable_module_does_not_reach_torch_inside_a_test_body": 41,
-    "tests/test_cuda_surface.py::test_a_parallel_run_writes_one_population_and_named_worker_shares": 41,
-    "tests/test_cuda_surface.py::test_both_mechanisms_survive_a_parallel_run": 59,
-    "tests/test_cuda_surface.py::test_without_the_flag_the_same_run_is_green": 41,
-    "tests/test_export_input_scale_join.py::test_a_spread_of_exactly_one_bf16_ulp_is_still_one_calibration": 49,
-    "tests/test_export_moe_write.py::test_an_nvfp4_stack_missing_one_input_scale_is_refused_by_key": 111,
-    "tests/test_export_moe_write.py::test_an_nvfp4_stack_writes_a_static_input_scale_beside_each_wire": 138,
-    "tests/test_export_moe_write.py::test_research_bf16_export_stamps_decoder_only_gate_and_exact_scheme": 145,
-    "tests/test_export_moe_write.py::test_research_export_preserves_wires_and_snapshots_execution[False]": 56,
-    "tests/test_export_moe_write.py::test_research_export_preserves_wires_and_snapshots_execution[True]": 53,
     "tests/test_export_plan_cache.py::test_a_second_pass_over_many_shapes_recomputes_nothing": 278,
-    "tests/test_export_plan_cache.py::test_a_second_pass_over_the_whole_key_space_recomputes_nothing": 81,
-    "tests/test_export_routed_resident_pricing.py::test_mtp_duplicate_is_its_own_line_item_and_the_total_is_the_sum[reference]": 101,
     "tests/test_export_routed_resident_pricing.py::test_mtp_duplicate_is_its_own_line_item_and_the_total_is_the_sum[runtime]": 161,
-    "tests/test_export_routed_resident_pricing.py::test_routed_stack_bytes_are_the_native_owner_allocation[reference]": 156,
-    "tests/test_export_serving.py::test_a_selected_producer_seals_its_receipt_and_commit": 152,
-    "tests/test_export_serving.py::test_joined_expert_encodes_group_across_names_and_write_the_one_unit_bytes[2]": 261,
-    "tests/test_export_serving.py::test_joined_expert_encodes_group_across_names_and_write_the_one_unit_bytes[5]": 264,
-    "tests/test_export_serving.py::test_the_scale_binding_seals_the_bytes_the_roles_consumed": 110,
-    "tests/test_ig790_row_scripts.py::test_row_propagates_child_failure[tools-ig790-pqbridge-row.sh]": 41,
-    "tests/test_ig790_row_scripts.py::test_row_propagates_child_failure[tools-ig790-verify-row.sh]": 41,
+    "tests/test_export_routed_resident_pricing.py::test_routed_stack_bytes_are_the_native_owner_allocation[reference]": 231,
+    "tests/test_export_serving.py::test_a_selected_producer_seals_its_receipt_and_commit": 286,
+    "tests/test_export_serving.py::test_joined_expert_encodes_group_across_names_and_write_the_one_unit_bytes[2]": 527,
+    "tests/test_export_serving.py::test_joined_expert_encodes_group_across_names_and_write_the_one_unit_bytes[5]": 357,
     "tests/test_impacted_manual_gate.py::test_real_gate_is_selected_as_a_pytest_target": 210,
     "tests/test_impacted_tests.py::test_a_docs_architecture_change_selects_the_issue_ref_guard": 222,
     "tests/test_impacted_tests.py::test_a_package_init_change_selects_every_test_that_imports_the_package": 225,
-    "tests/test_impacted_tests.py::test_checkout_graph_results_and_guard_metadata_are_isolated": 126,
     "tests/test_impacted_tests.py::test_pytest_import_roots_resolve_the_bare_helper_imports[box_artifacts]": 180,
     "tests/test_impacted_tests.py::test_readonly_checkout_queries_do_not_repeat_source_analysis": 221,
-    "tests/test_impacted_tests.py::test_real_route_census_path_import_is_an_edge": 127,
     "tests/test_impacted_tests.py::test_this_repository_does_not_gain_an_unnamed_directory_read": 217,
-    "tests/test_impacted_tests.py::test_this_repository_has_no_unreadable_source": 128,
     "tests/test_inductor_determinism_knob.py::test_two_fresh_cache_cpu_builds_per_arm_and_what_the_knob_did": 369,
     "tests/test_kernel_shape_guards.py::test_the_prefill_gemm_copies_a_strided_activation_and_is_off_the_served_path": 241,
-    "tests/test_matched_reach.py::test_own_reaches_are_the_shipped_ones": 601,
-    "tests/test_menu_selection_requirement.py::test_the_converter_sidecar_carries_the_selection_block": 77,
-    "tests/test_menu_selection_requirement.py::test_the_converter_sidecar_marks_a_uniform_plan_as_nothing_to_validate": 80,
-    "tests/test_merge_guard.py::test_parts_that_disagree_on_a_driver_field_are_refused": 49,
-    "tests/test_merge_suite.py::test_a_population_edited_after_publication_is_not_what_the_attempt_wrote": 54,
-    "tests/test_merge_suite.py::test_a_real_runs_stdout_binds_to_the_population_it_wrote": 61,
-    "tests/test_native_shape_time_scopes.py::test_request_accepts_routed_tp2": 155,
-    "tests/test_native_shape_time_scopes.py::test_request_refuses_routed_geometry_mismatch": 141,
     "tests/test_native_shape_time_scopes.py::test_routed_tp2_panel_validates": 175,
-    "tests/test_native_shape_time_scopes.py::test_worker_refuses_routed_tp1": 154,
-    "tests/test_native_shape_time_scopes.py::test_worker_routed_tp2_uses_production_builder": 117,
     "tests/test_producer_plan_public.py::test_substack_projection_keeps_uniform_plan_and_prices_units[False]": 284,
-    "tests/test_producer_plan_public.py::test_substack_projection_keeps_uniform_plan_and_prices_units[True]": 298,
-    "tests/test_rate_menu.py::test_the_offered_menu_is_strictly_increasing_in_bits[shape3-BF16]": 66,
-    "tests/test_rooted_cached_bundle.py::test_actual_mixed_producers_export_complete_dense_and_expert_roster[permissive-False]": 50,
-    "tests/test_rooted_cached_bundle.py::test_actual_mixed_producers_export_complete_dense_and_expert_roster[permissive-True]": 48,
-    "tests/test_rooted_cached_bundle.py::test_actual_mixed_producers_export_complete_dense_and_expert_roster[strict-False]": 55,
-    "tests/test_rooted_cached_bundle.py::test_actual_mixed_producers_export_complete_dense_and_expert_roster[strict-True]": 49,
-    "tests/test_served_e2m1_window.py::test_fused_routed_launch_price_counts_actual_native_table_tensors": 62,
-    "tests/test_serving_export_gate.py::test_the_published_range_is_inside_what_the_encoder_can_build[BF16]": 123,
-    "tests/test_serving_parts.py::test_partitioned_expert_wires_equal_one_process_export": 92,
-    "tests/test_t4_fused_qualify.py::test_real_common_budget_screen_completes_without_an_exact_byte_match": 44,
-    "tests/test_t8_batch_probe.py::test_actual_cpu_batch_and_anchor_keep_reads_outside_both_timers": 67,
-    "tests/test_uniform_control.py::test_the_block_states_the_verdict_the_gate_exists_to_record": 78,
-    "tests/test_uniform_control.py::test_the_layer_zero_separator_pair_weighs_what_the_receipt_weighed": 78,
-    "tests/test_uniform_control.py::test_the_matched_control_is_the_rung_the_receipt_served": 86,
-    "tests/test_uniform_control.py::test_the_verdict_reads_only_a_finite_non_negative_kl[nan]": 79,
-    "tests/test_uniform_control.py::test_wire_bits_rise_with_the_rung_on_every_grid": 87
+    "tests/test_producer_plan_public.py::test_substack_projection_keeps_uniform_plan_and_prices_units[True]": 298
   },
   "source": [
     {
@@ -560,6 +733,150 @@
       "artifact": "gate-result-2-a1-7",
       "archive_sha256": "b7b28957e489f715d3f50a97c7b284ae36ec50a3bb0025d24c287191184211eb",
       "junit_sha256": "0782c8211bbd8ba73b0cf5c2806d121b6be866a070661cc3939ece983697502d"
+    },
+    {
+      "run": 41284308847,
+      "artifact": "gate-result-1-a1-0",
+      "archive_sha256": "a86b2350cb33f4a276ce730aff985f3d62f9ce15092bbb6ed1d4a2bf5ccdb250",
+      "junit_sha256": "2c8c46294e4d21a90916e2a684b9fda03ab8aa5983a38de09dcbe65e88363b27"
+    },
+    {
+      "run": 41284308847,
+      "artifact": "gate-result-1-a1-1",
+      "archive_sha256": "ec08d89789ee5ea88fcd4a35f994fbc94b9d6604100d268584336037de34851d",
+      "junit_sha256": "8a28f2bdb08cfeadd7fe355eadff6062ba0e9ed16fa59d24bcb6ad052959d5ec"
+    },
+    {
+      "run": 41284308847,
+      "artifact": "gate-result-1-a1-2",
+      "archive_sha256": "db7ca98f21ab4e0a00c0e1e2a77c0ea214d16f153a1b54633c9749ba4e3ffbee",
+      "junit_sha256": "050fb3ab16597cb56f42aca0e90ab556bcd19650a4a2cc5cca01fa3f6dd789bf"
+    },
+    {
+      "run": 41284308847,
+      "artifact": "gate-result-1-a1-3",
+      "archive_sha256": "152a7419b9c33212b853cc0da8481839007b65449a0774be09f16eeeb9c613d8",
+      "junit_sha256": "0e69406ad6e299a943e8ea4b63344b1ff9e6ed51d1617acea5cccd8c58b6521a"
+    },
+    {
+      "run": 41284308847,
+      "artifact": "gate-result-1-a1-4",
+      "archive_sha256": "10547af5c14738c8ea0b5390fba3eea41b379cefce69a0dd627cb8d745e5cad1",
+      "junit_sha256": "3c6d76d1d89cce113d1f18cab56b263e61c153a0ee83e8d79ea61655e0c69f5c"
+    },
+    {
+      "run": 41284308847,
+      "artifact": "gate-result-1-a1-5",
+      "archive_sha256": "d1f6b1f64d4d3a65562ce111147a1b263a1297cfcc9cd572317890c7eb1992b7",
+      "junit_sha256": "91c75aba6c27b89530e0b4ed628cebefd92367e5594d60b4869841ee0aa9b2be"
+    },
+    {
+      "run": 41284308847,
+      "artifact": "gate-result-1-a1-6",
+      "archive_sha256": "369c2dec9c1a4435d95dbfee6b963339007d33ca39b5586d7450eb58473f34d1",
+      "junit_sha256": "a331d6618d41d6fb1c6f26893009d7acab194d6a433e407a1aac6d5439e10036"
+    },
+    {
+      "run": 41284308847,
+      "artifact": "gate-result-1-a1-7",
+      "archive_sha256": "bf6cf25c084b35011ceb116cd76808eab471e2ee582c6e838b192007fce7dec4",
+      "junit_sha256": "1bf5137794622f22ad8954b90c9ffd6cd01b5c2f1084f9cee2a90904bf09f7d3"
+    },
+    {
+      "run": 41284308847,
+      "artifact": "gate-result-2-a1-0",
+      "archive_sha256": "a87214bd7575d24d4834d8ac609f09a9d7fdef87012a7242dd049166f78eea30",
+      "junit_sha256": "d740dcccf563937e40ffd6a1ded48cffa107d53a05d8196d4ebad6f80998acd1"
+    },
+    {
+      "run": 41284308847,
+      "artifact": "gate-result-2-a1-1",
+      "archive_sha256": "927cb90a33929bd75ea2a664f0e1ebb6294f0b8ceae804b0082b0ddee9a939d1",
+      "junit_sha256": "64e857cfd6ba0b1e59696180565786a5e715981ebf1fc65d3a75fdee5e43ccef"
+    },
+    {
+      "run": 41284308847,
+      "artifact": "gate-result-2-a1-2",
+      "archive_sha256": "a40b50fc2ec9d6a6e4daf909c86906e0c1aaa1e1ff618db338722479facf3c1e",
+      "junit_sha256": "8ed9b3f481b5e2da02dd4ce0edb37117d470f5abc358814354762ae8d142a663"
+    },
+    {
+      "run": 41284308847,
+      "artifact": "gate-result-2-a1-3",
+      "archive_sha256": "2966fe50b8b21d87abd19f684c8aa101dcedb584859d7eba1cb486f755d96bde",
+      "junit_sha256": "4ed4fb1bc940590c5853411307f76b3b4ac9b851f16525c6dbcbed9b6a8d32d4"
+    },
+    {
+      "run": 41284308847,
+      "artifact": "gate-result-2-a1-4",
+      "archive_sha256": "905352de1af8c3ec110d4e3caa68ba71c0c9ca53e0a3936bd7ee7fb012d2d776",
+      "junit_sha256": "a42d7bd2a647784decd1eac1501c487dfae796ff57321a87d5457c180f49da67"
+    },
+    {
+      "run": 41284308847,
+      "artifact": "gate-result-2-a1-5",
+      "archive_sha256": "34fb633c5245c52f0a3caf8a9f5cc619526f75d0e325166259240552a92ac3d0",
+      "junit_sha256": "dda5da689acdca5446f9dceefbdb7890fe1a897256b16837a31cb26361aa5baf"
+    },
+    {
+      "run": 41284308847,
+      "artifact": "gate-result-2-a1-6",
+      "archive_sha256": "988336dad888e1e7c4c166037553aa78ebb4a907797449cc42624654c7050985",
+      "junit_sha256": "bfaad17d5232adc4ba6bc77e6926f20e6142509d2514817f3d35babfcbcdbb2b"
+    },
+    {
+      "run": 41284308847,
+      "artifact": "gate-result-2-a1-7",
+      "archive_sha256": "4dd66dd63272f8a82c9bf894f3a32823cb681a6fc43cd8b3e2b2d19440a48c04",
+      "junit_sha256": "8e3a1263d964dcb7fe9fe54f5b90ccf06d35b52be36de5e94eec0d720a295209"
+    },
+    {
+      "run": 41284308847,
+      "artifact": "gate-result-3-a1-0",
+      "archive_sha256": "897aa9b3822aeae82bb2f02772b6f2729422c773de7da187e3b3ccd039cb3142",
+      "junit_sha256": "0e440f90546510293839b536b1187323e243fc76d1a95784b1cd0dc71fffb19c"
+    },
+    {
+      "run": 41284308847,
+      "artifact": "gate-result-3-a1-1",
+      "archive_sha256": "9adfbdd0d9e6c2bed23a8a457b8e2b1b84bd03bb22a779926336a9e008491c2a",
+      "junit_sha256": "f170c911ef1c0704b73f9075a320894e97e197a6cb13165efc9c740bba19334b"
+    },
+    {
+      "run": 41284308847,
+      "artifact": "gate-result-3-a1-2",
+      "archive_sha256": "91b005de902958cf38c43b22442fb1fdbebfcabd2623b41021dba722441cf135",
+      "junit_sha256": "d3c8c5f01ee17a23c52fbb0074b847277eb929f8606301d6852db7049bc2e775"
+    },
+    {
+      "run": 41284308847,
+      "artifact": "gate-result-3-a1-3",
+      "archive_sha256": "1ecfd2049a43885d86bb4c0286e079f8944bae6a49dcccd409bdf31ab7f5dcf2",
+      "junit_sha256": "582f32c97242d683b714ba3c1e6c4cce969fcffc0247d6c1beafbe92b13e7657"
+    },
+    {
+      "run": 41284308847,
+      "artifact": "gate-result-3-a1-4",
+      "archive_sha256": "3e1bb5ae4a158ff0e3ff1e05dff329a2035cc933c37492fcac80679971dbaf48",
+      "junit_sha256": "672c124269cb3640eb5335e509430c8ea8bb955304cde4445f65ef13328ff7f3"
+    },
+    {
+      "run": 41284308847,
+      "artifact": "gate-result-3-a1-5",
+      "archive_sha256": "05c167ce67a7b286f2750407c41d39c974612bb3ea26f43e3a78db76a83b1ef2",
+      "junit_sha256": "6e85534fb276f41967b22a4bfa0dc4ed10a47fc4303f6fd7e729bacd4cfb5c53"
+    },
+    {
+      "run": 41284308847,
+      "artifact": "gate-result-3-a1-6",
+      "archive_sha256": "e1f6d4fbb912e5be62ee08105d66e1dc8ef87c264b88769bbd6b518879874644",
+      "junit_sha256": "2d6d002612cb991834f976e0b971ea9c1e960c84f97cd7057a5af1b107f59416"
+    },
+    {
+      "run": 41284308847,
+      "artifact": "gate-result-3-a1-7",
+      "archive_sha256": "9bbccf455553bc9136433edc6da3fd812a6e2c1346381ef2c72f5f5b6de2da77",
+      "junit_sha256": "e11bea0ec94589d3ce9f188c1107371887c96792c70f0c4cd442fbd045517584"
     }
   ]
 }

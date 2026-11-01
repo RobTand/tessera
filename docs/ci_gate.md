@@ -59,8 +59,12 @@ CPU population; an empty PR selection records that no tests were selected.
 
 ## Per-test budgets and quarantine
 
-`tools/ci/gate_budget.json` enforces a 20-second default, with exceptions
-measured in retained hosted canary reports. Exceptions use twice the largest
+`tools/ci/gate_budget.json` enforces an 80-second default, derived by rounding up
+twice the largest measured cold planning consumer, 39.884 seconds. That shared
+initialization can be charged to different consumers on different workers;
+the previous 20-second default failed otherwise passing qualification attempts.
+The retained observations name each consumer, architecture, run, and attempt.
+Exceptions for cases above the default use twice the largest
 observed case duration, rounded up. The default and exception list cannot
 grow against the event's base commit. Enforcement uses PB's 1.5 tolerance.
 An unavailable base commit gives no verdict.
@@ -118,7 +122,8 @@ so each file can be qualified on both architectures.
 
 `tools/ci/gate_evidence.py --manifest RUNS.json --output REPORT.json` reads
 retained JUnit repeats and their CPU populations. `--durations-output` writes
-the per-lane median file times. `--budget-output` builds a bootstrap exception
+the per-lane median file times. `--budget-default-seconds` sets the measured
+bootstrap default; `--budget-output` builds a bootstrap exception
 list from hosted observations, using twice each measured maximum rounded up.
 Every source JUnit digest is retained. The manifest records lane, repeat,
 JUnit path, surface path, and the PB action key or hosted run and artifact.
