@@ -1,0 +1,21 @@
+{
+  "fixture_only": true,
+  "note": "Synthetic normalized collector handoff for binding tests, NOT a scorer implementation or TP2 measurement.",
+  "run_id": "fixture-three-arm-window",
+  "input_sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+  "config_sha256": "3f5c2c7381aae1c02d486c645ec6015cd1a60eb41faa5686541a15f523d79898",
+  "image": "fixture.invalid/runtime@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "image_id": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+  "src_sha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+  "scoring": {
+    "corpus_sha256": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+    "teacher_sha256": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+    "tokenizer_sha256": "7777777777777777777777777777777777777777777777777777777777777777",
+    "regime": "fixture-target-batched-decode",
+    "expected_rows": 4
+  },
+  "members": [
+    {"rank": 0, "action_key": "1111111111111111111111111111111111111111111111111111111111111111", "nonce": "33333333333333333333333333333333", "scope_id": "fixture-rank0.slice", "container_id": "5555555555555555555555555555555555555555555555555555555555555555"},
+    {"rank": 1, "action_key": "2222222222222222222222222222222222222222222222222222222222222222", "nonce": "44444444444444444444444444444444", "scope_id": "fixture-rank1.slice", "container_id": "6666666666666666666666666666666666666666666666666666666666666666"}
+  ]
+}
