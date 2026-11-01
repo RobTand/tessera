@@ -125,6 +125,7 @@ def test_budget_tolerance_and_measurement_mode(tmp_path):
 
 def test_selector_failure_runs_full_population(tmp_path):
     gate = load('gate_select')
+    subprocess.run(['git', 'init', '-q', str(tmp_path)], check=True)
     (tmp_path / 'tests').mkdir()
     (tmp_path / 'tests/test_a.py').write_text('def test_a(): pass\n')
     def broken(*args, **kwargs):

@@ -25,7 +25,9 @@ def full_gate(pr, repository):
 
 
 def population(root):
-    return sorted(str(path.relative_to(root)) for path in (root / 'tests').rglob('test_*.py'))
+    result = subprocess.run(['git', 'ls-files', '-z', '--cached', '--others', '--exclude-standard',
+                             '--', 'tests/test_*.py'], cwd=root, capture_output=True, check=True)
+    return sorted(set(result.stdout.decode().rstrip('\0').split('\0')) - {''})
 
 
 def select_files(root, base, head, execute=subprocess.run):

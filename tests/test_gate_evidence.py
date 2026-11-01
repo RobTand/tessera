@@ -35,6 +35,7 @@ def test_evidence_distinguishes_always_failures_from_flakes(tmp_path):
 
 def test_selector_timeout_runs_full_population(tmp_path):
     gate = load('gate_select')
+    subprocess.run(['git', 'init', '-q', str(tmp_path)], check=True)
     (tmp_path / 'tests').mkdir()
     (tmp_path / 'tests/test_a.py').write_text('def test_a(): pass\n')
     def timeout(*args, **kwargs):
