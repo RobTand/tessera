@@ -62,7 +62,7 @@ def test_unknown_data_read_does_not_activate_a_guarded_lazy_import(tmp_path):
         '    if name in _NAMES:\n'
         '        from . import slicing as _slicing\n'
         '        return getattr(_slicing, name)\n'
-        '    raise AttributeError(name)\n')
+        '    raise AttributeError("no such attribute")\n')
     (tmp_path / 'pkg/slicing.py').write_text(
         'from pathlib import Path\ndef slice(): return Path("/outside/data.json").read_text()\n')
     (tmp_path / 'tests').mkdir()
