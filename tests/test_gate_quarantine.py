@@ -22,24 +22,24 @@ def entry(target='tests/test_one.py::test_bad', issue=3201):
 ])
 def test_quarantine_growth_cannot_accompany_code_changes(current):
     with pytest.raises(ValueError, match='quarantine-only'):
-        select.quarantine_policy({'entries': current}, {'entries': [entry()]},
+        select.quarantine_policy(current, [entry()],
                                  [QUARANTINE, 'src/tessera/owner.py'])
 
 
 @pytest.mark.parametrize('changed', [[QUARANTINE], [QUARANTINE, 'docs/ci_gate.md']])
 def test_quarantine_only_change_can_add_entries(changed):
-    select.quarantine_policy({'entries': [entry(), entry('tests/test_other.py')]},
-                             {'entries': [entry()]}, changed)
+    select.quarantine_policy([entry(), entry('tests/test_other.py')],
+                             [entry()], changed)
 
 
 def test_removal_and_file_to_exact_node_are_always_allowed():
-    select.quarantine_policy({'entries': [entry()]},
-        {'entries': [entry('tests/test_one.py'), entry('tests/test_other.py')]},
+    select.quarantine_policy([entry()],
+        [entry('tests/test_one.py'), entry('tests/test_other.py')],
         [QUARANTINE, 'src/tessera/owner.py'])
 
 
 def test_first_policy_bootstraps_when_base_has_no_policy():
-    select.quarantine_policy({'entries': [entry()]}, None, [QUARANTINE, 'tools/ci/gate_select.py'])
+    select.quarantine_policy([entry()], None, [QUARANTINE, 'tools/ci/gate_select.py'])
 
 
 @pytest.mark.parametrize('response', [{'state': 'closed'}, {'state': 'open', 'pull_request': {}}])
@@ -113,7 +113,7 @@ def test_owner_lookup_without_a_token_stays_anonymous(monkeypatch):
                                     'tests/../test_one.py', '/tests/test_one.py'])
 def test_quarantine_rejects_non_exact_syntax(target):
     with pytest.raises(ValueError, match='exact'):
-        select.exclusion_entries({'entries': [entry(target)]})
+        select.exclusion_entries({'lanes': {'bytes': [], 'torch': [target]}, 'issues': {target: 3201}})
 
 
 def test_base_must_exist_before_bootstrap(tmp_path):

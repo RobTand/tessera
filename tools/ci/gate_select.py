@@ -73,11 +73,18 @@ def select_files(root, base, head, execute=subprocess.run):
 
 
 def exclusion_entries(config):
-    if 'entries' in config:
-        entries = config['entries']
-    else:
-        entries = [{'lane': lane, 'target': node, 'issue': config['issues'].get(node)}
-                   for lane, nodes in config['lanes'].items() for node in nodes]
+    if not isinstance(config, dict) or set(config) != {'lanes', 'issues'}:
+        raise ValueError('quarantine schema requires only lanes and issues')
+    lanes, issues = config['lanes'], config['issues']
+    if (not isinstance(lanes, dict) or set(lanes) != {'bytes', 'torch'} or
+            not all(isinstance(nodes, list) and all(isinstance(node, str) for node in nodes)
+                    for nodes in lanes.values()) or not isinstance(issues, dict)):
+        raise ValueError('quarantine schema requires bytes/torch lists and an issue map')
+    targets = {node for nodes in lanes.values() for node in nodes}
+    if set(issues) != targets:
+        raise ValueError('quarantine schema requires exactly one owner per target')
+    entries = [{'lane': lane, 'target': node, 'issue': issues[node]}
+               for lane, nodes in lanes.items() for node in nodes]
     seen = set()
     for row in entries:
         target = row.get('target', '')
@@ -101,11 +108,10 @@ def exclusion_entries(config):
 QUARANTINE_PATH = 'tools/ci/gate_quarantine.json'
 
 
-def quarantine_policy(current: dict, baseline: dict | None, changed: list[str]) -> None:
-    entries = exclusion_entries(current)
+def quarantine_policy(entries: list[dict], baseline: list[dict] | None, changed: list[str]) -> None:
     if baseline is None:
         return  # Initial policy, like the budget bootstrap, is reviewed with the gate.
-    previous = {(row['lane'], row['target']): row for row in exclusion_entries(baseline)}
+    previous = {(row['lane'], row['target']): row for row in baseline}
     def covered(row):
         target = row['target']
         old = previous.get((row['lane'], target), previous.get((row['lane'], target.split('::', 1)[0])))
@@ -196,7 +202,8 @@ def main():
     unknown = {row['target'].split('::', 1)[0] for row in entries} - set(population(root))
     if unknown:
         raise ValueError('quarantine files outside the test population: ' + ', '.join(sorted(unknown)))
-    quarantine_policy(config, base_quarantine(root, args.base), diff)
+    baseline = base_quarantine(root, args.base)
+    quarantine_policy(entries, exclusion_entries(baseline) if baseline is not None else None, diff)
     check_quarantine_owners(entries)
     durations = json.loads((root / 'tools/ci/gate_durations.json').read_text())['lanes']
     count = args.shards
@@ -214,7 +221,8 @@ def main():
                            'cuda': 'not covered: CPU wheels, CUDA_VISIBLE_DEVICES empty'},
             'selected': [{'lane': lane, 'path': path, 'estimated_seconds': durations.get(lane, {}).get(path)}
                          for lane in ('bytes', 'torch') for path in files],
-            'deselect': config['lanes']}
+            'deselect': {lane: [row['target'] for row in entries if row['lane'] == lane]
+                         for lane in ('bytes', 'torch')}}
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_text(json.dumps(plan, indent=2) + '\n')
     args.matrix.write_text(json.dumps(matrix, indent=2) + '\n')

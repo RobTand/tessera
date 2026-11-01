@@ -196,3 +196,12 @@ qualifying samples, p90 is the maximum. It and retains failed
 runs separately. Per-shard times separate dependency installation, the test
 step, and other job work. Missing timing evidence stays null. A timing report
 with fewer than three passing full canaries does not complete qualification.
+
+The quarantine schema accepts only `lanes` and `issues`, with exactly the
+`bytes` and `torch` lists and one owner per listed target. The planner parses
+that file once; growth checks, open-owner checks and deselection use those
+same records. Extra keys, including the former test-only `entries` shape,
+are policy failures. The comparison uses the event's base tip. A stale PR
+that still carries an entry removed on master must merge master before it
+can pass. A Mergify batch containing quarantine growth and another PR's
+code fails the quarantine-only rule; land the growth separately first.
