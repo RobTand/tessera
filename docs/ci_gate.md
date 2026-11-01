@@ -124,9 +124,9 @@ an open issue before exclusion. No exclusion claims CUDA coverage.
 script and legacy exemptions. Authenticated Mergify batch drafts bypass the
 PR naming step in the workflow. `pure` retains that step during rollout and
 runs its bytes tests with xdist. Its boundary and distribution proofs remain.
-Land in this order: merge #1573 through the current queue with `pure` still
+Land in this order: merge [the gate PR](https://github.com/RobTand/tessera/pull/1573) through the current queue with `pure` still
 required; the lead lands the queue configuration in a fresh non-draft replacement
-for #1563; prove one real Mergify batch ran the full `gate`; only then the lead
+for [the draft queue PR](https://github.com/RobTand/tessera/pull/1563); prove one real Mergify batch ran the full `gate`; only then the lead
 switches classic protection to `branch rule` alone. Check a fresh ordinary PR
 reports `pure`, `branch rule` and `pr-gate` first. Sweep open PRs lacking a
 `branch rule` check before switching protection. The queue judges its configured
