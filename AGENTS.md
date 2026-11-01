@@ -205,7 +205,10 @@ Treat as constraints. Violate slogans when judgment says so.
   math/build threads within those budgets; do not add launchers or
   deployment-specific constants. Resource admission limits are not
   CPU-count-dependent expected results. Retry-until-green, skips, quarantine
-  and weaker assertions are not flake repairs. All existing integration,
+  and weaker assertions are not flake repairs. The one exception is the merge
+  gate's quarantine list (`docs/ci_gate.md`): a test that already fails or
+  flakes on `master` may be listed there only with an open issue that owns its
+  fix, so the queue keeps moving while the cause is fixed. All existing integration,
   submission, xdist, device-population and operational evidence requirements
   remain in force.
 
