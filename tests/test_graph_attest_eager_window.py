@@ -16,6 +16,21 @@ SHIP_MODE = "ship-eager-4096-8192"
 GRAPH_SHIP_MODE = "ship-graph-2048"
 
 
+@pytest.fixture(params=[0, 1], ids=["rank0-first", "rank1-first"])
+def lifecycle_scenario(monkeypatch, request):
+    import subprocess
+    from graph_attest_lifecycle import scenario
+
+    def external_process(*args, **kwargs):
+        raise AssertionError("lifecycle control must not depend on external process scheduling")
+
+    monkeypatch.setattr(subprocess, "Popen", external_process)
+    def run(root, name, *, mode, arms):
+        return scenario(monkeypatch, root, name, mode=mode, arms=arms, first_rank=request.param)
+
+    return run
+
+
 def graph_ship_plan(tmp_path):
     path = tmp_path / "graph-plan.txt"
     rows = []
@@ -235,10 +250,10 @@ def test_ship_rows_keep_the_same_admission_caps_and_profile_namespaces(tmp_path)
 @pytest.mark.parametrize("name", ["success", "probe_failure", "timeout", "preflight", "floor", "copy_failure"])
 @pytest.mark.parametrize("mode,arms", [(MODE, ("eager2048", "eager4096")),
                                       (SHIP_MODE, ("eager4096", "eager8192"))])
-def test_eager_lifecycle_uses_rank1_client_and_stops_later_arm_on_failure(tmp_path, name, mode, arms):
-    from test_graph_attest_window_scenarios import scenario
-    outcomes, living, seconds = scenario(tmp_path, name, mode=mode)
-    assert seconds < 10 and not living
+def test_eager_lifecycle_uses_rank1_client_and_stops_later_arm_on_failure(tmp_path, lifecycle_scenario, name, mode, arms):
+    simulation = lifecycle_scenario(tmp_path, name, mode=mode, arms=arms)
+    outcomes = simulation.outcomes
+    assert not simulation.active
     assert all(outcome["simulation"] and not outcome["ownership_released"] for outcome in outcomes)
     rdv = tmp_path / "rdv"
     assert not (rdv / f"{arms[0]}-probes-rank0.json").exists()
@@ -248,7 +263,49 @@ def test_eager_lifecycle_uses_rank1_client_and_stops_later_arm_on_failure(tmp_pa
         assert (rdv / f"{arms[0]}-probes-rank1.json").exists()
     else:
         assert any(outcome["returncode"] for outcome in outcomes)
-        assert not (rdv / f"{arms[1]}.rank1.pid").exists()
+        assert not any(event[0] == "start" and event[2] == arms[1] for event in simulation.events)
+    assert_lifecycle_evidence(simulation, name)
+
+
+def assert_lifecycle_evidence(simulation, name):
+    probes = [event for event in simulation.events if event[0] == "probe"]
+    expected = simulation.arms if name == "success" else simulation.arms[:1]
+    if name in ("preflight", "floor"):
+        expected = ()
+    assert probes == [("probe", 1, arm) for arm in expected]
+    for rank in (0, 1):
+        started = [arm for operation, ordinal, arm in simulation.events if operation == "start" and ordinal == rank]
+        stopped = [arm for operation, ordinal, arm in simulation.events if operation == "stop" and ordinal == rank]
+        assert stopped == started
+        if name in ("probe_failure", "timeout", "copy_failure"):
+            assert started == list(simulation.arms[:1])
+        if rank == 1 and stopped:
+            operations = [operation for operation, ordinal, arm in simulation.events if ordinal == rank]
+            if name in ("probe_failure", "timeout"):
+                assert operations.index("probe") < operations.index("failed") < operations.index("stop")
+            if name == "copy_failure":
+                assert operations.index("probe") < operations.index("stop") < operations.index("failed")
+        if name == "success":
+            assert [(operation, arm) for operation, ordinal, arm in simulation.events if ordinal == rank] == [
+                (operation, arm) for arm in simulation.arms
+                for operation in (("start", "ready", "probe", "stop", "cleaned") if rank == 1 else
+                                  ("start", "ready", "stop", "cleaned"))]
+    if name in ("probe_failure", "timeout"):
+        assert (simulation.rdv / f"{simulation.arms[0]}.probes.log").read_text() == "partial\n"
+        assert all(outcome["completed_arms"] == [] for outcome in simulation.outcomes)
+    errors = {"probe_failure": "simulated probe command failed: 7", "timeout": "graph work deadline; cleanup reserve begins",
+              "preflight": "simulated preflight refusal", "floor": "simulated physical memory floor refusal",
+              "copy_failure": "simulated evidence copy failed"}
+    if name != "success":
+        failure = json.loads((simulation.rdv / "failed-rank1.json").read_text())
+        assert errors[name] in failure["error"]
+        assert failure["error"] == simulation.outcomes[1]["error"]
+        assert all(outcome["completed_arms"] == [] for outcome in simulation.outcomes)
+    if name in ("probe_failure", "timeout", "copy_failure"):
+        assert all(outcome["peer_cleanup_acknowledgement"]["available"] for outcome in simulation.outcomes)
+    if name == "timeout":
+        assert any(outcome["returncode"] == 124 for outcome in simulation.outcomes)
+        assert all(outcome["ended_unix"] <= outcome["window_end_unix"] for outcome in simulation.outcomes)
 
 
 @pytest.mark.parametrize("mode", [MODE, SHIP_MODE])
@@ -542,11 +599,11 @@ def test_graph_ship_container_passes_each_row_levers_and_keeps_admission_caps(tm
 
 
 @pytest.mark.parametrize("name", ["success", "probe_failure", "timeout", "preflight", "floor", "copy_failure"])
-def test_graph_ship_lifecycle_uses_rank1_client_and_stops_on_failure(tmp_path, name):
-    from test_graph_attest_window_scenarios import scenario
-    recipe.plan(graph_ship_plan(tmp_path), mode=GRAPH_SHIP_MODE)
-    outcomes, living, seconds = scenario(tmp_path, name, mode=GRAPH_SHIP_MODE)
-    assert seconds < 10 and not living
+def test_graph_ship_lifecycle_uses_rank1_client_and_stops_on_failure(tmp_path, lifecycle_scenario, name):
+    arms = tuple(arm["arm"] for arm in recipe.plan(graph_ship_plan(tmp_path), mode=GRAPH_SHIP_MODE))
+    simulation = lifecycle_scenario(tmp_path, name, mode=GRAPH_SHIP_MODE, arms=arms)
+    outcomes = simulation.outcomes
+    assert not simulation.active
     assert all(outcome["simulation"] and not outcome["ownership_released"] for outcome in outcomes)
     assert not (tmp_path / "rdv/graph2048_off-probes-rank0.json").exists()
     if name == "success":
@@ -554,7 +611,8 @@ def test_graph_ship_lifecycle_uses_rank1_client_and_stops_on_failure(tmp_path, n
         assert (tmp_path / "rdv/graph2048_off-probes-rank1.json").exists()
     else:
         assert any(outcome["returncode"] for outcome in outcomes)
-        assert not (tmp_path / "rdv/graph2048_on.rank1.pid").exists()
+        assert not any(event[0] == "start" and event[2] == arms[1] for event in simulation.events)
+    assert_lifecycle_evidence(simulation, name)
 
 
 def test_graph_ship_retains_exact_runtime_parent_and_D5_reviews(tmp_path, monkeypatch):
