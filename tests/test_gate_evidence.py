@@ -89,3 +89,18 @@ def test_skipped_canary_jobs_do_not_report_negative_work():
     assert result['runs'][0]['wall_seconds'] is None
     assert result['passing_runs'] == 0
     assert evidence._elapsed('2026-11-01T00:00:10Z', '2026-11-01T00:00:09Z') is None
+
+
+def test_canary_rerun_timing_requires_its_own_request_timestamp():
+    evidence = load('gate_evidence')
+    entry = {'run': {'id': 1, 'run_attempt': 2, 'status': 'completed',
+                     'conclusion': 'success', 'created_at': '2026-11-01T00:00:00Z'},
+             'jobs': [{'name': 'gate', 'conclusion': 'success',
+                       'completed_at': '2026-11-01T01:02:00Z'}]}
+    result = evidence.analyze_canaries([entry])
+    assert result['runs'][0]['wall_seconds'] is None
+    assert result['passing_runs'] == 0
+    entry['requested_at'] = '2026-11-01T01:00:00Z'
+    result = evidence.analyze_canaries([entry])
+    assert result['runs'][0]['wall_seconds'] == 120
+    assert result['p90_seconds'] == 120
