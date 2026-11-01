@@ -1275,8 +1275,7 @@ sealed timing packet and explicit coordinator GPU GO inside an exclusive
 measurement attempt, importing the existing containment owner rather than
 launching a second dispatcher. Held original FDs retain the existing outer/inner
 checks, native load/fence checks and close-before-publication behavior. CPU
-checks run locally when they are fast relevant development checks; GPU work,
-benchmarks and large or long builds require PrismaBuild admission.
+checks and builds also use PB.
 CPU-only PM preparation reuses `piece_major_protocol` to verify the current
 source closure (including the kernel), harness, native bank and origin bytes,
 captured routing and input manifest before publishing its identities. The
