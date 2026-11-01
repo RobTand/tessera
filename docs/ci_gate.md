@@ -21,8 +21,10 @@ refusal, the shrink-only boundary allowlist, and the built wheel and sdist.
 The torch lane installs CPU torch 2.11.0 and Triton 3.8.0 from pinned
 requirements. Triton is needed to import native owners for CPU metadata tests;
 it does not make these runs CUDA qualification. Both set `CUDA_VISIBLE_DEVICES`
-to the empty string. They use four xdist workers, `--dist worksteal`, and one
-native thread per worker, within inherited CPU affinity.
+to the empty string. They use four xdist workers, `--dist loadfile`, and one native thread per
+worker, within inherited CPU affinity. File-based scheduling builds each
+module-scoped fixture once, instead of rebuilding it on stealing workers.
+Files enter the scheduler longest first.
 
 Every shard uploads JUnit, a verdict, and `--surface-json` output. Reports
 live in the ignored `.pytest_cache` directory so source-identity tests still

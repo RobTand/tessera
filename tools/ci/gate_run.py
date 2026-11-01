@@ -178,7 +178,7 @@ def run_plan(plan: dict, *, root: Path, output: Path, junit: Path,
         environment['PYTHONPATH'] = str(Path(__file__).resolve().parent) + os.pathsep + str(root / 'src') + os.pathsep + environment.get('PYTHONPATH', '')
         junit.parent.mkdir(parents=True, exist_ok=True)
         profile = ['-X', 'importtime'] if os.environ.get('GATE_PROFILE_STARTUP') == '1' else []
-        command = [sys.executable, *profile, '-m', 'pytest', '-n', str(workers), '--dist=worksteal',
+        command = [sys.executable, *profile, '-m', 'pytest', '-n', str(workers), '--dist=loadfile',
                    '-q', '-ra', '--durations=30', '--timeout=300', '-p', 'gate_collect', '--surface-json=' + str(output.with_name('surface.json')), '--rootdir=' + str(root), '--junitxml=' + str(junit), '-o', 'junit_family=xunit1',
                    *('--deselect=' + target for target in plan.get('deselect', {}).get(lane, [])
                      if target.split('::', 1)[0] in files), str(root)]
