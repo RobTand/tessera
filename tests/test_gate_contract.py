@@ -198,3 +198,19 @@ def test_gate_builds_a_module_fixture_once_across_workers(tmp_path, monkeypatch)
                            junit=output / 'junit.xml', workers=2, affinity={0, 1})
     assert code == 0
     assert marker.read_text().splitlines() == ['build']
+
+
+def test_file_scheduler_preserves_the_duration_order(tmp_path, monkeypatch):
+    runner = load('gate_run')
+    monkeypatch.setattr(runner, '_budget_policy', lambda *args: {'seconds': 20, 'slow': {}})
+    commands = []
+    def capture(command, **kwargs):
+        commands.append((command, json.loads(kwargs['env']['GATE_ASSIGNED_FILES'])))
+        return SimpleNamespace(returncode=3)
+    plan = {'selected': [{'lane': 'torch', 'path': 'tests/test_short.py', 'estimated_seconds': 1},
+                         {'lane': 'torch', 'path': 'tests/test_long.py', 'estimated_seconds': 30}]}
+    assert runner.run_plan(plan, root=tmp_path, output=tmp_path / 'result.json',
+                           junit=tmp_path / 'junit.xml', execute=capture, affinity={0, 1}) == 75
+    command, files = commands[0]
+    assert files == ['tests/test_long.py', 'tests/test_short.py']
+    assert '--no-loadscope-reorder' in command
