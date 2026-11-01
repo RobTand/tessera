@@ -1,1 +1,15 @@
-{"lanes": {"bytes": [], "torch": []}, "issues": {}}
+{
+  "lanes": {
+    "bytes": [],
+    "torch": [
+      "tests/test_projection_smoke.py::test_cpu_dry_run_reads_and_refuses_bad_tensor_bytes[width]",
+      "tests/test_projection_smoke.py::test_cpu_dry_run_reads_and_refuses_bad_tensor_bytes[dtype]",
+      "tests/test_projection_smoke.py::test_cpu_dry_run_reads_and_refuses_bad_tensor_bytes[bias]"
+    ]
+  },
+  "issues": {
+    "tests/test_projection_smoke.py::test_cpu_dry_run_reads_and_refuses_bad_tensor_bytes[width]": 1566,
+    "tests/test_projection_smoke.py::test_cpu_dry_run_reads_and_refuses_bad_tensor_bytes[dtype]": 1566,
+    "tests/test_projection_smoke.py::test_cpu_dry_run_reads_and_refuses_bad_tensor_bytes[bias]": 1566
+  }
+}

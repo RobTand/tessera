@@ -9,7 +9,7 @@ concurrency:
   group: hosted-gate-${{ github.event.pull_request.number }}
   cancel-in-progress: true
 env:
-  GATE_SHARDS: '2' # Per lane; four test jobs in the full matrix.
+  GATE_SHARDS: '4' # Per lane; eight test jobs in the full matrix.
   GATE_RUNNERS: ubuntu-24.04,ubuntu-24.04-arm
   CUDA_VISIBLE_DEVICES: ''
   OMP_NUM_THREADS: '1'

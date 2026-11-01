@@ -35,8 +35,8 @@ remains the CUDA qualification, as described in `AGENTS.md`.
 ## Scheduling and verdicts
 
 The partition and retry code is adapted from PrismaBuild's hosted gate.
-`GATE_SHARDS` is the single per-lane shard setting, initially two. Full runs
-therefore use four test jobs across `ubuntu-24.04` and `ubuntu-24.04-arm`.
+`GATE_SHARDS` is the single per-lane shard setting, four. Full runs
+therefore use eight test jobs across `ubuntu-24.04` and `ubuntu-24.04-arm`.
 The partition sorts files by recorded duration, then path, and assigns each
 to the least-loaded shard. Unknown files use the known p90, or one second for
 an empty inventory. Small PR selections use one shard per lane.
@@ -56,7 +56,10 @@ which exceptions are needed. An unavailable base commit gives no verdict.
 Timings include setup and teardown through xunit1 JUnit.
 
 `tools/ci/gate_quarantine.json` records exclusions and their owning issues.
-The initial list is empty. Hosted failures must be investigated and assigned
+The three projection artifact mutation cases are excluded under open issue
+[#1566](https://github.com/RobTand/tessera/issues/1566). Their module-scoped
+safetensors fixture contaminated later consumers in the first hosted canary;
+the consumer tests remain active. Hosted failures must be investigated and assigned
 an open issue before exclusion. No exclusion claims CUDA coverage.
 
 ## Branch protection transition
@@ -94,3 +97,8 @@ appear in that receipt or in the population's explicit missing-dependency
 list. Collected helper modules with no test items remain accounted for. An
 all-skipped or all-deselected assignment can pass with pytest exit 5 only when
 those collection and population checks complete. It never claims a CUDA pass.
+
+The first four-job trial used two shards per lane. Its ARM torch job alone
+took 585 seconds after a 67-second plan, already beyond the ten-minute gate
+target before aggregation. The next trial uses four shards per lane. This
+is a sizing trial, not a completed p90 qualification.
