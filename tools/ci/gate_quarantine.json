@@ -11,7 +11,8 @@
       "tests/test_kernel_a4.py::test_plane_decode_matches_materialize_stock[w13-0]",
       "tests/test_kernel_a4.py::test_plane_decode_matches_materialize_stock[w13-1]",
       "tests/test_kernel_a4.py::test_plane_decode_matches_materialize_stock[w2-0]",
-      "tests/test_kernel_a4.py::test_plane_decode_matches_materialize_stock[w2-1]"
+      "tests/test_kernel_a4.py::test_plane_decode_matches_materialize_stock[w2-1]",
+      "tests/test_stageprev_793_operative.py::test_observer_reports_receiver_name_variants_without_false_refusal"
     ]
   },
   "issues": {
@@ -24,6 +25,7 @@
     "tests/test_kernel_a4.py::test_plane_decode_matches_materialize_stock[w13-0]": 1568,
     "tests/test_kernel_a4.py::test_plane_decode_matches_materialize_stock[w13-1]": 1568,
     "tests/test_kernel_a4.py::test_plane_decode_matches_materialize_stock[w2-0]": 1568,
-    "tests/test_kernel_a4.py::test_plane_decode_matches_materialize_stock[w2-1]": 1568
+    "tests/test_kernel_a4.py::test_plane_decode_matches_materialize_stock[w2-1]": 1568,
+    "tests/test_stageprev_793_operative.py::test_observer_reports_receiver_name_variants_without_false_refusal": 1562
   }
 }
