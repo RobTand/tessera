@@ -24,7 +24,8 @@ it does not make these runs CUDA qualification. Both set `CUDA_VISIBLE_DEVICES`
 to the empty string. They use four xdist workers, `--dist loadfile`, and one native thread per
 worker, within inherited CPU affinity. File-based scheduling builds each
 module-scoped fixture once, instead of rebuilding it on stealing workers.
-Files enter the scheduler longest first.
+Files enter the scheduler longest first; `--no-loadscope-reorder` preserves
+that duration order instead of sorting files by their test counts.
 
 Every shard uploads JUnit, a verdict, and `--surface-json` output. Reports
 live in the ignored `.pytest_cache` directory so source-identity tests still
