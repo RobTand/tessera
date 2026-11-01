@@ -71,3 +71,16 @@ def test_unknown_data_read_does_not_activate_a_guarded_lazy_import(tmp_path):
     (tmp_path / 'other.py').write_text('VALUE = 1\n')
     assert select.select(tmp_path, ['other.py'])['tests'] == ['tests/test_slice.py']
     assert 'tests/test_slice.py' in select.select(tmp_path, ['pkg/slicing.py'])['tests']
+
+
+def test_empty_selector_output_for_a_real_change_runs_full_population(tmp_path):
+    gate = load(ROOT / 'tools/ci/gate_select.py')
+    subprocess.run(['git', 'init', '-q', str(tmp_path)], check=True)
+    (tmp_path / 'tests').mkdir()
+    (tmp_path / 'tests/test_one.py').write_text('def test_one(): pass\n')
+    (tmp_path / 'source.py').write_text('VALUE = 1\n')
+    def execute(command, **kwargs):
+        return SimpleNamespace(returncode=0, stdout='source.py\n' if command[0] == 'git' else '', stderr='')
+    result = gate.select_files(tmp_path, 'base', 'head', execute=execute)
+    assert result['verdict'] == 'full'
+    assert result['tests'] == ['tests/test_one.py']
