@@ -270,6 +270,7 @@ def test_collector_applies_the_measured_timeout_to_the_exact_node(tmp_path):
         'def test_ordinary(request):\n'
         '    assert request.node.get_closest_marker("timeout") is None\n')
     env = dict(os.environ, PYTHONPATH=str(ROOT/'tools/ci'),
+               GATE_COLLECTION_DIR=str(tmp_path/'collection'),
                GATE_ASSIGNED_FILES=json.dumps(['tests/test_a.py']), GATE_DESELECT='[]',
                GATE_TEST_TIMEOUTS=json.dumps({'tests/test_a.py::test_slow':535.5}))
     result = subprocess.run([sys.executable, '-m', 'pytest', '-q', '-p', 'gate_collect',
