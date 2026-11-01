@@ -110,3 +110,12 @@ The first four-job trial used two shards per lane. Its ARM torch job alone
 took 585 seconds after a 67-second plan, already beyond the ten-minute gate
 target before aggregation. The next trial uses four shards per lane. This
 is a sizing trial, not a completed p90 qualification.
+
+`--canary-manifest CANARIES.json` also accepts retained GitHub metadata as a
+list of objects with `run` and `jobs` fields. `run` is the REST workflow-run
+response, and `jobs` is its jobs array. The report measures from run creation
+through completion of the final `gate` job, including scheduler delays. It
+reports p50 and nearest-rank p90 for completed passing runs and retains failed
+runs separately. Per-shard times separate dependency installation, the test
+step, and other job work. Missing timing evidence stays null. A timing report
+with fewer than three passing full canaries does not complete qualification.
