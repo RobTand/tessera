@@ -92,6 +92,121 @@ def parse_sass(text: str) -> dict:
     return kernels
 
 
+def analyze_prefetch_sass(text: str, *, architecture: str) -> dict:
+    """Classify SM120-family cache controls without invoking any tools.
+
+    This is deliberately separate from the permissive comparison parser above:
+    zero hints is evidence only when every addressed instruction parses. Unknown
+    cache controls or architectures invalidate the count, rather than silently
+    becoming evidence of absence. Records are retained for diagnostics even when
+    the overall input is inconclusive; their count is then not authoritative.
+    """
+    records, errors = [], []
+    hints = 0
+
+    def result():
+        return {"status": "inconclusive" if errors else "complete",
+                "hint_count": None if errors else hints,
+                "instructions": records, "errors": errors}
+
+    supported = {"sm_120", "sm_120a", "sm_121", "sm_121a"}
+    if not isinstance(architecture, str) or architecture not in supported:
+        errors.append(f"unsupported architecture: {architecture!r}")
+    if not isinstance(text, str) or not text.strip():
+        errors.append("missing SASS disassembly")
+        return result()
+
+    # Strip comments but preserve address markers and line numbers. This also
+    # prevents mnemonic-like text in comments from being treated as evidence.
+    def strip_comment(match):
+        comment = match.group()
+        if re.fullmatch(r"/\*[0-9a-fA-F]{4,}\*/", comment):
+            return comment
+        return "\n" * comment.count("\n") + " "
+
+    clean = re.sub(r"/\*.*?\*/|//[^\n]*", strip_comment, text, flags=re.S)
+    for lineno, raw in enumerate(text.splitlines(), 1):
+        marker = re.match(r"^\s*/\*([^\s*]+)\*/\s+(?:@\S+\s+)?[A-Z]", raw)
+        if marker and not re.fullmatch(r"[0-9a-fA-F]{4,}", marker.group(1)):
+            errors.append(f"line {lineno}: malformed instruction PC")
+    if "/*" in re.sub(r"/\*[0-9a-fA-F]{4,}\*/", "", clean):
+        errors.append("unterminated comment")
+    section_arch = None
+    kernel = None
+    count = 0
+    total = 0
+    saw_arch = False
+    instruction = re.compile(
+        r"^\s*/\*([0-9a-fA-F]{4,})\*/\s*"
+        r"(?:(@!?U?P(?:\d+|T))\s+)?"
+        r"([A-Z][A-Z0-9_]*(?:\.[A-Z0-9_]+)*)"
+        r"(?:\s+([^;]*?))?\s*;\s*$")
+    address = re.compile(r"\[(?:U?R\d+|RZ)(?:\.64)?(?:\+0x[0-9a-fA-F]+)?\]")
+
+    def finish_kernel():
+        if kernel is not None and count == 0:
+            errors.append(f"kernel {kernel}: no parsed instructions")
+
+    for lineno, line in enumerate(clean.splitlines(), 1):
+        if re.search(r"\b(?:fatal|error)\s*:", line, re.I):
+            errors.append(f"line {lineno}: disassembler error")
+        arch = re.match(r"^\s*arch\s*=\s*(\S+)\s*$", line)
+        if arch:
+            finish_kernel()
+            kernel, count = None, 0
+            section_arch = arch.group(1)
+            saw_arch = True
+            if section_arch != architecture:
+                errors.append(f"line {lineno}: architecture {section_arch} does not match {architecture}")
+            continue
+        function = _FUNC.match(line)
+        if function:
+            finish_kernel()
+            kernel, count = function.group(1), 0
+            if section_arch is None:
+                errors.append(f"line {lineno}: function has no architecture header")
+            continue
+        if not re.search(r"/\*[0-9a-fA-F]{4,}\*/", line):
+            # A malformed address comment may have been stripped above. Bare
+            # executable cache controls are not metadata, nor evidence of zero
+            # hints. Comments and encoding continuations have no such remainder.
+            if re.match(r"^\s*(?:@\S+\s+)?CCTL[A-Z0-9_.]*(?=\s|;|$)", line):
+                errors.append(f"line {lineno}: cache control has missing or malformed PC")
+            continue
+        parsed = instruction.fullmatch(line)
+        if parsed is None:
+            errors.append(f"line {lineno}: malformed addressed instruction")
+            continue
+        pc, predicate, opcode, operands = parsed.groups()
+        operands = (operands or "").strip()
+        count += 1
+        total += 1
+        if kernel is None:
+            errors.append(f"line {lineno}: instruction outside a function")
+        # CCTLL/CCTLT and future CCTL forms must not be silently ignored.
+        if not opcode.startswith("CCTL"):
+            continue
+        records.append({"kernel": kernel, "pc": int(pc, 16),
+                        "predicate": predicate or "", "opcode": opcode,
+                        "operands": operands})
+        if opcode == "CCTL.IVALL":
+            if operands:
+                errors.append(f"line {lineno}: unexpected IVALL operands")
+        elif opcode == "CCTL.E.PF1":
+            if address.fullmatch(operands) is None:
+                errors.append(f"line {lineno}: malformed PF1 address")
+            else:
+                hints += 1
+        else:
+            errors.append(f"line {lineno}: unsupported cache control {opcode}")
+    finish_kernel()
+    if not saw_arch:
+        errors.append("missing architecture header")
+    if total == 0:
+        errors.append("no parsed instructions")
+    return result()
+
+
 def _dump_one(args, library: str, version: str, torch_version: str) -> str:
     nvcc = os.environ.get("NVCC", "nvcc")
     cubin = os.path.join(args.out, f"{library}.cubin")
@@ -178,10 +293,21 @@ _ANON = re.compile(r"_GLOBAL__N__[0-9a-f]+_\d+_\w+?_cu_[0-9a-f]+")
 
 
 def _kernel_name(name: str) -> str:
-    """The mangled name with the anonymous namespace's per-file hash removed:
-    nvcc hashes the translation unit into it, so an edit anywhere in the file
-    renames every kernel."""
-    return _ANON.sub("_GLOBAL__N_", name)
+    """Normalize the complete root nvcc anonymous source-name component.
+
+    Its Itanium length includes the basename and per-file hashes. Read that
+    boundary before matching: a hash regex alone also consumes the following
+    decimal function-name length (and hex-leading function names). Leave other
+    or malformed manglings unchanged rather than guessing their boundaries.
+    """
+    root = re.match(r"_ZN([1-9][0-9]*)(?=_GLOBAL__N__)", name)
+    if root is None or len(root.group(1)) > len(str(len(name))):
+        return name
+    end = root.end() + int(root.group(1))
+    if end > len(name) or _ANON.fullmatch(name[root.end():end]) is None:
+        return name
+    namespace = "_GLOBAL__N_"
+    return name[:root.start(1)] + str(len(namespace)) + namespace + name[end:]
 
 
 def _kernels(path: str) -> dict:

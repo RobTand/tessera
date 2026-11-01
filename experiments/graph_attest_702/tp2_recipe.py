@@ -177,6 +177,15 @@ def inputs(env: dict, *, live: bool, runner=None) -> dict:
                 producer_sha256=env.get("PRODUCER_SHA256", NOT_COMPUTED) if development else producer_sha(),
                 hooks_sha256=env.get("HOOKS_SHA256", NOT_COMPUTED) if development else sha(root / "experiments/glm53_508_graph_qual/digest/usercustomize.py"),
                 equal_script_sha256=env.get("EQUAL_SCRIPT_SHA256", NOT_COMPUTED) if development else sha(root / "experiments/glm53_508_graph_qual/equal-508.py"))
+    if "BATCH_KL" in env:
+        if mode != "graph-control":
+            raise Refused("BATCH_KL is limited to the three-arm graph-control window")
+        declaration = json.loads(env["BATCH_KL"])
+        if not isinstance(declaration, dict) or not declaration:
+            raise Refused("BATCH_KL must be a nonempty JSON configuration object")
+        # Retained with inputs, not interpreted as a command or a capability.
+        # handoff/endpoint/tool/output/scoring belong to the owner adapter.
+        result["batch_kl"] = declaration
     if matrix_cells is not None:
         result["matrix_cells"] = matrix_cells
     if mode in BENCHMARK_PAIRS:

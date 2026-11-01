@@ -13,6 +13,7 @@ import uuid
 from managed_window import (CLEANUP_SECONDS, WINDOW_SECONDS, HOSTS, MEMORY_POLICY, Refused, atomic_json,
                             seal_check, check_memory_policy, read_json, terminal_cleanup)
 import tp2_recipe as recipe
+from batch_kl import bind_batch_kl
 
 PB = Path("/mnt/shared/prismabuild-fleet/repo/tools")
 RANK_PYTHON = "/home/rob/venvs/pb-cpu/bin/python"
@@ -68,7 +69,7 @@ def rows(root: Path, config: dict, env: dict) -> list[dict]:
                            container_images=[config["image"]], timeout_s=config.get("window_seconds", WINDOW_SECONDS),
                            env={**{key: env[key] for key in ("TS", "ARTIFACT", "RECEIPTS", "FABRIC",
                                                           "SOURCE_COMMIT", "SOURCE_SHA256", "PRODUCER_COMMIT", "PRODUCER_SHA256")},
-                                **{key: env[key] for key in ("WINDOW_MODE", "ARTIFACT_MANIFEST", "PQ_PIN_COMMIT", "CONTROL_ROOT", "PROFILE_MANIFEST", "DATA_MANIFEST", "MATRIX_CELLS") if key in env},
+                                **{key: env[key] for key in ("WINDOW_MODE", "ARTIFACT_MANIFEST", "PQ_PIN_COMMIT", "CONTROL_ROOT", "PROFILE_MANIFEST", "DATA_MANIFEST", "MATRIX_CELLS", "BATCH_KL") if key in env},
                                 "GRAPH_WINDOW_INPUT_SHA256": recipe.sha(root / "inputs.json"),
                                 "GRAPH_PEER_WAIT_SECONDS": str(config.get("peer_wait_seconds", 3600)),
                                 **{key: "1" for key in ("OMP_NUM_THREADS", "MKL_NUM_THREADS", "OPENBLAS_NUM_THREADS",
@@ -190,12 +191,24 @@ def submit(root: Path, reviews: Path):
             env[key] = setup["config"][field]
     if "matrix_cells" in setup["config"]:
         env["MATRIX_CELLS"] = json.dumps(setup["config"]["matrix_cells"])
+    stored_rows = json.loads((root / "manifest.json").read_text())
+    # The prepared declaration, not the submitting shell, owns this scope.
+    # Recover its exact string: reserializing inputs.config.batch_kl would
+    # change the action environments covered by the full manifest seal below.
+    env.pop("BATCH_KL", None)
+    if "batch_kl" in setup["config"]:
+        declarations = [row.get("env", {}).get("BATCH_KL") for row in stored_rows]
+        if (len(declarations) != 2 or not isinstance(declarations[0], str)
+                or declarations[0] != declarations[1]):
+            raise Refused("prepared BATCH_KL must match exactly in both native action environments")
+        env["BATCH_KL"] = declarations[0]
+    elif any("BATCH_KL" in row.get("env", {}) for row in stored_rows):
+        raise Refused("prepared BATCH_KL manifest differs from the disabled window")
     recipe.require_producer(Path(__file__).resolve().parents[2], env["PRODUCER_COMMIT"],
                             env["PRODUCER_SHA256"], exact_head=True)
     current = recipe.inputs(env, live=True)
     recipe.check_control_record(setup["config"], current, where="Window4 submission",
                               refusal=Refused("prepared source/control changed; never restamp or resume an old window"))
-    stored_rows = json.loads((root / "manifest.json").read_text())
     expected_rows = rows(root, setup["config"], env)
     safety_keys = ("tags", "demand", "gpu_memory_gb", "exclusive", "measurement", "host_class",
                    "max_attempts", "priority", "timeout_s", "residency", "residency_ram", "residency_share")
@@ -291,7 +304,18 @@ def main():
     ap.add_argument("--handoffs", type=Path)
     ap.add_argument("--submit", type=Path)
     ap.add_argument("--reviews", type=Path)
+    ap.add_argument("--bind-batch-kl", type=Path, metavar="ROOT",
+                    help="after receipt.py: bind retained three-arm KL evidence, without submission")
+    ap.add_argument("--graph-receipt", type=Path, help="unchanged graph receipt to bind")
     args = ap.parse_args()
+    if args.bind_batch_kl is not None or args.graph_receipt is not None:
+        if (args.bind_batch_kl is None or args.graph_receipt is None or args.submit or
+                args.prepare or args.dry_run or args.matrix_cell or args.preflight_output or
+                args.reviews or args.handoffs or args.census_key or args.prepare_role_preflight):
+            raise Refused("binding requires only PLAN --bind-batch-kl ROOT --graph-receipt PATH")
+        companion = bind_batch_kl(args.bind_batch_kl, args.graph_receipt)
+        print(json.dumps(companion, sort_keys=True))
+        return 0 if companion["qualified"] else 1
     env = dict(os.environ)
     if args.matrix_cell:
         if args.submit:

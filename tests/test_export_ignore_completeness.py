@@ -24,13 +24,13 @@ vLLM builds one method per fused module (``Glm5NextVisionMLP`` builds one
 ``prismaquant/glm53-mia-sm121:487ecf187``, ``models/glm5next/nvidia/
 multimodal.py:102-107``).
 
-WHAT THIS DOES NOT CLAIM.  On that pinned build the vision tower is built with
-``quant_config=None`` (``model.py:1082``), and ``LinearBase.__init__`` then
-installs ``UnquantizedLinearMethod`` WITHOUT calling ``get_quant_method``
-(``linear.py``, the ``if quant_config is None`` branch), so the plugin is never
-asked about it and the refusal does not fire there today.  The rule is the
-completeness the plugin's contract states, held for every Linear rather than
-for the ones one runtime happens to ask about.
+WHAT THIS DOES NOT CLAIM.  On that historical pinned build the vision tower
+supplies ``quant_config=None`` (``model.py:1082``). Without the selective
+constructor hook, ``LinearBase.__init__`` installs ``UnquantizedLinearMethod``
+without calling ``get_quant_method`` (``linear.py``). The current
+``projection_routes.install`` hook supplies TesseraConfig only for explicitly
+declared targets; unselected vision modules keep that stock behavior. Neither
+ignore completeness nor selected construction proves a loaded forward or graph.
 """
 from __future__ import annotations
 

@@ -75,3 +75,7 @@ exclude = ["tessera._dev*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+
+[tool.tl3.harness]
+command = ["python", "-m", "pytest"]
+test-files = ["tests/**/*.py"]
