@@ -186,14 +186,23 @@ def base_quarantine(root: Path, base: str) -> dict | None:
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--base', required=True)
-    parser.add_argument('--head', required=True)
-    parser.add_argument('--mode', choices=['full', 'selection'], required=True)
-    parser.add_argument('--shards', type=int, required=True)
+    parser.add_argument('--base')
+    parser.add_argument('--head')
+    parser.add_argument('--mode', choices=['full', 'selection'])
+    parser.add_argument('--shards', type=int)
     parser.add_argument('--runners', default='ubuntu-24.04,ubuntu-24.04-arm')
-    parser.add_argument('--output', type=Path, required=True)
-    parser.add_argument('--matrix', type=Path, required=True)
+    parser.add_argument('--output', type=Path)
+    parser.add_argument('--matrix', type=Path)
+    parser.add_argument('--event', type=Path)
+    parser.add_argument('--repository')
+    parser.add_argument('--print-mode', action='store_true')
     args = parser.parse_args()
+    if args.print_mode:
+        event = json.loads(args.event.read_text())
+        print('mode=' + ('full' if full_gate(event['pull_request'], args.repository) else 'selection'))
+        return 0
+    if not all((args.base, args.head, args.mode, args.shards, args.output, args.matrix)):
+        parser.error('planning requires base, head, mode, shards, output and matrix')
     root = Path.cwd()
     selection = ({'verdict': 'full', 'tests': population(root), 'reason': 'full CPU gate'}
                  if args.mode == 'full' else select_files(root, args.base, args.head))

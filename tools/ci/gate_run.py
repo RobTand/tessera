@@ -217,6 +217,9 @@ def run_plan(plan: dict, *, root: Path, output: Path, junit: Path,
             record['verdict'] = 'pass'
         try:
             record['surface'] = cpu_population(output.with_name('surface.json'))
+            if lane == 'torch' and (record['surface']['not_collected'] or
+                                    not record['surface']['device'].startswith('torch ')):
+                raise ValueError('torch lane requires torch and zero uncollected modules')
             record['collection'] = collection_coverage(output.parent, files, record['surface'], workers)
             costs = _budget_timings(junit, files, config, require_all=False)
             overruns, warnings = [], []

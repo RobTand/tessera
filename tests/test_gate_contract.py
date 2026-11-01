@@ -69,7 +69,7 @@ def verdict(plan, lane, value, code):
             'population_version': 'cpu-v1', 'lane': lane, 'files': ['tests/test_a.py'],
             'verdict': value, 'pytest_exit_code': code, 'budget': {'status': 'pass'},
             'boundary': {'status': 'pass'}, 'collection': {'status': 'pass'}, 'surface': {'role': 'population', 'cuda': False,
-                                                     'cuda_surface': {'executed': 0}}}
+                                                     'cuda_surface': {'executed': 0}, 'not_collected': [], 'device': 'torch 2.11 reports no CUDA device'}}}
 
 
 def test_failures_are_final_and_only_missing_verdicts_retry():
@@ -146,7 +146,7 @@ def test_workflow_keeps_boundary_proofs_and_branch_check_separate():
     gate = (ROOT / '.github/workflows/gate.yml').read_text()
     assert 'types: [opened, synchronize, reopened]' in gate
     assert 'name: pr-gate' in gate and 'name: gate' in gate
-    assert '37929162' in gate
+    assert '--print-mode' in gate
     assert 'CUDA_VISIBLE_DEVICES' in gate
     assert 'self-hosted' not in gate
 
@@ -193,7 +193,7 @@ def test_gate_builds_a_module_fixture_once_across_workers(tmp_path, monkeypatch,
     monkeypatch.setattr(runner, '_budget_policy', lambda *args: {'seconds': 20, 'slow': {}, 'enforce': True})
     monkeypatch.setattr(runner, 'cpu_population', lambda *args: {
         'role': 'population', 'cuda': False, 'cuda_surface': {'executed': 0},
-        'not_collected': [], 'counts': {'passed': 8}})
+        'not_collected': [], 'device': 'torch 2.11 reports no CUDA device', 'counts': {'passed': 8}})
     output = tmp_path / 'output'
     output.mkdir()
     plan = {'mode': 'full', 'base_sha': 'base', 'head_sha': 'head',

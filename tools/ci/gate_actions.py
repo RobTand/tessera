@@ -38,8 +38,10 @@ def _verdict(plan, files, record, lane):
     if verdict == 'pass' and code in (0, 5) and isinstance(budget, dict) and budget.get('status') == 'pass':
         surface = record.get('surface', {})
         boundary_ok = lane != 'bytes' or record.get('boundary', {}).get('status') == 'pass'
+        torch_ok = lane != 'torch' or (surface.get('not_collected') == [] and
+                                       surface.get('device', '').startswith('torch '))
         if (surface.get('role') == 'population' and surface.get('cuda') is False and
-                surface.get('cuda_surface', {}).get('executed') == 0 and boundary_ok and
+                surface.get('cuda_surface', {}).get('executed') == 0 and boundary_ok and torch_ok and
                 record.get('collection', {}).get('status') == 'pass'):
             return 'pass'
     return None

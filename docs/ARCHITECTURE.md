@@ -10456,3 +10456,5 @@ The hosted gate compares quarantine with its PR base. Growth requires a change l
 The class guard integration test waits for explicit workload readiness and retains the production TERM grace; its cooperative handler records TERM before exiting. A deliberate handler pause covers slow scheduling without imposing a shorter cleanup policy.
 
 Documentation-only gate changes run the fast standalone, packaging and provenance tier, except wire schema documentation which still forces full. The reverse-import selector excludes only three named kernel-generated proc records from unknown repository reads; arbitrary external paths and proc aliases retain conservative consumers. Selector edits force the full gate.
+
+The workflow executes the tested Python event-identity decision before planning and uses its output for both final check names. Torch lanes require a CPU torch installation and zero uncollected modules at both runner and aggregate boundaries.
