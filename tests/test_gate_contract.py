@@ -179,7 +179,7 @@ def test_gate_builds_a_module_fixture_once_across_workers(tmp_path, monkeypatch,
         'def pytest_addoption(parser): parser.addoption("--surface-json")\n')
     marker = tmp_path / 'fixture-builds.txt'
     (tests / 'test_shared.py').write_text(
-        'import pathlib, pytest\n'
+        'import pathlib, pytest, time\n'
         '@pytest.fixture(scope="module")\n'
         'def shared():\n'
         f'    with pathlib.Path({str(marker)!r}).open("a") as log: log.write("build\\n")\n'
@@ -189,6 +189,12 @@ def test_gate_builds_a_module_fixture_once_across_workers(tmp_path, monkeypatch,
         'def test_consumer(shared, case): assert shared == 1\n'
         '@pytest.mark.parametrize("case", range(8))\n'
         'def test_independent(case, worker_id):\n'
+        f'    ready = pathlib.Path({str(tmp_path)!r}) / ("independent-" + worker_id + ".ready")\n'
+        '    ready.touch()\n'
+        '    deadline = time.monotonic() + 10\n'
+        '    while len(list(ready.parent.glob("independent-*.ready"))) < 2:\n'
+        '        assert time.monotonic() < deadline, "Independent cases did not reach both workers"\n'
+        '        time.sleep(.01)\n'
         f'    with pathlib.Path({str(marker.with_name("independent-workers.txt"))!r}).open("a") as log: log.write(worker_id+"\\n")\n')
     monkeypatch.setattr(runner, '_budget_policy', lambda *args: {'seconds': 20, 'slow': {}, 'enforce': True})
     monkeypatch.setattr(runner, 'cpu_population', lambda *args: {
