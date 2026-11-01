@@ -65,11 +65,13 @@ def grid():
         return matched_reach.reach_grid(BF16_GRID, WIDTHS, base_sigma=SIGMA)
 
 
+@pytest.mark.xdist_group(name="test_matched_reach")
 def test_own_reaches_are_the_shipped_ones(grid):
     """The reaches the #18 receipt names, from the code rather than the doc."""
     assert grid["own"] == {12: 3.671875, 14: 4.0, 16: 4.3125}
 
 
+@pytest.mark.xdist_group(name="test_matched_reach")
 def test_diagonal_is_the_shipped_ratio(grid):
     """A width asked for its own reach must accept ratio 1.0.
 
@@ -82,6 +84,7 @@ def test_diagonal_is_the_shipped_ratio(grid):
         assert lo <= 1.0 <= hi, (L, lo, hi)
 
 
+@pytest.mark.xdist_group(name="test_matched_reach")
 def test_every_cell_lands_on_its_target_exactly(grid):
     """The built table's realised reach equals the target, to the bit."""
     for (L, target_L), cell in grid["cells"].items():
@@ -90,6 +93,7 @@ def test_every_cell_lands_on_its_target_exactly(grid):
         assert cell["realised"] == grid["own"][target_L]
 
 
+@pytest.mark.xdist_group(name="test_matched_reach")
 def test_the_naive_division_misses(grid):
     """Why this module exists: ``target / own`` is not the matched ratio.
 
@@ -118,6 +122,7 @@ def test_unreachable_target_raises():
                                     lo=2.0, hi=8.0)
 
 
+@pytest.mark.xdist_group(name="test_matched_reach")
 def test_interval_is_narrow_enough_to_retype(grid):
     """The reported interval is what says how much precision the arm needs."""
     for cell in grid["cells"].values():

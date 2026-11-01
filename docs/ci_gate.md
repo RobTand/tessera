@@ -21,9 +21,9 @@ refusal, the shrink-only boundary allowlist, and the built wheel and sdist.
 The torch lane installs CPU torch 2.11.0 and Triton 3.8.0 from pinned
 requirements. Triton is needed to import native owners for CPU metadata tests;
 it does not make these runs CUDA qualification. Both set `CUDA_VISIBLE_DEVICES`
-to the empty string. They use four xdist workers, `--dist loadfile`, and one native thread per
-worker, within inherited CPU affinity. File-based scheduling builds each
-module-scoped fixture once, instead of rebuilding it on stealing workers.
+to the empty string. They use four xdist workers, `--dist loadgroup`, and one native thread per
+worker, within inherited CPU affinity. The five matched-reach grid consumers share an explicit xdist group, so their
+module-scoped fixture builds once. Other cases can share all workers.
 Files enter the scheduler longest first; `--no-loadscope-reorder` preserves
 that duration order instead of sorting files by their test counts.
 
@@ -63,7 +63,9 @@ measured in retained hosted canary reports. Exceptions use twice the largest
 observed case duration, rounded up. The default and exception list cannot
 grow against the event's base commit. Enforcement uses PB's 1.5 tolerance.
 An unavailable base commit gives no verdict.
-Timings include setup and teardown through xunit1 JUnit.
+Timings include setup and teardown through xunit1 JUnit. Scheduling group
+suffixes are removed from test names before budget and evidence lookup;
+parameter values retain their original identity.
 
 `tools/ci/gate_quarantine.json` records exclusions and their owning issues.
 The three projection artifact mutation cases are excluded under open issue
@@ -75,8 +77,8 @@ Six A4 CPU wire nodes depend on unpublished archived artifacts, owned by
 [the portable A4 fixtures issue](https://github.com/RobTand/tessera/issues/1568).
 One Stageprev receiver-name proof also requires the published PB source tree,
 owned by [the observer contract issue](https://github.com/RobTand/tessera/issues/1562).
-All matched-reach tests remain active. File-based worker scheduling builds
-their module fixture once. The fixture also reuses standard-normal inverse-CDF
+All matched-reach tests remain active. An explicit worker group builds
+their shared grid fixture once. The fixture also reuses standard-normal inverse-CDF
 samples across sigma searches, then applies the original scalar multiplication.
 Bit-for-bit tests compare it with the encoder's source at every tested width.
 Its patch is scoped to fixture construction; production code is unchanged.
@@ -126,8 +128,10 @@ those collection and population checks complete. It never claims a CUDA pass.
 
 The first four-job trial used two shards per lane. Its ARM torch job alone
 took 585 seconds after a 67-second plan, already beyond the ten-minute gate
-target before aggregation. The next trial uses four shards per lane. This
-is a sizing trial, not a completed p90 qualification.
+target before aggregation. Four shards per lane reduced the cost. A later full trial passed in 581
+seconds with file-based worker scheduling; grouped consumers let independent
+cases share workers instead of serializing each file. Final-head canaries
+measure this scheduling change.
 
 `--canary-manifest CANARIES.json` also accepts retained GitHub metadata as a
 list of objects with `run` and `jobs` fields. `run` is the REST workflow-run

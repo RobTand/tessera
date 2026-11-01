@@ -14,6 +14,9 @@ import xml.etree.ElementTree as ET
 NO_VERDICT = 75
 BUDGET_ENFORCEMENT_TOLERANCE = 1.5
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from gate_junit import test_name
+
 
 class BoundaryFailure(ValueError):
     """A boundary proof failed with a final verdict."""
@@ -63,6 +66,7 @@ def _budget_timings(junit, files, config, require_all=True):
     observed, seconds = set(), {}
     for case in ET.parse(junit).iter('testcase'):
         filename, name = case.get('file', '').removeprefix('./'), case.get('name', '')
+        name = test_name(name)
         classname = case.get('classname', '')
         if not classname and case.find('skipped') is not None and (name in files or filename in files):
             continue  # A module-level importorskip is not a test timing.
@@ -178,7 +182,7 @@ def run_plan(plan: dict, *, root: Path, output: Path, junit: Path,
         environment['PYTHONPATH'] = str(Path(__file__).resolve().parent) + os.pathsep + str(root / 'src') + os.pathsep + environment.get('PYTHONPATH', '')
         junit.parent.mkdir(parents=True, exist_ok=True)
         profile = ['-X', 'importtime'] if os.environ.get('GATE_PROFILE_STARTUP') == '1' else []
-        command = [sys.executable, *profile, '-m', 'pytest', '-n', str(workers), '--dist=loadfile', '--no-loadscope-reorder',
+        command = [sys.executable, *profile, '-m', 'pytest', '-n', str(workers), '--dist=loadgroup', '--no-loadscope-reorder',
                    '-q', '-ra', '--durations=30', '--timeout=300', '-p', 'gate_collect', '--surface-json=' + str(output.with_name('surface.json')), '--rootdir=' + str(root), '--junitxml=' + str(junit), '-o', 'junit_family=xunit1',
                    *('--deselect=' + target for target in plan.get('deselect', {}).get(lane, [])
                      if target.split('::', 1)[0] in files), str(root)]

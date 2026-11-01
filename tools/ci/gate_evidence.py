@@ -10,13 +10,18 @@ import json
 import math
 from pathlib import Path
 import statistics
+import sys
 import xml.etree.ElementTree as ET
+
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from gate_junit import test_name
 
 
 def cases(path):
     for case in ET.parse(path).iter('testcase'):
         filename = case.get('file', '').removeprefix('./')
-        classname, name = case.get('classname', ''), case.get('name', '')
+        classname, name = case.get('classname', ''), test_name(case.get('name', ''))
         if not filename:
             module = classname.split('.Test', 1)[0]
             filename = module.replace('.', '/') + '.py' if module else name
