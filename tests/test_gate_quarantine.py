@@ -195,3 +195,50 @@ def test_renaming_code_into_docs_cannot_hide_quarantine_growth(tmp_path, monkeyp
         '--mode', 'full', '--shards', '1', '--output', 'plan.json', '--matrix', 'matrix.json'])
     with pytest.raises(ValueError, match='quarantine-only'):
         select.main()
+
+
+@pytest.mark.parametrize('shape', ['split', 'entries_only', 'extra', 'unknown_lane', 'extra_owner'])
+def test_planner_rejects_unvalidated_quarantine_shapes(tmp_path, monkeypatch, shape):
+    """The reviewer's closed-owner bypass must fail before a plan is written."""
+    import io, json, subprocess, sys
+    subprocess.run(['git', 'init', '-q', str(tmp_path)], check=True)
+    (tmp_path / 'tests').mkdir()
+    config = tmp_path / 'tools/ci'; config.mkdir(parents=True)
+    old = 'tests/test_old.py::test_known_bad'
+    new = 'tests/test_new.py::test_regress'
+    (tmp_path / 'tests/test_old.py').write_text('def test_known_bad(): assert False\n')
+    baseline = {'lanes': {'bytes': [], 'torch': [old]}, 'issues': {old: 1566}}
+    quarantine = config / 'gate_quarantine.json'
+    quarantine.write_text(json.dumps(baseline))
+    (config / 'gate_durations.json').write_text(json.dumps({'lanes': {'bytes': {}, 'torch': {}}}))
+    def commit():
+        subprocess.run(['git', 'add', '.'], cwd=tmp_path, check=True)
+        subprocess.run(['git', '-c', 'user.name=test', '-c', 'user.email=test@example.invalid',
+                        'commit', '-qm', 'fixture'], cwd=tmp_path, check=True)
+        return subprocess.check_output(['git', 'rev-parse', 'HEAD'], cwd=tmp_path, text=True).strip()
+    base = commit()
+    current = json.loads(json.dumps(baseline))
+    if shape == 'split':
+        current['entries'] = [{'lane': 'torch', 'target': old, 'issue': 1566}]
+        current['lanes']['torch'].append(new)
+        current['issues'][new] = 1
+    elif shape == 'entries_only':
+        current = {'entries': [{'lane': 'torch', 'target': old, 'issue': 1566}]}
+    elif shape == 'extra':
+        current['unexpected'] = []
+    elif shape == 'unknown_lane':
+        current['lanes']['cuda'] = []
+    else:
+        current['issues'][new] = 1
+    quarantine.write_text(json.dumps(current))
+    (tmp_path / 'tests/test_new.py').write_text('def test_regress(): assert False\ndef test_fine(): pass\n')
+    head = commit()
+    def urlopen(request, timeout):
+        return io.BytesIO(json.dumps({'state': 'closed' if request.full_url.endswith('/1') else 'open'}).encode())
+    monkeypatch.setattr(select.urllib.request, 'urlopen', urlopen)
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(sys, 'argv', ['gate_select', '--base', base, '--head', head,
+        '--mode', 'full', '--shards', '1', '--output', 'plan.json', '--matrix', 'matrix.json'])
+    with pytest.raises(ValueError, match='quarantine schema'):
+        select.main()
+    assert not (tmp_path / 'plan.json').exists()
