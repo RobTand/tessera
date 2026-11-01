@@ -243,3 +243,36 @@ def test_grouped_junit_keeps_exact_budget_and_evidence_identity(tmp_path, name, 
     assert runner._budget_timings(junit, [filename], {'seconds': 20, 'slow': {nodeid: 100}}) == [
         {'nodeid': nodeid, 'seconds': 177, 'budget_seconds': 100}]
     assert list(load('gate_evidence').cases(junit))[0]['nodeid'] == nodeid
+
+
+def test_runner_preserves_a_measured_exception_above_the_global_timeout(tmp_path, monkeypatch):
+    runner = load('gate_run')
+    monkeypatch.setattr(runner, '_budget_policy', lambda *args: {
+        'seconds': 80, 'slow': {'tests/test_a.py::test_slow': 357}, 'enforce': True})
+    seen = []
+    def capture(command, **kwargs):
+        seen.append(kwargs['env'])
+        assert json.loads(kwargs['env'].get('GATE_TEST_TIMEOUTS', '{}')) == {
+            'tests/test_a.py::test_slow': 535.5}
+        raise RuntimeError('stop after checking the actual pytest environment')
+    assert runner.run_plan(fixture_plan(), root=tmp_path, output=tmp_path/'result.json',
+                           junit=tmp_path/'junit.xml', workers=1, lane='torch',
+                           execute=capture, affinity={0}) == 75
+    assert len(seen) == 1
+
+
+def test_collector_applies_the_measured_timeout_to_the_exact_node(tmp_path):
+    import os
+    (tmp_path/'tests').mkdir()
+    (tmp_path/'tests/test_a.py').write_text(
+        'def test_slow(request):\n'
+        '    assert request.node.get_closest_marker("timeout").args == (535.5,)\n'
+        'def test_ordinary(request):\n'
+        '    assert request.node.get_closest_marker("timeout") is None\n')
+    env = dict(os.environ, PYTHONPATH=str(ROOT/'tools/ci'),
+               GATE_ASSIGNED_FILES=json.dumps(['tests/test_a.py']), GATE_DESELECT='[]',
+               GATE_TEST_TIMEOUTS=json.dumps({'tests/test_a.py::test_slow':535.5}))
+    result = subprocess.run([sys.executable, '-m', 'pytest', '-q', '-p', 'gate_collect',
+                             '--timeout=300', '--rootdir', str(tmp_path), str(tmp_path/'tests')],
+                            cwd=tmp_path, env=env, capture_output=True, text=True)
+    assert result.returncode == 0, result.stdout + result.stderr
