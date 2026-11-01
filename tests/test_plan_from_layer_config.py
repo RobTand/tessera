@@ -22,7 +22,7 @@ from pathlib import Path
 
 import pytest
 import box_artifacts
-from test_accounting_source import package_roots
+from test_accounting_source import isolated_prismaquant_imports, package_roots
 from tessera.errors import TesseraError
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -353,7 +353,8 @@ def test_broadcast_refuses_a_role_whose_shape_differs_at_another_depth():
 # -- the accounting the export is checked against ------------------------------
 
 @box_artifacts.require("prismaquant_worktree", "prismaquant", "tessera_formats.py")
-def test_the_sidecar_reproduces_prismaquants_own_charged_bits():
+def test_the_sidecar_reproduces_prismaquants_own_charged_bits(
+        isolated_prismaquant_imports):
     # Not "a plausible size": the exact integer the allocator spent its budget
     # in.  Computed by importing PrismaQuant's own accountant, so a divergence
     # here is a divergence between two trees, not between two formulas.
@@ -370,7 +371,8 @@ def test_the_sidecar_reproduces_prismaquants_own_charged_bits():
 
 @box_artifacts.require("prismaquant_worktree", "prismaquant", "tessera_formats.py")
 @box_artifacts.require("shared_runs", "pq-continuous", "qwen06b", "alloc")
-def test_broadcasting_keeps_the_allocations_bpp_because_every_layer_has_one_shape():
+def test_broadcasting_keeps_the_allocations_bpp_because_every_layer_has_one_shape(
+        isolated_prismaquant_imports):
     config = json.loads((ALLOC / "lc_full_4.0.json").read_text())
     achieved = config["__prismaquant__"]["achieved_bits"]
     _plan, provenance = build(config, one_layer_shapes(layers=28),
@@ -496,7 +498,7 @@ def test_shared_expert_gate_up_is_the_exporters_fused_group_too():
         build(config, shapes, with_control=False)
 
 
-def test_the_unit_table_carries_the_shape_the_rate_was_charged_on():
+def test_the_unit_table_carries_the_shape_the_rate_was_charged_on(isolated_prismaquant_imports):
     _plan, provenance = build(uniform_config(), one_layer_shapes(), prismaquant=PQ_TREE)
     rows = {u["qname"]: u for u in provenance["units"]}
     assert rows["model.layers.0.self_attn.q_proj"]["rows"] == 2048
@@ -533,25 +535,25 @@ def _moe_plan_source(tmp_path, *, packed=False):
     src = tmp_path / "source"
     src.mkdir()
     stack = "model.layers.0.feed_forward.experts"
-    tensors = {f"model.layers.0.feed_forward.gate.weight": torch.zeros(2, 64),
-               "model.layers.0.self_attn.o_proj.weight": torch.zeros(64, 64)}
+    hidden, intermediate = 128, 512
+    tensors = {f"model.layers.0.feed_forward.gate.weight": torch.zeros(2, hidden),
+               "model.layers.0.self_attn.o_proj.weight": torch.zeros(hidden, hidden)}
     if packed:
-        tensors.update({f"{stack}.gate_up_proj.weight": torch.zeros(2, 128, 64),
-                        f"{stack}.down_proj.weight": torch.zeros(2, 64, 64)})
+        tensors.update({f"{stack}.gate_up_proj.weight": torch.zeros(2, 2 * intermediate, hidden),
+                        f"{stack}.down_proj.weight": torch.zeros(2, hidden, intermediate)})
     else:
-        tensors.update({f"{stack}.{expert}.{role}.weight": torch.zeros(64, 64)
-                        for expert in range(2) for role in ("w1", "w2", "w3")})
+        tensors.update({f"{stack}.{expert}.{role}.weight": torch.zeros(
+            hidden if role == "w2" else intermediate, intermediate if role == "w2" else hidden)
+            for expert in range(2) for role in ("w1", "w2", "w3")})
     save_file(tensors, str(src / "model.safetensors"))
-    config = {"architectures": ["Lfm2MoeForCausalLM"], "hidden_size": 64,
-              "moe_intermediate_size": 64, "num_experts": 2}
+    config = {"architectures": ["Lfm2MoeForCausalLM"], "hidden_size": hidden,
+              "moe_intermediate_size": intermediate, "num_experts": 2}
     (src / "config.json").write_text(json.dumps(config))
     request = {stack: {"grid": "E4M3", "q256": 896,
                       "source_layout": "out_first_chunked" if packed else "unpacked_per_expert"}}
     projection = export.project_expert_plan({n: tuple(t.shape) for n, t in tensors.items()}, config, request)
     projection["source"] = source_identity(src)
-    keys = ("cols", "expert", "group", "projection", "rows", "source_layout",
-            "source_slice", "source_tensor", "tensor")
-    units = {u["tensor"][:-7]: {k: u[k] for k in keys}
+    units = {u["tensor"][:-7]: {k: v for k, v in u.items() if k != "wire"}
              for u in projection["stacks"][stack]["units"]}
     carried = {"schema": "prismaquant.tessera_expert_projection.v1", "producer": projection,
                "stacks": {stack: units}, "request": request}
@@ -600,7 +602,7 @@ def test_actual_translator_hands_off_whole_expert_stacks(tmp_path, monkeypatch, 
         actual = export.project_expert_plan({**dense, **packed_shapes, **routed},
                     json.loads((src / "config.json").read_text()), {stack: plan[stack]})
         assert actual["stacks"][stack]["units"] == carried["producer"]["stacks"][stack]["units"]
-        assert provenance["totals"]["quantized_params"] == 6 * 64 * 64
+        assert provenance["totals"]["quantized_params"] == sum(u["rows"] * u["cols"] for u in units.values())
 
     class PlanningCompleted(Exception):
         pass
@@ -764,3 +766,15 @@ def test_carried_projection_still_refuses_another_checkpoint(tmp_path):
     with pytest.raises(PLAN.PlanError, match="source identity disagrees"):
         PLAN.main([str(path), str(src), str(out), "--no-uniform-control"])
     assert not out.exists()
+
+
+def test_explicit_router_and_vision_units_reach_the_export_plan():
+    router = "model.layers.0.mlp.gate"
+    vision = "model.visual.blocks.0.attn.qkv"
+    assignment = {router: "TESSERA_E4M3_K1_R1024", vision: "TESSERA_E4M3_K1_R1024"}
+    shapes = {router + ".weight": (32, 32), vision + ".weight": (96, 32)}
+    PLAN.refuse_before_source(assignment, None)
+    plan, _receipt = PLAN.build(assignment, shapes, cover="as-allocated",
+        allow_disagreement=False, prismaquant=None, with_control=False,
+        architecture="Glm5NextForConditionalGeneration")
+    assert plan == {name + ".weight": {"grid": "E4M3", "q256": 1024} for name in assignment}

@@ -91,15 +91,16 @@ def build(q256, distinct, seed=500):
         "down": [twgg.Expert(HIDDEN, INTER, r_i, seed + 200 + i, family="value").unit for i in range(distinct)],
     }
     bundles = {name: wgg.prepare_grouped_window_gemm([u[e % distinct] for e in range(EXPERTS)],
-                                                     block_m=64, block_n=64, block_k=64,
-                                                     arithmetic="folded")
+                                                     block_m=64, block_n=64, block_k=64)
                for name, u in units.items()}
+    classes = [{"start": 0, "end": EXPERTS,
+                "q256": {"w13": [q256, q256], "w2": [q256]}}]
     packed = PackedWindowMoeBundles(gate=bundles["gate"], up=bundles["up"], down=bundles["down"],
-                                    family="value")
+                                    family="value", expert_classes=classes)
     compact = native_window_moe_from_bundles(bundles["down"], gate=bundles["gate"], up=bundles["up"])
     reason = rf.fused_routed_window_supported(bundles["gate"], bundles["up"], bundles["down"])
     fused = None if reason else rf.FusedRoutedWindowMoE.from_bundles(bundles["gate"], bundles["up"],
-                                                                     bundles["down"])
+                                                                     bundles["down"], expert_classes=classes)
     head = {"q256": q256, "rates_hidden": sorted(set(r_h)), "rates_inter": sorted(set(r_i)),
             "fused_refused": reason, "resident_bytes": int(packed.resident_bytes())}
     return head, {"compact": compact, "fused": fused}, (units, bundles, packed)

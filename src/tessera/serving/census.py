@@ -174,7 +174,7 @@ CELL_AGREEMENT_SCHEMA = "tessera.cell-launch-agreement/3"
 def cell_launch_agreement(records_by_phase, *, cells, phase_regimes, platform,
                           rungs_by_module, families_by_route, structure="dense",
                           symbol_alias=None, runtime_image=None, execution_mode=None,
-                          formats=None):
+                          formats=None, kernel_build=None):
     """Every served record's launch against the CELL that covers it (#111).
 
     The lane-engagement block above asks whether a lane took any modules.  This
@@ -207,8 +207,8 @@ def cell_launch_agreement(records_by_phase, *, cells, phase_regimes, platform,
     reason ``all_required_engaged`` is: ``None`` when no record was covered by
     any cell, so a gate can tell "nothing to check" from "everything checked".
     """
-    from .contract import (cached_serving_contract, cell_covers_rung, cell_runtime_scope,
-                           refuse_unevaluated_predicates)
+    from .contract import (cached_serving_contract, cell_covers_rung, cell_executes,
+                           cell_matches_runtime, refuse_unevaluated_predicates)
 
     if formats is None:
         formats = cached_serving_contract()["formats"]
@@ -216,6 +216,8 @@ def cell_launch_agreement(records_by_phase, *, cells, phase_regimes, platform,
     from .scheme import eager_regime_problem
 
     runtime = {"image": runtime_image, "execution_mode": execution_mode}
+    if kernel_build is not None:
+        runtime["kernel_build"] = kernel_build
     unsupported_reason = (
         "compiled dense route records combine shape-polymorphic launches; "
         "per-cell agreement is unsupported for this observation"
@@ -229,10 +231,10 @@ def cell_launch_agreement(records_by_phase, *, cells, phase_regimes, platform,
         # that key cannot carry, so a narrowed cell entering it would report
         # agreement for launches it never covered.
         refuse_unevaluated_predicates(cell, f"lane_eligibility cell {cell.get('id')}")
-        if runtime_image is None or execution_mode is None or "runtime" not in cell:
+        if (runtime_image is None and kernel_build is None) or execution_mode is None or "runtime" not in cell:
             continue
-        image, execution_modes = cell_runtime_scope(cell)
-        if image != runtime_image or execution_mode not in execution_modes:
+        if not cell_matches_runtime(cell, image=runtime_image,
+                                    execution_mode=execution_mode, kernel_build=kernel_build):
             continue
         modes = _cell_modes(cell)
         for mode in modes:
@@ -280,8 +282,9 @@ def cell_launch_agreement(records_by_phase, *, cells, phase_regimes, platform,
                 unattested += 1
                 continue
             pair = (str(record.get("symbol")), str(record.get("decoder")))
+            allowed = cell_executes(cell, q256=int(rung), entry=entries.get(family))
             if execution_mode == "compiled" and (
-                    len(cell["executes"]) != 1 or any("+" in item for item in pair)):
+                    len(allowed) != 1 or any("+" in item for item in pair)):
                 # Only the routed single-launch observation can be joined to
                 # a phase cell. A combined trace does not identify which of
                 # its branches the driven phase executed.
@@ -326,7 +329,6 @@ def cell_launch_agreement(records_by_phase, *, cells, phase_regimes, platform,
                     "hardware no cell in this contract covers.")
                 continue
             covered += 1
-            allowed = {(str(e["symbol"]), str(e["decoder"])) for e in cell["executes"]}
             counts[cell["id"]] += 1
             # The route may carry an observed backend suffix while a cell
             # publishes the runtime entry point. Preserve exact matching too:

@@ -505,11 +505,8 @@ def test_window_linear_dispatches_on_m_inside_the_op():
 
 # --- the BF16 family --------------------------------------------------------
 #
-# Same WINDOW body, same CHANNEL plane, same 2^14 table -- the table holds bf16
-# VALUES instead of E4M3 codes, and the tile that comes out is what a stock
-# BF16 GEMM multiplies, with the row scale already folded in.  The family's
-# encoder is not merged, so these are synthetic streams against the one-step
-# definition; what they prove is the parametrisation, not the grid.
+# The BF16 table contains raw values. Its FP32 row scale stays separate
+# through the dot. These synthetic streams test the decoder, not an encoder.
 
 
 def _reference_states(body_bits, rates, window_bits, initial):
@@ -530,33 +527,22 @@ def _reference_states(body_bits, rates, window_bits, initial):
     return out
 
 
-def _value_reference(body_bits, rates, window_bits, table, initial, row_scale):
-    """The tile by the body's definition: walk, look up, scale, round.
-
-    The rounding is last and is the tile's own dtype, which is what the
-    kernel does -- it widens the table entry to fp32, applies the fp32 row
-    scale and stores one rounded value.
-    """
+def _value_reference(body_bits, rates, window_bits, table, initial):
+    """Return raw table values from the independent state walk."""
     state = _reference_states(body_bits, rates, window_bits, initial)
-    return (table[state].float() * row_scale[:, None]).to(table.dtype)
+    return table[state]
 
 
 def _value_reference_f32(body_bits, rates, window_bits, table, initial, row_scale):
-    """The same product WITHOUT the tile's rounding.
-
-    The GEMV never materialises the tile, so it accumulates the unrounded
-    ``table[state] * scale``; holding it to a rounded tile would be holding a
-    more accurate kernel to a less accurate reference.
-    """
-    state = _reference_states(body_bits, rates, window_bits, initial)
-    return table[state].float() * row_scale[:, None]
+    """Return effective FP32 weights without a per-weight BF16 conversion."""
+    return _value_reference(body_bits, rates, window_bits, table, initial).float() * row_scale[:, None]
 
 
 @cuda
 @pytest.mark.parametrize("rows,cols", [(256, 128), (200, 176), (128, 1024),
                                        (72, 45)])
-def test_a_bf16_table_decodes_a_scaled_bf16_tile(rows, cols):
-    """``decode_value_tile``: the tile is the table's dtype, scale applied."""
+def test_a_bf16_table_decodes_raw_values_with_a_separate_scale(rows, cols):
+    """The value decoder returns the table values without the row scale."""
     kw = _kw()
     window_bits, rate = 14, 4
     torch.manual_seed(rows + cols)
@@ -569,7 +555,7 @@ def test_a_bf16_table_decodes_a_scaled_bf16_tile(rows, cols):
     got = unit.decode()
     assert got.dtype is torch.bfloat16
     want = _value_reference(body, (rate,) * cols, window_bits, table,
-                            torch.zeros(cols, dtype=torch.int64, device="cuda"), scale)
+                            torch.zeros(cols, dtype=torch.int64, device="cuda"))
     assert torch.equal(got, want)
 
 
@@ -585,7 +571,7 @@ def test_the_bf16_family_starts_from_an_initial_window_too():
     start = torch.randint(0, 1 << window_bits, (cols,), dtype=torch.int64, device="cuda")
     unit = kw.prepare_window_values(body, (rate,) * cols, window_bits, table, scale,
                                     initial=start, device="cuda")
-    want = _value_reference(body, (rate,) * cols, window_bits, table, start, scale)
+    want = _value_reference(body, (rate,) * cols, window_bits, table, start)
     assert torch.equal(unit.decode(), want)
     zero = kw.prepare_window_values(body, (rate,) * cols, window_bits, table, scale,
                                     device="cuda")
@@ -594,12 +580,7 @@ def test_the_bf16_family_starts_from_an_initial_window_too():
 
 @cuda
 def test_the_gemv_reads_a_bf16_table():
-    """One GEMV kernel, two alphabets: the table's dtype is all that changes.
-
-    Held to the same fp32-accumulation bar as the FP8 family, against the
-    decoded tile in fp32 -- the tile already carries the scale, so the
-    reference is a plain matmul.
-    """
+    """The GEMV uses raw values and the independent FP32 scale plane."""
     kw = _kw()
     rows, cols, window_bits, rate = 512, 640, 14, 4
     torch.manual_seed(5)
@@ -620,32 +601,21 @@ def test_the_gemv_reads_a_bf16_table():
 
 @cuda
 def test_the_bf16_linear_routes_both_sides_of_the_cap():
-    """``window_value_linear`` at M=1 (GEMV) and M past the cap (BF16 GEMM).
-
-    Both sides are W16A16 -- the wide side decodes a bf16 tile and runs the
-    stock GEMM, so unlike the FP8 family nothing quantises the activation --
-    and both are held to bf16 rounding against the fp32 product.
-    """
+    """Both Linear paths apply the row scale after the dot."""
     kw = _kw()
-    rows, cols, window_bits, rate = 384, 512, 14, 4
-    torch.manual_seed(9)
-    body = torch.randint(0, 1 << rate, (rows, cols), dtype=torch.uint8, device="cuda")
-    table = (torch.randn(1 << window_bits, device="cuda") * 0.05).to(torch.bfloat16)
-    scale = torch.rand(rows, device="cuda") + 0.25
+    rows, cols, window_bits, rate = 32, 64, 14, 4
+    body = torch.zeros(rows, cols, dtype=torch.uint8, device="cuda")
+    table = torch.ones(1 << window_bits, dtype=torch.bfloat16, device="cuda")
+    scale = torch.full((rows,), 1.0 + 2.0 ** -8, device="cuda")
     unit = kw.prepare_window_values(body, (rate,) * cols, window_bits, table, scale,
                                     device="cuda")
-    tile = _value_reference_f32(body, (rate,) * cols, window_bits, table,
-                                torch.zeros(cols, dtype=torch.int64, device="cuda"),
-                                scale)
     for m in (1, kw.GEMV_MAX_M + 1, 64):
-        x = torch.randn(m, cols, device="cuda", dtype=torch.bfloat16)
+        x = torch.zeros(m, cols, dtype=torch.bfloat16, device="cuda")
+        x[:, 0] = 0.75
         got = unit.linear(x)
-        assert got.dtype is torch.bfloat16
-        want = x.float() @ tile.t()
-        assert float((got.float() - want).abs().max() / want.abs().max()) < 2.0 ** -7, m
-    got = kw.window_module_linear(torch.randn(1, cols, device="cuda",
-                                              dtype=torch.bfloat16), [unit, unit])
-    assert got.shape == (1, 2 * rows)
+        expected = torch.full_like(got, 0.75390625)
+        assert torch.equal(got.view(torch.int16), expected.view(torch.int16)), (
+            f"BF16 Linear M={m}: got {float(got[0, 0])}, expected 0.75390625")
 
 
 @cuda
@@ -730,23 +700,25 @@ def test_the_value_ops_survive_a_compiled_forward():
 
 
 @cuda
-def test_the_value_family_has_no_row_scale_to_hand_out():
-    """``window_module_row_scale`` refuses the value family.
-
-    Its scale is already inside the decoded tile; returning it to a lane that
-    would pass it to ``_scaled_mm`` beside the tile is a silent second
-    multiplication, and this seam exists to stop exactly that.
-    """
+def test_the_value_family_returns_row_scales_with_raw_tiles():
+    """Consume two independent scale planes beside the raw module tile."""
     kw = _kw()
     rows, cols, window_bits, rate = 64, 64, 14, 4
     torch.manual_seed(12)
     body = torch.randint(0, 1 << rate, (rows, cols), dtype=torch.uint8, device="cuda")
     table = (torch.randn(1 << window_bits, device="cuda") * 0.05).to(torch.bfloat16)
     scale = torch.rand(rows, device="cuda") + 0.25
-    unit = kw.prepare_window_values(body, (rate,) * cols, window_bits, table, scale,
-                                    device="cuda")
-    with pytest.raises(GrammarError, match="already applied"):
-        kw.window_module_row_scale([unit])
+    units = [kw.prepare_window_values(body, (rate,) * cols, window_bits, table, s,
+                                     device="cuda") for s in (scale, scale * 2)]
+    raw = _value_reference(body, (rate,) * cols, window_bits, table,
+                           torch.zeros(cols, dtype=torch.int64, device="cuda"))
+    x = torch.eye(cols, dtype=torch.bfloat16, device="cuda") * 0.75
+    decoded = kw.window_module_decode(units)
+    got = ((x.float() @ decoded.float().t())
+           * kw.window_module_row_scale(units)[None, :]).bfloat16()
+    expected = (0.75 * torch.cat([raw, raw]).float().t()
+                * torch.cat([scale, scale * 2])[None, :]).bfloat16()
+    assert torch.equal(got.view(torch.int16), expected.view(torch.int16))
 
 
 # ------------------------- the TP shard's start state -----------------------

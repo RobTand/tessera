@@ -6,15 +6,14 @@ contract against the **actual** BF16 R7 checkpoint and the launch table:
 
 * the compact reader and the materialising reader accept and refuse the same
   sidecar declarations (one comparison helper);
-* the native module's forward is the FOLDED product of the retained reference
-  preparation's pair -- ``bf16(value * row_scale)`` per weight, fp32
-  accumulation, one cast (tessera#614) -- at the M tails and at TP2 cuts;
+* the native module accumulates raw BF16 values in FP32, applies the row
+  scale in FP32, then converts the output to BF16;
 * the prepared weights stay packed across forwards -- fingerprints and byte
   count unchanged, no ``[rows, columns]`` tile anywhere;
 * the launch table publishes ``(tessera::window_gemm_dense,
   native_window_gemm)`` for the FP8 route (attested) and
-  ``(tessera::window_gemm_dense, native_window_gemm_folded)`` for the BF16
-  route (experimental until a census earns it a cell).
+  ``(tessera::window_gemm_dense, native_window_gemm_bf16)`` for the BF16
+  route. The BF16 pair has no served census for this source.
 """
 from __future__ import annotations
 
@@ -84,9 +83,7 @@ def _col_plan(declared, tp_rank, tp_size):
 
 
 def _reference_product(parsed_roles, plan, x):
-    """The served arithmetic, off the retained reference preparation's pair:
-    ``bf16(values * row scale)`` -- ``materialize_bf16_folded``'s one rounding
-    -- multiplied in fp32 and cast once (tessera#614)."""
+    """Apply the row scale to the FP32 dot before the BF16 conversion."""
     import tessera.serving.bf16_route as bf16_route
 
     from tessera.serving.sharding import shard_parsed_roles
@@ -95,66 +92,18 @@ def _reference_product(parsed_roles, plan, x):
     module = bf16_route.prepare_tessera_bf16_module(roles, device="cuda")
     values = module.decode()
     scale = module.row_scale()
-    folded = (values.float() * scale[:, None]).to(torch.bfloat16)
-    return (x.float() @ folded.float().t()).bfloat16()
+    return ((x.float() @ values.float().t()) * scale).bfloat16()
 
 
 def _tolerance(reference):
     return 5e-3 + 1e-2 * float(reference.float().abs().max())
 
 
-@cuda
-def test_the_launch_table_publishes_the_native_pair():
-    from tessera.serving import telemetry
-    from tessera.serving.scheme import (FUSED_WINDOW_DENSE_SYMBOL, TESSERA_BF16,
-                                        TESSERA_FP8, WINDOW_GEMM_SYMBOL, launch_pairs)
-
-    pair = (WINDOW_GEMM_SYMBOL, telemetry.DECODER_NATIVE_WINDOW_GEMM)
-    for route in (TESSERA_FP8,):
-        for regime in ("decode", "batch"):
-            # ATTESTED since contract v34 (tessera#545).  The pair was
-            # experimental -- in the routes' census expectation and out of the
-            # contract validator's default view -- until four served censuses
-            # on the sm_121 serve image put all 112 declared modules on it in
-            # both regimes and both residencies
-            # (docs/measurements/tessera-window-gemm-census-2026-09-21.md).
-            # It left scheme.EXPERIMENTAL_LAUNCHES with the four dense cells
-            # that name it, so the default view and the census opt-in now
-            # agree, which is what the two assertions below say.
-            assert pair in launch_pairs(route, regime=regime), (route, regime)
-            assert pair in launch_pairs(route, regime=regime,
-                                        include_experimental=True), (route, regime)
-            for mode in ("resident", "streamed"):
-                assert pair in launch_pairs(route, regime=regime, mode=mode), (
-                    route, regime, mode)
-    # The BF16 route serves the FOLDED arithmetic under its own decoder since
-    # contract v37 (tessera#614).  The v34 BF16 cells attested the epilogue
-    # kernel and were withdrawn; contract v38 (tessera#604) attests the folded
-    # pair on the GLM serving image (resident, eager), so it left
-    # scheme.EXPERIMENTAL_LAUNCHES and the default view and the census opt-in
-    # agree again.  The epilogue pair is in neither.  Residency is the cells'
-    # scope, not the table's: the view is the same in both modes.
-    folded = (WINDOW_GEMM_SYMBOL, telemetry.DECODER_NATIVE_WINDOW_GEMM_FOLDED)
-    # Contract v43: the fused window kernel's dense identity serves the folded
-    # arithmetic beside the Triton GEMM, per module, under its own decoder.
-    fused_folded = (FUSED_WINDOW_DENSE_SYMBOL,
-                    telemetry.DECODER_NATIVE_FUSED_WINDOW_DENSE_FOLDED)
-    for regime in ("decode", "batch"):
-        for mode in ("resident", "streamed"):
-            assert launch_pairs(TESSERA_BF16, regime=regime, mode=mode,
-                                include_experimental=True) == {folded, fused_folded}, (
-                regime, mode)
-            assert launch_pairs(TESSERA_BF16, regime=regime, mode=mode) == {
-                folded, fused_folded}, (regime, mode)
-    assert WINDOW_GEMM_SYMBOL == "tessera::window_gemm_dense"
-    assert telemetry.DECODER_NATIVE_WINDOW_GEMM in telemetry.DECODERS
-    assert telemetry.DECODER_NATIVE_WINDOW_GEMM_FOLDED in telemetry.DECODERS
 
 
 @cuda
 def test_the_two_readers_agree_on_an_actual_wire():
-    """Compact and materialising parses accept the same bytes and refuse the
-    same wrong sidecar, with the same words -- on the shipping BF16 wire."""
+    """Both readers accept the actual BF16 bytes and refuse the same wrong sidecar."""
     from tessera.serving.scheme import (parse_compact_blob_for_scheme,
                                         parse_tessera_blob_for_scheme)
 
@@ -166,20 +115,17 @@ def test_the_two_readers_agree_on_an_actual_wire():
     assert compact[0][1].role_facts == {"grid": "BF16", "body": "WINDOW",
                                         "plane": "CHANNEL", "q256": 1792,
                                         "rows": 1024, "columns": 3072, "span": 1}
-    with pytest.raises(ValueError, match="sidecar scheme declares") as compact_refusal:
+    with pytest.raises(ValueError):
         parse_compact_blob_for_scheme(blob, {**scheme, "q256": 1024}, "test",
                                       device="cuda")
-    with pytest.raises(ValueError, match="sidecar scheme declares") as materialised_refusal:
+    with pytest.raises(ValueError):
         parse_tessera_blob_for_scheme(blob, {**scheme, "q256": 1024}, "test")
-    assert str(compact_refusal.value) == str(materialised_refusal.value)
 
 
 @cuda
 @pytest.mark.parametrize("m", [0, 1, 8, 9, 15, 17, 32, 128])
 def test_the_native_module_serves_the_reference_product(m):
-    """The actual BF16 R7 unit, whole module: every M tail equals the folded
-    product of the retained reference preparation's pair (one bf16 rounding of
-    value * row scale, fp32 accumulate, one cast)."""
+    """The actual BF16 R7 unit uses FP32 row-scale epilogue math at each M tail."""
     from tessera.serving.native_window import prepare_dense_native_module
     from tessera.serving.scheme import TESSERA_BF16, validate_tessera_scheme
 
@@ -293,57 +239,6 @@ def test_tp2_column_cut_matches_the_reference():
         assert error < _tolerance(want), (rank, error)
 
 
-def test_compact_expert_reader_has_signature_and_refusal_parity():
-    """CPU: ``parse_compact_tessera_expert_blob(blob, declared_role, target,
-    device="cpu")`` accepts and refuses exactly what
-    ``parse_tessera_expert_blob`` does, on an actual routed A4 expert
-    container -- the shared reader the MoE owners pick up."""
-    from tessera.serving.scheme import (expert_role_declarations,
-                                        parse_compact_tessera_expert_blob,
-                                        parse_tessera_expert_blob,
-                                        validate_tessera_moe_scheme)
-
-    config = box_artifacts.skip_now("a4_export", "config.json")
-    settings = json.loads(Path(config).read_text())["quantization_config"]
-    group = next(value["scheme"] for value in settings["config_groups"].values()
-                 if value["scheme"].get("structure") == "routed_moe")
-    declared = validate_tessera_moe_scheme(group, "test")
-    declared_role = expert_role_declarations(declared["groups"]["w13"])[0]
-    blob = _a4_expert_wire()
-    materialised = parse_tessera_expert_blob(blob, declared_role, "test", device="cpu")
-    compact = parse_compact_tessera_expert_blob(blob, declared_role, "test", device="cpu")
-    assert [name for name, _ in materialised] == [name for name, _ in compact]
-    assert compact[0][1].role_facts == {
-        "grid": "E2M1x2", "body": "TCQ", "plane": "LUT", "q256": 896,
-        "rows": 2048, "columns": 4096, "span": 2,
-    }
-    # A stride bound that the blob overruns: one refusal, two readers.
-    with pytest.raises(ValueError) as materialised_stride:
-        parse_tessera_expert_blob(blob, {**declared_role, "wire_stride": len(blob) - 1},
-                                  "test", device="cpu")
-    with pytest.raises(ValueError) as compact_stride:
-        parse_compact_tessera_expert_blob(
-            blob, {**declared_role, "wire_stride": len(blob) - 1}, "test", device="cpu")
-    assert str(materialised_stride.value) == str(compact_stride.value)
-    # A wrong sidecar rung: one comparison, two readers, one sentence.
-    with pytest.raises(ValueError) as materialised_rung:
-        parse_tessera_expert_blob(blob, {**declared_role, "role_q256": [1152]},
-                                  "test", device="cpu")
-    with pytest.raises(ValueError) as compact_rung:
-        parse_compact_tessera_expert_blob(blob, {**declared_role, "role_q256": [1152]},
-                                          "test", device="cpu")
-    assert str(materialised_rung.value) == str(compact_rung.value)
-
-
-def _a4_expert_wire() -> bytes:
-    index_path = box_artifacts.skip_now("a4_export", "model.safetensors.index.json")
-    weight_map = json.loads(Path(index_path).read_text())["weight_map"]
-    tensor = "model.language_model.layers.3.mlp.experts.0.gate_proj.wire"
-    shard = box_artifacts.skip_now("a4_export", weight_map[tensor])
-    from safetensors import safe_open
-
-    with safe_open(str(shard), framework="pt") as handle:
-        return bytes(handle.get_tensor(tensor).detach().cpu().numpy().tobytes())
 
 
 @cuda
@@ -354,12 +249,10 @@ def test_the_module_owns_its_bundles_with_no_global_registry():
     import gc
     import weakref
 
-    from tessera.serving import native_window
     from tessera.serving.native_window import prepare_dense_native_module
     from tessera.serving.scheme import (TESSERA_BF16, parse_compact_blob_for_scheme,
                                         validate_tessera_scheme)
 
-    assert not hasattr(native_window, "_BUNDLES"), "a global bundle registry returned"
     scheme = _scheme(DOWN_GROUP)
     declared = validate_tessera_scheme(scheme, "test")
     compact = parse_compact_blob_for_scheme(

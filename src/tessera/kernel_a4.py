@@ -500,11 +500,12 @@ if _TL is not None:
 
         ``k`` is the column (broadcast against ``p``, the pair index).  The
         select window is the ``memory+1`` bits ending at the pair's own select
-        bit, read as a big-endian 16-bit field; ``label_lut`` maps it to the
-        pair's super-label; position 1's label is stored, position 0's is the
-        super-label minus it mod 4.  The pair's two ``RATE-1``-bit points are
-        one 16-bit read, both shifts absolute within that read (the caller's
-        admission holds their span behind the byte offset).  Returns
+        bit, read as a big-endian field of ``memory+1`` bits; ``label_lut``
+        maps it to the pair's super-label; position 1's label is stored,
+        position 0's is the super-label minus it mod 4. The pair's two
+        ``RATE-1``-bit points use absolute shifts within at most 16 bits.
+        A second byte is read only when the meaningful field crosses the
+        first byte; zero-width points perform no load. Returns
         ``(window, ell, stored, lab0, lab1, pt0, pt1, code0, code1)`` -- the
         last two are the row-pair's two code bytes, rows ``4p, 4p+1`` and
         ``4p+2, 4p+3``.
@@ -516,19 +517,25 @@ if _TL is not None:
         q = k * (pairs + PAD) + PAD - MEMORY + p
         byte = q // 8
         b0 = _TL.load(select_ptr + byte).to(_TL.int32)
-        b1 = _TL.load(select_ptr + byte + 1).to(_TL.int32)
+        b1 = _TL.load(select_ptr + byte + 1,
+                      mask=(q % 8) + MEMORY + 1 > 8, other=0).to(_TL.int32)
         window = (((b0 << 8) | b1) >> (15 - MEMORY - (q % 8))) & ((1 << (MEMORY + 1)) - 1)
         ell = _TL.load(label_lut_ptr + window).to(_TL.int32)
         lab_byte = _TL.load(label_ptr + (k * (pairs * 2) + p * 2) // 8).to(_TL.int32)
         stored = (lab_byte >> (6 - (p * 2) % 8)) & 3
         lab0 = (ell - stored) & 3
-        field = RATE - 1
-        t = k * (steps * field) + p * (2 * field)
-        p0 = _TL.load(point_ptr + t // 8).to(_TL.int32)
-        p1 = _TL.load(point_ptr + t // 8 + 1).to(_TL.int32)
-        u = (p0 << 8) | p1
-        pt0 = (u >> (16 - field - (t % 8))) & (POINTS - 1)
-        pt1 = (u >> (16 - 2 * field - (t % 8))) & (POINTS - 1)
+        if RATE > 1:
+            field = RATE - 1
+            t = k * (steps * field) + p * (2 * field)
+            p0 = _TL.load(point_ptr + t // 8).to(_TL.int32)
+            p1 = _TL.load(point_ptr + t // 8 + 1,
+                          mask=(t % 8) + 2 * field > 8, other=0).to(_TL.int32)
+            u = (p0 << 8) | p1
+            pt0 = (u >> (16 - field - (t % 8))) & (POINTS - 1)
+            pt1 = (u >> (16 - 2 * field - (t % 8))) & (POINTS - 1)
+        else:
+            pt0 = 0
+            pt1 = 0
         lab1 = stored
         code0 = _TL.load(code_ptr + lab0 * POINTS + pt0)
         code1 = _TL.load(code_ptr + lab1 * POINTS + pt1)

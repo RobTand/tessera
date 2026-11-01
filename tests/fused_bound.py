@@ -28,14 +28,10 @@ and one more bf16 rounding.
 
 Three more facts of the arithmetic, each read off the kernel it states:
 
-* The BF16 value family has two weight contracts.  FOLDED (the fused lane,
-  and the Triton lanes under ``arithmetic="folded"``): the weight is
-  ``bf16(fp32(value * row_scale))``, exact in the reference because the
-  reference decodes it the same way, and no epilogue multiply.  EPILOGUE (the
-  grouped Triton GEMM's default): the weight is the bf16 table value and the
-  row scale multiplies the fp32 accumulator -- one more round-to-nearest fp32
-  multiply, the reference weight being ``value * row_scale`` in fp64 (exact:
-  8 x 24 significant bits).
+* The BF16 value family keeps the BF16 table value unscaled through the dot.
+  The row scale multiplies the FP32 accumulator once in the epilogue.
+  The reference weight is ``value * row_scale`` in FP64. This product is exact:
+  its operands have eight and twenty-four significant bits.
 * The Triton GEMMs accumulate ``acc += tl.dot(x_chunk, w_chunk)`` over
   ``BK``-column chunks of every run.  Fused into the accumulator, a product
   passes through at most the ``K - 1`` adds of the products after it; summed
@@ -71,58 +67,39 @@ def bf16_ulp(v):
     return torch.exp2(torch.floor(torch.log2(v.clamp(min=2.0 ** -126))) - 7)
 
 
-def decoded_weight(expert, family, *, folded=True):
-    """The role's decoded weight as the kernel multiplies it, fp32 ``[rows, cols]``.
-
-    E4M3: the e4m3 byte's value, UNSCALED (the row scale is applied in the
-    epilogue).  Value, ``folded``: the table value folded once to bf16 with
-    the row scale, as the folded contract does.  Value, not ``folded`` (the
-    epilogue contract): the bf16 table value, UNSCALED.
-    """
+def decoded_weight(expert, family):
+    """Return the unscaled table values that the kernel multiplies."""
     states = expert.states.cuda()
     if family == "e4m3":
         byte = expert.unit.native[expert.unit.codes_of_state[states].long()]
         return byte.view(torch.float8_e4m3fn).float()
-    values = expert.values.float().cuda()[states]
-    if not folded:
-        return values
-    return (values * expert.scale[:, None]).bfloat16().float()
+    return expert.values.float().cuda()[states]
 
 
-def fp64_weight(expert, family, *, folded=True):
-    """The role's decoded weight in fp64 ``[rows, cols]``, row scale applied."""
-    w = decoded_weight(expert, family, folded=folded).double()
-    if family == "e4m3" or not folded:
-        return w * expert.scale.double()[:, None]
-    return w
+def fp64_weight(expert, family):
+    """Return the canonical effective weight in FP64, with the row scale."""
+    return decoded_weight(expert, family).double() * expert.scale.double()[:, None]
 
 
-def epilogue_multiplies(family, *, folded=True):
-    """The round-to-nearest fp32 multiplies the epilogue applies before any
-    routing weight: ``(acc * a_scale) * w_scale`` on E4M3, ``acc * w_scale``
-    on the value family's epilogue contract, none when the scale is folded."""
-    if family == "e4m3":
-        return 2
-    return 0 if folded else 1
+def epilogue_multiplies(family):
+    """Count the FP32 epilogue multiplies before any router weight."""
+    return 2 if family == "e4m3" else 1
 
 
-def dense_bound(family, a64, w64, k, s=1, *, weight=None, folded=True, rounded=True):
+def dense_bound(family, a64, w64, k, s=1, *, weight=None, rounded=True):
     """``(r, bound)``: the fp64 reference ``(a64 @ w64.T) * weight`` and the
     per-element bound on ``|kernel - r|`` for one dense (or one route's) GEMM.
 
-    ``a64`` is the scaled A operand in fp64 (``xq * a_scale`` for E4M3, the
-    bf16 ``x`` for value), ``w64`` the scaled weight (:func:`fp64_weight`,
-    with the same ``folded``), ``k`` the reduction length, ``s`` the K split,
-    ``weight`` an optional per-row routing weight (fp64, broadcastable) the
-    epilogue multiplies in as one more round-to-nearest fp32 multiply.
-    ``folded=False`` is the value family's epilogue contract (one multiply by
-    the row scale, :func:`epilogue_multiplies`).  ``rounded=False`` returns
-    the bound on the fp32 value BEFORE any bf16 rounding (a route the grouped
-    reduction sums unrounded).
+    ``a64`` is the scaled activation in FP64: ``xq * a_scale`` for E4M3,
+    or the BF16 ``x`` for the value family. ``w64`` is the canonical scaled
+    weight from :func:`fp64_weight`. ``k`` is the reduction length and ``s``
+    is the K split. ``weight`` is an optional router weight in FP64.
+    The epilogue applies it as one more FP32 multiply. ``rounded=False``
+    returns the bound before the final BF16 cast.
     """
     r = a64 @ w64.t()
     sigma = a64.abs() @ w64.abs().t()
-    n_mul = epilogue_multiplies(family, folded=folded)
+    n_mul = epilogue_multiplies(family)
     if weight is not None:
         r = r * weight
         sigma = sigma * weight.abs()
@@ -153,13 +130,15 @@ def one_hot_expected(expert, family, hot, a, *, weight=None):
     is ONE exact fp32 product (``hot_k * w[n, k]``: 3 x 4 significant bits on
     E4M3, a bf16 on value) plus zeros, so the E4M3 epilogue ``(acc * a_scale)
     * w_scale`` (then ``* weight`` on a weighted route) is a chain of
-    round-to-nearest fp32 multiplies torch reproduces bitwise, and the value
-    family's folded ``bf16(table * scale)`` comes back as itself.  Output
-    ``[cols, rows]``: ``y[k, n]``."""
+    round-to-nearest FP32 multiplies that Torch reproduces bitwise. The value
+    family applies its row scale once before the final BF16 cast.
+    Output ``[cols, rows]``: ``y[k, n]``.
+    """
     w = decoded_weight(expert, family)                      # [rows, cols] fp32
     acc = w.t() * hot[:, None]                              # exact
     if family == "e4m3":
-        acc = (acc * a[:, None]) * expert.scale[None, :]
+        acc = acc * a[:, None]
+    acc = acc * expert.scale[None, :]
     if weight is not None:
         acc = acc * weight
     return acc.bfloat16()

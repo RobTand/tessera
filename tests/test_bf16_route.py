@@ -10,14 +10,16 @@ Three claims, each with its own failure mode:
 2. **The wire round-trips at its declared width.**  Two bytes an element on
    the code plane, priced by the accountant to the byte, and the reader
    resolves the grid off the profile id like any other.
-3. **Two renderings, and only one of them rounds.**  ``materialize_bf16``
-   is the route's: the raw table values (bf16, exact) plus the fp32 row
-   scale a GEMM epilogue applies.  ``materialize_bf16_folded`` is the
-   twin's, the one place a fold is unavoidable, and it is
-   ``reconstruct_unit``'s fp32 product rounded once.  The streamed decoder
-   over the packed wire reproduces both bitwise, which is what lets a
-   serving lane hold the wire and a stock twin hold the tile and call them
-   the same artifact.
+3. **The canonical weight rounds nowhere; the stock checkpoint rounds once.**
+   ``materialize_bf16`` is the definition: the raw table values (bf16, exact)
+   plus the fp32 row scale a GEMM epilogue applies in fp32 -- no per-weight
+   BF16 conversion anywhere.  The streamed decoder over the packed wire
+   reproduces that pair bitwise, which is what lets a serving lane hold the
+   wire and a reader hold the parsed unit and call them the same artifact.
+   The one-tensor stock checkpoint cannot carry a scale, so
+   ``stock.materialize_stock`` renders one derived twin there -- values times
+   scale rounded once to bf16 -- labelled a derived stock rendering, not
+   canonical and not served math.
 
 Everything here is CPU: the route has no Triton path of its own, and the
 window Viterbi's reference implementation is the definition.
@@ -25,7 +27,6 @@ window Viterbi's reference implementation is the definition.
 import sys
 from fractions import Fraction
 from pathlib import Path
-import math
 
 import pytest
 import torch
@@ -44,12 +45,11 @@ from tessera.bf16_route import (  # noqa: E402
     BF16_FAMILY,
     prepare_bf16_unit,
     stream_bf16,
-    stream_bf16_folded,
     window_table_values,
 )
 from tessera.calculator import terminal_rate  # noqa: E402
 from tessera.decode import (  # noqa: E402
-    materialize_bf16, materialize_bf16_folded, materialize_fp8, reconstruct_unit)
+    materialize_bf16, materialize_fp8, reconstruct_unit)
 from tessera.encode import grid_vector_table, window_table  # noqa: E402
 from tessera.errors import GrammarError  # noqa: E402
 from tessera.export import (  # noqa: E402
@@ -303,13 +303,18 @@ def test_the_accountant_prices_the_wide_table_exactly(q256):
 # ---------------------------------------------------------------- the tile
 
 
-def test_materialise_is_one_rounding_of_the_reconstruction():
+def test_materialise_is_the_canonical_pair():
+    """``materialize_bf16`` returns the raw bf16 table values and the fp32
+    row scale, and the canonical FP32 product is the same fp32 product
+    ``reconstruct_unit`` computes."""
     _, exported, _, _ = _encode()
     parsed = parse_unit_artifact(exported.blob)
-    tile = materialize_bf16_folded(parsed.unit, parsed.grid, parsed.code)
-    assert tile.dtype is torch.bfloat16
-    assert torch.equal(tile, reconstruct_unit(parsed.unit, parsed.grid, None)
-                       .to(torch.bfloat16))
+    values, scale = materialize_bf16(parsed.unit, parsed.grid, parsed.code)
+    assert values.dtype is torch.bfloat16 and scale.dtype is torch.float32
+    assert torch.equal(
+        values.float() * scale[:, None],
+        reconstruct_unit(parsed.unit, parsed.grid, None),
+    )
 
 
 def test_materialise_refuses_another_grid():
@@ -322,7 +327,7 @@ def test_materialise_refuses_another_grid():
         w, grid=E4M3_GRID, q256=1024, name="u", window_bits=TEST_L, verify=False,
     )
     with pytest.raises(GrammarError, match="needs the scalar BF16 grid"):
-        materialize_bf16_folded(unit, forests, None)
+        materialize_bf16(unit, forests, None)
     # ...and the FP8 materialiser refuses the BF16 unit, symmetrically.
     _, bf_unit, bf_forests = _encode()[1:]
     with pytest.raises(GrammarError, match="256-code hardware grid"):
@@ -331,15 +336,14 @@ def test_materialise_refuses_another_grid():
 
 def test_streamed_decode_is_bit_identical_to_the_tile():
     """The product mode and the correctness path are the same artifact: the
-    lane holds the wire at 4-8 bpp and decodes, the stock twin holds the
-    tile, and the two tensors are equal bit for bit."""
+    lane holds the wire at 4-8 bpp and decodes, the parsed unit decodes in
+    place, and the two pairs are equal bit for bit."""
     _, exported, _, _ = _encode(q256=1536)
     parsed = parse_unit_artifact(exported.blob)
     streamed = prepare_bf16_unit(parsed.unit)
-    assert torch.equal(
-        stream_bf16_folded(streamed),
-        materialize_bf16_folded(parsed.unit, parsed.grid, parsed.code),
-    )
+    got_values, got_scale = stream_bf16(streamed)
+    values, scale = materialize_bf16(parsed.unit, parsed.grid, parsed.code)
+    assert torch.equal(got_values, values) and torch.equal(got_scale, scale)
     assert streamed.resident_bytes < 16 * SHAPE[0] * SHAPE[1] / 8 * 2
 
 
@@ -352,57 +356,21 @@ def test_streamed_decode_refuses_what_it_does_not_apply():
         prepare_bf16_unit(unit)
 
 
-def test_the_route_rounds_the_weight_nowhere_and_the_twin_rounds_once():
-    """A CHANNEL scale is an output-row factor, so it commutes with the matmul
-    and the route never has to fold it in.  Three claims, all exact:
+def test_the_route_rounds_the_weight_nowhere():
+    """One-hot rows select each raw value without a reduction-order difference.
 
-    ``materialize_bf16`` returns the raw table values and the fp32 row scale;
-    those values are *already* bf16 (every table entry is a bf16 value on this
-    grid, so the cast rounds nothing); and the fold is the only place a
-    rounding enters -- ``materialize_bf16_folded`` is ``bf16(code * s)``, to
-    the bit, which is what a one-tensor checkpoint must ship.
+    The pair must reproduce the independent canonical reader before any
+    output conversion. No per-weight BF16 conversion is part of the pair.
     """
     _, exported, _, _ = _encode(q256=1536)
     parsed = parse_unit_artifact(exported.blob)
     values, scale = materialize_bf16(parsed.unit, parsed.grid, parsed.code)
     assert values.dtype is torch.bfloat16 and scale.shape == (SHAPE[0],)
     assert scale.dtype is torch.float32
-    assert torch.equal(values.float(), values.float().to(torch.bfloat16).float())
-    tile = materialize_bf16_folded(parsed.unit, parsed.grid, parsed.code)
-    assert torch.equal(tile, (values.float() * scale[:, None]).to(torch.bfloat16))
-    # And the epilogue really is the more accurate arrangement.
-    torch.manual_seed(7)
-    x = torch.randn(64, SHAPE[1])
-    exact = x @ (values.float() * scale[:, None]).T
+    x = torch.eye(SHAPE[1], dtype=torch.float32)
     epilogue = (x @ values.float().T) * scale[None, :]
-    folded = x @ tile.float().T
-    assert float((epilogue - exact).norm()) < float((folded - exact).norm())
-
-
-@pytest.mark.parametrize("share,err_gap,sq_gap", [
-    (0.154, 0.0118, 0.0237),  # GLM experts, BF16 R=7: the receipt's worked example
-    (0.110, 0.0060, 0.0121),  # dense Qwen transfer (out 0.01214, same fold constant)
-    (0.020, 0.0002, 0.0004),  # BF16 R=4: the rung where the share is small
-])
-def test_a_fold_share_composes_in_quadrature_not_as_a_percent_win(share, err_gap, sq_gap):
-    """A fold share is not a route win: it composes in quadrature (#45).
-
-    The weight-space table (``tessera-bf16-route-2026-09-02.md`` §7b) defines
-    ``fold = sqrt(out_bf16^2 - out^2)``, so a share ``s`` raises the twin's
-    error by ``sqrt(1+s^2)-1`` and its squared error -- the quantity an
-    output-space KL tracks -- by ``s^2``. The shares are the receipt's (15.4%
-    GLM at R=7, ~11% transferred to dense Qwen, 2.0% at R=4); the gaps are
-    derived here from that definition. The pre-#45 reading turned the first
-    row into "the route is ~15% better than its twin"; the definition gives
-    1.2% and 2.4%, and served at R=7 the twin's KL is 1.0011x the route's on
-    ``all`` and 0.9961x on ``confident`` -- signs disagree, i.e. below what
-    the corpus resolves (``tessera-bf16-route-served-2026-09-02.md`` §3). The
-    never-fold rule itself is untouched and is held by
-    ``test_the_route_rounds_the_weight_nowhere_and_the_twin_rounds_once``.
-    """
-    assert math.sqrt(1 + share ** 2) - 1 == pytest.approx(err_gap, abs=5e-5)
-    assert share ** 2 == pytest.approx(sq_gap, abs=5e-5)
-    assert err_gap < share / 10, "the win is an order of magnitude below the share"
+    canonical = reconstruct_unit(parsed.unit, parsed.grid, None)
+    assert torch.equal(epilogue, canonical.T)
 
 
 def test_the_streamed_pair_is_the_materialised_one():
@@ -424,23 +392,25 @@ def test_the_route_refuses_a_block_plane():
         materialize_bf16(unit, forests, None)
 
 
-def test_the_stock_helper_routes_this_unit_to_the_tile():
+def test_the_stock_helper_ships_the_derived_rendering():
     """``materialize_stock`` is what a loader dispatching on the wire calls.
 
     On E2M1 it returns an NVFP4 triple and on E4M3 an FP8 pair; on this grid
     there is no stock quantized layout to build, because bf16 *is* the stock
-    layout -- so it returns one ``weight``, and it must be the same tensor
-    ``materialize_bf16_folded`` gives, or a checkpoint and a lane disagree about one
-    artifact.
+    layout -- so it returns one ``weight``.  A one-tensor checkpoint carries
+    no scale, so the weight is the derived stock rendering: the canonical
+    pair's product rounded once to bf16.  That is the checkpoint file's
+    rendering, not canonical and not served math.
     """
     from tessera.stock import materialize_stock
 
     _, exported, _, _ = _encode(q256=1536)
     parsed = parse_unit_artifact(exported.blob)
+    values, scale = materialize_bf16(parsed.unit, parsed.grid, parsed.code)
     got = materialize_stock(parsed.unit, parsed.grid, parsed.code)
     assert set(got) == {"weight"} and got["weight"].dtype is torch.bfloat16
     assert torch.equal(
-        got["weight"], materialize_bf16_folded(parsed.unit, parsed.grid, parsed.code))
+        got["weight"], (values.float() * scale[:, None]).to(torch.bfloat16))
 
 
 def test_a_checkpoint_config_naming_this_grid_replays_it():
@@ -513,14 +483,6 @@ def test_the_streamed_decoder_starts_a_shard_where_the_parent_left_off():
     got_tile, got_scale = stream_bf16(prepare_bf16_unit(shard.unit))
     assert torch.equal(got_tile, want_tile)
     assert torch.equal(got_scale, want_scale)
-
-
-def test_the_folded_rendering_of_a_shard_agrees_too():
-    """The twin's one-tensor rendering takes the same start state."""
-    shard = _row_shard()
-    assert torch.equal(
-        stream_bf16_folded(prepare_bf16_unit(shard.unit)),
-        materialize_bf16_folded(shard.unit, shard.grid, shard.code))
 
 
 def test_a_whole_unit_is_unchanged_by_the_threading():

@@ -70,6 +70,8 @@ __all__ = [
     "WireRecipe",
     "wire_recipe",
     "served_recipe",
+    "E2M1X2_SERVED_RECIPE",
+    "E2M1X2_SERVED_WINDOW_BITS",
     "DEFAULT_LDLQ_SIGMA",
     "DEFAULT_LDLQ_BLOCK",
     "DEFAULT_REFIT_OBJECTIVE",
@@ -1448,6 +1450,14 @@ E2M1X2_SUBCAP_RECIPE = WireRecipe(
     window_sigma=DEFAULT_WINDOW_SIGMA, channel_sigma=DEFAULT_CHANNEL_SIGMA,
 )
 
+#: Native fused T-4 uses this wire for dense and routed serving.
+#: The research recipe stays unchanged. Each tuple-code table uses 16,384 bytes.
+E2M1X2_SERVED_WINDOW_BITS = 14
+E2M1X2_SERVED_RECIPE = WireRecipe(
+    body=BodyKind.WINDOW, span=1, scale_plane=ScalePlaneKind.LUT,
+    window_bits=E2M1X2_SERVED_WINDOW_BITS, window_seed=DEFAULT_WINDOW_SEED,
+    window_sigma=DEFAULT_WINDOW_SIGMA, channel_sigma=DEFAULT_CHANNEL_SIGMA,
+)
 
 def tcq_cap_q256(grid: PayloadGrid) -> int:
     """The coset trellis's highest rung on ``grid`` in q256 per position:
@@ -1502,14 +1512,9 @@ def wire_recipe(grid: PayloadGrid, q256: "int | None" = None) -> WireRecipe:
       per-channel FP8 tensor, so the route is the FP8 MMA (W8A8).
     * **E2M1x2 below the cap** (``q256 < tcq_cap_q256(grid)``, 3.5 body bits
       per weight): ``E2M1X2_SUBCAP_RECIPE`` -- the window body over LUT16,
-      L=12.  1.06-1.10x EXL3 at 2.5-3.5 bpp where the coset trellis is
-      1.36-1.43x.  This is the RESEARCH default the table records: a served
-      ROUTED stack below the cap carries the span-2 TCQ spelling instead
-      (``served_recipe`` promotes it to TCQ
-      for ``STRUCTURE_ROUTED_MOE`` only, because the routed path decodes TCQ
-      only), measurably worse and stated there.  A DENSE module keeps this
-      WINDOW spelling at every rung, and below the cap the route refuses it
-      at export.  Nothing here moves for research encodes or the stock twin.
+      L=12. This research recipe stays unchanged for current measurements.
+      ``served_recipe`` selects the native WINDOW L14 wire for both dense
+      and routed serving. Explicit TCQ remains available for research.
     * **E2M1x2 at the cap** and **E2M1**: ``TCQ_RECIPE``.  At the cap the
       structured coset table beats the window on the wire at L=12 (1.170x
       against 1.244x) and at L=14 (1.21x): the window pays the table's
@@ -1541,58 +1546,25 @@ def wire_recipe(grid: PayloadGrid, q256: "int | None" = None) -> WireRecipe:
 
 def served_recipe(grid: PayloadGrid, q256: int,
                   structure: str = STRUCTURE_DENSE) -> WireRecipe:
-    """The wire a SERVED unit of ``structure`` carries on ``grid`` at ``q256``.
+    """Return the wire for a served unit at this grid, rung and structure.
 
-    The one statement per ``(grid, q256, structure)`` that the serving
-    exporter encodes, the cached-unit receipt stamps (``cached_unit``) and the
-    export intake adopts, and that the contract's ``formats[].attested_wire``
-    must equal at every attested rung (``tests/test_serving_attested_wire.py``).
+    The exporter, cached-unit records and accountant use this function.
+    Dense and routed E2M1x2 units use WINDOW L14 over the LUT16 scale plane.
+    The pure column widths 1..8 correspond to q256 values 128..1024.
+    Fractional schedules keep the same wire; this recipe does not assert
+    measured route eligibility or quality.
 
-    The route decides the body.  On the NVFP4 route (every grid but E4M3 and
-    BF16) a ``routed_moe`` stack carries span-2 TCQ at EVERY readable rung, not
-    just the cap: the contract stamps ``tcq``/``span 2`` across the whole
-    reader range (contract v32, tessera#506 leg 2) and ``prepare_span2_compact``
-    takes a TCQ unit only, so a sub-cap rung served through the WINDOW recipe
-    ``wire_recipe`` resolves below the cap for research and stock work would
-    be unreadable by the one decoder the routed path has.  The recipe table
-    keeps its WINDOW default -- research encodes and the stock twin are
-    untouched -- and the span-2 TCQ wire is the served spelling above it,
-    exactly as ``_resolve_recipe`` resolves a caller that names TCQ over a
-    window recipe.
-
-    A DENSE module keeps the ``wire_recipe`` spelling at every rung (D2b,
-    tessera#560): the seven-rung load receipt covers the MoE kernel only,
-    never the dense ``native_span2`` path, so promoting dense sub-cap to TCQ
-    would serve an unmeasured decoder.  Below the cap that is the WINDOW body,
-    which the route refuses at export.  With the default ``structure`` this is
-    ``wire_recipe`` at every rung, byte for byte, which is what keeps every
-    receipt stamped before this function existed valid.
-
-    On the FP8 and BF16 routes the recipe IS the served wire, so this is the
-    plain ``wire_recipe`` there.
-
-    The TCQ promotion below the cap is necessary AND measured-worse:
-    necessary because the routed path decodes TCQ only (the round-5 red run
-    proved it); measured-worse because the table's WINDOW default was chosen
-    on the frontier (``docs/tessera-one-format.md`` section 4: E2M1x2 TCQ
-    span-2 at 1.401x/1.357x/1.431x EXL3 at 2.5/3.0/3.5 bpp against window
-    L=12 at 1.056x/1.061x/1.098x).  Every sub-cap ROUTED rung therefore serves
-    the costlier of the two wires, on purpose and in the open.
+    ``wire_recipe`` keeps its research defaults. Callers can select TCQ
+    explicitly for research and byte-matched quality screens. E4M3, BF16
+    and scalar E2M1 keep their existing recipes.
     """
     if structure not in STRUCTURES:
         raise GrammarError(
             f"structure {structure!r} is not one of {STRUCTURES}; there is no served "
             "wire for a unit served as it")
-    recipe = wire_recipe(grid, q256)
-    if (structure == STRUCTURE_ROUTED_MOE and grid.name not in ("E4M3", "BF16")
-            and recipe.body is not BodyKind.TCQ):
-        # The only non-TCQ recipe on the NVFP4 route is E2M1X2_SUBCAP_RECIPE
-        # (LUT plane, default seed, no sigmas, and a window width a TCQ body
-        # must not carry), so the promotion IS TCQ_RECIPE: no rebuild.
-        # ``test_the_served_promotion_is_the_resolved_tcq_wire`` holds it
-        # equal to what ``_resolve_recipe`` builds from the fields.
-        return TCQ_RECIPE
-    return recipe
+    if grid.arity == 2 and grid.name.startswith("E2M1"):
+        return E2M1X2_SERVED_RECIPE
+    return wire_recipe(grid, q256)
 
 
 @dataclass(frozen=True)

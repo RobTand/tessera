@@ -37,7 +37,7 @@ ROOT = Path(__file__).resolve().parents[1]
 HERE = ROOT / "experiments/graph_attest_702"
 sys.path.insert(0, str(HERE))
 import managed_window as window
-import tp2_recipe as recipe
+import eager_benchmark
 
 REFUSAL = "local MemAvailable below 107 GiB preflight"
 FLOOR = "local MemAvailable below 2 GiB physical memory floor"
@@ -131,7 +131,7 @@ def d30_adapter(tmp_path, monkeypatch, *, rank=0, read, clock, eager=False):
         monkeypatch.setattr(rank_window, "scope_memory",
                             lambda owned: dict(rank=owned["rank"], scope_id=owned["scope_id"]))
     adapter = new_adapter(tmp_path, owned, rank)
-    adapter.config = dict(window_mode=recipe.EAGER_MODE if eager else "graph-control")
+    adapter.config = dict(window_mode=eager_benchmark.MODE if eager else "graph-control")
     adapter.envelope = window.Envelope(clock.time() + 1200, cleanup_seconds=60)
     return adapter
 
@@ -459,12 +459,64 @@ def test_finite_cleanup_deadline_shortens_the_kill_grace(tmp_path):
     started = time.monotonic()
     with pytest.raises(TimeoutError):
         envelope.run([sys.executable, "-c", STUBBORN_ALONE_CHILD, str(pids)], limit=1.0, cleanup=True)
+    child = int(pids.read_text())
+    # SIGKILL is asynchronous. Keep the original elapsed bound for physical death.
+    await_dead([child], started + 9.5)
     elapsed = time.monotonic() - started
-    assert not alive(int(pids.read_text()))
+    assert not alive(child)
     assert 7 <= elapsed <= 9.5, "termination respects the original eight-second envelope"
     (record,) = envelope.terminations
     assert signal_names(record) == ["SIGTERM", "SIGKILL"]
     assert record["deadline_shortened_grace"] is True
+
+
+def test_delayed_kill_reap_preserves_deadline_and_records_cleanup(monkeypatch):
+    clock = FakeClock()
+    monkeypatch.setattr(window, "time", clock)
+    envelope = window.Envelope(clock.time() + 8, cleanup_seconds=2)
+    signals, waits = [], []
+
+    class DelayedProcess:
+        pid = 4242
+        returncode = None
+
+        def communicate(self, *, input, timeout):
+            clock.advance(timeout)
+            raise subprocess.TimeoutExpired("delayed-child", timeout)
+
+        def poll(self):
+            return self.returncode
+
+        def wait(self, *, timeout):
+            waits.append(timeout)
+            assert signals == [(self.pid, signal.SIGTERM), (self.pid, signal.SIGKILL)]
+            clock.advance(timeout)
+            assert .02 > timeout
+            raise subprocess.TimeoutExpired("delayed-child", timeout)
+
+    process = DelayedProcess()
+    monkeypatch.setattr(window.subprocess, "Popen", lambda *args, **kwargs: process)
+
+    def killpg(pid, sig):
+        assert pid == process.pid, "cleanup must signal only the owned process group"
+        if sig:
+            signals.append((pid, sig))
+
+    monkeypatch.setattr(window.os, "killpg", killpg)
+    started = clock.monotonic()
+    with pytest.raises(TimeoutError, match="subprocess deadline: delayed-child") as excinfo:
+        envelope.run(["delayed-child"], limit=1, cleanup=True)
+    assert type(excinfo.value) is TimeoutError
+    assert waits == [.01], "the final reap has only 10 ms after the absolute deadline"
+    assert clock.monotonic() - started == pytest.approx(8.01)
+    (record,) = envelope.terminations
+    assert record["pid"] == process.pid
+    assert signal_names(record) == ["SIGTERM", "SIGKILL"]
+    assert record["deadline_shortened_grace"] is True
+    assert record["reap_timed_out"] is True
+    assert record["reap_timeout_seconds"] == .01
+    assert record["returncode"] is None
+    assert record["ended_unix"] == clock.time()
 
 
 # --- exact-attempt container termination -------------------------------------

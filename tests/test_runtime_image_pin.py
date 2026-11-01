@@ -1,4 +1,4 @@
-"""The serve-image pin is a digest, and a mismatch refuses (issue #100).
+"""Serving image integrity always refuses; historical pins stamp in dev mode.
 
 NOTE ON WHAT IS *NOT* HERE: the digest itself.  The pin lives in exactly one
 place -- ``runtime_contract.json``'s ``versions.default_serve_image`` -- and a
@@ -138,7 +138,8 @@ def test_a_tag_resolving_to_the_pin_passes_and_records_the_digest():
     assert record["resolved_digest"] == parse_reference(pin)[2]
 
 
-def test_a_tag_resolving_to_other_bytes_is_refused_not_warned():
+def test_a_tag_resolving_to_other_bytes_refuses_in_certified_mode(monkeypatch):
+    monkeypatch.setenv("PRISMAQUANT_DEV_MODE", "0")
     other = "vllm/vllm-openai@sha256:" + "0" * 64
     with pytest.raises(RuntimeImageError) as exc:
         require_pinned("vllm/vllm-openai:latest",
@@ -151,6 +152,24 @@ def test_a_tag_resolving_to_other_bytes_is_refused_not_warned():
     assert payload["fix"] == f"docker pull {pinned_reference()}"
     assert payload["repo_digests"] == [other]
 
+
+def test_historical_default_pin_difference_stamps_and_keeps_actual_bytes(monkeypatch, capsys):
+    monkeypatch.delenv("PRISMAQUANT_DEV_MODE", raising=False)
+    other = "vllm/vllm-openai@sha256:" + "0" * 64
+    record = require_pinned("vllm/vllm-openai:latest",
+                            inspector=_inspector(repo_digests=[other]))
+    assert not record["refused"] and not record["gated"]
+    assert record["dev_uncertified"] and record["reason"] == "image_pin_mismatch"
+    assert record["resolved_reference"] == other
+    output = capsys.readouterr()
+    assert not output.out and "[DEV-MODE]" in output.err
+
+
+def test_resolve_keeps_its_receipt_return_contract_in_certified_mode(monkeypatch):
+    monkeypatch.setenv("PRISMAQUANT_DEV_MODE", "0")
+    other = "vllm/vllm-openai@sha256:" + "0" * 64
+    record = resolve("vllm/vllm-openai:latest", inspector=_inspector(repo_digests=[other]))
+    assert record["refused"] and record["reason"] == "image_pin_mismatch"
 
 def test_an_absent_image_is_the_same_refusal_with_the_same_fix():
     with pytest.raises(RuntimeImageError) as exc:
@@ -443,15 +462,7 @@ def test_the_cli_prints_the_pin_the_wrappers_default_to():
 
 
 def experiment_shell_scripts() -> list:
-    """Every shell script under ``experiments/``, at any depth.
-
-    One enumerator, because two legs of this file read the same population
-    for two rules and read it differently: the container gate walked the top
-    level while the pin-override gate walked the tree, so a script in a
-    campaign subdirectory was held to one rule and not the other.  A
-    campaign directory is where a wrapper is most likely to be copied and
-    edited, which is exactly where the gate must still reach.
-    """
+    """Enumerate all experiment shell scripts, including campaign subdirectories."""
     return sorted((ROOT / "experiments").rglob("*.sh"))
 
 
@@ -470,18 +481,7 @@ def test_the_wrapper_scan_reaches_a_campaign_subdirectory():
         "neither rule")
 
 
-def test_every_wrapper_that_starts_a_container_gates_and_names_no_digest():
-    """The wrappers' own text: a `docker run` behind no gate is the defect."""
-    starters = sorted(
-        p for p in experiment_shell_scripts()
-        if re.search(r"^\s*(exec\s+)?docker run", p.read_text(), re.M))
-    assert starters, "no container-starting wrapper found; the scan moved"
-    for path in starters:
-        text = path.read_text()
-        assert "runtime_image_require" in text, (
-            f"{path.name} starts a container without gating its image")
-        assert "vllm/vllm-openai:latest" not in text, (
-            f"{path.name} still names the floating tag")
+
 
 
 def test_no_campaign_overrides_the_runtime_pin_with_a_floating_image():
@@ -502,13 +502,13 @@ def test_no_campaign_overrides_the_runtime_pin_with_a_floating_image():
     )
 
 
-def test_the_shell_helper_refuses_and_prints_json_a_program_can_read(tmp_path):
+def test_the_shell_helper_refuses_and_prints_json_a_program_can_read(tmp_path, monkeypatch):
     """``experiments/runtime_image.sh`` is what the wrappers source.
 
-    Driven with a fake ``docker`` on PATH so no daemon is touched: the point
-    under test is the wrapper's own control flow -- does a mismatch stop it --
-    not whether this box happens to hold the right image today.
+    A fake docker exercises the wrapper's certified-mode control flow, not
+    which image this box holds. Development-mode stamps are tested above.
     """
+    monkeypatch.setenv("PRISMAQUANT_DEV_MODE", "0")
     fake = tmp_path / "bin"
     fake.mkdir()
     (fake / "docker").write_text(

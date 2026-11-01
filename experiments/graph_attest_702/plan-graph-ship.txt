@@ -1,0 +1,5 @@
+# Explicit ship-graph-2048 A8S/socket/TP2/c1 lever OFF/ON pair at the SAME MNBT.
+# Both arms use the frozen October5 L512/2048/8192 timing/profile matrix, not c4 equality.
+# Declare every lever in each row. The ON arm may enable one or more; no defaults move.
+graph2048_off FABRIC=socket EAGER=0 MAX_BATCHED=2048 COMPILATION_JSON={"mode":"NONE","cudagraph_mode":"FULL_DECODE_ONLY"} SPEC_JSON={"method":"mtp","num_speculative_tokens":1,"draft_tensor_parallel_size":2,"moe_backend":"triton"} TESSERA_E4M3_DECODE_ONCE=0 TESSERA_GLM53_KDA_CONV_SPLIT=off TESSERA_ROUTED_PIECE_MAJOR=0
+graph2048_on FABRIC=socket EAGER=0 MAX_BATCHED=2048 COMPILATION_JSON={"mode":"NONE","cudagraph_mode":"FULL_DECODE_ONLY"} SPEC_JSON={"method":"mtp","num_speculative_tokens":1,"draft_tensor_parallel_size":2,"moe_backend":"triton"} TESSERA_E4M3_DECODE_ONCE=1 TESSERA_GLM53_KDA_CONV_SPLIT=on TESSERA_ROUTED_PIECE_MAJOR=1

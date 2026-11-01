@@ -34,8 +34,8 @@ __all__ = ["DecodedE4M3", "FLAG", "MIN_M", "decode_e4m3", "enabled", "prefill_ap
 
 E4M3 = torch.float8_e4m3fn
 
-#: Default off.  ``1`` makes the FP8 dense route decode each resident module
-#: once at load and serve M >= ``MIN_M`` from the decoded copy.
+#: Default on for resident modules with an eager forward. Explicit 0 opts out.
+#: Decode once at load and serve M >= MIN_M from the resident copy.
 FLAG = "TESSERA_E4M3_DECODE_ONCE"
 
 #: The smallest M the decoded lane takes.  Measured, not chosen: 256 is the
@@ -50,7 +50,7 @@ def enabled() -> bool:
     """``TESSERA_E4M3_DECODE_ONCE``, strictly parsed and latched per process."""
     from .flags import latched_bool
 
-    return latched_bool(FLAG, meaning="the decode-once E4M3 dense prefill lane")
+    return latched_bool(FLAG, default=True, meaning="the decode-once E4M3 dense prefill lane")
 
 
 @dataclasses.dataclass(frozen=True)
@@ -68,9 +68,8 @@ class DecodedE4M3:
 
 def _decode_role(bundle, chunk: int) -> torch.Tensor:
     """One role's ``[rows, cols]`` E4M3 bytes through its own Triton decoder."""
-    if bundle.family != "e4m3" or bundle.arithmetic != "epilogue":
-        raise ValueError(f"decode-once serves the E4M3 epilogue contract, not "
-                         f"{bundle.family}/{bundle.arithmetic}")
+    if bundle.family != "e4m3":
+        raise ValueError(f"decode-once serves the E4M3 family, not {bundle.family!r}")
     unit = dataclasses.replace(bundle, scale=torch.ones_like(bundle.scale))
     cols, device = int(bundle.cols), bundle.scale.device
     weight = torch.empty(int(bundle.rows), cols, dtype=E4M3, device=device)

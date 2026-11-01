@@ -9,6 +9,23 @@
 # under <out_dir> (HOME/TMPDIR/Triton and torch-extension caches included).
 set -euo pipefail
 CHECKOUT=$(realpath "$1"); OUT=$(realpath -m "$2"); shift 2
+BENCH_PY=${BENCH_PY:-bench_t8r.py}
+DOCKER_IDENTITY=(--user "$(id -u):$(id -g)")
+mkdir -p "$OUT/home" "$OUT/tmp" "$OUT/triton"
+# D38 exercises the same source entry and output-directory owner before CUDA.
+if [[ ( "$BENCH_PY" == bench_geometry.py || "$BENCH_PY" == bench_class_dispatch.py || "$BENCH_PY" == bench_uniform_production_arm.py ) && " $* " == *" --cpu-preflight "* ]]; then
+  printf 'D38 Docker user mapping: %s; output owner: %s\n' "${DOCKER_IDENTITY[*]}" "$(stat -c %u:%g "$OUT/home")"
+  for directory in "$OUT" "$OUT/home" "$OUT/home/torch_extensions" "$OUT/tmp" "$OUT/triton"; do
+    mkdir -p "$directory"
+    probe=$(mktemp "$directory/d38-user.XXXXXX")
+    printf 'D38-user-%s' "$(id -u)" > "$probe"
+    [[ "$(cat "$probe")" == "D38-user-$(id -u)" ]]
+    rm -- "$probe"
+  done
+  PREFLIGHT_SRC=${BENCH_SRC:-$CHECKOUT/src}
+  PYTHONPATH="$PREFLIGHT_SRC:${PYTHONPATH:-}" exec "${BENCH_CPU_PYTHON:-/home/rob/venvs/pb-cpu/bin/python}" \
+    "$CHECKOUT/experiments/t8r_speed/$BENCH_PY" --out "$OUT" "$@"
+fi
 IMAGE_REF=${ORACLE_IMAGE:?set ORACLE_IMAGE to the immutable PB-declared measurement image}
 source "$CHECKOUT/experiments/runtime_image.sh"
 runtime_image_require "$IMAGE_REF"
@@ -29,8 +46,11 @@ ART=/mnt/shared/tessera-measurements/pact-e4m3-accuracy-20260928/release-t8/expo
 for ((i=1; i<=$#; i++)); do
   if [[ "${!i}" == --artifact ]]; then j=$((i+1)); ART=${!j}; fi
 done
-[[ -f "$ART/config.json" ]] || { echo "missing artifact: $ART" >&2; exit 2; }
-mkdir -p "$OUT/home" "$OUT/tmp" "$OUT/triton"
+ART_MOUNT=()
+if [[ "$BENCH_PY" != bench_geometry.py && "$BENCH_PY" != bench_class_dispatch.py && "$BENCH_PY" != bench_uniform_production_arm.py ]]; then
+  [[ -f "$ART/config.json" ]] || { echo "missing artifact: $ART" >&2; exit 2; }
+  ART_MOUNT=(-v "$ART":"$ART":ro)
+fi
 CPUS=$(python3 -c 'import os; s=sorted(os.sched_getaffinity(0)); print(",".join(map(str,s)))')
 HEAD=${TESSERA_HEAD:-$(git -C "$CHECKOUT" rev-parse HEAD 2>/dev/null || echo unknown)}
 STATE=${TESSERA_STATE:-$(git -C "$CHECKOUT" status --short 2>/dev/null | tr '\n' ';' || echo unknown)}
@@ -167,8 +187,8 @@ EXT_BEFORE=$(ext_libs)
 echo "ext_dir=$EXT_DIR prebuilt=[$(echo "$EXT_BEFORE" | tr '\n' ';')]"
 rc=0
 "${RUN_PREFIX[@]}" docker run --rm --gpus all --ipc=host --network=host --cpuset-cpus "$CPUS" "${DIRECT_OPTS[@]}" \
-  --user "$(id -u):$(id -g)" \
-  -v "$CHECKOUT":/work:ro "${SRC_MOUNT[@]}" -v "$ART":"$ART":ro -v "$OUT":"$OUT" \
+  "${DOCKER_IDENTITY[@]}" \
+  -v "$CHECKOUT":/work:ro "${SRC_MOUNT[@]}" "${ART_MOUNT[@]}" -v "$OUT":"$OUT" \
   -e KERNEL_SHA="$KERNEL_SHA" \
   -e HOME="$OUT/home" -e TMPDIR="$OUT/tmp" -e TRITON_CACHE_DIR="$OUT/triton" \
   -e TORCH_EXTENSIONS_DIR="$CONTAINER_EXT" \

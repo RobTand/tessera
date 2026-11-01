@@ -1,11 +1,8 @@
-"""What a unit is served AS: a dense Linear or one projection of a routed MoE stack.
+"""The unit structure: a dense Linear or a routed MoE projection.
 
-The two structures take different decoders, and on the NVFP4 route they carry
-different wires below the E2M1x2 cap (``export.served_recipe``). The names live
-in this core module so that ``export`` and ``cached_unit`` can state the served
-wire without importing the serving plugin layer: a historical producer package
-loads ``cached_unit`` and refuses any ``serving`` import
-(``historical_producer``). ``serving.scheme`` re-exports them.
+Both structures use the same served E2M1x2 recipe. These core names let
+``export`` and ``cached_unit`` select the recipe without a serving import.
+Historical producer packages keep that import boundary.
 """
 from __future__ import annotations
 

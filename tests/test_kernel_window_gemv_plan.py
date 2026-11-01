@@ -26,6 +26,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 from tessera.errors import GrammarError                          # noqa: E402
 from tessera import kernel_window_gemv as kg                     # noqa: E402
 from tessera.kernel_roster import WINDOW_GEMV_SOURCE             # noqa: E402
+from tessera.window_geometry import TILE_ROWS                    # noqa: E402
 
 BF16 = torch.bfloat16
 FP32 = torch.float32
@@ -229,7 +230,7 @@ def _repacked(cols: int, rate: int = 4, n_tiles: int = 2) -> kg.Repacked:
     and the words' device, which is all an item table is cut from."""
     runs = torch.tensor([[rate, 0, cols, 0]], dtype=torch.int32)
     return kg.Repacked(words=torch.zeros(1, dtype=torch.int32), tile_words=0, n_tiles=n_tiles,
-                       rows=n_tiles * kg.TILE_ROWS, cols=cols, rows_p=n_tiles * kg.TILE_ROWS,
+                       rows=n_tiles * TILE_ROWS, cols=cols, rows_p=n_tiles * TILE_ROWS,
                        perm=torch.arange(cols, dtype=torch.int32), runs=runs, rates=(rate,))
 
 

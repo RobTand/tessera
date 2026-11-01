@@ -1,0 +1,456 @@
+{
+ "cell_launch_agreement": {
+  "agrees": null,
+  "platform": "sm_121",
+  "runtime": {
+   "execution_mode": "eager",
+   "image": "localhost/prismaquant/spark-vllm-nccl230@sha256:5be13705acaecc7b4aaf342a84f80d67844c9970ff8375bf9fbeecc9c98ce84a"
+  },
+  "schema": "tessera.cell-launch-agreement.by-structure/1",
+  "structures": {
+   "routed_moe": {
+    "agrees": null,
+    "phases": {
+     "decode": {
+      "cells": {},
+      "covered_by_cell": 0,
+      "modules": 2,
+      "regime": "decode",
+      "unattested": 2,
+      "unsupported_records": 0
+     },
+     "prefill": {
+      "cells": {},
+      "covered_by_cell": 0,
+      "modules": 2,
+      "regime": "batch",
+      "unattested": 2,
+      "unsupported_records": 0
+     }
+    },
+    "platform": "sm_121",
+    "runtime": {
+     "execution_mode": "eager",
+     "image": "localhost/prismaquant/spark-vllm-nccl230@sha256:5be13705acaecc7b4aaf342a84f80d67844c9970ff8375bf9fbeecc9c98ce84a"
+    },
+    "schema": "tessera.cell-launch-agreement/3",
+    "structure": "routed_moe"
+   }
+  }
+ },
+ "checkpoint": "/model",
+ "checkpoint_sidecars": {
+  "config.json": "ac48f8a159abd59d0682b079f47c94b1db57a1d51aa2f4a6b657718838ef116d",
+  "tessera_serving_manifest.json": "5100b3dcc6cd71be9cea588a22de45b3169c601150348af0f20b9f9c526ff281"
+ },
+ "compilation_config": null,
+ "compiled": false,
+ "compiled_attestation": null,
+ "declared_families": {
+  "TESSERA_FP8": 1
+ },
+ "declared_name_mapping": {
+  "model.language_model.layers.1.mlp.experts": "language_model.model.layers.1.mlp.experts"
+ },
+ "declared_names_mapped_to_module_space": true,
+ "decoder_coverage": {
+  "phases": {
+   "decode": {
+    "decoders": {
+     "native_routed_fused_window_e4m3mma": 2
+    },
+    "modules": 2
+   },
+   "prefill": {
+    "decoders": {
+     "native_routed_fused_window_e4m3mma": 2
+    },
+    "modules": 2
+   }
+  },
+  "required": []
+ },
+ "device": {
+  "capability": [
+   12,
+   1
+  ],
+  "name": "NVIDIA GB10",
+  "platform_token": "sm_121"
+ },
+ "elapsed_s": 126.5,
+ "engine_backends": {
+  "kernel_config": {
+   "enable_flashinfer_autotune": false
+  },
+  "kv_cache_dtype": "fp8_ds_mla",
+  "moe_backend": "triton",
+  "trust_remote_code": true
+ },
+ "engine_scope": {
+  "language_model_only": true
+ },
+ "env": {
+  "TESSERA_RESEARCH_GLM53_NOPE": "0",
+  "TESSERA_SERVE_MODE": "resident",
+  "VLLM_DISABLED_KERNELS": null
+ },
+ "generated_text": "MarshalAliasesAliasesAliasesAliasesAliasesAliasesAliases",
+ "histogram": {
+  "decode": {
+   "other_route_modules": 0,
+   "regime": "decode",
+   "routes": [
+    {
+     "contract": "fp8_per_token_dynamic",
+     "decoder": "native_routed_fused_window_e4m3mma",
+     "kind": "moe",
+     "modules": 2,
+     "policy": "TESSERA_FP8:resident",
+     "state": "served",
+     "symbol": "tessera.routed_fused.FusedRoutedWindowMoE.__call__"
+    }
+   ],
+   "shapes": [
+    "M1:N2048:K4096"
+   ],
+   "tessera_modules": 2,
+   "tessera_modules_by_family": {
+    "TESSERA_FP8": 2
+   }
+  },
+  "prefill": {
+   "other_route_modules": 0,
+   "regime": "batch",
+   "routes": [
+    {
+     "contract": "fp8_per_token_dynamic",
+     "decoder": "native_routed_fused_window_e4m3mma",
+     "kind": "moe",
+     "modules": 2,
+     "policy": "TESSERA_FP8:resident",
+     "state": "served",
+     "symbol": "tessera.routed_fused.FusedRoutedWindowMoE.__call__"
+    }
+   ],
+   "shapes": [
+    "M64:N2048:K4096"
+   ],
+   "tessera_modules": 2,
+   "tessera_modules_by_family": {
+    "TESSERA_FP8": 2
+   }
+  }
+ },
+ "lane_engagement": {
+  "all_required_engaged": null,
+  "declared_by_artifact": [],
+  "engaged_modules_max": {},
+  "phases": {
+   "decode": {
+    "decoders": {
+     "native_routed_fused_window_e4m3mma": 2
+    },
+    "engaged_modules": {},
+    "lane_refusals": {},
+    "tessera_modules": 2,
+    "unengaged_required_lanes": []
+   },
+   "prefill": {
+    "decoders": {
+     "native_routed_fused_window_e4m3mma": 2
+    },
+    "engaged_modules": {},
+    "lane_refusals": {},
+    "tessera_modules": 2,
+    "unengaged_required_lanes": []
+   }
+  },
+  "required_decoders": {},
+  "required_lanes": [],
+  "schema": "tessera.lane-engagement/1"
+ },
+ "lane_refusals": {},
+ "memory_budget": {
+  "gpu_memory_utilization": 0.3,
+  "kv_cache_memory_bytes": 268435456
+ },
+ "problems": [],
+ "prompt_tokens": 64,
+ "quant_method": "tessera",
+ "ranks": [
+  {
+   "device": "NVIDIA GB10",
+   "histogram": {
+    "decode": {
+     "other_route_modules": 0,
+     "regime": "decode",
+     "routes": [
+      {
+       "contract": "fp8_per_token_dynamic",
+       "decoder": "native_routed_fused_window_e4m3mma",
+       "kind": "moe",
+       "modules": 1,
+       "policy": "TESSERA_FP8:resident",
+       "state": "served",
+       "symbol": "tessera.routed_fused.FusedRoutedWindowMoE.__call__"
+      }
+     ],
+     "shapes": [
+      "M1:N2048:K4096"
+     ],
+     "tessera_modules": 1,
+     "tessera_modules_by_family": {
+      "TESSERA_FP8": 1
+     }
+    },
+    "prefill": {
+     "other_route_modules": 0,
+     "regime": "batch",
+     "routes": [
+      {
+       "contract": "fp8_per_token_dynamic",
+       "decoder": "native_routed_fused_window_e4m3mma",
+       "kind": "moe",
+       "modules": 1,
+       "policy": "TESSERA_FP8:resident",
+       "state": "served",
+       "symbol": "tessera.routed_fused.FusedRoutedWindowMoE.__call__"
+      }
+     ],
+     "shapes": [
+      "M64:N2048:K4096"
+     ],
+     "tessera_modules": 1,
+     "tessera_modules_by_family": {
+      "TESSERA_FP8": 1
+     }
+    }
+   },
+   "lane_refusals": {},
+   "local_rank": 0,
+   "node": "sparklina",
+   "platform_token": "sm_121",
+   "rank": 0,
+   "records": {
+    "decode": {
+     "language_model.model.layers.1.mlp.experts.routed_experts": {
+      "contract": "fp8_per_token_dynamic",
+      "decoder": "native_routed_fused_window_e4m3mma",
+      "kernel_schedule": "tessera.routed_fused.FusedRoutedWindowMoE.__call__",
+      "kind": "moe",
+      "platform": "sm_121",
+      "policy": "TESSERA_FP8:resident",
+      "reason": null,
+      "shape": "M1:N2048:K4096",
+      "state": "served",
+      "symbol": "tessera.routed_fused.FusedRoutedWindowMoE.__call__",
+      "tile_m": 0
+     }
+    },
+    "prefill": {
+     "language_model.model.layers.1.mlp.experts.routed_experts": {
+      "contract": "fp8_per_token_dynamic",
+      "decoder": "native_routed_fused_window_e4m3mma",
+      "kernel_schedule": "tessera.routed_fused.FusedRoutedWindowMoE.__call__",
+      "kind": "moe",
+      "platform": "sm_121",
+      "policy": "TESSERA_FP8:resident",
+      "reason": null,
+      "shape": "M64:N2048:K4096",
+      "state": "served",
+      "symbol": "tessera.routed_fused.FusedRoutedWindowMoE.__call__",
+      "tile_m": 0
+     }
+    }
+   },
+   "runtime_image": "localhost/prismaquant/spark-vllm-nccl230@sha256:5be13705acaecc7b4aaf342a84f80d67844c9970ff8375bf9fbeecc9c98ce84a",
+   "schema": "tessera.rank-census/1",
+   "world_size": 2
+  },
+  {
+   "device": "NVIDIA GB10",
+   "histogram": {
+    "decode": {
+     "other_route_modules": 0,
+     "regime": "decode",
+     "routes": [
+      {
+       "contract": "fp8_per_token_dynamic",
+       "decoder": "native_routed_fused_window_e4m3mma",
+       "kind": "moe",
+       "modules": 1,
+       "policy": "TESSERA_FP8:resident",
+       "state": "served",
+       "symbol": "tessera.routed_fused.FusedRoutedWindowMoE.__call__"
+      }
+     ],
+     "shapes": [
+      "M1:N2048:K4096"
+     ],
+     "tessera_modules": 1,
+     "tessera_modules_by_family": {
+      "TESSERA_FP8": 1
+     }
+    },
+    "prefill": {
+     "other_route_modules": 0,
+     "regime": "batch",
+     "routes": [
+      {
+       "contract": "fp8_per_token_dynamic",
+       "decoder": "native_routed_fused_window_e4m3mma",
+       "kind": "moe",
+       "modules": 1,
+       "policy": "TESSERA_FP8:resident",
+       "state": "served",
+       "symbol": "tessera.routed_fused.FusedRoutedWindowMoE.__call__"
+      }
+     ],
+     "shapes": [
+      "M64:N2048:K4096"
+     ],
+     "tessera_modules": 1,
+     "tessera_modules_by_family": {
+      "TESSERA_FP8": 1
+     }
+    }
+   },
+   "lane_refusals": {},
+   "local_rank": 0,
+   "node": "sparky",
+   "platform_token": "sm_121",
+   "rank": 1,
+   "records": {
+    "decode": {
+     "language_model.model.layers.1.mlp.experts.routed_experts": {
+      "contract": "fp8_per_token_dynamic",
+      "decoder": "native_routed_fused_window_e4m3mma",
+      "kernel_schedule": "tessera.routed_fused.FusedRoutedWindowMoE.__call__",
+      "kind": "moe",
+      "platform": "sm_121",
+      "policy": "TESSERA_FP8:resident",
+      "reason": null,
+      "shape": "M1:N2048:K4096",
+      "state": "served",
+      "symbol": "tessera.routed_fused.FusedRoutedWindowMoE.__call__",
+      "tile_m": 0
+     }
+    },
+    "prefill": {
+     "language_model.model.layers.1.mlp.experts.routed_experts": {
+      "contract": "fp8_per_token_dynamic",
+      "decoder": "native_routed_fused_window_e4m3mma",
+      "kernel_schedule": "tessera.routed_fused.FusedRoutedWindowMoE.__call__",
+      "kind": "moe",
+      "platform": "sm_121",
+      "policy": "TESSERA_FP8:resident",
+      "reason": null,
+      "shape": "M64:N2048:K4096",
+      "state": "served",
+      "symbol": "tessera.routed_fused.FusedRoutedWindowMoE.__call__",
+      "tile_m": 0
+     }
+    }
+   },
+   "runtime_image": "localhost/prismaquant/spark-vllm-nccl230@sha256:5be13705acaecc7b4aaf342a84f80d67844c9970ff8375bf9fbeecc9c98ce84a",
+   "schema": "tessera.rank-census/1",
+   "world_size": 2
+  }
+ ],
+ "record_owner": {
+  "decode": {
+   "language_model.model.layers.1.mlp.experts.routed_experts": "language_model.model.layers.1.mlp.experts"
+  },
+  "prefill": {
+   "language_model.model.layers.1.mlp.experts.routed_experts": "language_model.model.layers.1.mlp.experts"
+  }
+ },
+ "records": {
+  "decode": {
+   "language_model.model.layers.1.mlp.experts.routed_experts": {
+    "contract": "fp8_per_token_dynamic",
+    "decoder": "native_routed_fused_window_e4m3mma",
+    "kernel_schedule": "tessera.routed_fused.FusedRoutedWindowMoE.__call__",
+    "kind": "moe",
+    "platform": "sm_121",
+    "policy": "TESSERA_FP8:resident",
+    "reason": null,
+    "shape": "M1:N2048:K4096",
+    "state": "served",
+    "symbol": "tessera.routed_fused.FusedRoutedWindowMoE.__call__",
+    "tile_m": 0
+   }
+  },
+  "prefill": {
+   "language_model.model.layers.1.mlp.experts.routed_experts": {
+    "contract": "fp8_per_token_dynamic",
+    "decoder": "native_routed_fused_window_e4m3mma",
+    "kernel_schedule": "tessera.routed_fused.FusedRoutedWindowMoE.__call__",
+    "kind": "moe",
+    "platform": "sm_121",
+    "policy": "TESSERA_FP8:resident",
+    "reason": null,
+    "shape": "M64:N2048:K4096",
+    "state": "served",
+    "symbol": "tessera.routed_fused.FusedRoutedWindowMoE.__call__",
+    "tile_m": 0
+   }
+  }
+ },
+ "runtime": {
+  "execution_mode": "eager",
+  "image": "localhost/prismaquant/spark-vllm-nccl230@sha256:5be13705acaecc7b4aaf342a84f80d67844c9970ff8375bf9fbeecc9c98ce84a"
+ },
+ "runtime_image_declaration": {
+  "env": [
+   "TESSERA_CENSUS_RUNTIME_IMAGE",
+   "TESSERA_CENSUS_RUNTIME_IMAGE_DECLARATION"
+  ],
+  "image": "localhost/prismaquant/spark-vllm-nccl230@sha256:5be13705acaecc7b4aaf342a84f80d67844c9970ff8375bf9fbeecc9c98ce84a",
+  "record": {
+   "fix": null,
+   "gated": true,
+   "local_id": "sha256:acc684c06ec79aa303deda50a15c422084690d3252d2449e9702b40de571fe63",
+   "pinned": "vllm/vllm-openai@sha256:61fc8a896b0a4fbbbdc063bc4b0dbc25ce98e02b5050c24aeb7830ac02039b14",
+   "present": true,
+   "reason": "explicit_digest",
+   "refused": false,
+   "repo_digests": [
+    "localhost/prismaquant/spark-vllm-nccl230@sha256:5be13705acaecc7b4aaf342a84f80d67844c9970ff8375bf9fbeecc9c98ce84a"
+   ],
+   "requested": "localhost/prismaquant/spark-vllm-nccl230@sha256:5be13705acaecc7b4aaf342a84f80d67844c9970ff8375bf9fbeecc9c98ce84a",
+   "requested_tag": null,
+   "required": "localhost/prismaquant/spark-vllm-nccl230@sha256:5be13705acaecc7b4aaf342a84f80d67844c9970ff8375bf9fbeecc9c98ce84a",
+   "resolved_digest": "sha256:5be13705acaecc7b4aaf342a84f80d67844c9970ff8375bf9fbeecc9c98ce84a",
+   "resolved_reference": "localhost/prismaquant/spark-vllm-nccl230@sha256:5be13705acaecc7b4aaf342a84f80d67844c9970ff8375bf9fbeecc9c98ce84a",
+   "schema": "tessera.runtime_image/1"
+  },
+  "schema": "tessera.runtime-image-declaration/1",
+  "source": "launcher_repo_digests"
+ },
+ "scheduler": {
+  "max_num_batched_tokens": 512,
+  "max_num_seqs": 4
+ },
+ "schema": "tessera.serving.route_census/2",
+ "tessera_config_groups": 1,
+ "topology": {
+  "distributed_executor_backend": "mp",
+  "master_addr": "10.100.96.2",
+  "master_port": 29661,
+  "nnodes": 2,
+  "node_rank": 0,
+  "observed_world_size": 2,
+  "requested_tensor_parallel_size": 2
+ },
+ "verdict": "served",
+ "versions": {
+  "python": "3.12.3",
+  "tessera": "0.1.0",
+  "tessera_commit": "0fcaefe6dd26a90a649fd57beff9b149df31ff7a",
+  "tessera_serving": "0.1.0",
+  "torch": "2.13.0+cu130",
+  "vllm": "0.30.1rc1.dev336+gaf5b4857e.d20260929"
+ }
+}

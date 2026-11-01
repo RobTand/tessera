@@ -361,62 +361,30 @@ def _check_native_library_scope(runtime):
 
 def _native_tensor_items(layer):
     """Registered state plus explicit compact serving owners, never scratch."""
-    import dataclasses
-    import torch
     result = list(layer.named_parameters()) + list(layer.named_buffers())
+    method = getattr(layer, "quant_method", None)
+    resident = getattr(method, "resident_tensors", None)
+    if callable(resident):
+        result.extend(("$owner." + name, value) for name, value in resident(layer))
+        return result
     native = getattr(layer, "tessera_native", None)
     if native is not None:
         from tessera.serving.native_window import PreparedDenseNativeModule
         if not isinstance(native, PreparedDenseNativeModule):
             raise ValueError("unsupported compact dense native owner")
         result.extend(("$owner.native." + name, value) for name, value in native.named_tensors())
-    units = getattr(layer, "tessera_a4_units", ())
-    if units:
-        from tessera.kernel_a4 import A4Unit
-        for index, unit in enumerate(units):
-            if not isinstance(unit, A4Unit):
-                raise ValueError("unsupported compact A4 native owner")
-            result.extend((f"$owner.a4.{index}.{field.name}", value)
-                for field in dataclasses.fields(unit)
-                if isinstance(value := getattr(unit, field.name), torch.Tensor))
-        epilogues = getattr(layer, "tessera_a4_epilogues", ())
-        if len(epilogues) != len(units):
-            raise ValueError("compact A4 epilogue roster differs")
-        result.extend((f"$owner.a4_epilogue.{index}", value)
-                      for index, value in enumerate(epilogues))
-    method = getattr(layer, "quant_method", None)
     packed = getattr(method, "_packed", None)
     if packed is not None:
         from tessera.native_window_moe import PackedWindowMoeBundles
         if not isinstance(packed, PackedWindowMoeBundles):
             raise ValueError("native receipts require the compact grouped window owner")
         result.extend(("$owner.moe." + name, value) for name, value in packed.named_tensors())
-    for stage in ("gate", "up", "down"):
-        stack = getattr(layer, f"tessera_a4_{stage}_stack", None)
-        if stack is not None:
-            from tessera.kernel_a4 import A4UnitStack
-            if not isinstance(stack, A4UnitStack):
-                raise ValueError("unsupported compact A4 expert stack")
-            result.extend((f"$owner.a4_moe.{stage}.{field.name}", value)
-                for field in dataclasses.fields(stack)
-                if isinstance(value := getattr(stack, field.name), torch.Tensor))
-            epilogue = getattr(layer, f"tessera_a4_{stage}_epilogues")
-            result.append((f"$owner.a4_moe.{stage}.epilogues", epilogue))
-    for stage in ("gs13", "gs2"):
-        scale = getattr(layer, "tessera_a4_" + stage, None)
-        if scale is not None:
-            result.append(("$owner.a4_moe." + stage, scale))
     return result
 
 
 def _native_tensors(layer):
-    import torch
     result = {name: tensor_identity(value) for name, value in
               _native_tensor_items(layer)}
-    # NVFP4's externally applied epilogue is a Python scalar, not a buffer.
-    for name in ("tessera_epilogue_scale", "tessera_global_scale_real"):
-        if hasattr(layer, name):
-            result["$scalar." + name] = tensor_identity(torch.tensor(getattr(layer, name), dtype=torch.float64))
     if not result:
         raise ValueError("native operator has no observed resident tensors")
     return result
@@ -447,7 +415,7 @@ def represented_native_input(layer, x):
     from tessera.alphabet import E2M1_VALUES
     from tessera.serving.nvfp4_route import blocked_scales, GROUP_SIZE
     scale = (layer.trellis_input_global_scale if hasattr(layer, "trellis_input_global_scale")
-             else layer.tessera_a4_gs13)
+             else layer.tessera_routed_fused.gs13)
     g = scale.data.reshape(())
     packed, blocked = native_ops.native_fp4_quant(x.contiguous(), g)
     m, k = x.shape
@@ -589,6 +557,7 @@ def prepare_native_operator(blob, record, source_weight, rendered_weight, *, uni
         raise ValueError("format differs from original wire recipe")
     method = build_tessera_method(scheme, unit, "resident")
     layer = torch.nn.Module()
+    layer.quant_method = method
     layer.tp_rank, layer.tp_size = rank, world
     local_rows, local_columns = local_shape([rows, columns], execution)
     method.create_weights(layer, input_size_per_partition=local_columns, output_partition_sizes=[local_rows],
@@ -701,6 +670,47 @@ def _check_phase_tensors(panel, phase_tensors):
             _require_cuda_tensor(tensor)
             if tensor_identity(tensor) != expected[name]:
                 raise ValueError(f"{phase}: actual {name} differs from independent panel")
+
+
+def _acceptance_sha(value, name):
+    if (not isinstance(value, str) or len(value) != 64
+            or any(c not in "0123456789abcdef" for c in value)):
+        raise ValueError(f"measurement acceptance lacks digest {name}")
+
+
+def accept_measurement(receipt):
+    """Accept a timing-admissible operator receipt for a decision.
+
+    Every required phase carries a completed timing measurement, content
+    digests on each tensor, and tracked transfer bytes in resources. The
+    receipt carries its own panel and runtime digests. Each gap refuses by
+    name; nothing is accepted on a missing field.
+    """
+    if not isinstance(receipt, dict) or receipt.get("status") != "timing_admissible":
+        raise ValueError("measurement acceptance requires a timing_admissible receipt")
+    _acceptance_sha(receipt.get("panel_sha256"), "panel_sha256")
+    _acceptance_sha(receipt.get("runtime_sha256"), "runtime_sha256")
+    phases = receipt.get("phases")
+    if not isinstance(phases, dict):
+        raise ValueError("measurement acceptance lacks phase observations")
+    transfers = receipt.get("resources", {}).get("phases") if isinstance(receipt.get("resources"), dict) else None
+    for phase in PHASES:
+        observation = phases.get(phase)
+        if not isinstance(observation, dict):
+            raise ValueError(f"measurement acceptance lacks phase {phase!r}")
+        if observation.get("measurement") is None:
+            raise ValueError(f"measurement acceptance lacks {phase} timing measurement")
+        for tensor in ("input", "reference_qdq", "qdq", "reference_output", "output"):
+            record = observation.get(tensor)
+            if not isinstance(record, dict) or not isinstance(record.get("content_sha256"), str):
+                raise ValueError(f"measurement acceptance lacks {phase}.{tensor} digest")
+            _acceptance_sha(record["content_sha256"], f"{phase}.{tensor} content_sha256")
+        movement = transfers.get(phase) if isinstance(transfers, dict) else None
+        if (not isinstance(movement, dict)
+                or type(movement.get("input_bytes")) is not int or movement["input_bytes"] < 0
+                or type(movement.get("output_bytes")) is not int or movement["output_bytes"] < 0):
+            raise ValueError(f"measurement acceptance lacks {phase} tracked transfer bytes")
+    return None
 
 
 def measure_prepared_operator(prepared, panel, phase_tensors, *, warmup_iterations, iterations,
@@ -992,6 +1002,8 @@ def main(argv=None):
                 if _agree_numerical_status(prepared, complete):
                     time_after_resource_collection(prepared, json.loads(args.panel.read_text()), phase_tensors,
                         result, collector=collector, warmup_iterations=args.warmup_iterations, iterations=args.iterations)
+        if result["status"] == "timing_admissible":
+            accept_measurement(result)
         args.out.write_text(json.dumps(result, sort_keys=True, indent=2, allow_nan=False) + "\n")
         # pbrun's CAS result is stdout. Bind the separately retained artifact
         # bytes to that result, rather than relying on an external path alone.

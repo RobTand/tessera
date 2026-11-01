@@ -67,6 +67,8 @@ from __future__ import annotations
 import json
 from typing import Any
 
+from tessera.graph_equality import CHOICES_PER_PASS
+
 SCHEMA = "tessera.graph_equals_eager.v2"
 #: The schema before the fabric was scope: readable, never a card's attestation.
 SCHEMA_V1 = "tessera.graph_equals_eager.v1"
@@ -97,11 +99,53 @@ def canonical(value: Any) -> str:
     return json.dumps(value, sort_keys=True, separators=(",", ":"))
 
 
-def arm_equal(arm: dict) -> bool:
-    """The rule: every choice of every pass a member, and every captured graph replayed."""
+def names_refusal(eager: list[str], graph: list[str]) -> str | None:
+    """Roles and their two expanded pass identities must be independent."""
+    if not eager or not graph:
+        return "eager and graph populations must both be present"
+    names = eager + graph
+    if any(not isinstance(n, str) or not n for n in names):
+        return "arm names must be nonempty strings"
+    expanded = [p for n in names for p in (n, f"{n}-r2")]
+    if len(set(expanded)) != len(expanded):
+        return "duplicate or overlapping arm roles or expanded pass names"
+    return None
+
+
+def complete_passes(arm: dict) -> bool:
+    """Exactly the two required passes, with integral complete population counters.
+
+    Eager membership may vary: completeness is not eager repeat-exactness.
+    """
     passes = arm.get("passes") or []
-    return (len(passes) >= 2
-            and all(p["choices"] > 0 and p["members"] == p["choices"] for p in passes)
+    name = arm.get("name")
+    return (len(passes) == 2
+            and {p.get("name") for p in passes} == {name, f"{name}-r2"}
+            and all(type(p.get("choices")) is int
+                    and p["choices"] == CHOICES_PER_PASS
+                    and type(p.get("members")) is int
+                    and 0 <= p["members"] <= CHOICES_PER_PASS for p in passes))
+
+
+def population_refusal(receipt: dict) -> str | None:
+    """The shared population gate, independent of declared verdicts and totals."""
+    eager, graph = receipt.get("eager_pool") or [], receipt.get("arms") or []
+    why = names_refusal([a["name"] for a in eager], [a["name"] for a in graph])
+    if why:
+        return why
+    total = receipt.get("equality_set", {}).get("choices_per_pass")
+    if type(total) is not int or total != CHOICES_PER_PASS:
+        return "equality_set choices_per_pass contradicts the authoritative protocol"
+    for arm in eager + graph:
+        if not complete_passes(arm):
+            return f"malformed population for arm {arm['name']}: incomplete or invalid required equality passes"
+    return None
+
+
+def arm_equal(arm: dict) -> bool:
+    """Every authoritative choice in both required passes is a member, with replay."""
+    return (complete_passes(arm)
+            and all(p["members"] == CHOICES_PER_PASS for p in arm["passes"])
             and bool(arm.get("replayed_everything")))
 
 
@@ -139,9 +183,10 @@ def attestation(receipt: dict, arm: dict) -> dict:
 
 def finish(receipt: dict) -> dict:
     """Set each arm's ``equal``, the ``attests`` list and the ``verdict`` from the rule."""
+    why = population_refusal(receipt)
     for arm in receipt["arms"]:
         arm["replayed_everything"] = replayed_everything(arm["graph"])
-        arm["equal"] = arm_equal(arm)
+        arm["equal"] = why is None and arm_equal(arm)
     receipt["attests"] = [attestation(receipt, a) for a in receipt["arms"] if a["equal"]]
     receipt["verdict"] = ("equal" if receipt["arms"] and all(a["equal"] for a in receipt["arms"])
                           else "not_equal")
@@ -176,6 +221,9 @@ def verify(receipt: dict, serve: dict) -> str | None:
 
 
 def _verify(receipt: dict, serve: dict) -> str | None:
+    why = population_refusal(receipt)
+    if why:
+        return why
     rederived = finish(json.loads(json.dumps(receipt)))
     for entry in rederived["attests"]:
         why = fabric_refusal(entry["fabric"], entry["tensor_parallel_size"])

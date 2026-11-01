@@ -16,8 +16,9 @@ import torch
 from .alphabet import AnchorForest
 from .decode import _replay_tables
 from .errors import GrammarError
-from .manifest import WINDOW_BITS_MAX, RotationState
+from .manifest import RotationState
 from .trellis import ConvCode, SUBSET_COUNT
+from . import window_geometry
 
 __all__ = [
     "SELECT_PAD", "pack_kernel_planes", "pack_scale_nibbles", "lut_scale_table",
@@ -26,7 +27,7 @@ __all__ = [
     "pack_unit_for_kernel", "build_subset_nibbles", "lut_scale_bytes",
     "prepare_span2_planes", "require_no_post_decode_transforms",
     "require_no_completion_plane", "require_select_plane_multiple",
-    "require_select_plane_rows", "require_window_geometry",
+    "require_select_plane_rows",
 ]
 
 
@@ -421,24 +422,6 @@ def build_span2_luts(
     return label_lut, subset_lut
 
 
-def require_window_geometry(window_bits: int, rates) -> None:
-    """The wire's window-width and rate rules, before a plane is packed.
-
-    ONE home: ``pack_window_planes`` states them and the compact window
-    repack (``tessera.compact_prep``) refuses the same bytes with the same
-    words -- a rate wider than the window would read a window's worth of bits
-    from the wrong place and decode to plausible wrong weights.
-    """
-    if not 1 <= int(window_bits) <= WINDOW_BITS_MAX:
-        raise GrammarError(
-            f"window_bits {window_bits} outside 1..{WINDOW_BITS_MAX}, the widest "
-            "window the wire carries"
-        )
-    rates = tuple(rates)
-    if rates and max(rates) > int(window_bits):
-        raise GrammarError(
-            f"rate {max(rates)} does not fit a {window_bits}-bit window"
-        )
 
 
 def pack_window_planes(
@@ -495,7 +478,7 @@ def pack_window_planes(
     device = body_bits.device
     if len(rates) != cols:
         raise GrammarError(f"{len(rates)} rates for {cols} columns")
-    require_window_geometry(window_bits, rates)
+    window_geometry.require_window_geometry(window_bits, rates)
     if initial_state is not None:
         if initial_state.numel() != cols:
             raise GrammarError(

@@ -94,14 +94,13 @@ def _init(cols, seed):
 
 
 def _role(family, *, rows=ROWS, cols=COLS, seed=700, init=None, rates=None,
-          arithmetic=None, quantizer="native"):
+          quantizer="native"):
     """One dense role at rate 4 (unless ``rates``), as the Triton lane freezes
     it: the definition-side ``Expert`` and its ``PreparedWindowGemm``."""
     expert = Expert(rows, cols, rates or (4,) * cols, seed, family=family, init=init)
-    arith = arithmetic or ("folded" if family == "value" else "epilogue")
     bundle = wg.prepare_window_gemm(
         expert.unit, block_m=64, block_n=64, block_k=64,
-        quantizer=quantizer if family == "e4m3" else None, arithmetic=arith)
+        quantizer=quantizer if family == "e4m3" else None)
     return expert, bundle
 
 
@@ -121,11 +120,7 @@ def _a64(family, xq, a):
 
 
 def _bound(expert, family, xq, a, s):
-    """``(r, bound)``: the definition in fp64 -- the decoded weights, the row
-    scale (folded before the dot for the value family, on the accumulator for
-    E4M3) and the per-token activation scale -- and the per-element bound on
-    ``|kernel - r|`` for a K split of ``s`` (``fused_bound.dense_bound``; the
-    model is stated there and in ``test_dense_forward_on_the_glm_role_shapes``)."""
+    """Return the FP64 reference and dtype-derived error bound for a K split."""
     return fb.dense_bound(family, _a64(family, xq, a), fb.fp64_weight(expert, family),
                           expert.cols, s)
 
@@ -348,14 +343,14 @@ def test_dense_forward_on_the_glm_role_shapes(role_name, rows, cols, row_cut, fa
     partials summed in a fixed order when it splits K, S =
     ``routed_fused.dense_k_split(m, rows, cols, sms)`` -- charging one fp32
     ulp per accumulation step so a truncating tensor-core adder is covered;
-    the E4M3 family then applies two round-to-nearest fp32 multiplies
-    ``(acc * a_scale) * w_scale``; the result is rounded once to bf16
-    (round-to-nearest).  With ``Sigma = sum_k |a_k w_k|`` over the scaled
-    operands in fp64 and ``gamma(n, u) = n u / (1 - n u)``:
+    Each family then applies its row scale in FP32.
+    E4M3 also applies the activation scale before the row scale.
+    The result has one BF16 conversion. With ``Sigma = sum_k |a_k w_k|``
+    over the scaled FP64 operands and ``gamma(n, u) = n u / (1 - n u)``:
 
         E_acc = gamma(K + S + 2, 2^-23) * Sigma + gamma(K, 2^-53) * Sigma
-        E_pre = E_acc                                      (value, folded)
-        E_pre = E_acc + gamma(2, 2^-24) * (|r| + E_acc)    (e4m3, epilogue)
+        E_pre = E_acc + gamma(1, 2^-24) * (|r| + E_acc)       (value)
+        E_pre = E_acc + gamma(2, 2^-24) * (|r| + E_acc)       (e4m3)
         |fused - r| <= E_pre + ulp_bf16(|r| + E_pre) / 2
 
     ``gamma(2, 2^-24)`` is the stated ``2^-23 |y|`` for the two epilogue
@@ -432,11 +427,11 @@ def _scheme(family, rows, cols, roles, wire_bytes, q256=1024):
 
 
 def _encode_module(family, roles, cols, q256=1024, seed=0):
-    """Encode ``roles`` = [(name, rows)] on the family's grid at ``q256``;
-    return the container blob, its scheme and the module's exact reference
-    weight in fp64 ``[rows, cols]``: the materialised E4M3 bytes times their
-    fp32 row scale (the product ``stock_dequant`` takes in fp32, exact here),
-    or the folded BF16 tile."""
+    """Encode the roles and return the blob, scheme and FP64 effective weights.
+
+    Each family keeps raw decoded values and its FP32 row scale separate.
+    The reference multiplies these operands in FP64 without a BF16 conversion.
+    """
     fused, export, stock, decode, alphabet = _tessera()
     torch.manual_seed(seed)
     blobs, refs = [], []
@@ -451,8 +446,8 @@ def _encode_module(family, roles, cols, q256=1024, seed=0):
             refs.append(tiles["weight"].to("cuda").double()
                         * tiles["weight_scale"].to("cuda").double().reshape(-1, 1))
         else:
-            refs.append(decode.materialize_bf16_folded(unit, forests, export.DEFAULT_CODE)
-                        .to("cuda").double())
+            values, scale = decode.materialize_bf16(unit, forests, export.DEFAULT_CODE)
+            refs.append(values.to("cuda").double() * scale.to("cuda").double()[:, None])
         blobs.append((name, rows, exported.blob))
     blob = fused.pack_fused(blobs)
     scheme = _scheme(family, sum(r for _, r in roles), cols, roles, len(blob), q256)
@@ -516,7 +511,7 @@ def test_the_served_module_takes_the_fused_lane_and_serves_two_roles(family, mon
     library = rf.library_for(family)
     decoder = {"e4m3": telemetry.DECODER_NATIVE_FUSED_WINDOW_DENSE,
                "e4m3mma": telemetry.DECODER_NATIVE_FUSED_WINDOW_DENSE_E4M3MMA,
-               "value": telemetry.DECODER_NATIVE_FUSED_WINDOW_DENSE_FOLDED}[library]
+               "value": telemetry.DECODER_NATIVE_FUSED_WINDOW_DENSE_BF16}[library]
     assert module.launch_pair == (FUSED_WINDOW_DENSE_SYMBOL, decoder)
     table_dtype, table_bytes = (torch.uint8, 1) if library == "e4m3mma" else (torch.int16, 2)
     assert (module.symbol, module.decoder) == module.launch_pair
@@ -542,7 +537,7 @@ def test_the_served_module_takes_the_fused_lane_and_serves_two_roles(family, mon
     assert twin.lane == LANE_TRITON
     assert twin.launch_pair == (WINDOW_GEMM_SYMBOL, (
         telemetry.DECODER_NATIVE_WINDOW_GEMM if family == "e4m3"
-        else telemetry.DECODER_NATIVE_WINDOW_GEMM_FOLDED))
+        else telemetry.DECODER_NATIVE_WINDOW_GEMM_BF16))
     assert twin.lane_reason == f"role 'gate_proj': disabled by {rf.ENV_TOGGLE_DENSE}=0"
     for m in (1, 129):
         x, xq, a = _inputs(family, m, 256, 600 + m)
@@ -656,9 +651,6 @@ def test_the_predicate_refuses_by_name():
     # a tile stride the run table does not produce
     assert "tile_words" in rf.fused_dense_window_supported(
         dataclasses.replace(mixed, tile_words=int(mixed.tile_words) + 16))
-    _e, epilogue = _role("value", arithmetic="epilogue")
-    assert rf.fused_dense_window_supported(epilogue) == \
-        "arithmetic 'epilogue'; the fused identity serves 'folded' for value"
     _e, unattested = _role("e4m3", quantizer=None)
     assert rf.fused_dense_window_supported(unattested) == \
         "the role was prepared without the native activation quantizer"
@@ -746,41 +738,6 @@ def test_the_module_launch_setting_selects_the_model_and_is_read_per_call(monkey
         with pytest.raises(GrammarError, match="TESSERA_DENSE_MODULE_LAUNCH"):
             rf.dense_k_split(1, 4096, 4096, sms)
 
-
-def test_the_module_op_launches_per_role_unless_the_module_launch_is_set(monkeypatch):
-    """``tessera::fused_window_dense`` on the E4M3 family: one
-    ``dense_forward`` per role by default, as before tessera#778, and one
-    ``dense_forward_roles`` for the module under
-    ``TESSERA_DENSE_MODULE_LAUNCH=1``.  The value family is per role under
-    either.  The launches are replaced by recorders, so this runs on CPU."""
-    from tessera.serving import native_window as nw
-
-    calls = []
-    monkeypatch.setattr(rf, "dense_forward", lambda role, x, a, out, counter, **kw: calls.append(("role", role.rows)))
-    monkeypatch.setattr(rf, "dense_forward_roles",
-                        lambda roles, x, a, out, **kw: calls.append(("module", tuple(r.rows for r in roles))))
-    rows, cols = [256, 32, 64], 256
-    i32 = lambda *shape: torch.zeros(*shape, dtype=torch.int32)
-    lists = dict(words=[i32(1, 8) for _ in rows], tables=[torch.zeros(1, 4, dtype=torch.int16) for _ in rows],
-                 inits=[i32(1, cols) for _ in rows], has_inits=[i32(1) for _ in rows],
-                 wscales=[torch.ones(1, r) for r in rows], runs=[i32(1, 8) for _ in rows],
-                 bdescs=[i32(1, cols // rf.BK, rf.BDESC_INTS) for _ in rows])
-    x = torch.zeros(3, cols, dtype=torch.float8_e4m3fn)
-    a = torch.ones(3)
-    for family_e4m3, value, want in ((True, None, [("role", 256), ("role", 32), ("role", 64)]),
-                                     (True, "0", [("role", 256), ("role", 32), ("role", 64)]),
-                                     (True, "1", [("module", (256, 32, 64))]),
-                                     (False, "1", [("role", 256), ("role", 32), ("role", 64)])):
-        if value is None:
-            monkeypatch.delenv(rf.ENV_DENSE_MODULE, raising=False)
-        else:
-            monkeypatch.setenv(rf.ENV_DENSE_MODULE, value)
-        calls.clear()
-        out = nw._fused_window_dense(x if family_e4m3 else x.to(torch.bfloat16), a if family_e4m3 else None,
-                                     role_rows=rows, tile_words=[64] * 3, slot_words=[8] * 3, cols=cols,
-                                     family_e4m3=family_e4m3, folded=not family_e4m3, **lists)
-        assert out.shape == (3, sum(rows))
-        assert calls == want, (family_e4m3, value, calls)
 
 
 def test_the_k_split_model_is_the_makespan_model():
@@ -946,42 +903,6 @@ def test_a_split_that_leaves_an_item_one_chunk_is_refused_by_name(family):
     _within(native(cap), _bound(expert, family, xq, a, cap), f"{family} M={m} S={cap} (the bound)")
 
 
-# --- the launch identity is published -------------------------------------------
-
-def test_the_dense_identity_is_a_published_launch_of_both_window_routes():
-    from tessera.serving import bf16_route, fp8_route, telemetry
-    from tessera.serving.native_window import (DENSE_LANES, FUSED_WINDOW_DENSE_DECODER,
-                                               LANE_FUSED, LANE_TRITON)
-    from tessera.serving.scheme import (FUSED_WINDOW_DENSE_SYMBOL, STRUCTURE_DENSE, TESSERA_BF16,
-                                        TESSERA_FP8, WINDOW_GEMM_SYMBOL, launch_pairs)
-
-    assert FUSED_WINDOW_DENSE_SYMBOL == "tessera::fused_window_dense"
-    assert DENSE_LANES[LANE_FUSED] == (FUSED_WINDOW_DENSE_SYMBOL, FUSED_WINDOW_DENSE_DECODER)
-    assert DENSE_LANES[LANE_TRITON][0] == WINDOW_GEMM_SYMBOL
-    assert FUSED_WINDOW_DENSE_DECODER == {
-        "epilogue": telemetry.DECODER_NATIVE_FUSED_WINDOW_DENSE,
-        "folded": telemetry.DECODER_NATIVE_FUSED_WINDOW_DENSE_FOLDED}
-    assert {telemetry.DECODER_NATIVE_FUSED_WINDOW_DENSE,
-            telemetry.DECODER_NATIVE_FUSED_WINDOW_DENSE_FOLDED} <= telemetry.DECODERS
-    for module, route, decoder in (
-            (fp8_route, TESSERA_FP8, telemetry.DECODER_NATIVE_FUSED_WINDOW_DENSE),
-            (bf16_route, TESSERA_BF16, telemetry.DECODER_NATIVE_FUSED_WINDOW_DENSE_FOLDED)):
-        assert module.DENSE_FUSED_LAUNCH == (FUSED_WINDOW_DENSE_SYMBOL, decoder)
-        extra = ((module.DENSE_FUSED_MMA_E4M3_LAUNCH, module.DENSE_DECODE_ONCE_LAUNCH)
-                 if module is fp8_route else ())
-        assert module.DENSE_LAUNCHES == (module.DENSE_LAUNCH, module.DENSE_FUSED_LAUNCH, *extra)
-        # contract v47 (tessera#747) earned the E4M3 instruction's pair its
-        # cells; the decode-once pair (v56, tessera#931) is resident-only and
-        # experimental, so the attested view is every launch the route makes
-        # but that one, and the experimental view adds it at resident only
-        decode_once = {getattr(module, "DENSE_DECODE_ONCE_LAUNCH", None)} - {None}
-        for mode in ("resident", "streamed"):
-            for regime in ("decode", "batch"):
-                assert set(module.DENSE_LAUNCHES) - decode_once == launch_pairs(
-                    route, structure=STRUCTURE_DENSE, regime=regime, mode=mode), (route, regime, mode)
-                assert set(module.DENSE_LAUNCHES) - (decode_once if mode == "streamed" else set()) \
-                    == launch_pairs(route, structure=STRUCTURE_DENSE, regime=regime, mode=mode,
-                                    include_experimental=True), (route, regime, mode)
 
 
 # --- every rate, and the two-rate schedules (tessera#694) -------------------------

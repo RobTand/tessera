@@ -18,8 +18,7 @@ THE REFERENCE.  The materialising reader (``scheme.parse_tessera_blob_for_
 scheme``), cut to the rank by the same ``shard_parsed_roles`` the retained
 reference preparation uses, then ``fp8_route.prepare_tessera_fp8_module``
 (E4M3 bytes and the fp32 row scale) or ``bf16_route.prepare_tessera_bf16_
-module`` (table values and the row scale, folded once to bf16 exactly as
-``materialize_bf16_folded`` and the served kernel fold it).  The activation is
+module`` (raw BF16 values and the separate FP32 row scale). The activation is
 the runtime's own per-token dynamic E4M3 quantiser (``native_ops.native_fp8_
 quant``) for the E4M3 family and the bf16 input for the value family; every
 product is summed in fp64 on exactly representable operands and rounded once
@@ -32,8 +31,8 @@ THE BOUND (dtype-derived, per output element; nothing here is fitted).  The
 kernel accumulates exact fp32 products (e4m3 x e4m3 and bf16 x bf16 both are)
 over K columns, in the split-K regime as S fp32 partials summed in a fixed
 order (K + S accumulation steps), then applies at most two fp32 epilogue
-multiplies (``(acc * a_scale) * w_scale`` for E4M3; none for the folded value
-family) and rounds once to bf16:
+multiplies (``(acc * a_scale) * w_scale`` for E4M3; ``acc * w_scale``
+for the value family) and has one final BF16 conversion:
   |n - r| <= gamma(K + S, u_acc) Sigma + gamma(2, u32)(|r| + gamma(K + S, u_acc) Sigma)
              + u16 (|r| + that)
 with Sigma = sum_k |a_k w_k| |scales| in fp64, u_acc = 2^-23 (one fp32 ulp per
@@ -257,9 +256,9 @@ def reference_weight(store, module, plan):
     prepared = bf16_route.prepare_tessera_bf16_module(roles, device="cuda")
     values = prepared.decode()
     scale = prepared.row_scale()
-    folded = (values.float() * scale[:, None]).to(torch.bfloat16)
-    return folded.double(), {"kind": "bf16_folded_once", "row_scale_max": float(scale.max()),
-                             "epilogue_mults": 0}
+    return values.double() * scale.double()[:, None], {
+        "kind": "raw_bf16_values_times_row_scale", "row_scale_max": float(scale.max()),
+        "epilogue_mults": 1}
 
 
 def make_x(m, cols, seed, sigma):

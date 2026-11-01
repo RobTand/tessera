@@ -39,9 +39,9 @@ def canonical_wire():
     return blob, declaration
 
 
-@pytest.fixture
-def panel(tmp_path, canonical_wire):
-    blob, declaration = canonical_wire
+def build_dense_fixture_panel(tmp_path, blob, declaration):
+    """The CPU fixture panel body; the ``panel`` fixture delegates here so
+    sibling tests can build the same receipt without calling a fixture."""
     doc = copy.deepcopy(contract.load_serving_contract())
     family = contract.PAYLOAD_FAMILY_BY_ROUTE[scheme.TESSERA_FP8]
     cell = next(c for c in doc["lane_eligibility"]["cells"] if c["platform"] == "sm_121"
@@ -95,6 +95,12 @@ def panel(tmp_path, canonical_wire):
                                     "scheme": declaration, "timing": tp.timing_summary(samples), "cell_id": cell["id"]}],
             "evidence": evidence,
             "energy": {"status": "hold", "reason": "cross_host_clock_alignment_unqualified", "reference_w": 140}}
+
+
+@pytest.fixture
+def panel(tmp_path, canonical_wire):
+    return build_dense_fixture_panel(tmp_path, blob=canonical_wire[0],
+                                     declaration=canonical_wire[1])
 
 
 def rewrite(panel, key, fn):

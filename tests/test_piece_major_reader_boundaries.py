@@ -21,6 +21,10 @@ def clean_environment(monkeypatch):
     for key in ("TESSERA_ROUTED_PIECE_MAJOR", "TESSERA_ROUTED_FUSED",
                 "TESSERA_DENSE_FUSED", "TESSERA_FUSED_E4M3_MMA"):
         monkeypatch.delenv(key, raising=False)
+    from tessera.serving import flags
+    flags.reset_for_tests()
+    yield
+    flags.reset_for_tests()
 
 
 def unit(family="e4m3", layout=LEGACY, cols=128, rate=4):
@@ -42,14 +46,12 @@ def unit(family="e4m3", layout=LEGACY, cols=128, rate=4):
 
 def prepared(family="e4m3", layout=LEGACY):
     from tessera.window_gemm import prepare_window_gemm
-    return prepare_window_gemm(unit(family, layout), quantizer=None,
-                               arithmetic="folded" if family == "value" else "epilogue")
+    return prepare_window_gemm(unit(family, layout), quantizer=None)
 
 
 def bundle(family="e4m3", layout=LEGACY, cols=128, rate=4):
     from tessera.window_gemm_grouped import prepare_grouped_window_gemm
-    b = prepare_grouped_window_gemm([unit(family, layout, cols=cols, rate=rate)] * 2, quantizer=None,
-                                   arithmetic="folded" if family == "value" else "epilogue")
+    b = prepare_grouped_window_gemm([unit(family, layout, cols=cols, rate=rate)] * 2, quantizer=None)
     # CUDA metadata only: tensor-content checks remain real CPU operations.
     return SimpleNamespace(**{**vars(b), "quantizer": "native"}, device=torch.device("cuda"))
 
@@ -145,36 +147,6 @@ def test_routed_mixed_tags_refused(monkeypatch):
     assert "disagree" in rf.fused_routed_window_supported(a, a, b)
 
 
-@pytest.mark.parametrize("failure", ["disabled", "f16", "build"])
-def test_pm_owner_never_falls_back_to_legacy_reader(monkeypatch, failure):
-    from tessera import native_window_moe as nm
-    b = bundle(layout=PM)
-    owner = nm.PackedWindowMoeBundles(gate=b, up=b, down=b, family="e4m3")
-    monkeypatch.setattr(nm, "native_window_moe_from_bundles", bomb)
-    if failure == "disabled":
-        monkeypatch.setenv("TESSERA_ROUTED_FUSED", "0")
-    elif failure == "f16":
-        monkeypatch.setenv("TESSERA_FUSED_E4M3_MMA", "f16")
-    def unavailable(*args):
-        raise RuntimeError("unavailable native library")
-    monkeypatch.setattr(rf, "_ext", unavailable if failure == "build" else bomb)
-    with pytest.raises(GrammarError, match="Refusing rather than mis-reading"):
-        owner.adapter()
-
-
-def test_legacy_owner_keeps_existing_fallback(monkeypatch):
-    from tessera import native_window_moe as nm
-    b = bundle()
-    owner = nm.PackedWindowMoeBundles(gate=b, up=b, down=b, family="e4m3")
-    monkeypatch.setenv("TESSERA_ROUTED_FUSED", "0")
-    monkeypatch.setattr(rf, "_ext", bomb)
-    fallback = object()
-    calls = []
-    def compact(*args, **kwargs):
-        calls.append((args, kwargs))
-        return fallback
-    monkeypatch.setattr(nm, "native_window_moe_from_bundles", compact)
-    assert owner.adapter() is fallback and len(calls) == 1
 
 
 @pytest.mark.parametrize("layout", [PM, "unknown"])
@@ -206,14 +178,6 @@ def e2m1_bundle():
     return b
 
 
-def test_e2m1_legacy_positive_controls(monkeypatch):
-    from tessera import routed_fused_e2m1 as fe
-    monkeypatch.setattr(fe, "_ext", bomb)
-    monkeypatch.setattr(fe, "smem_reason", lambda *a: None)
-    u = SimpleNamespace(rep=unit(cols=256).rep, window_bits=14, arity=2, cols=256, rows=256)
-    assert fe.dense_role_reason(u) is None
-    b = e2m1_bundle()
-    assert fe.fused_routed_e2m1_supported(b, b, b) is None
 
 
 def intake(family):
@@ -226,23 +190,28 @@ def intake(family):
                     rows=sum(n for _, n in roles), roles=roles,
                     role_q256=[1024] * len(roles), wire_stride=4)
     declared = dict(family=name, experts=2, hidden_size=128, intermediate_size=128,
+                    expert_ids=[0, 1], expert_classes=[{'start': 0, 'end': 2,
+                        'q256': {'w13': [1024, 1024], 'w2': [1024]}}],
                     groups=dict(w13=group([("gate", 128), ("up", 128)]),
                                 w2=group([("down", 128)])))
     return mr._RankLocalPackedIntake(declared, "layer45" if family == "value" else "layer10",
-                                     torch.device("cuda"), 0, 1, compact=True)
+                                     torch.device("cuda"), 0, 1)
 
 
-@pytest.mark.parametrize("family,optin,fused,mma,expected", [
-    ("e4m3", "1", "1", "e4m3", PM), ("e4m3", "0", "1", "e4m3", LEGACY),
-    ("e4m3", "1", "0", "e4m3", LEGACY), ("e4m3", "1", "1", "f16", LEGACY),
-    ("value", "1", "1", "e4m3", LEGACY),
+@pytest.mark.parametrize("family,optin,mma,expected", [
+    ("e4m3", None, "e4m3", PM), ("e4m3", "", "e4m3", PM),
+    ("e4m3", "1", "e4m3", PM), ("e4m3", "0", "e4m3", LEGACY),
+    ("e4m3", None, "f16", LEGACY), ("value", None, "e4m3", LEGACY),
+    ("e4m3", "1", "f16", LEGACY), ("value", "1", "e4m3", LEGACY),
 ])
 @pytest.mark.parametrize("change_environment", [False, True])
-def test_actual_intake_finish_and_history(monkeypatch, family, optin, fused, mma, expected,
+def test_actual_intake_finish_and_history(monkeypatch, family, optin, mma, expected,
                                          change_environment):
     from tessera.serving import moe_route as mr
-    monkeypatch.setenv(mr.ENV_PIECE_MAJOR, optin)
-    monkeypatch.setenv("TESSERA_ROUTED_FUSED", fused)
+    if optin is None:
+        monkeypatch.delenv(mr.ENV_PIECE_MAJOR, raising=False)
+    else:
+        monkeypatch.setenv(mr.ENV_PIECE_MAJOR, optin)
     monkeypatch.setenv("TESSERA_FUSED_E4M3_MMA", mma)
     u = unit(family)
     def repack(blob, role, plan, target, **kwargs):
@@ -260,7 +229,6 @@ def test_actual_intake_finish_and_history(monkeypatch, family, optin, fused, mma
             # different process settings. The adapter separately admits its
             # frozen words against the reader selected at construction.
             monkeypatch.setenv(mr.ENV_PIECE_MAJOR, "0" if expected == PM else "1")
-            monkeypatch.setenv("TESSERA_ROUTED_FUSED", "1")
             monkeypatch.setenv("TESSERA_FUSED_E4M3_MMA", "e4m3")
     pointers = {part: slot["words"].data_ptr()
                 for axis in owner.axis.values() for part, slot in axis._slots.items()}
@@ -276,7 +244,6 @@ def test_actual_intake_finish_and_history(monkeypatch, family, optin, fused, mma
     for role in ("gate", "up", "down"):
         b = getattr(bundles, role)
         assert b.word_layout == expected and b.words_all.data_ptr() == pointers[role]
-        assert b.arithmetic == ("folded" if family == "value" else "epilogue")
         assert torch.equal(b.words_all, want.expand(2, -1))
         assert torch.equal(b.init_all, u.permuted_start_state().expand(2, -1))
         assert torch.equal(b.has_init, torch.ones(2, dtype=torch.int32))

@@ -31,21 +31,23 @@ def observe(fn, xa, directory):
     native = fn.native_adapter
     if type(native) is not FusedRoutedWindowMoE or native.library != 'e4m3mma':
         raise ValueError('stageprev numeric owner is not the production MMA8 routed adapter')
+    if native.uniform is None:
+        raise ValueError('stageprev observes the uniform launch; this owner has several classes')
     if len(xa) != 3:
         raise ValueError('stageprev requires exactly x, ids and weights')
-    owner = type(native)
-    original = owner._launch
+    owner = type(native.uniform)
+    original = owner.launch
     captured = {}
 
-    def capture(instance, mode, *args, **kwargs):
-        original(instance, mode, *args, **kwargs)
-        if instance is not native:
+    def capture(kernel, mode, *args, **kwargs):
+        original(kernel, mode, *args, **kwargs)
+        if kernel is not native.uniform:
             return
         if mode not in (0, 2) or mode in captured:
             raise ValueError('unexpected or duplicate native stage')
         captured[mode] = kwargs['out'].clone()
 
-    owner._launch = capture
+    owner.launch = capture
     try:
         first = fn(*xa)
         torch.cuda.synchronize()
@@ -60,7 +62,7 @@ def observe(fn, xa, directory):
                        for m in (0, 2))):
             raise ValueError('repeated intermediate/final words differ')
     finally:
-        owner._launch = original
+        owner.launch = original
     directory = Path(directory)
     directory.mkdir(parents=True, exist_ok=False)
     outputs = {}
@@ -71,9 +73,9 @@ def observe(fn, xa, directory):
             handle.write(raw)
         outputs[role] = dict(entry, path=str(path))
     runs = {}
-    for role, table in [('gate_proj', native.runs_gate), ('up_proj', native.runs_up),
-                        ('down_proj', native.runs_down)]:
-        runs[role] = table.cpu().tolist()
+    for role, projection in [('gate_proj', native.uniform.gate), ('up_proj', native.uniform.up),
+                             ('down_proj', native.uniform.down)]:
+        runs[role] = projection.runs.cpu().tolist()
     inputs = {name: record(tensor)[1] for name, tensor in zip(("x", "ids", "weights"), xa)}
     return {'outputs': outputs, 'repeat_equal': True, 'run_tables': runs, 'inputs': inputs,
             'native_extra_resident_bytes': int(native.resident_bytes()),

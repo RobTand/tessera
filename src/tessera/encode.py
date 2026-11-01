@@ -3458,6 +3458,17 @@ def _encode_unit_steps(
             "and there is no measured floor for one, so this would be silently "
             "ignored"
         )
+    # Admission reads the metrics of refits that actually run, in schedule
+    # order (one representative for the inner passes, then the trailing one).
+    # A single refit is trailing; an unset trailing metric inherits the base.
+    # Zero refits still run one trellis pass, but have no active refit metric.
+    trailing_metric = (refit_metric_trailing if refit_metric_trailing is not None
+                       else refit_metric)
+    active_refit_metrics = (
+        ([refit_metric] if scale_refit > 1 else []) + [trailing_metric]
+        if scale_refit > 0 else []
+    )
+    active_refit_metrics = [m for m in active_refit_metrics if m is not None]
     if refit_gauss_seidel:
         # The sweep is a different OPTIMISER for one objective: the coupled
         # least squares the LUT plane's block scales solve under a full
@@ -3483,12 +3494,7 @@ def _encode_unit_steps(
                 "refit, and without refit_metric no such refit runs: the plain "
                 "least squares is already per-block exact"
             )
-        if scale_refit > 1 and refit_metric_trailing is not None:
-            in_use = [m for m in (refit_metric, refit_metric_trailing) if m is not None]
-        elif scale_refit == 1 and refit_metric_trailing is not None:
-            in_use = [refit_metric_trailing]
-        else:
-            in_use = [refit_metric] if refit_metric is not None else []
+        in_use = active_refit_metrics
         if in_use and all(m.ndim == 1 for m in in_use):
             raise GrammarError(
                 "refit_gauss_seidel needs a metric that couples the blocks. A 1-D "
@@ -3541,13 +3547,10 @@ def _encode_unit_steps(
         # schedule puts a coupled metric on the TRAILING pass behind 1-D inner
         # ones, and reading refit_metric alone would refuse
         # refit_coupled_landing="trailing" -- the one arm the schedule exists
-        # to express.  This mirrors refit_gauss_seidel's `in_use` above; the
-        # two flags gate on the same fact and must read it the same way.
-        if refit_metric_trailing is not None:
-            in_use = [refit_metric_trailing] if refit_coupled_landing == "trailing" else (
-                ([refit_metric] if refit_metric is not None else []) + [refit_metric_trailing])
-        else:
-            in_use = [refit_metric] if refit_metric is not None else []
+        # to express.  Both gates read the shared active schedule; trailing
+        # mode restricts admission to its last metric rather than any inner one.
+        in_use = (active_refit_metrics[-1:] if refit_coupled_landing == "trailing"
+                  else active_refit_metrics)
         if not in_use:
             raise GrammarError(
                 "refit_coupled_landing re-assigns the LUT plane's blocks under the "

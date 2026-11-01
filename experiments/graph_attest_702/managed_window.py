@@ -205,8 +205,15 @@ class Envelope:
             if alive():
                 record["deadline_shortened_grace"] = stop_at == self.end
                 send(signal.SIGKILL)
-        process.wait(timeout=max(.01, min(1, self.end - time.monotonic())))
-        record.update(returncode=process.returncode, ended_unix=time.time())
+        reap_timeout = max(.01, min(1, self.end - time.monotonic()))
+        record.update(reap_timeout_seconds=reap_timeout, reap_timed_out=False)
+        try:
+            process.wait(timeout=reap_timeout)
+        except subprocess.TimeoutExpired:
+            # A delayed reap is cleanup evidence, not a replacement work failure.
+            record["reap_timed_out"] = True
+        finally:
+            record.update(returncode=process.returncode, ended_unix=time.time())
 
 
 class Rendezvous:
@@ -255,13 +262,14 @@ class Rendezvous:
 
     def bind_peer(self, *, tick=None) -> None:
         path = self.root / f"rank{1 - self.rank}.json"
-        peer_end = time.monotonic() + (self.identity["claimed_unix"] + PEER_WAIT_SECONDS - time.time())
+        peer_wait = self.identity.get("peer_wait_seconds", PEER_WAIT_SECONDS)
+        peer_end = time.monotonic() + (self.identity["claimed_unix"] + peer_wait - time.time())
         if time.monotonic() >= peer_end:
-            raise TimeoutError("3600-second peer admission deadline expired")
+            raise TimeoutError(f"{peer_wait}-second peer admission deadline expired")
         while not path.exists():
             self.envelope.remaining()
             if time.monotonic() >= peer_end:
-                raise TimeoutError("3600-second peer admission deadline expired")
+                raise TimeoutError(f"{peer_wait}-second peer admission deadline expired")
             require_claim(self.identity, self.queue)
             if tick:
                 tick()
@@ -273,7 +281,7 @@ class Rendezvous:
             raise Refused("peer belongs to a different host/run/input tuple")
         require_claim(value, self.queue)
         self.peer = value
-        self.envelope.tighten(value["claimed_unix"] + WINDOW_SECONDS)
+        self.envelope.tighten(value["window_end_unix"])
         self.check()
 
     def wait(self, stage: str, *, tick=None) -> dict:
@@ -286,6 +294,18 @@ class Rendezvous:
             if path.exists():
                 return self.checked(path, 1 - self.rank)
             time.sleep(min(self.poll_seconds, self.envelope.remaining()))
+
+
+def prismabuild_import_root() -> str | None:
+    """The admitted PrismaBuild ``src`` that carries ``prismabuild.client``, or None.
+
+    The launcher owns PRISMABUILD_READER_HELPER_ROOT: an immutable generation of the
+    PrismaBuild repository, supplied inside admission.  There is no fallback to the
+    shared checkout, which moves between runs; outside admission the caller's
+    explicitly supplied SDK is what imports.  Never Tessera's own ``src``.
+    """
+    helper = os.environ.get("PRISMABUILD_READER_HELPER_ROOT")
+    return str(Path(helper) / "src") if helper else None
 
 
 def terminal_cleanup(identity: dict, terminal: dict) -> dict:

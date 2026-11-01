@@ -21,7 +21,9 @@ sys.path.insert(0, str(ROOT / 'tests'))
 sys.path.insert(0, str(ROOT / 'src'))
 Q256_CASES = [256, 384, 512, 640, 768, 832, 928, 960, 1024, 1088, 1152, 1280, 1408, 1536, 1600, 1792, 1920, 2048]
 from tessera import routed_fused as rf
-from experiments.t8r_speed.pb_staged_store import NativeCallback, StagedInputs
+from experiments.t8r_speed.pb_staged_store import (
+    NativeCallback, StagedInputs, validate_whole_phase_readset,
+)
 
 SCOPE = 'syntheticgeometry/nonshipping'
 SOURCE_SHA = '4e93959a2a265dcd560e827fe65bbfe703b25b0e7769aef221bd426b882c802a'
@@ -130,14 +132,9 @@ def prepare(bank, native_root, sanitizer, runner):
 
 
 def validate_readset(path):
-    from prismabuild import client, storage_tiers
-    manifest, encoding = client.read_data_manifest(path)
-    expected = [{"name": "whole-synthetic-bank", "start_bytes": 0, "end_bytes": manifest["total_bytes"]}]
-    if encoding != "identity" or storage_tiers.manifest_phase_ranges(manifest) != expected:
-        raise ValueError("synthetic whole-bank staging phase differs")
-    if client.manifest_read_entries(manifest) != manifest["entries"]:
-        raise ValueError("synthetic staging read order differs")
-    return manifest, expected
+    manifest, _, ranges = validate_whole_phase_readset(
+        path, "whole-synthetic-bank")
+    return manifest, ranges
 
 
 def repair_readset(original, output):
@@ -148,7 +145,8 @@ def repair_readset(original, output):
     with output.open("x") as stream:
         json.dump(manifest, stream, indent=2)
         stream.write("\n")
-    checked, phases = validate_readset(output)
+    checked, _, phases = validate_whole_phase_readset(
+        output, "whole-synthetic-bank")
     print(json.dumps({"scope": SCOPE, "readset": str(output), "sha256": digest(output), "entry_count": checked["entry_count"], "total_bytes": checked["total_bytes"], "phases": phases, "retained_entries_unchanged": checked["entries"] == json.loads(original.read_bytes())["entries"]}))
 
 

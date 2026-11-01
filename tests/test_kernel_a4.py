@@ -1,11 +1,8 @@
-"""Native A4 span-2 compute: plane decode and W4A4 parity on real expert wires.
+"""Research TCQ A4 span-2 compute on archived expert wires.
 
-The candidate is ``tessera.kernel_a4`` (fused plane decode + block-scaled FP4
-MMA).  The oracle is the repository's own reference decode
-(``tessera.stock.materialize_stock``, which the CUDA decoder is held to byte
-for byte) and, for the multiply, both the exact fp64 arithmetic on the decoded
-codes/scales and the executed W4A4 contract (vLLM's ``scaled_fp4_quant`` plus
-``torch._scaled_mm``, the dense route's arithmetic).
+The candidate is tessera.kernel_a4, not the current production WINDOW owner.
+The oracle uses the reference plane decoder and exact FP64 products.
+The W4A4 reference uses scaled_fp4_quant and torch._scaled_mm.
 
 The wires are external bytes, not fixtures: point ``TESSERA_A4_WIRE_DIR`` at a
 directory holding ``gate_proj_wire.bin``, ``up_proj_wire.bin``,
@@ -107,9 +104,9 @@ def declared():
     cfg = json.loads((DATA / "a4-config.json").read_text())
     scheme = cfg["quantization_config"]["config_groups"][
         f"tessera_model_language_model_{LAYER}_mlp_experts"]["scheme"]
-    from tessera.serving.scheme import validate_tessera_moe_scheme
-
-    return validate_tessera_moe_scheme(scheme, PREFIX)
+    # The archived research declaration supplies only the shard geometry.
+    return {**scheme, "hidden_size": scheme["groups"]["w13"]["columns"],
+            "intermediate_size": scheme["groups"]["w2"]["columns"]}
 
 
 def rank_roles(rank: int, device: str = "cpu"):
@@ -120,24 +117,20 @@ def rank_roles(rank: int, device: str = "cpu"):
     """
     _require_data()
     from tessera.serving.moe_route import _packed_group_shard_plan
-    from tessera.serving.scheme import expert_role_declarations, parse_tessera_expert_blob
+    from tessera.fused import parse_fused
+    from tessera.unit_artifact import parse_unit_artifact
     from tessera.serving.sharding import shard_parsed_roles
 
     declared_scheme = declared()
-    roles13 = expert_role_declarations(declared_scheme["groups"]["w13"])
-    roles2 = expert_role_declarations(declared_scheme["groups"]["w2"])
     plan13 = _packed_group_shard_plan(declared_scheme, "w13", PREFIX, rank, TP)
     plan2 = _packed_group_shard_plan(declared_scheme, "w2", PREFIX, rank, TP)
-    blobs = {name: (DATA / f"{name}_wire.bin").read_bytes()
-             for name in ("gate_proj", "up_proj", "down_proj")}
-    parsed13 = [
-        parse_tessera_expert_blob(blobs["gate_proj"], roles13[0], f"{PREFIX} gate",
-                                  device=device)[0],
-        parse_tessera_expert_blob(blobs["up_proj"], roles13[1], f"{PREFIX} up",
-                                  device=device)[0],
-    ]
-    parsed2 = [parse_tessera_expert_blob(blobs["down_proj"], roles2[0],
-                                         f"{PREFIX} down", device=device)[0]]
+    parsed = {}
+    for name in ("gate_proj", "up_proj", "down_proj"):
+        blob = (DATA / f"{name}_wire.bin").read_bytes()
+        parsed[name] = [(member.name, parse_unit_artifact(member.blob, device=device))
+                        for member in parse_fused(blob)]
+    parsed13 = parsed["gate_proj"] + parsed["up_proj"]
+    parsed2 = parsed["down_proj"]
     return {"w13": shard_parsed_roles(parsed13, plan13),
             "w2": shard_parsed_roles(parsed2, plan2)}
 

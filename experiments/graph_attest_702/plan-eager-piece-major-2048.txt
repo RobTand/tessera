@@ -1,0 +1,6 @@
+# investigate-eager-piece-major-2048: fresh matched OFF then piece-major alone.
+# Prior CONTROL_ROOT holds actual OFF/OFF; mismatch does not prohibit measurement.
+# All eleven seeded L2048 requests precede separate profiles in both blocks.
+# Priority -10; total 1800 seconds including cleanup; decode-once and KDA stay off.
+control_pm_off FABRIC=socket EAGER=1 MAX_BATCHED=4096 SPEC_JSON={"method":"mtp","num_speculative_tokens":1,"draft_tensor_parallel_size":2,"moe_backend":"triton"} TESSERA_E4M3_DECODE_ONCE=0 TESSERA_GLM53_KDA_CONV_SPLIT=off TESSERA_ROUTED_PIECE_MAJOR=0
+control_piece_major FABRIC=socket EAGER=1 MAX_BATCHED=4096 SPEC_JSON={"method":"mtp","num_speculative_tokens":1,"draft_tensor_parallel_size":2,"moe_backend":"triton"} TESSERA_E4M3_DECODE_ONCE=0 TESSERA_GLM53_KDA_CONV_SPLIT=off TESSERA_ROUTED_PIECE_MAJOR=1

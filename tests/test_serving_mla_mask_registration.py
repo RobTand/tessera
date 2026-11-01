@@ -1,10 +1,42 @@
 """Runtime-scoped causal plugin registration test; pinned stock vLLM required."""
+import importlib
 import pytest
-pytest.importorskip('vllm')
+# Match the runtime consumer's optional boundary before importing Tessera.
+# Do not hide unrelated failures inside an installed prerequisite.
+for dependency in (
+    'vllm.v1.attention.backends.registry',
+    'vllm.v1.attention.backends.mla.flashinfer_mla_sparse',
+    'vllm.v1.attention.backends.mla.flashinfer_mla_sparse_sm120',
+    'vllm.v1.attention.backends.mla.index_group',
+):
+    try:
+        importlib.import_module(dependency)
+    except ModuleNotFoundError as exc:
+        # An absent parent also means the requested prerequisite is unavailable.
+        if exc.name == dependency or (
+            exc.name and dependency.startswith(exc.name + '.')
+        ):
+            pytest.skip(f'requires optional MLA prerequisite {dependency}: {exc}',
+                        allow_module_level=True)
+        raise
 from tessera.serving import flags, register
 from vllm.v1.attention.backends.registry import AttentionBackendEnum
 
-def test_explicit_mask_skip_flag_registers_stock_enum(monkeypatch):
+@pytest.fixture
+def registration_flags(monkeypatch):
+    """Isolate both flags read by register(), including its default-off arm."""
+    names = ('TESSERA_RESEARCH_GLM53_NOPE', 'TESSERA_RESEARCH_MLA_MASK_SKIP')
+    for name in names:
+        flags.reset_for_tests(name)
+        monkeypatch.delenv(name, raising=False)
+    try:
+        yield
+    finally:
+        for name in names:
+            flags.reset_for_tests(name)
+
+
+def test_explicit_mask_skip_flag_registers_stock_enum(monkeypatch, registration_flags):
     backend=AttentionBackendEnum.FLASHINFER_MLA_SPARSE_SM120
     previous=backend.get_path() if backend.is_overridden() else None
     try:

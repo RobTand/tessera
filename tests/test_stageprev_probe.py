@@ -60,23 +60,28 @@ def test_explicit_module_roster_binds_without_foreign_layer_alias(layer):
 
 @pytest.mark.parametrize("failure", [False, True])
 def test_observer_restores_actual_frozen_class_on_success_and_failure(tmp_path, monkeypatch, failure):
+    """The observer sees both stages at the load-bound uniform launch, as the
+    real uniform forward issues them, and reads run tables from the class
+    projections."""
     torch = pytest.importorskip("torch")
-    from tessera.routed_fused import FusedRoutedWindowMoE
-    native=FusedRoutedWindowMoE.__new__(FusedRoutedWindowMoE)
-    object.__setattr__(native,"library","e4m3mma")
-    object.__setattr__(native,"runs_gate",torch.tensor([[4,0,1,0,0,0,0,0]]))
-    object.__setattr__(native,"runs_up",torch.tensor([[4,0,1,0,0,1,0,64]]))
-    object.__setattr__(native,"runs_down",torch.tensor([[4,0,1,0,0,0,0,0]]))
+    from dataclasses import MISSING, fields
+    from tessera.routed_fused import FusedRoutedWindowMoE, _UniformProjection, _UniformWindowKernel
+    runs = {"gate": torch.tensor([[4,0,1,0,0,0,0,0]]), "up": torch.tensor([[4,0,1,0,0,1,0,64]]),
+            "down": torch.tensor([[4,0,1,0,0,0,0,0]])}
+    kernel = _UniformWindowKernel(**{f.name: None for f in fields(_UniformWindowKernel)}
+        | {role: _UniformProjection(None, None, None, table, None) for role, table in runs.items()})
+    values = {f.name: None for f in fields(FusedRoutedWindowMoE) if f.default is MISSING}
+    native = FusedRoutedWindowMoE(**values | {"library": "e4m3mma"}, uniform=kernel)
     def launch(self,mode,*args,**kwargs):
         kwargs["out"].fill_(mode+1)
         if failure:raise RuntimeError("owned launch failure")
-    monkeypatch.setattr(FusedRoutedWindowMoE,"_launch",launch)
+    monkeypatch.setattr(_UniformWindowKernel,"launch",launch)
     monkeypatch.setattr(FusedRoutedWindowMoE,"resident_bytes",lambda self:64)
     monkeypatch.setattr(torch.cuda,"synchronize",lambda:None)
     def fn(*unused):
         for mode in (0,2):
             out=torch.empty(1,2,dtype=torch.bfloat16)
-            native._launch(mode,out=out)
+            native.uniform.launch(mode,out=out)
         return out.clone()
     fn.native_adapter=native
     xa = (torch.ones(1,2,dtype=torch.bfloat16), torch.zeros(1,8,dtype=torch.int32),
@@ -94,5 +99,18 @@ def test_observer_restores_actual_frozen_class_on_success_and_failure(tmp_path, 
                                       "up_proj":[[4,0,1,0,0,1,0,64]],
                                       "down_proj":[[4,0,1,0,0,0,0,0]]}
         assert result["native_extra_resident_bytes"]==64
-    assert FusedRoutedWindowMoE._launch is launch
+    assert _UniformWindowKernel.launch is launch
+
+
+def test_observer_refuses_a_multi_class_owner(tmp_path):
+    """The class dispatcher has no uniform launch to observe; refuse by name."""
+    pytest.importorskip("torch")
+    from dataclasses import MISSING, fields
+    from tessera.routed_fused import FusedRoutedWindowMoE
+    values = {f.name: None for f in fields(FusedRoutedWindowMoE) if f.default is MISSING}
+    native = FusedRoutedWindowMoE(**values | {"library": "e4m3mma"})
+    fn = lambda *unused: None
+    fn.native_adapter = native
+    with pytest.raises(ValueError, match="uniform"):
+        probe().observe(fn, (None, None, None), tmp_path/"words")
 

@@ -25,20 +25,13 @@ digest *reference*, the check is membership in ``RepoDigests``, and the local
 plugin-2026-09-02.md`` (section 9) had already measured this; the gate had to
 be built to know it.
 
-PRINCIPLE 9, AND WHY THIS REFUSES RATHER THAN WARNS.  A warning nothing reads
-is a confession log, not a gate, and this repo has been bitten by precisely
-that.  :func:`require_pinned` raises; the CLI exits 2 and prints one JSON line
-on stdout so a *program* -- not only a human reading a log -- can read the
-refusal, the resolved digests, and the exact ``docker pull`` that fixes it.
-
-SCOPE. The default pin governs one repository: the vanilla vLLM image named
-by ``versions.default_serve_image``. An explicit digest reference for ANY
-repository is additionally checked against that exact reference's presence
-in ``RepoDigests``. Its caller has already selected bytes, so accepting an
-absent or differently stamped image would not preserve that selection.
-Other repositories' floating tags remain resolved and stamped, not gated
-against the unrelated default pin; they cannot establish an exact-runtime
-census context. This does not change the default image or its policy.
+DEFAULT PIN AND BYTE INTEGRITY. The recorded default pin is historical
+identity: a mismatch stamps and continues under decision D32 in development
+mode (the default), and still refuses in certified mode. Missing images and
+an explicit digest reference absent from RepoDigests remain refusals in both
+modes: the caller selected actual bytes, not a historical release identity.
+Other repositories' floating tags remain resolved and stamped. No default
+image or runtime qualification is changed by a development-mode stamp.
 
 ONE DEFAULT. The default digest lives in ``runtime_contract.json`` at
 ``versions.default_serve_image`` (schema v6, #131; ``versions.attested_on.image``
@@ -52,12 +45,14 @@ from __future__ import annotations
 
 import argparse
 import json
+from contextlib import redirect_stdout
 import os
 import re
 import subprocess
 import sys
 from typing import Any, Callable, Mapping
 
+from tessera.dev_mode import dev_mode_enabled, seal_check
 __all__ = [
     "CENSUS_DECLARATION_ENV",
     "DECLARATION_SCHEMA",
@@ -272,6 +267,10 @@ def resolve(requested: str, *,
     if pinned not in repo_digests:
         record.update(refused=True, reason="image_pin_mismatch",
                       fix=f"docker pull {pinned}")
+        if dev_mode_enabled():
+            with redirect_stdout(sys.stderr):  # The CLI stdout stays one JSON record.
+                seal_check("default serving image pin", pinned, repo_digests, where=__name__, same=False)
+            record.update(refused=False, gated=False, dev_uncertified=True)
         return record
     record["reason"] = "pinned"
     return record

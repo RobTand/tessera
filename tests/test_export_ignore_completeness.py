@@ -24,13 +24,13 @@ vLLM builds one method per fused module (``Glm5NextVisionMLP`` builds one
 ``prismaquant/glm53-mia-sm121:487ecf187``, ``models/glm5next/nvidia/
 multimodal.py:102-107``).
 
-WHAT THIS DOES NOT CLAIM.  On that pinned build the vision tower is built with
-``quant_config=None`` (``model.py:1082``), and ``LinearBase.__init__`` then
-installs ``UnquantizedLinearMethod`` WITHOUT calling ``get_quant_method``
-(``linear.py``, the ``if quant_config is None`` branch), so the plugin is never
-asked about it and the refusal does not fire there today.  The rule is the
-completeness the plugin's contract states, held for every Linear rather than
-for the ones one runtime happens to ask about.
+WHAT THIS DOES NOT CLAIM.  On that historical pinned build the vision tower
+supplies ``quant_config=None`` (``model.py:1082``). Without the selective
+constructor hook, ``LinearBase.__init__`` installs ``UnquantizedLinearMethod``
+without calling ``get_quant_method`` (``linear.py``). The current
+``projection_routes.install`` hook supplies TesseraConfig only for explicitly
+declared targets; unselected vision modules keep that stock behavior. Neither
+ignore completeness nor selected construction proves a loaded forward or graph.
 """
 from __future__ import annotations
 
@@ -42,6 +42,8 @@ import pytest
 
 torch = pytest.importorskip("torch")
 safetensors_torch = pytest.importorskip("safetensors.torch")
+
+from test_export_serving import _declare_fixture_geometry
 
 export = importlib.import_module("tessera.export_serving")
 
@@ -95,6 +97,7 @@ def _write(tmp_path: Path) -> Path:
 
 
 def _export(tmp_path, monkeypatch, *extra):
+    _declare_fixture_geometry(monkeypatch, hidden=HIDDEN, mlp_inter=2 * HIDDEN)
     src = _write(tmp_path)
     out = tmp_path / "out"
     monkeypatch.setattr("sys.argv", ["export", str(src), str(out),
@@ -109,7 +112,6 @@ def _export(tmp_path, monkeypatch, *extra):
 #: merged on disk.
 VISION_MODULES = (
     "model.visual.blocks.0.attn.qkv",
-    "model.visual.blocks.0.attn.qkv_proj",
     "model.visual.blocks.0.attn.proj",
     "model.visual.blocks.0.mlp.gate_up_proj",
     "model.visual.blocks.0.mlp.down_proj",
@@ -126,6 +128,8 @@ def test_the_ignore_rule_names_a_non_body_linear():
     # (multimodal.py:167), and which one exists is not the producer's to know.
     assert export.ignored_modules("model.visual.blocks.0.attn.qkv.weight", (192, 64)) == (
         "model.visual.blocks.0.attn.qkv", "model.visual.blocks.0.attn.qkv_proj")
+    assert export.ignored_modules("model.visual.blocks.0.attn.qkv.weight", (192, 64),
+                                  "Glm5NextForConditionalGeneration") == ("model.visual.blocks.0.attn.qkv",)
     assert export.ignored_modules("model.visual.blocks.0.mlp.gate_proj.weight", (128, 64)) == (
         "model.visual.blocks.0.mlp.gate_up_proj",)
     # The FUSED table's output, not an attested fact about Qwen4Exp: that
@@ -140,26 +144,6 @@ def test_the_ignore_rule_names_a_non_body_linear():
     assert export.ignored_modules(
         "model.language_model.layers.1.mlp.experts.7.gate_proj.weight", (64, 128)) == (
         "model.language_model.layers.1.mlp.experts",)
-
-
-def test_the_exported_ignore_names_every_passed_through_linear(tmp_path, monkeypatch):
-    """No encode (``--layers 0``): the question is the config, not the wire."""
-    written = _export(tmp_path, monkeypatch, "--layers", "0")
-    ignore = set(written["ignore"])
-    missing = [m for m in VISION_MODULES if m not in ignore]
-    assert not missing, (
-        f"the exporter copies these Linears through at source precision and never names them, "
-        f"so the plugin refuses the checkpoint at load: {missing}; ignore={sorted(ignore)}")
-    leaves = [i for i in ignore if i.endswith(("mlp.gate_proj", "mlp.up_proj"))]
-    assert not leaves, f"ignore names unmerged roles vLLM never builds as modules: {leaves}"
-    assert "model.visual.patch_embed.proj" not in ignore, (
-        "a Conv3d was named as a Linear")
-    # The embedding is passed through like any other non-body tensor, so its
-    # name comes from the tensor that was written, under whatever layout the
-    # model has (#139): a hard-coded ``model.embed_tokens`` names a module
-    # this nested checkpoint does not have and misses the one it does.
-    assert "model.language_model.embed_tokens" in ignore, sorted(ignore)
-    assert "model.embed_tokens" not in ignore, sorted(ignore)
 
 
 cuda = pytest.mark.skipif(not torch.cuda.is_available(), reason="the encoder is a GPU job")

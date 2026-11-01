@@ -27,12 +27,10 @@ this module owns:
   not already carry the weights (vLLM's gemm2 / ``topk_weight_and_reduce``
   placement), summing over ``top_k``.
 
-ARITHMETIC.  The weight-side contract is the grouped bundle's and is explicit
-at preparation: ``"epilogue"`` (dense BF16 row scale on the fp32 accumulator,
-or the FP8 ``acc * a_scale * w_scale`` contract) or ``"folded"`` (the
-BF16 expert contract, one bf16 rounding of ``value * row_scale`` in
-registers before ``tl.dot``).  The adapter inherits it from the bundles; the
-FP8 family has no folded form.
+ARITHMETIC.  The weight-side contract is the grouped bundle's: raw table
+values through the dot, the fp32 row scale applied on the fp32 accumulator
+after it -- for the value family beside no activation scale, for the FP8
+family as ``acc * a_scale * w_scale``.  No selector names another form.
 
 WHAT REMAINS THE OWNER'S.  Routing (top-k ids and weights), shared experts,
 the TP all-reduce and the final scale/dtype presentation are the serving
@@ -41,7 +39,6 @@ layer's; this adapter returns the routed-expert result ``[T, rows]`` bf16.
 from __future__ import annotations
 
 import dataclasses
-import logging
 import math
 from typing import Sequence
 
@@ -56,7 +53,6 @@ __all__ = ["NativeWindowMoE", "prepare_native_window_moe", "PackedWindowUnits",
 
 #: The activations this adapter reproduces exactly.  Everything else refuses.
 SUPPORTED_ACTIVATIONS = ("silu",)
-_log = logging.getLogger(__name__)
 
 
 @dataclasses.dataclass(frozen=True)
@@ -84,19 +80,15 @@ class PackedWindowUnits:
         return total
 
     def prepare(self, *, block_m: int = 64, block_n: int = 64, block_k: int = 64,
-                arithmetic: "str | None" = None, activation: str = "silu",
+                activation: str = "silu",
                 quantizer: "str | None" = "native") -> "NativeWindowMoE":
-        """Build the adapter.  The default arithmetic is each family's
-        published contract: folded for the research BF16 wire, epilogue for
-        the FP8 wire.  An explicit value must match the family's served
-        contract; nothing here silently swaps them."""
-        if arithmetic is None:
-            arithmetic = "folded" if self.family == "value" else "epilogue"
+        """Build the adapter.  The kernel owns the families' arithmetic, so
+        this takes no arithmetic argument."""
         up = list(self.up) if self.up else None
         return prepare_native_window_moe(
             list(self.gate), list(self.down), up=up,
             block_m=block_m, block_n=block_n, block_k=block_k,
-            quantizer=quantizer, arithmetic=arithmetic, activation=activation)
+            quantizer=quantizer, activation=activation)
 
 
 @dataclasses.dataclass(frozen=True)
@@ -114,16 +106,16 @@ class NativeWindowMoE:
     def launch_pair(self) -> "tuple[str, str]":
         """``(symbol, decoder)`` this adapter's forward is recorded under.
 
-        The compact lane's symbol with the family's arithmetic-naming decoder
+        The compact lane's symbol with the family's decoder
         (``scheme.ROUTE_LAUNCHES``); the route reads it off the adapter so a
         different adapter behind the same attribute (``tessera.routed_fused``)
         is recorded as itself, never under this name.
         """
         from .serving.scheme import WINDOW_MOE_COMPACT_SYMBOL
         from .serving.telemetry import (DECODER_NATIVE_WINDOW_MOE_COMPACT,
-                                        DECODER_NATIVE_WINDOW_MOE_COMPACT_FOLDED)
+                                        DECODER_NATIVE_WINDOW_MOE_COMPACT_BF16)
 
-        decoder = (DECODER_NATIVE_WINDOW_MOE_COMPACT_FOLDED if self.down.family == "value"
+        decoder = (DECODER_NATIVE_WINDOW_MOE_COMPACT_BF16 if self.down.family == "value"
                    else DECODER_NATIVE_WINDOW_MOE_COMPACT)
         return WINDOW_MOE_COMPACT_SYMBOL, decoder
 
@@ -283,7 +275,8 @@ class WindowUnitAxis:
 
     FAMILIES = ("value", "e4m3", "e2m1")
 
-    def __init__(self, experts: int, parts: Sequence[str], *, family: str):
+    def __init__(self, experts: int, parts: Sequence[str], *, family: str,
+                 word_runs: "dict | None" = None):
         if family not in self.FAMILIES:
             raise GrammarError(f"window unit axis families are {self.FAMILIES}, got {family!r}")
         self.experts = int(experts)
@@ -294,19 +287,57 @@ class WindowUnitAxis:
         self._filled: dict = {}
         self._meta: dict = {}
         self._word_layout: dict = {}
+        # Predeclared per-unit (word, run) sizes (#967), when the caller
+        # derives them from the schema: they let a MIXED per-unit stack
+        # allocate its exact flat storage once, at its first put, so no
+        # per-unit weight outlives its callback and nothing is padded to a
+        # common size or retained until finish.  A part whose sizes are all
+        # equal takes the uniform path verbatim.
+        self._sizes: dict = {}
+        self._flat: dict = {}
+        self._offsets: dict = {}
+        for part, entries in (word_runs or {}).items():
+            part = str(part)
+            if part not in self.parts:
+                raise GrammarError(f"word_runs names {part!r}; the axis holds {self.parts}")
+            if len(entries) != self.experts:
+                raise GrammarError(
+                    f"{part!r}: word_runs carries {len(entries)} size(s) for "
+                    f"{self.experts} experts")
+            sizes = []
+            for words, runs in entries:
+                if int(words) <= 0 or int(runs) <= 0:
+                    raise GrammarError(
+                        f"{part!r}: predeclared word/run sizes must be positive, got "
+                        f"({words}, {runs})")
+                sizes.append((int(words), int(runs)))
+            self._sizes[part] = sizes
 
-    def _signature(self, unit) -> tuple:
-        """What one grouped stack needs every expert of a part to share."""
+    def _signature(self, part: str, unit) -> tuple:
+        """What one grouped stack needs every expert of a part to share.
+
+        Without predeclared sizes the per-unit extents (word count, run count,
+        rate table, tile stride) are part of the shared layout, exactly as
+        before #967.  With them, those extents are each expert's own data --
+        checked against its declared size at ``put`` -- and the shared layout
+        is everything the grouped stack indexes uniformly.
+        """
         rep = unit.rep
         if self.family == "e2m1":
             state = (int(unit.codes.numel()), int(unit.scale_plane.numel()),
                      int(unit.arity), int(unit.half))
         else:
             state = (int(unit.table.numel()), int(unit.scale.numel()))
-        return (self.family, int(unit.rows), int(unit.cols), int(unit.window_bits),
-                int(rep.words.numel()), int(rep.runs.shape[0]),
-                tuple(int(r) for r in rep.rates), *state,
-                int(rep.tile_words), int(rep.n_tiles), str(getattr(rep, "word_layout", "legacy")))
+        shared = (self.family, int(unit.rows), int(unit.cols), int(unit.window_bits),
+                  *state, int(rep.n_tiles), str(getattr(rep, "word_layout", "legacy")))
+        if self._sizes.get(str(part)):
+            return shared
+        schedule = (tuple((rate, rep.rates.count(rate)) for rate in sorted(set(rep.rates)))
+                    if self.family == "e2m1" else tuple(int(r) for r in rep.rates))
+        # E2M1 stores each expert's permutation and descriptors separately.
+        # Equal rate counts and strides do not require equal column placement.
+        return shared + (int(rep.words.numel()), int(rep.runs.shape[0]),
+                         schedule, int(rep.tile_words))
 
     def _alloc(self, part: str, unit) -> dict:
         e = self.experts
@@ -316,14 +347,38 @@ class WindowUnitAxis:
         rows, cols, L = int(unit.rows), int(unit.cols), int(unit.window_bits)
         device = words.device
         e2m1 = self.family == "e2m1"
-        slot = {
-            "words": torch.empty((e, words.numel()), dtype=torch.int32, device=device),
-            "runs": torch.empty((e, int(runs.shape[0]), 4), dtype=torch.int32, device=device),
-            "scale": (torch.zeros(0, dtype=torch.float32, device=device) if e2m1
-                      else torch.empty((e, rows), dtype=torch.float32, device=device)),
-            "perm": torch.empty((e, cols), dtype=torch.int32, device=device),
-            "init": torch.empty((e, cols), dtype=torch.int32, device=device),
-        }
+        sizes = self._sizes.get(part)
+        if sizes and len(set(sizes)) != 1:
+            # Exact flat storage for a mixed part (#967): one word stream and
+            # one run table for the whole part, each expert's slice bounded by
+            # the offsets ``finish`` publishes.  The buffers are the SUM of the
+            # declared per-unit sizes -- nothing padded to a common shape, so
+            # the resident bytes are the units' own priced words and runs,
+            # unit for unit.
+            word_off, run_off = [0], [0]
+            for w, r in sizes:
+                word_off.append(word_off[-1] + w)
+                run_off.append(run_off[-1] + r)
+            self._offsets[part] = (word_off, run_off)
+            self._flat[part] = True
+            slot = {
+                "words": torch.empty(word_off[-1], dtype=torch.int32, device=device),
+                "runs": torch.empty((run_off[-1], 4), dtype=torch.int32, device=device),
+                "scale": (torch.zeros(0, dtype=torch.float32, device=device) if e2m1
+                          else torch.empty((e, rows), dtype=torch.float32, device=device)),
+                "perm": torch.empty((e, cols), dtype=torch.int32, device=device),
+                "init": torch.empty((e, cols), dtype=torch.int32, device=device),
+            }
+        else:
+            self._flat[part] = False
+            slot = {
+                "words": torch.empty((e, words.numel()), dtype=torch.int32, device=device),
+                "runs": torch.empty((e, int(runs.shape[0]), 4), dtype=torch.int32, device=device),
+                "scale": (torch.zeros(0, dtype=torch.float32, device=device) if e2m1
+                          else torch.empty((e, rows), dtype=torch.float32, device=device)),
+                "perm": torch.empty((e, cols), dtype=torch.int32, device=device),
+                "init": torch.empty((e, cols), dtype=torch.int32, device=device),
+            }
         empty_u8 = torch.zeros(0, dtype=torch.uint8, device=device)
         if self.family == "value":
             slot["table"] = torch.empty((e, unit.table.numel()), dtype=torch.bfloat16, device=device)
@@ -347,7 +402,7 @@ class WindowUnitAxis:
         slot["total_words"] = torch.empty(e, dtype=torch.int32, device=device)
         slot["has_init"] = torch.empty(e, dtype=torch.int32, device=device)
         self._slots[part] = slot
-        self._layout[part] = self._signature(unit)
+        self._layout[part] = self._signature(part, unit)
         self._filled[part] = set()
         self._meta[part] = (rows, cols, L)
         self._word_layout[part] = str(getattr(rep, "word_layout", "legacy"))
@@ -371,12 +426,35 @@ class WindowUnitAxis:
                 f"got {type(unit).__name__}")
         slot = self._slots.get(part) or self._alloc(part, unit)
         rep = unit.rep
-        if self._signature(unit) != self._layout[part]:
+        if self._signature(part, unit) != self._layout[part]:
+            if self._sizes.get(part):
+                raise GrammarError(
+                    f"{part!r} expert {expert}: packed layout differs from the first expert's; "
+                    "one grouped stack needs one layout per projection")
             raise GrammarError(
-                f"{part!r} expert {expert}: packed layout differs from the first expert's; "
-                "one grouped stack needs one layout per projection")
-        slot["words"][expert] = rep.words
-        slot["runs"][expert] = rep.runs
+                f"{part!r} expert {expert}: the unit's packed layout (word count, run table, "
+                "rates) differs from the first expert's, and this part carries no predeclared "
+                "per-unit word/run sizes (word_runs) to allocate exact flat storage from. A "
+                "mixed per-unit stack declares its sizes (moe_route._mixed_axis_word_runs); "
+                "this axis refuses rather than pad to a common size or retain per-unit "
+                "weights until finish.")
+        sizes = self._sizes.get(part)
+        if sizes:
+            want = sizes[expert]
+            got = (int(rep.words.numel()), int(rep.runs.shape[0]))
+            if got != want:
+                raise GrammarError(
+                    f"{part!r} expert {expert}: the unit packs {got[0]} word(s) in {got[1]} "
+                    f"run(s), its declared size is {want[0]} word(s) in {want[1]} run(s) -- "
+                    "refusing rather than writing a unit off its predeclared place")
+        if self._flat.get(part):
+            word_off, run_off = self._offsets[part]
+            w0, r0 = word_off[expert], run_off[expert]
+            slot["words"][w0:w0 + int(rep.words.numel())] = rep.words.reshape(-1)
+            slot["runs"][r0:r0 + int(rep.runs.shape[0])] = rep.runs
+        else:
+            slot["words"][expert] = rep.words
+            slot["runs"][expert] = rep.runs
         if self.family == "e2m1":
             slot["scale_plane"][expert] = unit.scale_plane.reshape(-1)
             slot["scale_lut"][expert] = unit.scale_lut.reshape(-1).view(torch.uint8)
@@ -415,13 +493,28 @@ class WindowUnitAxis:
             missing = [e for e in range(self.experts) if e not in self._filled[part]]
             if missing:
                 raise GrammarError(f"{part!r} is missing experts {missing} at finish")
-            word_width = slot["words"].shape[1]
-            out[part] = {
-                **slot,
+            meta = {
                 "rows": self._meta[part][0],
                 "cols": self._meta[part][1],
                 "window_bits": self._meta[part][2],
                 "word_layout": self._word_layout.get(part, "legacy"),
+            }
+            if self._flat.get(part):
+                # The mixed part's offsets are its own declared places: int32
+                # word starts (the priced per-unit scalar) and the int64 run
+                # bounds the grouped kernel reads per expert.
+                word_off, run_off = self._offsets[part]
+                out[part] = {
+                    **slot, **meta,
+                    "word_off": torch.tensor(word_off[:-1], dtype=torch.int32,
+                                             device=slot["words"].device),
+                    "run_off": torch.tensor(run_off, dtype=torch.int64,
+                                            device=slot["runs"].device),
+                }
+                continue
+            word_width = slot["words"].shape[1]
+            out[part] = {
+                **slot, **meta,
                 "word_off": (torch.arange(self.experts, dtype=torch.int32, device=slot["words"].device)
                              * word_width),
                 "run_off": torch.cat([
@@ -436,6 +529,13 @@ class WindowUnitAxis:
     def filled(self) -> int:
         """How many (part, expert) slots have been placed."""
         return sum(len(s) for s in self._filled.values())
+
+    def named_tensors(self):
+        """Declare each tensor in the current axis slots by reference."""
+        for part, slot in self._slots.items():
+            for field, value in slot.items():
+                if isinstance(value, torch.Tensor):
+                    yield f"{part}.{field}", value
 
     def resident_bytes(self) -> int:
         """Bytes the allocated slots hold (packed constants only)."""
@@ -453,6 +553,13 @@ class PackedWindowMoeBundles:
     up: PreparedGroupedWindowGemm
     down: PreparedGroupedWindowGemm
     family: str
+    expert_classes: list
+
+    def __post_init__(self):
+        from .expert_classes import normalize_expert_classes
+
+        object.__setattr__(self, "expert_classes",
+            normalize_expert_classes(self.expert_classes, self.experts))
 
     @property
     def experts(self) -> int:
@@ -496,81 +603,35 @@ class PackedWindowMoeBundles:
                 value = getattr(bundle, field.name)
                 if isinstance(value, torch.Tensor):
                     yield f"{role}.{field.name}", value
-        fused = self.__dict__.get("_fused_adapter")
-        if fused is not None:
-            yield from fused.named_tables()
+        adapter = self.__dict__.get("_adapter")
+        if adapter is not None:
+            yield from adapter.named_tables()
 
     def native_owner(self):
-        """The retained owner after selection; caller-held compact inputs stay intact.
-
-        Construction/refusal is still owned by ``adapter``. A compact fallback
-        returns this original owner, while a successful fused selection keeps
-        its projection views plus the already-prepared native tables.
-        """
+        """Retain native aliases only; caller-held load planes remain untouched."""
         selected = self.adapter()
-        fused = self.__dict__.get("_fused_adapter")
-        if fused is None or selected is not fused:
+        if self.gate is selected.gate and self.up is selected.up and self.down is selected.down:
             return self
-        if self.gate is fused.gate and self.up is fused.up and self.down is fused.down:
-            return self
-        owner = dataclasses.replace(self, gate=fused.gate, up=fused.up, down=fused.down)
+        owner = dataclasses.replace(self, gate=selected.gate, up=selected.up, down=selected.down)
         object.__setattr__(owner, "_adapter", selected)
-        object.__setattr__(owner, "_fused_adapter", fused)
         return owner
 
     def adapter(self):
-        """The routed-expert compute over these bundles, built once.
-
-        The fused warp-specialised lane (``tessera.routed_fused``, #640) where
-        :func:`~tessera.routed_fused.fused_routed_window_supported` admits the
-        stack and ``TESSERA_ROUTED_FUSED`` is not ``0``; the compact Triton
-        adapter otherwise.  Each answers ``launch_pair`` with its own
-        ``(symbol, decoder)`` so the route records what actually ran.  The
-        refusal reason is logged at INFO so a serve's log says why a stack
-        kept the compact adapter.
-        """
+        """Build the sole class dispatcher once, with no feature switch or substitute."""
+        if self.family == "e2m1":
+            raise GrammarError(
+                "e2m1 bundles require FusedRoutedE2M1MoE.from_bundles with checkpoint "
+                "gs13 and gs2; the FP8/BF16 class dispatcher is not a W4A4 substitute")
         cached = self.__dict__.get("_adapter")
         if cached is not None:
             return cached
-        from .routed_fused import FusedRoutedWindowMoE, fused_routed_window_supported
+        from .routed_fused import FusedRoutedWindowMoE
 
-        reason = fused_routed_window_supported(self.gate, self.up, self.down)
-        built = None
-        if reason is None:
-            try:
-                built = FusedRoutedWindowMoE.from_bundles(
-                    self.gate, self.up, self.down, activation="silu")
-            except GrammarError:
-                raise
-            except Exception as exc:  # noqa: BLE001 -- the native build is what may fail here
-                # The predicate admitted the stack, so what failed is the
-                # extension build or load (toolchain, architecture, ninja).
-                # ``native_extensions[].when_unavailable`` publishes the
-                # compact adapter as the substitute in both residencies; this
-                # is that substitution, and the reason goes where a serve's
-                # log shows it.
-                reason = f"native build unavailable ({type(exc).__name__}: {exc})"
-                _log.warning("fused routed window lane unavailable for a %s stack of %d "
-                             "experts; the compact adapter serves it: %s",
-                             self.family, self.experts, reason)
-            else:
-                object.__setattr__(self, "_fused_adapter", built)
-        if built is None:
-            # The compact Triton adapter reads the legacy ``[column][chunk]``
-            # order only.  A re-laid stack cannot be re-strided by a reader that
-            # does not know the order, so an unavailable fused lane is a
-            # refusal, not a substitution (tessera#793/#739).
-            if self.word_layout != "legacy":
-                raise GrammarError(
-                    f"the {self.word_layout!r} resident word layout is served only by the fused "
-                    f"routed window lane; it is unavailable ({reason}), and the compact adapter "
-                    "reads the legacy order only. Refusing rather than mis-reading the stack.")
-            _log.info("compact window MoE adapter kept for a %s stack of %d experts: %s",
-                      self.family, self.experts, reason)
-            built = native_window_moe_from_bundles(
-                self.down, gate=self.gate, up=self.up, activation="silu")
+        built = FusedRoutedWindowMoE.from_bundles(self.gate, self.up, self.down,
+            expert_classes=self.expert_classes, activation="silu")
         object.__setattr__(self, "_adapter", built)
         return built
+
 
 
 def native_window_moe_from_bundles(
@@ -584,7 +645,8 @@ def native_window_moe_from_bundles(
     """The adapter from already-prepared grouped stacks (the loader path).
 
     ``gate_up`` is the fused ``[2I]`` stack; ``gate``/``up`` are the separate
-    spelling.  Families, weight arithmetic and expert counts must agree.
+    spelling.  Families and expert counts must agree; the kernel owns the
+    weight contract.
     """
     if activation not in SUPPORTED_ACTIVATIONS:
         raise GrammarError(f"activation {activation!r} is not served")
@@ -597,8 +659,6 @@ def native_window_moe_from_bundles(
             continue
         if bundle.family != down.family:
             raise GrammarError(f"{name} family {bundle.family!r} differs from down's {down.family!r}")
-        if bundle.arithmetic != down.arithmetic:
-            raise GrammarError(f"{name} arithmetic {bundle.arithmetic!r} differs from down's")
         if bundle.experts != down.experts:
             raise GrammarError(f"{name} has {bundle.experts} experts, down has {down.experts}")
     if gate_up is not None and gate_up.rows != 2 * down.cols:
@@ -617,17 +677,15 @@ def prepare_native_window_moe(
     block_n: int = 64,
     block_k: int = 64,
     quantizer: "str | None" = "native",
-    arithmetic: str = "epilogue",
     activation: str = "silu",
 ) -> NativeWindowMoE:
     """Prepare both stages once.
 
     ``gate`` is the fused gate/up stack (``rows == 2 * down.cols``) unless
     ``up`` is given, in which case ``gate`` and ``up`` are separate stacks of
-    ``down.cols`` rows each.  ``arithmetic`` is the grouped bundles' explicit
-    weight-side contract (``"epilogue"`` default, ``"folded"`` for the
-    BF16 expert contract); the down stack must agree with the gate/up
-    stacks.  ``activation`` must be in :data:`SUPPORTED_ACTIVATIONS`.
+    ``down.cols`` rows each.  The kernel owns the weight-side contract, so
+    there is no arithmetic argument.  ``activation`` must be in
+    :data:`SUPPORTED_ACTIVATIONS`.
     """
     if activation not in SUPPORTED_ACTIVATIONS:
         raise GrammarError(
@@ -636,29 +694,24 @@ def prepare_native_window_moe(
     if up is None:
         gate_up = prepare_grouped_window_gemm(
             gate, initial_state=initial_state, block_m=block_m, block_n=block_n,
-            block_k=block_k, quantizer=quantizer, arithmetic=arithmetic)
+            block_k=block_k, quantizer=quantizer)
         gate_bundle = up_bundle = None
     else:
         gate_up = None
         gate_bundle = prepare_grouped_window_gemm(
             gate, initial_state=initial_state, block_m=block_m, block_n=block_n,
-            block_k=block_k, quantizer=quantizer, arithmetic=arithmetic)
+            block_k=block_k, quantizer=quantizer)
         up_bundle = prepare_grouped_window_gemm(
             up, initial_state=initial_state, block_m=block_m, block_n=block_n,
-            block_k=block_k, quantizer=quantizer, arithmetic=arithmetic)
+            block_k=block_k, quantizer=quantizer)
     down_bundle = prepare_grouped_window_gemm(
         down, initial_state=initial_state, block_m=block_m, block_n=block_n,
-        block_k=block_k, quantizer=quantizer, arithmetic=arithmetic)
+        block_k=block_k, quantizer=quantizer)
     first = gate_up or gate_bundle
     if first.family != down_bundle.family:
         raise GrammarError(
             f"gate/up family {first.family!r} and down family {down_bundle.family!r} "
-            "must agree; a mixed-family MoE has no single arithmetic contract"
-        )
-    if first.arithmetic != down_bundle.arithmetic:
-        raise GrammarError(
-            "the gate/up and down stacks must share one weight arithmetic "
-            f"({first.arithmetic!r} vs {down_bundle.arithmetic!r})"
+            "must agree; a mixed-family MoE has no single weight contract"
         )
     if first.experts != down_bundle.experts:
         raise GrammarError(

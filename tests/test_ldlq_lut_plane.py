@@ -838,6 +838,28 @@ def test_the_coupled_landing_reaches_the_bytes_and_leaves_the_wire_alone():
     assert len(gs) == len(cou), "the wire is unchanged"
 
 
+@pytest.mark.parametrize("mode", [True, "every"])
+def test_coupled_landing_refuses_a_separable_only_trailing_refit(mode):
+    """With one refit only the trailing metric runs. An unused coupled base
+    cannot make a coupled landing meaningful (issue #1243). CPU-only so the
+    admission rule is checked without requiring a CUDA device."""
+    from tessera.alphabet import build_forest
+    from tessera.encode import encode_unit
+    from tessera.trellis import ConvCode
+
+    w = _weights(seed=19, rows=16, cols=64, device="cpu")
+    H = _hessian(cols=64, seed=19, device="cpu")
+    h = H.diagonal() / H.diagonal().mean()
+    forest = build_forest(3, grid=E2M1_GRID)
+    code = ConvCode(memory=6)
+    with pytest.raises(
+        GrammarError, match="refit_coupled_landing needs a metric that couples the blocks"
+    ):
+        encode_unit(w, forest, (3,) * 64, code, scale_plane=ScalePlaneKind.LUT,
+                    scale_refit=1, refit_metric=H, refit_metric_trailing=h,
+                    refit_coupled_landing=mode)
+
+
 @cuda
 def test_the_coupled_landing_is_refused_where_the_landing_is_already_exact():
     w = _weights(seed=19).bfloat16()

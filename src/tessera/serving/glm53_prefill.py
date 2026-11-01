@@ -104,6 +104,9 @@ Environment:
   row shows tolerance and acceptance hold.
 - ``TESSERA_GLM53_ONORM_CUDA``: ``1`` appends the op as above; ``0`` (the
   default) leaves ``custom_ops`` as the serve set it.
+- ``TESSERA_GLM53_MHC_FUSED``: ``1`` installs :mod:`tessera.serving.mhc_fusion`
+  (one fused kernel per split-k mHC site, bitwise to stock at the stock split,
+  #783); unset or ``0`` (the default) keeps the stock mHC kernels.
 
 Decline (stock behaviour, one warning): a touched module's sha256 is not an
 inspected interface's, or TP != 2, PP > 1, DP > 1, EP, sequence-parallel MoE
@@ -232,10 +235,8 @@ def is_glm5next(config: Any) -> bool:
 
 def onorm_cuda_enabled() -> bool:
     """``TESSERA_GLM53_ONORM_CUDA``: ``1`` opts in; ``0`` or unset (the default) leaves the serve's ops."""
-    raw = os.environ.get("TESSERA_GLM53_ONORM_CUDA", "0").strip()
-    if raw not in ("", "0", "1"):
-        raise ValueError(f"TESSERA_GLM53_ONORM_CUDA must be 0 or 1; got {raw!r}")
-    return raw == "1"
+    from .flags import latched_bool
+    return latched_bool("TESSERA_GLM53_ONORM_CUDA", meaning="the KDA CUDA output norm")
 
 
 def enable_onorm_cuda(config: Any) -> bool:
@@ -266,10 +267,9 @@ def enable_onorm_cuda(config: Any) -> bool:
 
 
 def sp_mode() -> str:
-    mode = os.environ.get("TESSERA_GLM53_SP_MHC", "off").strip().lower()
-    if mode not in ("auto", "off", "force"):
-        raise ValueError(f"TESSERA_GLM53_SP_MHC must be auto, off or force; got {mode!r}")
-    return mode
+    from .flags import latched_mode
+    return latched_mode("TESSERA_GLM53_SP_MHC", modes=("auto", "off", "force"),
+                        meaning="sequence-parallel mHC", unset_help="", default="off")
 
 
 def sp_decline_reasons(config: Any) -> list[str]:
@@ -855,10 +855,9 @@ KDA_SPLIT_CONV_BLOCK = """\
 
 
 def kda_conv_split_mode() -> str:
-    mode = os.environ.get("TESSERA_GLM53_KDA_CONV_SPLIT", "off").strip().lower()
-    if mode not in ("on", "off"):
-        raise ValueError(f"TESSERA_GLM53_KDA_CONV_SPLIT must be on or off; got {mode!r}")
-    return mode
+    from .flags import latched_mode
+    return latched_mode("TESSERA_GLM53_KDA_CONV_SPLIT", modes=("on", "off"),
+                        meaning="split KDA convolution", unset_help="", default="off")
 
 
 def conv_split(conv_fn: Callable, qkv: Any, weight: Any, bias: Any, conv_state: Any,
@@ -972,7 +971,10 @@ def install_for_current_config() -> None:
     current = getter() if getter is not None else None
     if current is None:
         return
+    from .mhc_fusion import install_mhc_fusion
+
     with _INSTALL_LOCK:
         enable_onorm_cuda(current)
         install_sp_mhc(current)
         install_kda_conv_split(current)
+        install_mhc_fusion(current)

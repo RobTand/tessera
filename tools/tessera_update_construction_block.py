@@ -1,17 +1,11 @@
 #!/usr/bin/env python3
-"""Regenerate ``runtime_contract.json``'s ``construction`` block from the receipts.
+"""Derive the active construction block from its named census receipts.
 
-The block is DERIVED, never hand-edited: every row is
-``contract.construction_entry_from_receipt`` applied to one receipt under
-``docs/measurements/construction/``, and ``tests/test_serving_construction.py``
-re-derives the block and refuses any drift.  When a census is re-taken (a new
-image, a new architecture), drop the receipt in that directory and run this;
-the test is what proves the two agree.
+The contract names one active receipt per architecture. Historical receipts
+remain unchanged. Use --receipt to replace one active architecture.
 
-Idempotent: running it twice writes the same bytes, and it does not touch the
-changelog unless ``--changelog`` is given with an entry to prepend.
-
-    tools/tessera_update_construction_block.py [--check]
+    tools/tessera_update_construction_block.py --receipt <new receipt>
+    tools/tessera_update_construction_block.py --check
 """
 from __future__ import annotations
 
@@ -26,41 +20,27 @@ sys.path.insert(0, str(ROOT / "src"))
 from tessera.serving.contract import (  # noqa: E402
     CONSTRUCTION_SCHEMA, construction_entry_from_receipt)
 
-RECEIPTS = ROOT / "docs/measurements/construction"
 CONTRACT = ROOT / "src/tessera/serving/runtime_contract.json"
 
 NOTE = (
-    "Which Linears the pinned runtime OFFERS to a quant config, per architecture. "
-    "LinearBase.__init__ takes UnquantizedLinearMethod() in the quant_config is None "
-    "branch WITHOUT calling get_quant_method, so a model that builds a projection with "
-    "quant_config=None takes vLLM's own BF16 method and this plugin is never asked -- it "
-    "cannot refuse, warn, or see the prefix. A wire written there deletes the "
-    "<module>.weight the runtime wants and puts bytes in its place that nothing decodes. "
-    "offered/never_offered are vLLM MODULE patterns with repeat indices collapsed to '*'; "
-    "a producer translates its checkpoint names with hf_to_vllm_mapper_unstacked first "
-    "(the same table configure_quant_config hands this plugin) and normalises the same "
-    "way. A name in neither list is a module the runtime does not build -- unless it is "
-    "listed under the row's optional 'disagreements', which names a pattern whose observed "
-    "members answered differently and the exact prefixes that differed: such a pattern is "
-    "struck from 'offered' because it clears none of its members, least of all the ones "
-    "the census did not observe. Every row is "
-    "DERIVED from a receipt under docs/measurements/construction/ by "
-    "contract.construction_entry_from_receipt and re-derived in "
-    "tests/test_serving_construction.py, so the table cannot drift from the observation; "
-    "the observation itself is tools/tessera_construction_census.py, which builds the "
-    "model the way the loader does and records every prefix a probe quant config is "
-    "offered. An architecture with no row is UNCENSUSED, which is an honest gap and not a "
-    "claim that everything is routed.")
+    "The active receipts record which modules reach a quant config. "
+    "An explicit Tessera target can use the selective constructor override. "
+    "Unselected modules retain their stock method. "
+    "The offered and never_offered lists use normalized runtime module names. "
+    "The producer applies hf_to_vllm_mapper_unstacked before the lookup. "
+    "Each row derives from its named active receipt. Historical receipts remain unchanged. "
+    "Construction proves reachability, not weight loading or a forward result.")
 
 
-def build_block() -> dict:
-    entries = []
-    for path in sorted(RECEIPTS.glob("*.json")):
+def build_block(contract, replacements=()) -> dict:
+    entries = {}
+    paths = [ROOT / entry["receipt"] for entry in contract["construction"]["architectures"]]
+    for path in [*paths, *replacements]:
         entry = construction_entry_from_receipt(json.loads(path.read_text()))
         entry["receipt"] = str(path.relative_to(ROOT))
-        entries.append(entry)
-    entries.sort(key=lambda e: e["architecture"])
-    return {"schema": CONSTRUCTION_SCHEMA, "note": NOTE, "architectures": entries}
+        entries[entry["architecture"]] = entry
+    return {"schema": CONSTRUCTION_SCHEMA, "note": NOTE,
+            "architectures": sorted(entries.values(), key=lambda entry: entry["architecture"])}
 
 
 def splice(raw: str, block: dict) -> str:
@@ -100,13 +80,15 @@ def splice(raw: str, block: dict) -> str:
 
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__)
+    ap.add_argument("--receipt", type=Path, action="append", default=[],
+                    help="replace the active receipt for its measured architecture")
     ap.add_argument("--check", action="store_true",
                     help="exit 1 if the committed block is not what the receipts derive")
     args = ap.parse_args()
 
     raw = CONTRACT.read_text()
     contract = json.loads(raw)
-    block = build_block()
+    block = build_block(contract, [path.resolve() for path in args.receipt])
     if args.check:
         if contract.get("construction") == block:
             print("construction block matches the receipts")

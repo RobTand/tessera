@@ -1,22 +1,13 @@
-"""Does the stock twin hold exactly what the wire decodes to?  Every unit.
+"""Verify every tensor in the derived BF16 stock checkpoint.
 
-The twin is the artifact vanilla vLLM serves, and the wire is the artifact the
-lane will serve.  A served comparison between them is only a comparison of two
-*servings* of one encode if the two really are one encode -- so this reads the
-wire back from bytes, materialises it, and asserts bit equality with the twin
-tensor, per unit, with no tolerance.  It also re-checks the streamed decoder
-against the same tensor, because that is the path the lane's product mode
-takes and it must not be a third rendering.
+The reference comes from the wire reader and the stock renderer. It has one
+BF16 conversion per weight. The Tessera route instead keeps raw BF16 values
+and FP32 row scales separate through the dot. These are distinct arithmetic
+contracts over the same encode.
 
-It reads the checkpoints and nothing else: no encoder state is carried over
-from the export, which is what makes this a check rather than a restatement.
-
-With ``--source`` it also checks the twin is *structurally* the source
-checkpoint -- same tensor names, same shapes, every quantised tile back in
-bfloat16 and no ``quantization_config`` -- which is the claim that makes the
-twin servable by a runtime that has never heard of Tessera.  Equal bytes per
-unit is not that claim: a checkpoint can hold the right tiles under the wrong
-names, or under a config that sends a loader looking for scales.
+The check also derives the stock tensor from the streamed pair. It reads only
+checkpoint bytes. With ``--source``, it verifies tensor names, shapes, BF16
+dtypes and the absence of a quantization configuration.
 """
 from __future__ import annotations
 
@@ -31,8 +22,8 @@ from safetensors import safe_open
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
-from tessera.bf16_route import prepare_bf16_unit, stream_bf16_folded  # noqa: E402
-from tessera.decode import materialize_bf16_folded  # noqa: E402
+from tessera.bf16_route import prepare_bf16_unit, stream_bf16  # noqa: E402
+from tessera.stock import materialize_stock  # noqa: E402
 from tessera.fused import parse_fused  # noqa: E402
 from tessera.unit_artifact import parse_unit_artifact  # noqa: E402
 
@@ -124,17 +115,19 @@ def main() -> None:
             continue
         for member, name in zip(members, names):
             parsed = parse_unit_artifact(member.blob, device=args.device)
-            tile = materialize_bf16_folded(parsed.unit, parsed.grid, parsed.code)
+            tile = materialize_stock(parsed.unit, parsed.grid, parsed.code)["weight"]
             got = twin_index[name].get_tensor(name).to(args.device)
             checked += 1
             if got.dtype is not torch.bfloat16 or not torch.equal(got, tile):
                 mismatched += 1
                 delta = float((got.float() - tile.float()).abs().max())
-                problems.append(f"{name}: twin != materialize_bf16_folded, max |d| {delta}")
+                problems.append(f"{name}: twin differs from the derived stock tile, max |d| {delta}")
                 worst = max(worst or 0.0, delta)
             if checked % args.streamed_every == 0:
                 streamed_checked += 1
-                if not torch.equal(stream_bf16_folded(prepare_bf16_unit(parsed.unit)), tile):
+                values, scale = stream_bf16(prepare_bf16_unit(parsed.unit))
+                derived = (values.float() * scale[:, None]).to(torch.bfloat16)
+                if not torch.equal(derived, tile):
                     streamed_bad += 1
                     problems.append(f"{name}: streamed decode != tile")
             del parsed, tile, got

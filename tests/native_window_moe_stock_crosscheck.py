@@ -1,34 +1,12 @@
-"""Stock-oracle crosscheck for the REAL window MoE method.
+"""Exercise the real window MoE loader and forward callbacks.
 
-Drives `build_tessera_moe_method` through create_weights -> every loader
-callback -> process_weights_after_loading -> apply and compares the ROUTED
-output against **actual stock vLLM `fused_experts`** on **independently
-decoded reference weights** (the materialising reader / read_unit_artifact,
-never the native path's own bundles):
+FP8 uses the independent stock vLLM kernel. BF16 uses independent FP64
+dots with raw values and separate row scales. Neither reference reads the
+native adapter's decoded weights. The component result is rank-local.
 
-* FP8 ordinary route, TP1 and both TP2 geometry cuts (rank-local weights and
-  the rank-local stock result; no all-reduce in this component check);
-* folded BF16 through the research route (TP2 rank 0).
-
-With ``--canonical-fixture`` the arms run on the fixture's OWN layer-3/layer-4
-expert wires at H=4096 / I=2048, clamp ACTIVE, non-unit routing, and both
-input-weight/output-weight placements.  Folded BF16 (A16) is exercised there
-at **TP1 and both TP2 cuts** -- the A16 research-selected TP1 compact lane had
-never been run on a device -- and each arm proves the native dispatch was
-reached and no selected-expert materialization ran.
-
-Stock is the oracle for the boundary in question: dynamic per-token FP8 at
-both stages, the per-route bf16 down output and `moe_sum` rounding.  The
-numbers are reported, not buried: each arm prints max abs, max relative and
-the deviation in bf16 ulps of the reference maximum.
-
-Run directly (actual vLLM work is exempt from PrismaBuild), in the pinned
-image:
-
-  docker run --rm --gpus all --user 1000:1000 -e HOME=/tmp \
-    -e PYTHONPATH=/work/src:/work/tests \
-    -v <worktree>:/work:ro --entrypoint bash <image> -lc \
-    "python3 -m pip install -q --user pytest; python3 /work/tests/native_window_moe_stock_crosscheck.py"
+The reports use a four-ULP screen, not a composed error bound. The canonical
+fixture covers the clamp, non-unit routing, TP1 and both TP2 rank cuts.
+Run these batch checks through PrismaBuild in the pinned vLLM image.
 """
 import json
 import os
@@ -93,7 +71,7 @@ def _install_dispatch_probe(method):
     set (``moe_route.py`` ``if self._native is not None: return
     self._apply_native``); the path that would instead *materialise the
     selected experts* is the research-selected fallback ``_apply_selected``,
-    which decodes ``self._packed.decode`` / ``decode_folded``.  A test that
+    which decodes ``self._packed.decode``. A test that
     only reads ``_native_mode`` infers the branch; this wraps the adapter to
     count its real invocations and shadows the two fallbacks so a call to
     either fails the arm.  It also records whether a selected-expert decode
@@ -110,7 +88,7 @@ def _install_dispatch_probe(method):
              "selected_path_calls": 0,
              "monolithic_calls": 0,
              "materializer_decls": sorted(
-                 name for name in ("decode", "decode_folded")
+                 name for name in ("decode",)
                  if callable(getattr(method._packed, name, None)))}
     if real_native is None:
         return state
@@ -253,17 +231,15 @@ def canonical_reference_tensors(units, layer, device="cpu"):
     FP8 (layer 3): ``prepare_tessera_moe_experts`` materialises the stock
     per-channel stack; its ``w13`` rows are split into gate and up at the
     expert's intermediate size, ``w2`` is down.
-    BF16 (layer 4): each role is decoded independently with
-    ``decode.materialize_bf16_folded`` on the MATERIALISING parse (the
-    reference reader), which is the twin's rendering -- one bf16 rounding with
-    the row scale folded in.
+    BF16 (layer 4): the materialising reader returns raw BF16 values and
+    separate FP32 row scales. No per-weight BF16 conversion applies.
 
     Returns ``{"tensors": {...}, "meta": {...}}``: tensors stay out of the JSON
     a receipt prints, and the metadata is shapes only -- it is a preparation
     report, not a decode.
     """
     from tessera.serving import moe_route as _mr
-    from tessera.decode import materialize_bf16_folded
+    from tessera.decode import materialize_bf16
 
     u = units[layer]
     experts = sorted(u["experts"])
@@ -272,10 +248,9 @@ def canonical_reference_tensors(units, layer, device="cpu"):
     # [2*inter, K] and is split gate-first for the per-role reference tensors.
     inter = int(declared["groups"]["w13"]["rows"]) // 2
 
-    def _fold(expert_entry, role):
-        # the MATERIALISING parse, never the compact one under test
+    def _pair(expert_entry, role):
         parsed = expert_entry["materialized"][role][0][1]
-        return materialize_bf16_folded(parsed.unit, parsed.forests, parsed.code)
+        return materialize_bf16(parsed.unit, parsed.forests, parsed.code)
 
     if u["family"] == "TESSERA_FP8":
         bounded = dict(declared)
@@ -292,9 +267,12 @@ def canonical_reference_tensors(units, layer, device="cpu"):
                    "s3": [prepared.w13_weight_scale[e][inter:2 * inter] for e in range(len(experts))],
                    "s2": [prepared.w2_weight_scale[e] for e in range(len(experts))]}
     else:
-        tensors = {"w1": [_fold(u["experts"][e], "w1") for e in experts],
-                   "w3": [_fold(u["experts"][e], "w3") for e in experts],
-                   "w2": [_fold(u["experts"][e], "w2") for e in experts]}
+        pairs = {role: [_pair(u["experts"][e], role) for e in experts]
+                 for role in ("w1", "w3", "w2")}
+        tensors = {role: [pair[0].to(device) for pair in values]
+                   for role, values in pairs.items()}
+        tensors.update({"s" + role[1:]: [pair[1].to(device) for pair in values]
+                        for role, values in pairs.items()})
     meta = {"family": u["family"], "experts": experts, "intermediate": inter,
             "note": "reference tensors materialised independently of the compact intake",
             "shapes": {k: [list(v.shape) for v in vs] for k, vs in tensors.items()}}
@@ -352,13 +330,7 @@ def canonical_execution(fixture, layers=(3, 4), experts=(0, 1), clamp=10.0):
             {"layer": layer, "distinct": int(torch.unique(weights).numel()),
              "min": float(weights.min()), "max": float(weights.max())})
         quant_fp8 = _fp8_quant_config()
-        # A16 (folded BF16, layer 4) is exercised at TP1 as well as both TP2
-        # cuts: the A16 RESEARCH-SELECTED TP1 device result is the one this
-        # fixture owes, because that world size took the compact lane only
-        # after ``moe_route.compact_window_lane`` was unified and had never
-        # been run on a device.  The FP8 route (layer 3) keeps its two TP2
-        # canonical cuts; its TP1 arithmetic is already covered by the
-        # synthetic-geometry arms above and the pinned component test.
+        # BF16 covers TP1 and both TP2 rank cuts. FP8 keeps its two cuts.
         arms = (((0, 1), (0, 2), (1, 2)) if u["family"] == "TESSERA_BF16"
                 else ((0, 2), (1, 2)))
         for tp_rank, tp_size in arms:
@@ -426,19 +398,12 @@ def canonical_execution(fixture, layers=(3, 4), experts=(0, 1), clamp=10.0):
                 "layer_w13_weight": (list(layer_stub.w13_weight.shape)
                                      if getattr(layer_stub, "w13_weight", None) is not None
                                      and hasattr(layer_stub.w13_weight, "shape") else None)}
-            if u["family"] == "TESSERA_FP8":
-                w1 = torch.stack([torch.cat([tenor["w1"][e][lo:hi], tenor["w3"][e][lo:hi]])
-                                  for e in range(E)]).cuda().contiguous()
-                s1 = torch.stack([torch.cat([tenor["s1"][e][lo:hi], tenor["s3"][e][lo:hi]])
-                                  for e in range(E)]).cuda().contiguous()
-                w2 = torch.stack([tenor["w2"][e][:, lo:hi] for e in range(E)]).cuda().contiguous()
-                s2 = torch.stack([tenor["s2"][e] for e in range(E)]).cuda().contiguous()
-            else:
-                w1 = torch.stack([torch.cat([tenor["w1"][e][lo:hi], tenor["w3"][e][lo:hi]])
-                                  for e in range(E)]).cuda().contiguous()
-                s1 = None
-                w2 = torch.stack([tenor["w2"][e][:, lo:hi] for e in range(E)]).cuda().contiguous()
-                s2 = None
+            w1 = torch.stack([torch.cat([tenor["w1"][e][lo:hi], tenor["w3"][e][lo:hi]])
+                              for e in range(E)]).cuda().contiguous()
+            s1 = torch.stack([torch.cat([tenor["s1"][e][lo:hi], tenor["s3"][e][lo:hi]])
+                              for e in range(E)]).cuda().contiguous()
+            w2 = torch.stack([tenor["w2"][e][:, lo:hi] for e in range(E)]).cuda().contiguous()
+            s2 = torch.stack([tenor["s2"][e] for e in range(E)]).cuda().contiguous()
             ones_ids = torch.zeros(4, 1, dtype=torch.int32, device="cuda")
             ones_w = torch.ones(4, 1, device="cuda")
             if method._native.gate_up is not None:
@@ -555,28 +520,21 @@ def canonical_execution(fixture, layers=(3, 4), experts=(0, 1), clamp=10.0):
                     ids_wi, w_wi = ids, weights
                 layer_stub.apply_router_weight_on_input = weight_input
                 native = method.apply(layer_stub, x, w_wi, ids_wi, None, None)
-                qc = (quant_fp8(w1_scale=s1, w2_scale=s2, swiglu_limit=clamp)
-                      if s1 is not None else
-                      FusedMoEQuantConfig.make(gemm1_clamp_limit=clamp))
-                # ``fused_experts`` calls ``apply_moe_activation`` with NO
-                # ``activation_config``, so it DROPS ``gemm1_clamp_limit`` --
-                # demonstrated below by a clamped run that is byte-identical to
-                # an uncapped one.  The stock clamped semantics live on the
-                # modular path, which builds ``ApplyMoEActivationConfig`` from
-                # the quant config and passes it.  The arm applies the stock
-                # stage explicitly on the fused kernel's own gemm1 output, so
-                # the composition is graded against the operation the model
-                # actually specifies rather than against a clamp-less stand-in.
-                stock = _stock_modular_reference(
-                    x, w1, w2, w_wi, ids_wi, family=u["family"], clamp=clamp,
-                    experts=E, apply_router_weight_on_input=weight_input,
-                    w1_scale=s1, w2_scale=s2,
-                    moe_config=method.moe)
+                if u["family"] == "TESSERA_FP8":
+                    stock = _stock_modular_reference(
+                        x, w1, w2, w_wi, ids_wi, clamp=clamp, experts=E,
+                        apply_router_weight_on_input=weight_input,
+                        w1_scale=s1, w2_scale=s2, moe_config=method.moe)
+                    reference_kind = "stock FP8 modular kernel"
+                else:
+                    stock = _bf16_epilogue_reference(
+                        x, w1, w2, w_wi, ids_wi, clamp=clamp,
+                        apply_router_weight_on_input=weight_input,
+                        w1_scale=s1, w2_scale=s2)
+                    reference_kind = "independent BF16 epilogue screen"
                 report.setdefault("clamp_wiring", []).append(
                     {"layer": layer, "tp_rank": tp_rank, "weight_input": weight_input,
-                     "stock_used": "FusedMoEKernel.apply via make_fp8_moe_kernel / "
-                                   "make_unquantized_moe_kernel with the clamp in the "
-                                   "quant config (modular path)"})
+                     "reference_kind": reference_kind})
                 ok &= _arm(f"canonical_L{layer}_tp{tp_size}_rank{tp_rank}"
                            f"_clamped_weight_input={int(weight_input)}", native, stock, report)
             # Two ``apply`` calls (both weight placements) must each have
@@ -598,84 +556,60 @@ def canonical_execution(fixture, layers=(3, 4), experts=(0, 1), clamp=10.0):
     return report
 
 
-def _stock_modular_reference(x, w1, w2, weights, ids, *, family, clamp,
+def _stock_modular_reference(x, w1, w2, weights, ids, *, clamp,
                              experts, apply_router_weight_on_input,
-                             w1_scale=None, w2_scale=None, moe_config=None):
-    """THE ACTUAL STOCK KERNEL, clamp included.
-
-    Not a composition and not ``fused_experts``: ``FusedMoEKernel.apply``
-    (``modular_kernel.py``) is what the serving lane itself calls, and its
-    activation path passes ``ApplyMoEActivationConfig``, which is where
-    ``gemm1_clamp_limit`` survives.  The non-modular ``fused_experts`` calls
-    ``apply_moe_activation`` with NO config and silently drops the clamp --
-    measured, not inferred (see the ``fused_experts_respects_swiglu_limit``
-    stage in this file, which is retained as the negative evidence).
-
-    FP8 (layer 3): ``make_fp8_moe_kernel`` with the stock per-channel quant
-    config carrying ``swiglu_limit``.
-    BF16 (layer 4): ``make_unquantized_moe_kernel`` with
-    ``gemm1_clamp_limit``.
-    """
+                             w1_scale, w2_scale, moe_config):
+    """Run the independent stock FP8 kernel with its actual clamp contract."""
     from vllm.model_executor.layers.fused_moe.activation import MoEActivation
-    from vllm.model_executor.layers.fused_moe.config import FusedMoEQuantConfig
+    from vllm.model_executor.layers.fused_moe.oracle.fp8 import (
+        make_fp8_moe_kernel, make_fp8_moe_quant_config, select_fp8_moe_backend)
+    from vllm.model_executor.layers.quantization.utils.quant_utils import (
+        kFp8DynamicTokenSym, kFp8StaticChannelSym)
 
-    # The backend and expert class are selected HERE, independently, with the
-    # stock oracle's own factories.  They must NOT be read off the native
-    # method: ``moe_route.py`` sets ``self.fp8_backend = self.bf16_backend =
-    # self.experts_cls = None`` in native mode by design, so reusing them
-    # cannot instantiate anything.
-    if family == "TESSERA_FP8":
-        from vllm.model_executor.layers.fused_moe.oracle.fp8 import (
-            make_fp8_moe_kernel, make_fp8_moe_quant_config,
-            select_fp8_moe_backend)
-        from vllm.model_executor.layers.quantization.utils.quant_utils import (
-            kFp8DynamicTokenSym, kFp8StaticChannelSym)
-        backend, experts_cls = select_fp8_moe_backend(
-            config=moe_config, weight_key=kFp8StaticChannelSym,
-            activation_key=kFp8DynamicTokenSym, allow_vllm_cutlass=True)
-        quant = make_fp8_moe_quant_config(
-            fp8_backend=backend, w1_scale=w1_scale, w2_scale=w2_scale,
-            a1_scale=None, a2_scale=None, per_act_token_quant=True,
-            per_out_ch_quant=True, block_shape=None,
-            gemm1_alpha=None, gemm1_beta=None, swiglu_limit=clamp, layer=None)
-        kernel = make_fp8_moe_kernel(
-            moe_quant_config=quant, moe_config=moe_config,
-            fp8_backend=backend, experts_cls=experts_cls,
-            routing_tables=None)
-    else:
-        from vllm.model_executor.layers.fused_moe.oracle.unquantized import (
-            UnquantizedMoeBackend, make_unquantized_moe_kernel)
-        # TRITON, chosen explicitly rather than by the stock auto-selection.
-        #
-        # The lane's research BF16 route is pinned to stock TRITON
-        # (``moe_route.py`` refuses any other unquantized backend for
-        # research-selected experts), so the reference runs the same stock
-        # expert implementation the lane mirrors.
-        #
-        # The stock auto-selection instead lands on FlashInfer CUTLASS, which
-        # this direct-apply harness cannot feed -- NOT because of these shapes.
-        # It reads ``ep_rank`` from ``moe_parallel_config.ep_rank`` at
-        # construction and hands it to the FFI, which requires an int; the
-        # harness's layer stub (``test_serving_moe_selected._layer``) leaves
-        # every unlisted field ``None``, so ``ep_rank`` is ``None`` and the
-        # FlashInfer path rejects it.  That is a harness-metadata gap, not a
-        # geometry or backend limitation, and it is why the reference names
-        # its backend here instead of taking the auto selection.
-        backend, experts_cls = UnquantizedMoeBackend.TRITON, None
-        from vllm.model_executor.layers.fused_moe.experts.triton_moe import (
-            TritonExperts)
-        experts_cls = TritonExperts
-        quant = FusedMoEQuantConfig.make(gemm1_clamp_limit=clamp)
-        kernel = make_unquantized_moe_kernel(
-            quant_config=quant, moe_config=moe_config,
-            backend=backend, experts_cls=experts_cls,
-            routing_tables=None)
-    ids_arg = ids.int()
-    return kernel.apply(x, w1, w2, weights, ids_arg,
-                        activation=MoEActivation.SILU,
-                        global_num_experts=experts,
+    backend, experts_cls = select_fp8_moe_backend(
+        config=moe_config, weight_key=kFp8StaticChannelSym,
+        activation_key=kFp8DynamicTokenSym, allow_vllm_cutlass=True)
+    quant = make_fp8_moe_quant_config(
+        fp8_backend=backend, w1_scale=w1_scale, w2_scale=w2_scale,
+        a1_scale=None, a2_scale=None, per_act_token_quant=True,
+        per_out_ch_quant=True, block_shape=None,
+        gemm1_alpha=None, gemm1_beta=None, swiglu_limit=clamp, layer=None)
+    kernel = make_fp8_moe_kernel(
+        moe_quant_config=quant, moe_config=moe_config,
+        fp8_backend=backend, experts_cls=experts_cls, routing_tables=None)
+    return kernel.apply(x, w1, w2, weights, ids.int(),
+                        activation=MoEActivation.SILU, global_num_experts=experts,
                         expert_map=None,
                         apply_router_weight_on_input=apply_router_weight_on_input)
+
+
+def _bf16_epilogue_reference(x, w1, w2, weights, ids, *, w1_scale, w2_scale,
+                             clamp, apply_router_weight_on_input):
+    """Compute the BF16 screen from independent values and row scales.
+
+    FP64 dots precede each row scale. The reference preserves the adapter's
+    activation and per-route BF16 boundaries. It is not a vLLM stock oracle.
+    """
+    out = torch.zeros_like(x, dtype=torch.float32)
+    for token, choices in enumerate(ids.tolist()):
+        for choice, expert in enumerate(choices):
+            left = x[token]
+            if apply_router_weight_on_input:
+                left = (left * weights[token, choice]).to(torch.bfloat16)
+            projections = ((w1[expert].double() @ left.double())
+                           * w1_scale[expert].double()).float()
+            projections = projections.to(torch.bfloat16).float()
+            gate, up = projections.chunk(2)
+            if clamp is not None:
+                gate = gate.clamp(max=clamp)
+                up = up.clamp(min=-clamp, max=clamp)
+            act = (torch.nn.functional.silu(gate) * up).to(torch.bfloat16)
+            down = ((w2[expert].double() @ act.double())
+                    * w2_scale[expert].double()).float()
+            if not apply_router_weight_on_input:
+                down = down * weights[token, choice]
+            out[token] += down.to(torch.bfloat16).float()
+    return out.to(torch.bfloat16)
 
 
 def stock_factory_construction_check(fixture, layers=(3, 4), experts=(0, 1)):
@@ -1156,7 +1090,7 @@ def main():
             # the loose oracle is the negative control.
             ok &= loose_err > 100 * native_err
 
-    # --- folded BF16 research route, TP2 rank 0 ----------------------------
+    # BF16 research route against the independent canonical screen.
     from vllm.model_executor.layers.fused_moe.activation import MoEActivation
     from vllm.model_executor.layers.fused_moe.fused_moe import fused_experts
 
@@ -1181,11 +1115,13 @@ def main():
     # routing for 2 experts on the BF16 stacks
     ids2 = torch.randint(0, 2, (8, 2), dtype=torch.int32, device="cuda")
     native = method.apply(layer, x, weights, ids2, None, None)
-    stock = fused_experts(x, w1.cuda(), w2.cuda(), weights, ids2,
-                          activation=MoEActivation.SILU, global_num_experts=2)
-    ok &= _arm("bf16_folded_tp2_rank0", native, stock, report)
+    stock = _bf16_epilogue_reference(
+        x, w1, w2, weights, ids2, clamp=None, apply_router_weight_on_input=False,
+        w1_scale=torch.ones(w1.shape[:-1], device=x.device),
+        w2_scale=torch.ones(w2.shape[:-1], device=x.device))
+    ok &= _arm("bf16_epilogue_tp2_rank0", native, stock, report)
 
-    # --- the model's SwiGLU clamp, ACTIVE, on both families ----------------
+    # The remaining FP8 controls retain the clamp-ignoring negative evidence.
     # Every arm above ran with no clamp, so none of them exercised the
     # arithmetic the derived fixture needs (GLM's ``swiglu_limit: 10.0``).
     # These arms drive inputs whose gemm1 accumulators cross the limit in BOTH
@@ -1239,44 +1175,6 @@ def main():
                  "counts_toward_acceptance": False})
             del withdrawn
 
-    # folded BF16 research route (layer 4's family), both rank cuts
-    from vllm.model_executor.layers.fused_moe.config import FusedMoEQuantConfig
-    for tp_rank, tp_size in ((0, 2), (1, 2)):
-        layer = _native_layer(tp_rank=tp_rank, tp_size=tp_size)
-        layer.swiglu_limit = CLAMP
-        with set_current_vllm_config(
-                types.SimpleNamespace(model_config=types.SimpleNamespace(enforce_eager=True))):
-            method = moe_route.build_tessera_moe_method(
-                bscheme, "m", "resident", layer,
-                research_selected=moe_route.ResearchSelectedMoeConfig(
-                    max_experts_per_chunk=2, expected_tensor_parallel_size=2))
-        method.create_weights(layer, 2, HIDDEN, INTER // tp_size, torch.bfloat16)
-        _load_all(method, layer, b13, [pair[tp_rank] if len(pair) > tp_rank else pair[0]
-                                       for pair in b2])
-        method.process_weights_after_loading(layer)
-        local = INTER // tp_size
-        lo, hi = tp_rank * local, (tp_rank + 1) * local
-        w1c = torch.stack([
-            torch.cat([expected[e][0][lo:hi], expected[e][0][INTER + lo:INTER + hi]])
-            for e in range(2)]).cuda().contiguous()
-        w2c = torch.stack([expected[e][1][:, lo:hi] for e in range(2)]).cuda().contiguous()
-        # ALSO WITHDRAWN (same defect, BF16 family): ``fused_experts`` ignores
-        # the clamp here too.  Kept as negative evidence, excluded from ``ok``.
-        qc = FusedMoEQuantConfig.make(gemm1_clamp_limit=CLAMP)
-        for weight_input in (False, True):
-            layer.apply_router_weight_on_input = weight_input
-            native_c = method.apply(layer, x_clamped, weights, ids2, None, None)
-            stock_c = fused_experts(x_clamped, w1c, w2c, weights, ids2,
-                                    activation=MoEActivation.SILU, global_num_experts=2,
-                                    apply_router_weight_on_input=weight_input,
-                                    quant_config=qc)
-            _arm(f"WITHDRAWN_clamp_ignoring_bf16_tp2_rank{tp_rank}"
-                 f"_weight_input={int(weight_input)}", native_c, stock_c, report)
-            report.setdefault("withdrawn_gates", []).append(
-                {"arm": f"bf16_folded_tp2_rank{tp_rank}_weight_input={int(weight_input)}",
-                 "reason": "stock side is fused_experts, which drops gemm1_clamp_limit",
-                 "ulps_observed": report["arms"][-1].get("bf16_ulps_of_max"),
-                 "counts_toward_acceptance": False})
 
     report["passed"] = bool(ok)
     print(json.dumps(report))

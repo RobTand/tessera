@@ -1,0 +1,631 @@
+{
+ "scope": "tessera#1133 GPU validation of the T4 performant menu binding (parent tessera#1103). Policy checks and native A4 execution checks only. No performance, serving or 20-cell measurement claim.",
+ "source": {
+  "repository": "RobTand/tessera",
+  "snapshot_parent": "69aae020048458a168296ef534ad29938299cf83",
+  "this_attempt_actions_submitted_from_a_clean_worktree": true,
+  "effective_source_sha256": "4d068a285daa1e8817577c363c3595bb7f27ff828903eb3d6dce2ada6658ba69",
+  "files_verified": 2116
+ },
+ "priority": {
+  "submitted": 10,
+  "reason": "plan priority and the campaign label (Rob 10-09); the acceptance text names priority 0; priority is not part of the action key"
+ },
+ "container_image": {
+  "reference": "localhost/prismaquant/spark-vllm-nccl230@sha256:c2e75e03cfc52c15489b40fe58e65acb7347f6fa3ddf2e81afda86760698147b",
+  "inspect_on_sparklina": "sha256:38ead3cab558d85c2261c43dccb76207f5b25c639281cf9a24714455f14a9dc4 [\"localhost/prismaquant/spark-vllm-nccl230@sha256:c2e75e03cfc52c15489b40fe58e65acb7347f6fa3ddf2e81afda86760698147b\"] created=2026-09-28T08:25:54.65219962-04:00",
+  "dependency_site": "/mnt/shared/tessera-suite-envs/ts-readiness-20261002-py312/site-packages",
+  "dependency_sha256": "2bacba69864fad0e86481f94e6d3ea157e9d9ddab24e7f6efb3c72692658fdf6"
+ },
+ "runtime_identity_in_image": {
+  "backend": "tokenspeed_triton",
+  "backend_module_version": "3.8.10",
+  "capability": [
+   12,
+   1
+  ],
+  "device": "NVIDIA GB10",
+  "jsonschema": "4.26.0",
+  "numpy": "2.3.5",
+  "ptx_tokens": [
+   "mxf4nvf4",
+   "mma.sync"
+  ],
+  "python": "3.12.3",
+  "tokenspeed-triton": "3.8.10.post20260721",
+  "tokenspeed_triton": "3.8.10.post20260721",
+  "torch": "2.13.0+cu130",
+  "torch_cuda": "13.0",
+  "triton": "3.7.1",
+  "vllm": "0.28.1rc1.dev397+gfd4a15126.d20260904"
+ },
+ "cpu_runtime": [
+  "python 3.14.4 x86_64",
+  "torch 2.11.0+cpu",
+  "numpy 2.5.2",
+  "pytest 9.1.1",
+  "pytest-xdist 3.8.0",
+  "jsonschema 4.26.0",
+  "triton 3.8.0",
+  "vllm absent",
+  "torch.cuda.is_available False"
+ ],
+ "wire_fixtures": {
+  "directory": "/mnt/shared/astra-native-a4/data",
+  "a4-config.json": {
+   "bytes": 140563,
+   "sha256": "b449cd6246c60f7892f95794c442acb395cb67813530bca8b734323c9a74812d"
+  },
+  "gate_proj_wire.bin": {
+   "bytes": 4195630,
+   "sha256": "2e87c5101b034e1dd4124b53c2f93ae1dcce230f1cb3d153d764c9b481f9cb16"
+  },
+  "up_proj_wire.bin": {
+   "bytes": 4195628,
+   "sha256": "dcdcf51adf82a23174678c3266c4754cad876a46d728402392abbb084a1e7282"
+  },
+  "down_proj_wire.bin": {
+   "bytes": 4195583,
+   "sha256": "e8f05c06ebd3ee5ee873121635edc852ec58e57e6cf9155f16c68b53fc548fa4"
+  }
+ },
+ "menu_readout": {
+  "approved_cell_count": 20,
+  "approved_cell_statuses": [
+   "allow"
+  ],
+  "approved_status": "allow",
+  "foreign_build_reasons": [
+   "performance_admission_not_established"
+  ],
+  "foreign_build_status": "wait",
+  "menu_TESSERA_E2M1_K2": {
+   "dense": [
+    896
+   ],
+   "routed": [
+    896
+   ]
+  },
+  "qualified_menu": {
+   "dense": [
+    896
+   ],
+   "routed": [
+    896
+   ]
+  },
+  "rung_768_first_cell_reason": "performance_admission_not_established"
+ },
+ "native_selection_collected": [
+  "tests/test_kernel_a4.py::test_native_fp4_mma_is_emitted_not_emulated",
+  "tests/test_kernel_a4.py::test_gemm_matches_arithmetic_reference[1-w13-0]",
+  "tests/test_kernel_a4.py::test_gemm_matches_arithmetic_reference[1-w13-1]",
+  "tests/test_kernel_a4.py::test_gemm_matches_arithmetic_reference[1-w2-0]",
+  "tests/test_kernel_a4.py::test_gemm_matches_arithmetic_reference[1-w2-1]",
+  "tests/test_kernel_a4.py::test_gemm_matches_arithmetic_reference[8-w13-0]",
+  "tests/test_kernel_a4.py::test_gemm_matches_arithmetic_reference[8-w13-1]",
+  "tests/test_kernel_a4.py::test_gemm_matches_arithmetic_reference[8-w2-0]",
+  "tests/test_kernel_a4.py::test_gemm_matches_arithmetic_reference[8-w2-1]",
+  "tests/test_kernel_a4.py::test_gemm_matches_arithmetic_reference[32-w13-0]",
+  "tests/test_kernel_a4.py::test_gemm_matches_arithmetic_reference[32-w13-1]",
+  "tests/test_kernel_a4.py::test_gemm_matches_arithmetic_reference[32-w2-0]",
+  "tests/test_kernel_a4.py::test_gemm_matches_arithmetic_reference[32-w2-1]",
+  "tests/test_kernel_a4.py::test_gemm_matches_arithmetic_reference[128-w13-0]",
+  "tests/test_kernel_a4.py::test_gemm_matches_arithmetic_reference[128-w13-1]",
+  "tests/test_kernel_a4.py::test_gemm_matches_arithmetic_reference[128-w2-0]",
+  "tests/test_kernel_a4.py::test_gemm_matches_arithmetic_reference[128-w2-1]",
+  "tests/test_kernel_a4.py::test_grouped_gemm_matches_the_dense_kernel[w13-0]",
+  "tests/test_kernel_a4.py::test_grouped_gemm_matches_the_dense_kernel[w13-1]",
+  "tests/test_kernel_a4.py::test_grouped_gemm_matches_the_dense_kernel[w2-0]",
+  "tests/test_kernel_a4.py::test_grouped_gemm_matches_the_dense_kernel[w2-1]"
+ ],
+ "full_run_passed_tests": [
+  "tests/test_kernel_a4.py::test_gemm_matches_arithmetic_reference[1-w13-0]",
+  "tests/test_kernel_a4.py::test_gemm_matches_arithmetic_reference[1-w13-1]",
+  "tests/test_kernel_a4.py::test_gemm_matches_arithmetic_reference[1-w2-0]",
+  "tests/test_kernel_a4.py::test_gemm_matches_arithmetic_reference[1-w2-1]",
+  "tests/test_kernel_a4.py::test_gemm_matches_arithmetic_reference[128-w13-0]",
+  "tests/test_kernel_a4.py::test_gemm_matches_arithmetic_reference[128-w13-1]",
+  "tests/test_kernel_a4.py::test_gemm_matches_arithmetic_reference[128-w2-0]",
+  "tests/test_kernel_a4.py::test_gemm_matches_arithmetic_reference[128-w2-1]",
+  "tests/test_kernel_a4.py::test_gemm_matches_arithmetic_reference[32-w13-0]",
+  "tests/test_kernel_a4.py::test_gemm_matches_arithmetic_reference[32-w13-1]",
+  "tests/test_kernel_a4.py::test_gemm_matches_arithmetic_reference[32-w2-0]",
+  "tests/test_kernel_a4.py::test_gemm_matches_arithmetic_reference[32-w2-1]",
+  "tests/test_kernel_a4.py::test_gemm_matches_arithmetic_reference[8-w13-0]",
+  "tests/test_kernel_a4.py::test_gemm_matches_arithmetic_reference[8-w13-1]",
+  "tests/test_kernel_a4.py::test_gemm_matches_arithmetic_reference[8-w2-0]",
+  "tests/test_kernel_a4.py::test_gemm_matches_arithmetic_reference[8-w2-1]",
+  "tests/test_kernel_a4.py::test_grouped_gemm_matches_the_dense_kernel[w13-0]",
+  "tests/test_kernel_a4.py::test_grouped_gemm_matches_the_dense_kernel[w13-1]",
+  "tests/test_kernel_a4.py::test_grouped_gemm_matches_the_dense_kernel[w2-0]",
+  "tests/test_kernel_a4.py::test_grouped_gemm_matches_the_dense_kernel[w2-1]",
+  "tests/test_kernel_a4.py::test_native_fp4_mma_is_emitted_not_emulated",
+  "tests/test_rung_performant_policy.py::PerformantPolicy::test_actual_scope_can_allow_without_fake_aggregate_measured",
+  "tests/test_rung_performant_policy.py::PerformantPolicy::test_class_and_actual_shape_mismatch_refuse",
+  "tests/test_rung_performant_policy.py::PerformantPolicy::test_class_donors_never_supply_held_or_refused_times",
+  "tests/test_rung_performant_policy.py::PerformantPolicy::test_class_inheritance_does_not_set_measurement_or_admission",
+  "tests/test_rung_performant_policy.py::PerformantPolicy::test_diagnostic_measurement_is_not_admission",
+  "tests/test_rung_performant_policy.py::PerformantPolicy::test_legacy_semantics_and_new_query_do_not_mix",
+  "tests/test_rung_performant_policy.py::PerformantPolicy::test_measured_r896_uses_its_actual_scoped_cost",
+  "tests/test_rung_performant_policy.py::PerformantPolicy::test_menu_is_structure_specific",
+  "tests/test_rung_performant_policy.py::PerformantPolicy::test_missing_shape_activation_recipe_and_M_wait",
+  "tests/test_rung_performant_policy.py::PerformantPolicy::test_pair_arity_q896_is_pure_seven",
+  "tests/test_rung_performant_policy.py::PerformantPolicy::test_present_partial_cell_waits_before_class_reconstruction",
+  "tests/test_rung_performant_policy.py::PerformantPolicy::test_quality_sample_reversal_does_not_admit_or_exclude",
+  "tests/test_rung_performant_policy.py::SupplierRevision::test_metadata_increment_uses_pure_grid_owner",
+  "tests/test_rung_performant_policy.py::SupplierRevision::test_missing_rank_shape_field_returns_wait",
+  "tests/test_rung_performant_policy.py::SupplierRevision::test_routed_release_unit_never_matches_dense_cell",
+  "tests/test_rung_performant_policy.py::TimingPublication::test_all_class_spots_bound_the_derived_value",
+  "tests/test_rung_performant_policy.py::TimingPublication::test_approved_cell_records_bind_M_shape_and_kind",
+  "tests/test_rung_performant_policy.py::TimingPublication::test_approved_scope_admits_exact_cells_and_waits_elsewhere",
+  "tests/test_rung_performant_policy.py::TimingPublication::test_approved_semantic_scope_binds_every_field",
+  "tests/test_rung_performant_policy.py::TimingPublication::test_candidate_table_digest_is_a_byte_integrity_refusal",
+  "tests/test_rung_performant_policy.py::TimingPublication::test_class_publication_binds_all_observed_times",
+  "tests/test_rung_performant_policy.py::TimingPublication::test_measured_samples_must_agree_with_their_pass_median",
+  "tests/test_rung_performant_policy.py::TimingPublication::test_missing_samples_are_not_fake_repetitions",
+  "tests/test_rung_performant_policy.py::TimingPublication::test_pair_publication_binds_only_the_approved_build",
+  "tests/test_rung_performant_policy.py::TimingPublication::test_publication_preserves_noise_observations_and_hard_refusals",
+  "tests/test_rung_performant_policy.py::TimingPublication::test_release_units_link_exact_rank_shapes_without_qualification",
+  "tests/test_rung_performant_policy.py::TimingPublication::test_retained_samples_publish_descriptive_uncertainty",
+  "tests/test_rung_performant_policy.py::TimingPublication::test_supplier_prose_is_not_a_new_identity_gate"
+ ],
+ "pb_cpu_venv_jsonschema_history": [
+  {
+   "label": "first run: jsonschema absent",
+   "action_key": "d5865e694fce997a8ef0e26c9f269640806e24ccffb7a332521be843f6ffa32a",
+   "host": "dl380g10",
+   "pb_status": "failed",
+   "command": "/bin/bash -c '/home/rob/venvs/pb-cpu/bin/python -m pytest tests/test_rung_performant_policy.py \"tests/test_kernel_a4.py::test_code_nibbles_match_subset_semantics\" \"tests/test_kernel_a4.py::test_plane_decode_matches_materialize_stock\" -n 2 --dist worksteal --durations=10 -ra -p no:cacheprovider --surface-json policy-surface.json && /home/rob/venvs/pb-cpu/bin/python -m pytest tests/test_kernel_a4.py::test_native_fp4_mma_is_emitted_not_emulated tests/test_kernel_a4.py::test_gemm_matches_arithmetic_reference tests/test_kernel_a4.py::test_grouped_gemm_matches_the_dense_kernel --collect-only -q -p n",
+   "module_error": "ModuleNotFoundError: No module named 'jsonschema'",
+   "pytest_summary": null
+  },
+  {
+   "label": "second run: jsonschema absent",
+   "action_key": "d370c65485d246fdc8d73c7a4349bba45cdc7bf63fedb678ba95f3904ef72f67",
+   "host": "dl380g10",
+   "pb_status": "failed",
+   "command": "/home/rob/venvs/pb-cpu/bin/python -m pytest tests/test_rung_performant_policy.py -n 2 --dist worksteal --durations=10 -ra --surface-json policy-surface.json",
+   "module_error": "ModuleNotFoundError: No module named 'jsonschema'",
+   "pytest_summary": null
+  },
+  {
+   "label": "per-action pip install of jsonschema, then pytest",
+   "action_key": "62f9a62e6f3f2f1caeeffa85e517fd8a7f1bd4ba21336f21b62a09dae95f4af3",
+   "host": "dl380g10",
+   "pb_status": "executed",
+   "command": "/bin/sh -c '/home/rob/venvs/pb-cpu/bin/pip install --quiet jsonschema && /home/rob/venvs/pb-cpu/bin/python -m pytest tests/test_rung_performant_policy.py -n 2 --dist worksteal --durations=10 -ra --surface-json policy-surface.json'",
+   "module_error": null,
+   "pytest_summary": "28 passed in 5.80s"
+  }
+ ],
+ "pool_venv_inventory_earlier_attempt": {
+  "action_key": "3b59b3bca1ed7c48a5aaf1bc90cfa4445f3e048e623c3e167a9b4ecd09c9e00f",
+  "venvs_listed": 72,
+  "venvs_listing_triton_3_6_0_only": 68,
+  "venvs_listing_no_triton": 4,
+  "venvs_listing_other_triton": 0,
+  "venvs_listing_tokenspeed": 0,
+  "torch_versions_of_triton_venvs": [
+   [
+    "2.11.0+cpu"
+   ],
+   [
+    "2.11.0+cu130"
+   ]
+  ],
+  "venvs_without_triton": [
+   "/home/rob/dq-runs/venvs/gridbook-release",
+   "/home/rob/venvs/pb-cpu314",
+   "/home/rob/venvs/pb1485-sdk5-b40-overlay-20261004",
+   "/home/rob/venvs/typecheck"
+  ]
+ },
+ "pool_venv_refusal_earlier_attempt": {
+  "action_key": "15685e3628e24603a3aae647679fcf8c8941aa9313633f916d9acc5b1a3715d3",
+  "summary": "28 passed, 21 errors in 3.25s",
+  "allocation": "0 test(s) allocated on the device",
+  "error": "test_kernel_a4: triton cannot compile or run block-scaled FP4 MMA for this device (RuntimeError: PassManager::run failed); the A4 span-2 native kernels refuse rather than emulating the multiply in bf16",
+  "interpreter": "/home/rob/dq-runs/venvs/prismaquant-cu130/bin/python"
+ },
+ "strict_cuda_refusal_of_the_two_test_slice": [
+  "--strict-cuda: no test in this run allocated on the CUDA device. A device this session never used is not coverage of the surface it was submitted to cover -- every other check here is satisfied by a run that collected the suite and skipped all of it (tessera#152).",
+  "--strict-cuda: refusing rather than reporting coverage this run does not have."
+ ],
+ "actions": [
+  {
+   "name": "cpu1",
+   "role": "metadata, CPU, superseded",
+   "action_key": "8241a594d333c291370881c83d6adfcb11baac49322df56c01009e10f78af9ca",
+   "device": "dl380g10 CPU only (torch 2.11.0+cpu)",
+   "host": "dl380g10",
+   "pb_status": "executed",
+   "pb_returncode": 0,
+   "action_returncode": null,
+   "elapsed_s": 20.8,
+   "published_utc": "2026-10-09T22:11:59Z",
+   "finished_utc": "2026-10-09T22:12:23Z",
+   "priority": 10,
+   "snapshot_parent": "69aae020048458a168296ef534ad29938299cf83",
+   "snapshot_commit": "258220fc655888467fc9966c5f12bd8d1328c957",
+   "demand": {
+    "cpu": 2,
+    "mem_gb": 8
+   },
+   "timeout_s": 1800.0,
+   "scope_memory_peak_gib": 1.31,
+   "cas_receipt_sha256": "53d31efa5f6ceb2285459d05094ce3e7960b7631a73742d728c451d209bad248",
+   "stdout_sha256": "8b90ad1bfc32201f3168a01bb31dbe031a7f5790aebb3e282b53bddb92f63be9",
+   "stdout_bytes": 7481,
+   "command": "/bin/bash -c 'set +e\nPY=/home/rob/venvs/pb-cpu/bin/python\nSURF=/mnt/shared/tessera-suite-receipts/ts1133-20261009\necho \"LEG env\"\n$PY - <<'\"'\"'PYEOF'\"'\"'\nimport importlib.metadata as m, platform, sys\nprint(\"python\", sys.version.split()[0], platform.machine())\nfor name in (\"torch\", \"numpy\", \"pytest\", \"pytest-xdist\", \"jsonschema\", \"triton\", \"vllm\"):\n    try:\n        print(name, m.version(name))\n    except m.PackageNotFoundError:\n        print(name, \"absent\")\nimport torch\nprint(\"torch.cuda.is_available\", torch.cuda.is_available())\nPYEOF\nrc_env=$?\necho \"LEG policy+decode\"\n$PY -m pytest tests/test_rung_performant_policy.py tests/test_kernel_a4.py::test_code_nibbles_match_subset_semantics tests/test_kernel_a4.py::test_plane_decode_matches_materialize_stock -n 2 --dist worksteal --durations=10 -ra -p no:cacheprovider --surface-json $SURF/surface.cpu.json\nrc_policy=$?\necho \"LEG collect-native\"\n$PY -m pytest tests/test_kernel_a4.py::test_native_fp4_mma_is_emitted_not_emulated tests/test_kernel_a4.py::test_gemm_matches_arithmetic_reference tests/test_kernel_a4.py::test_grouped_gemm_matches_the_dense_kernel --collect-only -q -p no:cacheprovider\nrc_collect=$?\necho \"LEG menu-readout\"\n$PY - <<'\"'\"'PYEOF'\"'\"'\nimport copy, json, sys\nsys.path.insert(0, \"tests\")\nfrom test_rung_performant_policy import approved_t4_table, decide\nfrom tessera.rung_allowability import measured_geometry_classes, performant_rungs, publication_scope\ntable = approved_t4_table()\nscope = publication_scope(table)\nallowed = decide(table, 896)\nforeign = copy.deepcopy(table)\nforeign[\"kernel_build\"][\"id\"] = \"other-build\"\nfor measurement in foreign[\"rungs\"][0][\"measurements\"]:\n    measurement[\"measurement_build_id\"] = \"other-build\"\nforeign[\"geometry_classes\"] = measured_geometry_classes(foreign)\nrefused = decide(foreign, 896)\nreadout = {\n    \"menu_TESSERA_E2M1_K2\": {kind: list(performant_rungs(\"TESSERA_E2M1_K2\", kind)) for kind in (\"dense\", \"routed\")},\n    \"qualified_menu\": scope[\"qualified_menu\"],\n    \"approved_status\": allowed[\"status\"],\n    \"approved_cell_count\": len(allowed[\"cells\"]),\n    \"approved_cell_statuses\": sorted({cell[\"status\"] for cell in allowed[\"cells\"]}),\n    \"foreign_build_status\": refused[\"status\"],\n    \"foreign_build_reasons\": sorted({cell[\"reason\"] for cell in refused[\"cells\"]}),\n    \"rung_768_first_cell_reason\": decide(table, 768)[\"cells\"][0][\"reason\"],\n}\nprint(\"MENU_READOUT \" + json.dumps(readout, sort_keys=True))\nPYEOF\nrc_readout=$?\necho \"LEGS env=$rc_env policy=$rc_policy collect=$rc_collect readout=$rc_readout\"\n[ $rc_env -eq 0 ] && [ $rc_policy -eq 0 ] && [ $rc_collect -eq 0 ] && [ $rc_readout -eq 0 ]'",
+   "surface_file": "/mnt/shared/tessera-suite-receipts/ts1133-20261009/surface.cpu.json",
+   "surface_sha256": "b977ffcd16fc7c751c29fce780428d43daeff6850108eda837046209a8adef90"
+  },
+  {
+   "name": "cpu2",
+   "role": "metadata, CPU",
+   "action_key": "4aa13e926f4efb725ceecc667c29deec9b0f2f34fd8c2e18293e73dbcbadd463",
+   "device": "dl380g10 CPU only (torch 2.11.0+cpu)",
+   "host": "dl380g10",
+   "pb_status": "executed",
+   "pb_returncode": 0,
+   "action_returncode": null,
+   "elapsed_s": 27.9,
+   "published_utc": "2026-10-09T22:16:10Z",
+   "finished_utc": "2026-10-09T22:16:46Z",
+   "priority": 10,
+   "snapshot_parent": "69aae020048458a168296ef534ad29938299cf83",
+   "snapshot_commit": "d676252b60edf65bc725a4a17361bc8a59bfdb18",
+   "demand": {
+    "cpu": 2,
+    "mem_gb": 8
+   },
+   "timeout_s": 1800.0,
+   "scope_memory_peak_gib": 1.33,
+   "cas_receipt_sha256": "732162e03fe6870ed7f61f17dddbcd900292af3dd2b0ad5c017f99dd25a8dc03",
+   "stdout_sha256": "75e1e850289db28db46999e2008970b02deda41974fe845cff285664cbbe7427",
+   "stdout_bytes": 7490,
+   "command": "/bin/bash -c 'set +e\nPY=/home/rob/venvs/pb-cpu/bin/python\nSURF=/mnt/shared/tessera-suite-receipts/ts1133-20261009\necho \"LEG env\"\n$PY - <<'\"'\"'PYEOF'\"'\"'\nimport importlib.metadata as m, platform, sys\nprint(\"python\", sys.version.split()[0], platform.machine())\nfor name in (\"torch\", \"numpy\", \"pytest\", \"pytest-xdist\", \"jsonschema\", \"triton\", \"vllm\"):\n    try:\n        print(name, m.version(name))\n    except m.PackageNotFoundError:\n        print(name, \"absent\")\nimport torch\nprint(\"torch.cuda.is_available\", torch.cuda.is_available())\nPYEOF\nrc_env=$?\necho \"LEG policy+decode\"\n$PY -m pytest tests/test_rung_performant_policy.py tests/test_kernel_a4.py::test_code_nibbles_match_subset_semantics tests/test_kernel_a4.py::test_plane_decode_matches_materialize_stock -n 2 --dist worksteal --durations=10 -ra -p no:cacheprovider --surface-json $SURF/surface.cpu-verified.json\nrc_policy=$?\necho \"LEG collect-native\"\n$PY -m pytest tests/test_kernel_a4.py::test_native_fp4_mma_is_emitted_not_emulated tests/test_kernel_a4.py::test_gemm_matches_arithmetic_reference tests/test_kernel_a4.py::test_grouped_gemm_matches_the_dense_kernel --collect-only -q -p no:cacheprovider\nrc_collect=$?\necho \"LEG menu-readout\"\n$PY - <<'\"'\"'PYEOF'\"'\"'\nimport copy, json, sys\nsys.path.insert(0, \"tests\")\nfrom test_rung_performant_policy import approved_t4_table, decide\nfrom tessera.rung_allowability import measured_geometry_classes, performant_rungs, publication_scope\ntable = approved_t4_table()\nscope = publication_scope(table)\nallowed = decide(table, 896)\nforeign = copy.deepcopy(table)\nforeign[\"kernel_build\"][\"id\"] = \"other-build\"\nfor measurement in foreign[\"rungs\"][0][\"measurements\"]:\n    measurement[\"measurement_build_id\"] = \"other-build\"\nforeign[\"geometry_classes\"] = measured_geometry_classes(foreign)\nrefused = decide(foreign, 896)\nreadout = {\n    \"menu_TESSERA_E2M1_K2\": {kind: list(performant_rungs(\"TESSERA_E2M1_K2\", kind)) for kind in (\"dense\", \"routed\")},\n    \"qualified_menu\": scope[\"qualified_menu\"],\n    \"approved_status\": allowed[\"status\"],\n    \"approved_cell_count\": len(allowed[\"cells\"]),\n    \"approved_cell_statuses\": sorted({cell[\"status\"] for cell in allowed[\"cells\"]}),\n    \"foreign_build_status\": refused[\"status\"],\n    \"foreign_build_reasons\": sorted({cell[\"reason\"] for cell in refused[\"cells\"]}),\n    \"rung_768_first_cell_reason\": decide(table, 768)[\"cells\"][0][\"reason\"],\n}\nprint(\"MENU_READOUT \" + json.dumps(readout, sort_keys=True))\nPYEOF\nrc_readout=$?\necho \"LEGS env=$rc_env policy=$rc_policy collect=$rc_collect readout=$rc_readout\"\n[ $rc_env -eq 0 ] && [ $rc_policy -eq 0 ] && [ $rc_collect -eq 0 ] && [ $rc_readout -eq 0 ]'",
+   "surface_file": "/mnt/shared/tessera-suite-receipts/ts1133-20261009/surface.cpu-verified.json",
+   "surface_sha256": "705c65ac1d0eec81e3242b372ae3318b1c5940914a26730cfb35770a198f93b0"
+  },
+  {
+   "name": "pre",
+   "role": "native slice, strict-cuda refusal",
+   "action_key": "4311cf8975c0c6f48a85dfafc596e77ec70015364f37ab6c63b805b1e5fda9be",
+   "device": "NVIDIA GB10 (sm_121)",
+   "host": "sparky",
+   "pb_status": "failed",
+   "pb_returncode": 1,
+   "action_returncode": 4,
+   "elapsed_s": 10.2,
+   "published_utc": "2026-10-09T22:13:22Z",
+   "finished_utc": "2026-10-09T22:13:38Z",
+   "priority": 10,
+   "snapshot_parent": "69aae020048458a168296ef534ad29938299cf83",
+   "snapshot_commit": "4d1cd05011d37c84a47ea567fc05a0bb45b490b3",
+   "demand": {
+    "cpu": 1,
+    "gpu": 1,
+    "mem_gb": 16
+   },
+   "timeout_s": 1800.0,
+   "scope_memory_peak_gib": 1.93,
+   "cas_receipt_sha256": null,
+   "stdout_sha256": "2881ae77ee66c4227f7d3aaca3bae33acda27e28709065e1e1663d8909982168",
+   "stdout_bytes": 1588,
+   "command": "/usr/bin/python3 tools/suite_deadline.py --timeout-s 1800 --kill-after-s 5.0 -- /usr/bin/python3 tools/suite_container.py --image localhost/prismaquant/spark-vllm-nccl230@sha256:c2e75e03cfc52c15489b40fe58e65acb7347f6fa3ddf2e81afda86760698147b --deps-site /mnt/shared/tessera-suite-envs/ts-readiness-20261002-py312/site-packages --deps-sha256 2bacba69864fad0e86481f94e6d3ea157e9d9ddab24e7f6efb3c72692658fdf6 --surface-dir /mnt/shared/tessera-suite-receipts/ts1133-20261009 --cache-dir /home/rob/tmp/tessera-suite-cache/ts1133-pre-20261009 --data-root /mnt/shared/prismabuild-fleet --artifact-root TESSERA_A4_WIRE_DIR=/mnt/shared/astra-native-a4/data -- /usr/bin/python3 -m pytest tests/test_kernel_a4.py::test_native_fp4_backend_reports tests/test_kernel_a4.py::test_native_fp4_mma_is_emitted_not_emulated -v -p no:cacheprovider --surface-json /mnt/shared/tessera-suite-receipts/ts1133-20261009/surface.gpu-pre.json --strict-cuda --durations=10",
+   "surface_file": "/mnt/shared/tessera-suite-receipts/ts1133-20261009/surface.gpu-pre.json",
+   "surface_sha256": "0ee8e7decf99524048908c74681b8590be596e693d1163e238c93637852d96d5"
+  },
+  {
+   "name": "full",
+   "role": "metadata plus native execution",
+   "action_key": "d65fa0ffe74a538ce710a1a88ef6498c10541fe2c26934cca30f52cd9bbe65d9",
+   "device": "NVIDIA GB10 (sm_121)",
+   "host": "sparklina",
+   "pb_status": "executed",
+   "pb_returncode": 0,
+   "action_returncode": null,
+   "elapsed_s": 14.3,
+   "published_utc": "2026-10-09T22:14:07Z",
+   "finished_utc": "2026-10-09T22:14:26Z",
+   "priority": 10,
+   "snapshot_parent": "69aae020048458a168296ef534ad29938299cf83",
+   "snapshot_commit": "38298605dbdf7ea0c862458e8a534070c79a0b49",
+   "demand": {
+    "cpu": 2,
+    "gpu": 1,
+    "mem_gb": 16
+   },
+   "timeout_s": 1800.0,
+   "scope_memory_peak_gib": 4.47,
+   "cas_receipt_sha256": "505043a05401d84dbb9f60e42361cb19de881095d9d975326ac796cd57210200",
+   "stdout_sha256": "324e11b8e692a367801f154d713c56c1380ba6c79b098cdbec7156fef2938b3c",
+   "stdout_bytes": 17778,
+   "command": "/usr/bin/python3 tools/suite_deadline.py --timeout-s 1800 --kill-after-s 5.0 -- /usr/bin/python3 tools/suite_container.py --image localhost/prismaquant/spark-vllm-nccl230@sha256:c2e75e03cfc52c15489b40fe58e65acb7347f6fa3ddf2e81afda86760698147b --deps-site /mnt/shared/tessera-suite-envs/ts-readiness-20261002-py312/site-packages --deps-sha256 2bacba69864fad0e86481f94e6d3ea157e9d9ddab24e7f6efb3c72692658fdf6 --surface-dir /mnt/shared/tessera-suite-receipts/ts1133-20261009 --cache-dir /home/rob/tmp/tessera-suite-cache/ts1133-full-20261009 --data-root /mnt/shared/prismabuild-fleet --artifact-root TESSERA_A4_WIRE_DIR=/mnt/shared/astra-native-a4/data -- /usr/bin/python3 -m pytest tests/test_rung_performant_policy.py tests/test_kernel_a4.py::test_native_fp4_mma_is_emitted_not_emulated tests/test_kernel_a4.py::test_gemm_matches_arithmetic_reference tests/test_kernel_a4.py::test_grouped_gemm_matches_the_dense_kernel -v -p no:cacheprovider --surface-json /mnt/shared/tessera-suite-receipts/ts1133-20261009/surface.gpu-full.json -n 2 --dist worksteal -p xdist.plugin --strict-cuda --durations=10",
+   "surface_file": "/mnt/shared/tessera-suite-receipts/ts1133-20261009/surface.gpu-full.json",
+   "surface_sha256": "9e20de95f61c921680f3084ec5697bceb7beb02d09fe1d8f8d5ee9a662f16053"
+  },
+  {
+   "name": "probe",
+   "role": "runtime identity probe",
+   "action_key": "2230cd9647dfcbf5e43d1dbbd852833f4190e6ec418d5bc516d989510fc00c34",
+   "device": "NVIDIA GB10 (sm_121)",
+   "host": "sparklina",
+   "pb_status": "executed",
+   "pb_returncode": 0,
+   "action_returncode": null,
+   "elapsed_s": 2.6,
+   "published_utc": "2026-10-09T22:16:15Z",
+   "finished_utc": "2026-10-09T22:16:22Z",
+   "priority": 10,
+   "snapshot_parent": "69aae020048458a168296ef534ad29938299cf83",
+   "snapshot_commit": "559a0cb79fdbb023fd57028205e44810100592b3",
+   "demand": {
+    "cpu": 1,
+    "gpu": 1,
+    "mem_gb": 8
+   },
+   "timeout_s": 900.0,
+   "scope_memory_peak_gib": 0.55,
+   "cas_receipt_sha256": "7fea33fa9e4973e49268cbfb0477adb49e5cf865e1b141c9ddd89a7da7752c37",
+   "stdout_sha256": "523082706ea198d3dfef3ec783f378314f2524fa6ebfab0d05bf44e02dd583d8",
+   "stdout_bytes": 3668,
+   "command": "/bin/bash -c 'set +e\nIMG=localhost/prismaquant/spark-vllm-nccl230@sha256:c2e75e03cfc52c15489b40fe58e65acb7347f6fa3ddf2e81afda86760698147b\nWIRES=/mnt/shared/astra-native-a4/data\necho \"HOST $(hostname)\"\necho \"IMAGE_INSPECT $(docker image inspect \"$IMG\" --format '\"'\"'{{.Id}} {{json .RepoDigests}} created={{.Created}}'\"'\"' 2>&1)\"\nPROBE=$(cat <<'\"'\"'PYEOF'\"'\"'\nimport importlib.metadata as m, json, sys\nout = {\"python\": sys.version.split()[0]}\nfor name in (\"torch\", \"triton\", \"tokenspeed-triton\", \"tokenspeed_triton\", \"vllm\", \"numpy\", \"jsonschema\"):\n    try:\n        out[name] = m.version(name)\n    except m.PackageNotFoundError:\n        out[name] = None\nimport torch\nout[\"torch_cuda\"] = torch.version.cuda\nout[\"device\"] = torch.cuda.get_device_name(0)\nout[\"capability\"] = list(torch.cuda.get_device_capability(0))\nimport tessera.kernel_a4 as kernel_a4\nout[\"backend\"] = kernel_a4.native_fp4_backend()\nout[\"backend_module_version\"] = getattr(kernel_a4._TRITON, \"__version__\", None)\nout[\"ptx_tokens\"] = kernel_a4.native_fp4_mma_ptx_tokens()\nprint(\"IDENTITY \" + json.dumps(out, sort_keys=True))\nPYEOF\n)\ndocker run --rm --gpus all --user \"$(id -u):$(id -g)\" --entrypoint /usr/bin/python3 \\\n  --workdir \"$PWD\" --mount \"type=bind,src=$PWD,dst=$PWD,readonly\" \\\n  --mount \"type=bind,src=$WIRES,dst=$WIRES,readonly\" \\\n  --env \"PYTHONPATH=$PWD/src\" --env PYTHONDONTWRITEBYTECODE=1 --env HOME=/tmp --env TRITON_CACHE_DIR=/tmp/triton \\\n  --env \"TESSERA_A4_WIRE_DIR=$WIRES\" --env \"PRISMABUILD_CONTAINER_OWNER=$PRISMABUILD_CONTAINER_OWNER\" \\\n  \"$IMG\" -c \"$PROBE\"\nrc=$?\necho \"PROBE_RC $rc\"\nexit $rc'"
+  },
+  {
+   "name": "oldgpu",
+   "role": "pool venv, earlier attempt",
+   "action_key": "15685e3628e24603a3aae647679fcf8c8941aa9313633f916d9acc5b1a3715d3",
+   "device": "NVIDIA GB10 (sm_121)",
+   "host": "sparky",
+   "pb_status": "failed",
+   "pb_returncode": 1,
+   "action_returncode": 1,
+   "elapsed_s": 5.7,
+   "published_utc": "2026-10-09T21:48:42Z",
+   "finished_utc": "2026-10-09T21:48:57Z",
+   "priority": 10,
+   "snapshot_parent": "69aae020048458a168296ef534ad29938299cf83",
+   "snapshot_commit": "554f677720e07cf3b95f4114ed306239fe593977",
+   "demand": {
+    "cpu": 2,
+    "gpu": 1,
+    "mem_gb": 16
+   },
+   "timeout_s": 2700.0,
+   "scope_memory_peak_gib": 1.96,
+   "cas_receipt_sha256": null,
+   "stdout_sha256": "c6f2eaf1e2075800c0cd8b689bafd3af79a3f35d9502f055873b0b118bd2be03",
+   "stdout_bytes": 224238,
+   "command": "/home/rob/dq-runs/venvs/prismaquant-cu130/bin/python -m pytest tests/test_rung_performant_policy.py tests/test_kernel_a4.py::test_native_fp4_mma_is_emitted_not_emulated tests/test_kernel_a4.py::test_gemm_matches_arithmetic_reference tests/test_kernel_a4.py::test_grouped_gemm_matches_the_dense_kernel --strict-cuda -n 2 --dist worksteal --durations=10 -ra --surface-json cuda-surface.json --junitxml=cuda-junit.xml"
+  },
+  {
+   "name": "oldprobe",
+   "role": "pool venv inventory, earlier attempt",
+   "action_key": "3b59b3bca1ed7c48a5aaf1bc90cfa4445f3e048e623c3e167a9b4ecd09c9e00f",
+   "device": "NVIDIA GB10 (sm_121)",
+   "host": "sparky",
+   "pb_status": "executed",
+   "pb_returncode": 0,
+   "action_returncode": null,
+   "elapsed_s": 15.6,
+   "published_utc": "2026-10-09T21:58:16Z",
+   "finished_utc": "2026-10-09T21:58:39Z",
+   "priority": 10,
+   "snapshot_parent": "69aae020048458a168296ef534ad29938299cf83",
+   "snapshot_commit": "be9c79cdf58cc49491f93d57630d253adab2836e",
+   "demand": {
+    "cpu": 1,
+    "gpu": 1,
+    "mem_gb": 4
+   },
+   "timeout_s": 600.0,
+   "scope_memory_peak_gib": 0.79,
+   "cas_receipt_sha256": "949f91eb5c3b0235ba9e1de6834b2ab301ecec7ac0f70ec854539fa0667b9c8d",
+   "stdout_sha256": "f6a17f6f02c1bc3f067728d38d31b50baebe7810a87bc413d5fd8c92ed2b2e2b",
+   "stdout_bytes": 12502,
+   "command": "bash -c 'for v in /home/rob/dq-runs/venvs/* /home/rob/venvs/* /opt/venvs/*; do\n  [ -x \"$v/bin/python\" ] || continue\n  echo \"== $v\"; \"$v/bin/python\" -I -c \"\nimport importlib.metadata as m\nfor d in m.distributions():\n    n=d.metadata['\"'\"'Name'\"'\"'].lower()\n    if '\"'\"'triton'\"'\"' in n or '\"'\"'tokenspeed'\"'\"' in n or n in ('\"'\"'torch'\"'\"','\"'\"'vllm'\"'\"','\"'\"'jsonschema'\"'\"','\"'\"'pytest-xdist'\"'\"'): print(n,d.version)\n\" 2>&1 | head -12\ndone\nfind / -xdev -maxdepth 7 -iname '\"'\"'tokenspeed*'\"'\"' 2>/dev/null | head\nnvidia-smi --query-gpu=name,compute_cap --format=csv'"
+  }
+ ],
+ "populations": {
+  "surface.cpu.json": {
+   "schema": "tessera.test_surface.v3",
+   "role": "population",
+   "worker_id": null,
+   "xdist_workers": 2,
+   "commit": "258220fc655888467fc9966c5f12bd8d1328c957",
+   "source_identity": {
+    "schema": "tessera.suite_source.v1",
+    "snapshot_commit": "258220fc655888467fc9966c5f12bd8d1328c957",
+    "sha256": "5277b4dfd6aed2da08aa423af65074c12dd8eb458e3325f167edb32678c88d60",
+    "verification": "verified",
+    "excluded_metadata": [],
+    "files_verified": 2117,
+    "measurement_span": {
+     "entry_sha256": "5277b4dfd6aed2da08aa423af65074c12dd8eb458e3325f167edb32678c88d60",
+     "entry_snapshot_commit": "258220fc655888467fc9966c5f12bd8d1328c957",
+     "entry_verification": "verified",
+     "agrees": true
+    },
+    "workers": {
+     "gw0": "agrees",
+     "gw1": "agrees"
+    }
+   },
+   "cuda": false,
+   "device": "torch 2.11.0+cpu reports no CUDA device",
+   "strict_cuda": false,
+   "counts": {
+    "passed": 34,
+    "failed": 0,
+    "error": 0,
+    "skipped": 0,
+    "xfailed": 0,
+    "xpassed": 0
+   },
+   "skip_reasons": {},
+   "cuda_surface": {
+    "executed": 0,
+    "measured_by": "tests during whose call torch's CUDA allocator recorded a new allocation",
+    "is_a_floor": true,
+    "box_artifact_skips": {}
+   },
+   "not_collected": []
+  },
+  "surface.cpu-verified.json": {
+   "schema": "tessera.test_surface.v3",
+   "role": "population",
+   "worker_id": null,
+   "xdist_workers": 2,
+   "commit": "d676252b60edf65bc725a4a17361bc8a59bfdb18",
+   "source_identity": {
+    "schema": "tessera.suite_source.v1",
+    "snapshot_commit": "d676252b60edf65bc725a4a17361bc8a59bfdb18",
+    "sha256": "4d068a285daa1e8817577c363c3595bb7f27ff828903eb3d6dce2ada6658ba69",
+    "verification": "verified",
+    "excluded_metadata": [
+     {
+      "action_key": "4aa13e926f4efb725ceecc667c29deec9b0f2f34fd8c2e18293e73dbcbadd463",
+      "bytes": 153,
+      "path": ".pbrun-closure.b4a98aae92ca4906.json",
+      "request_sha256": "f84200f8b02dcefc7facbb5d7656863d139d708b91662e1fc81ed5c65d92a074",
+      "sha256": "528287cee2527bd866f2969e0b1d6d966cd16742427ac86c62259b962e0adcac"
+     }
+    ],
+    "files_verified": 2116,
+    "measurement_span": {
+     "entry_sha256": "4d068a285daa1e8817577c363c3595bb7f27ff828903eb3d6dce2ada6658ba69",
+     "entry_snapshot_commit": "d676252b60edf65bc725a4a17361bc8a59bfdb18",
+     "entry_verification": "verified",
+     "agrees": true
+    },
+    "workers": {
+     "gw0": "agrees",
+     "gw1": "agrees"
+    }
+   },
+   "cuda": false,
+   "device": "torch 2.11.0+cpu reports no CUDA device",
+   "strict_cuda": false,
+   "counts": {
+    "passed": 34,
+    "failed": 0,
+    "error": 0,
+    "skipped": 0,
+    "xfailed": 0,
+    "xpassed": 0
+   },
+   "skip_reasons": {},
+   "cuda_surface": {
+    "executed": 0,
+    "measured_by": "tests during whose call torch's CUDA allocator recorded a new allocation",
+    "is_a_floor": true,
+    "box_artifact_skips": {}
+   },
+   "not_collected": []
+  },
+  "surface.gpu-pre.json": {
+   "schema": "tessera.test_surface.v3",
+   "role": "population",
+   "worker_id": null,
+   "xdist_workers": null,
+   "commit": "4d1cd05011d37c84a47ea567fc05a0bb45b490b3",
+   "source_identity": {
+    "schema": "tessera.suite_source.v1",
+    "snapshot_commit": "4d1cd05011d37c84a47ea567fc05a0bb45b490b3",
+    "sha256": "4d068a285daa1e8817577c363c3595bb7f27ff828903eb3d6dce2ada6658ba69",
+    "verification": "verified",
+    "excluded_metadata": [
+     {
+      "action_key": "4311cf8975c0c6f48a85dfafc596e77ec70015364f37ab6c63b805b1e5fda9be",
+      "bytes": 153,
+      "path": ".pbrun-closure.6fd7d722d9160ce5.json",
+      "request_sha256": "8f1969a6fc8df7590859cf4a94a3ccb5bba614c56e3210e367a5fad2f30386dd",
+      "sha256": "528287cee2527bd866f2969e0b1d6d966cd16742427ac86c62259b962e0adcac"
+     }
+    ],
+    "files_verified": 2116,
+    "measurement_span": {
+     "entry_sha256": "4d068a285daa1e8817577c363c3595bb7f27ff828903eb3d6dce2ada6658ba69",
+     "entry_snapshot_commit": "4d1cd05011d37c84a47ea567fc05a0bb45b490b3",
+     "entry_verification": "verified",
+     "agrees": true
+    }
+   },
+   "cuda": true,
+   "device": "torch 2.13.0+cu130, 1 CUDA device(s), device 0 = NVIDIA GB10",
+   "strict_cuda": true,
+   "counts": {
+    "passed": 2,
+    "failed": 0,
+    "error": 0,
+    "skipped": 0,
+    "xfailed": 0,
+    "xpassed": 0
+   },
+   "skip_reasons": {},
+   "cuda_surface": {
+    "executed": 0,
+    "measured_by": "tests during whose call torch's CUDA allocator recorded a new allocation",
+    "is_a_floor": true,
+    "box_artifact_skips": {}
+   },
+   "not_collected": []
+  },
+  "surface.gpu-full.json": {
+   "schema": "tessera.test_surface.v3",
+   "role": "population",
+   "worker_id": null,
+   "xdist_workers": 2,
+   "commit": "38298605dbdf7ea0c862458e8a534070c79a0b49",
+   "source_identity": {
+    "schema": "tessera.suite_source.v1",
+    "snapshot_commit": "38298605dbdf7ea0c862458e8a534070c79a0b49",
+    "sha256": "4d068a285daa1e8817577c363c3595bb7f27ff828903eb3d6dce2ada6658ba69",
+    "verification": "verified",
+    "excluded_metadata": [
+     {
+      "action_key": "d65fa0ffe74a538ce710a1a88ef6498c10541fe2c26934cca30f52cd9bbe65d9",
+      "bytes": 153,
+      "path": ".pbrun-closure.391e003ef2e103d8.json",
+      "request_sha256": "300b5b4f1962b98dd919cbf72437ecb57f3f55e4d1cf2a230afa26391850dda7",
+      "sha256": "528287cee2527bd866f2969e0b1d6d966cd16742427ac86c62259b962e0adcac"
+     }
+    ],
+    "files_verified": 2116,
+    "measurement_span": {
+     "entry_sha256": "4d068a285daa1e8817577c363c3595bb7f27ff828903eb3d6dce2ada6658ba69",
+     "entry_snapshot_commit": "38298605dbdf7ea0c862458e8a534070c79a0b49",
+     "entry_verification": "verified",
+     "agrees": true
+    },
+    "workers": {
+     "gw0": "agrees",
+     "gw1": "agrees"
+    }
+   },
+   "cuda": true,
+   "device": "torch 2.13.0+cu130, 1 CUDA device(s), device 0 = NVIDIA GB10",
+   "strict_cuda": true,
+   "counts": {
+    "passed": 49,
+    "failed": 0,
+    "error": 0,
+    "skipped": 0,
+    "xfailed": 0,
+    "xpassed": 0
+   },
+   "skip_reasons": {},
+   "cuda_surface": {
+    "executed": 20,
+    "measured_by": "tests during whose call torch's CUDA allocator recorded a new allocation",
+    "is_a_floor": true,
+    "box_artifact_skips": {}
+   },
+   "not_collected": []
+  }
+ }
+}

@@ -67,16 +67,20 @@ CASES = {f"r{r}": (r, None) for r in range(1, 9)}
 CASES.update({f"r{r}+q": (r, 0.25) for r in range(1, 8)})
 
 
-def parse_case(case):
+def parse_case(case, family="e4m3"):
     """``rN`` / ``rN+q`` (the named cases), or ``qK``: the rung K = q256 itself --
     one run at K / 256 when 256 divides K, else the adjacent pair (K // 256,
     K // 256 + 1) with the fraction (K % 256) / 256 of the columns at the high rate."""
-    if case in CASES:
+    if case in CASES and family == "e4m3":
         return CASES[case]
     if case.startswith("q") and case[1:].isdigit():
         k = int(case[1:])
-        if not 256 <= k <= 2048:
-            raise ValueError(f"rung {k} is outside the E4M3 reader range 256..2048")
+        from tessera.control import grid_for_name
+        grid = grid_for_name({"e4m3": "E4M3", "value": "BF16"}.get(family, family))
+        lower, upper = 256 // grid.arity, 256 * grid.payload_bits // grid.arity
+        if not lower <= k <= upper:
+            raise ValueError(f"rung {k} is outside the {grid.name} producer range {lower}..{upper}")
+        k *= grid.arity
         return (k // 256, None) if k % 256 == 0 else (k // 256, (k % 256) / 256)
     raise ValueError(f"unknown case {case!r}")
 
@@ -101,10 +105,15 @@ def q256_of(r_lo, frac):
     return 256 * r_lo + (0 if frac is None else round(256 * frac))
 
 
-def build_projection(rf, e, rows, cols, r_lo, n_hi, seed, dev, mma8, bf16_table=False):
+def build_projection(rf, e, rows, cols, r_lo, n_hi, seed, dev, mma8, bf16_table=False, window_bits=None):
     """Random words/table/init/scales for ``e`` experts of one projection, and its run tables,
     generated on the device from ``seed`` (deterministic, so two arms see the same bytes)."""
     g = torch.Generator(device=dev).manual_seed(seed)
+    if window_bits is None:
+        from tessera.control import grid_for_name
+        from tessera.export import wire_recipe
+        window_bits = wire_recipe(grid_for_name("BF16" if bf16_table else "E4M3"),
+                                  256 * r_lo + round(256 * n_hi / cols)).window_bits
     n_lo = cols - n_hi
     two = n_hi > 0
     pair = torch.tensor((r_lo, 0, n_lo, 0, r_lo + 1 if two else 0, n_lo, n_hi, 16 * n_lo * r_lo),
@@ -114,15 +123,15 @@ def build_projection(rf, e, rows, cols, r_lo, n_hi, seed, dev, mma8, bf16_table=
     words_stride = -(-rows // 512) * tile_words
     words = torch.randint(-2**31, 2**31 - 1, (e, words_stride), generator=g, device=dev, dtype=torch.int32)
     if mma8:
-        table = torch.randint(0, 256, (e, 1 << 14), generator=g, device=dev, dtype=torch.int32)
+        table = torch.randint(0, 256, (e, 1 << window_bits), generator=g, device=dev, dtype=torch.int32)
         table = torch.where((table & 0x7F) == 0x7F, table - 1, table).to(torch.uint8)
     elif bf16_table:
         # the value family's table holds bf16 weights: finite values, as a wire's are
-        table = (torch.randn(e, 1 << 14, generator=g, device=dev) * 0.02).to(torch.bfloat16).view(torch.int16)
+        table = (torch.randn(e, 1 << window_bits, generator=g, device=dev) * 0.02).to(torch.bfloat16).view(torch.int16)
     else:
-        table = torch.randint(-2**15, 2**15 - 1, (e, 1 << 14), generator=g, device=dev,
+        table = torch.randint(-2**15, 2**15 - 1, (e, 1 << window_bits), generator=g, device=dev,
                               dtype=torch.int32).to(torch.int16)
-    init = torch.randint(-2**31, 2**31 - 1, (e, cols), generator=g, device=dev, dtype=torch.int32)
+    init = torch.randint(0, 1 << window_bits, (e, cols), generator=g, device=dev, dtype=torch.int32)
     has_init = torch.ones(e, dtype=torch.int32, device=dev)
     scale = torch.rand(e, rows, generator=g, device=dev) * 1e-2 + 1e-3
     # per expert: n_hi random columns at the high rate, in the packer's stable
@@ -139,7 +148,8 @@ def build_projection(rf, e, rows, cols, r_lo, n_hi, seed, dev, mma8, bf16_table=
     runs = pair.reshape(1, 8).expand(e, 8).contiguous().to(dev)
     return {"words": words, "table": table, "init": init, "has_init": has_init, "scale": scale,
             "runs": runs, "bdesc": bdesc.contiguous(), "tile_words": tile_words,
-            "slot_words": rf.slot_words_for_pair(pair), "bytes_per_expert": 4 * words_stride}
+            "slot_words": rf.slot_words_for_pair(pair), "bytes_per_expert": 4 * words_stride,
+            "perm": perm.to(torch.int32).contiguous(), "window_bits": window_bits}
 
 
 def routing_tables(ids, w, e, bm):

@@ -1,14 +1,7 @@
-"""The native window MoE adapter: fused and split gate/up, both families, the
-folded BF16 contract, placement flags, refusal of unsupported activations,
-and graph capture -- against the same independent per-expert oracle the
-grouped operator uses.
+"""The native window MoE adapter and its independent per-expert oracle.
 
-The oracle loops experts on the host (allowed in tests) and mirrors vLLM's
-placement, not an algebraic equivalent: at topk=1, weights multiply the
-bf16 input BEFORE activation quantization iff ``apply_router_weight_on_input``;
-otherwise they multiply gemm2 before the plain sum. The
-activation is fp32-silu cast once to bf16; the folded contract is
-``bf16(value * row_scale)`` before each dot.
+Both families keep row scale in the FP32 epilogue. The oracle preserves
+router-weight placement, projection rounding, activation and route reduction.
 """
 
 import sys
@@ -26,8 +19,8 @@ from test_window_gemm_grouped import Expert, _quant, _tol  # noqa: E402
 cuda = pytest.mark.skipif(not torch.cuda.is_available(), reason="the lane is a CUDA kernel")
 
 
-def _per_expert(stack, xq, family, folded, a1, t):
-    picked = torch.stack([e.reference(xq, family, folded=folded) for e in stack])
+def _per_expert(stack, xq, family, a1, t):
+    picked = torch.stack([e.reference(xq, family) for e in stack])
     if family == "e4m3" and a1 is not None:
         picked = picked * a1.reshape(1, t, 1)
     return picked                                            # [E, T, rows]
@@ -37,7 +30,7 @@ def _routes(picked, ids, sel):
     return picked[ids.long(), sel].bfloat16()
 
 
-def _down(dn_stack, act, ids, rw, rows_h, family, folded, weight_input):
+def _down(dn_stack, act, ids, rw, rows_h, family, weight_input):
     t, k = ids.shape
     route_rows = torch.arange(t * k, device=ids.device)
     flat = act.reshape(t * k, dn_stack[0].cols)
@@ -46,7 +39,7 @@ def _down(dn_stack, act, ids, rw, rows_h, family, folded, weight_input):
         flat_q = a_in.float()
     else:
         flat_q, a2 = flat, None
-    picked = _per_expert(dn_stack, flat_q, family, folded, None, t)
+    picked = _per_expert(dn_stack, flat_q, family, None, t)
     routes = picked[ids.long().reshape(-1), route_rows].reshape(t, k, rows_h)
     if family == "e4m3":
         assert a2 is not None
@@ -60,10 +53,8 @@ def _down(dn_stack, act, ids, rw, rows_h, family, folded, weight_input):
 
 @cuda
 @pytest.mark.parametrize("weight_input", [False, True])
-@pytest.mark.parametrize("family,arithmetic", [
-    ("value", "epilogue"), ("value", "folded"), ("e4m3", "epilogue"),
-])
-def test_native_window_moe_matches_the_oracle_fused_and_split(weight_input, family, arithmetic):
+@pytest.mark.parametrize("family", ["value", "e4m3"])
+def test_native_window_moe_matches_the_oracle_fused_and_split(weight_input, family):
     rows_h, cols_h, inter, experts = 768, 192, 96, 3
     t, k = 16, (1 if weight_input else 2)
     seeds = [131, 132, 133]
@@ -73,7 +64,6 @@ def test_native_window_moe_matches_the_oracle_fused_and_split(weight_input, fami
     rw = torch.rand(t, k, device="cuda", generator=generator)
     sel = torch.arange(t, device="cuda")[:, None].expand_as(ids)
     x = torch.randn(t, cols_h, device="cuda", generator=generator).bfloat16()
-    folded = arithmetic == "folded"
     gu_stack = [Expert(2 * inter, cols_h, (4,) * cols_h, s, family=family)
                 for s in seeds]
     gate_stack = [Expert(inter, cols_h, (4,) * cols_h, s + 200, family=family)
@@ -84,10 +74,10 @@ def test_native_window_moe_matches_the_oracle_fused_and_split(weight_input, fami
                        family=family) for i, s in enumerate(seeds)]
     fused = nwm.prepare_native_window_moe(
         [e.unit for e in gu_stack], [e.unit for e in dn_stack],
-        arithmetic=arithmetic, activation="silu")
+        activation="silu")
     split = nwm.prepare_native_window_moe(
         [e.unit for e in gate_stack], [e.unit for e in dn_stack],
-        up=[e.unit for e in up_stack], arithmetic=arithmetic, activation="silu")
+        up=[e.unit for e in up_stack], activation="silu")
     # Modular prepare narrows routing weights to x.dtype and multiplies
     # x before quantization, not the first GEMM's accumulator.
     source = x * rw.reshape(t, 1).to(x.dtype) if weight_input else x
@@ -96,22 +86,22 @@ def test_native_window_moe_matches_the_oracle_fused_and_split(weight_input, fami
         xq1 = x_in.float()
     else:
         xq1, a1 = source, None
-    fu = _routes(_per_expert(gu_stack, xq1, family, folded, a1, t), ids, sel)
+    fu = _routes(_per_expert(gu_stack, xq1, family, a1, t), ids, sel)
     gate, up = fu[..., :inter].float(), fu[..., inter:].float()
     act_f = (torch.nn.functional.silu(gate) * up).bfloat16()
-    ref_f = _down(dn_stack, act_f, ids, rw, rows_h, family, folded, weight_input)
-    sg = _routes(_per_expert(gate_stack, xq1, family, folded, a1, t), ids, sel)
-    su = _routes(_per_expert(up_stack, xq1, family, folded, a1, t), ids, sel)
+    ref_f = _down(dn_stack, act_f, ids, rw, rows_h, family, weight_input)
+    sg = _routes(_per_expert(gate_stack, xq1, family, a1, t), ids, sel)
+    su = _routes(_per_expert(up_stack, xq1, family, a1, t), ids, sel)
     act_s = (torch.nn.functional.silu(sg.float()) * su.float()).bfloat16()
-    ref_s = _down(dn_stack, act_s, ids, rw, rows_h, family, folded, weight_input)
+    ref_s = _down(dn_stack, act_s, ids, rw, rows_h, family, weight_input)
 
     out_f = fused(x, ids, rw, apply_router_weight_on_input=weight_input)
     out_s = split(x, ids, rw, apply_router_weight_on_input=weight_input)
     assert out_f.shape == (t, rows_h) and out_f.dtype == torch.bfloat16
     assert float((out_f.float() - ref_f.float()).abs().max()) < _tol(ref_f), (
-        f"fused {family}/{arithmetic} weight_input={weight_input}")
+        f"fused {family} weight_input={weight_input}")
     assert float((out_s.float() - ref_s.float()).abs().max()) < _tol(ref_s), (
-        f"split {family}/{arithmetic} weight_input={weight_input}")
+        f"split {family} weight_input={weight_input}")
     if weight_input:
         for prepared in (fused, split):
             with pytest.raises(GrammarError, match="only implemented for topk=1"):
@@ -140,25 +130,14 @@ def test_packed_window_units_prepare_matches_the_direct_adapter():
                                        down=tuple(e.unit for e in dn), family="value")
     for pack, direct in (
         (fused_pack, nwm.prepare_native_window_moe([e.unit for e in gu],
-                                                   [e.unit for e in dn],
-                                                   arithmetic="folded")),
+                                                   [e.unit for e in dn])),
         (split_pack, nwm.prepare_native_window_moe([e.unit for e in gate],
                                                    [e.unit for e in dn],
-                                                   up=[e.unit for e in up],
-                                                   arithmetic="folded")),
+                                                   up=[e.unit for e in up])),
     ):
         assert pack.experts == experts and pack.resident_bytes() > 0
         from_pack = pack.prepare()
         assert torch.equal(from_pack(x, ids, rw), direct(x, ids, rw))
-        assert from_pack.down.arithmetic == "folded", \
-            "the research BF16 wire's default arithmetic is folded"
-    fp8_gu = [Expert(2 * inter, cols_h, (4,) * cols_h, 940 + i, family="e4m3")
-              for i in range(experts)]
-    fp8_dn = [Expert(rows_h, inter, (4,) * inter, 950 + i, family="e4m3")
-              for i in range(experts)]
-    fp8_pack = nwm.PackedWindowUnits(gate=tuple(e.unit for e in fp8_gu), up=(),
-                                     down=tuple(e.unit for e in fp8_dn), family="e4m3")
-    assert fp8_pack.prepare().down.arithmetic == "epilogue"
 
 
 # -- the model's SwiGLU clamp (CPU: the arithmetic, not the kernel) --------
@@ -232,12 +211,6 @@ def test_native_window_moe_refuses_unsupported_activations_and_families():
     with pytest.raises(GrammarError, match="not served"):
         nwm.prepare_native_window_moe([e.unit for e in gu_stack], [e.unit for e in dn_stack],
                                       activation="gelu")
-    fp8 = [Expert(2 * inter, cols_h, (4,) * cols_h, 161 + i, family="e4m3")
-           for i in range(experts)]
-    with pytest.raises(GrammarError, match="folded"):
-        nwm.prepare_native_window_moe([e.unit for e in fp8],
-                                      [e.unit for e in dn_stack],
-                                      arithmetic="folded")
 
 
 @cuda

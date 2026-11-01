@@ -150,9 +150,10 @@ class PreparedWindowUnit:
 
     def __init__(self, plane_words, wire_bytes, offsets, rates, initial, code_table,
                  value_table, row_scale, rows, cols, window_bits, max_rate):
-        # ``code_table is None`` is the BF16 family: the table holds values,
-        # not E4M3 codes, so there is no byte tile and no separate scale to
-        # ship -- ``decode`` returns the tile the GEMM multiplies.
+        # ``code_table is None`` is the BF16 family: the table holds raw
+        # values, not E4M3 codes, so there is no byte tile.  The CHANNEL row
+        # scale stays beside the tile for both families; a lane applies it
+        # once on the GEMM output in fp32.
         self.plane_words = plane_words
         self.wire_bytes = int(wire_bytes)
         self.offsets = offsets
@@ -197,21 +198,22 @@ class PreparedWindowUnit:
 
     @property
     def family(self) -> str:
-        """``"fp8"`` (E4M3 code table, scale beside the tile) or ``"value"``
-        (float table, scale folded into the tile)."""
+        """``"fp8"`` (E4M3 code table) or ``"value"`` (float table); both keep
+        the row scale beside the tile."""
         return "fp8" if self.code_table is not None else "value"
 
     def decode(self) -> torch.Tensor:
-        """The unit's tile -- a fresh tensor, every call.
+        """The unit's raw tile -- a fresh tensor, every call.
 
-        ``uint8 [rows, cols]`` of E4M3 bytes for the FP8 family, whose row
-        scale is ``row_scale`` beside it; ``[rows, cols]`` in the value
-        table's dtype with the scale already applied for the BF16 family.
+        ``uint8 [rows, cols]`` of E4M3 bytes for the FP8 family, or the raw
+        value-table tile in the table's dtype for the BF16 family.  Neither
+        applies the row scale: it is ``row_scale`` beside the tile, and a
+        lane applies it once on the GEMM output in fp32.
         """
         if self.code_table is None:
             return decode_value_tile(
                 self.plane_words, self.offsets, self.rates, self.initial,
-                self.value_table, self.row_scale, self.rows, self.cols,
+                self.value_table, self.rows, self.cols,
                 self.window_bits, self.max_rate,
             )
         return decode_fp8_tile(
@@ -488,19 +490,19 @@ def decode_selected_windows(groups, table, expert_ids, steps, cols, window_bits,
 
 @triton.jit
 def _decode_kernel(
-    words_ptr, offset_ptr, rate_ptr, init_ptr, table_ptr, scale_ptr, out_ptr,
+    words_ptr, offset_ptr, rate_ptr, init_ptr, table_ptr, out_ptr,
     rows, cols,
     window: tl.constexpr, LANES: tl.constexpr, VEC: tl.constexpr,
-    BLOCK_C: tl.constexpr, SCALED: tl.constexpr,
+    BLOCK_C: tl.constexpr,
 ):
-    """A ``[LANES * VEC, BLOCK_C]`` tile of table entries, straight from the wire.
+    """A ``[LANES * VEC, BLOCK_C]`` tile of raw table entries, from the wire.
 
     The table's element type is the tile's: ``uint8`` E4M3 codes for the FP8
-    route, whose row scale travels beside the tile as ``weight_scale`` and is
-    NOT applied here (``SCALED = False``); ``bfloat16`` values for the BF16
-    route, whose tile is what the GEMM multiplies, so the row scale is folded
-    in on the way out (``SCALED = True``).  Both are the same decode: the
-    state walk and the gather do not know what the table holds.
+    route, ``bfloat16`` raw values for the BF16 route.  No row scale enters
+    either way: a CHANNEL scale is an output-row factor, so it travels beside
+    the tile (``row_scale``) and is applied once in the GEMM epilogue in
+    fp32 -- the canonical T16 definition.  Both families are the same decode:
+    the state walk and the gather do not know what the table holds.
 
     The block is ``[BLOCK_C, LANES, VEC]`` while it reads and ``[LANES * VEC,
     BLOCK_C]`` when it writes, and both orders are forced:
@@ -552,9 +554,6 @@ def _decode_kernel(
     out = tl.trans(tl.reshape(entry, (BLOCK_C, LANES * VEC)), 1, 0)        # [LANES*VEC, BLOCK_C]
     p = pid_p * (LANES * VEC) + tl.arange(0, LANES * VEC)
     keep = (p[:, None] < rows) & live_c[None, :]
-    if SCALED:
-        scale = tl.load(scale_ptr + p, mask=p < rows, other=0.0)
-        out = (out.to(tl.float32) * scale[:, None]).to(out_ptr.dtype.element_ty)
     tl.store(out_ptr + p[:, None].to(tl.int64) * cols + c[None, :], out, mask=keep)
 
 
@@ -587,15 +586,14 @@ _DECODE_BLOCK_C = 16
 
 
 def _decode_impl(plane_words, offsets, rates, initial, table, rows, cols,
-                 window_bits, max_rate, row_scale=None, lanes: int = 32,
+                 window_bits, max_rate, lanes: int = 32,
                  block_c: int = _DECODE_BLOCK_C):
-    """One tile in the table's dtype; ``row_scale`` given means fold it in."""
+    """One tile of raw table entries in the table's dtype; no scale applied."""
     out = torch.empty((rows, cols), dtype=table.dtype, device=plane_words.device)
     _decode_kernel[(triton.cdiv(rows, lanes * _VEC), triton.cdiv(cols, block_c))](
-        plane_words, offsets, rates, initial, table,
-        table if row_scale is None else row_scale, out, rows, cols,
+        plane_words, offsets, rates, initial, table, out, rows, cols,
         window=window_bits, LANES=lanes, VEC=_VEC, BLOCK_C=block_c,
-        SCALED=row_scale is not None, num_warps=4,
+        num_warps=4,
     )
     return out
 
@@ -769,23 +767,24 @@ def decode_value_tile(
     rates: torch.Tensor,
     initial: torch.Tensor,
     value_table: torch.Tensor,
-    row_scale: torch.Tensor,
     rows: int,
     cols: int,
     window_bits: int,
     max_rate: int,
 ) -> torch.Tensor:
-    """The unit's tile in the table's own dtype, row scale applied.
+    """The unit's tile of raw table values, in the table's own dtype.
 
     The BF16 family's decode target: the same WINDOW body, the same CHANNEL
     plane and the same ``2^L`` table as the FP8 route, but the table holds
-    bf16 VALUES rather than E4M3 codes, so the tile that comes out is what a
-    stock BF16 GEMM multiplies -- there is no separate ``weight_scale`` for
-    the runtime to carry, because the scale is already in the numbers.
+    bf16 VALUES rather than E4M3 codes.  The tile is raw -- every entry is
+    exactly the table's bf16 word, and no row scale is applied here.  The
+    CHANNEL row scale is the prepared unit's ``row_scale`` beside the tile;
+    a lane applies it once on the GEMM output in fp32, the canonical T16
+    definition.  There is no per-weight BF16 rounding.
 
     The dtype is the table's, not a parameter: a bf16 table decodes a bf16
     tile, an fp16 table an fp16 tile.  ``decode_fp8_tile`` is the same kernel
-    with a uint8 table and the scale left outside.
+    with a uint8 table.
     """
     _check_reach(int(window_bits), int(max_rate), _VEC)
     if value_table.dtype not in (torch.bfloat16, torch.float16, torch.float32):
@@ -793,15 +792,12 @@ def decode_value_tile(
             "a value table holds floating-point values; this one is "
             f"{value_table.dtype} (E4M3 codes go through decode_fp8_tile)"
         )
-    if row_scale.numel() != rows:
-        raise GrammarError(f"{row_scale.numel()} row scales for {rows} rows")
     return _decode_impl(plane_words, offsets, rates, initial, value_table,
-                        int(rows), int(cols), int(window_bits), int(max_rate),
-                        row_scale=row_scale)
+                        int(rows), int(cols), int(window_bits), int(max_rate))
 
 
 @decode_value_tile.register_fake
-def _(plane_words, offsets, rates, initial, value_table, row_scale, rows, cols,
+def _(plane_words, offsets, rates, initial, value_table, rows, cols,
       window_bits, max_rate):
     return value_table.new_empty((rows, cols))
 
@@ -934,24 +930,23 @@ def window_value_linear(
 
     Same dispatch shape as ``window_linear`` and for the same reason -- M is
     read inside the op, where it is a concrete integer, never in the traced
-    forward.  The difference is the activation contract on the wide side:
-    this family decodes a bf16 tile and runs the stock BF16 GEMM (W16A16),
-    where the FP8 family quantises the activation per token to E4M3 (W8A8).
-    On the narrow side both accumulate in fp32 off the table, so the small-M
-    contract is W16A16 for both -- which the FP8 route's record has to say,
-    and which is native here.
+    forward. Both branches use raw values with the separate CHANNEL scale.
+    The wide branch computes an FP32 dot, applies the scale once, then
+    converts the output to the table dtype. The narrow GEMV keeps its
+    existing FP32 partial sums and scale before the atomic add. Neither
+    branch adds a per-weight BF16 conversion.
     """
     orig = tuple(x.shape)
     x2 = x.reshape(-1, int(cols))
     if x2.shape[0] <= int(gemv_max):
         y = window_gemv(x2.contiguous(), plane_words, offsets, rates, initial,
                         value_table, row_scale, rows, cols, window_bits, max_rate)
-        y = y.to(value_table.dtype)
     else:
         tile = decode_value_tile(plane_words, offsets, rates, initial, value_table,
-                                 row_scale, rows, cols, window_bits, max_rate)
-        y = torch.matmul(x2.to(value_table.dtype), tile.t())
-    return y.reshape(*orig[:-1], int(rows))
+                                 rows, cols, window_bits, max_rate)
+        y = torch.matmul(x2.to(torch.float32), tile.t().to(torch.float32))
+        y = y * row_scale.to(torch.float32).reshape(1, int(rows))
+    return y.to(value_table.dtype).reshape(*orig[:-1], int(rows))
 
 
 @window_value_linear.register_fake
@@ -1021,10 +1016,13 @@ def prepare_window_values(
 
 
 def window_module_decode(units) -> torch.Tensor:
-    """The module's whole E4M3 tile, ``uint8 [sum(rows), cols]``, role order.
+    """The module's whole raw tile, ``[sum(rows), cols]``, role order.
 
-    Byte-identical to ``torch.cat([materialize_fp8(u)[0] for u in units], 0)``,
-    which is what the route's ``PreparedTesseraFp8Module.decode`` returns.
+    E4M3 bytes for the FP8 family, raw value-table words for the BF16
+    family -- no row scale applied.  Byte-identical to
+    ``torch.cat([materialize_fp8(u)[0] for u in units], 0)`` on the FP8
+    family, which is what the route's ``PreparedTesseraFp8Module.decode``
+    returns.
     """
     units = list(units)
     if not units:
@@ -1042,17 +1040,11 @@ def window_module_decode(units) -> torch.Tensor:
 def window_module_row_scale(units) -> torch.Tensor:
     """The module's per-row fp32 scale, ``[sum(rows)]``, role order.
 
-    FP8 family only.  On the value family the row scale is already inside the
-    decoded tile, so handing it back to a caller that will apply it again is a
-    silent factor of ``scale`` -- exactly the mistake this seam exists to stop
-    a lane from making.  Refuse instead.
+    Both families: the CHANNEL row scale is an output-row factor that
+    neither decode applies, so a caller needs it beside the tile to apply
+    once on the GEMM output in fp32.
     """
     units = list(units)
-    if any(u.family != "fp8" for u in units):
-        raise GrammarError(
-            "the value family's row scale is already applied inside the "
-            "decoded tile; there is no separate scale to hand out"
-        )
     if len(units) == 1:
         return units[0].row_scale
     return torch.cat([u.row_scale for u in units]).contiguous()

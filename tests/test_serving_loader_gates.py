@@ -1,10 +1,8 @@
 """The load-time prepare gates derive from scheme.ROUTES, not from literals.
 
-(The NVFP4 half of this file tested the retired ``ops.prepare_tessera_module``
-wrapper; that wrapper is gone with the A4 whole-weight expansion, and the A4
-lanes validate the compact reader's sidecar and per-role facts directly --
-their refusals are covered by ``tests/test_serving_nvfp4_route.py`` and the
-A4 owner's suite.  What remains here is the FP8 route's gate.)
+The NVFP4 route now validates WINDOW metadata and prepares packed native
+roles directly. Its refusal tests are in
+``tests/test_serving_nvfp4_route.py``. This file retains the FP8 load gate.
 
 ``validate_tessera_scheme`` + ``refuse_unserveable_wire`` accept a wire at
 export off ``ROUTES``; the ``prepare_*_module`` gates run AFTER, at load, and

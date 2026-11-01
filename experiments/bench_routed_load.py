@@ -6,21 +6,12 @@ This is the instrument for tessera#501. It calls the load path vLLM calls --
 at TP1 -- on fixed expert wires read from a Tessera checkpoint, with no vLLM,
 and records what the load costs in time and in device memory.
 
-TWO ARMS, DISPATCHED ON THE SIDECAR'S FAMILY, because the two routes hold
-different things.  The research-selected packed intake (``TESSERA_FP8`` /
-``TESSERA_BF16``) keeps rank-local wire planes on an expert axis.  The NVFP4
-routed builder (``TESSERA_NVFP4``, tessera#492/#507) registers the stock
-modelopt tiles only as zero-size anchors and prepares each expert's wire, cut
-to this rank, straight into its slot of a per-``(group, role)``
-``native_a4.A4ExpertAxis`` stack -- so its footprint is those axis planes plus
-the per-expert A-side scale rows, and ``--layers all`` over a whole body
-answers what one rank's routed experts occupy.  The NVFP4 arm streams a layer at a time with a bounded read-ahead (a
-42-layer GLM-5.3-Flash A4 body is ~142 GiB of wire), guards the host
-``MemAvailable`` floor and memory PSI so a load that cannot fit reports
-instead of hanging the box, and stops before
-``process_weights_after_loading``: it measures the INTAKE, not the finalize
-handoff to the layer's stacks, and not an engine, a KV cache or an activation
-peak.
+The research FP8/BF16 arm retains its packed expert inputs. The NVFP4 arm
+uses the current WINDOW owner and its declared tensor references.
+Both arms observe intake, not a serving forward or an activation peak.
+The NVFP4 arm uses bounded read-ahead and checks host memory pressure.
+It stops before process_weights_after_loading transfers ownership to the
+native serving object. Historical TCQ measurements do not price that object.
 
 Two modes:
 
@@ -75,10 +66,6 @@ MOE_UNITS = (("w13", 0, "gate_proj"), ("w13", 1, "up_proj"), ("w2", 0, "down_pro
 #: through ``SHARD_TO_GROUP``.  Each entry is ``(shard_id, projection)``.
 NVFP4_SHARDS = (("w1", "gate_proj"), ("w3", "up_proj"), ("w2", "down_proj"))
 
-#: The expert axes the NVFP4 route fills, keyed as ``method.intake_axes()``
-#: keys them.  Since the native A4 rewrite the stock modelopt tiles are
-#: zero-size anchors; these stacks ARE the route's resident state.
-NVFP4_AXES = (("w13", "gate_proj"), ("w13", "up_proj"), ("w2", "down_proj"))
 
 _EXPERT_WIRE = re.compile(r"layers\.(\d+)\.mlp\.experts\.\d+\.gate_proj\.wire$")
 
@@ -560,23 +547,24 @@ def _child_nvfp4(args, torch, device, layers, experts, out) -> int:
         profiler.__exit__(None, None, None)
         _export_torch_profile(profiler, out, max(profiled, 1))
 
-    # The prepare wrote real bytes, or it did not: an all-zero nibble plane is
-    # what a stubbed or misrouted prepare leaves behind, and the per-expert
-    # global is the multiplier the kernel would be handed.
+    # Observe the declared WINDOW planes. This intake snapshot does not
+    # prove numerical correctness or a completed native serving forward.
     evidence = {}
     for layer in dict.fromkeys([layers[0], layers[-1]]):
         holder = held_layers.get(layer)
         if holder is None:
             continue
         axes = held_methods[layer].intake_axes()
-        planes = {f"{group}.{role}": dict(axes[(group, role)].named_tensors())
-                  for group, role in NVFP4_AXES}
+        planes = {group: dict(axis.named_tensors()) for group, axis in axes.items()}
         evidence[str(layer)] = {
-            "nibbles_expert0_nonzero_fraction": {
-                key: float((held["nibbles"][0] != 0).float().mean())
-                for key, held in planes.items() if "nibbles" in held},
-            "globals_expert0": {key: float(held["globals"][0])
-                                for key, held in planes.items() if "globals" in held},
+            "scale_plane_expert0_nonzero_fraction": {
+                f"{group}.{field}": float((tensor[0] != 0).float().mean())
+                for group, held in planes.items() for field, tensor in held.items()
+                if field.endswith(".scale_plane")},
+            "globals_expert0": {
+                f"{group}.{field}": float(tensor[0])
+                for group, held in planes.items() for field, tensor in held.items()
+                if field.endswith(".global_scale")},
             "w13_input_global_scale_all_finite": bool(
                 torch.isfinite(holder.w13_input_global_scale).all()),
             "axis_shapes": {key: {field: list(tensor.shape) for field, tensor in held.items()}

@@ -19,6 +19,44 @@ import struct
 from pathlib import Path
 
 
+def validate_whole_phase_readset(path, phase_name):
+    """Assert this consumer's whole-bank phase after public SDK validation.
+
+    PB owns schema validation, coverage, entry alignment and consumption order.
+    The v1 producer also requires reads in registry order; v2 may repeat or
+    reorder registry entries. No declared
+    artifact is opened. Return the manifest, public ordered reads and normalized
+    nonempty phase ranges (not the entry registry's unique-byte total in v2).
+    """
+    from prismabuild import client
+
+    manifest, encoding = client.read_data_manifest(path)
+    reads = client.manifest_read_entries(manifest)
+    # Invalid v1 phase tables can refuse by returning [] rather than raising.
+    if encoding != "identity" or not reads:
+        raise ValueError("whole-bank staging phase requires identity encoding and a valid readset")
+    if manifest["schema"] == "prismaquant.prismabuild.data_manifest.v2":
+        declaration = manifest["read_plan"]
+        total = declaration["read_bytes"]
+    else:
+        if reads != manifest["entries"]:
+            raise ValueError("whole-bank staging read order differs")
+        declaration = manifest["annotations"]
+        total = manifest["total_bytes"]
+    ranges = []
+    previous = 0
+    for phase in declaration["phases"]:
+        frontier = phase["cumulative_bytes"]
+        if frontier > previous:
+            ranges.append({"name": phase["name"], "start_bytes": previous,
+                           "end_bytes": frontier})
+        previous = frontier
+    expected = [{"name": phase_name, "start_bytes": 0, "end_bytes": total}]
+    if total <= 0 or ranges != expected:
+        raise ValueError("whole-bank staging phase differs or is incomplete")
+    return manifest, reads, ranges
+
+
 def verify_cached_frame(raw, role):
     """Verify the producer's cached unit inside the actual exported frame.
 
@@ -226,16 +264,31 @@ class StagedInputs:
         A public pinned FD and pre/post hashes do not establish the immutable
         original tensor-provider contract for mutable native-code file bytes.
         """
-        identity = (str(path),0)
-        entry = self.entries.get(identity)
-        if self.closed or entry is None or not str(path).endswith('.so'):
+        if self.closed or (str(path), 0) not in self.entries or not str(path).endswith('.so'):
             raise ValueError('undeclared native code artifact')
+        return self.pinned_file(path)
+
+    def pinned_file(self, path):
+        """Hold a declared complete file through its consuming process lifetime."""
+        identity = (str(path), 0)
+        entry = self.entries.get(identity)
+        if self.closed or entry is None:
+            raise ValueError('undeclared complete pinned file')
         if self.direct_vllm:
             self._direct_identity(str(path))
-            return os.dup(self.direct_files[str(path)]['fd']),dict(entry),{'transport':'direct-vllm-held-original-fd'}
-        fd,serving = self.sdk.open_pinned(self.queue,self.held['pin'],
-                                        self.held['ref_id'],self.keys[identity])
-        return fd,dict(entry),serving
+            fd = os.dup(self.direct_files[str(path)]['fd'])
+            serving = {'transport': 'direct-vllm-held-original-fd'}
+        else:
+            fd, serving = self.sdk.open_pinned(self.queue, self.held['pin'],
+                                               self.held['ref_id'], self.keys[identity])
+        try:
+            info = os.fstat(fd)
+            if not stat.S_ISREG(info.st_mode) or info.st_size != entry['bytes']:
+                raise ValueError('pinned complete file byte length/type differs')
+        except BaseException:
+            os.close(fd)
+            raise
+        return fd, dict(entry), serving
 
     def close(self):
         if not self.closed:

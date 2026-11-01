@@ -19,7 +19,8 @@ from tessera.serving.contract import CENSUS_PHASE_REGIMES, PAYLOAD_FAMILY_BY_ROU
 from tessera.serving.scheme import TESSERA_FP8, launch_pairs
 from tools.tessera_route_census import all_structure_agreement
 symbol, decoder = next(iter(launch_pairs(
-    TESSERA_FP8, structure="routed_moe", regime="decode", mode="resident")))
+    TESSERA_FP8, structure="routed_moe", regime="decode", mode="resident", lanes=(),
+    include_experimental=True)))
 record = {"kind": "moe", "policy": TESSERA_FP8 + ":resident",
           "symbol": symbol + ":runtime_backend", "decoder": decoder, "state": "served"}
 block, problems = all_structure_agreement(

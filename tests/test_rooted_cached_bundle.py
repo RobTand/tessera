@@ -130,7 +130,7 @@ def test_actual_mixed_producers_export_complete_dense_and_expert_roster(tmp_path
     from tessera.fused import parse_fused
     from tessera.historical_producer import load_historical_producer
     from tessera.serving_parts import source_identity
-    from test_cached_producer import _distinct_producer, _exporter, STACK
+    from test_cached_producer import _distinct_producer, _exporter, STACK, DIM
 
     exporter = _exporter()
     source = tmp_path / 'checkpoint'; source.mkdir()
@@ -143,14 +143,14 @@ def test_actual_mixed_producers_export_complete_dense_and_expert_roster(tmp_path
         package, seal = _distinct_producer(parent)
         producers[key] = load_historical_producer(package, seal)
         packages[seal] = {'path': str(package), 'sha256': seal}
-    weight = torch.randn(32, 32, generator=torch.Generator().manual_seed(74)).bfloat16()
+    weight = torch.randn(DIM, DIM, generator=torch.Generator().manual_seed(74)).bfloat16()
     blob = encode_linear(weight.float(), grid=E4M3_GRID, q256=1024,
                          name='TESSERA_E4M3_K1_R1024', verify=False).blob
     dense = {f'model.layers.0.feed_forward.{role}.weight': weight for role in ('w1', 'w3', 'w2')}
     tensors = {**dense, **{f'{STACK}.0.{role}.weight': weight for role in ('w1', 'w3', 'w2')}}
     save_file({name: value.clone() for name, value in tensors.items()}, str(source / 'model.safetensors'))
-    config = {'architectures': ['Lfm2MoeForCausalLM'], 'hidden_size': 32,
-              'moe_intermediate_size': 32, 'num_experts': 1}
+    config = {'architectures': ['Lfm2MoeForCausalLM'], 'hidden_size': DIM,
+              'moe_intermediate_size': DIM, 'num_experts': 1}
     (source / 'config.json').write_text(json.dumps(config))
     choices = {name: {'grid': 'E4M3', 'q256': 1024} for name in dense}
     choices[STACK] = {'grid': 'E4M3', 'q256': 1024}
@@ -215,7 +215,7 @@ def test_actual_mixed_producers_export_complete_dense_and_expert_roster(tmp_path
     before = {p: (p.stat().st_ino, p.stat().st_ctime_ns) for root in roots.values() for p in root.iterdir()}
     def forbidden(*args, **kwargs): raise AssertionError('mixed cached export encoded a wire')
     monkeypatch.setattr(exporter, 'encode_linear_planes', forbidden)
-    monkeypatch.setattr(exporter, 'output_partitions', lambda census, module: [32, 32] if module.endswith('.w13') else [32])
+    monkeypatch.setattr(exporter, 'output_partitions', lambda census, module: [DIM, DIM] if module.endswith('.w13') else [DIM])
     out = tmp_path / 'out'
     digest_cache = tmp_path / 'source-digests'; digest_cache.mkdir()
     monkeypatch.setattr('sys.argv', ['export', str(source), str(out), '--plan-json', str(plan_path),

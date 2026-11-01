@@ -1,6 +1,8 @@
 """Why the E4M3 scaled GEMM slows 4-6x at M*K >= 2^25 on GB10 (tessera#931 note).
 
-At the two shapes that slowed (kda_in 12448x4096, MLA o_proj 4096x8192) and
+The historical slowdown used partial-shape kda_in 12448x4096 and MLA o_proj
+4096x8192; those older KDA results remain partial-shape history. This benchmark
+now uses the complete KDA producer contract and the same MLA shape. At
 M = 2048, 4096, 8192, time:
 
 * ``rowwise``: ``torch._scaled_mm`` with row-wise scales (the lane), plus the
@@ -26,7 +28,11 @@ import time
 
 import torch
 
-SHAPES = {"kda_in": (12448, 4096), "mla_o_proj": (4096, 8192)}   # (N, K)
+from bench_dense_module import MODULES as BENCH_CONTRACT_MODULES
+
+_kda_roles, _kda_cols = BENCH_CONTRACT_MODULES["kda_in"]
+SHAPES = {"kda_in": (sum(rows for _, rows in _kda_roles), _kda_cols),
+          "mla_o_proj": (4096, 8192)}   # (N, K)
 MS = (2048, 4096, 8192)
 CHUNK = 2048
 

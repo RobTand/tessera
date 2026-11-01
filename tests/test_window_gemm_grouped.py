@@ -90,23 +90,13 @@ class Expert:
         )
         self.states = _states(self.body, self.rates, L, init)
 
-    def reference(self, x, family, folded=False):
-        """The per-expert dense definition: fp32 [T, rows], no routing.
-
-        ``folded=True`` is the BF16 folded contract (dense and routed since
-        tessera#614):
-        ``bf16(values * row_scale)`` before the dot, no epilogue scale --
-        exactly ``bf16_route.decode_folded``'s arithmetic.
-        """
+    def reference(self, x, family):
+        """Return the FP32 projection with one row-scale epilogue."""
         if family == "e4m3":
             byte = self.unit.native[self.unit.codes_of_state[self.states.cuda()].long()]
             w = byte.view(torch.float8_e4m3fn).float()
         else:
             w = self.values.float().cuda()[self.states.cuda()]
-            if folded:
-                w = (w * self.scale[:, None]).bfloat16().float()
-                acc = x.float() @ w.t()
-                return acc
         acc = x.float() @ w.t()
         return acc * self.scale[None, :]
 
@@ -127,27 +117,24 @@ def _a64(family, x):
     return x.double()
 
 
-def _route_bounds(experts, a64, ids, family, *, weight=None, folded=False, rounded=True,
+def _route_bounds(experts, a64, ids, family, *, weight=None, rounded=True,
                   route_input=False):
-    """Per route ``(r, bound)``, each ``[T, top_k, rows]`` fp64: the fp64
-    reference of the route's own expert (host loop over E and top_k only) and
-    ``fused_bound.dense_bound`` on it -- ``S = 1``, the family's epilogue
-    multiplies (``folded`` selects the value family's contract), one more
-    multiply when the kernel applies the routing ``weight`` (``[T, top_k]``),
-    and the route's bf16 rounding unless ``rounded=False`` (a route the
-    reduction sums in fp32).  ``route_input``: ``a64`` is route-indexed
-    ``[T * top_k, cols]`` instead of token-indexed ``[T, cols]``."""
+    """Return each route reference and its dtype-derived error bound.
+
+    The reference keeps row scale in the epilogue. A router weight adds
+    one FP32 multiply. ``route_input`` selects route-indexed activations.
+    """
     t, k = ids.shape
     rows, cols = experts[0].rows, experts[0].cols
     a_route = a64.reshape(t, k, cols) if route_input else a64[:, None, :].expand(t, k, cols)
     r = torch.zeros(t, k, rows, dtype=torch.float64, device="cuda")
     b = torch.zeros_like(r)
     for e, expert in enumerate(experts):
-        w64 = fb.fp64_weight(expert, family, folded=folded)
+        w64 = fb.fp64_weight(expert, family)
         for j in range(k):
             wj = None if weight is None else weight[:, j:j + 1].double()
-            r_e, b_e = fb.dense_bound(family, a_route[:, j], w64, cols, 1, weight=wj,
-                                      folded=folded, rounded=rounded)
+            r_e, b_e = fb.dense_bound(family, a_route[:, j], w64, cols, 1,
+                                      weight=wj, rounded=rounded)
             sel = (ids[:, j] == e)[:, None]
             r[:, j] = torch.where(sel, r_e, r[:, j])
             b[:, j] = torch.where(sel, b_e, b[:, j])
@@ -160,7 +147,7 @@ def _oracle(experts, x, ids, rw, family, *, round_routes=False):
     arithmetic with the routing weight on the fp32 accumulator, then the fp32
     route sum rounded once (``fused_bound.route_sum_bound``) -- the routes
     unrounded (fp32 atomics) unless ``round_routes``."""
-    r, b = _route_bounds(experts, _a64(family, x), ids, family, weight=rw, folded=False,
+    r, b = _route_bounds(experts, _a64(family, x), ids, family, weight=rw,
                          rounded=round_routes)
     return fb.route_sum_bound(r, b, top_k_dim=1)
 
@@ -369,31 +356,27 @@ def test_grouped_two_stage_moe_matches_the_route_preserving_oracle():
     ids = torch.randint(0, experts, (t, k), device="cuda", dtype=torch.int32)
     rw = torch.rand(t, k, device="cuda")
 
-    for family, arithmetic in (("value", "epilogue"), ("e4m3", "epilogue"),
-                               ("value", "folded")):
-        folded = arithmetic == "folded"
+    for family in ("value", "e4m3"):
         gu_stack = [Expert(2 * inter, cols_h, (4,) * cols_h, s, family=family)
                     for s in seeds]
         dn_stack = [Expert(rows_h, inter, (2 if i % 2 else 4,) * inter, s + 10,
                            family=family) for i, s in enumerate(seeds)]
         gu = wgg.prepare_grouped_window_gemm([e.unit for e in gu_stack],
-                                             block_m=32, block_n=64, block_k=64,
-                                             arithmetic=arithmetic)
+                                             block_m=32, block_n=64, block_k=64)
         dn = wgg.prepare_grouped_window_gemm([e.unit for e in dn_stack],
-                                             block_m=32, block_n=64, block_k=64,
-                                             arithmetic=arithmetic)
+                                             block_m=32, block_n=64, block_k=64)
         x = torch.randn(t, cols_h, device="cuda").bfloat16()
         a64 = _a64(family, x)
 
         for weight_input in (False, True):
-            what = f"{family}/{arithmetic} apply_router_weight_on_input={weight_input}"
+            what = f"{family} apply_router_weight_on_input={weight_input}"
             route = gu(x, ids, rw, preserve=True,
                        apply_router_weight_on_input=weight_input)
             assert route.shape == (t, k, 2 * inter) and route.dtype == torch.bfloat16
             # gemm1: MUL_ROUTED_WEIGHT on the fp32 accumulator iff weight on input
             _within(route, _route_bounds(gu_stack, a64, ids, family,
                                          weight=rw if weight_input else None,
-                                         folded=folded, rounded=True),
+                                         rounded=True),
                     f"{what}: gemm1 per route")
             gate, up = route[..., :inter].float(), route[..., inter:].float()
             act = (torch.nn.functional.silu(gate) * up).bfloat16()
@@ -405,7 +388,7 @@ def test_grouped_two_stage_moe_matches_the_route_preserving_oracle():
             # routes summed unrounded in fp32, one bf16 rounding
             r2, b2 = _route_bounds(dn_stack, _a64(family, flat), ids, family,
                                    weight=None if weight_input else rw,
-                                   folded=folded, rounded=False, route_input=True)
+                                   rounded=False, route_input=True)
             _within(out, fb.route_sum_bound(r2, b2, top_k_dim=1), f"{what}: gemm2 reduced")
             if family == "e4m3":
                 # the per-route scale must be indexed by route, not by token:
@@ -431,37 +414,6 @@ def test_grouped_out_buffer_is_overwritten_not_accumulated():
     assert torch.equal(reused, fresh)
 
 
-@cuda
-def test_grouped_folded_arithmetic_is_decode_folded_and_differs_from_epilogue():
-    """``arithmetic="folded"`` is exactly ``decode_folded``'s
-    ``bf16(value * row_scale)`` before the dot -- not the dense epilogue --
-    and the two differ on nontrivial scales; FP8 refuses it."""
-    rows, cols, experts = 768, 192, 3
-    stack = _stack(rows, cols, "value", [101, 102, 103])
-    folded = wgg.prepare_grouped_window_gemm([e.unit for e in stack],
-                                             block_m=32, block_n=64, block_k=64,
-                                             arithmetic="folded")
-    dense = wgg.prepare_grouped_window_gemm([e.unit for e in stack],
-                                            block_m=32, block_n=64, block_k=64)
-    t, k = 16, 2
-    x = torch.randn(t, cols, device="cuda").bfloat16()
-    ids = torch.randint(0, experts, (t, k), device="cuda", dtype=torch.int32)
-    rw = torch.rand(t, k, device="cuda")
-    route = folded(x, ids, rw, preserve=True)
-    # ``fused_bound.fp64_weight(folded=True)`` is decode_folded's weight,
-    # ``bf16(fp32(value * row_scale))``; no epilogue multiply, and no routing
-    # weight in a route-preserving projection without weight on input
-    _within(route, _route_bounds(stack, x.double(), ids, "value", folded=True, rounded=True),
-            "folded route-preserving projection")
-    epi = dense(x, ids, rw, preserve=True)
-    assert not torch.allclose(route.float(), epi.float(), rtol=1e-3, atol=1e-5), \
-        "folded and epilogue arithmetic must differ on nontrivial scales"
-    with pytest.raises(GrammarError, match="folded"):
-        wgg.prepare_grouped_window_gemm(
-            [e.unit for e in _stack(rows, cols, "e4m3", [111, 112])],
-            arithmetic="folded")
-    with pytest.raises(GrammarError, match="unknown weight arithmetic"):
-        wgg.prepare_grouped_window_gemm([e.unit for e in stack], arithmetic="fold")
 
 
 @cuda

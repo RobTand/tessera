@@ -190,3 +190,42 @@ current published PB verifier under bounded stable reads. It executes the
 held source bytes and rechecks both owners after use; location equality alone
 does not decide code identity. Changed helper bytes, a mutable helper or a
 symlink outside that immutable path refuse.
+
+The #685 acceptance consumer is a separate stdlib module,
+`tessera.serving.panel_baseline` (schema
+`tessera.shape_time_baseline_comparison.v1`, reviewer CLI
+`tools/tessera_panel_baseline.py`). It judges new panel rows against the
+preserved #685 after-run tables and owns one rule: the recorded band is the
+band the historical bench itself wrote -- nearest-sample quartiles with
+Python's half-to-even round, reconstructed verbatim and proven against every
+recorded cell of a table before any comparison. It deliberately does not
+reuse `timing_summary`'s interpolated quartiles, which yield a different
+IQR on the same samples. Numbers are compared only after a row's
+(structure, module, family, grid, rate) key matches a documented group and
+its rank-local geometry agrees; a median outside the band is a named gap,
+never a silent pass. Dense rows project from a validated
+`tessera.shape_time_panel.v1` receipt; a routed row has no projection until
+the panel schema grows one, and the refusal says so rather than comparing a
+routed stack by dense projection.
+
+The consumer inherits the current runtime split instead of adding an
+identity policy of its own: historical runtime-identity drift in a
+validated panel (image, Tessera commit, serving-source and contract
+digests, Torch/vLLM versions, package origin) stamps and continues in
+development mode through the existing `seal_check` routing, and this module
+adds no seal, clean-tree, installation-proof, re-seal or permission
+prerequisite. What still refuses are its own comparability grounds, which
+are correctness checks and never stamps: byte integrity (a table or panel
+must match its own pinned digest, bound from the one buffer the reviewer
+actually read), table grammar (every timing cell must be a JSON object
+carrying a numeric `samples_ms` array, refused by name before
+summarizing), comparison-key and rank-local geometry agreement --
+agreement is never presumed: a row without its own complete rank-local
+geometry is a nonpassing geometry verdict, never a borrow of the reference
+shape -- and
+the panel validator's execution-scope refusals. A passing comparison
+promotes nothing: it says
+the new rows sit inside the band the preserved bench recorded, not that
+anything is measured, admitted, priced or pinned, and the #688 native
+acceptance (routed projection, the 304-row measured panel, four-group
+reproduction) stays open until real measurements exist.

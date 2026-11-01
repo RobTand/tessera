@@ -1,0 +1,6 @@
+# Explicit ship-graph-mnbt-matrix A8S/socket/TP2/c1-8 ON/ON pair at MNBT2048 vs MNBT4096.
+# Both arms use graph decode, MTP off, and all three levers explicitly ON.
+# No default moves: the matrix does not depend on the default-only PR.
+# Timing covers L512/2048/8192 at c1/4/8 with 10 trials and 128 completions per request.
+graph_mnbt2048_on FABRIC=socket EAGER=0 MAX_BATCHED=2048 COMPILATION_JSON={"mode":"NONE","cudagraph_mode":"FULL_DECODE_ONLY"} SPEC_JSON=null TESSERA_E4M3_DECODE_ONCE=1 TESSERA_GLM53_KDA_CONV_SPLIT=on TESSERA_ROUTED_PIECE_MAJOR=1
+graph_mnbt4096_on FABRIC=socket EAGER=0 MAX_BATCHED=4096 COMPILATION_JSON={"mode":"NONE","cudagraph_mode":"FULL_DECODE_ONLY"} SPEC_JSON=null TESSERA_E4M3_DECODE_ONCE=1 TESSERA_GLM53_KDA_CONV_SPLIT=on TESSERA_ROUTED_PIECE_MAJOR=1

@@ -195,15 +195,11 @@ def encoding_input_identity(weight, unit_name: str, grid, q256: int, *,
     ``unit_input_identity``. No invented expert fields are needed for a dense
     campaign's resume check.
 
-    ``structure`` is what the unit is served AS, and it picks the recipe the
-    receipt stamps: ``export.served_recipe(grid, q256, structure)``, the one
-    statement the serving exporter encodes and the intake adopts (tessera#662).
-    The block carries no structure key of its own. With the default, and at
-    every rung where the served wire is the research one (every E4M3 and BF16
-    rung, and E2M1x2 at its cap), the block is ``wire_recipe``'s, byte for
-    byte, so no receipt stamped before the argument existed moves. Only a
-    routed E2M1x2 stack below the cap stamps a different block: the span-2
-    TCQ wire its decoder reads.
+    ``structure`` selects the recipe for the served unit. The receipt uses
+    ``export.served_recipe(grid, q256, structure)``, as the exporter does.
+    Both E2M1x2 structures use WINDOW L14. The receipt carries no separate
+    structure key because the wire fields state the same recipe.
+    E4M3 and BF16 keep their research recipes.
     """
     if not isinstance(unit_name, str) or not unit_name:
         raise ValueError("encoding input identity requires a unit name")

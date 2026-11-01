@@ -23,9 +23,10 @@ import torch
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from tessera import kernel_window_gemv as kg    # noqa: E402
+from tessera.window_geometry import TILE_ROWS  # noqa: E402
 
 
-def pack_bitstream(body, rates, tile_rows=kg.TILE_ROWS):
+def pack_bitstream(body, rates, tile_rows=TILE_ROWS):
     """``body [rows, cols]`` codes + per-column rates -> ``kg.Repacked``.
 
     Pure bitstream packing: no byte grouping, no 8//rate step.  Rows are

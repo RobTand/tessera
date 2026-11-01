@@ -6,11 +6,11 @@
 twice, in the same order, with the same intrinsic, so the comparison is
 ``torch.equal`` on int16 views, not a tolerance.
 
-The token-sum cases run on each of the three libraries the routed lane builds,
-at the GLM-5.3 shape (``H`` 4096, top-k 8) and T in {1, 4, 2048}, on the data
-``shared_fold_data.adversarial`` builds to bite (an overflow only the final
-rounding makes, exact cancellation, a double-rounding tie, subnormals, NaN and
-infinities). The adapter cases fold through ``FusedRoutedWindowMoE.__call__``
+The token-sum cases run on each library the routed lane owns,
+at the GLM-5.3 shape (``H`` 4096, top-k 8) and T in {1, 2, 4, 2048}, on
+served-scale data and ``shared_fold_data.adversarial`` inputs: final-rounding
+overflow, exact cancellation, a double-rounding tie, subnormals, NaN and
+infinities. The adapter cases fold through ``FusedRoutedWindowMoE.__call__``
 eagerly and under CUDA-graph replay.
 
 The lane is a CUDA kernel JIT-built on first use. These tests run through
@@ -27,7 +27,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 from tessera import routed_fused as rf                    # noqa: E402
 from tessera.errors import GrammarError                   # noqa: E402
 
-from shared_fold_data import adversarial, targeted_failures  # noqa: E402
+from shared_fold_data import adversarial, served_scale, targeted_failures  # noqa: E402
 from test_routed_fused_window import (HIDDEN, LIBRARY_IDS, TOP_K, _bundles,  # noqa: E402,F401
                                       _fused, _routes, _stacks, cuda, family)
 
@@ -48,18 +48,23 @@ def _fold(lib, routed, shared, top_k):
 
 
 @cuda
-@pytest.mark.parametrize("lib", LIBRARY_IDS)
-@pytest.mark.parametrize("tokens", [1, 4, 2048])
-def test_token_sum_shared_is_token_sum_then_the_bf16_add(lib, tokens):
-    routed, shared = adversarial(tokens, GLM_HIDDEN, GLM_TOP_K, 1000 + tokens,
-                                 rf._ext(lib).token_sum)
+@pytest.mark.parametrize("lib", tuple(rf.LIBRARIES))
+@pytest.mark.parametrize("tokens", [1, 2, 4, 2048])
+@pytest.mark.parametrize("data", ["served_scale", "adversarial"])
+def test_token_sum_shared_is_token_sum_then_the_bf16_add(lib, tokens, data):
+    if data == "adversarial":
+        routed, shared = adversarial(tokens, GLM_HIDDEN, GLM_TOP_K, 1000 + tokens,
+                                     rf._ext(lib).token_sum)
+    else:
+        routed, shared = served_scale(tokens, GLM_HIDDEN, GLM_TOP_K, 1000 + tokens)
     stock = _stock(lib, routed, shared, GLM_TOP_K)
     out = _fold(lib, routed, shared, GLM_TOP_K)
     torch.cuda.synchronize()
     a, b = out.view(torch.int16), stock.view(torch.int16)
     assert torch.equal(a, b), f"{lib} T={tokens}: {int((a != b).sum())} of {a.numel()} differ"
-    # The targeted groups stored their known answers, so the equality bites.
-    assert targeted_failures(out, GLM_TOP_K) == []
+    if data == "adversarial":
+        assert targeted_failures(stock, GLM_TOP_K) == []
+        assert targeted_failures(out, GLM_TOP_K) == []
 
 
 @cuda

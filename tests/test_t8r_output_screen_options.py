@@ -13,6 +13,11 @@ ROOT = Path(__file__).resolve().parents[1]
 A8SE = str(Path(ROOTS["shared_runs"].default) /
            "moe/glm53-a8-bf16menu-20260930/release/exported")
 
+@pytest.fixture(autouse=True)
+def preserve_runtime_mode(monkeypatch):
+    monkeypatch.setenv("TESSERA_SERVE_MODE", os.environ.get("TESSERA_SERVE_MODE", "resident"))
+
+
 
 class DeviceBoundaryReached(Exception):
     pass
@@ -27,7 +32,7 @@ def main_scope(*, stubbed=False):
                  and t.id in ('ARTIFACT', 'REPLAY_ARTIFACT') for t in n.targets))]
     def device(*args):
         raise DeviceBoundaryReached('argument admission reached actual main device boundary')
-    scope = dict(argparse=argparse, os=os, VLLM_STUBBED=stubbed,
+    scope = dict(argparse=argparse, os=os, _install_vllm_stubs=lambda: stubbed,
                  torch=SimpleNamespace(manual_seed=lambda seed: None, device=device))
     exec(compile(ast.Module(body=nodes, type_ignores=[]), str(path), 'exec'), scope)
     return scope
@@ -100,3 +105,38 @@ def test_finite_comparison_parser_exists_before_device(monkeypatch, tmp_path):
     # read the explicit protocol before touching a device.
     with pytest.raises(FileNotFoundError):
         main_scope()['main']()
+
+
+def test_benchmark_import_does_not_advertise_a_missing_runtime():
+    pytest.importorskip("torch")
+    import subprocess
+    import sys
+
+    script = r"""
+import importlib.abc
+import importlib.util
+import os
+import sys
+
+class MissingRuntime(importlib.abc.MetaPathFinder):
+    def find_spec(self, fullname, path=None, target=None):
+        if fullname == "vllm" or fullname.startswith("vllm."):
+            raise ModuleNotFoundError("The runtime is absent for this control.")
+
+sys.meta_path.insert(0, MissingRuntime())
+import bench_class_dispatch
+try:
+    runtime = importlib.util.find_spec("vllm")
+except ModuleNotFoundError:
+    runtime = None
+assert runtime is None
+assert "vllm" not in sys.modules
+assert "TESSERA_SERVE_MODE" not in os.environ
+"""
+    env = dict(os.environ)
+    env.pop("TESSERA_SERVE_MODE", None)
+    env["PYTHONPATH"] = os.pathsep.join((str(ROOT / "src"),
+        str(ROOT / "experiments/t8r_speed"), env.get("PYTHONPATH", "")))
+    done = subprocess.run([sys.executable, "-c", script], env=env,
+                          capture_output=True, text=True, timeout=60)
+    assert done.returncode == 0, done.stderr

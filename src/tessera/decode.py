@@ -43,7 +43,6 @@ __all__ = [
     "dequantize",
     "materialize_nvfp4",
     "materialize_bf16",
-    "materialize_bf16_folded",
     "reconstruct_unit",
     "require_untransformed",
     "unit_half_scales",
@@ -990,6 +989,8 @@ def mxfp8_dequantize(tile: torch.Tensor, scales: torch.Tensor) -> torch.Tensor:
     return values * field
 
 
+
+
 def materialize_bf16(
     unit: "EncodedUnit",
     forest: "AnchorForest | dict[int, AnchorForest] | PayloadGrid",
@@ -997,39 +998,13 @@ def materialize_bf16(
 ) -> "tuple[torch.Tensor, torch.Tensor]":
     """A BF16 unit as ``(tile bf16 [rows, cols], row scale fp32 [rows])``.
 
-    The 16-bit route's analogue of ``materialize_fp8``, and like it a *pair*:
-    the values and the per-output-channel scale, kept apart.  The tile is the
-    raw table values, and on this grid that is **exact** -- every table entry
-    is a bf16 word by construction, so casting rounds nothing at all.
+    The canonical reader computes the FP32 product of these factors.
+    The kernel accumulates its dot in FP32 over the raw BF16 values.
+    It applies the row scale before the final BF16 conversion.
+    No per-weight BF16 conversion enters that dot.
 
-    **Why the scale is not folded in.**  It could be: an A16 tile carries its
-    own exponent per weight, so ``bf16(code x row_scale)`` is a legal single
-    tensor.  It is also one rounding worse, at every rate, by a fixed amount:
-    the fold adds one bf16 rounding of ``s_i * t_ik`` -- 0.0011-0.0022 in
-    absolute relative output error on GLM expert rows whatever the coder --
-    because it is a property of bf16's 7-bit mantissa and the activations, not
-    of the weights (``docs/measurements/tessera16-alphabet-floor-2026-09-02.md``
-    B).  Its *share* of the error grows as the coding error shrinks underneath
-    it (15.4% at R = 7), but a share composes in quadrature -- ``fold =
-    sqrt(out_bf16^2 - out^2)`` -- so that is a 1.2% error gap and a 2.4%
-    squared-error gap, the quantity an output-space KL tracks; and served at
-    R = 7 the twin's KL is 1.0011x the route's on ``all`` and 0.9961x on
-    ``confident``, i.e. below what the corpus resolves, so no fold win is
-    claimed (``tessera-bf16-route`` §7b as corrected,
-    ``tessera-bf16-route-served`` §3, #45).  An fp16 fold costs 0-0.0005; not
-    folding costs nothing.
-
-    And nothing has to fold, because of the plane's shape rather than a
-    trick: a CHANNEL scale is one factor per **output row**, and an
-    output-row factor commutes with the matmul --
-    ``x (s * W)^T = (x W^T) * s``.  A route runs the stock BF16 GEMM on the
-    tile and applies ``s`` to the GEMM's output in fp32
-    (``y_i = s_i * sum_k t_ik x_k``), which is exact and is the epilogue
-    ``lane_planes`` already builds for this plane on the kernel lane.
-
-    The scale is returned in fp32 rather than pushed into either factor for
-    the same reason :func:`materialize_bf16_folded` rounds only once: two
-    roundings of one product is a rendering the encoder never scored.
+    The plain BF16 checkpoint cannot carry separate scales. Its derived
+    rendering lives in ``stock.materialize_stock``, not in this decoder.
     """
     grid, _forests = _grid_and_forests(forest)
     if grid.arity != 1 or grid.name != "BF16":
@@ -1051,36 +1026,6 @@ def materialize_bf16(
     values = grid_value_table(grid, codes.device)[codes.int()]
     scale = unit.scale_rows.to(codes.device).float() * float(unit.scale_global)
     return values.to(torch.bfloat16), scale.reshape(-1)
-
-
-def materialize_bf16_folded(
-    unit: "EncodedUnit",
-    forest: "AnchorForest | dict[int, AnchorForest] | PayloadGrid",
-    code: "ConvCode | None",
-) -> torch.Tensor:
-    """The **twin's** rendering: one bf16 tile with the row scale folded in.
-
-    A plain BF16 checkpoint ships a weight and no scale, so it has no choice;
-    this is the one place in the route where the fold is unavoidable, and it
-    exists so that the fold is named and priced rather than defaulted into.
-    Its cost is the twin's, not the route's -- :func:`materialize_bf16` is
-    what a lane holding the wire calls, and it pays nothing.
-
-    **The rounding rule, stated once.**  This is ``reconstruct_unit``'s fp32
-    product with **one** round-to-nearest-even to bf16 at the end, and the
-    test asserts exactly that equality.  It holds bit-for-bit, and not by
-    luck: ``unit_scale_field`` on a CHANNEL plane *is*
-    ``scale_rows.float() * float(global)`` (``channel_scale_field``), the
-    expression the pair already carries, and ``dequantize`` multiplies the
-    same fp32 grid value by the same fp32 factor -- so no reassociation of a
-    float product is involved.  The bf16 hop through the pair is free because
-    every entry of this grid is a bf16 word by construction, so
-    ``float(bf16(v)) == v``.  One rounding and not two: rounding the row word
-    or the global separately would fold twice and put the served tile a
-    half-ulp off the tensor the encoder scored.
-    """
-    values, scale = materialize_bf16(unit, forest, code)
-    return (values.float() * scale[:, None]).to(torch.bfloat16)
 
 
 def decode_codes_mixed(

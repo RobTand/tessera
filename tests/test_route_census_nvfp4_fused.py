@@ -1,22 +1,8 @@
-"""The served census must recognise the fused NVFP4 launches (tessera#545).
+"""The route census recognizes the native paired WINDOW W4A4 entry points.
 
-Master serves the fused pairs -- ``nvfp4_route.apply`` stamps
-``(a4_span2_gemm, native_span2_gemm)`` on every dense module and the native
-expert stack stamps ``(a4_span2_grouped_gemm, native_span2_grouped)`` -- while
-no ``lane_eligibility`` cell attests either (both sit in
-``scheme.EXPERIMENTAL_LAUNCHES``).  Step 1 of #545 is a served census that
-records the fused pairs actually dispatching, and the census tool is what
-takes it -- so the tool must accept what the dispatch stamps, or every fused
-module reads as a mismatch and the census cannot run at all.
-
-These pin the tool's expectation to the routes that own the dispatch
-(``nvfp4_route.census_expected`` / ``nvfp4_moe_route.census_expected``,
-derived from ``scheme.ROUTE_LAUNCHES`` -- never a second spelling in the
-tool), and pin the attestation side: no packaged cell names an experimental
-pair, so the pin cannot move to a runtime carrying those cells until a
-receipt earns them.  That last test is the red-before-green partner of the
-attestation itself: it goes red the day a cell names a fused launch, and the
-commit that turns it green is the one carrying the receipt.
+The route owners publish their actual dispatch pairs. This test checks the
+census reader against that shared declaration. It does not attest a serve.
+Historical TCQ cells cannot qualify the current WINDOW bytes.
 """
 from __future__ import annotations
 
@@ -45,14 +31,14 @@ def test_nvfp4_dense_census_expected_owns_the_fused_pair():
     pytest.importorskip("torch")
     from tessera.serving import nvfp4_route
     from tessera.serving.scheme import (
-        A4_DENSE_GEMM_SYMBOL,
+        FUSED_WINDOW_DENSE_E2M1_SYMBOL,
         STRUCTURE_DENSE,
         TESSERA_NVFP4,
         launch_pairs,
     )
-    from tessera.serving.telemetry import DECODER_NATIVE_SPAN2_GEMM
+    from tessera.serving.telemetry import DECODER_NATIVE_FUSED_WINDOW_DENSE_E2M1
 
-    fused = (A4_DENSE_GEMM_SYMBOL, DECODER_NATIVE_SPAN2_GEMM)
+    fused = (FUSED_WINDOW_DENSE_E2M1_SYMBOL, DECODER_NATIVE_FUSED_WINDOW_DENSE_E2M1)
     got = nvfp4_route.census_expected(compiled=False)
     for regime in ("decode", "batch"):
         assert got[regime] == launch_pairs(
@@ -66,14 +52,14 @@ def test_nvfp4_routed_census_expected_owns_the_fused_pair():
     pytest.importorskip("torch")
     from tessera.serving import nvfp4_moe_route
     from tessera.serving.scheme import (
-        A4_GROUPED_GEMM_SYMBOL,
+        ROUTED_FUSED_WINDOW_E2M1_SYMBOL,
         STRUCTURE_ROUTED_MOE,
         TESSERA_NVFP4,
         launch_pairs,
     )
-    from tessera.serving.telemetry import DECODER_NATIVE_SPAN2_GROUPED
+    from tessera.serving.telemetry import DECODER_NATIVE_ROUTED_FUSED_WINDOW_E2M1
 
-    fused = (A4_GROUPED_GEMM_SYMBOL, DECODER_NATIVE_SPAN2_GROUPED)
+    fused = (ROUTED_FUSED_WINDOW_E2M1_SYMBOL, DECODER_NATIVE_ROUTED_FUSED_WINDOW_E2M1)
     got = nvfp4_moe_route.census_expected(compiled=False)
     for regime in ("decode", "batch"):
         assert fused in got[regime], regime
@@ -94,13 +80,13 @@ def test_route_census_tool_accepts_the_fused_nvfp4_pairs():
     pytest.importorskip("torch")
     from tessera.serving import nvfp4_moe_route, nvfp4_route
     from tessera.serving.scheme import (
-        A4_DENSE_GEMM_SYMBOL,
-        A4_GROUPED_GEMM_SYMBOL,
+        FUSED_WINDOW_DENSE_E2M1_SYMBOL,
+        ROUTED_FUSED_WINDOW_E2M1_SYMBOL,
         TESSERA_NVFP4,
     )
     from tessera.serving.telemetry import (
-        DECODER_NATIVE_SPAN2_GEMM,
-        DECODER_NATIVE_SPAN2_GROUPED,
+        DECODER_NATIVE_FUSED_WINDOW_DENSE_E2M1,
+        DECODER_NATIVE_ROUTED_FUSED_WINDOW_E2M1,
     )
 
     tool = _tool()
@@ -108,26 +94,40 @@ def test_route_census_tool_accepts_the_fused_nvfp4_pairs():
         dense_want = tool.expected_pairs(
             TESSERA_NVFP4, regime, "dense", compiled=False, platform=None)
         assert dense_want == nvfp4_route.census_expected(compiled=False)[regime]
-        assert (A4_DENSE_GEMM_SYMBOL, DECODER_NATIVE_SPAN2_GEMM) in dense_want
+        assert (FUSED_WINDOW_DENSE_E2M1_SYMBOL, DECODER_NATIVE_FUSED_WINDOW_DENSE_E2M1) in dense_want
         moe_want = tool.expected_pairs(
             TESSERA_NVFP4, regime, "moe", compiled=False, platform=None)
         assert moe_want == nvfp4_moe_route.census_expected(compiled=False)[regime]
-        assert (A4_GROUPED_GEMM_SYMBOL, DECODER_NATIVE_SPAN2_GROUPED) in moe_want
+        assert (ROUTED_FUSED_WINDOW_E2M1_SYMBOL, DECODER_NATIVE_ROUTED_FUSED_WINDOW_E2M1) in moe_want
 
 
-def test_no_packaged_cell_attests_an_experimental_launch():
-    """Pin guard, torch-free: no cell names a launch no receipt has earned.
-
-    The fused pairs leave ``EXPERIMENTAL_LAUNCHES`` when a served census earns
-    them cells (#545 step 2), and the pin bump (step 3) follows the cells --
-    never precedes them.  A cell naming a fused pair while this test still
-    asserts absence is the signal to update the test beside the attestation,
-    not to bump the pin past it.
-    """
+def test_experimental_launches_require_their_own_runtime_and_rung_receipt():
+    """A scoped receipt must not qualify an operation on another runtime or table."""
+    from tessera.serving.contract import CENSUS_PHASE_REGIMES, cell_executes, format_entry
     from tessera.serving.scheme import EXPERIMENTAL_LAUNCHES
 
     contract = json.loads(CONTRACT.read_text(encoding="utf-8"))
+    results = CONTRACT.parents[3] / "experiments/results"
+    receipt = json.loads((results / "glm53_r768_stub_base_tp2_eager_census.json").read_text())
+    config = json.loads((results / "glm53_r768_stub_base_config.json").read_text())
+    tool = _tool()
+    rungs = {tool.declared_rung(group["scheme"])
+             for group in config["quantization_config"]["config_groups"].values()}
     experimental = set(EXPERIMENTAL_LAUNCHES)
     for cell in contract["lane_eligibility"]["cells"]:
-        pairs = {(entry["symbol"], entry["decoder"]) for entry in cell["executes"]}
-        assert not (pairs & experimental), cell["id"]
+        entry = format_entry(cell["family"], contract)
+        phase = next(phase for phase, regime in CENSUS_PHASE_REGIMES.items()
+                     if regime == cell["regime"])
+        recorded = {(record["symbol"], record["decoder"])
+                    for record in receipt["ranks"][0]["records"][phase].values()}
+        for rung in cell["rungs_q256"]:
+            scope_matches = (
+                cell["platform"] == receipt["device"]["platform_token"]
+                and cell["runtime"]["image"] == receipt["runtime"]["image"]
+                and cell["runtime"]["execution_modes"] == [receipt["runtime"]["execution_mode"]]
+                and cell["structure"] == "routed_moe" and cell["family"] == "TESSERA_E4M3_K1"
+                and cell["requires_serve_flags"] == ["TESSERA_SERVE_MODE=resident"]
+                and rung in rungs)
+            observed = cell_executes(cell, q256=rung, entry=entry) & experimental
+            assert observed == (recorded & experimental if scope_matches else set()), (
+                cell["id"], rung, observed)

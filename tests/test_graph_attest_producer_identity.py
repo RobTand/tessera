@@ -35,10 +35,6 @@ import tp2_recipe as recipe
 import watch_window_queue
 import window_driver as driver
 
-FILES = ("managed_window.py", "tp2_recipe.py", "rank_window.py", "window_driver.py", "submit.py",
-         "watch_window_queue.py", "arm_tp2.sh", "drive_tp2.sh", "plan-artifact.txt",
-         "eager_benchmark.py", "plan-eager-window4.txt", "plan-eager-ship-8192.txt")
-
 
 class ReachedAdmission(RuntimeError):
     pass
@@ -50,14 +46,16 @@ def git(root, *args):
 
 def disk_digest(root):
     return hashlib.sha256("".join(f"{hashlib.sha256((root / 'experiments/graph_attest_702' / name).read_bytes()).hexdigest()}  {name}\n"
-                                 for name in FILES).encode()).hexdigest()
+                                 for name in recipe.PRODUCER_FILES).encode()).hexdigest()
 
 
 def make_producer(tmp_path, *, message="reviewed producer"):
     root = tmp_path / "producer"
     (root / "experiments/graph_attest_702").mkdir(parents=True)
-    for name in FILES:
-        (root / "experiments/graph_attest_702" / name).write_bytes((HERE / name).read_bytes())
+    for name in recipe.PRODUCER_FILES:
+        target = root / "experiments/graph_attest_702" / name
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_bytes((HERE / name).read_bytes())
     git(root, "init", "-q")
     git(root, "config", "user.name", "CPU fixture")
     git(root, "config", "user.email", "fixture@example.invalid")
@@ -269,3 +267,51 @@ def test_dev_mode_producer_sha_reports_the_stored_env_without_hashing(monkeypatc
     assert recipe.producer_sha() == NOT_COMPUTED
     monkeypatch.setenv(DEV_MODE_ENV, "0")
     assert recipe.producer_sha() == disk_digest(ROOT)
+
+
+@pytest.mark.parametrize("dev", ["1", "0"])
+@pytest.mark.parametrize("fault", ["filename", "memory-cap", "residency"])
+def test_d32_manifest_filename_is_not_mixed_into_cap_refusals(tmp_path, monkeypatch, capsys, dev, fault):
+    producer, reviewed = make_producer(tmp_path)
+    config, env, root, reviews = fixture_inputs(monkeypatch, tmp_path, producer, reviewed)
+    config["data_manifest"] = str(tmp_path / "declared.json")
+    setup = json.loads((root / "inputs.json").read_bytes())
+    setup["config"] = config
+    (root / "inputs.json").write_text(json.dumps(setup))
+    row = dict(cwd=str(producer), tags=["fixture"], demand=dict(cpu=1, mem_gb=104, gpu=1),
+               gpu_memory_gb=102, exclusive=True, measurement=True, host_class="gb10", max_attempts=1,
+               priority=-10, timeout_s=1800, data_manifest=config["data_manifest"],
+               residency="stage", residency_ram="auto", residency_share="auto")
+    monkeypatch.setattr(driver, "rows", lambda *args, **kwargs: [row])
+    stored = json.loads(json.dumps(row))
+    if fault == "filename": stored["data_manifest"] = str(tmp_path / "recorded-alias.json")
+    elif fault == "memory-cap": stored["demand"]["mem_gb"] = 105
+    else: stored["residency"] = "none"
+    (root / "manifest.json").write_text(json.dumps([stored]))
+    monkeypatch.setenv(DEV_MODE_ENV, dev)
+    if fault == "filename" and dev == "1":
+        with pytest.raises(ReachedAdmission):
+            driver.submit(root, reviews)
+        assert "prepared manifest identity" in capsys.readouterr().out
+    else:
+        with pytest.raises(managed_window.Refused, match="prepared PB"):
+            driver.submit(root, reviews)
+
+
+
+@pytest.mark.parametrize("dev", ["1", "0"])
+@pytest.mark.parametrize("label", ["data_manifest", "control_root", "profile_manifest"])
+def test_d32_input_filename_labels_do_not_replace_actual_scope_checks(monkeypatch, capsys, dev, label):
+    recorded = dict(control_protocol=dict(server_seed=0, lens=[2048]), fabric="socket", **{label:"recorded-alias"})
+    current = dict(recorded, **{label:"current-alias"})
+    monkeypatch.setenv(DEV_MODE_ENV, dev)
+    if dev == "0":
+        with pytest.raises(managed_window.Refused):
+            recipe.check_control_record(recorded, current, where="test", refusal=managed_window.Refused("identity"))
+    else:
+        recipe.check_control_record(recorded, current, where="test", refusal=managed_window.Refused("identity"))
+        assert "[DEV-MODE]" in capsys.readouterr().out
+    current["control_protocol"] = dict(server_seed=99, lens=[2048])
+    with pytest.raises(managed_window.Refused, match="scope/geometry/comparability"):
+        recipe.check_control_record(recorded, current, where="test", refusal=managed_window.Refused("identity"))
+

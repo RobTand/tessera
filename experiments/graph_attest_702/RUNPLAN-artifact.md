@@ -36,6 +36,237 @@ artifact, whose true bytes and config digest must be supplied separately. Full
 artifact equality, compiled runtime cells, D13 serving pin, scientific quality,
 served profiling/power and ship-card qualification remain separate gates.
 
+## Batch-KL companion: integration only (tessera#1365)
+
+**Production disposition: unavailable, explicitly refused.** The existing live
+`LocalArm.probes` seam calls `collect_kl(arm, peer_meta)` exactly once when
+`config.batch_kl` is present, before writing successful probe status. The current
+implementation refuses even if a handoff declaration is configured: no supported
+live adapter has been supplied. The existing native protocol publishes failure
+and coupled abort, runs owned cleanup and copies partial outputs; it does not
+complete that arm or proceed to the next. No second serve or isolated scorer is
+run, no speculative guard is bypassed, and MTP1 remains unchanged.
+
+Owner-facing disposition for existing prismaquant#2566 / tessera#1318 (delivery
+and publication left to TrustLadder): the supplied PrismaQuant checkout
+`6d8288adc94b3c4b624c143ed372fb6513f32784` already has compiled execution and
+compilation configuration in `experiments/measure_glm_tr3_vllm.py`.
+`scorer_engine_kwargs` builds a separate engine with `max_num_seqs=1`; its
+no-spec qualification is not this live TP2/MTP1 c4 target-model measurement.
+The investigated #2566 handoff at
+`af1cae160d93bffb2a357ca8aaeae8d1ef59c468` on `prismaquant-2566` pairs
+eager/compiled dumps with `check_paired_execution_dumps`, but its documented
+scope is prefill, not graph-replayed decode. That helper is absent from the
+supplied current checkout. This historical handoff is context, not a landed or
+capable adapter. Required owner capability remains: attach to the already-live
+owned workers, distinguish target from drafter under MTP1, align requests and
+rows, emit complete batch dumps/results, and retain observed TP2 execution and
+both ranks' provenance. Reuse that owner's supported implementation when
+available; this change deliberately does not implement it. Compiled KL
+qualification stays with #1318/#1319, TP2 measurements with #1341/#1366, and
+graph-population/replay hardening with #1270/#1271; no duplicate campaign or
+intake decision is implied.
+
+### Configuration and normal evidence workflow
+
+The existing recipe environment accepts optional `BATCH_KL`, a nonempty JSON
+object retained as the parsed `inputs.json.config.batch_kl` during preparation.
+Its exact JSON string is forwarded unchanged into both native action environments
+in `manifest.json`, so rank startup reconstructs the same declaration before
+scope/comparability validation. Submission restores that string from the prepared
+manifest, not the submitting shell: an inline preparation declaration or separate
+preparation origin needs no re-export at `--submit`. Both rank declarations must
+match exactly and parse to the prepared configuration; missing or inconsistent
+declarations refuse. A disabled prepared window stays disabled even if the
+submitting shell has `BATCH_KL`. The complete manifest identity seal and resource
+checks still apply; neither prepared file is rewritten. It is only permitted for
+graph-control, leaving benchmark modes unchanged.
+Deployment-specific `handoff`, `endpoint`, `tool`, and `output` declarations
+belong there, along with `scoring` (`corpus_sha256`, `teacher_sha256`,
+`tokenizer_sha256`, `regime`, positive `expected_rows`). There are no executable
+commands or deployment defaults inferred from this object, nor does a declared
+capability enable an adapter. Do not copy the acceptance fixture's synthetic
+full config digest, image or deployment strings into a production recipe.
+The nominated full config digest above, socket TP2, MTP1, resource caps,
+deadlines, gang ownership and both eager controls are unchanged.
+
+After the normal native window and cleanup, retain the existing
+`receipt-manifest.json` containing both member keys. Generate the normal graph
+receipt with `receipt.py` as below, preserving its scope/exclusions. Then run
+this explicit companion stage (paths are caller configuration, not defaults):
+
+```sh
+PYTHONPATH=src python experiments/graph_attest_702/window_driver.py \
+  experiments/graph_attest_702/plan-artifact.txt \
+  --bind-batch-kl "$ROOT" --graph-receipt "$GRAPH_RECEIPT"
+```
+
+This stage starts no model and writes `$ROOT/batch-kl-manifest.json`; exit zero
+means binding validity only. Nonzero retains actionable errors for missing,
+refused, stale, incomplete or mismatched evidence. The normalized adapter
+contract is `batch-kl.json` in each retained arm directory, referencing
+arm-relative raw JSONL/result files with SHA256 hashes. It binds prepared input
+hash/run, both native identities and owned containers, artifact/config/source,
+actual image, requested and observed flags, target provenance and scoring scope.
+The binder rehashes retained bytes, checks row completeness, and requires a
+rank-qualified graph replay manager population covering both native ranks before
+reusing the graph verifier's full equality/replay gate, not a stored `equal`
+verdict. The shared verifier alone checks only managers present and cannot detect
+an entirely omitted rank; this companion boundary supplies that TP2 requirement.
+It links the unchanged graph receipt by SHA256 without adding BF16 KL claims to it. A synthetic
+fixture qualifying here is **not scientific TP2 or KL qualification**. Without
+the supported live handoff, production collection refuses and the companion
+remains unqualified; an offline result is not an acceptable substitute.
+
+### CPU integration verification
+
+The protected `tests/test_graph_attest_batch_kl.py` module docstring retains the
+pre-fix assertion failures and earlier coverage receipts. Post-change check:
+
+```sh
+PYTHONPATH=src OMP_NUM_THREADS=1 MKL_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 NUMEXPR_NUM_THREADS=1 python -m pytest tests/test_graph_attest_batch_kl.py tests/test_graph_attest_tp2.py tests/test_graph_attest_managed_window.py tests/test_graph_receipt.py tests/test_issue_refs.py tests/test_impacted_tests.py -q -n 2 --dist worksteal --durations=10 --basetemp="$TMPDIR/pytest"
+```
+
+Observed x86 result: **341 passed, 9 skipped** in 127.60s; all nine skips require
+the published PB SDK. No CUDA device and zero tests allocated on a device. These
+are CPU orchestration/binding checks, not a GPU measurement; no new TP2/MTP1 or
+BF16 KL outcome is claimed. No GPU check or measurement campaign was run here.
+The handoff and CLI workflow require reviewer inspection as well as these tests.
+
+[Test evidence {"artifacts":{"stderr":{"digest":"e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855","size":0},"stdout":{"digest":"9a9ec443fc97e0fcf8f49e6e0707741fad177c6d6101bb161d051ad3bd1d43f5","size":2078}},"operation":"3e94c3a95d1335231dbfaa2b639b5974d98d5112158659198e2aa01af032040b","receipt":"900a873b77a3bba3cd1662ff2fa3e53877b2598462dbf251e922faf101379998"}]
+
+### Review repair: prepared configuration and replay population
+
+Added `tests/test_graph_attest_batch_kl_binding.py`, reusing the protected
+normalized fixture without changing it. Before the repair, this command on
+`011036a1522c4630b12ae2701dec2769b16dc1af` plus the new tests reproduced **3 failed,
+1 passed**: enabled configuration raised `Window4 rank: control
+scope/geometry/comparability differs`; deleting either rank's manager failed
+`assert bound["qualified"] is False` because the companion still qualified.
+The batch-KL-disabled configuration case passed.
+
+```sh
+PYTHONPATH=src OMP_NUM_THREADS=1 MKL_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 NUMEXPR_NUM_THREADS=1 python -m pytest tests/test_graph_attest_batch_kl_binding.py -q -n 2 --dist worksteal --durations=10 --basetemp="$TMPDIR/pytest"
+```
+
+[Test evidence {"artifacts":{"stderr":{"digest":"e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855","size":0},"stdout":{"digest":"7ea3a334dff5d2aad1a02789ebe18e37bc6e684a6dd666dc960b59fae8c4c833","size":7467}},"operation":"eeb94961c3b54cc5ccdc377fab8ec7f5b69bab3b7d312f5162e9942290f76755","receipt":"8068c961378ec55fc99ef44fe27649787771e1c661c03aa66088024d7d2c3c83"}]
+
+The repair forwards `BATCH_KL` in the existing optional native action environment
+allowlist and establishes a manager population for both native ranks at the
+companion boundary. It retains the existing graph verifier and graph receipt
+contract. Post-repair x86 checks:
+
+```sh
+PYTHONPATH=src OMP_NUM_THREADS=1 MKL_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 NUMEXPR_NUM_THREADS=1 python -m pytest tests/test_graph_attest_batch_kl_binding.py tests/test_graph_attest_batch_kl.py tests/test_graph_attest_tp2.py tests/test_graph_attest_managed_window.py tests/test_graph_receipt.py -q -n 2 --dist worksteal --durations=10 --basetemp="$TMPDIR/pytest"
+```
+
+**133 passed, 9 skipped** in 23.15s, with all skips requiring the published PB SDK.
+
+[Test evidence {"artifacts":{"stderr":{"digest":"e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855","size":0},"stdout":{"digest":"dcdc33cc3a2e5396347891b252ec8e90dbed3f0dd6bb3e0aafe47be6109acd8b","size":1883}},"operation":"c91b2cfca82fbf6c51390cdef1fb12ebdbcd8d43846e548ec502de3651085b39","receipt":"920f4bdde9600a355973ef853063bcbe2d7bce256f5b9bb57fc9bdb380eddbd7"}]
+
+```sh
+PYTHONPATH=src OMP_NUM_THREADS=1 MKL_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 NUMEXPR_NUM_THREADS=1 python -m pytest tests/test_issue_refs.py tests/test_impacted_tests.py -q -n 2 --dist worksteal --durations=10 --basetemp="$TMPDIR/pytest"
+```
+
+**212 passed** in 175.37s.
+
+[Test evidence {"artifacts":{"stderr":{"digest":"e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855","size":0},"stdout":{"digest":"f5112f837a01f20da455bc444b947e773b6d005e687b11b3f821102e52e981ab","size":1781}},"operation":"2f2a0b5431fdd082f39379e6fdb3ec23a0d65a280c5eaa3481b49f0cc5e2780c","receipt":"421b91b7a57b3b1be2620fb04ad93f2c7d97da2fc5662b0712dbdcefd474355b"}]
+
+A broader optional x86 selection did **not run**: runner setup exited 124 before
+executing the command, so it supplies no test result. Its command excluded the
+reviewer's already identified unrelated historical-object dependency; no test
+was changed or claimed passing on that basis.
+
+```sh
+PYTHONPATH=src OMP_NUM_THREADS=1 MKL_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 NUMEXPR_NUM_THREADS=1 python -m pytest tests/test_graph_attest*.py tests/test_graph_receipt.py tests/test_graph_receipt_population.py tests/test_issue_refs.py tests/test_impacted_tests.py -k 'not test_frozen_2db_flags_reach_different_runtime_selectors' -q -n 2 --dist worksteal --durations=10 --basetemp="$TMPDIR/pytest"
+```
+
+[Test evidence {"artifacts":{"stderr":{"digest":"7290f2480a8579752fe0e7641f2fba61cb0065f1a3df82f30581ce650e52f410","size":40},"stdout":{"digest":"e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855","size":0}},"operation":"0b2c39f3aa504a9e506a4cb8ff0da6a1f6bea73dee3712a4a708452537ca070f","receipt":"ad01c805fc02b697b78969781829a6ac821c0b69ea88689677ab1a7f24b439fc"}]
+
+All completed checks above are CPU orchestration checks with zero device
+allocations. No GPU run or scientific measurement was attempted for this repair.
+Production collection still explicitly refuses the unsupported live handoff.
+
+### Review repair: fresh-environment submission
+
+`submit()` now restores `BATCH_KL` from both prepared manifest rows, preserving
+its exact string instead of reserializing the parsed input object. The submitting
+shell cannot enable, disable or substitute it. Missing/inconsistent declarations
+refuse in both modes; the real configuration comparison and full manifest seal
+remain intact. Added `test_submit_*` regressions use real parsing/rows/seals with
+inert source authentication, stopping at the review-read boundary before native
+publication. They cover both modes, enabled/disabled windows, missing/malformed
+ambient declarations, noncanonical JSON spelling, rank disagreement (including
+equivalent objects with different spelling), wrong input scope and an unrelated
+certified manifest mutation. Neither prepared file is rewritten.
+
+Pre-fix x86 reproduction, before changing `submit()`:
+
+```sh
+PYTHONPATH=src OMP_NUM_THREADS=1 MKL_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 NUMEXPR_NUM_THREADS=1 python -m pytest tests/test_graph_attest_batch_kl_binding.py -k 'test_submit_restores_exact_prepared_batch_kl and None' -q -n 2 --dist worksteal --durations=10 --basetemp="$TMPDIR/pytest"
+```
+
+**2 failed, 2 passed**: both enabled cases raised `Window4 submission: control
+scope/geometry/comparability differs` at `tp2_recipe.py:108`; disabled controls
+reached the review boundary.
+
+[Test evidence {"artifacts":{"stderr":{"digest":"e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855","size":0},"stdout":{"digest":"684f41db969044c3c63149feecc3b565476906a6daf84f019544961cb8e0dff8","size":6867}},"operation":"3ffec8d3a1cf7f8592de3f1f589798b112af25f86883a9e8328d03dcfcf20a0f","receipt":"701255ff6f57823a61b9062522a85524b08f9963fcf9ddbbd95783e80a08461f"}]
+
+An intermediate implementation used the object-only protocol reader for the
+list-valued manifest (**25 failed, 4 passed**). Keeping the existing `json.loads`
+manifest read corrected this implementation error without weakening any test.
+
+[Test evidence {"artifacts":{"stderr":{"digest":"e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855","size":0},"stdout":{"digest":"9fa827b89cde306175e3e67e379dc54b8ef902b140bfe441917769d4969294d3","size":51076}},"operation":"836521982979672efbb50f101a040a9e76c776071f92f1d8ab62d407c7246c46","receipt":"cdd87c2e87c3586a6b9f555d50890e34ce9f425edede78a2af71513422db854b"}]
+
+Corrected targeted check: same environment/options, entire
+`tests/test_graph_attest_batch_kl_binding.py`: **29 passed**, no skips.
+
+[Test evidence {"artifacts":{"stderr":{"digest":"e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855","size":0},"stdout":{"digest":"0c0f5221aacf99e0a6ba5cdaea232f401411dda68e118075e5049689b32b4b6a","size":1857}},"operation":"a56c1444056a2c71258429555d88fc3c4e584c4bb0cbe7cb905839e92d81570c","receipt":"915bb8f8196a13cb034da36016a883b782383902d1850e0fbe9d24476e8b4a0a"}]
+
+Current x86 acceptance, repair, submission and mandatory guards:
+
+```sh
+PYTHONPATH=src OMP_NUM_THREADS=1 MKL_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 NUMEXPR_NUM_THREADS=1 python -m pytest tests/test_graph_attest_batch_kl.py tests/test_graph_attest_batch_kl_binding.py tests/test_graph_attest_tp2.py tests/test_graph_attest_managed_window.py tests/test_graph_receipt.py tests/test_graph_attest_producer_identity.py tests/test_graph_attest_headroom_preflight.py tests/test_issue_refs.py tests/test_impacted_tests.py -q -n 2 --dist worksteal --durations=10 --basetemp="$TMPDIR/pytest"
+```
+
+**414 passed, 9 skipped** (published PB SDK required). All checks above allocated
+zero tests on a device; they establish CPU orchestration/binding only.
+
+[Test evidence {"artifacts":{"stderr":{"digest":"e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855","size":0},"stdout":{"digest":"ad077eedc6feabcc3e4c9601633cd1510aff14b5f4646581e46cc5c347085113","size":2168}},"operation":"50237696ea2e7e19266655bf3b48a8a8ec64be215e429e931291d44341fc4af7","receipt":"f8ec40ac1536fd3419c910f6bdc82495d544a3b31436e02e63758e0eb2568106"}]
+
+GPU-arm check plan, recorded before execution: the repaired binding regression
+plus all brief acceptance files in the configured pinned image, without CPU-only
+guard sweeps. It decides Python 3.12/image compatibility, which x86 Python 3.14
+cannot establish. These remain CPU orchestration tests with zero expected device
+allocations; expected elapsed GPU-host time is under one minute. No GPU measurement
+or TP2 campaign.
+
+Executed the x86 command above with only its first five test files on `arm="gpu"`:
+**158 passed, 9 skipped** (published PB SDK required), in **14.13s**, zero tests
+allocated on the device. The configured image reported CUDA torch 2.13.0+cu130
+and NVIDIA GB10 visibility; neither visibility nor these CPU cases measure TP2.
+
+[Test evidence {"artifacts":{"stderr":{"digest":"e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855","size":0},"stdout":{"digest":"9de12f4e1b8b553f9fb3e7ae4e465743c8be75c0d689bc569d10c142641ea678","size":1871}},"operation":"6b6a72527683b7b7a367ffa5408f5782ca4fcf1db8d145c8dac70f30dd7bd5c1","receipt":"eb926e757b63bec8d2328b07bfddf5ab2612b56715cd4ef3c277b514f000b4cc"}]
+
+Impacted-test selection attempted through the check runner with
+`python tools/impacted_tests.py --ref 5b8d19410adf708b6ee69fe7e3cd3c94d03600d5 --json`
+could not analyze that base: the snapshot lacks the repair-parent git object
+(`fatal: bad object`). This is not a passing selector result or a test failure.
+
+[Test evidence {"artifacts":{"stderr":{"digest":"1545979a800c3de879dff522eb99f7c7ae30d87e1f20c5c8cc006125b926d167","size":117},"stdout":{"digest":"e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855","size":0}},"operation":"e4b20bffa0c0540f6d4010f9cdd274e5ee0a57c5a091e82d0a2acfb07494fce2","receipt":"708f0b86e6b63186b1447a65ca744355b5ba4c24d197633dcfbff7a904635d2b"}]
+
+The same selector (not a test command) completed in the actual working checkout
+using that exact available base: exit 0, `verdict=narrowed`, four changed files,
+423 selected test files. Its bulky JSON remains in computation scratch, not the
+repository. Only the targeted suites above were run; the full merge-result suite
+is left to the coordinator. Production live collection still refuses the missing
+owner-supported handoff; no scientific batch-KL or TP2 outcome is claimed.
+
+After the workflow documentation edits, reran `tests/test_issue_refs.py` with the
+same x86 environment/options: **3 passed**, no skips, zero device allocations.
+
+[Test evidence {"artifacts":{"stderr":{"digest":"e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855","size":0},"stdout":{"digest":"308536cc1819e29d41f17bc60ba873a1fca1526466e8dad14de5de2c2e926498","size":744}},"operation":"b0db161f60dde6c4811cdd9c7034aa1b1a0c70c1346346e7b2ef1a8624348040","receipt":"1f010da6099527c3b13efe3a2f3b6621aa94ab29be0180597d54c0e0f2e2955a"}]
+
 ## Reviewed v2 integration
 
 PR942 is merged as `39e3d950226f1c9fec38d4baaaccb59fc267e12b`; the reviewed eight
@@ -347,6 +578,93 @@ No ship artifact/client identity, effective7200 ceiling, model result, pin
 promotion or scientific qualification is fabricated by this plan. The latest CEO
 order below supersedes the former ship-before-Window4 sequencing.
 
+## Explicit eager MNBT4096 lever pair (issue984)
+
+Select `WINDOW_MODE=ship-eager-levers-4096` with
+`plan-eager-levers-4096.txt`. The exact pair is `eager4096_off` then
+`eager4096_on`, both eager/A8S/socket/TP2/resident/c1 at the SAME MNBT4096.
+The shared `PAIRS` owner, `pair_refusal` and `pair_arm` from issue980
+own this mode too; no second plan convention or runtime launcher is added.
+Every row explicitly declares decode-once `0|1`, KDA split `off|on` and
+piece-major `0|1`. OFF disables all three; ON enables at least one.
+The supplied plan enables all three. A reviewed single-lever plan may leave
+the other two OFF. Exact row values override image env on both ranks; a
+missing/invalid flag or an ON arm with no delta refuses.
+The new plan belongs to `PRODUCER_FILES`; approvals bind the changed roster.
+
+Timing/profile programs, prompt bytes, L512/2048/8192 c1 output128 ten-trial
+population, manifest-declared profiles and both-box power collection remain
+unchanged. Only this eager lever mode adds `output-hashes.json` per arm:
+the existing generation validator checks all 33 requests (one warmup plus
+ten timed requests at each length), exact prompt/usage counts and completed
+length termination, then hashes decoded UTF-8 text plus finish reason.
+SSE chunking is deliberately ignored. The ON arm writes
+`output-comparison.json` and refuses any full-population mismatch before
+profiling. This is NOT token-ID/logit equality, teacher-forced KL, quality
+qualification or a replacement ship gate. Its invocation/window schemas
+are `tessera.eager_lever_invocation.v1`/`tessera.eager_lever_window.v1`.
+
+Runtime reader inspection is pinned to `2dbac191`, not the producer:
+`serving/e4m3_prefill.py:49-53` reads the latched decode-once flag;
+`serving/fp8_route.py:430-438` attaches the decoded resident copy;
+`serving/native_window.py:359-367` selects its distinct launch at M>=256.
+`serving/glm53_prefill.py:857-861,923-931` reads KDA split and installs
+its source-checked replacement; a stock interface mismatch still declines.
+`serving/moe_route.py:130-153,638-648` reads piece-major, gates it on the
+fused E4M3 MMA reader, and re-lays eligible one-run R4 words at intake.
+CPU controls check those actual frozen source bytes/readers, decoded launch
+selection, KDA replacement installation and real intake word-layout changes.
+They do not claim actual served ON activation or CUDA numerical equivalence.
+A later served ON arm must demonstrate these paths in its retained profiles,
+not merely label a flag. No default, threshold, route, pin or policy moves.
+
+Existing graph-control, Window4 and ship-eager pairs remain unchanged.
+D30 107GiB/900s/1Hz strict <2GiB dual-rank abort,104 host/102 GPU caps,
+5400s whole-window bound, cleanup and pair isolation remain unchanged.
+The real driver CPU dry run through PB x86 is D38 preflight, not a model
+run. Parent Sol plus D5 exact-head source reviews precede any served lever
+gang; separately reviewed frozen-client trace-writer adoption remains a
+prerequisite. Graph runs go first once runnable; independently authorized
+eager measurements may run while the graph selector is reviewed.
+
+
+
+## Explicit graph ship lever pair (issue980)
+
+Select `WINDOW_MODE=ship-graph-2048` with `plan-graph-ship.txt`. The exact
+pair is `graph2048_off` then `graph2048_on`, BOTH graph/socket/TP2/c1 at
+MNBT2048, with the unchanged `NONE/FULL_DECODE_ONLY` compilation tuple.
+This is a same-MNBT lever OFF/ON comparison, not eager-versus-graph or an MNBT
+step. Every row declares `TESSERA_E4M3_DECODE_ONCE=0|1`,
+`TESSERA_GLM53_KDA_CONV_SPLIT=off|on` and `TESSERA_ROUTED_PIECE_MAJOR=0|1`.
+The OFF row disables all three; the ON row must enable at least one. The
+supplied plan enables all three in ON; an explicitly reviewed single-lever
+plan can leave the other two OFF without changing the pair or workload.
+No undeclared row override or missing/invalid lever value is accepted.
+Row values are retained in the frozen inputs and invocation and passed into
+both containers; ambient values never supply the production plan's levers.
+
+Both arms reuse the exact October5 c1 L512/2048/8192 output128 ten-trial
+timing requests and the existing manifest-declared profile cells/order.
+Timing labels are graph; `tessera.ship_graph_window.v1` and
+`tessera.ship_graph_invocation.v1` distinguish these outputs from eager.
+Rank1 owns the client, both ranks verify their profiles, and power is sampled
+on both Sparks. This is NOT the c4 equality/replay graph receipt, and cannot
+fill its ship gate. Window4, ship-eager and default graph-control are untouched.
+
+The D30 107 GiB start bar/900s wait/1 Hz strict <2 GiB dual-rank guard,
+104 GiB host/102 GiB GPU-subset caps, 5400s shared envelope, cleanup reserve,
+pair isolation and exact producer/runtime parent/D5 reviews are unchanged.
+The added plan is part of `PRODUCER_FILES`; old producer approvals do not
+transfer. CPU dry-run qualification runs the real `drive_tp2.sh --dry-run`
+entry point through PB x86/tmp/native1 under D1 (D38); it starts no model.
+No graph gang or lever publication is authorized here. Runtime refusals
+(including the pinned decode-once compiled-forward restriction) remain; this
+source change claims no native compatibility, performance, quality, ship or pin.
+The separately required client trace-writer repair is not performed in this
+selector or in frozen client bytes; it must be reviewed before later GPU work.
+
+
 ## Separate issue968 MNBT8192 ship-window selector
 
 Select `WINDOW_MODE=ship-eager-4096-8192` with
@@ -395,9 +713,13 @@ Current file roster, byte lengths and all non-shard metadata hashes are checked;
 shipping-body hashes reuse the supplied authenticated full-file audit, not a
 new175GB body rehash. This does not attest the later all-T8-rate v1 artifact.
 
-`eager_benchmark.py` binds the exact October5 `stock-client-source` identity,
-timing/profile programs and existing prompt/profile manifest hashes supplied by
-campaign. No instrument source, prompt, formula or request population changes.
+`eager_benchmark.py` consumes the issue981 single-buffer profile-receipt client
+at `stock-client-source-profile-receipt-v2-20261005`, client head
+`ada886b910f0c0b1719d9c6cc5ebd50ba0746e38`. Its profile helper parses and hashes
+one captured byte buffer, then records the post-read stat; the verifier is
+unchanged. This binding is submitted for review, not approval to run a model.
+The October5 timing program, prompt/profile manifests, formula and request
+population are unchanged. Old failed profiles and client bytes remain immutable.
 Rank1/sparky runs the original host client, as EXL3 did. Endpoint8142, target
 model ID, eager/socket/runtime labels and the fresh output/profile namespaces
 are explicit differences. The original profile helper's SSH only inspects rank0
@@ -455,3 +777,90 @@ CPU failing-before control: action `f585e74f487a11271d07a2ca7d88a2960b1b6cb37ad5
 ran5 tests:4 new named-mode controls failed,1 legacy refusal passed;0 skips,
 torch2.11.0+cpu/noCUDA. Passing controls and actual model evidence are separate
 records, not asserted by this source/documentation change.
+
+## Bounded seeded L2048 control and piece-major phases (2026-10-06, #1002)
+
+These are separate diagnostic scopes, not a relaxed ship comparison.
+`WINDOW_MODE=investigate-eager-control-2048` selects the two-block
+`plan-eager-determinism-2048.txt`. The next scope,
+`WINDOW_MODE=investigate-eager-piece-major-2048`, selects
+`plan-eager-piece-major-2048.txt` with an explicit completed `CONTROL_ROOT`.
+The original ship eager lever scope still requires OFF then at least one
+lever ON and all 33 responses. The earlier failed combined pair stays failed.
+
+The dedicated `seeded_control_client.py` preserves the October 5 prompt order,
+stream options, temperature zero, 128 completions and ignored end-of-sequence.
+Only L2048 at concurrency one is selected, with the original ten timed trials
+plus one warmup: eleven full responses per block rather than thirty-three.
+Server initialization seed zero is an explicit `vllm serve --seed 0` input on
+both ranks; request seeds are explicitly 0 through 10 in matching trial order.
+The old client did not send seeds and remains read-only. The new protocol is
+`tessera.eager_determinism_protocol.v1`; client seed arguments are required.
+Request payloads, prompt hashes, trial and slot identities, complete streaming
+choices, final usage, full decoded text, length finish and their hashes are
+retained. Token IDs and log probabilities are retained if the API already
+returns them; unreturned token IDs, logits and effective internal seeds are
+not inferred. This is not a teacher-forced quality measurement.
+
+`control_off_first` and `control_off_restart` start fresh containers on
+both ranks, all three levers OFF, and finish only after exact owned cleanup.
+Any OFF/OFF difference is recorded as serving nondeterminism. It does not
+stop subsequent lever measurement behind an equality requirement. The next
+gang contains only `control_pm_off` then `control_piece_major`, with
+decode-once and KDA split disabled. Both ranks validate the actual matched
+OFF populations and preregistered observed timing selfvariation before ON.
+Observed paired OFF ranges are finite descriptive evidence, not statistical
+confidence or numerical quality equivalence. The client requests no logits
+or log probabilities, so text/finish/usage cannot derive a quality band.
+If OFF differs, actual matched numerical observations and additional controls
+are needed in further bounded quanta before a quality/default decision.
+
+Each actual gang uses the published native driver at priority -10, with a
+total 1800-second claim-relative budget including the existing 180-second
+cleanup reserve and a 120-second peer admission cap. No arm, rank admission
+or cleanup restarts that budget. CEO 09:50 release removes the obsolete D42
+or campaign handoff wait; ordinary native fencing handles interleaving.
+No other lever precedes the piece-major phase; default remains OFF.
+Preserve the two-rank topology, maximum batched tokens 4096, maximum sequence count one,
+maximum length 8448, resident serving, socket fabric, speculative token one,
+draft parallelism two, fp8_ds_mla KV with two GiB per rank, CPU caps 8/6, host
+cap 104 GiB and GPU subset 102 GiB. The 107 GiB start gate, bounded 900-second
+headroom wait and one-Hertz strictly-below-two-GiB coupled TERM/KILL guard
+with ten-second kill grace are unchanged. Published native driver, completion
+client, broker ownership and independent physical cleanup remain the owners.
+
+Before changed GPU invocation, run the same entry point through PrismaBuild
+on x86 with `--dry-run --preflight-output <fresh JSON>`. It imports the real
+client and frozen generation validator, parses actual seed arguments, validates
+eleven L2048 token-ID prompts and reads at most 64 bytes of every artifact
+file, plus the real model configuration and runtime contract. No full model
+copy or body rehash is performed. This proves CPU argument/input readiness
+only. Parent and independent exact-head code review precede changed GPU work.
+The piece-major phase uses a `PROFILE_MANIFEST` declaring L2048 prefill and
+decode cells through the existing comparison instrument and verifier. Both
+arms retain all eleven seeded output records before separate profile requests
+and collect both-Spark Netdata power over the timing interval. Actual profiles,
+effective paths/counters, peaks, full-population comparison and work per joule
+are required for any performance/default-on recommendation. The ordinary
+ship/quality gates and the serving pin do not change. No historical isolated
+kernel gain is represented as a served receipt.
+
+Both diagnostic native rows require `DATA_MANIFEST`, declaring every complete
+original artifact file through existing PB stage, RAM-auto and shared-residency
+options. PB stages the ranges before native GPU admission. The local rank uses
+the existing `StagedInputs`/public reader lease, opens authenticated complete
+file descriptors and mounts those read-only over the same artifact paths inside
+its owned container. It does not copy a new cache or fall back to bulk origin
+reads. Refs and descriptors remain held across both fresh-server blocks and are
+released only after exact owned physical cleanup. A failed staged-reader
+release is retained as an unproven handoff, not rewritten as success.
+Both modes use the existing eager route-trace histogram. Counter identities
+and profile labels must be reported at their actual scope; flag values alone
+do not prove the piece-major reader executed.
+The bounded observer extends the existing graph histogram/import patcher and
+serving predicate. It records the actual native-forward argument at index 20
+of the unchanged 33-argument interface, plus library/mode/token/block-row
+values, after the native call returns. This counts submitted native forwards,
+not SM utilization or completion-time work; full outputs and profiles still
+govern successful served evidence. No runtime/kernel arithmetic changes.
+

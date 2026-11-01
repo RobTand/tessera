@@ -6,15 +6,13 @@ cannot read.  This package IS that runtime for Tessera bytes, so it publishes
 its own ``runtime_contract.json`` and a producer (PrismaQuant) reads it through
 ``importlib.resources`` rather than hard-coding a route claim.
 
-WHAT A CELL MEANS.  A ``lane_eligibility`` cell says: on this platform, for
-this payload family, at these rungs, in this regime, at this residency, on
-this exact runtime image and measured execution mode, the
-plugin executes these LAUNCHES under this activation contract on a route with
-this status.  A cell exists only where a container receipt covers it; absence
-resolves ``unattested``, which is the honest status and not a refusal. The table
-preserves the measured dense cells and adds routed-MoE E4M3/q1024 resident eager
-on its own exact EUGR image. TP>1, expert parallelism and unmeasured runtime,
-residency or rung combinations are not attested.
+WHAT A CELL MEANS. A cell records a platform, payload family, module kind,
+rungs, token regime, residency, kernel build and execution mode.
+The image remains provenance. A receipt backs each cell.
+Legacy build names identify recorded toolchain scopes, not native binary equivalence.
+The compatibility map preserves historical receipt identifiers.
+An explicit kernel build selects cells without an image-digest key.
+The launch, wire, evidence and tensor-parallel checks remain unchanged.
 
 THE LAUNCH IS A VALUE, AND THE RESIDENCY IS A CONDITION (schema v4, #111).
 ``executes`` is a list of ``{symbol, decoder}`` and it is DERIVED here from
@@ -60,8 +58,9 @@ its ``world_size_receipt``, an entry of ``tensor_parallel.world_size_receipts``
 that carries the two-rank serve record, one route trace per rank, the unit
 among the families those traces executed, and the KL against a single-rank arm
 -- and a unit above 1 without one is refused by name
-(``_validate_tensor_parallel``).  Since v29 the three families are at 2 on the
-GLM-5.3-Flash stub serves (tessera#506, tessera#514), graded ``route_only``.
+(``_validate_tensor_parallel``). Contract v29 raised all three families to two
+ranks. Contract v62 withdraws the BF16 claim after the epilogue cutover.
+The E2M1 and E4M3 claims keep their historical ``route_only`` receipts.
 Read the receipt's ``excess_over_control`` as a DIVERGENCE, not as added error:
 on a quantized checkpoint a TP2-vs-TP1 comparison re-draws quantization noise
 that the reference KL does not see move (tessera#514's resolution,
@@ -159,6 +158,10 @@ __all__ = [
     "derive_cell_executes",
     "cell_predicates",
     "refuse_unevaluated_predicates",
+    "cell_kernel_build",
+    "cell_kernel_key",
+    "cell_key_compatibility",
+    "cell_matches_runtime",
     "cell_residency_modes",
     "cell_runtime_scope",
     "cell_runtime_id_suffix",
@@ -182,7 +185,7 @@ __all__ = [
 
 CONTRACT_FILENAME = "runtime_contract.json"
 CONTRACT_SCHEMA = "tessera.runtime-contract.v1"
-LANE_ELIGIBILITY_SCHEMA = "tessera.lane-eligibility.v11"
+LANE_ELIGIBILITY_SCHEMA = "tessera.lane-eligibility.v12"
 #: Execution is a separate axis from token-count regime and residency. These
 #: are the two modes selected by a serving invocation's enforce_eager flag.
 EXECUTION_MODES = ("eager", "compiled")
@@ -286,7 +289,14 @@ PLUGIN_ENTRY_POINT = "tessera = tessera.serving:register"
 #: it cannot drift.  ``receipt`` is a repository path under
 #: :data:`EVIDENCE_RECEIPT_ROOT`; the validator checks its grammar and a tree
 #: test checks the file (a wheel does not ship docs).
-EVIDENCE_KL_KINDS = ("topk_intersection_lower_bound", "full_vocab")
+#:
+#: ``graph_equality`` (contract v67, tessera#1152) is not a KL bound.
+#: This decode-only record cites the open graph gap and attests no equality,
+#: compiled KL, or compiled scope. A CUDA-graph serve replays decode batches,
+#: so the validator refuses the kind outside a decode cell.
+#: It carries no top-K number and never raises the grade.
+#: A decode cell that cites the open gap keeps ``grade`` ``route_only``.
+EVIDENCE_KL_KINDS = ("topk_intersection_lower_bound", "full_vocab", "graph_equality")
 EVIDENCE_SMOKE_STATUSES = ("recorded", "repetitive", "not_recorded")
 EVIDENCE_GRADES = ("route_only", "kl_lower_bound", "kl_full_vocab")
 EVIDENCE_RECEIPT_ROOT = "docs/measurements/"
@@ -542,13 +552,46 @@ def require_runtime_image(value: Any, where: str = "runtime.image") -> str:
         f"got {value!r}; a floating tag or local image id does not identify an attested runtime")
 
 
+def cell_kernel_build(cell: Mapping[str, Any]) -> str:
+    """Read a build name. Legacy names identify only recorded toolchain scopes."""
+    runtime = cell.get("runtime", {})
+    if "kernel_build" not in runtime:
+        return "legacy:" + str(cell["id"])
+    value = runtime["kernel_build"]
+    if not isinstance(value, str) or not value or value != value.strip():
+        raise ValueError("runtime.kernel_build must be a complete non-empty name")
+    return value
+
+
+def cell_kernel_key(cell: Mapping[str, Any]) -> tuple:
+    """Key a cell by build, module kind, and the complete execution scope."""
+    _, execution_modes = cell_runtime_scope(cell)
+    return (cell_kernel_build(cell), cell["structure"], cell["platform"],
+            cell["family"], cell["regime"], cell_residency_modes(cell), execution_modes)
+
+
+def cell_key_compatibility(cells) -> dict[str, tuple]:
+    """Map historical receipt identifiers to kernel keys without new evidence."""
+    return {cell["id"]: cell_kernel_key(cell) for cell in cells}
+
+
+def cell_matches_runtime(cell, *, image, execution_mode, kernel_build=None) -> bool:
+    """Use a build key, or the historical image map when no build is supplied."""
+    recorded_image, modes = cell_runtime_scope(cell)
+    if execution_mode not in modes:
+        return False
+    if kernel_build is not None:
+        return cell_kernel_build(cell) == kernel_build
+    return recorded_image == image
+
+
 def cell_runtime_scope(cell: Mapping[str, Any],
                        where: str = "lane_eligibility cell") -> tuple[str, tuple[str, ...]]:
     """The explicit runtime scope a cell attests; no global image fallback."""
     runtime = cell.get("runtime")
     at = f"{where}.runtime"
     _require_keys(runtime, at, required=set(RUNTIME_SCOPE_KEYS),
-                  optional=RUNTIME_VERSION_KEYS | RUNTIME_CODE_KEYS)
+                  optional=RUNTIME_VERSION_KEYS | RUNTIME_CODE_KEYS | {"kernel_build"})
     image = require_runtime_image(runtime["image"], f"{at}.image")
     modes = runtime["execution_modes"]
     if (not isinstance(modes, list) or not modes
@@ -572,7 +615,7 @@ def cell_runtime_versions(cell: Mapping[str, Any],
     runtime = cell.get("runtime")
     at = f"{where}.runtime"
     _require_keys(runtime, at, required=set(RUNTIME_SCOPE_KEYS | RUNTIME_VERSION_KEYS),
-                  optional=RUNTIME_CODE_KEYS)
+                  optional=RUNTIME_CODE_KEYS | {"kernel_build"})
     out = []
     for field in ("vllm", "torch"):
         value = runtime[field]
@@ -1478,6 +1521,8 @@ def validate_serving_contract(contract: Mapping[str, Any]) -> None:
     _validate_construction(contract["construction"], "runtime_contract.construction")
     validate_producer_interface(contract["producer_interface"],
                                 "runtime_contract.producer_interface")
+    if contract["contract_version"] >= 57 and "routed_units" not in contract["producer_interface"]:
+        raise ValueError("runtime_contract v57 requires producer_interface.routed_units")
 
     families = {}
     for i, entry in enumerate(contract["formats"]):
@@ -1651,6 +1696,7 @@ def validate_serving_contract(contract: Mapping[str, Any]) -> None:
         # under one digest, which a digest cannot be.
         toolchain = cell_runtime_versions(cell, where)
         cell_runtime_code(cell, where)
+        cell_kernel_build(cell)
         known = toolchains_by_image.setdefault(runtime_image, (toolchain, cell["id"]))
         if known[0] != toolchain:
             raise ValueError(
@@ -1739,7 +1785,8 @@ def validate_serving_contract(contract: Mapping[str, Any]) -> None:
                 "cell that names no launch attests a route nobody can identify, and an empty "
                 "list would read as 'this regime runs nothing'")
         for j, launch in enumerate(executes):
-            _require_keys(launch, f"{where}.executes[{j}]", required={"symbol", "decoder"})
+            _require_keys(launch, f"{where}.executes[{j}]", required={"symbol", "decoder"},
+                          optional={"rungs_q256"})
         if len(cell_executes(cell)) != len(executes):
             raise ValueError(
                 f"{where}.executes repeats a (symbol, decoder) pair; the field is a SET of "
@@ -1772,18 +1819,18 @@ def validate_serving_contract(contract: Mapping[str, Any]) -> None:
                 "(family, structure, platform, regime, plus the residency where the cell "
                 "covers only some). An id that names a launch is a second, "
                 "unparsed spelling of `executes` -- exactly the one that went stale.")
-        scope = (cell["platform"], cell["family"], cell["structure"], cell["regime"], runtime_image)
+        scope = (cell["platform"], cell["family"], cell["structure"], cell["regime"])
         for mode in modes:
             for execution_mode in execution_modes:
-                key = (scope, mode, execution_mode)
-                clash = _cell_scope.get(key)
-                if clash is not None:
-                    raise ValueError(
-                        f"{where} ({cell['id']!r}) and {clash!r} both cover "
-                        f"{scope} at residency {mode!r} and execution mode {execution_mode!r}. "
-                        "A cell is resolved by these facts plus the rung, so two cells "
-                        "claiming one of them would make the answer depend on table order.")
-                _cell_scope[key] = cell["id"]
+                keys = (("image", runtime_image, scope, mode, execution_mode),
+                        ("build", cell_kernel_build(cell), scope, mode, execution_mode))
+                for key in keys:
+                    clash = _cell_scope.get(key)
+                    if clash is not None:
+                        raise ValueError(
+                            f"{where} ({cell['id']!r}) and {clash!r} both cover "
+                            f"{key}. Overlapping lookup scopes would make the answer depend on table order.")
+                    _cell_scope[key] = cell["id"]
 
     # A PLATFORM'S SERVE IMAGE IS ONE OF ITS OWN (v10, #456).
     #
@@ -2249,9 +2296,15 @@ def _all_modes() -> tuple:
     return MODES
 
 
-def cell_executes(cell: Mapping[str, Any]) -> set:
-    """``{(symbol, decoder)}`` a cell publishes -- the census's own shape."""
-    return {(str(e["symbol"]), str(e["decoder"])) for e in cell["executes"]}
+def cell_executes(cell: Mapping[str, Any], *, q256: int | None = None,
+                 entry: Mapping[str, Any] | None = None) -> set:
+    """Read published pairs, optionally within their census and run-table scope."""
+    return {(str(e["symbol"]), str(e["decoder"])) for e in cell["executes"]
+            if q256 is None or "rungs_q256" not in e
+            or cell_covers_rung(
+                {"rungs_q256": e["rungs_q256"],
+                 "run_tables": derived_cell_run_tables(e, entry) if entry is not None else []},
+                q256, entry)}
 
 
 def _is_int(value: Any) -> bool:
@@ -2419,7 +2472,10 @@ def derive_evidence_grade(cell: Mapping[str, Any]) -> str:
     any other), so the derivation is: no entry, ``route_only`` -- the census
     attests dispatch and nothing attests quality in this regime; any top-K
     intersection bound, ``kl_lower_bound``; any full-vocabulary KL,
-    ``kl_full_vocab``.  ``qualification`` is deliberately not overloaded
+    ``kl_full_vocab``.  A ``graph_equality`` record never raises the grade
+    (tessera#1152): it cites the open graph gap and claims no compiled KL,
+    so a decode cell carrying only one still grades ``route_only``.
+    ``qualification`` is deliberately not overloaded
     with this: one home per fact.
     """
     kinds = {entry["kind"] for entry in cell["evidence"]["kl"]}
@@ -2674,7 +2730,9 @@ def cell_evidence(cell: Mapping[str, Any], where: str = "lane_eligibility cell",
     the field a gate cannot read.  ``kl`` entries are ``{kind, top_k, regime,
     execution_modes, receipt}``: ``kind`` from :data:`EVIDENCE_KL_KINDS`,
     ``top_k`` a positive integer for a top-K bound and ``null`` for a
-    full-vocabulary KL, ``regime`` the CELL'S OWN regime (a prefill bound
+    full-vocabulary KL or a ``graph_equality`` record (tessera#1152: the record
+    is not a bound, and it is decode-only -- refused outside a decode cell),
+    ``regime`` the CELL'S OWN regime (a prefill bound
     written into a decode cell is the confusion this field exists to refuse),
     ``execution_modes`` a non-empty distinct subset of the cell's, ``receipt``
     a repository path. A ``kl`` entry may stamp the rung its receipt measured
@@ -2719,10 +2777,20 @@ def cell_evidence(cell: Mapping[str, Any], where: str = "lane_eligibility cell",
                 raise ValueError(
                     f"{spot}.top_k must be a positive integer for a top-K intersection bound, "
                     f"got {top_k!r}")
+        elif kind == "graph_equality":
+            if top_k is not None:
+                raise ValueError(
+                    f"{spot}.top_k must be null for a graph-equality record, got {top_k!r}: "
+                    "the record is not a top-K bound, so a number beside it is prose")
         elif top_k is not None:
             raise ValueError(
                 f"{spot}.top_k must be null for a full-vocabulary KL, got {top_k!r}")
         regime = entry["regime"]
+        if kind == "graph_equality" and regime != "decode":
+            raise ValueError(
+                f"{spot}.regime {regime!r}: a graph-equality record is a decode-only claim "
+                "(a CUDA-graph serve replays decode batches), so one outside a decode cell "
+                "attests nothing")
         if regimes is not None and regime not in regimes:
             raise ValueError(
                 f"{spot}.regime {regime!r} is not a declared regime {sorted(regimes)} "
@@ -2897,18 +2965,43 @@ def _lanes_a_rung_reaches(route: str, contract: Mapping[str, Any], wire: Mapping
     return tuple(out)
 
 
-def derive_cell_executes(cell: Mapping[str, Any], route: str, entry: Mapping[str, Any],
-                         contract: Mapping[str, Any], where: str = "cell") -> set:
-    """The launch pairs a cell's axes make: the value ``executes`` must equal.
+# This receipt qualifies one current decoder, not the global execution registry.
+# Historical identities remain valid only on their original run tables.
+_SCOPED_EXECUTION_RECEIPTS = ({
+    "platform": "sm_121",
+    "family": "TESSERA_E4M3_K1",
+    "structure": "routed_moe",
+    "regimes": ("decode", "batch"),
+    "residencies": ("resident",),
+    "image": ("localhost/prismaquant/spark-vllm-nccl230@sha256:"
+              "f8dbe1a02e33ccb7416ab40b72a83e8c725dcb6fed3e90bae4a658cce5e1b7f5"),
+    "execution_modes": ("eager",),
+    "rungs_q256": (768,),
+    "pair": ("tessera.routed_fused.FusedRoutedWindowMoE.__call__",
+             "native_routed_window_classes_e4m3mma"),
+    "receipt": "experiments/results/glm53_r768_stub_base_tp2_eager_census.json",
+},)
 
-    ``entry`` is the family's ``formats[]`` row and ``route`` its ``scheme.ROUTES``
-    key.  This is ``_validate_cell_executes``'s derivation on its own, so a
-    fixture that moves a cell onto another rung states the launches the
-    validator will demand instead of restating the lane arithmetic by hand
-    (a hand restatement with ``lanes=()`` went stale the day the E4M3
-    instruction's lane reached every rate, contract v47).
-    """
-    from .scheme import launch_pairs
+
+def _receipt_executes_at_rung(cell: Mapping[str, Any], rung: int) -> set:
+    """Read receipt-qualified pairs for the exact runtime and census rung."""
+    runtime = cell.get("runtime", {})
+    return {receipt["pair"] for receipt in _SCOPED_EXECUTION_RECEIPTS
+            if all(cell.get(axis) == receipt[axis] for axis in ("platform", "family", "structure"))
+            and cell["regime"] in receipt["regimes"]
+            and cell_residency_modes(cell) == receipt["residencies"]
+            and runtime.get("image") == receipt["image"]
+            and tuple(runtime.get("execution_modes", ())) == receipt["execution_modes"]
+            and rung in receipt["rungs_q256"]}
+
+
+def _cell_executes_at_rung(cell: Mapping[str, Any], route: str, entry: Mapping[str, Any],
+                          contract: Mapping[str, Any], rung: int, where: str) -> set:
+    """Derive execution identities for one census rung."""
+    from .scheme import qualification_launch_pairs
+    served = _receipt_executes_at_rung(cell, rung)
+    if served:
+        return served
 
     wires = {int(w["q256"]): w for w in entry["attested_wire"]}
     # The family's own published terminal rate, so a rung above what this
@@ -2926,46 +3019,56 @@ def derive_cell_executes(cell: Mapping[str, Any], route: str, entry: Mapping[str
     # derives over every rung the cell covers.
     _family_arity_cap(entry, where)
     modes = cell_residency_modes(cell, where)
-    want: set = set()
-    for rung in cell["rungs_q256"]:
-        rates = rung_rates(entry, int(rung))
-        lanes = _lanes_a_rung_reaches(route, contract, wires[int(rung)], rates,
-                                      str(entry["grid"]), str(cell["structure"]))
-        for mode in modes:
-            want |= launch_pairs(route, structure=cell["structure"],
-                                 regime=cell["regime"], mode=mode, lanes=lanes)
-    return want
+    rates = rung_rates(entry, int(rung))
+    lanes = _lanes_a_rung_reaches(route, contract, wires[int(rung)], rates,
+                                  str(entry["grid"]), str(cell["structure"]))
+    return set().union(*(qualification_launch_pairs(
+        route, structure=cell["structure"], regime=cell["regime"], mode=mode, lanes=lanes)
+        for mode in modes))
+
+
+def derive_cell_executes(cell: Mapping[str, Any], route: str, entry: Mapping[str, Any],
+                         contract: Mapping[str, Any], where: str = "cell") -> set:
+    """Derive the union of qualified execution identities over the census rungs."""
+    return set().union(*(_cell_executes_at_rung(cell, route, entry, contract, rung, where)
+                         for rung in cell["rungs_q256"]))
 
 
 def _validate_cell_executes(cell: Mapping[str, Any], route: str, entry: Mapping[str, Any],
                             contract: Mapping[str, Any], where: str) -> None:
-    """``executes`` must BE the launches this build makes, not agree with them.
+    """Require the exact attested execution set for this cell.
 
-    Principle 14 applied to the launch: until schema v4 a cell said which A-side
-    contract ran and which rungs a receipt covered, and the only place the
-    LAUNCH appeared was the cell's ``id`` -- so the contract's machine-readable
-    answer to "what does an E4M3 decode execute" was the materialised FP8 pair
-    in every case, which stopped being true the moment an artifact at a
-    lane-readable rung was served (#111).  The value is derived here from
-    ``scheme.ROUTE_LAUNCHES``, the table the routes' own ``census_expected``
-    is built from, narrowed by exactly the axes the cell already carries: the
-    structure, regime, the residency its serve flag names, and the lanes each of its
-    rungs can reach.
+    Current and historical records use the same axis filters.
+    Experimental operations cannot borrow a historical receipt.
     """
     # The per-code root, the family cap and the covered run tables are
     # derive_cell_executes's; this compares.
-    want = derive_cell_executes(cell, route, entry, contract, where)
+    by_rung = {rung: _cell_executes_at_rung(cell, route, entry, contract, rung, where)
+               for rung in cell["rungs_q256"]}
+    want = set().union(*by_rung.values())
     modes = cell_residency_modes(cell, where)
     got = cell_executes(cell)
     if got != want:
         raise ValueError(
-            f"{where}.executes is {sorted(got)} but the {route} route makes "
+            f"{where}.executes is {sorted(got)} but the {route} qualification records admit "
             f"{sorted(want)} for structure {cell['structure']!r} in the "
             f"{cell['regime']!r} regime at residency {list(modes)} "
-            f"on rung(s) {list(cell['rungs_q256'])} (tessera.serving.scheme.ROUTE_LAUNCHES, "
-            "the table the routes' own census_expected is derived from). A cell states what "
-            "the runtime EXECUTES; it is derived from the dispatch's table or it is a claim "
-            "about a runtime nobody read.")
+            f"on rung(s) {list(cell['rungs_q256'])}. "
+            "Current experimental operations are not attested by historical receipts.")
+    # Only cells with a new scoped receipt need explicit per-launch coverage.
+    scoped = any(_receipt_executes_at_rung(cell, rung) for rung in by_rung)
+    for index, launch in enumerate(cell["executes"]):
+        rungs = launch.get("rungs_q256", cell["rungs_q256"])
+        if "rungs_q256" not in launch and not scoped:
+            continue
+        pair = (launch["symbol"], launch["decoder"])
+        expected = sorted(rung for rung, pairs in by_rung.items() if pair in pairs)
+        if (not isinstance(rungs, list) or not rungs
+                or any(not _is_int(rung) for rung in rungs)
+                or rungs != expected):
+            raise ValueError(
+                f"{where}.executes[{index}].rungs_q256 is {rungs!r}; "
+                f"the execution receipts require {expected!r} for {pair!r}.")
 
 
 #: ``formats[]`` family -> the ``scheme.ROUTES`` key that serves it.  Two names
@@ -3322,7 +3425,12 @@ def validate_producer_interface(block: Any, where: str) -> None:
     since tessera#687) -- so its equality with the tree is held by
     ``tests/test_producer_authority_drivers.py``.
     """
-    _require_keys(block, where, required={"schema", "reuse_authority"})
+    _require_keys(block, where, required={"schema", "reuse_authority"},
+                  optional={"routed_units"})
+    if "routed_units" in block:
+        from ..serving_plan import ROUTED_UNIT_ASSIGNMENT
+        if block["routed_units"] != ROUTED_UNIT_ASSIGNMENT:
+            raise ValueError(f"{where}.routed_units must match the per-unit plan/loader contract")
     if block["schema"] != PRODUCER_INTERFACE_SCHEMA:
         raise ValueError(f"{where}.schema must be {PRODUCER_INTERFACE_SCHEMA!r}")
     reuse = block["reuse_authority"]

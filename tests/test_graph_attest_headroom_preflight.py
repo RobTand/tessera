@@ -31,7 +31,7 @@ ROOT = Path(__file__).resolve().parents[1]
 HERE = ROOT / "experiments/graph_attest_702"
 sys.path.insert(0, str(HERE))
 import managed_window as window
-import tp2_recipe as recipe
+import eager_benchmark
 
 REFUSAL = "local MemAvailable below 107 GiB preflight"
 FLOOR = "local MemAvailable below 2 GiB physical memory floor"
@@ -98,7 +98,7 @@ def rank_adapter(tmp_path, monkeypatch, *, rank=0, read, clock, eager=False,
                                                   scope_id=identity["scope_id"]))
     adapter = rank_window.LocalArm.__new__(rank_window.LocalArm)
     adapter.identity, adapter.rank = owned, rank
-    adapter.config = dict(window_mode=recipe.EAGER_MODE if eager else "graph-control")
+    adapter.config = dict(window_mode=eager_benchmark.MODE if eager else "graph-control")
     adapter.envelope = window.Envelope(clock.time() + window_end_seconds,
                                        cleanup_seconds=cleanup_seconds)
     adapter.work, adapter.rdv = tmp_path / "work", tmp_path / "rdv"

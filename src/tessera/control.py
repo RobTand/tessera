@@ -87,7 +87,7 @@ from .errors import (
     PromotionRefusedError,
     TesseraError,
 )
-from .export import rung_ceiling, wire_recipe
+from .export import rung_ceiling, served_recipe
 from .manifest import BodyKind, ScalePlaneKind, body_rate_cap, scale_plane_terminal_flags
 from .serving_parts import read_serving_manifest
 
@@ -379,12 +379,9 @@ def _unit_geomean(ratios: "Sequence[float]") -> float:
 def unit_wire_bits(grid: "str | PayloadGrid", q256: int, rows: int, columns: int) -> Fraction:
     """Exact plane-region bits one Tessera unit costs on the wire.
 
-    The recipe comes from :func:`tessera.export.wire_recipe` -- the same
-    function the exporter writes with -- and the count from
-    :func:`tessera.calculator.terminal_rate`, which is the accountant the
-    parser and the serializer both defer to.  Nothing here is a rate times a
-    parameter count: a CHANNEL plane and a window table are charged per *unit*,
-    so the shape is an argument and not a convenience.
+    The recipe comes from :func:`tessera.export.served_recipe`. The serving
+    exporter writes this wire. The accountant charges each scale plane and
+    code table per unit, so the function needs the unit shape.
 
     Header and manifest side bytes are outside this figure, exactly as they are
     outside ``TerminalRecord.exact_bpp``; both arms of a control carry the same
@@ -397,7 +394,7 @@ def unit_wire_bits(grid: "str | PayloadGrid", q256: int, rows: int, columns: int
     hit = _BITS_CACHE.get(key)
     if hit is not None:
         return hit
-    recipe = wire_recipe(payload, q256)
+    recipe = served_recipe(payload, q256)
     plane = ScalePlaneKind(recipe.scale_plane)
     body = BodyKind(recipe.body)
     cap = body_rate_cap(body, payload)
@@ -452,34 +449,12 @@ class RungPrice:
 
 @dataclass(frozen=True)
 class RateMenu:
-    """Every rung one Tessera unit admits at its own shape, priced and screened.
+    """Price each legal rung at the unit shape.
 
-    A rung is **dominated** when a higher rung of the same unit costs no more
-    bytes.  Both legs of that are measured, not assumed:
-
-    * *no more bytes* is exact integer arithmetic through
-      :func:`unit_wire_bits`, which agrees with ``encode_linear`` byte for byte
-      (``tests/test_rate_menu.py``);
-    * *no worse* would be an inference across a recipe change, so it was
-      measured.  At (64, 512) on E2M1x2 the cap rung R896 weighs exactly what
-      R736 weighs and 2544 B less than R895, and its relative SSE on a
-      Gaussian unit is 0.00877 against R736's 0.02353 and R895's 0.01152 --
-      better on both axes than everything it dominates
-      (``experiments/tessera_dominated_rungs.py --quality``, weight space, one
-      unit).  Error fell monotonically with the rung on the five sub-cap rungs
-      measured (736, 800, 860, 894, 895), which is evidence for -- not proof of
-      -- the ordering holding between them.
-
-    So :attr:`offered` is what a menu builder should expose and
-    :attr:`dominated` is what it should not -- and the pruning is *recorded*
-    rather than silent, because a rung disappearing from a menu with no reason
-    attached is how the next reader files issue #43 again.
-
-    Measured shape dependence, since the whole effect is a fixed per-unit table
-    amortised over the unit: on E2M1x2 the dominated count is 87 of 385 legal
-    rungs at 96x320, 160/769 at 64x512, 35/769 at 96x768, and **0** at
-    512x2048 and 1024x3072.  Production-shaped units have nothing to prune;
-    small ones have a third of the axis to prune.
+    A dominated rung costs at least as many bytes as a higher rung.
+    The menu records that comparison; it does not measure quality or speed.
+    The served E2M1x2 recipe uses one fixed WINDOW L14 table at all rungs.
+    Scalar TCQ recipes can still change forest costs across rungs.
     """
 
     grid: str
@@ -523,9 +498,8 @@ class RateMenu:
                 str(price.q256): price.dominated_by for price in self.dominated
             },
             "reason": (
-                "a rung a higher rung matches or beats on bytes is worse on "
-                "both axes and is not offered (tessera#43, measured in "
-                "experiments/tessera_dominated_rungs.py)"
+                "a higher rung costs no more bytes; this byte comparison "
+                "does not assert quality or measured route eligibility"
             ),
         }
 
@@ -543,11 +517,8 @@ def rate_menu(
     skipped, never approximated -- and then sweeps from the top down, keeping a
     rung only when it is strictly cheaper than everything above it.
 
-    The shape is an argument and not a convenience: the axis is non-monotone
-    only because a *per-unit* term (a 4096-byte window table below the E2M1x2
-    coset cap, one forest per distinct rate on arity-1 E2M1) is a large share
-    of a small unit and rounding error on a large one.  A menu pruned at one
-    shape and reused at another is wrong in both directions.
+    The unit shape controls each per-unit table and plane charge.
+    A menu for one shape does not apply to another shape.
     """
     payload = grid if isinstance(grid, PayloadGrid) else grid_for_name(grid)
     rows, columns = int(rows), int(columns)
@@ -851,24 +822,13 @@ def uniform_control(
 ) -> UniformControl:
     """The one-rung plan that weighs what this candidate weighs.
 
-    The search is a brute-force scan of every rung the grid admits, priced at
-    each unit's own shape, and it ranks by **bits** rather than by rung.  The two
-    orders agree at the production shape
-    ``test_wire_bits_rise_with_the_rung_on_every_grid`` sweeps (1024x3072) and
-    **disagree on small units** -- ``wire_recipe`` chooses body and plane per
-    rung, and below the E2M1x2 coset cap a 4096-byte window table buys a rung
-    that a 512-byte forest undercuts, so on a 64x512 unit R736..R895 all cost
-    more bits than R896 (measured in ``tests/test_rate_menu.py``, issue
-    tessera#43).  Bits, not rung, is what a byte match means.  Rungs the
-    grammar refuses are skipped rather than approximated.
+    The search prices every legal rung at each unit shape. It ranks by
+    bytes rather than by rung. Scalar TCQ forest costs can make the
+    byte axis non-monotone. The search skips refused rungs.
 
-    Raises when the candidate's Tessera units span more than one grid and no
-    ``grid`` is named: "one uniform rung" has no meaning across two families,
-    and picking one silently would answer a question nobody asked.  Raises,
-    unless ``assert_match=False``, when the nearest rung is further from the
-    candidate than a control may be -- which is what the 0.239-bpp hole below
-    the E2M1x2 coset cap produces, and is a refusal rather than a warning
-    because the alternative is discovering it after two serves.
+    The search refuses multiple candidate grids unless the caller names
+    one grid. It also refuses excessive byte slack unless the caller sets
+    ``assert_match=False``. These checks prevent unequal-budget comparisons.
     """
     if rule not in MATCH_RULES:
         raise TesseraError(f"unknown match rule {rule!r}; one of {MATCH_RULES}")

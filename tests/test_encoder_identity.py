@@ -63,6 +63,29 @@ def test_the_identity_moves_when_the_encoder_moves(identity, monkeypatch):
     assert ei.encoder_fixture_id() != identity
 
 
+def test_the_identity_moves_with_the_export_trellis_default(identity, monkeypatch):
+    """Issue #1240: ordinary fixtures inherit the effective export default.
+
+    Python binds keyword defaults at definition time. Patch the signature's
+    default to simulate changing the exporter source, leaving the release
+    path's module constant alone so it cannot mask an ordinary fixture still
+    hard-coding the old weighting. Resolve ``identity`` before the patch, then
+    clear the memo so the assertion compares two actual builds.
+    """
+    import tessera.export as export
+
+    current = export.encode_linear_planes.__kwdefaults__["trellis_weighting"]
+    moved = "none" if current != "none" else "scale"
+    monkeypatch.setattr(
+        export.encode_linear_planes, "__kwdefaults__",
+        {**export.encode_linear_planes.__kwdefaults__, "trellis_weighting": moved},
+    )
+    monkeypatch.setattr(ei, "_MEMO", [])
+    assert ei.encoder_fixture_id() != identity, (
+        "a fresh identity build ignored the moved export trellis default"
+    )
+
+
 def test_identity_sees_upward_landing_of_an_unraised_boundary(
         identity, monkeypatch):
     """Issue #116: the fixture reaches #115's exact residual branch.
@@ -406,6 +429,39 @@ def test_the_release_fixture_is_the_exporters_own_call():
             dataclasses.replace(case, released_positions=None)
         )
     assert hand_assembled == exporter
+
+
+def test_the_release_fixture_follows_a_moved_export_trellis_default(
+        identity, monkeypatch):
+    """Issue #1240: the hand-assembled call follows the exporter default.
+
+    At zero releases the fixture must equal a real export even after its
+    default moves. Use the exporter directly as the oracle: comparing two
+    identity fixture paths would let matching hard-coded literals hide the
+    bug. ``identity`` resolves the unpatched build before changing defaults,
+    as required by the identity's process-wide memo contract.
+    """
+    import tessera.export as export
+
+    case = next(c for c in ei.fixtures() if c.released_positions is not None)
+    current = export.DEFAULT_TRELLIS_WEIGHTING
+    moved = "none" if current != "none" else "scale"
+    monkeypatch.setattr(export, "DEFAULT_TRELLIS_WEIGHTING", moved)
+    monkeypatch.setattr(
+        export.encode_linear_planes, "__kwdefaults__",
+        {**export.encode_linear_planes.__kwdefaults__, "trellis_weighting": moved},
+    )
+    with ei._fixture_build():
+        hand_assembled = ei._fixture_blob(
+            dataclasses.replace(case, released_positions=0)
+        )
+        exporter = export.encode_linear(
+            ei._fixture_weight(), grid=case.grid, q256=case.q256,
+            name=case.label, **case.encode,
+        ).blob
+    assert hand_assembled == exporter, (
+        "the release fixture ignored the moved export trellis default"
+    )
 
 
 def test_the_release_fixture_actually_places_releases():

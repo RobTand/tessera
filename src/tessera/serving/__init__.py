@@ -63,6 +63,14 @@ def register() -> None:
         # Already registered.
         pass
 
+    from .endpoint_runtime import install as install_endpoint_observer
+
+    install_endpoint_observer()
+
+    from .projection_routes import install as install_projection_routes
+
+    install_projection_routes()
+
     # A Tessera GLM-5.3 graph serve resolves eager's operators (tessera#702
     # cause 1). Registered here because vLLM loads plugins before it builds
     # any VllmConfig, and resolves those defaults while building one.
@@ -72,9 +80,9 @@ def register() -> None:
 
     # Separate, explicit research attention extension. It does not change the
     # quantization contract or replace a stock attention enum implementation.
-    import os
+    from .flags import latched_bool
 
-    if os.environ.get("TESSERA_RESEARCH_GLM53_NOPE") == "1":
+    if latched_bool("TESSERA_RESEARCH_GLM53_NOPE", meaning="GLM-5.3 NoPE CUSTOM backend registration"):
         from vllm.v1.attention.backends.registry import AttentionBackendEnum, register_backend
 
         backend = AttentionBackendEnum.CUSTOM
@@ -85,7 +93,6 @@ def register() -> None:
 
     # Independent default-off stock-backend override, published by the shared
     # contract. Its own install checks source identity and refuses conflicts.
-    from .flags import latched_bool
     if latched_bool("TESSERA_RESEARCH_MLA_MASK_SKIP", meaning="eager sparse-MLA prefill mask skip"):
         from .mla_sparse_sm120 import install
         install()

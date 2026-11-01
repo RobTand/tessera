@@ -100,13 +100,10 @@ def validate_bank_record(record, finalization, arm, *, source_module):
 
 
 def validate_readset(path):
-    from prismabuild import client, storage_tiers
+    from pb_staged_store import validate_whole_phase_readset
 
-    manifest, encoding = client.read_data_manifest(path)
-    expected = [{"name": PHASE, "start_bytes": 0, "end_bytes": manifest["total_bytes"]}]
-    if encoding != "identity" or storage_tiers.manifest_phase_ranges(manifest) != expected:
-        raise ValueError("native1 whole-phase ranges differ or are incomplete")
-    if client.manifest_read_entries(manifest) != manifest["entries"]:
+    manifest, read_entries, expected = validate_whole_phase_readset(path, PHASE)
+    if read_entries != manifest["entries"]:
         raise ValueError("native1 declared consumption order differs")
     required = native_members()
     ordered = [e["path"] for e in manifest["entries"]]
@@ -287,6 +284,9 @@ class NativePopulation:
 
 
 def consume(args):
+    if args.arm is not None:
+        import pytest
+
     with leased_banks(args.manifest, args.out, gpu=not args.cpu_map) as banks:
         if args.cpu_map:
             print(json.dumps({"kind": "CPU held staged native-map proof", "arms": list(banks)}), flush=True)
@@ -294,7 +294,6 @@ def consume(args):
         if args.arm is None:
             from fused_e2m1_check import main
             return main(["--out", str(Path(args.out) / "numeric"), "--compare-prefetch"], banks=banks)
-        import pytest
         from tessera import routed_fused_e2m1 as fe
         os.environ[fe.PREFETCH_ENV] = str(args.arm)
         fe._LIB, fe._LIB_PREFETCH = banks[args.arm], args.arm

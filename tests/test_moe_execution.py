@@ -101,3 +101,10 @@ def test_checkpoint_refuses_degree_outside_exact_integer_grammar(degree):
     block["expected_tensor_parallel_size"] = degree
     with pytest.raises(ValueError, match="expected_tensor_parallel_size must be exactly 1 or 2"):
         ResearchSelectedMoeConfig.from_checkpoint(block)
+
+
+@pytest.mark.parametrize('value', [0, 3, 4, True, 2.0, '2'])
+def test_only_explicit_tp1_or_tp2_config_is_accepted(value):
+    with pytest.raises(ValueError, match='tensor_parallel_size'):
+        ResearchSelectedMoeConfig(max_experts_per_chunk=1,
+                                  expected_tensor_parallel_size=value)

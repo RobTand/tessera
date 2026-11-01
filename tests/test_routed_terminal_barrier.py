@@ -78,12 +78,14 @@ int main(int argc, char** argv) {
             if (!blocked) throw std::runtime_error("terminal did not await reused stage");
             if (desc[slot * 8] != 23)
                 throw std::runtime_error("terminal descriptor published before acknowledgment");
-            // The consumer now completes both real quanta in order. Its
-            // EMPTY acknowledgments prove each preceding FULL reset.
-            for (unsigned q = gc - 2; q < gc; ++q) {
-                full_pending[q & 1] = false;
-                empty_released[q & 1] = true;
-            }
+            full_pending[(gc - 1) & 1] = false;
+            empty_released[(gc - 1) & 1] = true;
+            bool still_blocked = false;
+            try { terminal(); } catch (Waiting&) { still_blocked = true; }
+            if (!still_blocked || desc[slot * 8] != 23)
+                throw std::runtime_error("terminal did not await matching EMPTY parity");
+            full_pending[(gc - 2) & 1] = false;
+            empty_released[(gc - 2) & 1] = true;
             terminal();
         } else if (blocked) {
             throw std::runtime_error("first-use terminal waited on nonexistent chunk");
@@ -103,19 +105,37 @@ int main(int argc, char** argv) {
 
 
 @pytest.fixture(scope='module')
-def terminal_binary(tmp_path_factory):
+def terminal_build(tmp_path_factory):
     compiler = shutil.which(os.environ.get('CXX', 'c++'))
     assert compiler, 'a C++ compiler is required for the source-executed protocol regression'
     root = tmp_path_factory.mktemp('terminal-barrier')
-    source = root / 'terminal.cpp'
-    functions = '\n'.join(
-        f'void terminal{i}(unsigned gc, int slot) {{ const int tid = 0;\n{body}\n}}'
-        for i, body in enumerate(terminal_branches()))
-    source.write_text(HARNESS.replace('@FUNCTIONS@', functions))
-    binary = root / 'terminal'
-    subprocess.run([compiler, '-std=c++17', '-O0', str(source), '-o', str(binary)],
-                   check=True, capture_output=True, text=True)
-    return binary
+    binaries = {}
+
+    def build(family=None, mutation=None):
+        key = family, mutation
+        if key not in binaries:
+            branches = terminal_branches()
+            guard = 'if (gc >= 2) bar_sync(BAR_EMPTY0 + (gc & 1), THREADS);'
+            if mutation:
+                assert guard in branches[family]
+                replacement = '' if mutation == 'missing-wait' else 'bar_sync(BAR_EMPTY0 + (gc & 1), THREADS);'
+                branches[family] = branches[family].replace(guard, replacement, 1)
+            functions = '\n'.join(
+                f'void terminal{i}(unsigned gc, int slot) {{ const int tid = 0;\n{body}\n}}'
+                for i, body in enumerate(branches))
+            source, binary = root / f'terminal{len(binaries)}.cpp', root / f'terminal{len(binaries)}'
+            source.write_text(HARNESS.replace('@FUNCTIONS@', functions))
+            subprocess.run([compiler, '-std=c++17', '-O0', str(source), '-o', str(binary)],
+                           check=True, capture_output=True, text=True)
+            binaries[key] = binary
+        return binaries[key]
+
+    return build
+
+
+@pytest.fixture(scope='module')
+def terminal_binary(terminal_build):
+    return terminal_build()
 
 
 @pytest.mark.parametrize('family', [0, 1], ids=['value-e4m3', 'fp4'])
@@ -126,3 +146,21 @@ def test_terminal_waits_for_delayed_consumer(terminal_binary, family, chunks):
     result = subprocess.run([str(terminal_binary), str(family), str(chunks)],
                             capture_output=True, text=True, timeout=5)
     assert result.returncode == 0, result.stderr
+
+
+@pytest.mark.parametrize('family', [0, 1], ids=['e4m3-paired', 'fp4-protocol-control'])
+@pytest.mark.parametrize('pairs,items', [(0, 0), (0, 3), (3, 0), (1, 1), (3, 1),
+                                       (3, 2), (3, 3), (4, 1), (4, 3), (64, 5)])
+def test_paired_terminal_waits_for_delayed_consumer(terminal_binary, terminal_build, family, pairs, items):
+    quanta = pairs * items
+    result = subprocess.run([str(terminal_binary), str(family), str(quanta)],
+                            capture_output=True, text=True, timeout=5)
+    assert result.returncode == 0, result.stderr
+    mutation = 'missing-wait' if quanta >= 2 else 'unused-wait'
+    diagnostic = ('FULL reused before delayed consumer reset' if quanta >= 2
+                  else 'first-use terminal waited on nonexistent chunk')
+    result = subprocess.run([str(terminal_build(family, mutation)), str(family), str(quanta)],
+                            capture_output=True, text=True, timeout=5)
+    with pytest.raises(AssertionError, match=diagnostic) as failure:
+        assert result.returncode == 0, result.stderr
+    print(f'unsafe terminal {family}/{mutation}, paired quanta={quanta}: {failure.value}')

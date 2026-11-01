@@ -44,6 +44,12 @@ def _scoped_contract():
     assert IMAGE not in list(mapped.values())[1:] and OTHER_IMAGE not in mapped.values()
     for cell in contract["lane_eligibility"]["cells"]:
         cell["runtime"] = {**copy.deepcopy(RUNTIME), "image": mapped[cell["runtime"]["image"]]}
+        # A synthetic image cannot retain the base-image class qualification.
+        entry = runtime_contract.format_entry(cell["family"], contract)
+        cell["executes"] = [
+            {"symbol": symbol, "decoder": decoder}
+            for symbol, decoder in sorted(runtime_contract.derive_cell_executes(
+                cell, runtime_contract._FAMILY_TO_ROUTE[cell["family"]], entry, contract))]
         # Since contract v48 some cells carry the runtime suffix the validator
         # derives from the scope (tessera#702: the nightly GLM cells share a
         # scope with the f8dbe1a0 cells that hold the bare ids).  A rewritten
@@ -77,7 +83,7 @@ def test_every_published_cell_names_its_measured_runtime_and_toolchain():
         vllm, torch = runtime_contract.cell_runtime_versions(cell)
         assert image and modes and vllm and torch
         assert set(cell["runtime"]) == (runtime_contract.RUNTIME_SCOPE_KEYS
-                                        | runtime_contract.RUNTIME_VERSION_KEYS)
+                                        | runtime_contract.RUNTIME_VERSION_KEYS | {"kernel_build"})
 
 
 def test_one_image_carries_one_toolchain():
@@ -179,6 +185,10 @@ def test_runtime_variants_have_disjoint_scopes_and_unique_ids():
     first["runtime"]["execution_modes"] = ["eager"]
     other_mode = copy.deepcopy(first)
     other_mode["runtime"]["execution_modes"] = ["compiled"]
+    # The decode cell cites the open graph gap with eager scope (tessera#1152).
+    # A compiled variant covers no eager mode, so it carries no eager record.
+    other_mode["evidence"]["kl"] = []
+    other_mode["evidence"]["grade"] = "route_only"
     other_mode["id"] += runtime_contract.cell_runtime_id_suffix(other_mode)
     other_image = copy.deepcopy(first)
     other_image["runtime"]["image"] = OTHER_IMAGE

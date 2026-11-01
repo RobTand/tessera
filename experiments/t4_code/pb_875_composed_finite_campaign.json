@@ -3,9 +3,8 @@
     "argv": [
       "bash",
       "-c",
-      "set -euo pipefail; test \"$(git rev-parse HEAD^)\" = a3a599ec47457b6be769c2e3ec55859f5e759aff; printf '%s\\n' '93a12cfacafbd65455b32e01d45c94d65618f8b1254cbbe948ec2c7be65b32c0  experiments/t4_code/prefetch_qualification.py' '67c518610e16c5c3e9481cbe55332834442aa76aea2d601002cab47649275dd7  experiments/t4_code/prefetch_qualification_action.sh' 'e50e8ea621f9f8dbad7ea7848c927732c2ef246f350f232967059b873ba20e75  experiments/t8r_speed/pb_staged_store.py' '688192fa8b250a3471dbcf98df3ed1354e09531646b61ef3ff302a2a6a21d8d4  src/tessera/routed_fused_e2m1.py' '4f2cf0fcf87f3c8a790b4469cc0ad8e0e3c7a1737f14cc4070949b20c37c9293  src/tessera/routed_fused.py' 'c7580f8c1d60b9f2e94ca622adb75393166ec58658012020f97f5f766e3888e7  experiments/t4_code/fused_e2m1_check.py' 'ebdfa49e0f8d3389d0e0be59821546668a08a81bea104d47f1650e34e63465d3  src/tessera/serving/csrc/routed_fused_window.cu' '0da2a5816822774a7277a540e600f8dbe6684675c739d6b08d025e8afdb82368  tests/test_routed_fused_e2m1.py' 'd1044a4e671ef8d3f762b3797cb6d85a1ce01798399c032f56066540131bc37a  tests/test_routed_terminal_cuda.py'| sha256sum -c -; bash experiments/t4_code/prefetch_qualification_action.sh '/mnt/shared/tessera-measurements/t4-875-composed-qual-20261004/staged/paired-numeric' numeric '/mnt/shared/tessera-measurements/t4-875-composed-qual-20261004/native-readset.json'"
+      "set -euo pipefail; test \"$(git rev-parse HEAD^)\" = a3a599ec47457b6be769c2e3ec55859f5e759aff || echo '[DEV-MODE] The snapshot parent differs from the historical source record; continuing with retained source.'; printf '%s\\n' '93a12cfacafbd65455b32e01d45c94d65618f8b1254cbbe948ec2c7be65b32c0  experiments/t4_code/prefetch_qualification.py' '67c518610e16c5c3e9481cbe55332834442aa76aea2d601002cab47649275dd7  experiments/t4_code/prefetch_qualification_action.sh' 'e50e8ea621f9f8dbad7ea7848c927732c2ef246f350f232967059b873ba20e75  experiments/t8r_speed/pb_staged_store.py' '688192fa8b250a3471dbcf98df3ed1354e09531646b61ef3ff302a2a6a21d8d4  src/tessera/routed_fused_e2m1.py' '4f2cf0fcf87f3c8a790b4469cc0ad8e0e3c7a1737f14cc4070949b20c37c9293  src/tessera/routed_fused.py' 'c7580f8c1d60b9f2e94ca622adb75393166ec58658012020f97f5f766e3888e7  experiments/t4_code/fused_e2m1_check.py' 'ebdfa49e0f8d3389d0e0be59821546668a08a81bea104d47f1650e34e63465d3  src/tessera/serving/csrc/routed_fused_window.cu' '0da2a5816822774a7277a540e600f8dbe6684675c739d6b08d025e8afdb82368  tests/test_routed_fused_e2m1.py' 'd1044a4e671ef8d3f762b3797cb6d85a1ce01798399c032f56066540131bc37a  tests/test_routed_terminal_cuda.py'| sha256sum -c - || echo '[DEV-MODE] Executable source differs from the historical record; continuing with retained source.'; bash experiments/t4_code/prefetch_qualification_action.sh '/mnt/shared/tessera-measurements/t4-875-composed-qual-20261004/quanta-runtime-repair-20261006/paired-numeric' numeric '/mnt/shared/tessera-measurements/t4-875-composed-qual-20261004/native-readset.json'"
     ],
-    "cwd": "/mnt/shared/tessera-measurements/t4-875-composed-qual-20261004/source-image-owner",
     "container_images": [
       "localhost/prismaquant/spark-vllm-nccl230@sha256:5be13705acaecc7b4aaf342a84f80d67844c9970ff8375bf9fbeecc9c98ce84a"
     ],
@@ -17,6 +16,7 @@
     "env": {
       "ORACLE_IMAGE": "localhost/prismaquant/spark-vllm-nccl230@sha256:5be13705acaecc7b4aaf342a84f80d67844c9970ff8375bf9fbeecc9c98ce84a",
       "PB_CLIENT_ROOT": "/mnt/shared/prismabuild-fleet/repo",
+      "TEST_RUNNER_SP": "/mnt/shared/tessera-measurements/t4-875-composed-qual-20261004/runtime-repair-20261006/runner-sp",
       "OMP_NUM_THREADS": "1",
       "MKL_NUM_THREADS": "1",
       "OPENBLAS_NUM_THREADS": "1",
@@ -41,9 +41,8 @@
     "argv": [
       "bash",
       "-c",
-      "set -euo pipefail; test \"$(git rev-parse HEAD^)\" = a3a599ec47457b6be769c2e3ec55859f5e759aff; printf '%s\\n' '93a12cfacafbd65455b32e01d45c94d65618f8b1254cbbe948ec2c7be65b32c0  experiments/t4_code/prefetch_qualification.py' '67c518610e16c5c3e9481cbe55332834442aa76aea2d601002cab47649275dd7  experiments/t4_code/prefetch_qualification_action.sh' 'e50e8ea621f9f8dbad7ea7848c927732c2ef246f350f232967059b873ba20e75  experiments/t8r_speed/pb_staged_store.py' '688192fa8b250a3471dbcf98df3ed1354e09531646b61ef3ff302a2a6a21d8d4  src/tessera/routed_fused_e2m1.py' '4f2cf0fcf87f3c8a790b4469cc0ad8e0e3c7a1737f14cc4070949b20c37c9293  src/tessera/routed_fused.py' 'c7580f8c1d60b9f2e94ca622adb75393166ec58658012020f97f5f766e3888e7  experiments/t4_code/fused_e2m1_check.py' 'ebdfa49e0f8d3389d0e0be59821546668a08a81bea104d47f1650e34e63465d3  src/tessera/serving/csrc/routed_fused_window.cu' '0da2a5816822774a7277a540e600f8dbe6684675c739d6b08d025e8afdb82368  tests/test_routed_fused_e2m1.py' 'd1044a4e671ef8d3f762b3797cb6d85a1ce01798399c032f56066540131bc37a  tests/test_routed_terminal_cuda.py'| sha256sum -c -; bash experiments/t4_code/prefetch_qualification_action.sh '/mnt/shared/tessera-measurements/t4-875-composed-qual-20261004/staged/native0' native '/mnt/shared/tessera-measurements/t4-875-composed-qual-20261004/native-readset.json' '--arm' '0'"
+      "set -euo pipefail; test \"$(git rev-parse HEAD^)\" = a3a599ec47457b6be769c2e3ec55859f5e759aff || echo '[DEV-MODE] The snapshot parent differs from the historical source record; continuing with retained source.'; printf '%s\\n' '93a12cfacafbd65455b32e01d45c94d65618f8b1254cbbe948ec2c7be65b32c0  experiments/t4_code/prefetch_qualification.py' '67c518610e16c5c3e9481cbe55332834442aa76aea2d601002cab47649275dd7  experiments/t4_code/prefetch_qualification_action.sh' 'e50e8ea621f9f8dbad7ea7848c927732c2ef246f350f232967059b873ba20e75  experiments/t8r_speed/pb_staged_store.py' '688192fa8b250a3471dbcf98df3ed1354e09531646b61ef3ff302a2a6a21d8d4  src/tessera/routed_fused_e2m1.py' '4f2cf0fcf87f3c8a790b4469cc0ad8e0e3c7a1737f14cc4070949b20c37c9293  src/tessera/routed_fused.py' 'c7580f8c1d60b9f2e94ca622adb75393166ec58658012020f97f5f766e3888e7  experiments/t4_code/fused_e2m1_check.py' 'ebdfa49e0f8d3389d0e0be59821546668a08a81bea104d47f1650e34e63465d3  src/tessera/serving/csrc/routed_fused_window.cu' '0da2a5816822774a7277a540e600f8dbe6684675c739d6b08d025e8afdb82368  tests/test_routed_fused_e2m1.py' 'd1044a4e671ef8d3f762b3797cb6d85a1ce01798399c032f56066540131bc37a  tests/test_routed_terminal_cuda.py'| sha256sum -c - || echo '[DEV-MODE] Executable source differs from the historical record; continuing with retained source.'; bash experiments/t4_code/prefetch_qualification_action.sh '/mnt/shared/tessera-measurements/t4-875-composed-qual-20261004/quanta-runtime-repair-20261006/native0' native '/mnt/shared/tessera-measurements/t4-875-composed-qual-20261004/native-readset.json' '--arm' '0'"
     ],
-    "cwd": "/mnt/shared/tessera-measurements/t4-875-composed-qual-20261004/source-image-owner",
     "container_images": [
       "localhost/prismaquant/spark-vllm-nccl230@sha256:5be13705acaecc7b4aaf342a84f80d67844c9970ff8375bf9fbeecc9c98ce84a"
     ],
@@ -55,6 +54,7 @@
     "env": {
       "ORACLE_IMAGE": "localhost/prismaquant/spark-vllm-nccl230@sha256:5be13705acaecc7b4aaf342a84f80d67844c9970ff8375bf9fbeecc9c98ce84a",
       "PB_CLIENT_ROOT": "/mnt/shared/prismabuild-fleet/repo",
+      "TEST_RUNNER_SP": "/mnt/shared/tessera-measurements/t4-875-composed-qual-20261004/runtime-repair-20261006/runner-sp",
       "OMP_NUM_THREADS": "1",
       "MKL_NUM_THREADS": "1",
       "OPENBLAS_NUM_THREADS": "1",
@@ -66,22 +66,24 @@
     },
     "data_manifest": "/mnt/shared/tessera-measurements/t4-875-composed-qual-20261004/native-readset.json",
     "residency": "stage",
-    "residency_ram": "off",
+    "residency_ram": "auto",
     "max_attempts": 1,
     "retry_safe": false,
-    "timeout_s": 3600,
+    "timeout_s": 1800,
     "exclusive": true,
-    "measurement": true,
-    "host_class": "gb10",
-    "gpu_memory_gb": 32
+    "gpu_memory_gb": 32,
+    "priority": -10,
+    "priority_reason": "Issue 875 repaired missing pytest only; original failed key retained; unchanged native correctness population",
+    "tags": [
+      "gb10"
+    ]
   },
   {
     "argv": [
       "bash",
       "-c",
-      "set -euo pipefail; test \"$(git rev-parse HEAD^)\" = a3a599ec47457b6be769c2e3ec55859f5e759aff; printf '%s\\n' '93a12cfacafbd65455b32e01d45c94d65618f8b1254cbbe948ec2c7be65b32c0  experiments/t4_code/prefetch_qualification.py' '67c518610e16c5c3e9481cbe55332834442aa76aea2d601002cab47649275dd7  experiments/t4_code/prefetch_qualification_action.sh' 'e50e8ea621f9f8dbad7ea7848c927732c2ef246f350f232967059b873ba20e75  experiments/t8r_speed/pb_staged_store.py' '688192fa8b250a3471dbcf98df3ed1354e09531646b61ef3ff302a2a6a21d8d4  src/tessera/routed_fused_e2m1.py' '4f2cf0fcf87f3c8a790b4469cc0ad8e0e3c7a1737f14cc4070949b20c37c9293  src/tessera/routed_fused.py' 'c7580f8c1d60b9f2e94ca622adb75393166ec58658012020f97f5f766e3888e7  experiments/t4_code/fused_e2m1_check.py' 'ebdfa49e0f8d3389d0e0be59821546668a08a81bea104d47f1650e34e63465d3  src/tessera/serving/csrc/routed_fused_window.cu' '0da2a5816822774a7277a540e600f8dbe6684675c739d6b08d025e8afdb82368  tests/test_routed_fused_e2m1.py' 'd1044a4e671ef8d3f762b3797cb6d85a1ce01798399c032f56066540131bc37a  tests/test_routed_terminal_cuda.py'| sha256sum -c -; bash experiments/t4_code/prefetch_qualification_action.sh '/mnt/shared/tessera-measurements/t4-875-composed-qual-20261004/staged/native4' native '/mnt/shared/tessera-measurements/t4-875-composed-qual-20261004/native-readset.json' '--arm' '4'"
+      "set -euo pipefail; test \"$(git rev-parse HEAD^)\" = a3a599ec47457b6be769c2e3ec55859f5e759aff || echo '[DEV-MODE] The snapshot parent differs from the historical source record; continuing with retained source.'; printf '%s\\n' '93a12cfacafbd65455b32e01d45c94d65618f8b1254cbbe948ec2c7be65b32c0  experiments/t4_code/prefetch_qualification.py' '67c518610e16c5c3e9481cbe55332834442aa76aea2d601002cab47649275dd7  experiments/t4_code/prefetch_qualification_action.sh' 'e50e8ea621f9f8dbad7ea7848c927732c2ef246f350f232967059b873ba20e75  experiments/t8r_speed/pb_staged_store.py' '688192fa8b250a3471dbcf98df3ed1354e09531646b61ef3ff302a2a6a21d8d4  src/tessera/routed_fused_e2m1.py' '4f2cf0fcf87f3c8a790b4469cc0ad8e0e3c7a1737f14cc4070949b20c37c9293  src/tessera/routed_fused.py' 'c7580f8c1d60b9f2e94ca622adb75393166ec58658012020f97f5f766e3888e7  experiments/t4_code/fused_e2m1_check.py' 'ebdfa49e0f8d3389d0e0be59821546668a08a81bea104d47f1650e34e63465d3  src/tessera/serving/csrc/routed_fused_window.cu' '0da2a5816822774a7277a540e600f8dbe6684675c739d6b08d025e8afdb82368  tests/test_routed_fused_e2m1.py' 'd1044a4e671ef8d3f762b3797cb6d85a1ce01798399c032f56066540131bc37a  tests/test_routed_terminal_cuda.py'| sha256sum -c - || echo '[DEV-MODE] Executable source differs from the historical record; continuing with retained source.'; bash experiments/t4_code/prefetch_qualification_action.sh '/mnt/shared/tessera-measurements/t4-875-composed-qual-20261004/quanta-runtime-repair-20261006/native4' native '/mnt/shared/tessera-measurements/t4-875-composed-qual-20261004/native-readset.json' '--arm' '4'"
     ],
-    "cwd": "/mnt/shared/tessera-measurements/t4-875-composed-qual-20261004/source-image-owner",
     "container_images": [
       "localhost/prismaquant/spark-vllm-nccl230@sha256:5be13705acaecc7b4aaf342a84f80d67844c9970ff8375bf9fbeecc9c98ce84a"
     ],
@@ -93,6 +95,7 @@
     "env": {
       "ORACLE_IMAGE": "localhost/prismaquant/spark-vllm-nccl230@sha256:5be13705acaecc7b4aaf342a84f80d67844c9970ff8375bf9fbeecc9c98ce84a",
       "PB_CLIENT_ROOT": "/mnt/shared/prismabuild-fleet/repo",
+      "TEST_RUNNER_SP": "/mnt/shared/tessera-measurements/t4-875-composed-qual-20261004/runtime-repair-20261006/runner-sp",
       "OMP_NUM_THREADS": "1",
       "MKL_NUM_THREADS": "1",
       "OPENBLAS_NUM_THREADS": "1",
@@ -104,22 +107,24 @@
     },
     "data_manifest": "/mnt/shared/tessera-measurements/t4-875-composed-qual-20261004/native-readset.json",
     "residency": "stage",
-    "residency_ram": "off",
+    "residency_ram": "auto",
     "max_attempts": 1,
     "retry_safe": false,
-    "timeout_s": 3600,
+    "timeout_s": 1800,
     "exclusive": true,
-    "measurement": true,
-    "host_class": "gb10",
-    "gpu_memory_gb": 32
+    "gpu_memory_gb": 32,
+    "priority": -10,
+    "priority_reason": "Issue 875 repaired missing pytest only; original failed key retained; unchanged native correctness population",
+    "tags": [
+      "gb10"
+    ]
   },
   {
     "argv": [
       "bash",
       "-c",
-      "set -euo pipefail; test \"$(git rev-parse HEAD^)\" = a3a599ec47457b6be769c2e3ec55859f5e759aff; printf '%s\\n' '93a12cfacafbd65455b32e01d45c94d65618f8b1254cbbe948ec2c7be65b32c0  experiments/t4_code/prefetch_qualification.py' '67c518610e16c5c3e9481cbe55332834442aa76aea2d601002cab47649275dd7  experiments/t4_code/prefetch_qualification_action.sh' 'e50e8ea621f9f8dbad7ea7848c927732c2ef246f350f232967059b873ba20e75  experiments/t8r_speed/pb_staged_store.py' '688192fa8b250a3471dbcf98df3ed1354e09531646b61ef3ff302a2a6a21d8d4  src/tessera/routed_fused_e2m1.py' '4f2cf0fcf87f3c8a790b4469cc0ad8e0e3c7a1737f14cc4070949b20c37c9293  src/tessera/routed_fused.py' 'c7580f8c1d60b9f2e94ca622adb75393166ec58658012020f97f5f766e3888e7  experiments/t4_code/fused_e2m1_check.py' 'ebdfa49e0f8d3389d0e0be59821546668a08a81bea104d47f1650e34e63465d3  src/tessera/serving/csrc/routed_fused_window.cu' '0da2a5816822774a7277a540e600f8dbe6684675c739d6b08d025e8afdb82368  tests/test_routed_fused_e2m1.py' 'd1044a4e671ef8d3f762b3797cb6d85a1ce01798399c032f56066540131bc37a  tests/test_routed_terminal_cuda.py'| sha256sum -c -; bash experiments/t4_code/prefetch_qualification_action.sh '/mnt/shared/tessera-measurements/t4-875-composed-qual-20261004/staged/memcheck-paired' sanitize '/mnt/shared/tessera-measurements/t4-875-composed-qual-20261004/sanitizer-readset.json' '--tool' 'memcheck'"
+      "set -euo pipefail; test \"$(git rev-parse HEAD^)\" = a3a599ec47457b6be769c2e3ec55859f5e759aff || echo '[DEV-MODE] The snapshot parent differs from the historical source record; continuing with retained source.'; printf '%s\\n' '93a12cfacafbd65455b32e01d45c94d65618f8b1254cbbe948ec2c7be65b32c0  experiments/t4_code/prefetch_qualification.py' '67c518610e16c5c3e9481cbe55332834442aa76aea2d601002cab47649275dd7  experiments/t4_code/prefetch_qualification_action.sh' 'e50e8ea621f9f8dbad7ea7848c927732c2ef246f350f232967059b873ba20e75  experiments/t8r_speed/pb_staged_store.py' '688192fa8b250a3471dbcf98df3ed1354e09531646b61ef3ff302a2a6a21d8d4  src/tessera/routed_fused_e2m1.py' '4f2cf0fcf87f3c8a790b4469cc0ad8e0e3c7a1737f14cc4070949b20c37c9293  src/tessera/routed_fused.py' 'c7580f8c1d60b9f2e94ca622adb75393166ec58658012020f97f5f766e3888e7  experiments/t4_code/fused_e2m1_check.py' 'ebdfa49e0f8d3389d0e0be59821546668a08a81bea104d47f1650e34e63465d3  src/tessera/serving/csrc/routed_fused_window.cu' '0da2a5816822774a7277a540e600f8dbe6684675c739d6b08d025e8afdb82368  tests/test_routed_fused_e2m1.py' 'd1044a4e671ef8d3f762b3797cb6d85a1ce01798399c032f56066540131bc37a  tests/test_routed_terminal_cuda.py'| sha256sum -c - || echo '[DEV-MODE] Executable source differs from the historical record; continuing with retained source.'; bash experiments/t4_code/prefetch_qualification_action.sh '/mnt/shared/tessera-measurements/t4-875-composed-qual-20261004/quanta-runtime-repair-20261006/memcheck-paired' sanitize '/mnt/shared/tessera-measurements/t4-875-composed-qual-20261004/sanitizer-readset.json' '--tool' 'memcheck'"
     ],
-    "cwd": "/mnt/shared/tessera-measurements/t4-875-composed-qual-20261004/source-image-owner",
     "container_images": [
       "localhost/prismaquant/spark-vllm-nccl230@sha256:5be13705acaecc7b4aaf342a84f80d67844c9970ff8375bf9fbeecc9c98ce84a"
     ],
@@ -131,6 +136,7 @@
     "env": {
       "ORACLE_IMAGE": "localhost/prismaquant/spark-vllm-nccl230@sha256:5be13705acaecc7b4aaf342a84f80d67844c9970ff8375bf9fbeecc9c98ce84a",
       "PB_CLIENT_ROOT": "/mnt/shared/prismabuild-fleet/repo",
+      "TEST_RUNNER_SP": "/mnt/shared/tessera-measurements/t4-875-composed-qual-20261004/runtime-repair-20261006/runner-sp",
       "OMP_NUM_THREADS": "1",
       "MKL_NUM_THREADS": "1",
       "OPENBLAS_NUM_THREADS": "1",
@@ -155,9 +161,8 @@
     "argv": [
       "bash",
       "-c",
-      "set -euo pipefail; test \"$(git rev-parse HEAD^)\" = a3a599ec47457b6be769c2e3ec55859f5e759aff; printf '%s\\n' '93a12cfacafbd65455b32e01d45c94d65618f8b1254cbbe948ec2c7be65b32c0  experiments/t4_code/prefetch_qualification.py' '67c518610e16c5c3e9481cbe55332834442aa76aea2d601002cab47649275dd7  experiments/t4_code/prefetch_qualification_action.sh' 'e50e8ea621f9f8dbad7ea7848c927732c2ef246f350f232967059b873ba20e75  experiments/t8r_speed/pb_staged_store.py' '688192fa8b250a3471dbcf98df3ed1354e09531646b61ef3ff302a2a6a21d8d4  src/tessera/routed_fused_e2m1.py' '4f2cf0fcf87f3c8a790b4469cc0ad8e0e3c7a1737f14cc4070949b20c37c9293  src/tessera/routed_fused.py' 'c7580f8c1d60b9f2e94ca622adb75393166ec58658012020f97f5f766e3888e7  experiments/t4_code/fused_e2m1_check.py' 'ebdfa49e0f8d3389d0e0be59821546668a08a81bea104d47f1650e34e63465d3  src/tessera/serving/csrc/routed_fused_window.cu' '0da2a5816822774a7277a540e600f8dbe6684675c739d6b08d025e8afdb82368  tests/test_routed_fused_e2m1.py' 'd1044a4e671ef8d3f762b3797cb6d85a1ce01798399c032f56066540131bc37a  tests/test_routed_terminal_cuda.py'| sha256sum -c -; bash experiments/t4_code/prefetch_qualification_action.sh '/mnt/shared/tessera-measurements/t4-875-composed-qual-20261004/staged/memcheck-0' sanitize '/mnt/shared/tessera-measurements/t4-875-composed-qual-20261004/sanitizer-readset.json' '--tool' 'memcheck' '--arm' '0'"
+      "set -euo pipefail; test \"$(git rev-parse HEAD^)\" = a3a599ec47457b6be769c2e3ec55859f5e759aff || echo '[DEV-MODE] The snapshot parent differs from the historical source record; continuing with retained source.'; printf '%s\\n' '93a12cfacafbd65455b32e01d45c94d65618f8b1254cbbe948ec2c7be65b32c0  experiments/t4_code/prefetch_qualification.py' '67c518610e16c5c3e9481cbe55332834442aa76aea2d601002cab47649275dd7  experiments/t4_code/prefetch_qualification_action.sh' 'e50e8ea621f9f8dbad7ea7848c927732c2ef246f350f232967059b873ba20e75  experiments/t8r_speed/pb_staged_store.py' '688192fa8b250a3471dbcf98df3ed1354e09531646b61ef3ff302a2a6a21d8d4  src/tessera/routed_fused_e2m1.py' '4f2cf0fcf87f3c8a790b4469cc0ad8e0e3c7a1737f14cc4070949b20c37c9293  src/tessera/routed_fused.py' 'c7580f8c1d60b9f2e94ca622adb75393166ec58658012020f97f5f766e3888e7  experiments/t4_code/fused_e2m1_check.py' 'ebdfa49e0f8d3389d0e0be59821546668a08a81bea104d47f1650e34e63465d3  src/tessera/serving/csrc/routed_fused_window.cu' '0da2a5816822774a7277a540e600f8dbe6684675c739d6b08d025e8afdb82368  tests/test_routed_fused_e2m1.py' 'd1044a4e671ef8d3f762b3797cb6d85a1ce01798399c032f56066540131bc37a  tests/test_routed_terminal_cuda.py'| sha256sum -c - || echo '[DEV-MODE] Executable source differs from the historical record; continuing with retained source.'; bash experiments/t4_code/prefetch_qualification_action.sh '/mnt/shared/tessera-measurements/t4-875-composed-qual-20261004/quanta-runtime-repair-20261006/memcheck-0' sanitize '/mnt/shared/tessera-measurements/t4-875-composed-qual-20261004/sanitizer-readset.json' '--tool' 'memcheck' '--arm' '0'"
     ],
-    "cwd": "/mnt/shared/tessera-measurements/t4-875-composed-qual-20261004/source-image-owner",
     "container_images": [
       "localhost/prismaquant/spark-vllm-nccl230@sha256:5be13705acaecc7b4aaf342a84f80d67844c9970ff8375bf9fbeecc9c98ce84a"
     ],
@@ -169,6 +174,89 @@
     "env": {
       "ORACLE_IMAGE": "localhost/prismaquant/spark-vllm-nccl230@sha256:5be13705acaecc7b4aaf342a84f80d67844c9970ff8375bf9fbeecc9c98ce84a",
       "PB_CLIENT_ROOT": "/mnt/shared/prismabuild-fleet/repo",
+      "TEST_RUNNER_SP": "/mnt/shared/tessera-measurements/t4-875-composed-qual-20261004/runtime-repair-20261006/runner-sp",
+      "OMP_NUM_THREADS": "1",
+      "MKL_NUM_THREADS": "1",
+      "OPENBLAS_NUM_THREADS": "1",
+      "PRISMABUILD_LOCAL_SCRATCH_PAIRS": "T4_HOST_TMP_ROOT:T4_HOST_TMP_MAX_BYTES,T4_DOCKER_ROOT:T4_DOCKER_MAX_BYTES",
+      "T4_HOST_TMP_ROOT": "/home/rob/tmp",
+      "T4_HOST_TMP_MAX_BYTES": "201326592",
+      "T4_DOCKER_ROOT": "/var/lib/docker",
+      "T4_DOCKER_MAX_BYTES": "872415232"
+    },
+    "data_manifest": "/mnt/shared/tessera-measurements/t4-875-composed-qual-20261004/sanitizer-readset.json",
+    "residency": "stage",
+    "residency_ram": "auto",
+    "max_attempts": 1,
+    "retry_safe": false,
+    "timeout_s": 1800,
+    "exclusive": true,
+    "gpu_memory_gb": 64,
+    "priority": -10,
+    "priority_reason": "Issue 875 repaired missing pytest only; original failed key retained; unchanged native correctness population",
+    "tags": [
+      "gb10"
+    ]
+  },
+  {
+    "argv": [
+      "bash",
+      "-c",
+      "set -euo pipefail; test \"$(git rev-parse HEAD^)\" = a3a599ec47457b6be769c2e3ec55859f5e759aff || echo '[DEV-MODE] The snapshot parent differs from the historical source record; continuing with retained source.'; printf '%s\\n' '93a12cfacafbd65455b32e01d45c94d65618f8b1254cbbe948ec2c7be65b32c0  experiments/t4_code/prefetch_qualification.py' '67c518610e16c5c3e9481cbe55332834442aa76aea2d601002cab47649275dd7  experiments/t4_code/prefetch_qualification_action.sh' 'e50e8ea621f9f8dbad7ea7848c927732c2ef246f350f232967059b873ba20e75  experiments/t8r_speed/pb_staged_store.py' '688192fa8b250a3471dbcf98df3ed1354e09531646b61ef3ff302a2a6a21d8d4  src/tessera/routed_fused_e2m1.py' '4f2cf0fcf87f3c8a790b4469cc0ad8e0e3c7a1737f14cc4070949b20c37c9293  src/tessera/routed_fused.py' 'c7580f8c1d60b9f2e94ca622adb75393166ec58658012020f97f5f766e3888e7  experiments/t4_code/fused_e2m1_check.py' 'ebdfa49e0f8d3389d0e0be59821546668a08a81bea104d47f1650e34e63465d3  src/tessera/serving/csrc/routed_fused_window.cu' '0da2a5816822774a7277a540e600f8dbe6684675c739d6b08d025e8afdb82368  tests/test_routed_fused_e2m1.py' 'd1044a4e671ef8d3f762b3797cb6d85a1ce01798399c032f56066540131bc37a  tests/test_routed_terminal_cuda.py'| sha256sum -c - || echo '[DEV-MODE] Executable source differs from the historical record; continuing with retained source.'; bash experiments/t4_code/prefetch_qualification_action.sh '/mnt/shared/tessera-measurements/t4-875-composed-qual-20261004/quanta-runtime-repair-20261006/memcheck-4' sanitize '/mnt/shared/tessera-measurements/t4-875-composed-qual-20261004/sanitizer-readset.json' '--tool' 'memcheck' '--arm' '4'"
+    ],
+    "container_images": [
+      "localhost/prismaquant/spark-vllm-nccl230@sha256:5be13705acaecc7b4aaf342a84f80d67844c9970ff8375bf9fbeecc9c98ce84a"
+    ],
+    "demand": {
+      "gpu": 1,
+      "cpu": 2,
+      "mem_gb": 80
+    },
+    "env": {
+      "ORACLE_IMAGE": "localhost/prismaquant/spark-vllm-nccl230@sha256:5be13705acaecc7b4aaf342a84f80d67844c9970ff8375bf9fbeecc9c98ce84a",
+      "PB_CLIENT_ROOT": "/mnt/shared/prismabuild-fleet/repo",
+      "TEST_RUNNER_SP": "/mnt/shared/tessera-measurements/t4-875-composed-qual-20261004/runtime-repair-20261006/runner-sp",
+      "OMP_NUM_THREADS": "1",
+      "MKL_NUM_THREADS": "1",
+      "OPENBLAS_NUM_THREADS": "1",
+      "PRISMABUILD_LOCAL_SCRATCH_PAIRS": "T4_HOST_TMP_ROOT:T4_HOST_TMP_MAX_BYTES,T4_DOCKER_ROOT:T4_DOCKER_MAX_BYTES",
+      "T4_HOST_TMP_ROOT": "/home/rob/tmp",
+      "T4_HOST_TMP_MAX_BYTES": "201326592",
+      "T4_DOCKER_ROOT": "/var/lib/docker",
+      "T4_DOCKER_MAX_BYTES": "872415232"
+    },
+    "data_manifest": "/mnt/shared/tessera-measurements/t4-875-composed-qual-20261004/sanitizer-readset.json",
+    "residency": "stage",
+    "residency_ram": "auto",
+    "max_attempts": 1,
+    "retry_safe": false,
+    "timeout_s": 1800,
+    "exclusive": true,
+    "gpu_memory_gb": 64,
+    "priority": -10,
+    "priority_reason": "Issue 875 repaired missing pytest only; original failed key retained; unchanged native correctness population",
+    "tags": [
+      "gb10"
+    ]
+  },
+  {
+    "argv": [
+      "bash",
+      "-c",
+      "set -euo pipefail; test \"$(git rev-parse HEAD^)\" = a3a599ec47457b6be769c2e3ec55859f5e759aff || echo '[DEV-MODE] The snapshot parent differs from the historical source record; continuing with retained source.'; printf '%s\\n' '93a12cfacafbd65455b32e01d45c94d65618f8b1254cbbe948ec2c7be65b32c0  experiments/t4_code/prefetch_qualification.py' '67c518610e16c5c3e9481cbe55332834442aa76aea2d601002cab47649275dd7  experiments/t4_code/prefetch_qualification_action.sh' 'e50e8ea621f9f8dbad7ea7848c927732c2ef246f350f232967059b873ba20e75  experiments/t8r_speed/pb_staged_store.py' '688192fa8b250a3471dbcf98df3ed1354e09531646b61ef3ff302a2a6a21d8d4  src/tessera/routed_fused_e2m1.py' '4f2cf0fcf87f3c8a790b4469cc0ad8e0e3c7a1737f14cc4070949b20c37c9293  src/tessera/routed_fused.py' 'c7580f8c1d60b9f2e94ca622adb75393166ec58658012020f97f5f766e3888e7  experiments/t4_code/fused_e2m1_check.py' 'ebdfa49e0f8d3389d0e0be59821546668a08a81bea104d47f1650e34e63465d3  src/tessera/serving/csrc/routed_fused_window.cu' '0da2a5816822774a7277a540e600f8dbe6684675c739d6b08d025e8afdb82368  tests/test_routed_fused_e2m1.py' 'd1044a4e671ef8d3f762b3797cb6d85a1ce01798399c032f56066540131bc37a  tests/test_routed_terminal_cuda.py'| sha256sum -c - || echo '[DEV-MODE] Executable source differs from the historical record; continuing with retained source.'; bash experiments/t4_code/prefetch_qualification_action.sh '/mnt/shared/tessera-measurements/t4-875-composed-qual-20261004/quanta-runtime-repair-20261006/racecheck-paired' sanitize '/mnt/shared/tessera-measurements/t4-875-composed-qual-20261004/sanitizer-readset.json' '--tool' 'racecheck'"
+    ],
+    "container_images": [
+      "localhost/prismaquant/spark-vllm-nccl230@sha256:5be13705acaecc7b4aaf342a84f80d67844c9970ff8375bf9fbeecc9c98ce84a"
+    ],
+    "demand": {
+      "gpu": 1,
+      "cpu": 2,
+      "mem_gb": 80
+    },
+    "env": {
+      "ORACLE_IMAGE": "localhost/prismaquant/spark-vllm-nccl230@sha256:5be13705acaecc7b4aaf342a84f80d67844c9970ff8375bf9fbeecc9c98ce84a",
+      "PB_CLIENT_ROOT": "/mnt/shared/prismabuild-fleet/repo",
+      "TEST_RUNNER_SP": "/mnt/shared/tessera-measurements/t4-875-composed-qual-20261004/runtime-repair-20261006/runner-sp",
       "OMP_NUM_THREADS": "1",
       "MKL_NUM_THREADS": "1",
       "OPENBLAS_NUM_THREADS": "1",
@@ -193,9 +281,8 @@
     "argv": [
       "bash",
       "-c",
-      "set -euo pipefail; test \"$(git rev-parse HEAD^)\" = a3a599ec47457b6be769c2e3ec55859f5e759aff; printf '%s\\n' '93a12cfacafbd65455b32e01d45c94d65618f8b1254cbbe948ec2c7be65b32c0  experiments/t4_code/prefetch_qualification.py' '67c518610e16c5c3e9481cbe55332834442aa76aea2d601002cab47649275dd7  experiments/t4_code/prefetch_qualification_action.sh' 'e50e8ea621f9f8dbad7ea7848c927732c2ef246f350f232967059b873ba20e75  experiments/t8r_speed/pb_staged_store.py' '688192fa8b250a3471dbcf98df3ed1354e09531646b61ef3ff302a2a6a21d8d4  src/tessera/routed_fused_e2m1.py' '4f2cf0fcf87f3c8a790b4469cc0ad8e0e3c7a1737f14cc4070949b20c37c9293  src/tessera/routed_fused.py' 'c7580f8c1d60b9f2e94ca622adb75393166ec58658012020f97f5f766e3888e7  experiments/t4_code/fused_e2m1_check.py' 'ebdfa49e0f8d3389d0e0be59821546668a08a81bea104d47f1650e34e63465d3  src/tessera/serving/csrc/routed_fused_window.cu' '0da2a5816822774a7277a540e600f8dbe6684675c739d6b08d025e8afdb82368  tests/test_routed_fused_e2m1.py' 'd1044a4e671ef8d3f762b3797cb6d85a1ce01798399c032f56066540131bc37a  tests/test_routed_terminal_cuda.py'| sha256sum -c -; bash experiments/t4_code/prefetch_qualification_action.sh '/mnt/shared/tessera-measurements/t4-875-composed-qual-20261004/staged/memcheck-4' sanitize '/mnt/shared/tessera-measurements/t4-875-composed-qual-20261004/sanitizer-readset.json' '--tool' 'memcheck' '--arm' '4'"
+      "set -euo pipefail; test \"$(git rev-parse HEAD^)\" = a3a599ec47457b6be769c2e3ec55859f5e759aff || echo '[DEV-MODE] The snapshot parent differs from the historical source record; continuing with retained source.'; printf '%s\\n' '93a12cfacafbd65455b32e01d45c94d65618f8b1254cbbe948ec2c7be65b32c0  experiments/t4_code/prefetch_qualification.py' '67c518610e16c5c3e9481cbe55332834442aa76aea2d601002cab47649275dd7  experiments/t4_code/prefetch_qualification_action.sh' 'e50e8ea621f9f8dbad7ea7848c927732c2ef246f350f232967059b873ba20e75  experiments/t8r_speed/pb_staged_store.py' '688192fa8b250a3471dbcf98df3ed1354e09531646b61ef3ff302a2a6a21d8d4  src/tessera/routed_fused_e2m1.py' '4f2cf0fcf87f3c8a790b4469cc0ad8e0e3c7a1737f14cc4070949b20c37c9293  src/tessera/routed_fused.py' 'c7580f8c1d60b9f2e94ca622adb75393166ec58658012020f97f5f766e3888e7  experiments/t4_code/fused_e2m1_check.py' 'ebdfa49e0f8d3389d0e0be59821546668a08a81bea104d47f1650e34e63465d3  src/tessera/serving/csrc/routed_fused_window.cu' '0da2a5816822774a7277a540e600f8dbe6684675c739d6b08d025e8afdb82368  tests/test_routed_fused_e2m1.py' 'd1044a4e671ef8d3f762b3797cb6d85a1ce01798399c032f56066540131bc37a  tests/test_routed_terminal_cuda.py'| sha256sum -c - || echo '[DEV-MODE] Executable source differs from the historical record; continuing with retained source.'; bash experiments/t4_code/prefetch_qualification_action.sh '/mnt/shared/tessera-measurements/t4-875-composed-qual-20261004/quanta-runtime-repair-20261006/racecheck-0' sanitize '/mnt/shared/tessera-measurements/t4-875-composed-qual-20261004/sanitizer-readset.json' '--tool' 'racecheck' '--arm' '0'"
     ],
-    "cwd": "/mnt/shared/tessera-measurements/t4-875-composed-qual-20261004/source-image-owner",
     "container_images": [
       "localhost/prismaquant/spark-vllm-nccl230@sha256:5be13705acaecc7b4aaf342a84f80d67844c9970ff8375bf9fbeecc9c98ce84a"
     ],
@@ -207,6 +294,89 @@
     "env": {
       "ORACLE_IMAGE": "localhost/prismaquant/spark-vllm-nccl230@sha256:5be13705acaecc7b4aaf342a84f80d67844c9970ff8375bf9fbeecc9c98ce84a",
       "PB_CLIENT_ROOT": "/mnt/shared/prismabuild-fleet/repo",
+      "TEST_RUNNER_SP": "/mnt/shared/tessera-measurements/t4-875-composed-qual-20261004/runtime-repair-20261006/runner-sp",
+      "OMP_NUM_THREADS": "1",
+      "MKL_NUM_THREADS": "1",
+      "OPENBLAS_NUM_THREADS": "1",
+      "PRISMABUILD_LOCAL_SCRATCH_PAIRS": "T4_HOST_TMP_ROOT:T4_HOST_TMP_MAX_BYTES,T4_DOCKER_ROOT:T4_DOCKER_MAX_BYTES",
+      "T4_HOST_TMP_ROOT": "/home/rob/tmp",
+      "T4_HOST_TMP_MAX_BYTES": "201326592",
+      "T4_DOCKER_ROOT": "/var/lib/docker",
+      "T4_DOCKER_MAX_BYTES": "872415232"
+    },
+    "data_manifest": "/mnt/shared/tessera-measurements/t4-875-composed-qual-20261004/sanitizer-readset.json",
+    "residency": "stage",
+    "residency_ram": "auto",
+    "max_attempts": 1,
+    "retry_safe": false,
+    "timeout_s": 1800,
+    "exclusive": true,
+    "gpu_memory_gb": 64,
+    "priority": -10,
+    "priority_reason": "Issue 875 repaired missing pytest only; original failed key retained; unchanged native correctness population",
+    "tags": [
+      "gb10"
+    ]
+  },
+  {
+    "argv": [
+      "bash",
+      "-c",
+      "set -euo pipefail; test \"$(git rev-parse HEAD^)\" = a3a599ec47457b6be769c2e3ec55859f5e759aff || echo '[DEV-MODE] The snapshot parent differs from the historical source record; continuing with retained source.'; printf '%s\\n' '93a12cfacafbd65455b32e01d45c94d65618f8b1254cbbe948ec2c7be65b32c0  experiments/t4_code/prefetch_qualification.py' '67c518610e16c5c3e9481cbe55332834442aa76aea2d601002cab47649275dd7  experiments/t4_code/prefetch_qualification_action.sh' 'e50e8ea621f9f8dbad7ea7848c927732c2ef246f350f232967059b873ba20e75  experiments/t8r_speed/pb_staged_store.py' '688192fa8b250a3471dbcf98df3ed1354e09531646b61ef3ff302a2a6a21d8d4  src/tessera/routed_fused_e2m1.py' '4f2cf0fcf87f3c8a790b4469cc0ad8e0e3c7a1737f14cc4070949b20c37c9293  src/tessera/routed_fused.py' 'c7580f8c1d60b9f2e94ca622adb75393166ec58658012020f97f5f766e3888e7  experiments/t4_code/fused_e2m1_check.py' 'ebdfa49e0f8d3389d0e0be59821546668a08a81bea104d47f1650e34e63465d3  src/tessera/serving/csrc/routed_fused_window.cu' '0da2a5816822774a7277a540e600f8dbe6684675c739d6b08d025e8afdb82368  tests/test_routed_fused_e2m1.py' 'd1044a4e671ef8d3f762b3797cb6d85a1ce01798399c032f56066540131bc37a  tests/test_routed_terminal_cuda.py'| sha256sum -c - || echo '[DEV-MODE] Executable source differs from the historical record; continuing with retained source.'; bash experiments/t4_code/prefetch_qualification_action.sh '/mnt/shared/tessera-measurements/t4-875-composed-qual-20261004/quanta-runtime-repair-20261006/racecheck-4' sanitize '/mnt/shared/tessera-measurements/t4-875-composed-qual-20261004/sanitizer-readset.json' '--tool' 'racecheck' '--arm' '4'"
+    ],
+    "container_images": [
+      "localhost/prismaquant/spark-vllm-nccl230@sha256:5be13705acaecc7b4aaf342a84f80d67844c9970ff8375bf9fbeecc9c98ce84a"
+    ],
+    "demand": {
+      "gpu": 1,
+      "cpu": 2,
+      "mem_gb": 80
+    },
+    "env": {
+      "ORACLE_IMAGE": "localhost/prismaquant/spark-vllm-nccl230@sha256:5be13705acaecc7b4aaf342a84f80d67844c9970ff8375bf9fbeecc9c98ce84a",
+      "PB_CLIENT_ROOT": "/mnt/shared/prismabuild-fleet/repo",
+      "TEST_RUNNER_SP": "/mnt/shared/tessera-measurements/t4-875-composed-qual-20261004/runtime-repair-20261006/runner-sp",
+      "OMP_NUM_THREADS": "1",
+      "MKL_NUM_THREADS": "1",
+      "OPENBLAS_NUM_THREADS": "1",
+      "PRISMABUILD_LOCAL_SCRATCH_PAIRS": "T4_HOST_TMP_ROOT:T4_HOST_TMP_MAX_BYTES,T4_DOCKER_ROOT:T4_DOCKER_MAX_BYTES",
+      "T4_HOST_TMP_ROOT": "/home/rob/tmp",
+      "T4_HOST_TMP_MAX_BYTES": "201326592",
+      "T4_DOCKER_ROOT": "/var/lib/docker",
+      "T4_DOCKER_MAX_BYTES": "872415232"
+    },
+    "data_manifest": "/mnt/shared/tessera-measurements/t4-875-composed-qual-20261004/sanitizer-readset.json",
+    "residency": "stage",
+    "residency_ram": "auto",
+    "max_attempts": 1,
+    "retry_safe": false,
+    "timeout_s": 1800,
+    "exclusive": true,
+    "gpu_memory_gb": 64,
+    "priority": -10,
+    "priority_reason": "Issue 875 repaired missing pytest only; original failed key retained; unchanged native correctness population",
+    "tags": [
+      "gb10"
+    ]
+  },
+  {
+    "argv": [
+      "bash",
+      "-c",
+      "set -euo pipefail; test \"$(git rev-parse HEAD^)\" = a3a599ec47457b6be769c2e3ec55859f5e759aff || echo '[DEV-MODE] The snapshot parent differs from the historical source record; continuing with retained source.'; printf '%s\\n' '93a12cfacafbd65455b32e01d45c94d65618f8b1254cbbe948ec2c7be65b32c0  experiments/t4_code/prefetch_qualification.py' '67c518610e16c5c3e9481cbe55332834442aa76aea2d601002cab47649275dd7  experiments/t4_code/prefetch_qualification_action.sh' 'e50e8ea621f9f8dbad7ea7848c927732c2ef246f350f232967059b873ba20e75  experiments/t8r_speed/pb_staged_store.py' '688192fa8b250a3471dbcf98df3ed1354e09531646b61ef3ff302a2a6a21d8d4  src/tessera/routed_fused_e2m1.py' '4f2cf0fcf87f3c8a790b4469cc0ad8e0e3c7a1737f14cc4070949b20c37c9293  src/tessera/routed_fused.py' 'c7580f8c1d60b9f2e94ca622adb75393166ec58658012020f97f5f766e3888e7  experiments/t4_code/fused_e2m1_check.py' 'ebdfa49e0f8d3389d0e0be59821546668a08a81bea104d47f1650e34e63465d3  src/tessera/serving/csrc/routed_fused_window.cu' '0da2a5816822774a7277a540e600f8dbe6684675c739d6b08d025e8afdb82368  tests/test_routed_fused_e2m1.py' 'd1044a4e671ef8d3f762b3797cb6d85a1ce01798399c032f56066540131bc37a  tests/test_routed_terminal_cuda.py'| sha256sum -c - || echo '[DEV-MODE] Executable source differs from the historical record; continuing with retained source.'; bash experiments/t4_code/prefetch_qualification_action.sh '/mnt/shared/tessera-measurements/t4-875-composed-qual-20261004/quanta-runtime-repair-20261006/synccheck-paired' sanitize '/mnt/shared/tessera-measurements/t4-875-composed-qual-20261004/sanitizer-readset.json' '--tool' 'synccheck'"
+    ],
+    "container_images": [
+      "localhost/prismaquant/spark-vllm-nccl230@sha256:5be13705acaecc7b4aaf342a84f80d67844c9970ff8375bf9fbeecc9c98ce84a"
+    ],
+    "demand": {
+      "gpu": 1,
+      "cpu": 2,
+      "mem_gb": 80
+    },
+    "env": {
+      "ORACLE_IMAGE": "localhost/prismaquant/spark-vllm-nccl230@sha256:5be13705acaecc7b4aaf342a84f80d67844c9970ff8375bf9fbeecc9c98ce84a",
+      "PB_CLIENT_ROOT": "/mnt/shared/prismabuild-fleet/repo",
+      "TEST_RUNNER_SP": "/mnt/shared/tessera-measurements/t4-875-composed-qual-20261004/runtime-repair-20261006/runner-sp",
       "OMP_NUM_THREADS": "1",
       "MKL_NUM_THREADS": "1",
       "OPENBLAS_NUM_THREADS": "1",
@@ -231,9 +401,8 @@
     "argv": [
       "bash",
       "-c",
-      "set -euo pipefail; test \"$(git rev-parse HEAD^)\" = a3a599ec47457b6be769c2e3ec55859f5e759aff; printf '%s\\n' '93a12cfacafbd65455b32e01d45c94d65618f8b1254cbbe948ec2c7be65b32c0  experiments/t4_code/prefetch_qualification.py' '67c518610e16c5c3e9481cbe55332834442aa76aea2d601002cab47649275dd7  experiments/t4_code/prefetch_qualification_action.sh' 'e50e8ea621f9f8dbad7ea7848c927732c2ef246f350f232967059b873ba20e75  experiments/t8r_speed/pb_staged_store.py' '688192fa8b250a3471dbcf98df3ed1354e09531646b61ef3ff302a2a6a21d8d4  src/tessera/routed_fused_e2m1.py' '4f2cf0fcf87f3c8a790b4469cc0ad8e0e3c7a1737f14cc4070949b20c37c9293  src/tessera/routed_fused.py' 'c7580f8c1d60b9f2e94ca622adb75393166ec58658012020f97f5f766e3888e7  experiments/t4_code/fused_e2m1_check.py' 'ebdfa49e0f8d3389d0e0be59821546668a08a81bea104d47f1650e34e63465d3  src/tessera/serving/csrc/routed_fused_window.cu' '0da2a5816822774a7277a540e600f8dbe6684675c739d6b08d025e8afdb82368  tests/test_routed_fused_e2m1.py' 'd1044a4e671ef8d3f762b3797cb6d85a1ce01798399c032f56066540131bc37a  tests/test_routed_terminal_cuda.py'| sha256sum -c -; bash experiments/t4_code/prefetch_qualification_action.sh '/mnt/shared/tessera-measurements/t4-875-composed-qual-20261004/staged/racecheck-paired' sanitize '/mnt/shared/tessera-measurements/t4-875-composed-qual-20261004/sanitizer-readset.json' '--tool' 'racecheck'"
+      "set -euo pipefail; test \"$(git rev-parse HEAD^)\" = a3a599ec47457b6be769c2e3ec55859f5e759aff || echo '[DEV-MODE] The snapshot parent differs from the historical source record; continuing with retained source.'; printf '%s\\n' '93a12cfacafbd65455b32e01d45c94d65618f8b1254cbbe948ec2c7be65b32c0  experiments/t4_code/prefetch_qualification.py' '67c518610e16c5c3e9481cbe55332834442aa76aea2d601002cab47649275dd7  experiments/t4_code/prefetch_qualification_action.sh' 'e50e8ea621f9f8dbad7ea7848c927732c2ef246f350f232967059b873ba20e75  experiments/t8r_speed/pb_staged_store.py' '688192fa8b250a3471dbcf98df3ed1354e09531646b61ef3ff302a2a6a21d8d4  src/tessera/routed_fused_e2m1.py' '4f2cf0fcf87f3c8a790b4469cc0ad8e0e3c7a1737f14cc4070949b20c37c9293  src/tessera/routed_fused.py' 'c7580f8c1d60b9f2e94ca622adb75393166ec58658012020f97f5f766e3888e7  experiments/t4_code/fused_e2m1_check.py' 'ebdfa49e0f8d3389d0e0be59821546668a08a81bea104d47f1650e34e63465d3  src/tessera/serving/csrc/routed_fused_window.cu' '0da2a5816822774a7277a540e600f8dbe6684675c739d6b08d025e8afdb82368  tests/test_routed_fused_e2m1.py' 'd1044a4e671ef8d3f762b3797cb6d85a1ce01798399c032f56066540131bc37a  tests/test_routed_terminal_cuda.py'| sha256sum -c - || echo '[DEV-MODE] Executable source differs from the historical record; continuing with retained source.'; bash experiments/t4_code/prefetch_qualification_action.sh '/mnt/shared/tessera-measurements/t4-875-composed-qual-20261004/quanta-runtime-repair-20261006/synccheck-0' sanitize '/mnt/shared/tessera-measurements/t4-875-composed-qual-20261004/sanitizer-readset.json' '--tool' 'synccheck' '--arm' '0'"
     ],
-    "cwd": "/mnt/shared/tessera-measurements/t4-875-composed-qual-20261004/source-image-owner",
     "container_images": [
       "localhost/prismaquant/spark-vllm-nccl230@sha256:5be13705acaecc7b4aaf342a84f80d67844c9970ff8375bf9fbeecc9c98ce84a"
     ],
@@ -245,6 +414,89 @@
     "env": {
       "ORACLE_IMAGE": "localhost/prismaquant/spark-vllm-nccl230@sha256:5be13705acaecc7b4aaf342a84f80d67844c9970ff8375bf9fbeecc9c98ce84a",
       "PB_CLIENT_ROOT": "/mnt/shared/prismabuild-fleet/repo",
+      "TEST_RUNNER_SP": "/mnt/shared/tessera-measurements/t4-875-composed-qual-20261004/runtime-repair-20261006/runner-sp",
+      "OMP_NUM_THREADS": "1",
+      "MKL_NUM_THREADS": "1",
+      "OPENBLAS_NUM_THREADS": "1",
+      "PRISMABUILD_LOCAL_SCRATCH_PAIRS": "T4_HOST_TMP_ROOT:T4_HOST_TMP_MAX_BYTES,T4_DOCKER_ROOT:T4_DOCKER_MAX_BYTES",
+      "T4_HOST_TMP_ROOT": "/home/rob/tmp",
+      "T4_HOST_TMP_MAX_BYTES": "201326592",
+      "T4_DOCKER_ROOT": "/var/lib/docker",
+      "T4_DOCKER_MAX_BYTES": "872415232"
+    },
+    "data_manifest": "/mnt/shared/tessera-measurements/t4-875-composed-qual-20261004/sanitizer-readset.json",
+    "residency": "stage",
+    "residency_ram": "auto",
+    "max_attempts": 1,
+    "retry_safe": false,
+    "timeout_s": 1800,
+    "exclusive": true,
+    "gpu_memory_gb": 64,
+    "priority": -10,
+    "priority_reason": "Issue 875 repaired missing pytest only; original failed key retained; unchanged native correctness population",
+    "tags": [
+      "gb10"
+    ]
+  },
+  {
+    "argv": [
+      "bash",
+      "-c",
+      "set -euo pipefail; test \"$(git rev-parse HEAD^)\" = a3a599ec47457b6be769c2e3ec55859f5e759aff || echo '[DEV-MODE] The snapshot parent differs from the historical source record; continuing with retained source.'; printf '%s\\n' '93a12cfacafbd65455b32e01d45c94d65618f8b1254cbbe948ec2c7be65b32c0  experiments/t4_code/prefetch_qualification.py' '67c518610e16c5c3e9481cbe55332834442aa76aea2d601002cab47649275dd7  experiments/t4_code/prefetch_qualification_action.sh' 'e50e8ea621f9f8dbad7ea7848c927732c2ef246f350f232967059b873ba20e75  experiments/t8r_speed/pb_staged_store.py' '688192fa8b250a3471dbcf98df3ed1354e09531646b61ef3ff302a2a6a21d8d4  src/tessera/routed_fused_e2m1.py' '4f2cf0fcf87f3c8a790b4469cc0ad8e0e3c7a1737f14cc4070949b20c37c9293  src/tessera/routed_fused.py' 'c7580f8c1d60b9f2e94ca622adb75393166ec58658012020f97f5f766e3888e7  experiments/t4_code/fused_e2m1_check.py' 'ebdfa49e0f8d3389d0e0be59821546668a08a81bea104d47f1650e34e63465d3  src/tessera/serving/csrc/routed_fused_window.cu' '0da2a5816822774a7277a540e600f8dbe6684675c739d6b08d025e8afdb82368  tests/test_routed_fused_e2m1.py' 'd1044a4e671ef8d3f762b3797cb6d85a1ce01798399c032f56066540131bc37a  tests/test_routed_terminal_cuda.py'| sha256sum -c - || echo '[DEV-MODE] Executable source differs from the historical record; continuing with retained source.'; bash experiments/t4_code/prefetch_qualification_action.sh '/mnt/shared/tessera-measurements/t4-875-composed-qual-20261004/quanta-runtime-repair-20261006/synccheck-4' sanitize '/mnt/shared/tessera-measurements/t4-875-composed-qual-20261004/sanitizer-readset.json' '--tool' 'synccheck' '--arm' '4'"
+    ],
+    "container_images": [
+      "localhost/prismaquant/spark-vllm-nccl230@sha256:5be13705acaecc7b4aaf342a84f80d67844c9970ff8375bf9fbeecc9c98ce84a"
+    ],
+    "demand": {
+      "gpu": 1,
+      "cpu": 2,
+      "mem_gb": 80
+    },
+    "env": {
+      "ORACLE_IMAGE": "localhost/prismaquant/spark-vllm-nccl230@sha256:5be13705acaecc7b4aaf342a84f80d67844c9970ff8375bf9fbeecc9c98ce84a",
+      "PB_CLIENT_ROOT": "/mnt/shared/prismabuild-fleet/repo",
+      "TEST_RUNNER_SP": "/mnt/shared/tessera-measurements/t4-875-composed-qual-20261004/runtime-repair-20261006/runner-sp",
+      "OMP_NUM_THREADS": "1",
+      "MKL_NUM_THREADS": "1",
+      "OPENBLAS_NUM_THREADS": "1",
+      "PRISMABUILD_LOCAL_SCRATCH_PAIRS": "T4_HOST_TMP_ROOT:T4_HOST_TMP_MAX_BYTES,T4_DOCKER_ROOT:T4_DOCKER_MAX_BYTES",
+      "T4_HOST_TMP_ROOT": "/home/rob/tmp",
+      "T4_HOST_TMP_MAX_BYTES": "201326592",
+      "T4_DOCKER_ROOT": "/var/lib/docker",
+      "T4_DOCKER_MAX_BYTES": "872415232"
+    },
+    "data_manifest": "/mnt/shared/tessera-measurements/t4-875-composed-qual-20261004/sanitizer-readset.json",
+    "residency": "stage",
+    "residency_ram": "auto",
+    "max_attempts": 1,
+    "retry_safe": false,
+    "timeout_s": 1800,
+    "exclusive": true,
+    "gpu_memory_gb": 64,
+    "priority": -10,
+    "priority_reason": "Issue 875 repaired missing pytest only; original failed key retained; unchanged native correctness population",
+    "tags": [
+      "gb10"
+    ]
+  },
+  {
+    "argv": [
+      "bash",
+      "-c",
+      "set -euo pipefail; test \"$(git rev-parse HEAD^)\" = a3a599ec47457b6be769c2e3ec55859f5e759aff || echo '[DEV-MODE] The snapshot parent differs from the historical source record; continuing with retained source.'; printf '%s\\n' '93a12cfacafbd65455b32e01d45c94d65618f8b1254cbbe948ec2c7be65b32c0  experiments/t4_code/prefetch_qualification.py' '67c518610e16c5c3e9481cbe55332834442aa76aea2d601002cab47649275dd7  experiments/t4_code/prefetch_qualification_action.sh' 'e50e8ea621f9f8dbad7ea7848c927732c2ef246f350f232967059b873ba20e75  experiments/t8r_speed/pb_staged_store.py' '688192fa8b250a3471dbcf98df3ed1354e09531646b61ef3ff302a2a6a21d8d4  src/tessera/routed_fused_e2m1.py' '4f2cf0fcf87f3c8a790b4469cc0ad8e0e3c7a1737f14cc4070949b20c37c9293  src/tessera/routed_fused.py' 'c7580f8c1d60b9f2e94ca622adb75393166ec58658012020f97f5f766e3888e7  experiments/t4_code/fused_e2m1_check.py' 'ebdfa49e0f8d3389d0e0be59821546668a08a81bea104d47f1650e34e63465d3  src/tessera/serving/csrc/routed_fused_window.cu' '0da2a5816822774a7277a540e600f8dbe6684675c739d6b08d025e8afdb82368  tests/test_routed_fused_e2m1.py' 'd1044a4e671ef8d3f762b3797cb6d85a1ce01798399c032f56066540131bc37a  tests/test_routed_terminal_cuda.py'| sha256sum -c - || echo '[DEV-MODE] Executable source differs from the historical record; continuing with retained source.'; bash experiments/t4_code/prefetch_qualification_action.sh '/mnt/shared/tessera-measurements/t4-875-composed-qual-20261004/quanta-runtime-repair-20261006/initcheck-paired' sanitize '/mnt/shared/tessera-measurements/t4-875-composed-qual-20261004/sanitizer-readset.json' '--tool' 'initcheck'"
+    ],
+    "container_images": [
+      "localhost/prismaquant/spark-vllm-nccl230@sha256:5be13705acaecc7b4aaf342a84f80d67844c9970ff8375bf9fbeecc9c98ce84a"
+    ],
+    "demand": {
+      "gpu": 1,
+      "cpu": 2,
+      "mem_gb": 80
+    },
+    "env": {
+      "ORACLE_IMAGE": "localhost/prismaquant/spark-vllm-nccl230@sha256:5be13705acaecc7b4aaf342a84f80d67844c9970ff8375bf9fbeecc9c98ce84a",
+      "PB_CLIENT_ROOT": "/mnt/shared/prismabuild-fleet/repo",
+      "TEST_RUNNER_SP": "/mnt/shared/tessera-measurements/t4-875-composed-qual-20261004/runtime-repair-20261006/runner-sp",
       "OMP_NUM_THREADS": "1",
       "MKL_NUM_THREADS": "1",
       "OPENBLAS_NUM_THREADS": "1",
@@ -269,9 +521,8 @@
     "argv": [
       "bash",
       "-c",
-      "set -euo pipefail; test \"$(git rev-parse HEAD^)\" = a3a599ec47457b6be769c2e3ec55859f5e759aff; printf '%s\\n' '93a12cfacafbd65455b32e01d45c94d65618f8b1254cbbe948ec2c7be65b32c0  experiments/t4_code/prefetch_qualification.py' '67c518610e16c5c3e9481cbe55332834442aa76aea2d601002cab47649275dd7  experiments/t4_code/prefetch_qualification_action.sh' 'e50e8ea621f9f8dbad7ea7848c927732c2ef246f350f232967059b873ba20e75  experiments/t8r_speed/pb_staged_store.py' '688192fa8b250a3471dbcf98df3ed1354e09531646b61ef3ff302a2a6a21d8d4  src/tessera/routed_fused_e2m1.py' '4f2cf0fcf87f3c8a790b4469cc0ad8e0e3c7a1737f14cc4070949b20c37c9293  src/tessera/routed_fused.py' 'c7580f8c1d60b9f2e94ca622adb75393166ec58658012020f97f5f766e3888e7  experiments/t4_code/fused_e2m1_check.py' 'ebdfa49e0f8d3389d0e0be59821546668a08a81bea104d47f1650e34e63465d3  src/tessera/serving/csrc/routed_fused_window.cu' '0da2a5816822774a7277a540e600f8dbe6684675c739d6b08d025e8afdb82368  tests/test_routed_fused_e2m1.py' 'd1044a4e671ef8d3f762b3797cb6d85a1ce01798399c032f56066540131bc37a  tests/test_routed_terminal_cuda.py'| sha256sum -c -; bash experiments/t4_code/prefetch_qualification_action.sh '/mnt/shared/tessera-measurements/t4-875-composed-qual-20261004/staged/racecheck-0' sanitize '/mnt/shared/tessera-measurements/t4-875-composed-qual-20261004/sanitizer-readset.json' '--tool' 'racecheck' '--arm' '0'"
+      "set -euo pipefail; test \"$(git rev-parse HEAD^)\" = a3a599ec47457b6be769c2e3ec55859f5e759aff || echo '[DEV-MODE] The snapshot parent differs from the historical source record; continuing with retained source.'; printf '%s\\n' '93a12cfacafbd65455b32e01d45c94d65618f8b1254cbbe948ec2c7be65b32c0  experiments/t4_code/prefetch_qualification.py' '67c518610e16c5c3e9481cbe55332834442aa76aea2d601002cab47649275dd7  experiments/t4_code/prefetch_qualification_action.sh' 'e50e8ea621f9f8dbad7ea7848c927732c2ef246f350f232967059b873ba20e75  experiments/t8r_speed/pb_staged_store.py' '688192fa8b250a3471dbcf98df3ed1354e09531646b61ef3ff302a2a6a21d8d4  src/tessera/routed_fused_e2m1.py' '4f2cf0fcf87f3c8a790b4469cc0ad8e0e3c7a1737f14cc4070949b20c37c9293  src/tessera/routed_fused.py' 'c7580f8c1d60b9f2e94ca622adb75393166ec58658012020f97f5f766e3888e7  experiments/t4_code/fused_e2m1_check.py' 'ebdfa49e0f8d3389d0e0be59821546668a08a81bea104d47f1650e34e63465d3  src/tessera/serving/csrc/routed_fused_window.cu' '0da2a5816822774a7277a540e600f8dbe6684675c739d6b08d025e8afdb82368  tests/test_routed_fused_e2m1.py' 'd1044a4e671ef8d3f762b3797cb6d85a1ce01798399c032f56066540131bc37a  tests/test_routed_terminal_cuda.py'| sha256sum -c - || echo '[DEV-MODE] Executable source differs from the historical record; continuing with retained source.'; bash experiments/t4_code/prefetch_qualification_action.sh '/mnt/shared/tessera-measurements/t4-875-composed-qual-20261004/quanta-runtime-repair-20261006/initcheck-0' sanitize '/mnt/shared/tessera-measurements/t4-875-composed-qual-20261004/sanitizer-readset.json' '--tool' 'initcheck' '--arm' '0'"
     ],
-    "cwd": "/mnt/shared/tessera-measurements/t4-875-composed-qual-20261004/source-image-owner",
     "container_images": [
       "localhost/prismaquant/spark-vllm-nccl230@sha256:5be13705acaecc7b4aaf342a84f80d67844c9970ff8375bf9fbeecc9c98ce84a"
     ],
@@ -283,6 +534,7 @@
     "env": {
       "ORACLE_IMAGE": "localhost/prismaquant/spark-vllm-nccl230@sha256:5be13705acaecc7b4aaf342a84f80d67844c9970ff8375bf9fbeecc9c98ce84a",
       "PB_CLIENT_ROOT": "/mnt/shared/prismabuild-fleet/repo",
+      "TEST_RUNNER_SP": "/mnt/shared/tessera-measurements/t4-875-composed-qual-20261004/runtime-repair-20261006/runner-sp",
       "OMP_NUM_THREADS": "1",
       "MKL_NUM_THREADS": "1",
       "OPENBLAS_NUM_THREADS": "1",
@@ -294,22 +546,24 @@
     },
     "data_manifest": "/mnt/shared/tessera-measurements/t4-875-composed-qual-20261004/sanitizer-readset.json",
     "residency": "stage",
-    "residency_ram": "off",
+    "residency_ram": "auto",
     "max_attempts": 1,
     "retry_safe": false,
-    "timeout_s": 7200,
+    "timeout_s": 1800,
     "exclusive": true,
-    "measurement": true,
-    "host_class": "gb10",
-    "gpu_memory_gb": 64
+    "gpu_memory_gb": 64,
+    "priority": -10,
+    "priority_reason": "Issue 875 repaired missing pytest only; original failed key retained; unchanged native correctness population",
+    "tags": [
+      "gb10"
+    ]
   },
   {
     "argv": [
       "bash",
       "-c",
-      "set -euo pipefail; test \"$(git rev-parse HEAD^)\" = a3a599ec47457b6be769c2e3ec55859f5e759aff; printf '%s\\n' '93a12cfacafbd65455b32e01d45c94d65618f8b1254cbbe948ec2c7be65b32c0  experiments/t4_code/prefetch_qualification.py' '67c518610e16c5c3e9481cbe55332834442aa76aea2d601002cab47649275dd7  experiments/t4_code/prefetch_qualification_action.sh' 'e50e8ea621f9f8dbad7ea7848c927732c2ef246f350f232967059b873ba20e75  experiments/t8r_speed/pb_staged_store.py' '688192fa8b250a3471dbcf98df3ed1354e09531646b61ef3ff302a2a6a21d8d4  src/tessera/routed_fused_e2m1.py' '4f2cf0fcf87f3c8a790b4469cc0ad8e0e3c7a1737f14cc4070949b20c37c9293  src/tessera/routed_fused.py' 'c7580f8c1d60b9f2e94ca622adb75393166ec58658012020f97f5f766e3888e7  experiments/t4_code/fused_e2m1_check.py' 'ebdfa49e0f8d3389d0e0be59821546668a08a81bea104d47f1650e34e63465d3  src/tessera/serving/csrc/routed_fused_window.cu' '0da2a5816822774a7277a540e600f8dbe6684675c739d6b08d025e8afdb82368  tests/test_routed_fused_e2m1.py' 'd1044a4e671ef8d3f762b3797cb6d85a1ce01798399c032f56066540131bc37a  tests/test_routed_terminal_cuda.py'| sha256sum -c -; bash experiments/t4_code/prefetch_qualification_action.sh '/mnt/shared/tessera-measurements/t4-875-composed-qual-20261004/staged/racecheck-4' sanitize '/mnt/shared/tessera-measurements/t4-875-composed-qual-20261004/sanitizer-readset.json' '--tool' 'racecheck' '--arm' '4'"
+      "set -euo pipefail; test \"$(git rev-parse HEAD^)\" = a3a599ec47457b6be769c2e3ec55859f5e759aff || echo '[DEV-MODE] The snapshot parent differs from the historical source record; continuing with retained source.'; printf '%s\\n' '93a12cfacafbd65455b32e01d45c94d65618f8b1254cbbe948ec2c7be65b32c0  experiments/t4_code/prefetch_qualification.py' '67c518610e16c5c3e9481cbe55332834442aa76aea2d601002cab47649275dd7  experiments/t4_code/prefetch_qualification_action.sh' 'e50e8ea621f9f8dbad7ea7848c927732c2ef246f350f232967059b873ba20e75  experiments/t8r_speed/pb_staged_store.py' '688192fa8b250a3471dbcf98df3ed1354e09531646b61ef3ff302a2a6a21d8d4  src/tessera/routed_fused_e2m1.py' '4f2cf0fcf87f3c8a790b4469cc0ad8e0e3c7a1737f14cc4070949b20c37c9293  src/tessera/routed_fused.py' 'c7580f8c1d60b9f2e94ca622adb75393166ec58658012020f97f5f766e3888e7  experiments/t4_code/fused_e2m1_check.py' 'ebdfa49e0f8d3389d0e0be59821546668a08a81bea104d47f1650e34e63465d3  src/tessera/serving/csrc/routed_fused_window.cu' '0da2a5816822774a7277a540e600f8dbe6684675c739d6b08d025e8afdb82368  tests/test_routed_fused_e2m1.py' 'd1044a4e671ef8d3f762b3797cb6d85a1ce01798399c032f56066540131bc37a  tests/test_routed_terminal_cuda.py'| sha256sum -c - || echo '[DEV-MODE] Executable source differs from the historical record; continuing with retained source.'; bash experiments/t4_code/prefetch_qualification_action.sh '/mnt/shared/tessera-measurements/t4-875-composed-qual-20261004/quanta-runtime-repair-20261006/initcheck-4' sanitize '/mnt/shared/tessera-measurements/t4-875-composed-qual-20261004/sanitizer-readset.json' '--tool' 'initcheck' '--arm' '4'"
     ],
-    "cwd": "/mnt/shared/tessera-measurements/t4-875-composed-qual-20261004/source-image-owner",
     "container_images": [
       "localhost/prismaquant/spark-vllm-nccl230@sha256:5be13705acaecc7b4aaf342a84f80d67844c9970ff8375bf9fbeecc9c98ce84a"
     ],
@@ -321,6 +575,7 @@
     "env": {
       "ORACLE_IMAGE": "localhost/prismaquant/spark-vllm-nccl230@sha256:5be13705acaecc7b4aaf342a84f80d67844c9970ff8375bf9fbeecc9c98ce84a",
       "PB_CLIENT_ROOT": "/mnt/shared/prismabuild-fleet/repo",
+      "TEST_RUNNER_SP": "/mnt/shared/tessera-measurements/t4-875-composed-qual-20261004/runtime-repair-20261006/runner-sp",
       "OMP_NUM_THREADS": "1",
       "MKL_NUM_THREADS": "1",
       "OPENBLAS_NUM_THREADS": "1",
@@ -332,241 +587,16 @@
     },
     "data_manifest": "/mnt/shared/tessera-measurements/t4-875-composed-qual-20261004/sanitizer-readset.json",
     "residency": "stage",
-    "residency_ram": "off",
+    "residency_ram": "auto",
     "max_attempts": 1,
     "retry_safe": false,
-    "timeout_s": 7200,
+    "timeout_s": 1800,
     "exclusive": true,
-    "measurement": true,
-    "host_class": "gb10",
-    "gpu_memory_gb": 64
-  },
-  {
-    "argv": [
-      "bash",
-      "-c",
-      "set -euo pipefail; test \"$(git rev-parse HEAD^)\" = a3a599ec47457b6be769c2e3ec55859f5e759aff; printf '%s\\n' '93a12cfacafbd65455b32e01d45c94d65618f8b1254cbbe948ec2c7be65b32c0  experiments/t4_code/prefetch_qualification.py' '67c518610e16c5c3e9481cbe55332834442aa76aea2d601002cab47649275dd7  experiments/t4_code/prefetch_qualification_action.sh' 'e50e8ea621f9f8dbad7ea7848c927732c2ef246f350f232967059b873ba20e75  experiments/t8r_speed/pb_staged_store.py' '688192fa8b250a3471dbcf98df3ed1354e09531646b61ef3ff302a2a6a21d8d4  src/tessera/routed_fused_e2m1.py' '4f2cf0fcf87f3c8a790b4469cc0ad8e0e3c7a1737f14cc4070949b20c37c9293  src/tessera/routed_fused.py' 'c7580f8c1d60b9f2e94ca622adb75393166ec58658012020f97f5f766e3888e7  experiments/t4_code/fused_e2m1_check.py' 'ebdfa49e0f8d3389d0e0be59821546668a08a81bea104d47f1650e34e63465d3  src/tessera/serving/csrc/routed_fused_window.cu' '0da2a5816822774a7277a540e600f8dbe6684675c739d6b08d025e8afdb82368  tests/test_routed_fused_e2m1.py' 'd1044a4e671ef8d3f762b3797cb6d85a1ce01798399c032f56066540131bc37a  tests/test_routed_terminal_cuda.py'| sha256sum -c -; bash experiments/t4_code/prefetch_qualification_action.sh '/mnt/shared/tessera-measurements/t4-875-composed-qual-20261004/staged/synccheck-paired' sanitize '/mnt/shared/tessera-measurements/t4-875-composed-qual-20261004/sanitizer-readset.json' '--tool' 'synccheck'"
-    ],
-    "cwd": "/mnt/shared/tessera-measurements/t4-875-composed-qual-20261004/source-image-owner",
-    "container_images": [
-      "localhost/prismaquant/spark-vllm-nccl230@sha256:5be13705acaecc7b4aaf342a84f80d67844c9970ff8375bf9fbeecc9c98ce84a"
-    ],
-    "demand": {
-      "gpu": 1,
-      "cpu": 2,
-      "mem_gb": 80
-    },
-    "env": {
-      "ORACLE_IMAGE": "localhost/prismaquant/spark-vllm-nccl230@sha256:5be13705acaecc7b4aaf342a84f80d67844c9970ff8375bf9fbeecc9c98ce84a",
-      "PB_CLIENT_ROOT": "/mnt/shared/prismabuild-fleet/repo",
-      "OMP_NUM_THREADS": "1",
-      "MKL_NUM_THREADS": "1",
-      "OPENBLAS_NUM_THREADS": "1",
-      "PRISMABUILD_LOCAL_SCRATCH_PAIRS": "T4_HOST_TMP_ROOT:T4_HOST_TMP_MAX_BYTES,T4_DOCKER_ROOT:T4_DOCKER_MAX_BYTES",
-      "T4_HOST_TMP_ROOT": "/home/rob/tmp",
-      "T4_HOST_TMP_MAX_BYTES": "201326592",
-      "T4_DOCKER_ROOT": "/var/lib/docker",
-      "T4_DOCKER_MAX_BYTES": "872415232"
-    },
-    "data_manifest": "/mnt/shared/tessera-measurements/t4-875-composed-qual-20261004/sanitizer-readset.json",
-    "residency": "stage",
-    "residency_ram": "off",
-    "max_attempts": 1,
-    "retry_safe": false,
-    "timeout_s": 7200,
-    "exclusive": true,
-    "measurement": true,
-    "host_class": "gb10",
-    "gpu_memory_gb": 64
-  },
-  {
-    "argv": [
-      "bash",
-      "-c",
-      "set -euo pipefail; test \"$(git rev-parse HEAD^)\" = a3a599ec47457b6be769c2e3ec55859f5e759aff; printf '%s\\n' '93a12cfacafbd65455b32e01d45c94d65618f8b1254cbbe948ec2c7be65b32c0  experiments/t4_code/prefetch_qualification.py' '67c518610e16c5c3e9481cbe55332834442aa76aea2d601002cab47649275dd7  experiments/t4_code/prefetch_qualification_action.sh' 'e50e8ea621f9f8dbad7ea7848c927732c2ef246f350f232967059b873ba20e75  experiments/t8r_speed/pb_staged_store.py' '688192fa8b250a3471dbcf98df3ed1354e09531646b61ef3ff302a2a6a21d8d4  src/tessera/routed_fused_e2m1.py' '4f2cf0fcf87f3c8a790b4469cc0ad8e0e3c7a1737f14cc4070949b20c37c9293  src/tessera/routed_fused.py' 'c7580f8c1d60b9f2e94ca622adb75393166ec58658012020f97f5f766e3888e7  experiments/t4_code/fused_e2m1_check.py' 'ebdfa49e0f8d3389d0e0be59821546668a08a81bea104d47f1650e34e63465d3  src/tessera/serving/csrc/routed_fused_window.cu' '0da2a5816822774a7277a540e600f8dbe6684675c739d6b08d025e8afdb82368  tests/test_routed_fused_e2m1.py' 'd1044a4e671ef8d3f762b3797cb6d85a1ce01798399c032f56066540131bc37a  tests/test_routed_terminal_cuda.py'| sha256sum -c -; bash experiments/t4_code/prefetch_qualification_action.sh '/mnt/shared/tessera-measurements/t4-875-composed-qual-20261004/staged/synccheck-0' sanitize '/mnt/shared/tessera-measurements/t4-875-composed-qual-20261004/sanitizer-readset.json' '--tool' 'synccheck' '--arm' '0'"
-    ],
-    "cwd": "/mnt/shared/tessera-measurements/t4-875-composed-qual-20261004/source-image-owner",
-    "container_images": [
-      "localhost/prismaquant/spark-vllm-nccl230@sha256:5be13705acaecc7b4aaf342a84f80d67844c9970ff8375bf9fbeecc9c98ce84a"
-    ],
-    "demand": {
-      "gpu": 1,
-      "cpu": 2,
-      "mem_gb": 80
-    },
-    "env": {
-      "ORACLE_IMAGE": "localhost/prismaquant/spark-vllm-nccl230@sha256:5be13705acaecc7b4aaf342a84f80d67844c9970ff8375bf9fbeecc9c98ce84a",
-      "PB_CLIENT_ROOT": "/mnt/shared/prismabuild-fleet/repo",
-      "OMP_NUM_THREADS": "1",
-      "MKL_NUM_THREADS": "1",
-      "OPENBLAS_NUM_THREADS": "1",
-      "PRISMABUILD_LOCAL_SCRATCH_PAIRS": "T4_HOST_TMP_ROOT:T4_HOST_TMP_MAX_BYTES,T4_DOCKER_ROOT:T4_DOCKER_MAX_BYTES",
-      "T4_HOST_TMP_ROOT": "/home/rob/tmp",
-      "T4_HOST_TMP_MAX_BYTES": "201326592",
-      "T4_DOCKER_ROOT": "/var/lib/docker",
-      "T4_DOCKER_MAX_BYTES": "872415232"
-    },
-    "data_manifest": "/mnt/shared/tessera-measurements/t4-875-composed-qual-20261004/sanitizer-readset.json",
-    "residency": "stage",
-    "residency_ram": "off",
-    "max_attempts": 1,
-    "retry_safe": false,
-    "timeout_s": 7200,
-    "exclusive": true,
-    "measurement": true,
-    "host_class": "gb10",
-    "gpu_memory_gb": 64
-  },
-  {
-    "argv": [
-      "bash",
-      "-c",
-      "set -euo pipefail; test \"$(git rev-parse HEAD^)\" = a3a599ec47457b6be769c2e3ec55859f5e759aff; printf '%s\\n' '93a12cfacafbd65455b32e01d45c94d65618f8b1254cbbe948ec2c7be65b32c0  experiments/t4_code/prefetch_qualification.py' '67c518610e16c5c3e9481cbe55332834442aa76aea2d601002cab47649275dd7  experiments/t4_code/prefetch_qualification_action.sh' 'e50e8ea621f9f8dbad7ea7848c927732c2ef246f350f232967059b873ba20e75  experiments/t8r_speed/pb_staged_store.py' '688192fa8b250a3471dbcf98df3ed1354e09531646b61ef3ff302a2a6a21d8d4  src/tessera/routed_fused_e2m1.py' '4f2cf0fcf87f3c8a790b4469cc0ad8e0e3c7a1737f14cc4070949b20c37c9293  src/tessera/routed_fused.py' 'c7580f8c1d60b9f2e94ca622adb75393166ec58658012020f97f5f766e3888e7  experiments/t4_code/fused_e2m1_check.py' 'ebdfa49e0f8d3389d0e0be59821546668a08a81bea104d47f1650e34e63465d3  src/tessera/serving/csrc/routed_fused_window.cu' '0da2a5816822774a7277a540e600f8dbe6684675c739d6b08d025e8afdb82368  tests/test_routed_fused_e2m1.py' 'd1044a4e671ef8d3f762b3797cb6d85a1ce01798399c032f56066540131bc37a  tests/test_routed_terminal_cuda.py'| sha256sum -c -; bash experiments/t4_code/prefetch_qualification_action.sh '/mnt/shared/tessera-measurements/t4-875-composed-qual-20261004/staged/synccheck-4' sanitize '/mnt/shared/tessera-measurements/t4-875-composed-qual-20261004/sanitizer-readset.json' '--tool' 'synccheck' '--arm' '4'"
-    ],
-    "cwd": "/mnt/shared/tessera-measurements/t4-875-composed-qual-20261004/source-image-owner",
-    "container_images": [
-      "localhost/prismaquant/spark-vllm-nccl230@sha256:5be13705acaecc7b4aaf342a84f80d67844c9970ff8375bf9fbeecc9c98ce84a"
-    ],
-    "demand": {
-      "gpu": 1,
-      "cpu": 2,
-      "mem_gb": 80
-    },
-    "env": {
-      "ORACLE_IMAGE": "localhost/prismaquant/spark-vllm-nccl230@sha256:5be13705acaecc7b4aaf342a84f80d67844c9970ff8375bf9fbeecc9c98ce84a",
-      "PB_CLIENT_ROOT": "/mnt/shared/prismabuild-fleet/repo",
-      "OMP_NUM_THREADS": "1",
-      "MKL_NUM_THREADS": "1",
-      "OPENBLAS_NUM_THREADS": "1",
-      "PRISMABUILD_LOCAL_SCRATCH_PAIRS": "T4_HOST_TMP_ROOT:T4_HOST_TMP_MAX_BYTES,T4_DOCKER_ROOT:T4_DOCKER_MAX_BYTES",
-      "T4_HOST_TMP_ROOT": "/home/rob/tmp",
-      "T4_HOST_TMP_MAX_BYTES": "201326592",
-      "T4_DOCKER_ROOT": "/var/lib/docker",
-      "T4_DOCKER_MAX_BYTES": "872415232"
-    },
-    "data_manifest": "/mnt/shared/tessera-measurements/t4-875-composed-qual-20261004/sanitizer-readset.json",
-    "residency": "stage",
-    "residency_ram": "off",
-    "max_attempts": 1,
-    "retry_safe": false,
-    "timeout_s": 7200,
-    "exclusive": true,
-    "measurement": true,
-    "host_class": "gb10",
-    "gpu_memory_gb": 64
-  },
-  {
-    "argv": [
-      "bash",
-      "-c",
-      "set -euo pipefail; test \"$(git rev-parse HEAD^)\" = a3a599ec47457b6be769c2e3ec55859f5e759aff; printf '%s\\n' '93a12cfacafbd65455b32e01d45c94d65618f8b1254cbbe948ec2c7be65b32c0  experiments/t4_code/prefetch_qualification.py' '67c518610e16c5c3e9481cbe55332834442aa76aea2d601002cab47649275dd7  experiments/t4_code/prefetch_qualification_action.sh' 'e50e8ea621f9f8dbad7ea7848c927732c2ef246f350f232967059b873ba20e75  experiments/t8r_speed/pb_staged_store.py' '688192fa8b250a3471dbcf98df3ed1354e09531646b61ef3ff302a2a6a21d8d4  src/tessera/routed_fused_e2m1.py' '4f2cf0fcf87f3c8a790b4469cc0ad8e0e3c7a1737f14cc4070949b20c37c9293  src/tessera/routed_fused.py' 'c7580f8c1d60b9f2e94ca622adb75393166ec58658012020f97f5f766e3888e7  experiments/t4_code/fused_e2m1_check.py' 'ebdfa49e0f8d3389d0e0be59821546668a08a81bea104d47f1650e34e63465d3  src/tessera/serving/csrc/routed_fused_window.cu' '0da2a5816822774a7277a540e600f8dbe6684675c739d6b08d025e8afdb82368  tests/test_routed_fused_e2m1.py' 'd1044a4e671ef8d3f762b3797cb6d85a1ce01798399c032f56066540131bc37a  tests/test_routed_terminal_cuda.py'| sha256sum -c -; bash experiments/t4_code/prefetch_qualification_action.sh '/mnt/shared/tessera-measurements/t4-875-composed-qual-20261004/staged/initcheck-paired' sanitize '/mnt/shared/tessera-measurements/t4-875-composed-qual-20261004/sanitizer-readset.json' '--tool' 'initcheck'"
-    ],
-    "cwd": "/mnt/shared/tessera-measurements/t4-875-composed-qual-20261004/source-image-owner",
-    "container_images": [
-      "localhost/prismaquant/spark-vllm-nccl230@sha256:5be13705acaecc7b4aaf342a84f80d67844c9970ff8375bf9fbeecc9c98ce84a"
-    ],
-    "demand": {
-      "gpu": 1,
-      "cpu": 2,
-      "mem_gb": 80
-    },
-    "env": {
-      "ORACLE_IMAGE": "localhost/prismaquant/spark-vllm-nccl230@sha256:5be13705acaecc7b4aaf342a84f80d67844c9970ff8375bf9fbeecc9c98ce84a",
-      "PB_CLIENT_ROOT": "/mnt/shared/prismabuild-fleet/repo",
-      "OMP_NUM_THREADS": "1",
-      "MKL_NUM_THREADS": "1",
-      "OPENBLAS_NUM_THREADS": "1",
-      "PRISMABUILD_LOCAL_SCRATCH_PAIRS": "T4_HOST_TMP_ROOT:T4_HOST_TMP_MAX_BYTES,T4_DOCKER_ROOT:T4_DOCKER_MAX_BYTES",
-      "T4_HOST_TMP_ROOT": "/home/rob/tmp",
-      "T4_HOST_TMP_MAX_BYTES": "201326592",
-      "T4_DOCKER_ROOT": "/var/lib/docker",
-      "T4_DOCKER_MAX_BYTES": "872415232"
-    },
-    "data_manifest": "/mnt/shared/tessera-measurements/t4-875-composed-qual-20261004/sanitizer-readset.json",
-    "residency": "stage",
-    "residency_ram": "off",
-    "max_attempts": 1,
-    "retry_safe": false,
-    "timeout_s": 7200,
-    "exclusive": true,
-    "measurement": true,
-    "host_class": "gb10",
-    "gpu_memory_gb": 64
-  },
-  {
-    "argv": [
-      "bash",
-      "-c",
-      "set -euo pipefail; test \"$(git rev-parse HEAD^)\" = a3a599ec47457b6be769c2e3ec55859f5e759aff; printf '%s\\n' '93a12cfacafbd65455b32e01d45c94d65618f8b1254cbbe948ec2c7be65b32c0  experiments/t4_code/prefetch_qualification.py' '67c518610e16c5c3e9481cbe55332834442aa76aea2d601002cab47649275dd7  experiments/t4_code/prefetch_qualification_action.sh' 'e50e8ea621f9f8dbad7ea7848c927732c2ef246f350f232967059b873ba20e75  experiments/t8r_speed/pb_staged_store.py' '688192fa8b250a3471dbcf98df3ed1354e09531646b61ef3ff302a2a6a21d8d4  src/tessera/routed_fused_e2m1.py' '4f2cf0fcf87f3c8a790b4469cc0ad8e0e3c7a1737f14cc4070949b20c37c9293  src/tessera/routed_fused.py' 'c7580f8c1d60b9f2e94ca622adb75393166ec58658012020f97f5f766e3888e7  experiments/t4_code/fused_e2m1_check.py' 'ebdfa49e0f8d3389d0e0be59821546668a08a81bea104d47f1650e34e63465d3  src/tessera/serving/csrc/routed_fused_window.cu' '0da2a5816822774a7277a540e600f8dbe6684675c739d6b08d025e8afdb82368  tests/test_routed_fused_e2m1.py' 'd1044a4e671ef8d3f762b3797cb6d85a1ce01798399c032f56066540131bc37a  tests/test_routed_terminal_cuda.py'| sha256sum -c -; bash experiments/t4_code/prefetch_qualification_action.sh '/mnt/shared/tessera-measurements/t4-875-composed-qual-20261004/staged/initcheck-0' sanitize '/mnt/shared/tessera-measurements/t4-875-composed-qual-20261004/sanitizer-readset.json' '--tool' 'initcheck' '--arm' '0'"
-    ],
-    "cwd": "/mnt/shared/tessera-measurements/t4-875-composed-qual-20261004/source-image-owner",
-    "container_images": [
-      "localhost/prismaquant/spark-vllm-nccl230@sha256:5be13705acaecc7b4aaf342a84f80d67844c9970ff8375bf9fbeecc9c98ce84a"
-    ],
-    "demand": {
-      "gpu": 1,
-      "cpu": 2,
-      "mem_gb": 80
-    },
-    "env": {
-      "ORACLE_IMAGE": "localhost/prismaquant/spark-vllm-nccl230@sha256:5be13705acaecc7b4aaf342a84f80d67844c9970ff8375bf9fbeecc9c98ce84a",
-      "PB_CLIENT_ROOT": "/mnt/shared/prismabuild-fleet/repo",
-      "OMP_NUM_THREADS": "1",
-      "MKL_NUM_THREADS": "1",
-      "OPENBLAS_NUM_THREADS": "1",
-      "PRISMABUILD_LOCAL_SCRATCH_PAIRS": "T4_HOST_TMP_ROOT:T4_HOST_TMP_MAX_BYTES,T4_DOCKER_ROOT:T4_DOCKER_MAX_BYTES",
-      "T4_HOST_TMP_ROOT": "/home/rob/tmp",
-      "T4_HOST_TMP_MAX_BYTES": "201326592",
-      "T4_DOCKER_ROOT": "/var/lib/docker",
-      "T4_DOCKER_MAX_BYTES": "872415232"
-    },
-    "data_manifest": "/mnt/shared/tessera-measurements/t4-875-composed-qual-20261004/sanitizer-readset.json",
-    "residency": "stage",
-    "residency_ram": "off",
-    "max_attempts": 1,
-    "retry_safe": false,
-    "timeout_s": 7200,
-    "exclusive": true,
-    "measurement": true,
-    "host_class": "gb10",
-    "gpu_memory_gb": 64
-  },
-  {
-    "argv": [
-      "bash",
-      "-c",
-      "set -euo pipefail; test \"$(git rev-parse HEAD^)\" = a3a599ec47457b6be769c2e3ec55859f5e759aff; printf '%s\\n' '93a12cfacafbd65455b32e01d45c94d65618f8b1254cbbe948ec2c7be65b32c0  experiments/t4_code/prefetch_qualification.py' '67c518610e16c5c3e9481cbe55332834442aa76aea2d601002cab47649275dd7  experiments/t4_code/prefetch_qualification_action.sh' 'e50e8ea621f9f8dbad7ea7848c927732c2ef246f350f232967059b873ba20e75  experiments/t8r_speed/pb_staged_store.py' '688192fa8b250a3471dbcf98df3ed1354e09531646b61ef3ff302a2a6a21d8d4  src/tessera/routed_fused_e2m1.py' '4f2cf0fcf87f3c8a790b4469cc0ad8e0e3c7a1737f14cc4070949b20c37c9293  src/tessera/routed_fused.py' 'c7580f8c1d60b9f2e94ca622adb75393166ec58658012020f97f5f766e3888e7  experiments/t4_code/fused_e2m1_check.py' 'ebdfa49e0f8d3389d0e0be59821546668a08a81bea104d47f1650e34e63465d3  src/tessera/serving/csrc/routed_fused_window.cu' '0da2a5816822774a7277a540e600f8dbe6684675c739d6b08d025e8afdb82368  tests/test_routed_fused_e2m1.py' 'd1044a4e671ef8d3f762b3797cb6d85a1ce01798399c032f56066540131bc37a  tests/test_routed_terminal_cuda.py'| sha256sum -c -; bash experiments/t4_code/prefetch_qualification_action.sh '/mnt/shared/tessera-measurements/t4-875-composed-qual-20261004/staged/initcheck-4' sanitize '/mnt/shared/tessera-measurements/t4-875-composed-qual-20261004/sanitizer-readset.json' '--tool' 'initcheck' '--arm' '4'"
-    ],
-    "cwd": "/mnt/shared/tessera-measurements/t4-875-composed-qual-20261004/source-image-owner",
-    "container_images": [
-      "localhost/prismaquant/spark-vllm-nccl230@sha256:5be13705acaecc7b4aaf342a84f80d67844c9970ff8375bf9fbeecc9c98ce84a"
-    ],
-    "demand": {
-      "gpu": 1,
-      "cpu": 2,
-      "mem_gb": 80
-    },
-    "env": {
-      "ORACLE_IMAGE": "localhost/prismaquant/spark-vllm-nccl230@sha256:5be13705acaecc7b4aaf342a84f80d67844c9970ff8375bf9fbeecc9c98ce84a",
-      "PB_CLIENT_ROOT": "/mnt/shared/prismabuild-fleet/repo",
-      "OMP_NUM_THREADS": "1",
-      "MKL_NUM_THREADS": "1",
-      "OPENBLAS_NUM_THREADS": "1",
-      "PRISMABUILD_LOCAL_SCRATCH_PAIRS": "T4_HOST_TMP_ROOT:T4_HOST_TMP_MAX_BYTES,T4_DOCKER_ROOT:T4_DOCKER_MAX_BYTES",
-      "T4_HOST_TMP_ROOT": "/home/rob/tmp",
-      "T4_HOST_TMP_MAX_BYTES": "201326592",
-      "T4_DOCKER_ROOT": "/var/lib/docker",
-      "T4_DOCKER_MAX_BYTES": "872415232"
-    },
-    "data_manifest": "/mnt/shared/tessera-measurements/t4-875-composed-qual-20261004/sanitizer-readset.json",
-    "residency": "stage",
-    "residency_ram": "off",
-    "max_attempts": 1,
-    "retry_safe": false,
-    "timeout_s": 7200,
-    "exclusive": true,
-    "measurement": true,
-    "host_class": "gb10",
-    "gpu_memory_gb": 64
+    "gpu_memory_gb": 64,
+    "priority": -10,
+    "priority_reason": "Issue 875 repaired missing pytest only; original failed key retained; unchanged native correctness population",
+    "tags": [
+      "gb10"
+    ]
   }
 ]

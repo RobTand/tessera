@@ -64,14 +64,13 @@ def _panel_fixture():
               "q256": 1792, "rows": 128, "columns": 256, "wire_bytes": 4096,
               "roles": [["weight", 128]], "role_q256": [1792]}
     # The launch the BF16 dense route makes: the packed native window GEMM on
-    # the folded arithmetic (tessera#614).  It was ``torch.mm``/``torch_window``
+    # raw values with the FP32 row-scale epilogue. It was ``torch.mm``/``torch_window``
     # until ``scheme.ROUTE_LAUNCHES`` stopped carrying the retired window-GEMV
-    # lane's rows (tessera#538), then ``native_window_gemm`` (the epilogue
-    # arithmetic) until #614; the bench resolves this pair from that table, so
-    # the expectation moves with it.
+    # lane's rows (tessera#538); the bench resolves this pair from that table, so
+    # the expectation moves with it. The BF16 pair has no served census for this source.
     route = {"kind": "dense", "policy": "TESSERA_BF16:resident",
              "symbol": "tessera::window_gemm_dense",
-             "decoder": "native_window_gemm_folded", "contract": "bf16_unquantized"}
+             "decoder": "native_window_gemm_bf16", "contract": "bf16_unquantized"}
     native = {"weight": _tensor_identity(weight)}
     observed_operator = {"wire_sha256": blob_sha, "wire_record_sha256": _json_sha(record),
                          "source_weight": _tensor_identity(weight),
@@ -535,7 +534,7 @@ def _fake_preparation(monkeypatch):
             # dense route admits two launches, so a fixture that declared
             # nothing would leave the bench unable to name one.
             layer.tessera_symbol = "tessera::window_gemm_dense"
-            layer.tessera_decoder = "native_window_gemm_folded"
+            layer.tessera_decoder = "native_window_gemm_bf16"
             trace.append("process loaded original wire")
 
         return SimpleNamespace(create_weights=create_weights,
@@ -768,8 +767,7 @@ def test_packed_native_owner_tensors_are_frozen_beside_registered_buffers():
     from tessera.serving.native_window import PreparedDenseNativeModule
     layer=torch.nn.Module();layer.register_buffer('scale_b',torch.ones(4))
     names=('words','table','codes','native','scale','runs','init_perm','perm')
-    bundle=SimpleNamespace(**{name:torch.arange(8,dtype=torch.int32) for name in names},cols=8,
-                           arithmetic='epilogue')
+    bundle=SimpleNamespace(**{name:torch.arange(8,dtype=torch.int32) for name in names},cols=8)
     owner=PreparedDenseNativeModule([SimpleNamespace(name='weight',rows=4,bundle=bundle)],
         rows=4,columns=8,device=torch.device('cpu'),family='e4m3')
     layer.tessera_native=owner
@@ -780,19 +778,30 @@ def test_packed_native_owner_tensors_are_frozen_beside_registered_buffers():
     assert _module()._native_tensors(layer)!=before
 
 
-def test_compact_a4_tensor_planes_and_epilogues_are_frozen():
-    from tessera.kernel_a4 import A4Unit
-    layer=torch.nn.Module();layer.register_buffer('global_scale',torch.ones(1))
-    fields=('select','label','point','nibbles','lut_bytes','label_lut','subset_nibbles','code_nibbles')
-    unit=A4Unit(**{name:torch.arange(8,dtype=torch.uint8) for name in fields},
-        rows=4,cols=8,rate=7,arity=2,memory=8,half=4,global_scale=1.0)
-    layer.tessera_a4_units=[unit];layer.tessera_a4_epilogues=[torch.ones(1)]
-    assert len(_module()._native_tensors(layer))==10
-    before=_module()._native_tensors(layer);unit.point[0]+=1
-    assert _module()._native_tensors(layer)!=before
-    layer.tessera_a4_epilogues=[]
-    with pytest.raises(ValueError,match='epilogue roster'):
-        _module()._native_tensors(layer)
+def test_fused_t4_owner_mutation_changes_the_native_receipt(monkeypatch):
+    from tessera import routed_fused_e2m1 as fp4
+    from tessera.compact_prep import WindowLutUnit
+    from tessera.serving.nvfp4_route import RESIDENT_ATTRIBUTES
+    from tessera.serving.residency import layer_resident_tensors
+    from window_pack_reference import pack_bitstream
+
+    monkeypatch.setattr(fp4, "_ext", lambda: None)
+    rep = pack_bitstream(torch.zeros((16, 256), dtype=torch.int64), (1,) * 256)
+    unit = WindowLutUnit(
+        rep=rep, codes=torch.zeros(1 << 14, dtype=torch.uint8),
+        scale_plane=torch.zeros(256, dtype=torch.uint8),
+        scale_lut=torch.zeros(16, dtype=torch.uint8), global_scale=1.0,
+        window_bits=14, rows=32, cols=256, arity=2, half=16,
+        initial_state=torch.ones(256, dtype=torch.int32), row_offset=32)
+    role = fp4.prepare_dense_role(unit, torch.tensor(2.0))
+    layer = torch.nn.Module()
+    layer.register_buffer("global_scale", torch.ones(1))
+    layer.tessera_a4_roles = [role]
+    layer.quant_method = SimpleNamespace(
+        resident_tensors=lambda owner: layer_resident_tensors(owner, RESIDENT_ATTRIBUTES))
+    before = _module()._native_tensors(layer)
+    role.words.reshape(-1)[0] += 1
+    assert _module()._native_tensors(layer) != before
 
 
 @pytest.mark.parametrize('cold_rate_grid', [False, True], ids=['warm-contract', 'cold-contract'])

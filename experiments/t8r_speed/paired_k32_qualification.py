@@ -128,19 +128,21 @@ def numeric_cell(fn, store, x, ids, weights, output_dir, *, kernel_profile, inde
     native = fn.native_adapter
     if type(native) is not rf.FusedRoutedWindowMoE or native.library != 'e4m3mma':
         raise ValueError('paired-K32 numerics requires the actual fused E4M3 MMA adapter')
-    owner = type(native)
-    original = owner._launch
+    if len(native.classes) != 1:
+        raise ValueError('paired-K32 numeric scope requires one uniform native class')
+    kernel_type = type(native.uniform)
+    original = kernel_type.launch
     captured = {}
-    def observe(instance, mode, *args, **kwargs):
-        original(instance, mode, *args, **kwargs)
-        if instance is not native:return
+    def observe(kernel, mode, *args, **kwargs):
+        original(kernel, mode, *args, **kwargs)
+        if kernel is not native.uniform:
+            return
         if mode not in (0, 2) or mode in captured:
             raise ValueError('numeric forward must launch each routed role once')
         captured[mode] = kwargs['out'].detach().clone()
-    # The production adapter is frozen. This one-process diagnostic observes
-    # its class seam with an exact instance guard, never changes its fields,
-    # and restores the real method before profiling or reference execution.
-    owner._launch = observe
+    # Observe the loaded uniform binding used by the actual production owner.
+    # Restore its launch before profiling and independent reference execution.
+    kernel_type.launch = observe
     try:
         first = fn(x, ids, weights)
         first_stages = captured.copy()
@@ -156,7 +158,7 @@ def numeric_cell(fn, store, x, ids, weights, output_dir, *, kernel_profile, inde
             if not torch.equal(first_stages[mode].view(torch.int16), second_stages[mode].view(torch.int16)):
                 raise ValueError('repeated intermediate bits differ')
     finally:
-        owner._launch = original
+        kernel_type.launch = original
     routes = first_stages[2].reshape(x.shape[0], ids.shape[1], native.down.rows).float()
     reduced = torch.zeros_like(routes[:, 0])
     for route in range(ids.shape[1]):
@@ -187,8 +189,9 @@ def numeric_cell(fn, store, x, ids, weights, output_dir, *, kernel_profile, inde
 def profile_geometry(native,x,ids,lib,profile):
     from tessera import routed_fused as rf
     geometry={}
-    for mode, bundle, slot in ((0, native.gate, native.slot_words_gate_up),
-                              (2, native.down, native.slot_words_down)):
+    cls, = native.classes
+    for mode, bundle, slot in ((0, cls.gate, cls.slot_words_gate_up),
+                              (2, cls.down, cls.slot_words_down)):
         bm = rf.superblock_rows('e4m3mma', mode, x.shape[0])
         rows = x.shape[0] if mode == 0 else x.shape[0]*ids.shape[1]
         paired = bool(lib.paired_k32_scope(True, True, mode, False, False, 4, False,

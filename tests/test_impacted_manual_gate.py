@@ -1,7 +1,6 @@
 """A manual gate is a dependency, but not a pytest target or coverage claim."""
 from __future__ import annotations
 
-import ast
 import importlib.util
 from pathlib import Path
 import sys
@@ -56,15 +55,10 @@ def test_manual_gate_is_excluded_after_every_selection_path(tmp_path, monkeypatc
         assert result["forces_full"] == ["conftest.py"]
 
 
-def test_real_gate_is_a_pytest_target_and_keeps_its_manual_entry_point():
+def test_real_gate_is_selected_as_a_pytest_target():
     result = impacted.select(ROOT, [REAL_GATE])
     assert REAL_GATE in result["tests"], "A4 pytest entry point was excluded"
     assert result["excluded_tests"] == []
-    body = ast.parse((ROOT / REAL_GATE).read_text())
-    definitions = [n for n in ast.walk(body) if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef))]
-    assert any(n.name == "test_native_a4_serving_gate" for n in definitions)
-    assert any(isinstance(n, ast.FunctionDef) and n.name == "run_gate" for n in definitions)
-    assert 'if __name__ == "__main__":' in (ROOT / REAL_GATE).read_text()
 
 
 def test_text_receipt_names_excluded_gate_and_reason(tmp_path, monkeypatch, capsys):

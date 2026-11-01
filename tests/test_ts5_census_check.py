@@ -14,22 +14,12 @@ import pytest
 
 from tessera.serving.contract import load_serving_contract
 from tessera.serving.scheme import (
-    ROUTES, MOE_GEMM_SYMBOL, TESSERA_FP8, expert_role_declarations, launch_pairs,
+    ROUTES, TESSERA_FP8, expert_role_declarations, routed_class_launch_pair,
     validate_tessera_moe_scheme)
 
 ACTIVATION_CONTRACT = ROUTES[TESSERA_FP8]["activation_contract"]
-# The lane-free launch an FP8 expert stack makes on this build: the compact
-# window MoE adapter (contract v38, tessera#604).  The materialising
-# ``(MOE_GEMM_SYMBOL, torch_materialize_stock)`` pair left the table then,
-# because ``moe_route.compact_window_lane`` answers True for FP8 whenever the
-# compact reader is defined; a record naming it is one no serve here stamps.
-# Since contract v42 (tessera#640) the fused routed window lane is a second
-# pair, made only where its extension built; ``lanes=()`` leaves it out, and
-# these fixtures record the compact launch.
-(_MOE_LAUNCH,) = launch_pairs(
-    TESSERA_FP8, structure="routed_moe", regime="decode", mode="resident", lanes=())
-GEMM_SYMBOL, DECODER_TORCH_STOCK = _MOE_LAUNCH
-assert GEMM_SYMBOL != MOE_GEMM_SYMBOL
+# The uniform census fixture uses the lane-free E4M3 native entry.
+GEMM_SYMBOL, DECODER = routed_class_launch_pair("e4m3", uniform=True)
 
 ROOT = Path(__file__).resolve().parents[1]
 IMAGE = "example/runtime@sha256:" + "1" * 64
@@ -58,28 +48,45 @@ def test_census_cli_resolves_its_own_tools_beside_another_repository(tmp_path):
     assert "--census" in result.stdout
 
 
+def _routed_fixture(target, experts=2):
+    scheme = {"family": TESSERA_FP8, "structure": "routed_moe", "grid": "E4M3",
+        "body": "WINDOW", "plane": "CHANNEL", "experts": experts,
+        "expert_ids": list(range(experts)),
+        "expert_classes": [{"start": 0, "end": experts,
+                            "q256": {"w13": [1024, 1024], "w2": [1024]}}],
+        "groups": {
+            "w13": {"rows": 128, "columns": 128, "q256": 1024,
+                "roles": [["gate_proj", 64], ["up_proj", 64]], "wire_stride": 4096},
+            "w2": {"rows": 128, "columns": 64, "q256": 1024,
+                "roles": [["down_proj", 128]], "wire_stride": 4096}}}
+    normalized = validate_tessera_moe_scheme(scheme, target)
+    roles = []
+    for storage, expert in enumerate(normalized["expert_ids"]):
+        for group, declaration in normalized["groups"].items():
+            for role in expert_role_declarations(declaration, expert=storage):
+                projection = role["roles"][0][0]
+                tensor = f"{target}.{expert}.{projection}.weight"
+                roles.append({"expert": expert, "storage_expert": storage,
+                    "tensor": tensor, "source_tensor": tensor,
+                    "source_slice": {"expert": expert},
+                    "wire": f"{target}.{storage}.{projection}.wire",
+                    "group": group, "role": projection,
+                    "q256": role["q256"], "grid": scheme["grid"], "family": scheme["family"],
+                    "rows": role["rows"], "cols": role["columns"]})
+    module = {"structure": "routed_moe", "family": scheme["family"],
+        "grid": scheme["grid"], "q256": 1024, "experts": experts,
+        "expert_ids": list(scheme["expert_ids"]),
+        "expert_classes": copy.deepcopy(scheme["expert_classes"]), "roles": roles}
+    return scheme, module
+
+
 def _fixture():
     plan = {name: {"grid": "E4M3", "q256": 1024} for name in TARGETS}
     plan["model.layers.0.conv.in_proj.weight"] = "PASSTHROUGH"
     groups, modules = {}, {}
     for target in TARGETS:
-        scheme = {"family": TESSERA_FP8, "structure": "routed_moe", "grid": "E4M3",
-            "body": "WINDOW", "plane": "CHANNEL", "experts": 2, "groups": {
-                "w13": {"rows": 128, "columns": 128, "q256": 1024,
-                    "roles": [["gate_proj", 64], ["up_proj", 64]], "wire_stride": 4096},
-                "w2": {"rows": 128, "columns": 64, "q256": 1024,
-                    "roles": [["down_proj", 128]], "wire_stride": 4096}}}
+        scheme, modules[target] = _routed_fixture(target)
         groups[target] = {"targets": [target], "format": "TESSERA", "scheme": scheme}
-        normalized = validate_tessera_moe_scheme(scheme, target)
-        roles = []
-        for expert in range(normalized["experts"]):
-            for group, declaration in normalized["groups"].items():
-                for role in expert_role_declarations(declaration):
-                    roles.append({"expert": expert, "group": group, "role": role["roles"][0][0],
-                        "q256": role["q256"], "grid": scheme["grid"], "family": scheme["family"],
-                        "rows": role["rows"], "cols": role["columns"]})
-        modules[target] = {"structure": "routed_moe", "family": scheme["family"],
-            "grid": scheme["grid"], "q256": 1024, "experts": scheme["experts"], "roles": roles}
     config = {"architectures": ["Lfm2MoeForCausalLM"], "quantization_config": {
         "quant_method": "tessera", "config_groups": groups, "ignore": []}}
     total_units = sum(len(row["roles"]) for row in modules.values())
@@ -93,7 +100,7 @@ def _fixture():
         for target in TARGETS:
             child = f"{target}.routed_experts"
             records[phase][child] = {"kind": "moe", "policy": f"{TESSERA_FP8}:resident",
-                "symbol": GEMM_SYMBOL, "decoder": DECODER_TORCH_STOCK,
+                "symbol": GEMM_SYMBOL, "decoder": DECODER,
                 "contract": ACTIVATION_CONTRACT, "state": "served",
                 "shape": "M1:N128:K128" if phase == "decode" else "M64:N128:K128"}
             owners[phase][child] = target
@@ -207,7 +214,8 @@ def test_eager_shapes_prove_actual_regime_and_declared_geometry(phase, shape):
 
 @pytest.mark.parametrize("defect", ["empty_plan", "different_plan", "extra_target", "duplicate_target",
     "missing_target", "manifest_target", "role_missing", "role_duplicate", "role_extra",
-    "role_rung", "role_shape", "rung", "grid", "experts", "units", "stack_summary"])
+    "role_rung", "role_shape", "role_tensor", "role_source_slice", "role_storage", "role_wire",
+    "expert_ids", "expert_classes", "rung", "grid", "experts", "units", "stack_summary"])
 def test_plan_config_and_projection_manifest_must_describe_one_population(defect):
     case = _fixture()
     plan, config, manifest, _, _ = case
@@ -236,6 +244,18 @@ def test_plan_config_and_projection_manifest_must_describe_one_population(defect
         module["roles"][0]["q256"] = 768
     elif defect == "role_shape":
         module["roles"][0]["cols"] += 1
+    elif defect == "role_tensor":
+        module["roles"][0]["tensor"] = module["roles"][0]["tensor"].replace(".0.", ".1.")
+    elif defect == "role_source_slice":
+        module["roles"][0]["source_slice"]["expert"] = 1
+    elif defect == "role_storage":
+        module["roles"][0]["storage_expert"] = 1
+    elif defect == "role_wire":
+        module["roles"][0]["wire"] = module["roles"][0]["wire"].replace(".0.", ".1.")
+    elif defect == "expert_ids":
+        module["expert_ids"] = [1, 0]
+    elif defect == "expert_classes":
+        module["expert_classes"][0]["q256"]["w2"] = [1088]
     elif defect == "rung":
         groups[TARGETS[0]]["scheme"]["groups"]["w2"]["q256"] = 768
     elif defect == "grid":
@@ -257,7 +277,7 @@ def _promote(case):
             "structure": "routed_moe", "family": "TESSERA_E4M3_K1", "regime": regime,
             "rungs_q256": [1024], "requires_serve_flags": ["TESSERA_SERVE_MODE=resident"],
             "runtime": {"image": IMAGE, "execution_modes": ["eager"]},
-            "executes": [{"symbol": GEMM_SYMBOL, "decoder": DECODER_TORCH_STOCK}]})
+            "executes": [{"symbol": GEMM_SYMBOL, "decoder": DECODER}]})
 
 
 def test_promotion_replays_current_cells_instead_of_embedded_agreement():

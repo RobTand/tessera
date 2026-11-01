@@ -1,77 +1,20 @@
-"""Tessera routed-MoE on the NVFP4 route: E2M1x2 expert wires served W4A4.
+"""Native fused routed W4A4 over paired WINDOW L14 and LUT16 expert bytes.
 
-WHAT IT SERVES (tessera#492).  One ``tessera.fused`` container per expert per
-projection, decoded ONCE at load through ``tessera.stock.materialize_stock``
--- the same decoder the dense NVFP4 route cross-checks its native kernel
-against -- into exactly the parameter set vLLM's own ``ModelOptNvFp4FusedMoE``
-builds for a modelopt NVFP4 checkpoint: ``w13_weight [E, 2N, K/2]`` and
-``w2_weight [E, K, N/2]`` packed E2M1 nibbles, ``w13_weight_scale [E, 2N,
-K/16]`` and ``w2_weight_scale [E, K, N/16]`` ue4m3 block scales, one fp32
-global per expert per group (``w13_weight_scale_2 [E, 2]``,
-``w2_weight_scale_2 [E]``) and one static fp32 activation scale per expert
-per group (``w13_input_scale [E, 2]``, ``w2_input_scale [E]``).  From
-``process_weights_after_loading`` onward this route IS that class: the same
-``convert_to_nvfp4_moe_kernel_format``, the same
-``make_nvfp4_moe_quant_config``, the same ``make_nvfp4_moe_kernel`` over the
-backend the runtime's own ``select_nvfp4_moe_backend`` picked for
-``(kNvfp4Static, kNvfp4Dynamic)`` on this box.  The native lane replaced
-that path: the module now owns NO stock kernel and NO stock experts class,
-its ``is_monolithic`` is False by its own definition (never delegated to a
-selection it does not run), and ``apply`` is the native two-stage grouped
-pipeline -- ``a4_grouped_apply`` for gate, up and down, vLLM's own
-``apply_moe_activation``, the runner's shared experts, and the router weights
-applied only in the final combine.  The A side is the runtime's registered
-``scaled_fp4_quant`` under the static per-expert scale, which is what makes
-the executed contract ``ROUTES[TESSERA_NVFP4]["activation_contract"]`` and
-not a claim this module makes.
+Each projection keeps its own code table, group-16 scale nibbles, UE4M3
+table and weight global. Compact preparation fills one WindowUnitAxis per
+group, then FusedRoutedE2M1MoE owns the native eager and graph forwards.
+No whole weight, TCQ reader, stock backend or compact FP8/BF16 substitute
+is part of this serving route.
 
-THE GLOBAL IS SHARED PER EXPERT, NOT PER STACK.  The gate and up units of one
-expert are encoded on their own LUT globals; ``w13`` is one tile per expert
-whose two halves the kernel reads under ONE ``weight_scale_2`` (the stock
-method warns and takes ``[:, 0]`` when the halves differ -- a silent wrong
-answer, not a refusal).  So the loader waits for both halves of an expert,
-joins them through ``fused.shared_lut_global`` -- the same power-of-two move
-the dense route makes for q/k/v and gate/up -- and writes the joined
-multiplier into both columns.  The down unit is its own tile and keeps its
-own global.  A whole-stack global would move every expert's block scales onto
-the range of the widest one and is not what the kernel needs.
+Static input globals remain checkpoint facts, reduced exactly as before:
+invert each calibrated capacity-over-amax, take the maximum reciprocal over
+all experts and projections of a GEMM input, then invert back. Weight globals
+are never joined across gate/up or experts. Rank-local row cuts carry WINDOW
+start states; column cuts preserve paired group-16 placement. Shared experts
+and tensor-parallel reduction stay with vLLM's runner.
 
-THE A-SIDE SCALE IS A CHECKPOINT FACT.  W4A4 needs a static input scale per
-expert projection, calibrated by the producer and written beside each wire as
-``experts.{e}.{proj}.input_global_scale`` -- the SAME quantity the dense route
-reads as ``trellis_input_global_scale``: capacity over amax, the value vLLM's
-quantiser multiplies by.  modelopt stores its reciprocal (``amax / (448 * 6)``)
-as ``input_scale``, so the loader inverts once at
-``process_weights_after_loading`` and the kernel reads what it always reads.
-A missing or non-positive scale is a refusal: an uninitialised input scale is
-a stack that serves garbage at a plausible loss.
-
-WHAT IS RANK-LOCAL.  At TP>1 the stock method slices ``w13`` rows and ``w2``
-columns by rank at load.  Here each expert's FULL container is parsed and
-verified (digest, geometry, role, recipe against the sidecar) and then cut by
-``sharding.shard_parsed_roles`` on the group's plan -- a row cut for ``w13``,
-a column cut for ``w2`` -- before decode, so a rank decodes and holds only its
-own rows: the span-2 trellis register at the cut is threaded into the select
-pad by ``lane_planes`` (tessera#492) and decodes ``torch.equal`` to the whole
-unit's rows.  Global expert ids are unchanged; the final reduction is stock
-vLLM's.
-
-WHAT THIS ROUTE REFUSES.  Expert parallelism and EPLB (the stride invariant
-needs every expert's blob and the parameter is ``[E, ...]`` by global id); a
-residency mode other than ``resident``; a non-gated MoE; an expert count,
-hidden size or intermediate size that disagrees with the sidecar, or a
-rank-local intermediate width that is not a whole number of 16-wide groups;
-an expert whose gate arrived without its up; a stock tensor name
-(``experts.{e}.{proj}.weight`` and friends) in a Tessera checkpoint.
-
-WHAT IS ATTESTED.  Being in ``scheme.MOE_BUILDERS`` is a dispatch fact.  The
-served ``routed_moe`` cells for this family are ``lane_eligibility``'s to
-publish, per image and per regime, from a container receipt.  Contract v28
-publishes two, at q256 896, eager and resident, on the image the two-rank
-GLM-5.3-Flash 4-layer stub served
-(``docs/measurements/tessera-glm53-a4-stub-tp2-served-2026-09-14.md``).  An
-export at another rung, or a serve outside that scope, is unattested, and an
-export of it needs ``--allow-unserveable`` and says so in its manifest.
+The declared reader/launch support is not a serving attestation. Historical
+TCQ receipts cannot qualify new WINDOW bytes.
 """
 from __future__ import annotations
 
@@ -85,11 +28,11 @@ from ..moe_layout import W13_PROJECTIONS, validate_moe_wire_lengths
 from .lane import MODE_RESIDENT, MODES
 from .residency import layer_resident_tensors
 from .moe_route import SHARD_TO_GROUP, _bind_module_prefix, _packed_group_shard_plan
-from .scheme import (A4_GROUPED_GEMM_SYMBOL, GROUP_SIZE, MOE_GEMM_SYMBOL, MOE_GROUPS, ROUTES,
+from .scheme import (GROUP_SIZE, MOE_GROUPS, ROUTES, ROUTED_FUSED_WINDOW_E2M1_SYMBOL,
                      STRUCTURE_ROUTED_MOE, TESSERA_NVFP4, expert_role_declarations,
                      launch_pairs, moe_census_symbol_base as census_symbol_base,
                      route_launches, validate_tessera_moe_scheme)
-from .telemetry import DECODER_NATIVE_SPAN2_GROUPED, emit_route, route_shape
+from .telemetry import DECODER_NATIVE_ROUTED_FUSED_WINDOW_E2M1, emit_route, route_shape
 
 __all__ = [
     "ACTIVATION_CONTRACT",
@@ -103,13 +46,9 @@ __all__ = [
 
 ACTIVATION_CONTRACT = ROUTES[TESSERA_NVFP4]["activation_contract"]
 
-# What ``process_weights_after_loading`` leaves on the layer outside registered
-# state: the grouped span-2 stacks, the two A-side globals and the per-expert
-# epilogues.  ``resident_tensors`` declares them (#580).
-RESIDENT_ATTRIBUTES = ("tessera_a4_gate_stack", "tessera_a4_up_stack", "tessera_a4_down_stack",
-                       "tessera_a4_gs13", "tessera_a4_gs2", "tessera_a4_gate_epilogues",
-                       "tessera_a4_up_epilogues", "tessera_a4_down_epilogues")
-GEMM_SYMBOL = MOE_GEMM_SYMBOL
+# The owner declares its actual bundles, descriptors, ratios and counters.
+RESIDENT_ATTRIBUTES = ("tessera_routed_fused",)
+GEMM_SYMBOL = ROUTED_FUSED_WINDOW_E2M1_SYMBOL
 #: The contract's payload family for this route's wires -- the name the
 #: platform gate and the census expectation are keyed by (#457).
 PAYLOAD_FAMILY = "TESSERA_E2M1_K2"
@@ -128,27 +67,12 @@ _STOCK_TILE_NAMES = ("w13_weight", "w2_weight", "w13_weight_scale", "w2_weight_s
 
 
 def census_expected(*, compiled: bool = False, platform=None) -> dict:
-    """The ``(symbol, decoder)`` pairs an NVFP4 expert stack may report, by regime.
-
-    The same shape as ``moe_route.census_expected`` for the same reason: one
-    launch in both regimes (the native grouped span-2 GEMM over the compact
-    loader's planes, ``(a4_span2_grouped_gemm, native_span2_grouped)``, the
-    expert half's only launch since contract v39), so ``compiled`` changes
-    nothing.  :func:`census_symbol_base` still strips a runtime backend suffix
-    from a recorded symbol, for records taken before v39.
-    Per ``(platform, family)`` (#457): the stack's payload family is the dense
-    NVFP4 route's, so a platform that executes no E2M1_K2 route executes none
-    for the experts either.
-    """
+    """Native launch pairs this routed owner can report, not qualification."""
     del compiled  # one launch has nothing to combine
     launches = route_launches(TESSERA_NVFP4, structure=STRUCTURE_ROUTED_MOE,
                               mode=MODE_RESIDENT)
     regimes = {regime for launch in launches for regime in launch["regimes"]}
-    # Experimental pairs, if a later launch enters that set, are what this
-    # route would report before a receipt earns them a cell, so a census
-    # accepts them; ``launch_pairs``' default view keeps the cell validator on
-    # the attested dispatch -- no qualification is promoted here.  None exist
-    # at contract v39: the grouped pair is attested.
+    # Launch support and lane_eligibility receipts are separate declarations.
     from .scheme import experimental_launch_pairs
 
     pairs = {regime: launch_pairs(TESSERA_NVFP4, structure=STRUCTURE_ROUTED_MOE,
@@ -162,145 +86,82 @@ def census_expected(*, compiled: bool = False, platform=None) -> dict:
 
 
 class _ExpertIntake:
-    """Per-rank intake: parse the full container, cut to this rank, hold ``w13``
-    halves until an expert has both, hand back what is ready to decode."""
+    """Validate full expert containers before preparing the rank-local units."""
 
     def __init__(self, declared, target, tp_rank, tp_size):
         self.target = target
         self.plans = {g: _packed_group_shard_plan(declared, g, target, tp_rank, tp_size)
                       for g in MOE_GROUPS}
         self.roles = {g: expert_role_declarations(declared["groups"][g]) for g in MOE_GROUPS}
-        self.pending: dict[int, list] = {}
-        # One caller-owned reusable transfer buffer per plane kind, bounded by
-        # the largest plane this layer's wires carry.  The runtime runs the
-        # whole load under ``max_split_size_mb=20``; a fresh ``.to(device)``
-        # per wire left a dead 20 MiB allocator slab per wire in that context.
-        # Reusing the buffer keeps the transfer out of the allocator's large
-        # bucket; nothing here is module-global, so two loaded layers never
-        # share a buffer.  The committed measurement is
-        # ``docs/measurements/tessera-a4-loader-staging-20260916.md``.
         self._scratch: dict = {}
-        # Geometry-keyed derivations (encoder-profile pair, rate schedule,
-        # completion depth, shard granularity) are the same for every expert
-        # of a layer; one caller-owned dict per loaded layer pays them once.
-        # Every key stores the full input tuple, so a hit is an identical
-        # question and the verification it returns was computed, not assumed.
         self._memo: dict = {}
 
     def take(self, group, index, expert, blob: bytes, device, axes=None):
-        """One verified container -> this rank's native bundles for its role.
+        from ..compact_prep import prepare_window_lut_compact
+        from .scheme import parse_compact_tessera_expert_blob
 
-        The compact reader runs the same metadata verification the parsed
-        reader does (digests, canonical padding, slack, geometry, the shard
-        record) and repacks the packed BODY straight into the kernel planes:
-        no parent-plane expansion and no decoded stock tile.  w13's halves are
-        held until both arrive, then their 16-entry tables are moved onto one
-        shared global exactly as the stock lane moves them
-        (``fused.shared_lut_global``), because a fused tile carries one
-        weight global.
-        """
-        from ..fused import shared_lut_global
-        from ..serving import scheme as scheme_module
-        from .native_a4 import prepare_a4_unit
-
-        target = self.target
         declared_role = self.roles[group][index]
-        expected = declared_role["roles"][0][0]
-        plan = self.plans[group]
-
-        def _cuts(shard):
-            if plan.axis == "row":
-                return (shard.lo, shard.hi), None
-            if plan.axis == "column":
-                return None, (shard.lo, shard.hi)
-            return None, None
-
-        # The factored compact validator, called by name.  It applies the same
-        # container framing, role list and per-role byte checks as the parsed
-        # reader with no weight-plane expansion, and it is the ONLY reader this
-        # route takes: the materialising fallback that stood here while the
-        # shared reader was unpublished is gone, so the lane cannot quietly
-        # serve through an unpacked path if that reader ever disappears.
-        validated = scheme_module.parse_compact_tessera_expert_blob(
-            blob, declared_role, f"{target} {group} expert {expert}",
+        validated = parse_compact_tessera_expert_blob(
+            blob, declared_role, f"{self.target} {group} expert {expert}",
             device=device, memo=self._memo)
         if len(validated) != 1:
             raise GrammarError(
-                f"{target} {group} expert {expert}: an expert projection container "
+                f"{self.target} {group} expert {expert}: an expert projection container "
                 f"holds one role, this one frames {len(validated)}")
         name, member = validated[0]
-        rows, cols = _cuts(plan.role(name))
-        if axes is not None:
-            # Direct-destination intake: the prepared planes are written once
-            # into this expert's preallocated axis slot, so no per-wire output
-            # tensor is allocated and `finish` copies nothing.  Only the
-            # 16-byte LUT table and the scalar global wait for the mate (the
-            # fused tile's shared global); the planes are already in place.
-            axis = axes[(group, expected)]
+        plan = self.plans[group]
+        shard = plan.role(name)
+        rows = (shard.lo, shard.hi) if plan.axis == "row" else None
+        cols = (shard.lo, shard.hi) if plan.axis == "column" else None
+        unit = prepare_window_lut_compact(member, rows=rows, cols=cols,
+                                          device=device, scratch=self._scratch)
+        if axes is None:
+            return name, unit
+        # Scratch-backed temporary words are copied into their one resident
+        # axis slot now, before the next compact preparation can reuse them.
+        axes[group].put(name, expert, unit)
+        return None
 
-            def _factory(field, size, dtype, _axis=axis):
-                return _axis.destination(expert, field, size, dtype, device)
+    def release(self):
+        self._scratch.clear()
+        self._memo.clear()
 
-            def _layout(rows_local, cols_local, rate, arity, memory, half,
-                        _axis=axis):
-                return _axis.bind_geometry(rows_local, cols_local, rate,
-                                           arity, memory, half)
 
-            from ..compact_prep import prepare_span2_compact
+def _window_bundles(axes, experts, expert_classes):
+    """Wrap finished e2m1 SoA tensors by reference, never choose an adapter.
 
-            prepared = prepare_span2_compact(
-                member, rows=rows, cols=cols, scratch=self._scratch,
-                memo=self._memo, out_factory=_factory, on_layout=_layout)
-            table = prepared["lut_bytes"].view(torch.uint8).clone()
-            scale = float(prepared["global_scale"])
-            if group != "w13":
-                axis.set_global(expert, scale)
-                axis.mark_filled(expert)
-                return ("direct", group, scale)
-            halves = self.pending.setdefault(expert, [None] * W13_PROJECTIONS)
-            halves[index] = (expected, table, scale)
-            if any(half is None for half in halves):
-                return None
-            del self.pending[expert]
-            names = [half[0] for half in halves]
-            shared, moved = shared_lut_global(
-                [half[1] for half in halves], [half[2] for half in halves], names)
-            for (role_name, _table, _scale), moved_table in zip(halves, moved):
-                joined = axes[("w13", role_name)]
-                joined.set_lut_bytes(expert,
-                                     moved_table.view(torch.uint8).contiguous())
-                joined.set_global(expert, float(shared))
-                joined.mark_filled(expert)
-            return ("direct", group, float(shared))
-        unit = prepare_a4_unit(member, rows=rows, cols=cols,
-                               scratch=self._scratch, memo=self._memo)
-        if group != "w13":
-            return ([(expected, unit)], float(unit.global_scale))
-        halves = self.pending.setdefault(expert, [None] * W13_PROJECTIONS)
-        halves[index] = (expected, unit)
-        if any(half is None for half in halves):
-            return None
-        del self.pending[expert]
-        names = [half[0] for half in halves]
-        # ``shared_lut_global`` takes each unit's E4M3 table as RAW UINT8
-        # BYTES (fused.py:169-174) and turns them into numbers with
-        # ``.to(torch.uint8).view(torch.float8_e4m3fn)``; an e4m3-typed axis
-        # would be converted NUMERICALLY there -- 0x38 (1.0) becomes byte 0x01
-        # (2^-9) -- and every table this route serves would be silently
-        # rescaled.  ``A4Unit.lut_bytes`` is the e4m3 view, so the view is
-        # undone here, at the one seam that needs bytes.
-        shared, moved = shared_lut_global(
-            [half[1].lut_bytes.view(torch.uint8) for half in halves],
-            [half[1].global_scale for half in halves], names)
-        import dataclasses
+    ``expert_classes`` is the scheme's declared class table. An E2M1 stack
+    has one class: its validator refuses experts with different run tables.
+    """
+    from ..native_window_moe import PackedWindowMoeBundles
+    from ..window_gemm_grouped import prepare_grouped_window_gemm_from_soa
 
-        joined = [
-            (name, dataclasses.replace(unit, lut_bytes=table.view(torch.uint8)
-                                       .view(torch.float8_e4m3fn).contiguous(),
-                                       global_scale=float(shared)))
-            for (name, unit), table in zip(halves, moved)
-        ]
-        return (joined, float(shared))
+    soa = {group: axis.finish() for group, axis in axes.items()}
+
+    def bundle(group, part):
+        slot = soa[group][part]
+        return prepare_grouped_window_gemm_from_soa(
+            words_all=slot["words"], table_all=slot["table"],
+            codes_all=slot["codes"], native_all=slot["native"],
+            scale_all=slot["scale"], runs_all=slot["runs"],
+            init_all=slot["init"], has_init=slot["has_init"],
+            word_off=slot["word_off"], tile_words=slot["tile_words"],
+            total_words=slot["total_words"], run_off=slot["run_off"],
+            perm_all=slot["perm"], rows=slot["rows"], cols=slot["cols"],
+            experts=experts, window_bits=slot["window_bits"], family="e2m1",
+            scale_plane_all=slot["scale_plane"], scale_lut_all=slot["scale_lut"],
+            global_all=slot["global_scale"],
+            word_layout=str(slot.get("word_layout", "legacy")))
+
+    return PackedWindowMoeBundles(gate=bundle("w13", "gate_proj"),
+                                  up=bundle("w13", "up_proj"),
+                                  down=bundle("w2", "down_proj"), family="e2m1",
+                                  expert_classes=expert_classes)
+
+
+def _static_input_global(scales, device):
+    """The checkpoint reduction, retaining its reciprocal rounding sequence."""
+    return (1.0 / (1.0 / scales).max()).to(device=device, dtype=torch.float32).reshape(())
 
 
 def build_tessera_nvfp4_moe_method(scheme: Mapping, prefix: str, mode: str, layer):
@@ -440,11 +301,13 @@ def build_tessera_nvfp4_moe_method(scheme: Mapping, prefix: str, mode: str, laye
                     f"{full_intermediate} at TP{self._tp_size}. Runtime padding or a cut "
                     "the sidecar's geometry does not divide into is refused.")
             local = full_intermediate // self._tp_size
-            if local % GROUP_SIZE or hidden % GROUP_SIZE:
-                raise ValueError(
-                    f"tessera target {prefix!r}: the rank-local tile is {2 * local}x{hidden} "
-                    f"(w13) and {hidden}x{local} (w2); both widths must be whole "
-                    f"{GROUP_SIZE}-wide block-scale groups for the NVFP4 mainloop.")
+            from .scheme import e2m1_shape_reason
+            for projection, rows_local, cols_local in (("gate_proj", local, hidden),
+                                                        ("down_proj", hidden, local)):
+                reason = e2m1_shape_reason(rows_local, cols_local,
+                                           structure=STRUCTURE_ROUTED_MOE, projection=projection)
+                if reason is not None:
+                    raise ValueError(f"tessera target {prefix!r} rank {self._tp_rank}: {reason}")
             n_rows = 2 * local
 
             # The wires and the A-side scales: zero-byte anchors whose only
@@ -490,17 +353,14 @@ def build_tessera_nvfp4_moe_method(scheme: Mapping, prefix: str, mode: str, laye
             self._w13_len = layer.tessera_w13_wire_len
             self._w2_len = layer.tessera_w2_wire_len
             self._intake = _ExpertIntake(declared, prefix, self._tp_rank, self._tp_size)
-            # One axis per (group, role): each is one stacked allocation per
-            # plane kind over the expert axis, filled as containers arrive.
-            from .native_a4 import A4ExpertAxis
+            from ..native_window_moe import WindowUnitAxis
 
             self._axes = {
-                (group_name, role["roles"][0][0]): A4ExpertAxis(experts)
+                group_name: WindowUnitAxis(
+                    experts, [role["roles"][0][0] for role in self._intake.roles[group_name]],
+                    family="e2m1")
                 for group_name in MOE_GROUPS
-                for role in self._intake.roles[group_name]
             }
-            self._shared_w13 = {}
-            self._shared_w2 = {}
             layer.tessera_mode = mode
             layer.tessera_family = family
             layer.tessera_structure = declared["structure"]
@@ -509,15 +369,7 @@ def build_tessera_nvfp4_moe_method(scheme: Mapping, prefix: str, mode: str, laye
             layer.tessera_columns = hidden
 
         def intake_axes(self) -> dict:
-            """The per-``(group, role)`` expert axes the loader is filling.
-
-            A copy of the mapping, keyed as ``("w13", "gate_proj")``; each value
-            is a :class:`~tessera.serving.native_a4.A4ExpertAxis`, whose
-            ``named_tensors`` is what this route holds for that stack during
-            intake, before ``resident_tensors(layer)`` has anything to declare.
-            Empty once ``process_weights_after_loading`` has moved the planes
-            into the layer's ``tessera_a4_*_stack`` attributes.
-            """
+            """The actual e2m1 axes while loading; empty after native ownership."""
             return dict(getattr(self, "_axes", None) or {})
 
         def _refuse_stock_tensor(self, param, loaded_weight, weight_name, shard_id, expert_id,
@@ -572,28 +424,9 @@ def build_tessera_nvfp4_moe_method(scheme: Mapping, prefix: str, mode: str, laye
                 raise ValueError(
                     f"tessera target {prefix!r}: expert {expert_id} {shard_id} already loaded")
             device = self._decode_device()
-            ready = self._intake.take(
+            self._intake.take(
                 group, index, expert_id, blob.detach().cpu().contiguous().numpy().tobytes(),
                 device, axes=self._axes)
-            if ready is not None:
-                if ready[0] == "direct":
-                    # The planes are already in their final axis slots; only
-                    # the joined/global multiplier the epilogues freeze is
-                    # handed back here.
-                    _tag, group_name, shared = ready
-                    if group_name == "w13":
-                        self._shared_w13[expert_id] = shared
-                    else:
-                        self._shared_w2[expert_id] = shared
-                else:
-                    units, shared = ready
-                    for name, unit in units:
-                        self._axes[(group, name)].put(expert_id, unit)
-                    if group == "w13":
-                        self._shared_w13[expert_id] = shared
-                    else:
-                        self._shared_w2[expert_id] = shared
-                    del units, ready
             if group == "w13":
                 self._w13_len[expert_id, index] = length
             else:
@@ -638,10 +471,6 @@ def build_tessera_nvfp4_moe_method(scheme: Mapping, prefix: str, mode: str, laye
                 self._w13_len, self._w2_len, experts=experts,
                 stride13=int(groups["w13"]["wire_stride"]),
                 stride2=int(groups["w2"]["wire_stride"]))
-            if self._intake.pending:
-                raise ValueError(
-                    f"tessera target {prefix!r}: expert(s) {sorted(self._intake.pending)[:8]} "
-                    "loaded one half of w13 and not the other")
             for group in MOE_GROUPS:
                 scales = self._input_global[group].data
                 bad = ~(torch.isfinite(scales) & (scales > 0))
@@ -654,8 +483,7 @@ def build_tessera_nvfp4_moe_method(scheme: Mapping, prefix: str, mode: str, laye
                         "than quantising activations at 1.0.")
             # modelopt's ``input_scale`` is the reciprocal of Tessera's
             # ``input_global_scale`` (amax / capacity vs capacity / amax).
-            input_small = {group: 1.0 / self._input_global[group].data
-                           for group in MOE_GROUPS}
+            # Reducing reciprocal scales preserves the checkpoint semantics.
             # The selected FlashInfer MoE backends aggregate the routed
             # activation scale per layer/projection rather than per expert
             # (``flashinfer_fp4_moe.py``'s
@@ -666,30 +494,33 @@ def build_tessera_nvfp4_moe_method(scheme: Mapping, prefix: str, mode: str, laye
             # native path reproduces that reduction instead of quantising per
             # expert.
             device = self._decode_device()
-            gs13 = (1.0 / input_small["w13"].max()).to(torch.float32).reshape(())
-            gs2 = (1.0 / input_small["w2"].max()).to(torch.float32).reshape(())
-            gs13 = gs13.to(device)
-            gs2 = gs2.to(device)
-            stacks = {}
-            for key, axis in self._axes.items():
-                stacks[key] = axis.finish()
+            gs13 = _static_input_global(self._input_global["w13"].data, device)
+            gs2 = _static_input_global(self._input_global["w2"].data, device)
+            from ..routed_fused_e2m1 import FusedRoutedE2M1MoE
+            from ..native_window_moe import checked_swiglu_limit
+
+            activation = getattr(layer.activation, "value", layer.activation)
+            if activation != "silu":
+                raise ValueError(
+                    f"tessera target {prefix!r}: native E2M1 serves silu, got {activation!r}")
+            for fact, default in (("swiglu_alpha", 1.0), ("swiglu_beta", 0.0)):
+                value = getattr(layer, fact, None)
+                if value is not None and float(value) != default:
+                    raise ValueError(
+                        f"tessera target {prefix!r}: {fact}={value!r} has no exact native implementation")
+            for fact in ("activation_situ_beta", "activation_situ_linear_beta"):
+                if getattr(self.moe, fact, None) is not None:
+                    raise ValueError(
+                        f"tessera target {prefix!r}: {fact} has no exact native implementation")
+            checked_swiglu_limit(getattr(layer, "swiglu_limit", None), where=f"{prefix}: ")
+            if getattr(layer, "apply_router_weight_on_input", False) and int(self.moe.experts_per_token) != 1:
+                raise ValueError(
+                    f"tessera target {prefix!r}: apply_router_weight_on_input requires topk=1")
+            bundles = _window_bundles(self._axes, experts, declared["expert_classes"])
+            layer.tessera_routed_fused = FusedRoutedE2M1MoE.from_bundles(
+                bundles.gate, bundles.up, bundles.down, gs13=gs13, gs2=gs2)
             self._axes = None
-            # Per-expert epilogues: the joined weight global over the A-side
-            # global, frozen once so a forward reads no host scalar.
-            shared13 = torch.tensor(
-                [self._shared_w13[index] for index in range(experts)],
-                dtype=torch.float32, device=device)
-            shared2 = torch.tensor(
-                [self._shared_w2[index] for index in range(experts)],
-                dtype=torch.float32, device=device)
-            layer.tessera_a4_gate_stack = stacks[("w13", "gate_proj")]
-            layer.tessera_a4_up_stack = stacks[("w13", "up_proj")]
-            layer.tessera_a4_down_stack = stacks[("w2", "down_proj")]
-            layer.tessera_a4_gs13 = gs13
-            layer.tessera_a4_gs2 = gs2
-            layer.tessera_a4_gate_epilogues = shared13 / gs13
-            layer.tessera_a4_up_epilogues = shared13 / gs13
-            layer.tessera_a4_down_epilogues = shared2 / gs2
+            self._intake.release()
             del layer.w13_wire, layer.w2_wire
             del layer.w13_input_global_scale, layer.w2_input_global_scale
             layer.tessera_w13_wire_len = None
@@ -698,12 +529,11 @@ def build_tessera_nvfp4_moe_method(scheme: Mapping, prefix: str, mode: str, laye
             self._tiles = None
             self._input_global = None
             self._w13_len = self._w2_len = None
-            self._shared_w13 = self._shared_w2 = None
             # The runtime asks a method whose config is None for one before it
             # serves; build it here, once, from the model's own facts.
             self.moe_quant_config = self.get_fused_moe_quant_config(layer)
-            layer.tessera_decoder = DECODER_NATIVE_SPAN2_GROUPED
-            layer.tessera_backend = A4_GROUPED_GEMM_SYMBOL
+            layer.tessera_decoder = DECODER_NATIVE_ROUTED_FUSED_WINDOW_E2M1
+            layer.tessera_backend = GEMM_SYMBOL
 
 
         def get_fused_moe_quant_config(self, layer):
@@ -733,27 +563,12 @@ def build_tessera_nvfp4_moe_method(scheme: Mapping, prefix: str, mode: str, laye
         # -- forward ----------------------------------------------------
         def apply(self, layer, x, topk_weights, topk_ids, shared_experts,
                   shared_experts_input):
-            """Two native stages over one device dispatch, weights applied last.
-
-            gate/up are separate grouped calls (per-role tables and globals
-            stay per role; no artificial trellis merge), the activation is the
-            layer's own, the down stage consumes the per-route rows, and the
-            router weights are applied only in the final combine -- the
-            routed-MoE contract.  ``apply_router_weight_on_input`` and an
-            expert map are refused rather than approximated.
-            """
-            from .native_a4 import a4_grouped_apply
-
+            """Native routed output; the runner alone evaluates shared experts."""
             assert not self.is_monolithic
             if layer.expert_map is not None:
                 raise ValueError(
                     f"tessera target {prefix!r}: expert parallelism carries an expert "
-                    "map and the native A4 route serves global expert ids only")
-            if getattr(layer, "apply_router_weight_on_input", False):
-                raise ValueError(
-                    f"tessera target {prefix!r}: apply_router_weight_on_input is not "
-                    "part of the native A4 contract (weights apply after the down "
-                    "projection); refusing rather than approximating")
+                    "map and the native E2M1 route serves global expert ids only")
             if x.ndim != 2 or x.shape[1] != hidden:
                 raise ValueError(
                     f"tessera target {prefix!r}: the routed activation must be "
@@ -763,79 +578,10 @@ def build_tessera_nvfp4_moe_method(scheme: Mapping, prefix: str, mode: str, laye
                 raise ValueError(
                     f"tessera target {prefix!r}: routing must be [tokens, {top_k}], "
                     f"got {tuple(topk_ids.shape)}")
-            if x.shape[0] == 0:
-                return x.new_empty((0, hidden))
-
-            device = x.device
-            # No host read of the routing tensor: ids are the router's device
-            # output and its own contract (0 <= id < num_experts) is what the
-            # modular kernels consume too.  An in-kernel gather of an
-            # out-of-range id is a fault, not a served answer.
-            flat_ids = topk_ids.to(torch.int64).reshape(-1)
-            flat_tokens = torch.arange(x.shape[0], device=device,
-                                       dtype=torch.int64).repeat_interleave(top_k)
-            flat_weights = topk_weights.reshape(-1).to(torch.float32)
-            order = torch.argsort(flat_ids, stable=True)
-            counts = torch.zeros(experts, dtype=torch.int32, device=device)
-            counts.scatter_add_(0, flat_ids[order],
-                                torch.ones_like(flat_ids, dtype=torch.int32))
-            offsets = torch.zeros(experts + 1, dtype=torch.int32, device=device)
-            offsets[1:] = torch.cumsum(counts, 0).to(torch.int32)
-            route_tokens = flat_tokens[order].to(torch.int32)
-            route_weights = flat_weights[order]
-            routes = int(flat_ids.numel())
-
-            gate = a4_grouped_apply(x, layer.tessera_a4_gate_stack, layer.tessera_a4_gs13,
-                                    expert_offsets=offsets, route_ids=route_tokens,
-                                    num_routes=routes,
-                                    epilogues=layer.tessera_a4_gate_epilogues)
-            up = a4_grouped_apply(x, layer.tessera_a4_up_stack, layer.tessera_a4_gs13,
-                                  expert_offsets=offsets, route_ids=route_tokens,
-                                  num_routes=routes,
-                                  epilogues=layer.tessera_a4_up_epilogues)
-            # The layer's activation is a ``MoEActivation`` ENUM, not a
-            # callable: vLLM's own ``apply_moe_activation`` is the executor
-            # (same op the modular kernels dispatch), driven by the layer's
-            # own clamp/alpha/beta facts, and an unsupported activation is
-            # refused by name rather than approximated.
-            from vllm.model_executor.layers.fused_moe.activation import (
-                ApplyMoEActivationConfig, apply_moe_activation,
-                apply_moe_activation_supported)
-
-            activation = layer.activation
-            if not apply_moe_activation_supported(activation):
-                raise ValueError(
-                    f"tessera target {prefix!r}: the native A4 route does not "
-                    f"serve the layer activation {activation!r}")
-            activation_config = ApplyMoEActivationConfig(
-                clamp_limit=getattr(layer, "swiglu_limit", None),
-                alpha=float(getattr(layer, "swiglu_alpha", None) or 1.0),
-                beta=float(getattr(layer, "swiglu_beta", None) or 0.0),
-                activation_situ_beta=getattr(self.moe, "activation_situ_beta", None),
-                activation_situ_linear_beta=getattr(
-                    self.moe, "activation_situ_linear_beta", None))
-            gate_up = torch.cat([gate, up], dim=-1)
-            activated = torch.empty((gate_up.shape[0], gate_up.shape[1] // 2),
-                                    dtype=gate_up.dtype, device=gate_up.device)
-            apply_moe_activation(activation, activated, gate_up,
-                                 activation_config=activation_config)
-            identity = torch.arange(routes, dtype=torch.int32, device=device)
-            down = a4_grouped_apply(activated, layer.tessera_a4_down_stack,
-                                    layer.tessera_a4_gs2, expert_offsets=offsets,
-                                    route_ids=identity, num_routes=routes,
-                                    epilogues=layer.tessera_a4_down_epilogues)
-            out = torch.zeros((x.shape[0], hidden), dtype=torch.float32, device=device)
-            out.index_add_(0, route_tokens.to(torch.int64),
-                           down * route_weights[:, None])
-            out = out.to(x.dtype)
-            # Shared experts are the RUNNER's: ``FusedMoERunner`` calls
-            # ``SharedExperts`` once (``NO_OVERLAP``, or the multi-stream path
-            # with its own wait) before this apply, and combines the stored
-            # output with the routed result after it.  A quant method that
-            # recomputed or re-added them here would count them twice; this
-            # method is not a modular kernel, so the MK-internal order is
-            # never its to run.  ``shared_experts``/``shared_experts_input``
-            # are therefore intentionally unconsumed.
+            out = layer.tessera_routed_fused(
+                x, topk_ids, topk_weights,
+                apply_router_weight_on_input=bool(getattr(layer, "apply_router_weight_on_input", False)),
+                swiglu_limit=getattr(layer, "swiglu_limit", None))
             self._record(layer, x)
             return out
 

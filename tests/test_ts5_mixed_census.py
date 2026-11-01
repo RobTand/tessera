@@ -7,7 +7,7 @@ from tessera.serving.contract import (
     construction_entry, output_partitions, vllm_module_name)
 from tessera.serving.dense_ownership import partition_members
 from tessera.serving.scheme import ROUTES, TESSERA_BF16, TESSERA_NVFP4, launch_pairs
-from test_ts5_census_check import IMAGE, TARGETS, _check, _fixture, _promote
+from test_ts5_census_check import IMAGE, TARGETS, _check, _fixture, _promote, _routed_fixture
 
 
 def _add_dense(case, target, members, *, family=TESSERA_BF16, grid="BF16", q256=1792):
@@ -19,19 +19,20 @@ def _add_dense(case, target, members, *, family=TESSERA_BF16, grid="BF16", q256=
     sizes = output_partitions(entry, target) if entry is not None else None
     if sizes is None or len(sizes) != len(members):
         sizes = [64] * len(members)
+    columns = 256 if family == TESSERA_NVFP4 else 128
     roles = [{"tensor": name, "role": name.removesuffix(".weight").rsplit(".", 1)[-1],
-              "rows": rows, "cols": 128, "grid": grid, "q256": q256, "family": family}
+              "rows": rows, "cols": columns, "grid": grid, "q256": q256, "family": family}
              for name, rows in zip(members, sizes)]
     for name in members:
         plan[name] = {"grid": grid, "q256": q256}
     scheme = {"structure": "dense", "family": family, "grid": grid,
               "body": route["body"], "plane": route["plane"], "q256": q256,
-              "rows": sum(r["rows"] for r in roles), "columns": 128, "wire_bytes": 4096,
+              "rows": sum(r["rows"] for r in roles), "columns": columns, "wire_bytes": 4096,
               "roles": [[r["role"], r["rows"]] for r in roles]}
     config["quantization_config"]["config_groups"][target] = {
         "targets": [target], "format": "TESSERA", "scheme": scheme}
     manifest["modules"][target] = {"family": family, "grid": grid, "q256": q256,
-        "rows": scheme["rows"], "cols": 128, "container_bytes": 4096, "roles": roles}
+        "rows": scheme["rows"], "cols": columns, "container_bytes": 4096, "roles": roles}
     manifest["export_identity"]["options"]["plan"] = copy.deepcopy(plan)
     manifest["totals"]["modules"] += 1
     manifest["totals"]["units"] += len(roles)
@@ -55,7 +56,7 @@ def _add_dense(case, target, members, *, family=TESSERA_BF16, grid="BF16", q256=
         census["records"][phase][target] = {"kind": "dense", "state": "served",
             "policy": family + ":resident", "contract": route["activation_contract"],
             "symbol": symbol, "decoder": decoder,
-            "shape": f"M{1 if phase == 'decode' else 64}:N{scheme['rows']}:K128"}
+            "shape": f"M{1 if phase == 'decode' else 64}:N{scheme['rows']}:K{columns}"}
         census["record_owner"][phase][target] = target
     census["declared_name_mapping"][target] = target
 
@@ -90,14 +91,9 @@ def test_full_lfm_mix_counts_74_owners_and_2178_matrices():
     for owner in range(22):
         old = old_targets[owner % 2]
         target = f"model.layers.{owner + 2}.feed_forward.experts"
-        scheme = copy.deepcopy(config["quantization_config"]["config_groups"][old])
-        scheme["targets"] = [target]
-        scheme["scheme"]["experts"] = 32
-        module = copy.deepcopy(manifest["modules"][old])
-        base_roles = [r for r in module["roles"] if r["expert"] == 0]
-        module["experts"] = 32
-        module["roles"] = [{**r, "expert": expert} for expert in range(32) for r in base_roles]
-        new_groups[target], new_modules[target] = scheme, module
+        routed_scheme, module = _routed_fixture(target, experts=32)
+        group = {"targets": [target], "format": "TESSERA", "scheme": routed_scheme}
+        new_groups[target], new_modules[target] = group, module
         new_plan[target] = {"grid": "E4M3", "q256": 1024}
         for phase in ("decode", "prefill"):
             child = target + ".routed_experts"

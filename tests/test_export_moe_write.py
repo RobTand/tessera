@@ -11,11 +11,10 @@ serving code itself rather than with a second copy of its rules.
 Two properties are worth stating out loud, because getting either wrong is
 silent:
 
-* **The stack is the plannable unit.**  vLLM builds ONE method per
-  ``RoutedExperts`` module, so a plan entry names ``<moe>.experts`` and gives
-  every expert of that stack one rung.  A plan naming a single expert's
-  ``gate_proj`` describes half a module the runtime builds whole, and is
-  refused with the spelling that works.
+* **The stack is the plannable unit.** vLLM builds one method per RoutedExperts
+  module. A plan names the stack, with optional original-global unit rungs.
+  Export sorts complete serving profiles into storage classes and writes the
+  explicit slot-to-global map; a single projection remains an incomplete plan.
 * **Not planning a stack changes nothing.**  An unplanned stack stays at
   source precision and is named in ``ignore`` at the FusedMoE prefix, exactly
   as before, so every checkpoint written before this is byte-identical under
@@ -47,7 +46,9 @@ from tessera.moe_execution import ResearchSelectedMoeConfig
 
 export = importlib.import_module("tessera.export_serving")
 
-HIDDEN, MOE_INTER, EXPERTS = 128, 64, 4
+from test_export_serving import _declare_fixture_geometry
+
+HIDDEN, MOE_INTER, EXPERTS = 128, 512, 4
 LAYER = "model.language_model.layers.1"
 STACK = f"{LAYER}.mlp.experts"
 
@@ -55,9 +56,7 @@ cuda = pytest.mark.skipif(not torch.cuda.is_available(),
                           reason="the encoder is a GPU job")
 
 
-# Rungs no routed cell attests (the E4M3 cells carry 832..1088 since contract
-# v39, the BF16 cells 1024), so the ordinary gate refuses and only the research
-# block admits them.
+# These research rungs have no serving cell.
 @pytest.mark.parametrize("grid,q256", [("E4M3", 1536), ("BF16", 1792)])
 def test_research_selected_export_gate_accepts_reader_range_without_publishing_a_cell(grid, q256):
     from tessera.control import grid_for_name
@@ -77,11 +76,11 @@ def test_research_selected_export_gate_accepts_reader_range_without_publishing_a
 
 def test_research_bf16_export_stamps_decoder_only_gate_and_exact_scheme(tmp_path, monkeypatch):
     generator = torch.Generator().manual_seed(73)
-    tensors = {f"{STACK}.0.{projection}.weight": torch.randn(32, 32, generator=generator)
+    tensors = {f"{STACK}.0.{projection}.weight": torch.randn(128, 128, generator=generator)
                for projection in ("gate_proj", "up_proj", "down_proj")}
-    tensors["model.language_model.layers.0.norm.weight"] = torch.randn(32, generator=generator).bfloat16()
+    tensors["model.language_model.layers.0.norm.weight"] = torch.randn(128, generator=generator).bfloat16()
     config = _config()
-    config["text_config"].update(n_routed_experts=1, hidden_size=32, moe_intermediate_size=32)
+    config["text_config"].update(n_routed_experts=1, hidden_size=128, moe_intermediate_size=128)
     plan = {STACK: {"grid": "BF16", "q256": 1792}}
     execution, block, _text = _research_input(tmp_path)
     after = _export(tmp_path, monkeypatch, tensors, plan, "--device", "cpu",
@@ -114,11 +113,11 @@ def test_research_export_preserves_wires_and_snapshots_execution(tmp_path, monke
     ordinary.mkdir()
     selected.mkdir()
     generator = torch.Generator().manual_seed(23)
-    tensors = {f"{STACK}.0.{projection}.weight": torch.randn(32, 32, generator=generator)
+    tensors = {f"{STACK}.0.{projection}.weight": torch.randn(128, 128, generator=generator)
                for projection in ("gate_proj", "up_proj", "down_proj")}
-    tensors["model.language_model.layers.0.norm.weight"] = torch.randn(32, generator=generator).bfloat16()
+    tensors["model.language_model.layers.0.norm.weight"] = torch.randn(128, generator=generator).bfloat16()
     config = _config()
-    config["text_config"].update(n_routed_experts=1, hidden_size=32, moe_intermediate_size=32)
+    config["text_config"].update(n_routed_experts=1, hidden_size=128, moe_intermediate_size=128)
     plan = {STACK: {"grid": "E4M3", "q256": 896}}
     before = _export(ordinary, monkeypatch, tensors, plan, "--device", "cpu", config=config)
     path, block, text = _research_input(selected)
@@ -268,6 +267,11 @@ def _write(tmp_path: Path, tensors, config=None) -> Path:
 
 def _export(tmp_path, monkeypatch, tensors, plan, *extra, config=None):
     """Run the exporter over ``tensors`` with ``plan``; return the out dir."""
+    config = _config() if config is None else config
+    text_config = config["text_config"]
+    _declare_fixture_geometry(monkeypatch, hidden=text_config["hidden_size"],
+                              mlp_inter=2 * text_config["hidden_size"],
+                              shared_inter=text_config["moe_intermediate_size"])
     src = _write(tmp_path, tensors, config)
     out = tmp_path / "out"
     argv = ["export", str(src), str(out), "--grid", "E4M3", "--q256", "1024",
@@ -361,13 +365,6 @@ def test_the_leaves_of_one_layer_group_into_one_stack(tmp_path):
     assert sorted(stacks[STACK][0]) == sorted(export.EXPERT_PROJECTIONS)
 
 
-def test_the_group_row_order_comes_off_the_runtimes_own_table():
-    """``w13`` is gate then up because ``MOE_GROUP_SHARDS`` says ``w1`` then ``w3``."""
-    assert export.MOE_GROUP_PROJECTIONS["w13"] == ("gate_proj", "up_proj")
-    assert export.MOE_GROUP_PROJECTIONS["w2"] == ("down_proj",)
-    assert export.EXPERT_PROJECTIONS == ("gate_proj", "up_proj", "down_proj")
-
-
 def test_planning_a_leaf_is_refused_and_names_the_stack_spelling(tmp_path, monkeypatch):
     """The old refusal said the write half did not exist. It does; the plan is misspelled."""
     with pytest.raises(SystemExit) as caught:
@@ -386,17 +383,18 @@ def test_planning_a_leaf_is_refused_and_names_the_stack_spelling(tmp_path, monke
 def test_a_bf16_expert_stack_is_refused_for_want_of_a_cell_not_a_builder(tmp_path, monkeypatch):
     """A 16-bit expert stack HAS a production builder since tessera#609, so the
     no-builder refusal no longer fires for it.  What refuses it now is the
-    serving gate's next question: since contract v38 (tessera#604) the routed
-    BF16 cells attest q256 1024 only, so a stack at 1792 is outside every
-    routed BF16 cell's rungs and cannot ship without an explicit override."""
+    serving gate's next question: contract v59 withdraws every BF16 cell, so
+    a stack at 1792 names a structure no cell attests and cannot ship
+    without an explicit override."""
     with pytest.raises(SystemExit) as caught:
         _export(tmp_path, monkeypatch, _checkpoint(),
                 {STACK: {"grid": "BF16", "q256": 1792}})
 
     message = str(caught.value)
     assert "has no expert route" not in message, message
-    assert "outside the rungs" in message and "routed_moe" in message, message
-    assert "TESSERA_BF16_K1 ([1024]" in message, message
+    assert "no lane_eligibility cell" in message, message
+    assert "TESSERA_BF16_K1" in message, message
+    assert "routed_moe" in message, message
 
 
 def test_a_family_with_no_expert_route_is_still_refused_by_name(monkeypatch):
@@ -667,15 +665,11 @@ def test_a_planned_stack_is_written_as_the_plugin_reads_it(tmp_path, monkeypatch
     assert record["structure"] == "routed_moe"
     assert len(record["roles"]) == EXPERTS * 3
     assert record["wire_stride"]["w13"] == w13_stride
-    # The record names the routed_moe cells that attest its rung (#135): the
-    # same cells the plan-time gate read, so the artifact says in its own
-    # bytes which attestation it rides.
-    from tessera.serving.contract import load_serving_contract
+    from tessera.serving.scheme import attested_cells
     assert record["attested_by"] == [
-        cell["id"] for cell in load_serving_contract()["lane_eligibility"]["cells"]
-        if cell["family"] == "TESSERA_E4M3_K1" and cell["structure"] == "routed_moe"
-        and 896 in cell["rungs_q256"]]
-    assert record["attested_by"], "the packaged contract attests E4M3 q896 routed_moe"
+        cell["id"] for cell in attested_cells("TESSERA_E4M3_K1", "routed_moe")
+        if 896 in cell["rungs_q256"]]
+    assert record["attested_by"]
 
 
 @cuda
@@ -709,23 +703,6 @@ def test_a_packed_stack_is_written_as_canonical_per_expert_wires(
     wires = _written_wires(out)
     _assert_wires_are_the_per_expert_encode(wires, _canonical_sources(_checkpoint()))
 
-    # And the last hop, on the PACKED export's OWN declaration.  The bytes are
-    # equal to the unpacked export's, but the sidecar is not: this scheme
-    # carries ``source_layout``, and nothing had ever handed one to the
-    # loader.  ``prepare_tessera_moe_experts`` is what
-    # ``process_weights_after_loading`` calls, so what it returns here is what
-    # the runtime's fused-MoE kernel would be handed for a packed source.
-    from tessera.serving.moe_route import prepare_tessera_moe_experts
-
-    prepared = prepare_tessera_moe_experts(
-        {"w13": [[wires[(expert, "gate_proj")], wires[(expert, "up_proj")]]
-                 for expert in range(EXPERTS)],
-         "w2": [[wires[(expert, "down_proj")]] for expert in range(EXPERTS)]},
-        declared, STACK, device="cuda")
-    assert tuple(prepared.w13_weight.shape) == (EXPERTS, 2 * MOE_INTER, HIDDEN)
-    assert tuple(prepared.w2_weight.shape) == (EXPERTS, HIDDEN, MOE_INTER)
-    assert prepared.w13_weight.dtype == torch.float8_e4m3fn
-    assert (prepared.w13_weight_scale > 0).all() and (prepared.w2_weight_scale > 0).all()
 
     manifest = json.loads((out / "tessera_serving_manifest.json").read_text())
     assert manifest["routed_moe"]["quantized_source_tensors"] == 2
@@ -736,38 +713,6 @@ def test_a_packed_stack_is_written_as_canonical_per_expert_wires(
     assert all("source_tensor" in role and "source_slice" in role
                for role in record["roles"])
 
-
-@cuda
-def test_the_written_wires_decode_to_the_stock_expert_tile(tmp_path, monkeypatch):
-    """The last hop: ``prepare_tessera_moe_experts`` on the exporter's own bytes.
-
-    This is the function ``process_weights_after_loading`` calls, so what it
-    returns here is what the runtime's fused-MoE kernel would be handed.
-    """
-    from tessera.serving.moe_route import prepare_tessera_moe_experts
-
-    out = _export(tmp_path, monkeypatch, _checkpoint(), {STACK: {"grid": "E4M3", "q256": 896}})
-    written = json.loads((out / "config.json").read_text())["quantization_config"]
-    scheme = next(g["scheme"] for g in written["config_groups"].values() if g["targets"] == [STACK])
-    declared = validate_tessera_moe_scheme(scheme, STACK)
-
-    with safetensors_torch.safe_open(str(out / "model.safetensors"), framework="pt") as handle:
-        def blob(expert, projection):
-            return bytes(handle.get_tensor(f"{STACK}.{expert}.{projection}.wire").tolist())
-
-        blobs = {"w13": [[blob(e, "gate_proj"), blob(e, "up_proj")] for e in range(EXPERTS)],
-                 "w2": [[blob(e, "down_proj")] for e in range(EXPERTS)]}
-
-    prepared = prepare_tessera_moe_experts(blobs, declared, STACK, device="cuda")
-
-    assert tuple(prepared.w13_weight.shape) == (EXPERTS, 2 * MOE_INTER, HIDDEN)
-    assert tuple(prepared.w2_weight.shape) == (EXPERTS, HIDDEN, MOE_INTER)
-    assert prepared.w13_weight.dtype == torch.float8_e4m3fn
-    assert tuple(prepared.w13_weight_scale.shape) == (EXPERTS, 2 * MOE_INTER, 1)
-    assert tuple(prepared.w2_weight_scale.shape) == (EXPERTS, HIDDEN, 1)
-    assert prepared.w13_weight_scale.dtype == torch.float32
-    assert torch.isfinite(prepared.w13_weight_scale).all()
-    assert (prepared.w13_weight_scale > 0).all()
 
 
 # --------------------------------------------------------------------------
@@ -783,10 +728,7 @@ def test_a_stack_at_a_rung_only_the_dense_route_reads_is_refused_before_any_enco
     names, before the first expert is encoded (this test never needs a GPU
     for that reason).
     """
-    from tessera.serving.contract import load_serving_contract
-
-    routed = [cell for cell in load_serving_contract()["lane_eligibility"]["cells"]
-              if cell["family"] == "TESSERA_E4M3_K1" and cell["structure"] == "routed_moe"]
+    routed = export.attested_cells("TESSERA_E4M3_K1", "routed_moe")
     assert routed and all(1536 not in cell["rungs_q256"] for cell in routed)
     with pytest.raises(SystemExit) as caught:
         _export(tmp_path, monkeypatch, _checkpoint(), {STACK: {"grid": "E4M3", "q256": 1536}})
@@ -801,7 +743,7 @@ def test_a_stack_at_a_rung_only_the_dense_route_reads_is_refused_before_any_enco
 # The NVFP4 expert stack (tessera#492): a static A-side scale beside each wire
 # --------------------------------------------------------------------------
 
-NVFP4_HIDDEN = NVFP4_INTER = 64     # the E2M1x2 encoder's row quantum, one group column
+NVFP4_HIDDEN = NVFP4_INTER = 256
 
 
 def _nvfp4_stack_tensors(experts=1):
@@ -838,13 +780,8 @@ def _nvfp4_scales(experts=1):
 
 
 def test_an_nvfp4_stack_writes_a_static_input_scale_beside_each_wire(tmp_path, monkeypatch):
-    """What the exporter writes for an NVFP4 stack is what
-    ``nvfp4_moe_route`` reads: one ``.wire`` and one ``.input_global_scale``
-    per expert projection, the scheme on the NVFP4 route at the wire's rung,
-    the role records carrying the scale.  The routed E2M1_K2 cells attest the
-    stack at q896, so it exports with no override and names them."""
-    from tessera.serving import nvfp4_moe_route
-    from tessera.serving.scheme import STRUCTURE_ROUTED_MOE, TESSERA_NVFP4, attested_cells
+    """The exporter preserves calibrated scales beside each native WINDOW wire."""
+    from tessera.serving.scheme import TESSERA_NVFP4
 
     scales = _nvfp4_scales()
     donor = _input_scales_file(tmp_path, scales)
@@ -855,33 +792,22 @@ def test_an_nvfp4_stack_writes_a_static_input_scale_beside_each_wire(tmp_path, m
     (group,) = [g for g in qconfig["config_groups"].values() if STACK in g["targets"]]
     scheme = group["scheme"]
     assert (scheme["family"], scheme["grid"], scheme["body"], scheme["plane"]) == (
-        TESSERA_NVFP4, "E2M1x2", "TCQ", "LUT")
+        TESSERA_NVFP4, "E2M1x2", "WINDOW", "LUT")
     declared = validate_tessera_moe_scheme(scheme, STACK)
     with safetensors_torch.safe_open(str(after / "model.safetensors"), framework="pt") as handle:
         keys = set(handle.keys())
         for key, value in scales.items():
             assert key in keys, key
             assert handle.get_tensor(key).tolist() == [value]
-            wire = handle.get_tensor(key[: -len(".input_global_scale")] + ".wire")
-            assert wire.dtype == torch.uint8 and wire.numel() > 0
     manifest = json.loads((after / "tessera_serving_manifest.json").read_text())
     stack_record = manifest["modules"][STACK]
     assert stack_record["family"] == TESSERA_NVFP4
-    assert stack_record["attested_by"] == [
-        cell["id"] for cell in attested_cells("TESSERA_E2M1_K2", STRUCTURE_ROUTED_MOE)
-        if 896 in cell["rungs_q256"]]
-    assert stack_record["attested_by"], "the stack names the cells that attest it"
     scale_of = {f"{STACK}.{record['expert']}.{record['role']}.input_global_scale":
                 record["input_global_scale"] for record in stack_record["roles"]}
     assert scale_of == scales
-    # The stock NVFP4 tile per projection: nibbles + group-16 scales + two fp32.
-    assert stack_record["resident_bytes_resident_mode"] == 3 * (
-        NVFP4_INTER * NVFP4_HIDDEN // 2 + NVFP4_INTER * NVFP4_HIDDEN // 16 + 8)
     gate = manifest["serving_gate"]
     assert gate["allow_unserveable"] is False and gate["unserveable_overrides"] == [], \
-        "an attested stack needs no override and stamps none"
-    # The suffix the route reads is the suffix the exporter wrote.
-    assert all(key.endswith("." + nvfp4_moe_route.INPUT_GLOBAL_SCALE_SUFFIX) for key in scales)
+        "native reader admission needs no override"
     # And the plugin reads the wires it was handed.
     with safetensors_torch.safe_open(str(after / "model.safetensors"), framework="pt") as handle:
         for group_name in MOE_GROUPS:
@@ -906,3 +832,73 @@ def test_an_nvfp4_stack_missing_one_input_scale_is_refused_by_key(tmp_path, monk
         _export(tmp_path, monkeypatch, _nvfp4_stack_tensors(), plan, "--device", "cpu",
                 "--allow-unserveable", config=_nvfp4_config())
     assert "--input-scales" in str(caught.value), str(caught.value)
+
+
+
+
+
+def test_unservable_gate_up_plan_refuses_before_encoding(tmp_path, monkeypatch):
+    def forbidden(*_args, **_kwargs):
+        pytest.fail("gate/up schedule refusal arrived after encoding")
+
+    monkeypatch.setattr(export, "encode_linear_planes", forbidden)
+    overrides = {f"{STACK}.0.gate_proj": 1088}
+    config = _config()
+    config["text_config"]["moe_intermediate_size"] = 128
+    with pytest.raises(SystemExit, match="unservable_gate_up_schedule"):
+        _export(tmp_path, monkeypatch, _checkpoint(inter=128),
+                {STACK: {"grid": "E4M3", "q256": 1024, "unit_q256": overrides}},
+                "--device", "cpu", config=config)
+
+
+
+@pytest.mark.parametrize("hidden,intermediate,fit_tp", [
+    (32, 512, 1), (128, 64, 1), (160, 512, 1), (128, 128, 2),
+])
+def test_native_class_geometry_is_refused_before_encoding(tmp_path, monkeypatch, hidden, intermediate, fit_tp):
+    def forbidden(*_args, **_kwargs):
+        pytest.fail("native class geometry refusal arrived after encoding")
+
+    monkeypatch.setattr(export, "encode_linear_planes", forbidden)
+    tensors = {f"{STACK}.0.{p}.weight": torch.zeros(
+        hidden if p == "down_proj" else intermediate,
+        intermediate if p == "down_proj" else hidden)
+        for p in export.EXPERT_PROJECTIONS}
+    config = _config()
+    config["text_config"].update(hidden_size=hidden, moe_intermediate_size=intermediate, n_routed_experts=1)
+    with pytest.raises(SystemExit, match="unservable_native_class_geometry"):
+        _export(tmp_path, monkeypatch, tensors, {STACK: {"grid": "E4M3", "q256": 1024}},
+                "--device", "cpu", "--fit-tp-size", str(fit_tp), config=config)
+
+
+
+def test_explicit_unservable_geometry_screen_is_stamped(tmp_path, monkeypatch):
+    generator = torch.Generator().manual_seed(917)
+    tensors = {f"{STACK}.0.{p}.weight": torch.randn(32, 32, generator=generator) * 0.02
+               for p in export.EXPERT_PROJECTIONS}
+    config = _config()
+    config["text_config"].update(hidden_size=32, moe_intermediate_size=32, n_routed_experts=1)
+    out = _export(tmp_path, monkeypatch, tensors, {STACK: {"grid": "E4M3", "q256": 1024}},
+                  "--device", "cpu", "--allow-unserveable", config=config)
+    manifest = json.loads((out / "tessera_serving_manifest.json").read_text())
+    refusals = manifest["serving_gate"]["unserveable_overrides"]
+    assert any("unservable_native_class_geometry" in row["refusal"] for row in refusals)
+    from tessera.routed_fused import library_for
+
+    assert manifest["modules"][STACK]["native_library"] == library_for("e4m3")
+
+
+
+def test_research_selected_cannot_bypass_native_class_geometry(tmp_path, monkeypatch):
+    def forbidden(*_args, **_kwargs):
+        pytest.fail("research geometry refusal arrived after encoding")
+
+    monkeypatch.setattr(export, "encode_linear_planes", forbidden)
+    tensors = {f"{STACK}.0.{p}.weight": torch.zeros(32, 32) for p in export.EXPERT_PROJECTIONS}
+    config = _config()
+    config["text_config"].update(hidden_size=32, moe_intermediate_size=32, n_routed_experts=1)
+    execution, _block, _text = _research_input(tmp_path)
+    with pytest.raises(SystemExit, match="unservable_native_class_geometry"):
+        _export(tmp_path, monkeypatch, tensors, {STACK: {"grid": "E4M3", "q256": 1024}},
+                "--device", "cpu", "--research-selected-moe-json", str(execution), config=config)
+

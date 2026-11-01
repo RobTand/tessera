@@ -201,7 +201,7 @@ def research_selected_record(served: dict):
     return options.get("research_selected_moe")
 
 
-def layer_units(model: Path, stack: str, plan_entry: dict, *, research_selected: bool) -> dict:
+def layer_units(model: Path, stack: str, plan_entry: dict) -> dict:
     """The producer's own projection of this layer, through the planner.
 
     Header shapes come from ``quantizable`` (one header read per shard, never a
@@ -214,8 +214,7 @@ def layer_units(model: Path, stack: str, plan_entry: dict, *, research_selected:
     _shards, dense, packed, routed = quantizable(Path(model))
     projected = project_expert_plan({**dense, **packed, **routed},
                                     json.loads((Path(model) / "config.json").read_text()),
-                                    {stack: dict(plan_entry)},
-                                    research_selected=research_selected)
+                                    {stack: dict(plan_entry)})
     entry = projected["stacks"][stack]
     if entry.get("source_layout") != "unpacked_per_expert":
         raise SystemExit(f"{stack}: planned source layout is not the unpacked per-expert one")
@@ -434,7 +433,7 @@ def source_mode(args) -> int:
     stack = args.stack
     plan_entry = resolve_plan(served, stack)
     research = research_selected_record(served)
-    entry = layer_units(args.model, stack, plan_entry, research_selected=research is not None)
+    entry = layer_units(args.model, stack, plan_entry)
     members = member_roster(entry)
     manifest = bundle_manifest(served, args.bundle)
     absent = [m["unit"] for m in members if m["unit"] not in manifest["units"]]
@@ -567,7 +566,7 @@ def rate_mode(args) -> int:
     stack = args.stack
     plan_entry = resolve_plan(served, stack)
     research = research_selected_record(served)
-    entry = layer_units(args.model, stack, plan_entry, research_selected=research is not None)
+    entry = layer_units(args.model, stack, plan_entry)
     members = member_roster(entry)
     manifest = bundle_manifest(served, args.bundle)
     if not Path(args.source_file).is_file():

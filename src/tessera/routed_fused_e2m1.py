@@ -31,15 +31,10 @@ column rate 1..8 and every adjacent two-run table is instantiated at three
 word stages; the largest launch (gate/up, rate 8) needs 93,648 B of shared
 memory.
 
-Scope: NOT a serving lane yet.  ``ROUTES["TESSERA_NVFP4"]`` admits the TCQ
-span-2 body only, and ``nvfp4_moe_route``/``nvfp4_route`` intake span-2 units,
-so no serving module can hold a window-body E2M1 stack.  This module is
-therefore kept out of the import graph of ``tessera.serving``: the contract's
-``native_extensions`` table lists the libraries a serving process can map
-(``tests/test_serving_native_extensions.py`` holds reachability to that
-table), and publishing this one before a route loads it would claim a load
-path that does not exist.  The entry, the route's launch rows and the census
-cells come with the route change that admits the window body.
+The production NVFP4 routes load this native WINDOW owner for dense and routed units.
+The serving contract publishes its extension and launch identities.
+Old TCQ receipts do not attest this body or owner.
+Full arithmetic qualification remains separate from exact fixtures and conditional random checks.
 """
 
 from __future__ import annotations
@@ -51,7 +46,6 @@ import torch
 
 from .errors import GrammarError
 from .routed_fused import (
-    ENV_TOGGLE,
     MODULE_NAME_VALUE,
     RATE_MAX,
     RATE_MIN,
@@ -65,7 +59,6 @@ from .routed_fused import (
     _run_stack_reason,
     _sm_count,
     build_library,
-    fused_routed_window_enabled,
     pair_tile_words,
     run_pair,
     slot_words_for_pair,
@@ -83,6 +76,7 @@ __all__ = [
     "chunk_desc",
     "DenseE2M1Role",
     "dense_forward",
+    "dense_forward_quantized",
     "dense_role_reason",
     "dense_split_max",
     "fused_routed_e2m1_supported",
@@ -92,6 +86,8 @@ __all__ = [
 ]
 
 MODULE_NAME = "tessera_routed_fused_e2m1"
+# Standalone E2M1 window experiment; not the serving WINDOW class selector.
+ENV_TOGGLE_E2M1 = "TESSERA_ROUTED_FUSED"
 #: The family's geometry (``fp4`` in the kernel source), checked against the
 #: built library's attributes by :func:`_ext`.
 BN = 256
@@ -250,8 +246,8 @@ def fused_routed_e2m1_supported(gate, up, down) -> "str | None":
                                        "the E2M1 routed window reader")
     except GrammarError as exc:
         return str(exc)
-    if not fused_routed_window_enabled():
-        return f"disabled by {ENV_TOGGLE}=0"
+    if os.environ.get(ENV_TOGGLE_E2M1, "1") == "0":
+        return f"disabled by {ENV_TOGGLE_E2M1}=0"
     bundles = {"gate": gate, "up": up, "down": down}
     e = int(down.experts)
     for name, b in bundles.items():
@@ -263,12 +259,17 @@ def fused_routed_e2m1_supported(gate, up, down) -> "str | None":
             return f"{name} window_bits {b.window_bits} != {WINDOW_BITS}"
         if int(b.experts) != e:
             return f"{name} has {b.experts} experts, down has {e}"
-        if b.cols % BK != 0 or b.cols < MIN_COLS:
-            return (f"{name} has {b.cols} columns; the E2M1 lane needs a multiple of {BK} "
-                    f"and at least {MIN_COLS}")
+        from .serving.scheme import e2m1_shape_reason
+        why = e2m1_shape_reason(b.rows, b.cols, structure="routed_moe",
+                                projection={"gate": "gate_proj", "up": "up_proj",
+                                            "down": "down_proj"}[name])
+        if why is not None:
+            return why
         why = _run_stack_reason(name, b, e)
         if why is not None:
             return why
+        if b.device != down.device:
+            return f"{name} lives on {b.device}, down on {down.device}"
         for field, shape, dtype in (("codes_all", (e, TABLE_ENTRIES), torch.uint8),
                                     ("scale_plane_all", (e, b.rows * (b.cols // 16) // 2), torch.uint8),
                                     ("scale_lut_all", (e, 16), torch.uint8),
@@ -280,10 +281,8 @@ def fused_routed_e2m1_supported(gate, up, down) -> "str | None":
         return f"gate rows {gate.rows}, up rows {up.rows} and down cols {down.cols} disagree"
     if gate.cols != up.cols:
         return f"gate cols {gate.cols} != up cols {up.cols}"
-    if gate.rows % HALF_ROWS != 0:
-        return f"the intermediate size {gate.rows} is not a multiple of {HALF_ROWS}"
-    if down.rows % BN != 0:
-        return f"the hidden size {down.rows} is not a multiple of {BN}"
+    if gate.cols != down.rows:
+        return f"gate cols {gate.cols} != down rows {down.rows}"
     if int(gate.tile_words[0]) != int(up.tile_words[0]):
         return (f"gate tile_words {int(gate.tile_words[0])} != up tile_words {int(up.tile_words[0])}; "
                 "the gate/up launch reads one tile stride for both")
@@ -396,18 +395,43 @@ class FusedRoutedE2M1MoE:
     def device(self) -> torch.device:
         return self.down.device
 
+    @property
+    def launch_pair(self) -> "tuple[str, str]":
+        from .serving.scheme import ROUTED_FUSED_WINDOW_E2M1_SYMBOL
+        from .serving.telemetry import DECODER_NATIVE_ROUTED_FUSED_WINDOW_E2M1
+
+        return ROUTED_FUSED_WINDOW_E2M1_SYMBOL, DECODER_NATIVE_ROUTED_FUSED_WINDOW_E2M1
+
+    def named_tensors(self):
+        """Every retained native input and work counter, by reference."""
+        for part in ("gate", "up", "down"):
+            bundle = getattr(self, part)
+            for field in dataclasses.fields(bundle):
+                value = getattr(bundle, field.name)
+                if isinstance(value, torch.Tensor):
+                    yield f"{part}.{field.name}", value
+        for field in dataclasses.fields(self):
+            value = getattr(self, field.name)
+            if isinstance(value, torch.Tensor):
+                yield field.name, value
+
     def named_tables(self):
         """The tensors this lane holds BEYOND the bundles' own planes."""
         for part in ("gate", "up", "down"):
             yield f"routed_fused.runs_{part}", getattr(self, f"runs_{part}")
             yield f"routed_fused.desc_{part}", getattr(self, f"desc_{part}")
             yield f"routed_fused.ratio_{part}", getattr(self, f"ratio_{part}")
+        yield "routed_fused.gs13", self.gs13
+        yield "routed_fused.gs2", self.gs2
+        yield "routed_fused.counters", self.counters
 
     def resident_bytes(self) -> int:
-        return sum(t.numel() * t.element_size() for _n, t in self.named_tables())
+        from .serving.residency import resident_storage_bytes
+
+        return resident_storage_bytes(self.named_tensors())
 
     def _routing(self, expert_ids: torch.Tensor, routing_weights: torch.Tensor) -> _Routing:
-        return _routing_tables(expert_ids, routing_weights, self.experts, self.device, None)
+        return _routing_tables(expert_ids, routing_weights, self.experts, self.device, (BM,))
 
     def _quantized(self, x: torch.Tensor, gs: torch.Tensor):
         from .kernel_a4 import a4_quantize_activation
@@ -443,7 +467,7 @@ class FusedRoutedE2M1MoE:
             b0.scale_plane_all, b1.scale_plane_all, b0.scale_lut_all, b1.scale_lut_all,
             q0, q1, r0, r1, d0, d1,
             int(b0.rows), int(tile_words), int(slot_words),
-            routing.offsets, routing.flat_sorted, routing.rw_sorted, routing.item_off, slot,
+            routing.offsets, routing.flat_sorted, routing.rw_sorted, routing.superblocks(BM), slot,
             int(routing.top_k), int(a_row_mode), bool(mul_weight), float(limit),
             out, _sm_count(index))
 
@@ -544,6 +568,13 @@ class DenseE2M1Role:
     tile_words: int
     slot_words: int
 
+    def named_tensors(self):
+        """The actual dense launch tensors, including static scale and ratio."""
+        for field in dataclasses.fields(self):
+            value = getattr(self, field.name)
+            if isinstance(value, torch.Tensor):
+                yield field.name, value
+
 
 def dense_role_reason(unit) -> "str | None":
     """Why the dense launch refuses a ``compact_prep.WindowLutUnit``, or ``None``.
@@ -562,10 +593,12 @@ def dense_role_reason(unit) -> "str | None":
         return f"window_bits {unit.window_bits} != {WINDOW_BITS}"
     if unit.arity != 2:
         return f"code arity {unit.arity}; the E2M1 launch reads E2M1x2 tuples"
-    if unit.cols % BK != 0 or unit.cols < MIN_COLS:
-        return f"{unit.cols} columns; the launch needs a multiple of {BK} and at least {MIN_COLS}"
-    if unit.rows % DENSE_ROWS != 0 or unit.rows <= 0:
-        return f"{unit.rows} rows; the dense launch needs a positive multiple of {DENSE_ROWS}"
+    if unit.half != 16:
+        return f"scale group {unit.half}; the E2M1 launch reads group-16 scales"
+    from .serving.scheme import e2m1_shape_reason
+    why = e2m1_shape_reason(unit.rows, unit.cols)
+    if why is not None:
+        return why
     pair, why = run_pair(unit.rep.runs, unit.cols)
     if pair is None:
         return why
@@ -601,32 +634,69 @@ def prepare_dense_role(unit, gs) -> DenseE2M1Role:
         tile_words=pair_tile_words(pair), slot_words=slot_words_for_pair(pair))
 
 
+def _checked_dense_split(role: DenseE2M1Role, k_split: int) -> int:
+    split = int(k_split)
+    maximum = dense_split_max(role.cols)
+    if not 1 <= split <= maximum:
+        raise GrammarError(f"k_split {k_split} is outside [1, {maximum}] at "
+                           f"{role.cols} columns: every split item keeps two K chunks")
+    return split
+
+
+def dense_forward_quantized(role: DenseE2M1Role, packed: torch.Tensor, scales: torch.Tensor,
+                            *, k_split: int = 1,
+                            out: "torch.Tensor | None" = None) -> torch.Tensor:
+    """Apply one role to the unchanged scaled_fp4_quant output.
+
+    ``packed`` is uint8 [M, K/2]. ``scales`` is UE4M3 [M, K/16], as
+    uint8 bytes or a float8_e4m3fn view. No activation conversion occurs here.
+    Each role applies its FP32 ratio before its BF16 output boundary.
+    """
+    if packed.dtype != torch.uint8 or packed.dim() != 2 or int(packed.shape[1]) != role.cols // 2:
+        raise GrammarError(
+            f"packed must be uint8 [M, {role.cols // 2}], got {packed.dtype} {tuple(packed.shape)}")
+    m = int(packed.shape[0])
+    if (scales.dtype not in (torch.uint8, torch.float8_e4m3fn)
+            or tuple(scales.shape) != (m, role.cols // 16)):
+        raise GrammarError(
+            f"scales must be UE4M3 [{m}, {role.cols // 16}], got {scales.dtype} {tuple(scales.shape)}")
+    device = packed.device
+    if device != role.gs.device or scales.device != device:
+        raise GrammarError("packed activations, scales and the dense role must share one device")
+    split = _checked_dense_split(role, k_split)
+    if out is None:
+        out = torch.empty((m, role.rows), dtype=torch.bfloat16, device=device)
+    elif (out.dtype != torch.bfloat16 or tuple(out.shape) != (m, role.rows)
+          or out.device != device or out.stride(1) != 1 or out.stride(0) < role.rows
+          or out.stride(0) % 2 or (split > 1 and out.stride(0) % 4)):
+        raise GrammarError(
+            f"out must be bf16 [{m}, {role.rows}] on {device} with unit column stride "
+            "and an even row stride (multiple of 4 for split-K)")
+    if m == 0:
+        return out
+    if device.type != "cuda":
+        raise GrammarError("the native E2M1 dense launch requires CUDA")
+    counter = torch.zeros(1, dtype=torch.int32, device=device)
+    partial = torch.empty(split * m * role.rows if split > 1 else 0, dtype=torch.float32, device=device)
+    index = device.index if device.index is not None else torch.cuda.current_device()
+    _ext().dense_forward_fp4(packed.contiguous(), scales.view(torch.uint8).contiguous(),
+                             role.words, role.codes, role.init, role.has_init, role.plane, role.lut,
+                             role.ratio, role.runs, role.desc, role.rows, int(role.tile_words),
+                             int(role.slot_words), counter, split, partial, out, _sm_count(index))
+    return out
+
+
 def dense_forward(role: DenseE2M1Role, x: torch.Tensor, *, k_split: int = 1,
                   out: "torch.Tensor | None" = None) -> torch.Tensor:
-    """bf16 ``[M, rows]``: the role over bf16 ``x [M, cols]``, the activation
-    quantised at the role's static global.  ``k_split`` > 1 splits K into
-    that many items per 64-row superblock and 256-row block, summed in fixed
-    order in fp32 before the one epilogue; at most :func:`dense_split_max`.
-    Reads no host value, so a captured forward replays."""
+    """Quantize BF16 [M, K], then call dense_forward_quantized for one role."""
     from .kernel_a4 import a4_quantize_activation
 
     if x.dtype != torch.bfloat16 or x.dim() != 2 or int(x.shape[1]) != role.cols:
         raise GrammarError(f"x must be bf16 [M, {role.cols}], got {x.dtype} {tuple(x.shape)}")
-    if not 1 <= int(k_split) <= dense_split_max(role.cols):
-        raise GrammarError(f"k_split {k_split} is outside [1, {dense_split_max(role.cols)}] at "
-                           f"{role.cols} columns: every split item keeps two K chunks")
-    m = int(x.shape[0])
-    device = x.device
-    if out is None:
-        out = torch.empty((m, role.rows), dtype=torch.bfloat16, device=device)
-    if m == 0:
+    split = _checked_dense_split(role, k_split)
+    if int(x.shape[0]) == 0:
+        if out is None:
+            return torch.empty((0, role.rows), dtype=torch.bfloat16, device=x.device)
         return out
     codes, scales = a4_quantize_activation(x.contiguous(), role.gs)
-    counter = torch.zeros(1, dtype=torch.int32, device=device)
-    partial = torch.empty(int(k_split) * m * role.rows if k_split > 1 else 0, dtype=torch.float32, device=device)
-    index = device.index if device.index is not None else torch.cuda.current_device()
-    _ext().dense_forward_fp4(codes.contiguous(), scales.view(torch.uint8).contiguous(),
-                             role.words, role.codes, role.init, role.has_init, role.plane, role.lut,
-                             role.ratio, role.runs, role.desc, role.rows, int(role.tile_words),
-                             int(role.slot_words), counter, int(k_split), partial, out, _sm_count(index))
-    return out
+    return dense_forward_quantized(role, codes, scales, k_split=split, out=out)

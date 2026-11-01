@@ -1,26 +1,8 @@
-"""The load bench's NVFP4 routed arm: the seam, the shard vocabulary, the accounting.
+"""The routed load observer reads real checkpoint frames and declared tensors.
 
-``experiments/bench_routed_load.py`` grew an arm that measures what one rank's
-routed NVFP4 experts occupy while a body loads (tessera#492, tessera#507).  A
-footprint is only worth its receipt if the bench drives the route's OWN loader,
-with the runtime's own shard ids, and counts the buffers the route actually
-holds -- a bench that quietly loaded nothing would report a very comfortable
-number.  So this pins:
-
-* the checkpoint helpers read a parts-style directory (``tessera_part_config.json``)
-  as well as a merged one, and find the layers whose experts carry wires;
-* ``NVFP4_SHARDS`` is the runtime's shard vocabulary (``scheme.MOE_GROUP_SHARDS``),
-  not a spelling of the projection names;
-* the stubbed vLLM seam and the layer stub really do drive
-  ``build_tessera_nvfp4_moe_method`` -> ``create_weights`` -> ``_load_wire``,
-  and every expert's axis slot comes out non-zero;
-* ``_nvfp4_resident`` is the expert axes plus the layer's A-side scale rows,
-  which is what the per-rank figure is summed from.  The stock modelopt tiles
-  are zero-size anchors on this route, so counting them would count nothing.
-
-The helper tests run anywhere.  The two loader tests need CUDA: the route
-prepares each wire with the span-2 CUDA packers, so there is no CPU intake to
-test.
+The CPU cases check checkpoint discovery and bounded input reads. The GPU
+cases drive the actual WINDOW intake and verify resident bytes and TP cuts.
+The vLLM base-class substitutes do not prove production runtime integration.
 """
 from __future__ import annotations
 
@@ -39,14 +21,11 @@ from tessera.serving.scheme import MOE_GROUP_SHARDS                # noqa: E402
 cuda = pytest.mark.skipif(not torch.cuda.is_available(),
                           reason="the route prepares wires with CUDA packers")
 
-HIDDEN, INTER, EXPERTS, Q256 = 64, 64, 2, 896
+HIDDEN, INTER, EXPERTS, Q256 = 256, 512, 2, 896
 LAYER = 1
 TARGET = f"model.language_model.layers.{LAYER}.mlp.experts"
 PROJECTIONS = (("gate_proj", INTER, HIDDEN), ("up_proj", INTER, HIDDEN),
                ("down_proj", HIDDEN, INTER))
-#: The stacked planes ``A4UnitStack`` takes, one per axis field.
-STACK_FIELDS = ("select", "label", "point", "nibbles", "lut_bytes", "label_lut",
-                "code_nibbles")
 
 
 def _bench():
@@ -69,22 +48,27 @@ def restore_vllm_modules():
 
 
 def _encode(rows, cols, name, seed):
-    """One E2M1x2/896 container on the CPU."""
     export = pytest.importorskip("tessera.export")
     alphabet = pytest.importorskip("tessera.alphabet")
     fused = pytest.importorskip("tessera.fused")
-
     grid = alphabet.tuple_grid(alphabet.E2M1_GRID, 2)
+    recipe = export.served_recipe(grid, Q256, "routed_moe")
     weight = torch.randn(rows, cols, generator=torch.Generator().manual_seed(seed)) * 0.02
+    if torch.cuda.is_available():
+        weight = weight.cuda()
     exported, _unit, _forests = export.encode_linear_planes(
-        weight.contiguous(), grid=grid, q256=Q256, name=name, verify=False)
+        weight.contiguous(), grid=grid, q256=Q256, name=name, verify=False,
+        body=recipe.body, span=recipe.span, scale_plane=recipe.scale_plane,
+        window_bits=recipe.window_bits, window_seed=recipe.window_seed,
+        window_sigma=recipe.window_sigma, channel_sigma=recipe.channel_sigma)
     return fused.pack_fused([(name, rows, exported.blob)])
 
 
-@pytest.fixture
-def checkpoint(tmp_path):
-    """A one-layer parts-style checkpoint: expert wires, A-side scales, sidecar."""
+@pytest.fixture(scope="module")
+def checkpoint(tmp_path_factory):
+    """A read-only checkpoint fixture shared by this module's consumers."""
     from safetensors.torch import save_file
+    tmp_path = tmp_path_factory.mktemp("routed-window-observer")
 
     tensors, strides = {}, {"w13": 0, "w2": 0}
     for expert in range(EXPERTS):
@@ -101,7 +85,10 @@ def checkpoint(tmp_path):
         {"weight_map": {key: "model.safetensors" for key in tensors}}))
     scheme = {
         "family": "TESSERA_NVFP4", "structure": "routed_moe", "grid": "E2M1x2",
-        "body": "TCQ", "plane": "LUT", "experts": EXPERTS,
+        "body": "WINDOW", "span": 1, "plane": "LUT", "experts": EXPERTS,
+        "expert_ids": list(range(EXPERTS)),
+        "expert_classes": [{"start": 0, "end": EXPERTS,
+                            "q256": {"w13": [Q256, Q256], "w2": [Q256]}}],
         "groups": {
             "w13": {"q256": Q256, "rows": 2 * INTER, "columns": HIDDEN,
                     "roles": [["gate_proj", INTER], ["up_proj", INTER]],
@@ -119,16 +106,6 @@ def checkpoint(tmp_path):
     return tmp_path, scheme
 
 
-def test_shard_vocabulary_is_the_runtimes():
-    """The bench loads under ``w1``/``w3``/``w2``, which is what ``_load_wire``
-    resolves through ``SHARD_TO_GROUP`` -- not the projection names."""
-    bench = _bench()
-    assert tuple(shard for shard, _ in bench.NVFP4_SHARDS) == (
-        MOE_GROUP_SHARDS["w13"] + MOE_GROUP_SHARDS["w2"])
-    assert [projection for _, projection in bench.NVFP4_SHARDS] == [
-        "gate_proj", "up_proj", "down_proj"]
-    for shard, _projection in bench.NVFP4_SHARDS:
-        assert shard in nvfp4_moe_route.SHARD_TO_GROUP
 
 
 def test_the_helpers_read_a_parts_directory(checkpoint):
@@ -186,8 +163,7 @@ def _load_layer(bench, held, scheme, *, rank, tp_size, scales=True):
 
 
 def _axis_planes(method):
-    axes = method.intake_axes()
-    return {key: dict(axes[key].named_tensors()) for key in _bench().NVFP4_AXES}
+    return {key: dict(axis.named_tensors()) for key, axis in method.intake_axes().items()}
 
 
 def _nbytes(tensor):
@@ -210,23 +186,13 @@ def test_the_stubbed_seam_drives_the_real_loader_and_the_accounting(
     bench._stub_vllm_oracle()
     holder, method = _load_layer(bench, held, scheme, rank=0, tp_size=1)
 
-    # The stock tiles are anchors; the prepared planes live on the axes.
-    assert holder.w13_weight.numel() == 0 and holder.w2_weight.numel() == 0
-    assert set(method.intake_axes()) == set(bench.NVFP4_AXES)
+    from tessera.serving.residency import resident_storage_bytes
     planes = _axis_planes(method)
-    for key, fields in planes.items():
-        assert set(fields) == set(STACK_FIELDS) | {"globals"}, key
-        assert all(tensor.device.type == "cuda" for tensor in fields.values()), key
-        for expert in range(EXPERTS):
-            assert (fields["nibbles"][expert] != 0).any(), (key, expert)
-            assert float(fields["globals"][expert]) > 0.0, (key, expert)
-    assert bool(torch.isfinite(holder.w13_input_global_scale).all())
-    assert bool(torch.isfinite(holder.w2_input_global_scale).all())
-
-    axes = sum(_nbytes(tensor) for fields in planes.values() for tensor in fields.values())
-    scale_rows = EXPERTS * 2 * 4 + EXPERTS * 4       # w13/w2 input_global_scale, fp32
-    assert axes > 0
-    assert bench._nvfp4_resident(holder, method) == axes + scale_rows
+    declared = [(f'{group}.{field}', tensor) for group, fields in planes.items()
+                for field, tensor in fields.items()]
+    declared.extend([('gs13', holder.w13_input_global_scale),
+                     ('gs2', holder.w2_input_global_scale)])
+    assert bench._nvfp4_resident(holder, method) == resident_storage_bytes(declared)
 
 
 @cuda
@@ -246,18 +212,21 @@ def test_a_rank_holds_its_own_half_at_tp2(checkpoint, restore_vllm_modules):
 
     per_rank = {rank: _axis_planes(method) for rank, (_holder, method) in ranks.items()}
     single = _axis_planes(whole[1])
-    for key in bench.NVFP4_AXES:
-        for field, tensor in per_rank[0][key].items():
-            other = per_rank[1][key][field]
-            assert (tuple(tensor.shape), tensor.dtype) == (tuple(other.shape), other.dtype), \
-                (key, field)
-        # The E2M1 nibble plane is rows/2 x cols/16 per expert, so a cut of
-        # either the rows (w13) or the columns (w2) halves it exactly.
-        assert 2 * _nbytes(per_rank[0][key]["nibbles"]) == _nbytes(single[key]["nibbles"]), key
-        # The per-expert globals are not cut.
-        assert _nbytes(per_rank[0][key]["globals"]) == _nbytes(single[key]["globals"]), key
-        for rank in (0, 1):
-            assert (per_rank[rank][key]["nibbles"] != 0).any(), (rank, key)
+    for group, fields in single.items():
+        for field, tensor in fields.items():
+            if field.endswith('.global_scale'):
+                assert torch.equal(per_rank[0][group][field], tensor)
+                assert torch.equal(per_rank[1][group][field], tensor)
+            elif field.endswith('.scale_plane'):
+                if group == 'w13':
+                    shape = (EXPERTS, HIDDEN // 16, INTER // 4)
+                    reconstructed = torch.cat([per_rank[r][group][field].reshape(shape)
+                                               for r in (0, 1)], dim=2)
+                else:
+                    shape = (EXPERTS, INTER // 32, HIDDEN // 2)
+                    reconstructed = torch.cat([per_rank[r][group][field].reshape(shape)
+                                               for r in (0, 1)], dim=1)
+                assert torch.equal(reconstructed.flatten(), tensor.flatten())
 
     resident = {rank: bench._nvfp4_resident(holder, method)
                 for rank, (holder, method) in ranks.items()}

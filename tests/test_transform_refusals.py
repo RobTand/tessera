@@ -176,14 +176,12 @@ def test_the_bf16_route_refuses_a_rotated_unit_at_preparation():
 # --- the routed-MoE expert route ------------------------------------------------
 
 def test_the_moe_route_refuses_a_rotated_expert_wire():
-    """One rotated projection refuses the stack: the expert decode is
-    ``materialize_fp8`` per projection, and a rotated gate served unrotated
-    would route tokens through a different expert Linear."""
+    """A rotated gate must refuse before the native route prepares its packed weights."""
     from tessera.alphabet import E4M3_GRID
     from tessera.export import encode_linear_planes
     from tessera.fused import pack_fused
-    from tessera.serving.moe_route import prepare_tessera_moe_experts
-    from tessera.serving.scheme import validate_tessera_moe_scheme
+    from tessera.serving.moe_route import _compact_expert_units, _packed_group_shard_plan
+    from tessera.serving.scheme import expert_role_declarations, validate_tessera_moe_scheme
 
     hidden, inter, q256 = 64, 32, 1024
 
@@ -201,6 +199,9 @@ def test_the_moe_route_refuses_a_rotated_expert_wire():
     scheme = {
         "family": "TESSERA_FP8", "structure": "routed_moe", "grid": "E4M3",
         "body": "WINDOW", "plane": "CHANNEL", "experts": 1,
+        "expert_ids": [0],
+        "expert_classes": [{"start": 0, "end": 1,
+                            "q256": {"w13": [q256, q256], "w2": [q256]}}],
         "groups": {
             "w13": {"rows": 2 * inter, "columns": hidden, "q256": q256,
                     "wire_stride": max(len(gate), len(up)),
@@ -210,6 +211,7 @@ def test_the_moe_route_refuses_a_rotated_expert_wire():
                    "roles": [["down_proj", hidden]]}},
     }
     declared = validate_tessera_moe_scheme(scheme, "m")
-    with pytest.raises(GrammarError, match=r"does not undo the unit's rotation"):
-        prepare_tessera_moe_experts(
-            {"w13": [[gate, up]], "w2": [[down]]}, declared, "m", device="cpu")
+    role = expert_role_declarations(declared["groups"]["w13"], expert=0)[0]
+    plan = _packed_group_shard_plan(declared, "w13", "m", 0, 1)
+    with pytest.raises(GrammarError):
+        _compact_expert_units(gate, role, plan, "m", device="cpu", family="e4m3")

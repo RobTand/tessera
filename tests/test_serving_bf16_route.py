@@ -1,27 +1,11 @@
-"""The Tessera 16-bit W16A16 dense serving route.
+"""The Tessera W16A16 dense route keeps values and FP32 row scales separate.
 
-Exercised for real on a CUDA box: the container parse, the packed-window
-decode, the reference-decoder cross-check at preparation, the folded row
-scale, both residency modes, the compiled decode and the refusals.
+The GPU cases exercise the container parse, packed decode, both residency modes,
+compiled decode and refusals. The dot uses raw BF16 values. Its FP32 accumulator
+receives the row scale before the final BF16 conversion.
 
-**The load-bearing assertion is that the route serves the folded tile**
-(tessera#606, #614): each weight is ``bf16(value * row_scale)``, rounded once,
-before the dot, and there is no scale on the output -- the tile
-``materialize_bf16_folded`` renders, and the arithmetic the routed BF16 stack
-serves.  The reason is pricing identity: a consumer that prices a BF16 rung
-prices that tile, so the served function must be that one.  The fold costs one
-bf16 rounding (~0.0011-0.0022 absolute on GLM expert rows at any rate), and
-served at R = 7 the folded twin's KL was 1.0011x the epilogue route's on
-``all`` and 0.9961x on ``confident``, below what the corpus resolves (#45), so
-neither arithmetic is claimed to win on quality.  Two tests hold the line: the
-served output is the folded product (and measurably not the epilogue one), and
-the RETAINED reference preparation still returns ``materialize_bf16``'s
-unfolded pair, which is what the fold is taken of.
-
-STUBBED: vLLM's ``LinearMethodBase`` and parameters.  There is no A-side
-quantiser to stub -- the A side is bf16 as it arrives, which is the whole of
-this route's activation contract, and one test asserts the route reaches for no
-such op.  vLLM loading this route owes a container run, as for every route.
+The vLLM linear base and parameters are stubs. An actual vLLM load needs
+a container check. No activation quantizer is part of this route.
 """
 from __future__ import annotations
 
@@ -145,8 +129,6 @@ def test_selected_bf16_windows_preserve_values_scales_and_global_expert_ids():
     expected_scale = torch.stack([m.row_scale() for m in modules]).index_select(0, ids.long())
     assert torch.equal(batch.decode(ids, max_experts_per_chunk=2), expected_values)
     assert torch.equal(batch.row_scale(ids), expected_scale)
-    assert torch.equal(batch.decode_folded(ids, max_experts_per_chunk=2),
-                       (expected_values.float() * expected_scale[:, :, None]).to(torch.bfloat16))
     assert batch.decode(ids[:0], max_experts_per_chunk=2).shape == (0, 32, 8)
     assert batch.resident_bytes() == batch.wire_bytes_resident() + 4 * 32 * 4
     assert batch.decode(ids, max_experts_per_chunk=1).data_ptr() != batch.decode(
@@ -165,35 +147,7 @@ def test_selected_bf16_windows_refuse_incompatible_layouts():
         route.PreparedTesseraBf16Module.stack([
             _selected_bf16_module(0), _selected_bf16_module(1, rate=3)])
 
-
-def test_selected_bf16_fold_bounds_raw_and_fp32_temporaries_by_chunk(monkeypatch):
-    batch = route.PreparedTesseraBf16Module.stack([
-        _selected_bf16_module(expert) for expert in range(4)])
-    real_decode, real_scale = batch.decode, batch.row_scale
-    seen = []
-
-    def bounded_decode(ids, **kwargs):
-        seen.append(int(ids.numel()))
-        assert ids.numel() <= 2, "fold decoded an unbounded raw selected stack"
-        return real_decode(ids, **kwargs)
-
-    def bounded_scale(ids):
-        assert ids.numel() <= 2, "fold expanded unbounded fp32 row scales"
-        return real_scale(ids)
-
-    monkeypatch.setattr(batch, "decode", bounded_decode)
-    monkeypatch.setattr(batch, "row_scale", bounded_scale)
-    ids = torch.tensor([3, 0, 1, 2, 3], dtype=torch.int32)
-    actual = batch.decode_folded(ids, max_experts_per_chunk=2)
-    expected = torch.stack([
-        (module.decode().float() * module.row_scale()[:, None]).to(torch.bfloat16)
-        for module in (_selected_bf16_module(expert) for expert in range(4))
-    ]).index_select(0, ids.long())
-    assert torch.equal(actual, expected)
-    assert seen == [2, 2, 1]
-
-
-def test_selected_bf16_folded_tile_matches_the_joint_screens_wire_reader():
+def test_selected_bf16_effective_weights_match_the_canonical_wire_reader():
     fused, export, _decode, alphabet = _tessera()
     from tessera.serving.scheme import parse_tessera_blob_for_scheme
     from tessera.unit_artifact import read_unit_artifact
@@ -208,11 +162,12 @@ def test_selected_bf16_folded_tile_matches_the_joint_screens_wire_reader():
         scheme = _scheme(rows=32, columns=64, roles=[['weight', 32]],
                          q256=512, wire_bytes=len(blob))
         parsed = parse_tessera_blob_for_scheme(blob, scheme, f'expert {expert}')
-        modules.append(route.prepare_tessera_bf16_module(parsed, device='cpu'))
-        rendered.append(read_unit_artifact(written.blob).to(torch.bfloat16))
+        modules.append(route.prepare_tessera_bf16_module(parsed, device="cpu"))
+        rendered.append(read_unit_artifact(written.blob))
     ids = torch.tensor([1, 0, 1], dtype=torch.int32)
-    selected = route.PreparedTesseraBf16Module.stack(modules).decode_folded(
-        ids, max_experts_per_chunk=2)
+    batch = route.PreparedTesseraBf16Module.stack(modules)
+    values = batch.decode(ids, max_experts_per_chunk=2)
+    selected = values.float() * batch.row_scale(ids)[:, :, None]
     assert torch.equal(selected, torch.stack(rendered).index_select(0, ids.long()))
 
 
@@ -270,8 +225,7 @@ class _Layer(torch.nn.Module):
 
 
 def _encode_module(roles, cols=512, q256=Q256, seed=0):
-    """Encode ``roles`` = [(name, rows)] on the BF16 grid; return the container
-    blob, the scheme, the reference pair and the FOLDED twin tensor."""
+    """Return the blob, scheme, raw values, row scales and derived stock tile."""
     fused, export, decode, alphabet = _tessera()
     torch.manual_seed(seed)
     values, scales, folded, blobs = [], [], [], []
@@ -283,7 +237,7 @@ def _encode_module(roles, cols=512, q256=Q256, seed=0):
         tile, scale = decode.materialize_bf16(unit, forests, export.DEFAULT_CODE)
         values.append(tile)
         scales.append(scale.reshape(-1))
-        folded.append(decode.materialize_bf16_folded(unit, forests, export.DEFAULT_CODE))
+        folded.append((tile.float() * scale[:, None]).to(torch.bfloat16))
         blobs.append((name, rows, exported.blob))
     blob = fused.pack_fused(blobs)
     scheme = _scheme(rows=sum(r for _, r in roles), columns=cols, wire_bytes=len(blob),
@@ -318,15 +272,7 @@ def _drive(monkeypatch, mode, roles=(("weight", 64),), cols=512, m=8, seed=0, q2
 @requires_cuda
 @pytest.mark.parametrize("mode", [MODE_RESIDENT, MODE_STREAMED])
 def test_the_tile_is_the_reference_values_and_the_scale_is_beside_it(monkeypatch, mode):
-    """The RETAINED reference tile is ``materialize_bf16``'s values (never the
-    fold), with the same fp32 row scale beside it that the served GEMM folds
-    into each weight.
-
-    The route no longer materialises a tile -- ``native_window`` holds packed
-    bundles -- so the byte-for-byte claim is made where it still has a subject,
-    the retained ``prepare_tessera_bf16_module`` preparation, which stays as
-    the oracle.
-    """
+    """The reference pair has raw BF16 values and the separate FP32 row scale."""
     from tessera.serving.scheme import parse_tessera_blob_for_scheme
 
     _got, layer, _m, _x, (values, scale, folded) = _drive(monkeypatch, mode)
@@ -342,11 +288,8 @@ def test_the_tile_is_the_reference_values_and_the_scale_is_beside_it(monkeypatch
     assert tuple(layer.row_scale.shape) == (values.shape[0],)
     assert layer.tessera_native is not None
     assert not hasattr(layer, "weight_bf16") and not hasattr(layer, "tessera_prepared")
-    # And the reference pair is NOT the folded twin: the fold is taken once,
-    # in the served kernel, of exactly this pair -- a reference that had
-    # already folded would be folded twice there, and every other assertion
-    # here would still pass.
-    assert not torch.equal(tile, folded), "the tile has the row scale folded into it"
+    # A derived stock tile must not become the raw operand.
+    assert not torch.equal(tile, folded), "the raw tile contains the row scale"
 
 
 def _rel(a, b):
@@ -355,38 +298,24 @@ def _rel(a, b):
 
 @requires_cuda
 @pytest.mark.parametrize("mode", [MODE_RESIDENT, MODE_STREAMED])
-def test_the_route_serves_the_folded_tile_and_not_the_epilogue(monkeypatch, mode):
-    """The served output IS ``x @ materialize_bf16_folded(...)^T``, and is not
-    the epilogue arithmetic (tessera#614).
-
-    ``folded`` is ``decode.materialize_bf16_folded``'s tile, so the reference is
-    the one definition of the fold in the tree.  Both references are the
-    arithmetic's own answer, rounded to bf16 once, as the served GEMM rounds:
-    the products are exact in fp32, so the served output differs from its own
-    arithmetic's reference only by fp32 summation order -- at most one bf16
-    ulp, and in most elements not at all.  Compared against unrounded fp32
-    products instead, the output's own bf16 rounding (unit roundoff 2^-8)
-    swamps the fold's per-weight rounding and neither ordering can be read.
-    On a build that serves the epilogue the ordering reverses, which is what
-    makes this bite.
-    """
+def test_the_route_applies_row_scale_after_the_dot(monkeypatch, mode):
+    """The real dense route must follow the dtype-derived epilogue oracle."""
     got, layer, _m, x, (values, scale, folded) = _drive(monkeypatch, mode, m=8)
     folded_ref = (x.float() @ folded.float().t()).bfloat16()
     epilogue_ref = ((x.float() @ values.float().t()) * scale).bfloat16()
-    # The two arithmetics really are different functions of these bytes.
     assert not torch.equal(folded_ref, epilogue_ref)
-    gap = (got.float() - folded_ref.float()).abs()
-    bound = folded_ref.float().abs() * 2 ** -7 + 1e-4 * float(folded_ref.float().abs().max())
-    assert bool((gap <= bound).all()), (
-        f"served output is up to {float((gap - bound).max()):.3e} past one bf16 ulp of the "
-        "folded product")
-    err_folded = _rel(got, folded_ref)
-    err_epilogue = _rel(got, epilogue_ref)
-    assert err_folded < err_epilogue, (
-        f"served output is closer to the epilogue product ({err_epilogue:.3e}) than to the "
-        f"folded one ({err_folded:.3e}): the route is not serving the fold")
-    assert layer.tessera_native.arithmetic == "folded"
+    from tessera import routed_fused as rf
+    import fused_bound as fb
 
+    role = layer.tessera_native.role_bundles[0]
+    split = rf.dense_k_split(x.shape[0], role.rows, role.cols,
+                            rf._sm_count(torch.cuda.current_device()),
+                            tile_words=role.tile_words)
+    effective = values.double() * scale.double()[:, None]
+    reference, bound = fb.dense_bound("value", x.double(), effective, role.cols, split)
+    fb.check_within(got, reference, bound, f"BF16 {mode} dense epilogue")
+    assert _rel(got, epilogue_ref) < _rel(got, folded_ref), \
+        "the route still uses a rounded per-weight product"
 
 @requires_cuda
 def test_fused_roles_stack_with_their_own_row_scales(monkeypatch):
@@ -569,25 +498,15 @@ def test_route_record_names_the_family_mode_contract_and_decoder(monkeypatch, fu
     assert (rec["symbol"], rec["decoder"]) == layer.tessera_native.launch_pair
     if fused_lane:
         assert rec["symbol"] == FUSED_WINDOW_DENSE_SYMBOL == "tessera::fused_window_dense"
-        assert rec["decoder"] == telemetry.DECODER_NATIVE_FUSED_WINDOW_DENSE_FOLDED
+        assert rec["decoder"] == telemetry.DECODER_NATIVE_FUSED_WINDOW_DENSE_BF16
         assert (rec["symbol"], rec["decoder"]) == route.DENSE_FUSED_LAUNCH
     else:
         assert rec["symbol"] == WINDOW_GEMM_SYMBOL == "tessera::window_gemm_dense"
-        assert rec["decoder"] == telemetry.DECODER_NATIVE_WINDOW_GEMM_FOLDED
+        assert rec["decoder"] == telemetry.DECODER_NATIVE_WINDOW_GEMM_BF16
         assert (rec["symbol"], rec["decoder"]) == route.DENSE_LAUNCH
     assert rec["decoder"] in telemetry.DECODERS
 
 
-@requires_cuda
-def test_a_bundle_on_another_arithmetic_is_refused_at_load(monkeypatch):
-    """``apply`` stamps ``DENSE_LAUNCH``; a prepared module on the epilogue
-    arithmetic would serve one function and record another, so loading refuses
-    it by name rather than emitting a record the kernel did not earn."""
-    from tessera.serving import native_window
-
-    monkeypatch.setitem(native_window.NATIVE_WINDOW_ARITHMETIC, TESSERA_BF16, "epilogue")
-    with pytest.raises(RuntimeError, match="native_window_gemm_folded"):
-        _drive(monkeypatch, MODE_RESIDENT)
 
 
 @requires_cuda
