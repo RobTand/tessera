@@ -37,13 +37,14 @@ def test_running_treats_a_vanishing_process_as_not_running(monkeypatch):
     assert running(os.getpid()) is False
 
 
+@pytest.mark.parametrize("handler_delay", [0, .3])
 @pytest.mark.parametrize("trigger", ["floor", "read_error", "launcher_exit"])
-def test_guard_stops_workload_after_launcher_exit(tmp_path, monkeypatch, trigger):
+def test_guard_stops_workload_after_launcher_exit(tmp_path, monkeypatch, trigger, handler_delay):
     guard = load_guard()
     pidfile = tmp_path / "workload.pid"
     termfile = tmp_path / "workload.term"
     leaf = ("import os,signal,time;from pathlib import Path;"
-            f"signal.signal(signal.SIGTERM,lambda *_:Path({str(termfile)!r}).write_text('TERM'));"
+            f"signal.signal(signal.SIGTERM,lambda *_:(time.sleep({handler_delay!r}),Path({str(termfile)!r}).write_text('TERM')));"
             f"Path({str(pidfile)!r}).write_text(str(os.getpid()));time.sleep(120)")
     launcher = ("import signal,subprocess,sys,time;"
                 "signal.signal(signal.SIGTERM,lambda *_:sys.exit(0));"
