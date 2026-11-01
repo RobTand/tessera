@@ -48,7 +48,7 @@ def public_sdk(monkeypatch, whole_phase_sdk):
 
     def public_only(name, globals=None, locals=None, fromlist=(), level=0):
         source = (globals or {}).get("__file__", "")
-        if Path(source).name in {
+        if source.rsplit("/", 1)[-1] in {
             "value_prefetch_numeric.py", "prefetch_qualification.py", "pb_staged_store.py"
         }:
             if name == "prismabuild":
