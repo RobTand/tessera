@@ -13,6 +13,7 @@ import xml.etree.ElementTree as ET
 
 NO_VERDICT = 75
 BUDGET_ENFORCEMENT_TOLERANCE = 1.5
+PYTEST_TIMEOUT_SECONDS = 300
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from gate_junit import test_name
@@ -180,12 +181,17 @@ def run_plan(plan: dict, *, root: Path, output: Path, junit: Path,
         environment['GATE_DESELECT'] = json.dumps([target for target in plan.get('deselect', {}).get(lane, [])
                                                   if target.split('::', 1)[0] in files])
         environment['GATE_ASSIGNED_FILES'] = json.dumps(files)
+        environment['GATE_TEST_TIMEOUTS'] = json.dumps({
+            node: limit * BUDGET_ENFORCEMENT_TOLERANCE
+            for node, limit in config['slow'].items()
+            if node.split('::', 1)[0] in files and
+            limit * BUDGET_ENFORCEMENT_TOLERANCE > PYTEST_TIMEOUT_SECONDS})
         environment['GATE_COLLECTION_DIR'] = str(output.parent.resolve())
         environment['PYTHONPATH'] = str(Path(__file__).resolve().parent) + os.pathsep + str(root / 'src') + os.pathsep + environment.get('PYTHONPATH', '')
         junit.parent.mkdir(parents=True, exist_ok=True)
         profile = ['-X', 'importtime'] if os.environ.get('GATE_PROFILE_STARTUP') == '1' else []
         command = [sys.executable, *profile, '-m', 'pytest', '-n', str(workers), '--dist=loadgroup', '--no-loadscope-reorder',
-                   '-q', '-ra', '--durations=30', '--timeout=300', '-p', 'gate_collect', '--surface-json=' + str(output.with_name('surface.json')), '--rootdir=' + str(root), '--junitxml=' + str(junit), '-o', 'junit_family=xunit1',
+                   '-q', '-ra', '--durations=30', f'--timeout={PYTEST_TIMEOUT_SECONDS}', '-p', 'gate_collect', '--surface-json=' + str(output.with_name('surface.json')), '--rootdir=' + str(root), '--junitxml=' + str(junit), '-o', 'junit_family=xunit1',
                    str(root)]
         if lane == 'bytes':
             record['boundary'] = {'status': 'pending'}

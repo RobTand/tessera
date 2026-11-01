@@ -87,8 +87,11 @@ Exceptions for cases above the default use twice the largest
 observed case duration, rounded up. The default and exception list cannot
 grow against the event's base commit. Enforcement uses PB's 1.5 tolerance.
 An unavailable base commit gives no verdict. These are hang limits, not a
-fine-grained cost ratchet. The 1.5 tolerance and 300-second pytest timeout are
-fixed runner constants, outside the shrink-only JSON policy.
+fine-grained cost ratchet. The tolerance is a runner constant. The default pytest timeout is 300 seconds;
+when a measured slow-node budget times 1.5 exceeds that cap, the collector
+uses that exact allowance for the node. The global timeout cannot stop a
+measured exception before its allowed budget. Final JUnit budget checks
+still enforce the unchanged JSON limits and tolerance.
 Bootstrap limits include cold-worker observations from both architecture
 assignments of the fixed partition. Timings include setup and teardown through
 xunit1 JUnit. Scheduling group

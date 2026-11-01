@@ -10245,6 +10245,9 @@ retaining job timestamps alongside step timestamps when their clocks disagree.
 When steps precede workflow creation, job completion supplies a conservative
 upper bound without applying an inferred clock correction.
 Scheduling group suffixes do not change budget or evidence test identities.
+Recorded slow-node budgets also set their runtime timeouts when their
+1.5-times allowance exceeds the default 300-second pytest cap; the JSON
+limits and final budget checks are unchanged.
 
 **`pure`** runs on every push to master and every pull request, in an
 interpreter with pytest, xdist, pytest-timeout, and jsonschema, without torch: the bytes-only tests (whatever

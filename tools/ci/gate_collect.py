@@ -34,6 +34,7 @@ class GateCollection:
     @pytest.hookimpl(hookwrapper=True, tryfirst=True)
     def pytest_collection_modifyitems(self, config, items):
         targets = json.loads(os.environ.get('GATE_DESELECT', '[]'))
+        timeouts = json.loads(os.environ.get('GATE_TEST_TIMEOUTS', '{}'))
         nodes = {item.nodeid for item in items}
         files = {item.path.relative_to(self.root).as_posix() for item in items}
         removed = []
@@ -54,6 +55,8 @@ class GateCollection:
             config.hook.pytest_deselected(items=removed)
         items.sort(key=lambda item: self.ranks[item.path])
         for item in items:
+            if item.nodeid in timeouts:
+                item.add_marker(pytest.mark.timeout(timeouts[item.nodeid]), append=False)
             fixtures = item._fixtureinfo.name2fixturedefs.values()
             if any(definition.scope == 'module'
                    for definitions in fixtures for definition in definitions):
