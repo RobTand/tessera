@@ -67,7 +67,9 @@ def fixture_plan():
 def verdict(plan, lane, value, code):
     return {**{k: plan[k] for k in ('base_sha', 'head_sha', 'mode')},
             'population_version': 'cpu-v1', 'lane': lane, 'files': ['tests/test_a.py'],
-            'verdict': value, 'pytest_exit_code': code, 'budget': {'status': 'pass'}}
+            'verdict': value, 'pytest_exit_code': code, 'budget': {'status': 'pass'},
+            'boundary': {'status': 'pass'}, 'surface': {'role': 'population', 'cuda': False,
+                                                     'cuda_surface': {'executed': 0}}}
 
 
 def test_failures_are_final_and_only_missing_verdicts_retry():

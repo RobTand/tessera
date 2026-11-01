@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import os
+import urllib.request
 import json
 from pathlib import Path
 import subprocess
@@ -47,6 +49,31 @@ def select_files(root, base, head, execute=subprocess.run):
         return {'verdict': 'full', 'tests': all_files, 'reason': str(error)}
 
 
+def issue_state(number):
+    request = urllib.request.Request(f'https://api.github.com/repos/RobTand/tessera/issues/{number}',
+                                     headers={'Accept': 'application/vnd.github+json'})
+    with urllib.request.urlopen(request, timeout=30) as response:
+        return json.load(response)['state']
+
+
+def quarantine(config, *, issue_state=issue_state):
+    lanes = config['lanes']
+    owners = config['issues']
+    for lane in ('bytes', 'torch'):
+        if not isinstance(lanes[lane], list) or len(lanes[lane]) != len(set(lanes[lane])):
+            raise ValueError('quarantine must list unique test nodes')
+        for nodeid in lanes[lane]:
+            if '::' not in nodeid or not nodeid.startswith('tests/'):
+                raise ValueError('quarantine requires an exact test node')
+            number = owners.get(nodeid)
+            if type(number) is not int or number < 1:
+                raise ValueError('quarantine needs an owning issue for ' + nodeid)
+    for number in set(owners[nodeid] for nodes in lanes.values() for nodeid in nodes):
+        if issue_state(number) != 'open':
+            raise ValueError(f'quarantine owner #{number} must remain open')
+    return lanes
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--base', required=True)
@@ -70,7 +97,10 @@ def main():
     if args.mode == 'selection':
         count = max(selection_shard_count(files, durations.get(lane, {}), args.shards,
                         workers=4, single_shard_seconds=120) for lane in ('bytes', 'torch'))
-    matrix = lane_matrix(files, durations, count, args.runners.split(',')) if files else {'shards': 0, 'include': []}
+    runners = args.runners.split(',')
+    if int(os.environ.get('GITHUB_RUN_ATTEMPT', '1')) % 2 == 0:
+        runners.reverse()
+    matrix = lane_matrix(files, durations, count, runners) if files else {'shards': 0, 'include': []}
     # A no-tests PR has a complete empty plan, and launches no pytest shard.
     plan = {'schema': 'tessera.gate_plan.v1', 'base_sha': args.base, 'head_sha': args.head,
             'mode': args.mode, 'selection': selection,
@@ -78,7 +108,7 @@ def main():
                            'cuda': 'not covered: CPU wheels, CUDA_VISIBLE_DEVICES empty'},
             'selected': [{'lane': lane, 'path': path, 'estimated_seconds': durations.get(lane, {}).get(path)}
                          for lane in ('bytes', 'torch') for path in files],
-            'deselect': json.loads((root / 'tools/ci/gate_quarantine.json').read_text())['lanes']}
+            'deselect': quarantine(json.loads((root / 'tools/ci/gate_quarantine.json').read_text()))}
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_text(json.dumps(plan, indent=2) + '\n')
     args.matrix.write_text(json.dumps(matrix, indent=2) + '\n')

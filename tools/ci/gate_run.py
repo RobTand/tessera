@@ -15,6 +15,10 @@ NO_VERDICT = 75
 BUDGET_ENFORCEMENT_TOLERANCE = 1.5
 
 
+class BoundaryFailure(ValueError):
+    """A boundary proof failed with a final verdict."""
+
+
 class BudgetFailure(ValueError):
     """A definite policy failure, never an infrastructure retry."""
 
@@ -46,6 +50,8 @@ def _budget_policy(root, base_sha):
             blob = subprocess.run(['git', 'show', f'{base_sha}:{path}'], cwd=root,
                                   text=True, capture_output=True, check=True)
             baseline = _budget_limits(json.loads(blob.stdout))
+    if baseline.get('enforce', False) and not current.get('enforce', False):
+        raise BudgetFailure('Enforced test budgets may not be disabled')
     if (current['seconds'] > baseline['seconds'] or
             not current['slow'].keys() <= baseline['slow'].keys() or
             any(limit > baseline['slow'][name] for name, limit in current['slow'].items())):
@@ -58,6 +64,8 @@ def _budget_timings(junit, files, config, require_all=True):
     for case in ET.parse(junit).iter('testcase'):
         filename, name = case.get('file', '').removeprefix('./'), case.get('name', '')
         classname = case.get('classname', '')
+        if not classname and case.find('skipped') is not None and name in files:
+            continue  # A module-level importorskip is not a test timing.
         if filename not in files or not name:
             raise ValueError('JUnit timing has missing or unexpected test identity')
         module = filename.removesuffix('.py').replace('/', '.')
@@ -106,6 +114,17 @@ def _write_budget_warnings(junit, warnings):
                          (f'{len(messages) - 25} more warnings in junit.xml.\n' if len(messages) > 25 else ''))
 
 
+def cpu_population(path):
+    surface = json.loads(path.read_text())
+    if surface.get('role') != 'population':
+        raise ValueError('CPU population is missing its controller report')
+    if surface.get('cuda') is not False or surface.get('cuda_surface', {}).get('executed') != 0:
+        raise ValueError('CPU lane unexpectedly exercised CUDA')
+    if not all(key in surface for key in ('counts', 'not_collected', 'skip_reasons', 'device')):
+        raise ValueError('CPU population is incomplete')
+    return surface
+
+
 def run_plan(plan: dict, *, root: Path, output: Path, junit: Path,
              files: list[str] | None = None, workers: int | None = None, lane: str = 'torch',
              execute=subprocess.run, affinity=None) -> int:
@@ -146,6 +165,16 @@ def run_plan(plan: dict, *, root: Path, output: Path, junit: Path,
                    '-q', '-ra', '--durations=30', '--timeout=300', '-p', 'gate_collect', '--surface-json=' + str(output.with_name('surface.json')), '--rootdir=' + str(root), '--junitxml=' + str(junit), '-o', 'junit_family=xunit1',
                    *('--deselect=' + target for target in plan.get('deselect', {}).get(lane, [])
                      if target.split('::', 1)[0] in files), str(root)]
+        if lane == 'bytes':
+            record['boundary'] = {'status': 'pending'}
+            proof = execute([sys.executable, 'tools/ci/gate_boundary.py', '--base', plan['base_sha']],
+                            cwd=root, env=environment, check=False)
+            if proof.returncode == 1:
+                record['boundary']['status'] = 'fail'
+                raise BoundaryFailure('no-torch boundary proof failed')
+            if proof.returncode != 0:
+                raise RuntimeError('boundary proof ended without a verdict')
+            record['boundary']['status'] = 'pass'
         print('GATE_PYTEST_START', flush=True)
         result = execute(command, cwd=root, env=environment, check=False)
         print('GATE_PYTEST_END', flush=True)
@@ -165,6 +194,7 @@ def run_plan(plan: dict, *, root: Path, output: Path, junit: Path,
                 raise RuntimeError(f'pytest exited {result.returncode}, without a complete test verdict')
             record['verdict'] = 'pass'
         try:
+            record['surface'] = cpu_population(output.with_name('surface.json'))
             costs = _budget_timings(junit, files, config, require_all=False)
             overruns, warnings = [], []
             for row in costs:
@@ -191,6 +221,10 @@ def run_plan(plan: dict, *, root: Path, output: Path, junit: Path,
                 record['verdict'] = None
                 raise RuntimeError(str(error)) from error
         code = 0 if record['verdict'] == 'pass' else 1
+    except BoundaryFailure as error:
+        record['verdict'] = 'fail'
+        record['boundary'] = {'status': 'fail', 'reason': str(error)}
+        code = 1
     except BudgetFailure as error:
         record['verdict'] = 'fail'
         record['budget'] = {'status': 'fail', 'reason': str(error), 'baseline_sha': plan.get('base_sha')}

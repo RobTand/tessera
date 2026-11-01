@@ -81,11 +81,6 @@ jobs:
           else
             python -c "import importlib.util; assert importlib.util.find_spec('torch') is None"
           fi
-      - name: Run no-torch boundary proofs
-        if: matrix.lane == 'bytes'
-        env:
-          GATE_BASE: ${{ github.event.pull_request.base.sha }}
-        run: python tools/ci/gate_boundary.py --base "$GATE_BASE"
       - name: Run assigned population
         env:
           SHARD_INDEX: ${{ matrix.index }}
@@ -173,11 +168,6 @@ jobs:
           else
             python -c "import importlib.util; assert importlib.util.find_spec('torch') is None"
           fi
-      - name: Run no-torch boundary proofs
-        if: matrix.lane == 'bytes'
-        env:
-          GATE_BASE: ${{ github.event.pull_request.base.sha }}
-        run: python tools/ci/gate_boundary.py --base "$GATE_BASE"
       - name: Run assigned population
         env:
           SHARD_INDEX: ${{ matrix.index }}

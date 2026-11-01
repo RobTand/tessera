@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import argparse
 from collections import Counter
-import importlib.util
 import json
 from pathlib import Path
 import shutil
@@ -22,6 +21,8 @@ def _verdict(plan, files, record, lane):
             any(not isinstance(path, str) for path in record['files']) or
             sorted(record['files']) != sorted(files)):
         return None
+    if record.get('verdict') == 'fail' and record.get('boundary', {}).get('status') == 'fail':
+        return 'fail'
     code = record.get('pytest_exit_code')
     budget = record.get('budget')
     if (record.get('verdict') == 'fail' and isinstance(budget, dict) and
@@ -32,7 +33,15 @@ def _verdict(plan, files, record, lane):
     verdict = record.get('verdict')
     if not isinstance(verdict, str):
         return None
-    return verdict if verdict == 'fail' or (verdict, code) == ('pass', 0) else None
+    if verdict == 'fail':
+        return 'fail'
+    if (verdict, code) == ('pass', 0) and isinstance(budget, dict) and budget.get('status') == 'pass':
+        surface = record.get('surface', {})
+        boundary_ok = lane != 'bytes' or record.get('boundary', {}).get('status') == 'pass'
+        if (surface.get('role') == 'population' and surface.get('cuda') is False and
+                surface.get('cuda_surface', {}).get('executed') == 0 and boundary_ok):
+            return 'pass'
+    return None
 
 
 def assess_attempts(plan, assignments, attempts):
@@ -79,7 +88,6 @@ def main(argv=None):
     parser.add_argument('command', choices=['retries', 'finish'])
     parser.add_argument('--plan', type=Path, required=True)
     parser.add_argument('--matrix', type=Path, required=True)
-    parser.add_argument('--durations', type=Path, default=Path('tools/ci/gate_durations.json'))
     parser.add_argument('--artifacts', type=Path, required=True)
     parser.add_argument('--prefix', default='gate-result')
     parser.add_argument('--output', type=Path, required=True)

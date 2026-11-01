@@ -71,3 +71,9 @@ The fixed-master inventory, hosted canaries, measured durations, budget
 exceptions, and quarantine owners are recorded with their source SHAs and
 PrismaBuild action keys during rollout. Measurement mode is not a completed
 budget qualification. No hosted timing claim is made before those runs finish.
+
+Boundary-proof failures produce final failure records before pytest starts.
+Passing records require both timing evidence and a controller population with
+no CUDA execution. The quarantine planner checks that every excluded node has
+an owning issue that remains open. Reruns swap the architectures by shard index
+so each file can be qualified on both architectures.
