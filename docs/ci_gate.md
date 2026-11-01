@@ -22,7 +22,9 @@ The torch lane installs the CPU torch wheel. Both set `CUDA_VISIBLE_DEVICES`
 to the empty string. They use four xdist workers, `--dist worksteal`, and one
 native thread per worker, within inherited CPU affinity.
 
-Every shard uploads JUnit, a verdict, and `--surface-json` output. The population
+Every shard uploads JUnit, a verdict, and `--surface-json` output. Reports
+live in the ignored `.pytest_cache` directory so source-identity tests still
+measure a clean checkout. The population
 reports device presence, CUDA allocations, uncollected modules, and verbatim
 skip reasons. CUDA-gated tests skip on these runners. A CPU pass does not prove
 the CUDA population. The coordinator's PrismaBuild GPU run with `--strict-cuda`

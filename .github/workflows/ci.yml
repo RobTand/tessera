@@ -85,7 +85,7 @@ jobs:
         # fails the run, which is the breakage this job exists to catch, and
         # a new torch-needing test file needs no edit here.
         run: |
-          PYTHONPATH=src python -m pytest tests -q -n 4 --dist worksteal --durations=30 --surface-json=surface.pure.json -p no:cacheprovider
+          PYTHONPATH=src python -m pytest tests -q -n 4 --dist worksteal --durations=30 --surface-json=.pytest_cache/surface.pure.json -p no:cacheprovider
 
       # The byte layer must load with no torch in the process -- not just the
       # tests above, but the modules themselves, including the test closure.
