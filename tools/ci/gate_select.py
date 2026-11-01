@@ -90,6 +90,8 @@ def main():
     selection = ({'verdict': 'full', 'tests': population(root), 'reason': 'full CPU gate'}
                  if args.mode == 'full' else select_files(root, args.base, args.head))
     files = population(root) if args.mode == 'full' else selection['tests']
+    if args.mode == 'full' and not files:
+        raise ValueError('empty CPU population refused in full gate')
     # Gate tooling changes require complete coverage, independently of graph edges.
     diff = subprocess.run(['git', 'diff', '--name-only', args.base, args.head],
                           text=True, capture_output=True, check=True).stdout.splitlines()

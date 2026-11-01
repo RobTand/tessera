@@ -45,7 +45,8 @@ The aggregate checks that every selected file belongs to exactly one shard in
 each lane. Verdicts must match the plan's base SHA, head SHA, population, mode,
 lane, and assignment. Exit 0 passes, 1 is a final test or budget failure, and
 75 means no verdict. A separate retry job reruns only missing verdicts, once.
-A later pass never erases an earlier failure.
+A later pass never erases an earlier failure. A full gate refuses an empty
+CPU population; an empty PR selection records that no tests were selected.
 
 ## Per-test budgets and quarantine
 
