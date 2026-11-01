@@ -144,7 +144,11 @@ measure this scheduling change.
 `--canary-manifest CANARIES.json` also accepts retained GitHub metadata as a
 list of objects with `run` and `jobs` fields. `run` is the REST workflow-run
 response, and `jobs` is its jobs array. The report measures from run creation
-through completion of the final `gate` job, including scheduler delays. A
+through completion of the final `gate` verdict step, including scheduler delays.
+It retains the job-level completion timestamp as well. On 2026-11-01, GitHub
+reported job completion about one hour later than the completed verdict and
+cleanup steps. The report uses the verdict step and each shard's `Complete job`
+step when present, falling back to job timestamps for older metadata. A
 rerun entry must also supply `requested_at`, the UTC timestamp retained when
 its REST rerun request was sent. GitHub keeps the original `created_at` on
 reruns, so it cannot measure later attempts. Without that timestamp, a rerun

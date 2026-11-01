@@ -10106,7 +10106,8 @@ cold planning cost on the two architecture assignments,
 verdict retries, measured and enforced test budgets,
 issue-owned quarantine, restored matched-reach coverage with exact standard-sample
 reuse in its test fixture, and the required-check transition. Its evidence command computes
-hosted wall time through the final verdict and separates setup from tests.
+hosted wall time through the final verdict step and separates setup from tests,
+retaining job timestamps alongside step timestamps when their clocks disagree.
 Scheduling group suffixes do not change budget or evidence test identities.
 
 **`pure`** runs on every push to master and every pull request, in an

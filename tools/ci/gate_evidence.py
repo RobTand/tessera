@@ -77,6 +77,12 @@ def _elapsed(start, end):
     return seconds if seconds >= 0 else None
 
 
+def _step_completion(job, name):
+    return next((step['completed_at'] for step in job.get('steps', [])
+                 if step['name'] == name and step.get('completed_at')),
+                job.get('completed_at'))
+
+
 def analyze_canaries(runs):
     """Measure through the final gate; failed runs never qualify as passes."""
     measured, passing = [], []
@@ -86,7 +92,8 @@ def analyze_canaries(runs):
         origin = entry.get('requested_at')
         if origin is None and run.get('run_attempt', 1) == 1:
             origin = run['created_at']
-        wall = _elapsed(origin, gate.get('completed_at'))
+        verdict_completed = _step_completion(gate, 'Require complete lane coverage and final verdicts')
+        wall = _elapsed(origin, verdict_completed)
         passed = (run['status'] == 'completed' and run.get('conclusion') == 'success'
                   and gate.get('conclusion') == 'success' and wall is not None)
         if passed:
@@ -97,16 +104,20 @@ def analyze_canaries(runs):
                 continue
             steps = {step['name']: _elapsed(step.get('started_at'), step.get('completed_at'))
                      for step in job.get('steps', [])}
-            total = _elapsed(job.get('started_at'), job.get('completed_at'))
+            completion = _step_completion(job, 'Complete job')
+            total = _elapsed(job.get('started_at'), completion)
             dependency = steps.get('Install pinned lane dependencies')
             tests = steps.get('Run assigned population')
             other = (total - dependency - tests
                      if all(value is not None for value in (total, dependency, tests)) else None)
             shards.append({'name': job['name'], 'runners': job.get('labels', []),
+                           'job_completed_at': job.get('completed_at'), 'completion_step_at': completion,
                            'conclusion': job.get('conclusion'), 'job_seconds': total,
                            'dependency_setup_seconds': dependency,
                            'test_step_seconds': tests, 'other_seconds': other})
         measured.append({'run_id': run['id'], 'attempt': run.get('run_attempt'),
+                         'gate_job_completed_at': gate.get('completed_at'),
+                         'verdict_completed_at': verdict_completed,
                          'head_sha': run.get('head_sha'), 'requested_at': origin, 'status': run['status'],
                          'conclusion': run.get('conclusion'), 'wall_seconds': wall,
                          'passed': passed, 'shards': shards})
