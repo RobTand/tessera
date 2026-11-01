@@ -72,10 +72,14 @@ Six A4 CPU wire nodes depend on unpublished archived artifacts, owned by
 [the portable A4 fixtures issue](https://github.com/RobTand/tessera/issues/1568).
 One Stageprev receiver-name proof also requires the published PB source tree,
 owned by [the observer contract issue](https://github.com/RobTand/tessera/issues/1562).
-All seven matched-reach tests remain active. File-based worker scheduling
-builds their expensive module fixture once; the five consumers previously
-excluded under [the fixture cost issue](https://github.com/RobTand/tessera/issues/1569)
-were restored after a PrismaBuild run passed all seven tests with one build.
+All matched-reach tests remain active. File-based worker scheduling builds
+their module fixture once. The fixture also reuses standard-normal inverse-CDF
+samples across sigma searches, then applies the original scalar multiplication.
+Bit-for-bit tests compare it with the encoder's source at every tested width.
+Its patch is scoped to fixture construction; production code is unchanged.
+The five consumers previously excluded under [the fixture cost issue](https://github.com/RobTand/tessera/issues/1569)
+are restored. Grouping alone passed ARM but still timed out on hosted x64;
+standard-sample reuse removes that repeated inverse-CDF work.
 The remaining tests in those modules stay active. The T4 prepare-inputs tests
 use the pinned public PrismaBuild SDK instead of being quarantined. Hosted failures must be investigated and assigned
 an open issue before exclusion. No exclusion claims CUDA coverage.

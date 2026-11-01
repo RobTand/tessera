@@ -24,6 +24,7 @@ the modules ``tests/conftest.py`` drops from the pure lane.
 """
 from __future__ import annotations
 
+from functools import cache
 import importlib.util
 import sys
 from pathlib import Path
@@ -44,9 +45,24 @@ from tessera.export import BF16_CHANNEL_SIGMA as SIGMA  # noqa: E402
 WIDTHS = [12, 14, 16]
 
 
+def _cached_gaussian_source(source):
+    """Reuse the sigma-independent inverse CDF with identical float operations."""
+    @cache
+    def standard(count):
+        return source(count, 1.0)
+
+    def scaled(count, sigma):
+        return tuple(sigma * value for value in standard(count))
+
+    return scaled
+
+
 @pytest.fixture(scope="module")
 def grid():
-    return matched_reach.reach_grid(BF16_GRID, WIDTHS, base_sigma=SIGMA)
+    from tessera import encode
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setattr(encode, 'GAUSSIAN_SOURCE', _cached_gaussian_source(encode.GAUSSIAN_SOURCE))
+        return matched_reach.reach_grid(BF16_GRID, WIDTHS, base_sigma=SIGMA)
 
 
 def test_own_reaches_are_the_shipped_ones(grid):
@@ -162,7 +178,7 @@ def test_grid_quantile_cache_calls_inverse_cdf_once_per_count():
     assert calls == [(8, 1.0), (16, 1.0)]
 
 
-@pytest.mark.parametrize('count', [1 << 12, 1 << 14, 1 << 16])
+@pytest.mark.parametrize('count', [1 << width for width in WIDTHS])
 def test_grid_quantile_cache_matches_encoder_source_bit_for_bit(count):
     from tessera.encode import GAUSSIAN_SOURCE
     cached = _cached_gaussian_source(GAUSSIAN_SOURCE)
