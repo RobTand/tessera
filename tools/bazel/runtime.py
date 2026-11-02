@@ -1,4 +1,5 @@
 """Give a remote test the environment the hosted gate gives a shard."""
+import importlib.util
 import os
 from pathlib import Path
 import sys
@@ -47,6 +48,15 @@ def compilers(cc):
     return {'CC': str(path), 'CXX': str(cxx)}
 
 
+def installed_tree(name):
+    """The directory an installed package sits in, or None: what a checkout root
+    of it would hold, as far as tests/box_artifacts.py reads one."""
+    spec = importlib.util.find_spec(name)
+    if spec is None or not spec.origin:
+        return None
+    return str(Path(spec.origin).resolve().parent.parent)
+
+
 def gate_environment(environ, root, scratch):
     """The pytest process's environment: the caller's minus Bazel's, plus the gate's.
 
@@ -59,6 +69,12 @@ def gate_environment(environ, root, scratch):
     environment.update(GATE_ENVIRONMENT)
     environment.update(compilers(environ.get('TS_BAZEL_CC')))
     environment['TMPDIR'] = environment['HOME'] = str(scratch)
+    # tests/box_artifacts.py's "prismaquant" root: the pinned, installed
+    # PrismaQuant (tools/ci/gate_prismaquant_requirements.txt) unless a caller
+    # named a checkout.
+    tree = installed_tree('prismaquant')
+    if tree and not environment.get('TESSERA_PRISMAQUANT_DIR'):
+        environment['TESSERA_PRISMAQUANT_DIR'] = tree
     # gate_run puts tools/ci first; the gate workflow adds src.
     environment['PYTHONPATH'] = os.pathsep.join([str(root / 'tools/ci'), str(root / 'src')])
     return environment

@@ -19,7 +19,8 @@ import sys
 import tempfile
 
 ROOT = Path(__file__).resolve().parents[2]
-SOURCES = ('tools/ci/gate_requirements.txt', 'tools/ci/gate_torch_requirements.txt')
+SOURCES = ('tools/ci/gate_requirements.txt', 'tools/ci/gate_torch_requirements.txt',
+           'tools/ci/gate_prismaquant_requirements.txt')
 EXPORT = 'tools/bazel/requirements.txt'
 FIX = 'python3 tools/bazel/requirements.py'
 EXCLUDE_NEWER = '2026-11-02T00:00:00Z'

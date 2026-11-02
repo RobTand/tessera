@@ -1169,6 +1169,8 @@ ts_py_library(
         "//tools/bazel:build_files.py",
         "//tools/bazel:requirements.py",
         "//tools/bazel:runtime.py",
+        "//tools:ci/gate_prismaquant_requirements.txt",
+        "//tools:ci/gate_requirements.txt",
     ],
     deps = [
         "//tools:ci/bazel_parity",
@@ -8313,6 +8315,7 @@ ts_py_library(
         "//tools:ci/gate_budget.json",
         "//tools:ci/gate_durations.json",
         "//tools:ci/gate_flaky.json",
+        "//tools:ci/gate_prismaquant_requirements.txt",
         "//tools:ci/gate_quarantine.json",
         "//tools:ci/gate_replay_sample.json",
         "//tools:ci/gate_requirements.txt",
