@@ -22,6 +22,16 @@ GATE_ENVIRONMENT = {
 }
 # What Bazel's test runner adds. A hosted shard has none of it.
 BAZEL_PREFIXES = ('TEST_', 'RUNFILES_', 'BASH_FUNC_', 'GTEST_', 'COVERAGE_', 'TESTBRIDGE_', 'LD_', 'TS_BAZEL_')
+# A Remote Bazel runner holds BuildBuddy's API key in its environment, and a
+# child that inherits it can print it into an uploaded log. No test needs one.
+SECRET_NAMES = {'BUILDBUDDY_API_KEY', 'MERGIFY_TOKEN', 'GITHUB_TOKEN'}
+SECRET_SUFFIXES = ('_API_KEY', '_TOKEN')
+
+
+def is_secret(name):
+    return name in SECRET_NAMES or name.endswith(SECRET_SUFFIXES)
+
+
 BAZEL_NAMES = {'JAVA_RUNFILES', 'PYTHON_RUNFILES', 'XML_OUTPUT_FILE', 'BAZEL_TEST', 'PYTHONSAFEPATH',
                'RUNTEST_PRESERVE_CWD', 'TZ', 'BUILD_EXECROOT'}
 
@@ -45,7 +55,7 @@ def gate_environment(environ, root, scratch):
     build directories must allow execution.
     """
     environment = {name: value for name, value in environ.items()
-                   if not name.startswith(BAZEL_PREFIXES) and name not in BAZEL_NAMES}
+                   if not name.startswith(BAZEL_PREFIXES) and name not in BAZEL_NAMES and not is_secret(name)}
     environment.update(GATE_ENVIRONMENT)
     environment.update(compilers(environ.get('TS_BAZEL_CC')))
     environment['TMPDIR'] = environment['HOME'] = str(scratch)

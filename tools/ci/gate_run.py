@@ -19,6 +19,16 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from gate_junit import test_name
 
 
+SECRET_NAMES = {'BUILDBUDDY_API_KEY', 'MERGIFY_TOKEN', 'GITHUB_TOKEN'}
+
+
+def without_secrets(environ):
+    """The environment minus every credential: a test child that inherits one
+    can print it into an uploaded log, and no test needs one."""
+    return {name: value for name, value in environ.items()
+            if name not in SECRET_NAMES and not name.endswith(('_API_KEY', '_TOKEN'))}
+
+
 class BoundaryFailure(ValueError):
     """A boundary proof failed with a final verdict."""
 
@@ -173,7 +183,7 @@ def run_plan(plan: dict, *, root: Path, output: Path, junit: Path,
             raise ValueError('job needs a positive worker count and assigned CPUs')
         workers = min(workers, len(cpus))
         record['workers'] = workers
-        environment = dict(os.environ, CUDA_VISIBLE_DEVICES='',
+        environment = dict(without_secrets(os.environ), CUDA_VISIBLE_DEVICES='',
                            OMP_NUM_THREADS='1', MKL_NUM_THREADS='1', OPENBLAS_NUM_THREADS='1')
         # setup-python exports loader overrides; proof capture must see the actual
         # installed interpreter rather than an ambient dynamic-loader override.
