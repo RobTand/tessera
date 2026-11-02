@@ -14,7 +14,7 @@ from tessera.export import ActivationSource
 from tessera.hessian_capture import capture_sha256_from_units
 from tessera.manifest import ScalePlaneKind
 
-from test_hessian_reference_capture import POLICY, SCHEMA, write_json
+from hessian_reference_support import POLICY, SCHEMA, write_json
 from reuse_authority_fixture import CANONICAL_CAPTURE
 
 

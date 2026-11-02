@@ -46,7 +46,7 @@ from tessera.moe_execution import ResearchSelectedMoeConfig
 
 export = importlib.import_module("tessera.export_serving")
 
-from test_export_serving import _declare_fixture_geometry
+from export_serving_support import _declare_fixture_geometry
 
 HIDDEN, MOE_INTER, EXPERTS = 128, 512, 4
 LAYER = "model.language_model.layers.1"

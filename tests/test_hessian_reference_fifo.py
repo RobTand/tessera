@@ -7,7 +7,7 @@ import time
 
 import pytest
 
-from test_hessian_reference_capture import reference
+from hessian_reference_support import reference
 from reuse_authority_fixture import CANONICAL_CAPTURE
 
 #: The tree under test.  The child below is a fresh interpreter: it does not

@@ -1,7 +1,7 @@
 """The fused routed window MoE lane (``tessera.routed_fused``, tessera#640).
 
 Parity against the same per-expert definition the grouped GEMM tests use
-(``test_window_gemm_grouped.Expert``: each expert's weights ARE the
+(``window_gemm_grouped_support.Expert``: each expert's weights ARE the
 definition, routing applied on the host), held per element to bounds derived
 from the dtypes and operation counts (``fused_bound``), stage by stage on the
 exact input each stage consumes, for both window families, with a
@@ -34,7 +34,7 @@ from tessera.native_window_moe import (PackedWindowMoeBundles,  # noqa: E402
                                        _silu_and_mul, native_window_moe_from_bundles)
 
 import fused_bound as fb                                   # noqa: E402
-from test_window_gemm_grouped import Expert, _quant  # noqa: E402
+from window_gemm_grouped_support import Expert, _quant  # noqa: E402
 
 cuda = pytest.mark.skipif(not torch.cuda.is_available(), reason="the lane is a CUDA kernel")
 

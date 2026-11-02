@@ -14,7 +14,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from tessera import native_window_moe as nwm  # noqa: E402
 from tessera.errors import GrammarError  # noqa: E402
-from test_window_gemm_grouped import Expert, _quant, _tol  # noqa: E402
+from window_gemm_grouped_support import Expert, _quant, _tol  # noqa: E402
 
 cuda = pytest.mark.skipif(not torch.cuda.is_available(), reason="the lane is a CUDA kernel")
 

@@ -68,7 +68,7 @@ THE BOUND (dtype-derived, per output element; nothing here is fitted).
   the 8-term sum and the final bf16 of both sides.
 The existing suite SCREENS are reported next to the bound and labelled as
 chosen screens, never as the pass criterion: ``_tol`` of
-``tests/test_window_gemm_grouped.py`` (5e-3 + 1e-2 max|ref|) and the A4
+``tests/window_gemm_grouped_support.py`` (5e-3 + 1e-2 max|ref|) and the A4
 two-stage ``rel < 2e-2`` of ``tests/test_kernel_a4.py``.
 
 PROFILES (``--mode profile``).  One routed layer per family at every expert
@@ -984,7 +984,7 @@ def oracle_case(fkey, fam, layer, method, ref, x, ids, w, clamp, n_experts, reco
     if fam["family"] != "TESSERA_NVFP4":
         tol = 5e-3 + 1e-2 * ref_max
         e2e["existing_screen"] = {
-            "name": "tests/test_window_gemm_grouped.py::_tol (5e-3 + 1e-2*max|ref|), "
+            "name": "tests/window_gemm_grouped_support.py::_tol (5e-3 + 1e-2*max|ref|), "
                     "a chosen screen, not a derived bound",
             "value": tol, "pass": diff_max < tol}
     else:
