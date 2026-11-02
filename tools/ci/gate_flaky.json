@@ -1,0 +1,6 @@
+{
+  "tests/test_graph_attest_d30_memory_guard.py::test_term_ignoring_child_group_is_killed_only_after_the_full_grace": {
+    "issue": 1529,
+    "reason": "D30 child readiness can expose a partially written PID file; attempt 1 of run 41515473406 failed with JSONDecodeError on ubuntu-24.04-arm."
+  }
+}

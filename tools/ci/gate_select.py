@@ -15,6 +15,7 @@ import sys
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from gate_partition import lane_matrix, selection_shard_count
 from gate_doc_readers import documentation_readers
+from gate_flaky import check_policy as check_flaky_policy
 
 
 def full_gate(pr, repository):
@@ -147,6 +148,8 @@ def check_quarantine_owners(entries: list[dict], *, fetch=fetch_quarantine_owner
         try:
             owner = fetch(issue)
         except urllib.error.HTTPError as error:
+            if error.code in (404, 410):
+                raise ValueError(f'Quarantine owner #{issue} must be an open issue') from error
             raise RuntimeError(f'Quarantine owner #{issue}: no verdict, GitHub HTTP {error.code}') from error
         except (OSError, TimeoutError, json.JSONDecodeError) as error:
             raise RuntimeError(f'Quarantine owner #{issue}: no verdict, GitHub unavailable: {error}') from error
@@ -206,6 +209,7 @@ def main():
     baseline = base_quarantine(root, args.base)
     quarantine_policy(entries, exclusion_entries(baseline) if baseline is not None else None, diff)
     check_quarantine_owners(entries)
+    files = sorted(set(files) | set(check_flaky_policy(root, population(root), check_quarantine_owners)))
     durations = json.loads((root / 'tools/ci/gate_durations.json').read_text())['lanes']
     count = args.shards
     if args.mode == 'selection':
