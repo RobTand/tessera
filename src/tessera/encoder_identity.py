@@ -170,6 +170,8 @@ import threading
 from dataclasses import dataclass, replace
 from types import MappingProxyType
 
+from .fixture_build import building, fixture_build as _fixture_build
+
 __all__ = [
     "FIXTURE_ROWS",
     "FIXTURE_COLS",
@@ -308,7 +310,6 @@ _DOMAIN = b"prismaquant.tessera.v1/encoder_fixture_id"
 
 _LOCK = threading.RLock()
 _MEMO: "list[bytes]" = []
-_BUILDING = threading.local()
 
 
 def _gaussian_stream(seed: int, count: int) -> "list[float]":
@@ -648,17 +649,6 @@ def shipping_structures() -> "frozenset[tuple]":
     )
 
 
-def building() -> bool:
-    """True while :func:`encoder_fixture_id` is encoding its fixtures.
-
-    The fixture build is the one path that must stamp no identity: the digest
-    is not known while it is being computed, and a manifest that carried it
-    would make the hash a function of itself.  ``build_unit_artifact`` asks
-    :func:`stamped_fixture_id`, which reads this.
-    """
-    return getattr(_BUILDING, "active", False)
-
-
 def stamped_fixture_id() -> "bytes | None":
     """The identity to stamp into a manifest, or ``None`` inside a fixture build."""
     if building():
@@ -824,28 +814,6 @@ def fixture_digests() -> "dict[str, str]":
             case.label: hashlib.sha256(_encode_fixture(case)).hexdigest()
             for case in fixtures()
         }
-
-
-class _fixture_build:
-    """Marks the fixture encodes so they stamp no identity, and forbids nesting.
-
-    Re-entry would mean a call path routed the fixture build back through the
-    stamping path -- the recursion this guard exists to make impossible -- so
-    it raises rather than quietly returning ``None`` twice.
-    """
-
-    def __enter__(self):
-        if building():
-            raise RuntimeError(
-                "the encoder fixture build re-entered itself: something asked "
-                "for the encoder identity while it was being computed"
-            )
-        _BUILDING.active = True
-        return self
-
-    def __exit__(self, *exc):
-        _BUILDING.active = False
-        return False
 
 
 def resumable(manifest) -> bool:
