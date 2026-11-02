@@ -10255,6 +10255,15 @@ Recorded slow-node budgets also set their runtime timeouts when their
 1.5-times allowance exceeds the default 300-second pytest cap; the JSON
 limits and final budget checks are unchanged.
 
+`tools/ci/gate_flaky.json` grants one retry to exact nodes owned by open
+deflake issues. The hosted planner checks owners with the quarantine client
+and always selects marked files for exact collection validation.
+`gate_collect.py` reports every retry with its node and issue in output and
+the shard summary, including under xdist. JUnit retains the final outcome
+and both attempts' timing. Closed or missing owners and nonexistent nodes
+fail the gate. Remove each mark with its deflake fix; never rerun the gate
+to obtain a pass.
+
 **`pure`** runs on every push to master and every pull request, in an
 interpreter with pytest, xdist, pytest-timeout, and jsonschema, without torch: the bytes-only tests (whatever
 `tests/conftest.py` can collect without torch, reported with the modules it

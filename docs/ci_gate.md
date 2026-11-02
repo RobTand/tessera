@@ -114,6 +114,21 @@ Collection validates every exclusion against exact collected node IDs or whole
 files and removes items by equality, never pytest's prefix-based `--deselect`.
 The torch lane validates entries from modules unavailable to the bytes lane.
 
+`tools/ci/gate_flaky.json` maps exact pytest node IDs to an open deflake issue
+and a reason. The planner reuses the quarantine owner client and job token;
+closed or missing issues and PR numbers fail policy. It includes marked files
+in every selection, so collection refuses missing nodes even on unrelated
+changes. `gate_collect.py` runs a marked failing item at most twice, with
+normal fixture teardown between attempts. Unmarked failures are final.
+Every retry emits `GATE_FLAKY_RETRY` with its node, issue and reason in pytest
+output and the shard's job summary. The report crosses xdist to its controller,
+which writes the summary once. JUnit records the final outcome and retry issue,
+and includes both attempts' time in the node's budget.
+Remove a mark in the deflake fix before closing its issue; a remaining mark
+with a closed owner fails the next plan.
+Never rerun a gate to obtain a pass. This single item retry requires an
+explicit mark with an open owner; it does not retry a failed gate or shard.
+
 The three projection artifact mutation cases are excluded under open issue
 [the projection fixture issue](https://github.com/RobTand/tessera/issues/1566). Their module-scoped
 safetensors fixture contaminated later consumers in the first hosted canary;
