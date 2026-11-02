@@ -228,6 +228,21 @@ ts_py_library(
 )
 
 ts_py_library(
+    name = "ci/seeded_breaks",
+    srcs = [
+        "ci/seeded_breaks.py",
+    ],
+    data = [
+        "//:docs/schema/allowable-rung-table.v2.schema.json",
+        "//experiments:t8_census/profile_unit_encode.sh",
+        "//tests:fixtures/native_operator_resource_qualification.json",
+    ],
+    deps = [
+        ":ci/bazel_gate",
+    ],
+)
+
+ts_py_library(
     name = "compact_prep_probe",
     srcs = [
         "compact_prep_probe.py",
