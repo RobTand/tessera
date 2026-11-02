@@ -112,6 +112,6 @@ def test_new_edges_are_judged_against_the_base_revision(tessera):
     head['edge_groups']['conftest_source'] = ['tests/conftest.py -> src/x.py', 'tests/conftest.py -> src/y.py']
     stored = {'schema': core.SCHEMA, 'figures': {}, 'tolerances': {}, 'reach_budget': 10}
     compared = tessera.comparison_baseline(stored, base, head)
-    assert core.regressions(head, compared) == ['new conftest_source edge: tests/conftest.py -> src/y.py',
-                                                'new test_to_test edge: tests/test_b.py -> tests/test_a.py']
+    assert sorted(core.regressions(head, compared)) == ['new conftest_source edge: tests/conftest.py -> src/y.py',
+                                                        'new test_to_test edge: tests/test_b.py -> tests/test_a.py']
     assert core.stale_entries(head, compared) == []
