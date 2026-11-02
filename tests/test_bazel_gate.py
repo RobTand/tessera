@@ -205,6 +205,7 @@ def test_the_final_scan_covers_both_diagnostic_logs(monkeypatch, artifact_gate):
     assert len(scans) == 1
     assert str(output) in scans[0]
     assert ['--env', 'BUILDBUDDY_API_KEY'] == scans[0][1:3]
+    assert ['--require', 'BUILDBUDDY_API_KEY'] == scans[0][-2:]
 
 
 @pytest.mark.parametrize('name', ['pr-bazel-remote-grpc.log', 'pr-execution_log.binpb.zst', 'summary.json'])

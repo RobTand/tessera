@@ -77,6 +77,7 @@ def test_the_seed_step_scans_its_actual_artifact_directory(monkeypatch, seed_mai
     assert len(scans) == 1
     assert str(output) in scans[0]
     assert ['--env', 'BUILDBUDDY_API_KEY'] == scans[0][1:3]
+    assert ['--require', 'BUILDBUDDY_API_KEY'] == scans[0][-2:]
 
 
 def test_a_seed_step_secret_log_is_deleted_and_fails(seed_main, capsys):

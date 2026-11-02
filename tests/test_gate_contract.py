@@ -4,6 +4,7 @@ from __future__ import annotations
 import importlib.util
 import json
 from pathlib import Path
+import re
 import subprocess
 import sys
 from types import SimpleNamespace
@@ -149,6 +150,36 @@ def test_workflow_keeps_boundary_proofs_and_branch_check_separate():
     assert 'self-hosted' not in gate
     # Every Bazel test runs with no CUDA device, as hosted shards did.
     assert 'test --test_env=CUDA_VISIBLE_DEVICES=\n' in (ROOT / '.bazelrc').read_text()
+
+
+def test_artifact_secrets_are_step_scoped_and_required():
+    text = (ROOT / '.github/workflows/gate.yml').read_text()
+    for line in text.splitlines():
+        if 'secrets.BUILDBUDDY_API_KEY' in line or 'secrets.MERGIFY_TOKEN' in line:
+            assert line.startswith('          ') and not line.startswith('           ')
+    scans = [step for step in re.split(r'\n      - ', text) if 'id: artifact_scan\n' in step]
+    assert len(scans) == 2
+    for step in scans:
+        assert '        env:\n' in step
+        for name in ('BUILDBUDDY_API_KEY', 'MERGIFY_TOKEN'):
+            assert f'{name}: ${{{{ secrets.{name} }}}}' in step
+            assert f'--env {name}' in step and f'--require {name}' in step
+
+
+def test_fork_prs_skip_artifact_scans_and_uploads_with_a_reason():
+    text = (ROOT / '.github/workflows/gate.yml').read_text()
+    steps = re.split(r'\n      - ', text)
+    same_repo = 'github.event.pull_request.head.repo.full_name == github.repository'
+    fork_repo = 'github.event.pull_request.head.repo.full_name != github.repository'
+    for step in steps:
+        if 'id: artifact_scan\n' in step or 'actions/upload-artifact@' in step:
+            condition = next(line for line in step.splitlines() if line.strip().startswith('if:'))
+            assert same_repo in condition
+            assert "github.event_name != 'pull_request'" in condition
+        if 'fork PR: no secrets, artifact upload skipped' in step:
+            condition = next(line for line in step.splitlines() if line.strip().startswith('if:'))
+            assert fork_repo in condition
+    assert text.count('fork PR: no secrets, artifact upload skipped') == 2
 
 
 def test_full_gate_refuses_an_empty_cpu_population(tmp_path, monkeypatch):
