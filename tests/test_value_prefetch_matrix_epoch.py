@@ -9,7 +9,7 @@ import zipfile
 import pytest
 import torch
 from experiments.t8r_speed import value_prefetch_numeric as numeric
-import test_routed_fused_window as helpers
+import routed_fused_window_support as helpers
 
 
 @pytest.mark.parametrize('fail', [False, True], ids=['two-whole-arm-epochs', 'failure-fences-before-release'])

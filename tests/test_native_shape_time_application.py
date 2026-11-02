@@ -11,7 +11,7 @@ import pytest
 import box_artifacts
 import torch
 
-from test_native_timing_panel import panel, canonical_wire
+from native_timing_panel_support import panel, canonical_wire
 from tools import tessera_shape_time_panel as app, tessera_shape_time_worker as worker
 from tessera.serving import contract, scheme, telemetry, backend, source_identity, runtime_image
 
