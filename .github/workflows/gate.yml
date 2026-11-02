@@ -1,32 +1,141 @@
-# Adapted from PrismaBuild's hosted gate. No label event triggers.
 name: hosted gate
-on:
+
+# Bazel runs on BuildBuddy: the client on a Remote Bazel runner, every test on
+# remote execution or, for the runner lane, on that runner. This workflow keeps
+# what needs GitHub: queue-aware refs, Mergify scopes, the no-torch boundary
+# proofs and the required checks. See docs/bazel.md and docs/ci_gate.md.
+#
+# Required checks keep their names. pr-gate (to enter the queue) comes from
+# ordinary pull requests; gate (to merge) comes from Mergify's batch drafts.
+
+'on':
   pull_request:
+    # No label triggers: Mergify adds and removes its own labels on queued pull
+    # requests, and each would rerun pr-gate, which the queue requires.
     types: [opened, synchronize, reopened]
+  push:
+    branches: [master]
+
 permissions:
   contents: read
+
 concurrency:
-  group: hosted-gate-${{ github.event.pull_request.number }}
-  cancel-in-progress: true
+  group: hosted-gate-${{ github.event.pull_request.number || github.sha }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 env:
-  GATE_SHARDS: '4' # Per lane; eight test jobs in the full matrix.
-  GATE_RUNNERS: ubuntu-24.04,ubuntu-24.04-arm
-  CUDA_VISIBLE_DEVICES: ''
   OMP_NUM_THREADS: '1'
   MKL_NUM_THREADS: '1'
   OPENBLAS_NUM_THREADS: '1'
-  PYTHONPATH: src
+  # Mergify's own batch drafts: same repository, merge-queue branch, Mergify's app user.
+  BATCH_DRAFT: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && startsWith(github.head_ref, 'mergify/merge-queue/') && github.event.pull_request.user.login == 'mergify[bot]' && github.event.pull_request.user.id == 37929162 }}
+
 jobs:
-  plan:
+  bazel:
+    name: Bazel
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    outputs:
+      tests: ${{ steps.gate.outputs.tests }}
+      base: ${{ steps.target.outputs.base }}
+      head: ${{ steps.target.outputs.head }}
+      scopes_uploaded: ${{ steps.uploaded.outputs.scopes_uploaded }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - id: refs
+        name: Queue-aware base and head
+        uses: Mergifyio/gha-mergify-ci@392d123d84a27960993927aec1f2cbb059fb95c1 # v27
+        with:
+          action: scopes-git-refs
+      - id: target
+        name: Commits to test
+        env:
+          REFS_BASE: ${{ steps.refs.outputs.base }}
+          REFS_HEAD: ${{ steps.refs.outputs.head }}
+          MERGE: ${{ github.sha }}
+        # A batch draft tests its exact integrated head against Mergify's
+        # queue-aware base. An ordinary pull request tests GitHub's merge
+        # commit against its first parent, current master.
+        run: |
+          set -euo pipefail
+          if [ "$BATCH_DRAFT" = true ]; then
+            base="$REFS_BASE" head="$REFS_HEAD"
+          else
+            git fetch --quiet --no-tags origin "$MERGE"
+            base="$(git rev-parse "$MERGE^1")" head="$MERGE"
+          fi
+          echo "base=$base" >> "$GITHUB_OUTPUT"
+          echo "head=$head" >> "$GITHUB_OUTPUT"
+      - id: gate
+        name: Select and test on BuildBuddy
+        env:
+          BUILDBUDDY_API_KEY: ${{ secrets.BUILDBUDDY_API_KEY }}
+          BASE: ${{ steps.target.outputs.base }}
+          HEAD: ${{ steps.target.outputs.head }}
+          CHECKOUT: ${{ github.event.pull_request.head.sha }}
+          BRANCH: ${{ github.head_ref }}
+        run: >-
+          python3 tools/ci/remote_gate.py pr --base "$BASE" --head "$HEAD"
+          --checkout "$CHECKOUT" --branch "$BRANCH"
+      - id: token
+        name: Require the Mergify token
+        if: always() && steps.gate.outputs.scopes_ready == 'true'
+        env:
+          MERGIFY_TOKEN: ${{ secrets.MERGIFY_TOKEN }}
+        # gha-mergify-ci skips scopes-upload and only warns when its token is empty.
+        run: |
+          if ! test -n "$MERGIFY_TOKEN"; then
+            echo "::error::MERGIFY_TOKEN is empty; scopes cannot reach Mergify."
+            exit 1
+          fi
+      - id: upload
+        name: Upload scopes
+        if: always() && steps.token.outcome == 'success'
+        uses: Mergifyio/gha-mergify-ci@392d123d84a27960993927aec1f2cbb059fb95c1 # v27
+        with:
+          action: scopes-upload
+          token: ${{ secrets.MERGIFY_TOKEN }}
+          scopes: ${{ steps.gate.outputs.scopes }}
+          all_scopes: ${{ steps.gate.outputs.all_scopes }}
+      - id: uploaded
+        if: always()
+        env:
+          OUTCOME: ${{ steps.upload.outcome }}
+        run: |
+          if [ "$OUTCOME" != success ]; then
+            echo "::error::No scope list reached Mergify; the gate cannot pass."
+            exit 1
+          fi
+          echo scopes_uploaded=true >> "$GITHUB_OUTPUT"
+      - name: Refuse to upload a secret
+        if: always()
+        run: env -u BUILDBUDDY_API_KEY -u MERGIFY_TOKEN python3 tools/ci/check_no_secret_leak.py gate-output
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        if: always()
+        with:
+          name: bazel-gate
+          path: gate-output/
+          retention-days: 7
+          if-no-files-found: ignore
+
+  boundary:
+    name: Boundary
+    # What the hosted no-torch lane proved beside its tests: the byte layer
+    # imports without torch, an empty denylist refuses, the wheel and sdist
+    # ship what they must, the standalone-boundary allowlist only shrinks; and
+    # the base-relative policies: budgets never grow, quarantine grows only
+    # alone and with open owners.
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
     permissions:
       contents: read
       issues: read
-    runs-on: ubuntu-24.04
-    timeout-minutes: 10
-    outputs:
-      matrix: ${{ steps.plan.outputs.matrix }}
-      has_tests: ${{ steps.plan.outputs.has_tests }}
-      mode: ${{ steps.identity.outputs.mode }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
@@ -36,248 +145,114 @@ jobs:
       - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
         with:
           python-version: '3.12'
-      - name: Decide full gate from the event identity
-        id: identity
-        run: python tools/ci/gate_select.py --event "$GITHUB_EVENT_PATH" --repository "$GITHUB_REPOSITORY" --print-mode >> "$GITHUB_OUTPUT"
-      - name: Select population and balance both lanes
-        id: plan
+          cache: pip
+          cache-dependency-path: tools/ci/gate_requirements.txt
+      - name: Install the no-torch lane's pins
+        run: |
+          python -m pip install -r tools/ci/gate_requirements.txt
+          python -c "import importlib.util; assert importlib.util.find_spec('torch') is None"
+      - id: target
+        name: The base the Bazel job tests against
         env:
+          MERGE: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          if [ "$BATCH_DRAFT" = true ]; then
+            head="$(git rev-parse HEAD)"
+          else
+            git fetch --quiet --no-tags origin "$MERGE"
+            git checkout --quiet --detach "$MERGE"
+            head="$MERGE"
+          fi
+          echo "base=$(git rev-parse "$head^1")" >> "$GITHUB_OUTPUT"
+      - name: No-torch boundary proofs
+        env:
+          BASE: ${{ steps.target.outputs.base }}
+        run: env -u GITHUB_TOKEN PYTHONPATH=src python tools/ci/gate_boundary.py --base "$BASE"
+      - name: Budgets and quarantine policy
+        env:
+          BASE: ${{ steps.target.outputs.base }}
           GITHUB_TOKEN: ${{ github.token }}
-          GATE_BASE: ${{ github.event.pull_request.base.sha }}
-          GATE_HEAD: ${{ github.event.pull_request.head.sha }}
-          GATE_MODE: ${{ steps.identity.outputs.mode }}
-        run: |
-          python tools/ci/gate_select.py --base "$GATE_BASE" --head "$GATE_HEAD" \
-            --mode "$GATE_MODE" --shards "$GATE_SHARDS" --runners "$GATE_RUNNERS" \
-            --output .pytest_cache/gate-artifacts/plan.json --matrix .pytest_cache/gate-artifacts/matrix.json >> "$GITHUB_OUTPUT"
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
-        with:
-          name: gate-plan-${{ github.run_attempt }}
-          path: .pytest_cache/gate-artifacts
-          retention-days: 7
-  shards:
-    name: shard-${{ matrix.index }}-${{ matrix.lane }}-a1
-    needs: plan
-    if: ${{ needs.plan.result == 'success' && needs.plan.outputs.has_tests == 'true' }}
-    continue-on-error: true
-    strategy:
-      fail-fast: false
-      matrix: ${{ fromJSON(needs.plan.outputs.matrix) }}
-    runs-on: ${{ matrix.runner }}
-    timeout-minutes: 20
-    steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
-        with:
-          ref: ${{ github.event.pull_request.head.sha }}
-          fetch-depth: 0
-          persist-credentials: false
-      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
-        with:
-          name: gate-plan-${{ github.run_attempt }}
-          path: .pytest_cache/gate-artifacts
-      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
-        with:
-          python-version: '3.12'
-          cache: pip
-          cache-dependency-path: |
-            tools/ci/gate_requirements.txt
-            tools/ci/gate_torch_requirements.txt
-            tools/ci/gate_prismaquant_requirements.txt
-      - name: Install pinned lane dependencies
-        run: |
-          python -m pip install -r tools/ci/gate_requirements.txt
-          if [ '${{ matrix.lane }}' = torch ]; then
-            python -m pip install -r tools/ci/gate_torch_requirements.txt -r tools/ci/gate_prismaquant_requirements.txt
-            python -c "import torch; assert torch.version.cuda is None, torch.__version__"
-          else
-            python -c "import importlib.util; assert importlib.util.find_spec('torch') is None"
-          fi
-      - name: Run assigned population
-        env:
-          SHARD_INDEX: ${{ matrix.index }}
-        run: |
-          python - <<'PYTHON'
-          import json, os
-          from pathlib import Path
-          rows = json.loads(Path('.pytest_cache/gate-artifacts/matrix.json').read_text())['include']
-          row = next(row for row in rows if row['index'] == int(os.environ['SHARD_INDEX']))
-          Path('.pytest_cache/gate-artifacts/assigned.txt').write_text('\n'.join(row['files']) + '\n')
-          PYTHON
-          python tools/ci/gate_run.py --plan .pytest_cache/gate-artifacts/plan.json --lane '${{ matrix.lane }}' \
-            --files-from .pytest_cache/gate-artifacts/assigned.txt --workers 4 \
-            --result .pytest_cache/gate-artifacts/result.json --junitxml .pytest_cache/gate-artifacts/junit.xml
-      - name: Upload verdict, timings and CPU population
-        if: always()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
-        with:
-          name: gate-result-${{ github.run_attempt }}-a1-${{ matrix.index }}
-          path: |
-            .pytest_cache/gate-artifacts/result.json
-            .pytest_cache/gate-artifacts/junit.xml
-            .pytest_cache/gate-artifacts/surface*.json
-            .pytest_cache/gate-artifacts/collection*.json
-          if-no-files-found: warn
-          retention-days: 7
-  retry-plan:
-    needs: [plan, shards]
-    if: ${{ !cancelled() && needs.plan.result == 'success' && needs.plan.outputs.has_tests == 'true' }}
-    runs-on: ubuntu-24.04
-    timeout-minutes: 5
-    outputs:
-      matrix: ${{ steps.retry.outputs.matrix }}
-      retry: ${{ steps.retry.outputs.retry }}
-    steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
-        with:
-          ref: ${{ github.event.pull_request.head.sha }}
-          persist-credentials: false
-      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
-        with:
-          name: gate-plan-${{ github.run_attempt }}
-          path: .pytest_cache/gate-artifacts
-      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
-        continue-on-error: true
-        with:
-          pattern: gate-result-${{ github.run_attempt }}-a1-*
-          path: verdicts
-      - name: Retry only shards without verdicts
-        id: retry
-        run: |
-          python3 tools/ci/gate_actions.py retries --plan .pytest_cache/gate-artifacts/plan.json \
-            --matrix .pytest_cache/gate-artifacts/matrix.json --artifacts verdicts \
-            --prefix gate-result-${{ github.run_attempt }} --output .pytest_cache/gate-artifacts/retries.json >> "$GITHUB_OUTPUT"
-  retry-shards:
-    name: shard-${{ matrix.index }}-${{ matrix.lane }}-a2
-    needs: [plan, retry-plan]
-    if: ${{ !cancelled() && needs.retry-plan.result == 'success' && needs.retry-plan.outputs.retry == 'true' }}
-    continue-on-error: true
-    strategy:
-      fail-fast: false
-      matrix: ${{ fromJSON(needs.retry-plan.outputs.matrix) }}
-    runs-on: ${{ matrix.runner }}
-    timeout-minutes: 20
-    steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
-        with:
-          ref: ${{ github.event.pull_request.head.sha }}
-          fetch-depth: 0
-          persist-credentials: false
-      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
-        with:
-          name: gate-plan-${{ github.run_attempt }}
-          path: .pytest_cache/gate-artifacts
-      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
-        with:
-          python-version: '3.12'
-          cache: pip
-          cache-dependency-path: |
-            tools/ci/gate_requirements.txt
-            tools/ci/gate_torch_requirements.txt
-            tools/ci/gate_prismaquant_requirements.txt
-      - name: Install pinned lane dependencies
-        run: |
-          python -m pip install -r tools/ci/gate_requirements.txt
-          if [ '${{ matrix.lane }}' = torch ]; then
-            python -m pip install -r tools/ci/gate_torch_requirements.txt -r tools/ci/gate_prismaquant_requirements.txt
-            python -c "import torch; assert torch.version.cuda is None, torch.__version__"
-          else
-            python -c "import importlib.util; assert importlib.util.find_spec('torch') is None"
-          fi
-      - name: Run assigned population
-        env:
-          SHARD_INDEX: ${{ matrix.index }}
-        run: |
-          python - <<'PYTHON'
-          import json, os
-          from pathlib import Path
-          rows = json.loads(Path('.pytest_cache/gate-artifacts/matrix.json').read_text())['include']
-          row = next(row for row in rows if row['index'] == int(os.environ['SHARD_INDEX']))
-          Path('.pytest_cache/gate-artifacts/assigned.txt').write_text('\n'.join(row['files']) + '\n')
-          PYTHON
-          python tools/ci/gate_run.py --plan .pytest_cache/gate-artifacts/plan.json --lane '${{ matrix.lane }}' \
-            --files-from .pytest_cache/gate-artifacts/assigned.txt --workers 4 \
-            --result .pytest_cache/gate-artifacts/result.json --junitxml .pytest_cache/gate-artifacts/junit.xml
-      - name: Upload verdict, timings and CPU population
-        if: always()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
-        with:
-          name: gate-result-${{ github.run_attempt }}-a2-${{ matrix.index }}
-          path: |
-            .pytest_cache/gate-artifacts/result.json
-            .pytest_cache/gate-artifacts/junit.xml
-            .pytest_cache/gate-artifacts/surface*.json
-            .pytest_cache/gate-artifacts/collection*.json
-          if-no-files-found: warn
-          retention-days: 7
+        run: python tools/ci/gate_policy.py --base "$BASE"
+
   pr-gate:
     name: pr-gate
-    needs: [plan, shards, retry-plan, retry-shards]
-    if: ${{ !cancelled() && needs.plan.outputs.mode != 'full' }}
+    needs: [bazel, boundary]
+    # Ordinary pull requests: not one of Mergify's batch drafts.
+    if: always() && github.event_name == 'pull_request' && !(github.event.pull_request.head.repo.full_name == github.repository && startsWith(github.head_ref, 'mergify/merge-queue/') && github.event.pull_request.user.login == 'mergify[bot]' && github.event.pull_request.user.id == 37929162)
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:
-      - name: Require a complete plan
-        env:
-          PLAN_RESULT: ${{ needs.plan.result }}
-        run: test "$PLAN_RESULT" = success || exit 75
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           ref: ${{ github.event.pull_request.head.sha }}
+          sparse-checkout: tools/ci
           persist-credentials: false
-      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
-        with:
-          name: gate-plan-${{ github.run_attempt }}
-          path: .pytest_cache/gate-artifacts
-      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
-        continue-on-error: true
-        with:
-          pattern: gate-result-${{ github.run_attempt }}-*
-          path: verdicts
-      - name: Require complete lane coverage and final verdicts
-        run: |
-          python3 tools/ci/gate_actions.py finish --plan .pytest_cache/gate-artifacts/plan.json \
-            --matrix .pytest_cache/gate-artifacts/matrix.json --artifacts verdicts \
-            --prefix gate-result-${{ github.run_attempt }} --output .pytest_cache/gate-artifacts/final.json \
-            --effective-output .pytest_cache/gate-artifacts/effective --summary "$GITHUB_STEP_SUMMARY"
-      - if: always()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
-        with:
-          name: gate-pr-gate-final-${{ github.run_attempt }}
-          path: .pytest_cache/gate-artifacts
-          retention-days: 7
+      - name: Require Bazel's verdict, scopes and the boundary job
+        env:
+          NEEDS_JSON: ${{ toJSON(needs) }}
+        run: python3 tools/ci/remote_gate.py aggregate
+
   gate:
     name: gate
-    needs: [plan, shards, retry-plan, retry-shards]
-    if: ${{ !cancelled() && needs.plan.outputs.mode == 'full' }}
+    needs: [bazel, boundary]
+    # Mergify's batch drafts: same repository, merge-queue branch, Mergify's app user.
+    if: always() && github.event_name == 'pull_request' && (github.event.pull_request.head.repo.full_name == github.repository && startsWith(github.head_ref, 'mergify/merge-queue/') && github.event.pull_request.user.login == 'mergify[bot]' && github.event.pull_request.user.id == 37929162)
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:
-      - name: Require a complete plan
-        env:
-          PLAN_RESULT: ${{ needs.plan.result }}
-        run: test "$PLAN_RESULT" = success || exit 75
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           ref: ${{ github.event.pull_request.head.sha }}
+          sparse-checkout: tools/ci
           persist-credentials: false
-      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+      - name: Require Bazel's verdict, scopes and the boundary job
+        env:
+          NEEDS_JSON: ${{ toJSON(needs) }}
+        run: python3 tools/ci/remote_gate.py aggregate
+
+  post-merge:
+    name: Post-merge full run
+    if: github.event_name == 'push'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    permissions:
+      contents: read
+      pull-requests: read
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
-          name: gate-plan-${{ github.run_attempt }}
-          path: .pytest_cache/gate-artifacts
-      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
-        continue-on-error: true
-        with:
-          pattern: gate-result-${{ github.run_attempt }}-*
-          path: verdicts
-      - name: Require complete lane coverage and final verdicts
+          fetch-depth: 0
+          persist-credentials: false
+      - id: prs
+        name: Merged pull requests
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BEFORE: ${{ github.event.before }}
+          AFTER: ${{ github.sha }}
         run: |
-          python3 tools/ci/gate_actions.py finish --plan .pytest_cache/gate-artifacts/plan.json \
-            --matrix .pytest_cache/gate-artifacts/matrix.json --artifacts verdicts \
-            --prefix gate-result-${{ github.run_attempt }} --output .pytest_cache/gate-artifacts/final.json \
-            --effective-output .pytest_cache/gate-artifacts/effective --summary "$GITHUB_STEP_SUMMARY"
-      - if: always()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+          set -o pipefail
+          prs=$(git rev-list "$BEFORE..$AFTER" | while read -r sha; do
+            gh api "repos/${GITHUB_REPOSITORY}/commits/$sha/pulls" --jq '.[].number'
+          done | sort -nu | paste -sd, -)
+          echo "prs=$prs" >> "$GITHUB_OUTPUT"
+      - id: full
+        name: Test everything on amd64 and arm64
+        env:
+          BUILDBUDDY_API_KEY: ${{ secrets.BUILDBUDDY_API_KEY }}
+          BEFORE: ${{ github.event.before }}
+          AFTER: ${{ github.sha }}
+          PRS: ${{ steps.prs.outputs.prs }}
+        run: >-
+          python3 tools/ci/remote_gate.py main --base "$BEFORE" --head "$AFTER"
+          --branch master --prs "$PRS" --timeout 100
+      - name: Refuse to upload a secret
+        if: always()
+        run: env -u BUILDBUDDY_API_KEY python3 tools/ci/check_no_secret_leak.py gate-output
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        if: always()
         with:
-          name: gate-gate-final-${{ github.run_attempt }}
-          path: .pytest_cache/gate-artifacts
-          retention-days: 7
+          name: post-merge-${{ github.sha }}
+          path: gate-output/
+          retention-days: 90
+          if-no-files-found: ignore

@@ -146,9 +146,9 @@ def test_workflow_keeps_boundary_proofs_and_branch_check_separate():
     gate = (ROOT / '.github/workflows/gate.yml').read_text()
     assert 'types: [opened, synchronize, reopened]' in gate
     assert 'name: pr-gate' in gate and 'name: gate' in gate
-    assert '--print-mode' in gate
-    assert 'CUDA_VISIBLE_DEVICES' in gate
     assert 'self-hosted' not in gate
+    # Every Bazel test runs with no CUDA device, as hosted shards did.
+    assert 'test --test_env=CUDA_VISIBLE_DEVICES=\n' in (ROOT / '.bazelrc').read_text()
 
 
 def test_full_gate_refuses_an_empty_cpu_population(tmp_path, monkeypatch):

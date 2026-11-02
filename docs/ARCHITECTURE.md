@@ -10251,18 +10251,14 @@ fallback one. A census (`tools/tessera_route_census.py`) that reads
 
 `.github/workflows/ci.yml` provides `branch rule`, `pure`, and tag-only
 `publish`. `.github/workflows/gate.yml` adds `pr-gate` on PR pushes and
-`gate` on authenticated Mergify batch drafts or same-repository canaries.
-Both test the bytes-only and torch CPU populations on hosted x64 and ARM.
-Neither covers CUDA-gated tests. [The gate reference](ci_gate.md) describes
-selection that falls back to full on silent output for changed paths,
-a docs-only tier including documentation and issue-snapshot readers, hosted-duration file sharding and xdist groups derived from module fixture scopes,
-with scheduling costs and bootstrap limits refreshed from retained hosted JUnit
-and an 80-second default derived from twice the measured 39.884-second
-cold planning cost on the two architecture assignments,
-verdict retries, measured and enforced test budgets,
-issue-owned quarantine parsed once for growth, owner checks and deselection,
-with a strict lanes/issues schema and growth checks covering both paths of renames, restored matched-reach coverage with exact standard-sample
-reuse in its test fixture, and the required-check transition. Its evidence command computes
+`gate` on authenticated Mergify batch drafts. Both run the tests bazel-diff
+selects on BuildBuddy, through Bazel (#1589): one target per test file and
+hosted lane, bytes-only and torch CPU, on amd64 per pull request and on amd64
+and arm64 after every merge. A hosted boundary job keeps the no-torch proofs
+and the budget and quarantine policies. Neither covers CUDA-gated tests.
+[The gate reference](ci_gate.md) describes selection, its fail-closed rules,
+the budget-only rerun and the secret rules; [docs/bazel.md](bazel.md) the
+build. The hosted gate it replaced had an evidence command that computes
 hosted wall time through the final verdict step and separates setup from tests,
 retaining job timestamps alongside step timestamps when their clocks disagree.
 When steps precede workflow creation, job completion supplies a conservative

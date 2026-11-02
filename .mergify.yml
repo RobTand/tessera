@@ -1,9 +1,14 @@
 # Mergify merge queue for Tessera. Tracking: #1559.
 #
-# Two steps keep per-PR feedback separate from testing the integrated SHA:
-# - "pr-gate" selects tests from each pull request's changes before queueing.
-# - "gate" tests the full gate population on Mergify's temporary draft batch
-#   pull request before the original pull requests merge into master.
+# Two steps keep per-PR feedback separate from testing the integrated SHA
+# (docs/ci_gate.md; Bazel on BuildBuddy, #1589):
+# - "pr-gate" runs the tests Bazel's impact analysis selects for the pull
+#   request merged into master, before queueing.
+# - "gate" runs the tests the batch impacts on Mergify's temporary draft batch
+#   pull request, against the queue-aware base, before the original pull
+#   requests merge into master. Every push to master then runs every test on
+#   amd64 and arm64 and records any detection miss.
+# The gate uploads each pull request's impacted Bazel packages as its scopes.
 #
 # max_parallel_checks: 2 forces draft batch PRs. In-place checks could rewrite
 # the original branch and invalidate the head TL3 approved. Serial mode keeps
@@ -32,6 +37,10 @@
 # PR head would hold a pull request outside the queue, and one the draft
 # can't pass would stall every batch. (branch_protection_injection_mode: none
 # would need a merge_bot_account, which this repository does not use.)
+scopes:
+  source:
+    manual:
+
 commands_restrictions:
   queue:
     conditions:

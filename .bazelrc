@@ -61,3 +61,5 @@ build:ci --remote_download_regex=.*/test\.outputs/.*
 # Runner-lane tests (tools/bazel/nonhermetic.bzl) run on the Remote Bazel
 # runner, which is amd64: the arm64 pass leaves them out.
 test:remote-arm64 --test_tag_filters=-runner
+# The budget-only rerun reads each test's test.outputs/budget_overrun.json.
+test:ci --nozip_undeclared_test_outputs

@@ -1,30 +1,26 @@
-# Hosted CPU merge gate
+# Merge gate
 
-Every PR push selects tests with `tools/impacted_tests.py`, Tessera's reverse
-import graph. Selector errors and empty selector output for changed paths select
-the full population. Changes to gate or
-workflow files, and the selector itself, also select the full population.
-Documentation-only changes outside `docs/schema/` select standalone, packaging
-and provenance checks plus all test modules naming Markdown, reStructuredText
-or issue-snapshot inputs, including tests that import such readers through
-helper modules. `tools/ci/gate_doc_readers.py` scans Python modules under
-`tests/` without importing them and follows their reverse import closure.
-It includes transitive helper imports, package and bare imports, relative
-imports and ambiguous module spellings. Only test files enter the selection;
-unrelated helpers do not. Comments and docstrings are citations, not input declarations.
-This conservatively retains fixture-only consumers too. Parse/read errors
-select the full population. Ordinary changes retain reverse-import and
-explicit data-read dependencies. Named kernel-generated boot ID, memory maps
-and mount records create no repository dependency; arbitrary external paths
-and proc aliases retain conservative consumers. The final check is `pr-gate`.
-The workflow handles `opened`, `synchronize`, and `reopened` events. Label
-changes take effect on the next push or reopen.
+The merge gate runs on Bazel through BuildBuddy (#1589); [docs/bazel.md](bazel.md) describes the build.
+`.github/workflows/gate.yml` keeps the required check names: `pr-gate` on ordinary pull requests, needed to queue, and `gate` on Mergify's batch drafts, needed to merge. It has three working jobs.
 
-The final `gate` check runs the full CPU population on same-repository Mergify
-batch heads. Their branches start `mergify/merge-queue/`, and their author must
-have login `mergify[bot]` and numeric ID 37929162. Same-repository PRs labelled
-`gate-canary` use that full path too. The checkout is the event's head SHA,
-which is the integrated commit for a batch draft.
+- **Bazel.** It starts `tools/ci/bazel_gate.py` on a Remote Bazel runner through `tools/ci/remote_gate.py`. Base and head are Mergify's queue-aware refs for a batch draft (`scopes-git-refs`). For an ordinary pull request they are GitHub's merge commit and its first parent, current master.
+  - bazel-diff v42 selects the impacted targets.
+  - A change to Bazel's own inputs (`MODULE.bazel`, its lock, `.bazelrc`, the root `BUILD.bazel`, `tools/bazel/**`), to `gate.yml` or to the gate scripts tests everything.
+  - A Python file no target holds fails the gate: the BUILD files are stale. Any other file no target reads selects nothing.
+  - Detection that can't establish what to test fails the gate; it never passes empty.
+  - The selected tests run on amd64 remote executors, and the runner lane on the runner's own checkout.
+  - The impacted targets' packages are uploaded to Mergify as scopes (`scopes-upload`).
+  - In the same run, the generated BUILD files, the lock export and the static population parity (`tools/ci/bazel_parity.py`) must be current. The graph-impact check (`tools/ci/graph_impact_tessera.py`) prints its summary line and fails a deepening change.
+- **Boundary.** On a hosted runner with only the no-torch pins, it keeps the proofs the no-torch lane made beside its tests: the byte layer imports without torch, an empty denylist refuses, the wheel and sdist ship what they must, and the standalone-boundary allowlist only shrinks (`tools/ci/gate_boundary.py`). `tools/ci/gate_policy.py` adds the base-relative policies below: budgets never grow, and quarantine grows only in a change of its own, with open owners.
+- **Post-merge.** On every push to master, `//...` runs on amd64 and arm64. It records `POST_MERGE_RECORD`, which says whether the merged change's own selection would have caught each failure. An architecture that executes no test is an error.
+
+**Budget-only rerun.** A test that failed only on a per-test budget (the runner writes `test.outputs/budget_overrun.json`), or that Bazel timed out, reruns once with `--nocache_test_results`. The rerun's verdict stands and is recorded as `budget_reruns`. An assertion failure never reruns.
+
+**Secrets.** No child the gate starts on the runner, other than Bazel, gets `BUILDBUDDY_API_KEY`, `MERGIFY_TOKEN`, `GITHUB_TOKEN` or any `*_API_KEY` or `*_TOKEN`. `tools/ci/check_no_secret_leak.py` must pass before any artifact upload.
+
+CUDA-gated tests are not covered: every Bazel test runs with `CUDA_VISIBLE_DEVICES` empty, and the 30 files whose every node needs CUDA are tagged `gpu` and left out. Their run stays on PrismaBuild with `--strict-cuda`.
+
+The sections below describe the hosted gate this replaced. Its populations, budgets and quarantine rules carry over into the Bazel runner (`tools/bazel/python_runner.py`); its scheduling does not.
 
 ## CPU populations
 
