@@ -115,3 +115,37 @@ def test_new_edges_are_judged_against_the_base_revision(tessera):
     assert sorted(core.regressions(head, compared)) == ['new conftest_source edge: tests/conftest.py -> src/y.py',
                                                         'new test_to_test edge: tests/test_b.py -> tests/test_a.py']
     assert core.stale_entries(head, compared) == []
+
+
+_LOADS_A_TOOL = '''import importlib.util
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parents[1]
+
+
+def _load(name):
+    spec = importlib.util.spec_from_file_location(name, ROOT / 'tools' / f'{name}.py')
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def test_a():
+    assert _load('helper').X
+'''
+
+
+def test_a_relative_root_reads_the_same_graph(tessera, tmp_path, monkeypatch):
+    """A path the code resolves (Path(__file__).resolve()) is absolute; the
+    evidence must place it under a relative root as under an absolute one."""
+    repo = tmp_path / 'repo'
+    (repo / 'tests').mkdir(parents=True)
+    (repo / 'tools').mkdir()
+    (repo / 'pyproject.toml').write_text('[project]\nname = "x"\n')
+    (repo / 'tools/helper.py').write_text('X = 1\n')
+    (repo / 'tests/test_a.py').write_text(_LOADS_A_TOOL)
+    files = ['pyproject.toml', 'tools/helper.py', 'tests/test_a.py']
+    monkeypatch.chdir(tmp_path)
+    edges = [tessera.graph.Graph(tessera.evidence.Evidence(root, files)).edges.get('tests/test_a.py')
+             for root in (Path('repo'), repo)]
+    assert edges == [{'tools/helper.py'}, {'tools/helper.py'}]
