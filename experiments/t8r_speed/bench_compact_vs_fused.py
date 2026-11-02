@@ -42,6 +42,7 @@ import torch
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
 sys.path.insert(0, os.path.join(HERE, "..", "..", "tests"))
+sys.path.insert(0, os.path.join(HERE, "..", "..", "src"))
 
 try:
     import pytest  # noqa: F401  (the test module imports it; the image may not carry it)
