@@ -2,7 +2,7 @@
   "schema": "graph-impact.v1",
   "figures": {
     "u_pct": 18.52801940943251,
-    "loc_u_pct": 34.32082723716565,
+    "loc_u_pct": 34.301988560594886,
     "scc_max": 61
   },
   "tolerances": {
@@ -263,5 +263,8 @@
       "tests/conftest.py -> src/tessera/window_viterbi.py",
       "tests/conftest.py -> src/tessera/wire.py"
     ]
-  }
+  },
+  "test_to_test": "reach",
+  "test_to_test_count": 139,
+  "test_to_test_strict_by": "2026-11-16"
 }
