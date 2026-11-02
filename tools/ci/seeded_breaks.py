@@ -66,6 +66,19 @@ def table(rows):
     return '\n'.join(lines)
 
 
+def select_seeds(value):
+    """Resolve comma-separated zero-based indices or place names in SEEDS order."""
+    choices = {str(index): index for index in range(len(SEEDS))}
+    choices.update({seed[0]: index for index, seed in enumerate(SEEDS)})
+    selected = set()
+    for item in value.split(','):
+        name = item.strip()
+        if name not in choices:
+            raise argparse.ArgumentTypeError('seeds must be zero-based indices or place names from SEEDS')
+        selected.add(choices[name])
+    return [seed for index, seed in enumerate(SEEDS) if index in selected]
+
+
 def run_seed(workspace, base, place, path, mutation, expected):
     workspace.checkout(base)
     mutate(workspace.root, path, mutation)
@@ -88,11 +101,13 @@ def run_seed(workspace, base, place, path, mutation, expected):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--base', default='HEAD')
+    parser.add_argument('--seeds', type=select_seeds, default=SEEDS,
+                        help='comma-separated zero-based indices or place names; default: all seeds')
     args = parser.parse_args()
     workspace = bazel_gate.Workspace()
     base = subprocess.check_output(['git', 'rev-parse', args.base], cwd=workspace.root, text=True,
                                    env=bazel_gate.child_environment()).strip()
-    rows = [run_seed(workspace, base, *seed) for seed in SEEDS]
+    rows = [run_seed(workspace, base, *seed) for seed in args.seeds]
     workspace.checkout(base)
     report = table(rows)
     print(report)
