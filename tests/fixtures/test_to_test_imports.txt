@@ -1,6 +1,5 @@
 tests/test_audit_byte_baseline.py -> tests/test_export_moe_write.py
 tests/test_audit_byte_baseline.py -> tests/test_served_e2m1_window.py
-tests/test_b770_producer_review.py -> tests/test_export_serving.py
 tests/test_b770_producer_review.py -> tests/test_t8_partition_launcher.py
 tests/test_cached_cohort_composition.py -> tests/test_rooted_cached_bundle.py
 tests/test_cached_unit_reader_gamut.py -> tests/test_cached_producer.py
@@ -10,9 +9,6 @@ tests/test_e4m3_prefill.py -> tests/test_dense_fused_window.py
 tests/test_e4m3_prefill.py -> tests/test_piece_major_reader_boundaries.py
 tests/test_e4m3_prefill.py -> tests/test_serving_fp8_route.py
 tests/test_endpoint_verifier_cli.py -> tests/test_endpoint_observer.py
-tests/test_export_ignore_completeness.py -> tests/test_export_serving.py
-tests/test_export_moe_layouts.py -> tests/test_export_serving.py
-tests/test_export_moe_write.py -> tests/test_export_serving.py
 tests/test_export_routed_resident_pricing.py -> tests/test_export_moe_write.py
 tests/test_export_serving.py -> tests/test_serving_parts.py
 tests/test_forest_grid_roster_determinism.py -> tests/test_forest_grid_roster.py
@@ -84,7 +80,6 @@ tests/test_stageprev_793_s7_contract.py -> tests/test_stageprev_793_prepare.py
 tests/test_stageprev_delegated_observer.py -> tests/test_stageprev_793_prepare.py
 tests/test_step4_route_kinds.py -> tests/test_step4_route_qualification.py
 tests/test_t4_prepare_inputs_release_gate.py -> tests/test_t4_fused_qualify.py
-tests/test_t8_batch_probe.py -> tests/test_export_serving.py
 tests/test_ts5_mixed_census.py -> tests/test_ts5_census_check.py
 tests/test_uniform_control.py -> tests/test_accounting_source.py
 tests/test_value_prefetch_matrix_epoch.py -> tests/test_routed_fused_window.py

@@ -278,7 +278,7 @@ def test_unanchored_shape_cannot_enter_timed_population(tmp_path, monkeypatch, m
 
 def test_actual_cpu_batch_and_anchor_keep_reads_outside_both_timers(tmp_path, monkeypatch, torch_runtime):
     import ab_batched_best_form as ab
-    import test_export_serving as fixture
+    import export_serving_support as fixture
     from tessera import export as encoder
     from tessera import export_serving as owner
     from tessera.structure import STRUCTURE_ROUTED_MOE
@@ -337,7 +337,7 @@ def test_actual_cpu_batch_and_anchor_keep_reads_outside_both_timers(tmp_path, mo
 
 def test_probe_actual_plan_uses_the_exporter_worklist(tmp_path, monkeypatch, torch_runtime):
     import ab_batched_best_form as ab
-    import test_export_serving as fixture
+    import export_serving_support as fixture
     from tessera import export, serving_parts
     source = fixture._write(tmp_path, fixture._checkpoint(), fixture._config())
     (source / 'model.safetensors.index.json').write_text(json.dumps({'weight_map': {

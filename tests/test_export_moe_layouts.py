@@ -50,7 +50,7 @@ import box_artifacts
 torch = pytest.importorskip("torch")
 safetensors_torch = pytest.importorskip("safetensors.torch")
 
-from test_export_serving import _declare_fixture_geometry
+from export_serving_support import _declare_fixture_geometry
 
 export = importlib.import_module("tessera.export_serving")
 
