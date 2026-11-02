@@ -237,7 +237,7 @@ class Evidence:
     """Every module's facts, resolved against the repository's files."""
 
     def __init__(self, root=ROOT, files=None):
-        self.root = Path(root)
+        self.root = Path(root).resolve()
         self.files = repository_files(self.root) if files is None else files
         self.file_set = set(self.files)
         self.directories = {'/'.join(parts[:end]) + '/' for parts in (file.split('/') for file in self.files)
