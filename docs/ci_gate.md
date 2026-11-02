@@ -4,7 +4,7 @@ The merge gate runs on Bazel through BuildBuddy (#1589); [docs/bazel.md](bazel.m
 `.github/workflows/gate.yml` keeps the required check names: `pr-gate` on ordinary pull requests, needed to queue, and `gate` on Mergify's batch drafts, needed to merge. It has three working jobs.
 
 - **Bazel.** It starts `tools/ci/bazel_gate.py` on a Remote Bazel runner through `tools/ci/remote_gate.py`. Base and head are Mergify's queue-aware refs for a batch draft (`scopes-git-refs`). For an ordinary pull request they are GitHub's merge commit and its first parent, current master.
-  - bazel-diff v42 selects the impacted targets.
+  - bazel-diff v70.0.2 selects the impacted targets.
   - A change to Bazel's own inputs (`MODULE.bazel`, its lock, `.bazelrc`, the root `BUILD.bazel`, `tools/bazel/**`), to `gate.yml` or to the gate scripts tests everything.
   - A Python file no target holds fails the gate: the BUILD files are stale. Any other file no target reads selects nothing.
   - Detection that can't establish what to test fails the gate; it never passes empty.

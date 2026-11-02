@@ -31,8 +31,9 @@ ROOT = Path(__file__).resolve().parents[2]
 SCHEMA = 'tessera.bazel-gate.v1'
 RESULT = 'gate-result.json'
 
-BAZEL_DIFF_URL = 'https://github.com/Tinder/bazel-diff/releases/download/v42.0.0/bazel-diff_deploy.jar'
-BAZEL_DIFF_SHA256 = '0170b70fe2f24477ab056c11f5c3240d8b45a1dca5ab73ad252c096679c5500c'
+# The one bazel-diff pin TL3, PrismaBuild, PrismaQuant and Tessera share.
+BAZEL_DIFF_URL = 'https://github.com/Tinder/bazel-diff/releases/download/v70.0.2/bazel-diff-rust-linux-amd64'
+BAZEL_DIFF_SHA256 = '44226a1d1d5239abc8bc6158de1f886fcbbf58e44479ec178df8c01e7e32102e'
 
 # A change to any of these can move every target: test everything. Patterns
 # without '/' name root files. Other workflows are ordinary inputs.
@@ -150,6 +151,17 @@ def canonical_label(label):
     return label[1:] if label.startswith('@//') else label.removeprefix('@@')
 
 
+def impacted_labels(output):
+    """get-impacted-targets output: a JSON list of {label, distances} when it
+    read dependency edges, else one label per line."""
+    if output.lstrip().startswith('['):
+        values = json.loads(output)
+        if any(not isinstance(value, dict) or not isinstance(value.get('label'), str) for value in values):
+            raise GateError('malformed impacted-target output')
+        return {canonical_label(value['label']) for value in values}
+    return {canonical_label(label) for label in output.split()}
+
+
 class Workspace:
     """Git and Bazel on the runner. Every failure raises GateError."""
 
@@ -202,25 +214,29 @@ class Workspace:
                 if label.startswith('//')}
 
     def bazel_diff(self, base, head):
-        jar = Path(tempfile.gettempdir(), 'bazel-diff-v42.0.0.jar')
-        if not jar.exists() or hashlib.sha256(jar.read_bytes()).hexdigest() != BAZEL_DIFF_SHA256:
+        """bazel-diff's impacted targets between two commits; it leaves each
+        revision's dependency edges (deps.json) beside the hashes."""
+        executable = Path(tempfile.gettempdir(), 'bazel-diff-v70.0.2-linux-amd64')
+        if not executable.exists() or hashlib.sha256(executable.read_bytes()).hexdigest() != BAZEL_DIFF_SHA256:
             with urllib.request.urlopen(BAZEL_DIFF_URL, timeout=120) as response:
                 data = response.read()
             if hashlib.sha256(data).hexdigest() != BAZEL_DIFF_SHA256:
-                raise GateError('bazel-diff jar checksum mismatch')
-            jar.write_bytes(data)
-        java = Path(self.run(self.bazel, 'info', 'java-home').strip(), 'bin/java')
-        hashes = {name: Path(tempfile.gettempdir(), f'{name}-hashes.json') for name in ['base', 'head']}
-        impacted = Path(tempfile.gettempdir(), 'impacted.txt')
-        impacted.unlink(missing_ok=True)
+                raise GateError('bazel-diff binary checksum mismatch')
+            executable.write_bytes(data)
+        executable.chmod(0o755)
+        directory = Path(tempfile.mkdtemp(prefix='tessera-bazel-diff-'))
+        hashes = {name: directory / f'{name}-hashes.json' for name in ['base', 'head']}
+        edges = {name: directory / f'{name}-deps.json' for name in ['base', 'head']}
+        impacted = directory / 'impacted.json'
         for name, sha in [('base', base), ('head', head)]:
             self.checkout(sha)
-            self.run(java, '-jar', jar, 'generate-hashes', '--workspacePath', self.root, '--bazelPath', self.bazel,
-                     '--excludeExternalTargets', '--includeTargetType', hashes[name])
-        self.run(java, '-jar', jar, 'get-impacted-targets', '--workspacePath', self.root, '--bazelPath', self.bazel,
+            self.run(executable, 'generate-hashes', '--workspacePath', self.root, '--bazelPath', self.bazel,
+                     '--excludeExternalTargets', '--includeTargetType', '--depEdgesFile', edges[name], hashes[name])
+        self.run(executable, 'get-impacted-targets', '--workspacePath', self.root, '--bazelPath', self.bazel,
                  '--targetType', 'Rule', '--startingHashes', hashes['base'], '--finalHashes', hashes['head'],
-                 '--output', impacted)
-        return {canonical_label(line) for line in impacted.read_text().split() if line}
+                 '--depEdgesFile', edges['head'], '--output', impacted)
+        self.diff_files = {'hashes': hashes, 'edges': edges, 'executable': executable}
+        return impacted_labels(impacted.read_text())
 
     def test(self, targets, config, metadata, log_name, extra=()):
         """Run targets; return (per-label status, labels that overran only a budget)."""
