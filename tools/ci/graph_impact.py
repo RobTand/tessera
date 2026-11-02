@@ -204,7 +204,7 @@ def baseline_record(live, baseline=None):
     """The live figures, keeping the baseline's where it is better. The reach
     budget is the p90 of test reach when first recorded, and only falls."""
     record = {name: live[name] for name in RATCHETED}
-    record['reach_budget'] = live.get('reach_budget', live['reach_p90'])
+    record['reach_budget'] = live['reach_p90']
     if baseline:
         for name in (*RATCHETED, 'reach_budget'):
             if name in baseline:

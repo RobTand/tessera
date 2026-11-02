@@ -70,9 +70,11 @@ def test_a_new_test_over_the_reach_budget_prints_its_blame_path(core):
 
 
 def test_an_allowlisted_test_may_reach_past_the_budget(core):
-    head = core.metrics({'tests/test_new.py': {'src/a.py', 'src/b.py'}},
-                        {('tests/test_new.py', 'src/a.py'), ('tests/test_new.py', 'src/b.py')})
-    base = core.metrics({}, set())
+    old = {'tests/test_old.py': {'src/a.py', 'src/b.py'}}
+    old_edges = {('tests/test_old.py', 'src/a.py'), ('tests/test_old.py', 'src/b.py')}
+    head = core.metrics(dict(old, **{'tests/test_new.py': {'src/a.py', 'src/b.py'}}),
+                        old_edges | {('tests/test_new.py', 'src/a.py'), ('tests/test_new.py', 'src/b.py')})
+    base = core.metrics(old, old_edges)
     assert core.compare(base, head, changed=['tests/test_new.py'], budget=1,
                         allowlist={'tests/test_new.py': 'integration-wide by design'}) == []
 
