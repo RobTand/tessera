@@ -61,12 +61,12 @@ def test_conftest_reach_is_a_ratcheted_edge_group(head):
     assert group and all(edge.startswith('tests/conftest.py -> ') for edge in group)
 
 
-def test_the_change_does_not_deepen_the_graph(tessera, capsys):
+def test_the_change_does_not_deepen_the_graph(tessera, head, capsys):
     """base -> head, with the merge base GRAPH_IMPACT_BASE or origin/master names."""
     base = tessera.merge_base(ROOT, os.environ.get('GRAPH_IMPACT_BASE'))
     if base is None:
         pytest.skip('no merge base in this checkout; the baseline figures above still hold')
-    code = tessera.check(ROOT, base)
+    code = tessera.check(ROOT, base, head)
     summary = capsys.readouterr().out
     print(summary)
     assert summary.startswith('U ')
