@@ -2,16 +2,29 @@
 from __future__ import annotations
 
 from fnmatch import fnmatch
+from copy import copy
 import json
 import os
 from pathlib import Path, PurePosixPath
 
 import pytest
+from _pytest.runner import runtestprotocol
+
+from gate_flaky import read_table
+from gate_junit import test_name
 
 
 class GateCollection:
-    def __init__(self, root, files):
+    def __init__(self, root, files, config):
         self.root = root
+        self.config = config
+        try:
+            self.flaky = read_table(root)
+            for node in self.flaky:
+                if not (root / node.split('::', 1)[0]).is_file():
+                    raise ValueError('flaky node names a missing file: ' + node)
+        except (OSError, ValueError) as error:
+            raise pytest.UsageError(str(error)) from error
         self.ranks = {root / path: rank for rank, path in enumerate(files)}
         self.collected = set()
         self.directories = {parent for path in self.ranks for parent in path.parents
@@ -37,6 +50,11 @@ class GateCollection:
         timeouts = json.loads(os.environ.get('GATE_TEST_TIMEOUTS', '{}'))
         nodes = {item.nodeid for item in items}
         files = {item.path.relative_to(self.root).as_posix() for item in items}
+        for node in self.flaky:
+            filename = node.split('::', 1)[0]
+            if filename in self.collected or filename in files:
+                if node not in nodes:
+                    raise pytest.UsageError('flaky mark is not an exact collected node: ' + node)
         removed = []
         for target in targets:
             filename = target.split('::', 1)[0]
@@ -63,6 +81,52 @@ class GateCollection:
                 group = 'module_' + item.path.relative_to(self.root).as_posix().replace('/', '.')
                 item.add_marker(pytest.mark.xdist_group(name=group))
         yield
+
+    @pytest.hookimpl(tryfirst=True)
+    def pytest_runtest_protocol(self, item, nextitem):
+        node = test_name(item.nodeid)
+        if node not in self.flaky:
+            return None
+        item.ihook.pytest_runtest_logstart(nodeid=item.nodeid, location=item.location)
+        reports = runtestprotocol(item, nextitem=nextitem, log=False)
+        failed = next((report for report in reports if report.failed), None)
+        if failed is not None:
+            entry = self.flaky[node]
+            # One nonfailure report carries the first attempt through xdist.
+            # Use call phase so JUnit closes only on the final teardown, and
+            # charge all of the first attempt's time to this node's budget.
+            retry = copy(failed)
+            retry.outcome, retry.when = 'rerun', 'call'
+            retry.duration = sum(report.duration for report in reports)
+            retry.gate_flaky_retry = (
+                f"GATE_FLAKY_RETRY: {node} issue #{entry['issue']} "
+                f"retry 1/1: {entry['reason']}")
+            item.ihook.pytest_runtest_logreport(report=retry)
+            item.user_properties.extend([('gate_flaky_issue', entry['issue']),
+                                         ('gate_flaky_attempts', 2)])
+            reports = runtestprotocol(item, nextitem=nextitem, log=False)
+        for report in reports:
+            item.ihook.pytest_runtest_logreport(report=report)
+        item.ihook.pytest_runtest_logfinish(nodeid=item.nodeid, location=item.location)
+        return True
+
+    @pytest.hookimpl(tryfirst=True)
+    def pytest_report_teststatus(self, report):
+        if getattr(report, 'gate_flaky_retry', None):
+            return 'rerun', 'R', 'RERUN'
+
+    def pytest_runtest_logreport(self, report):
+        message = getattr(report, 'gate_flaky_retry', None)
+        if not message or hasattr(self.config, 'workerinput'):
+            return
+        terminal = self.config.pluginmanager.get_plugin('terminalreporter')
+        if terminal:
+            terminal.write_line(message)
+        else:
+            print(message, flush=True)
+        if summary := os.environ.get('GITHUB_STEP_SUMMARY'):
+            with Path(summary).open('a') as handle:
+                handle.write('\n' + message + '\n')
 
     def pytest_collection_finish(self, session):
         destination = os.environ.get('GATE_COLLECTION_DIR')
@@ -95,4 +159,4 @@ def pytest_gate_configure(config):
     for filename in sorted({Path(path).name for path in files}):
         if not any(fnmatch(filename, pattern) for pattern in config.getini('python_files')):
             config.addinivalue_line('python_files', filename)
-    config.pluginmanager.register(GateCollection(root, files), 'gate-assigned-collection')
+    config.pluginmanager.register(GateCollection(root, files, config), 'gate-assigned-collection')
