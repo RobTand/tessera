@@ -2252,8 +2252,13 @@ def test_only_the_silent_directory_read_is_listed(tmp_path, reader, why):
 # enumerates caller-supplied receipt evidence to reject extra as well as missing raw
 # cases. It has no fixed repository base; keep it reported, not guessed or hidden.
 # docs/reports/unnamed-directory-reads-1014.md records this justified increment.
-_UNNAMED_DIRECTORY_READ_MODULES = 115
-_UNNAMED_DIRECTORY_READ_SITES = 169
+# The Bazel test runner (#1589) adds two more class-2 runtime-parameter sites:
+# tools/bazel/runtime.py globs the per-test venv it creates under TEST_TMPDIR
+# for its site-packages, and tools/bazel/python_runner.py lists the trace
+# records each traced process writes to a directory under TEST_TMPDIR. Both
+# directories exist only at run time; neither has a repository base.
+_UNNAMED_DIRECTORY_READ_MODULES = 117
+_UNNAMED_DIRECTORY_READ_SITES = 171
 
 
 def _exceeds_unnamed_directory_read_ceiling(modules: int, sites: int) -> bool:
