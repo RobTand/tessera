@@ -71,3 +71,25 @@ def test_the_change_does_not_deepen_the_graph(tessera, capsys):
     print(summary)
     assert summary.startswith('U ')
     assert code == 0
+
+
+#: Coordinator, 2026-11-02: Tessera's test->test edges are judged in the core's
+#: transitional `reach` mode until the helper cleanup (#1588) lands, and switch
+#: to `strict` by this date at the latest. Date only; no count trigger.
+STRICT_BY = '2026-11-16'
+
+
+def test_test_to_test_edges_are_in_reach_mode_until_the_switch_date(tessera):
+    import datetime
+    baseline = json.loads((ROOT / tessera.BASELINE).read_text())
+    if baseline.get('test_to_test', 'strict') == 'strict':
+        return
+    assert baseline['test_to_test'] == 'reach'
+    assert baseline['test_to_test_strict_by'] == STRICT_BY
+    assert datetime.date.today() < datetime.date.fromisoformat(STRICT_BY), (
+        f'test_to_test is still reach after {STRICT_BY}: set it to strict in {tessera.BASELINE}')
+
+
+def test_the_baseline_records_reach_mode_with_its_switch_date(tessera):
+    baseline = json.loads((ROOT / tessera.BASELINE).read_text())
+    assert baseline.get('test_to_test') == 'reach' and baseline.get('test_to_test_strict_by') == STRICT_BY
