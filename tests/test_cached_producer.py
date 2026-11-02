@@ -547,7 +547,7 @@ def calibrated_wires():
 def _canonical_handoff(root, hessians, provenance):
     """Use the public canonical reference contract; keep payloads per unit."""
     import hashlib
-    from test_hessian_reference_capture import POLICY, SCHEMA, write_json
+    from hessian_reference_support import POLICY, SCHEMA, write_json
 
     root.mkdir()
     (root / "inputs").mkdir()

@@ -32,7 +32,7 @@ import pytest
 from tessera import producer_authority
 from tessera.errors import GrammarError
 from tessera.serving.contract import load_serving_contract
-from test_hessian_reference_capture import build_reference
+from hessian_reference_support import build_reference
 
 ROOT = Path(__file__).resolve().parents[1]
 
