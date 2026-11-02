@@ -594,6 +594,22 @@ def check_packed_fp4_arithmetic(actual, expected, operand_magnitude, *, k):
     return receipt
 
 
+def _check_grouped_segments(actual, expected, segments, *, k, report, physical_device):
+    """Compare each nonempty grouped segment under its own derived stock bound.
+
+    ``segments`` is a sequence of ``(start, stop, magnitude_upper, global_scale)``:
+    the row slice of the already-computed ``actual`` and ``expected`` outputs, and
+    that segment's own magnitude upper bound and weight global scale. A ``stop`` of
+    ``None`` runs to the end of both outputs, exactly like ``actual[start:]``, so a
+    row-count mismatch between them still reaches the shape refusal. Returns the
+    per-segment ``check_packed_stock_arithmetic`` receipts in segment order.
+    """
+    from tessera.fp4_arithmetic import check_packed_stock_arithmetic
+    return [check_packed_stock_arithmetic(actual[start:stop], expected[start:stop], magnitude,
+                k=k, global_scale=global_scale, report=report, physical_device=physical_device)
+            for start, stop, magnitude, global_scale in segments]
+
+
 def run_correctness(args, grid, samples):
     """Byte oracles and attested full stock-reference comparisons, 64 by 256."""
     from tessera.compact_prep import parse_compact_wire, prepare_a4_wire_compact
@@ -687,9 +703,11 @@ def run_correctness(args, grid, samples):
                     actual = grouped(x, expert_offsets=offsets, route_ids=tokens, num_routes=5, out_dtype=torch.float32)
                     expected = torch.cat((rendered_x[tokens[:3].long()] @ weights[0].T,
                                           rendered_x[tokens[3:].long()] @ weights[1].T))
-                    segment_checks = [
-                        check_packed_stock_arithmetic(actual[:3], expected[:3], segment_magnitudes[0], k=k, global_scale=units[0].global_scale, report=attestation, physical_device=physical),
-                        check_packed_stock_arithmetic(actual[3:], expected[3:], segment_magnitudes[1], k=k, global_scale=units[1].global_scale, report=attestation, physical_device=physical)]
+                    segment_checks = _check_grouped_segments(
+                        actual, expected,
+                        ((0, 3, segment_magnitudes[0], units[0].global_scale),
+                         (3, None, segment_magnitudes[1], units[1].global_scale)),
+                        k=k, report=attestation, physical_device=physical)
                     bound_template = max(segment_checks, key=lambda item: item["atol"])
                     torch.save({"x": x.cpu(), "tokens": tokens.cpu(), "offsets": offsets.cpu(), "actual": actual.cpu(), "expected": expected.cpu(), "segment_bounds": segment_checks}, Path(args.out) / f"grouped-q{q}-{structure}-{role}-m{m}.pt")
                     errors.append(float((actual.double() - expected.double()).abs().max()))
