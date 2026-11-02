@@ -1,7 +1,7 @@
 # Tensor parallelism: one artifact, any TP degree
 
 **Status:** the Tessera-side mechanism is built and tested (schema minor 4,
-`layout.slice_unit`, 2026-09-02), and so is the serving plugin's per-rank
+`slicing.slice_unit`, 2026-09-02), and so is the serving plugin's per-rank
 loader, including the gate that decides which axis each route may be cut on
 (2026-09-02, #7). **Update 2026-09-15 (contract v29):** the two-box TP=2 gate
 has run. The contract publishes `max_world_size: 2` for all three families,
@@ -89,8 +89,8 @@ boundaries.
 
 ## Granularity: where a cut may fall
 
-`layout.shard_granularity(unit_or_manifest) -> (row_granularity,
-col_granularity)` and `layout.can_shard(unit, tp, axis)`. Both are derived from
+`slicing.shard_granularity(unit_or_manifest) -> (row_granularity,
+col_granularity)` and `slicing.can_shard(unit, tp, axis)`. Both are derived from
 the checks `slice_unit` applies, not asserted beside them.
 
 **Rows.** `arity * span`.
@@ -248,7 +248,7 @@ zero.**
   over a *zero* pad. It read `getattr(unit, "initial_window", None)` until the
   2026-09-02 math audit — an attribute nothing defines, so it was always `None`
   and every parsed shard was prepared against the pinned zero. Fixed to
-  `initial_state`, the name `layout.SlicedUnit` uses and the field the
+  `initial_state`, the name `slicing.SlicedUnit` uses and the field the
   INITIAL_STATE plane parses into.
 * The **BF16 route** (`bf16_route.prepare_bf16_unit`) now passes the state into
   `pack_window_planes`, and the streamed decoder reads it back out of the pad
@@ -387,7 +387,7 @@ Two consequences worth stating plainly:
 * ~~**The plugin's TP gate**~~ — **built 2026-09-02 (#7).** The loader was
   reachable and the config gate in front of it was not: `TesseraConfig` refused
   every `tensor_parallel_size > 1` at method construction, with a message
-  saying `layout.slice_unit` was not in the build. It was — the seam above
+  saying `slicing.slice_unit` was not in the build. It was — the seam above
   calls it. The gate is now two gates that answer two questions:
   `sharding.require_a_cutter` refuses a TP group in a build with **no** slicer
   (kept rather than deleted: a build without one must refuse rather than hand

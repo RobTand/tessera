@@ -1,6 +1,6 @@
 """The span-2 decoders start a ROW SHARD from its own register (tessera#492).
 
-A unit cut below row 0 (``tessera.layout.slice_unit``) carries the trellis
+A unit cut below row 0 (``tessera.slicing.slice_unit``) carries the trellis
 register each column is in at the cut -- the INITIAL_STATE plane.  The window
 body always threaded it into its pad; the span-2 TCQ body's decoders read step
 0's history out of the select plane's ``SELECT_PAD``, which was pinned to zero,
@@ -238,7 +238,7 @@ def test_the_native_decoder_refuses_a_row_cut_below_one_select_byte(parsed_unit_
     """The cut itself is LEGAL; the NATIVE decoder is what refuses it.
 
     A 64-row unit at TP=4 is 16 rows = 8 codes: one span-2 super-symbol per
-    column.  ``layout.slice_unit`` cuts that exactly and ``can_shard`` admits
+    column.  ``slicing.slice_unit`` cuts that exactly and ``can_shard`` admits
     it -- the super-symbol boundary is ``arity * span`` = 4 rows -- so
     ``shard_parsed_roles`` takes it, and that is the point: only the native
     select plane needs a whole byte per column (``arity * 8 * span`` = 32

@@ -212,12 +212,12 @@ def _moe_scheme(experts=4, hidden=128, inter=64, family=TESSERA_FP8, grid="E4M3"
 #: What a current exporter stamps beside the groups: the container schema minor
 #: these bytes were written at, and -- derived from it, never typed -- whether a
 #: rank may cut its own shard out of them (``export._write_config``,
-#: ``layout.tp_agnostic_at_minor``, tessera#328).  Taken from the code that
+#: ``slicing.tp_agnostic_at_minor``, tessera#328).  Taken from the code that
 #: writes it rather than restated, so a checkpoint whose declaration moves is a
 #: failing test here and not a silently different fixture.
 def _slicing_declaration():
     from tessera.container import SCHEMA_MINOR
-    from tessera.layout import tp_agnostic_at_minor
+    from tessera.slicing import tp_agnostic_at_minor
 
     return {"schema_minor": SCHEMA_MINOR,
             "tp_agnostic": tp_agnostic_at_minor(SCHEMA_MINOR)}
@@ -843,7 +843,7 @@ def test_a_world_size_above_one_reaches_its_route(monkeypatch):
     """The config gate is about the CUTTER and the BYTES, not about the degree.
 
     It used to refuse every ``tensor_parallel_size > 1`` with a message saying
-    ``tessera.layout.slice_unit`` was not in the build.  The slicer landed, the
+    ``tessera.slicing.slice_unit`` was not in the build.  The slicer landed, the
     seam cuts (``tests/test_serving_sharding.py``), and the message went on
     being shipped -- narrower than the code and, by then, false.  What decides
     now is the axis, and the axis is not known here: it arrives at
@@ -906,13 +906,13 @@ def test_an_artifact_that_records_only_its_minor_is_answered_from_the_minor(monk
 
     ``schema_minor`` is what ``tp_agnostic`` is a function of, so a config that
     carries the fact without the derived name resolves through the same one
-    home (``layout.tp_agnostic_at_minor``) rather than being refused for a
+    home (``slicing.tp_agnostic_at_minor``) rather than being refused for a
     spelling -- and a minor below the one that made a shard expressible is
     refused on the strength of its own bytes.
     """
     import vllm.distributed as distributed
 
-    from tessera.layout import SLICEABLE_SCHEMA_MINOR
+    from tessera.slicing import SLICEABLE_SCHEMA_MINOR
 
     monkeypatch.setenv(TESSERA_MODE_ENV, "resident")
     monkeypatch.setattr(distributed, "get_tensor_model_parallel_world_size", lambda: 2)
@@ -943,7 +943,7 @@ def test_the_stale_tp_size_stamp_is_not_read_as_permission(monkeypatch):
 def test_a_build_with_no_unit_slicer_still_refuses_a_tp_group(monkeypatch):
     """The gate is keyed on the slicer's PRESENCE, not deleted.
 
-    A Tessera without ``layout.slice_unit`` must refuse rather than hand every
+    A Tessera without ``slicing.slice_unit`` must refuse rather than hand every
     rank the whole unit: that serves correct logits at N times the intended
     memory and looks merely disappointing.
     """

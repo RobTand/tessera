@@ -23,7 +23,7 @@ them degrade to BF16:
   whose own config does not say its bytes can be cut.  Not because the artifact
   is per-rank -- it is deliberately TP-agnostic, one whole unit per role, and
   the loader cuts it at load (``sharding``) -- but because the cut needs
-  ``tessera.layout.slice_unit`` in the build AND a wire that can express a
+  ``tessera.slicing.slice_unit`` in the build AND a wire that can express a
   shard.  The second is read off the checkpoint (``tp_agnostic``, derived by
   the exporter from the schema minor it wrote at) rather than assumed of every
   artifact, and a checkpoint that declares nothing is refused above one rank
@@ -372,7 +372,7 @@ class TesseraConfig(QuantizationConfig):
         at the first forward of every module, and neither is the per-axis one:
 
         * **This build.**  ``sharding.require_a_cutter``.  The cutter --
-          ``tessera.layout.slice_unit``, which records the trellis state a
+          ``tessera.slicing.slice_unit``, which records the trellis state a
           sliced row starts from -- has landed, so this is no longer "one rank
           only"; it is kept because a build WITHOUT the slicer must still
           refuse rather than serve rank 0's whole unit to every rank.

@@ -252,7 +252,7 @@ planes amortising.
 
 > **Superseded 2026-09-02 (#7). This section's conclusion inverted.** Schema
 > minor 4 added the INITIAL_STATE plane — one element per column carrying the
-> trellis state a row-sliced column starts from — and `tessera.layout.slice_unit`
+> trellis state a row-sliced column starts from — and `tessera.slicing.slice_unit`
 > cuts a whole unit on either axis at load. A Tessera artifact is now
 > **TP-agnostic**: the exporter never learns the TP degree and every rank cuts
 > its own shard out of the same bytes (`docs/design/tensor-parallel.md`,

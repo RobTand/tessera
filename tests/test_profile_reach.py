@@ -208,7 +208,7 @@ def test_a_shard_keeps_its_parents_reach_profile():
     """Reach spellings ride the unit the way span and body already do: the
     identity slice of a minor-5 unit rebuilds to the parent's own bytes, and
     a row shard verifies under the parent's profile id."""
-    from tessera.layout import slice_unit
+    from tessera.slicing import slice_unit
 
     w = _weights()
     unit = _window_unit(w, channel_sigma=default_channel_sigma(E4M3_GRID) / 2)

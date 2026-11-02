@@ -725,7 +725,7 @@ def test_the_value_family_returns_row_scales_with_raw_tiles():
 #
 # §6 P0-shardstate of the 2026-09-02 math audit.  ``prepare_from_parsed`` read
 # ``getattr(unit, "initial_window", None)``, but the attribute a shard carries
-# is ``initial_state`` (``layout.SlicedUnit``), so the getattr was always
+# is ``initial_state`` (``slicing.SlicedUnit``), so the getattr was always
 # ``None`` and every shard was packed against the pinned zero start -- decoding
 # its first ``ceil(L/R)`` rows to plausible wrong weights, silently.  The
 # machinery was already there (``_initial_windows`` and the kernel's own
@@ -745,7 +745,7 @@ def _cpu_shard(rows=32, cols=256, window_bits=8, cut=(16, 32)):
     (``serving/sharding._reparse_shard``), and it is what makes the parsed
     unit a ``SlicedUnit`` carrying an INITIAL_STATE plane.
     """
-    from tessera.layout import slice_unit
+    from tessera.slicing import slice_unit
     from tessera.trellis import ConvCode
     from tessera.unit_artifact import build_unit_artifact
 

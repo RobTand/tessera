@@ -9,7 +9,7 @@ import torch
 from tessera.decode import reconstruct_unit
 from tessera.encode import _canonical_release_order
 from tessera.errors import GrammarError
-from tessera.layout import can_shard, slice_unit, unsliceable_reason
+from tessera.slicing import can_shard, slice_unit, unsliceable_reason
 from tessera.unit_artifact import build_unit_artifact, parse_unit_artifact
 
 

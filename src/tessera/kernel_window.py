@@ -357,7 +357,7 @@ def prepare_from_parsed(parsed, device=None) -> PreparedWindowUnit:
     # present on a tensor-parallel shard, whose columns continue a parent's
     # stream.  Read whichever the artifact carries; never assume the zero.
     #
-    # The name is the one ``layout.SlicedUnit`` uses, and it is the field the
+    # The name is the one ``slicing.SlicedUnit`` uses, and it is the field the
     # INITIAL_STATE plane parses into.  This read said ``initial_window``
     # until the 2026-09-02 math audit: a getattr for an attribute nothing
     # defines, so it was always ``None`` and every shard was prepared against

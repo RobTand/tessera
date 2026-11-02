@@ -124,7 +124,7 @@ def test_reference_storage_has_no_skip_left_to_reach():
 
 
 def test_no_reader_can_meet_an_arity_above_two():
-    """#24: what makes ``layout._steps_of``'s 4 and 8 unreachable.
+    """#24: what makes ``slicing._steps_of``'s 4 and 8 unreachable.
 
     A pin.  ``arity`` is the grid's tuple order, so the arities a parsed
     manifest can carry are the tuple orders in ``SERIALISABLE_GRIDS`` -- 1 and
@@ -321,7 +321,7 @@ def test_calculator_terminal_record_carries_no_digest_it_did_not_compute():
 
 
 def test_steps_of_searches_the_registry_arities_not_a_hardcoded_pair(monkeypatch):
-    """#34.1: ``layout._steps_of`` must derive its search from SERIALISABLE_GRIDS.
+    """#34.1: ``slicing._steps_of`` must derive its search from SERIALISABLE_GRIDS.
 
     The arity is not on the wire, so it is recovered by trial.  Hardcoding
     ``(1, 2)`` repeats the drift 654be54 just fixed (docstring and refusal
@@ -334,7 +334,7 @@ def test_steps_of_searches_the_registry_arities_not_a_hardcoded_pair(monkeypatch
     from types import SimpleNamespace
 
     from tessera import alphabet as _alphabet
-    from tessera import layout as _layout
+    from tessera import slicing as _slicing
     from tessera.planes import CANONICAL_PLANE_ORDER, PlaneKind
 
     wire = CANONICAL_PLANE_ORDER
@@ -353,7 +353,7 @@ def test_steps_of_searches_the_registry_arities_not_a_hardcoded_pair(monkeypatch
         )
 
     with pytest.raises(GrammarError) as exc:
-        _layout._steps_of(_refusing_manifest())
+        _slicing._steps_of(_refusing_manifest())
     expected = tuple(sorted({grid.arity for grid in _alphabet.SERIALISABLE_GRIDS.values()}))
     assert str(expected) in str(exc.value), (
         f"the refusal names {exc.value}, not the registry arities {expected}"
@@ -365,7 +365,7 @@ def test_steps_of_searches_the_registry_arities_not_a_hardcoded_pair(monkeypatch
     extended["test-arity-3"] = SimpleNamespace(arity=3)
     monkeypatch.setattr(_alphabet, "SERIALISABLE_GRIDS", extended)
     with pytest.raises(GrammarError) as exc2:
-        _layout._steps_of(_refusing_manifest())
+        _slicing._steps_of(_refusing_manifest())
     expected2 = tuple(sorted({grid.arity for grid in extended.values()}))
     assert 3 in expected2
     assert str(expected2) in str(exc2.value), (

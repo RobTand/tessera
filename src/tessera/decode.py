@@ -126,7 +126,7 @@ def _conv_state_stream(
     function of the stream with O(1) depth rather than a walk down the column.
 
     ``init`` is ``state_0`` -- the register a **shard** inherits from the rows
-    its parent holds above it (``layout.slice_unit``).  Only the first
+    its parent holds above it (``slicing.slice_unit``).  Only the first
     ``memory`` steps can still see it, and the correction is a *right* shift,
     because a select bit that was ``memory - m`` bits from the top at step 0 is
     ``memory - m - t`` bits from the top at step t:
@@ -472,7 +472,7 @@ def replay_body(
     ``EncodedUnit.anchors`` is the real proof the body is decodable.
 
     ``initial_state`` is the per-column register the stream starts from -- the
-    INITIAL_STATE plane of a shard (``layout.slice_unit``).  ``None`` is the
+    INITIAL_STATE plane of a shard (``slicing.slice_unit``).  ``None`` is the
     pinned zero start every whole unit has and every kernel assumes.
     """
     require_memory(code)
@@ -577,7 +577,7 @@ def replay_window(
     ``replay_body`` verifies for the convolutional code, here by construction.
 
     ``initial_state`` is ``state_{-1}``: what a **shard** inherits from the
-    rows its parent holds above it (``layout.slice_unit``).  Unrolling the
+    rows its parent holds above it (``slicing.slice_unit``).  Unrolling the
     same recursion gives
 
         state_t = (init << (t+1)R | sum_{j<=t} bits_j << (t-j)R) mod 2^L

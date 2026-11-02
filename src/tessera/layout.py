@@ -28,8 +28,7 @@ The tensor-parallel slicing half -- ``SlicedUnit``, ``slice_unit``,
 ``shard_granularity``, ``can_shard`` and their helpers -- lives in
 :mod:`tessera.slicing`, not here: a shard subclasses ``encode.EncodedUnit``
 and the cut replays the trellis, so it needs torch and this module must stay
-importable without it.  The cutter names stay available as ``tessera.layout``
-attributes through the lazy re-export below, so no caller moves.
+importable without it.  Import the cutter from :mod:`tessera.slicing`.
 """
 
 from __future__ import annotations
@@ -76,52 +75,8 @@ __all__ = [
     "build_planes",
     "build_terminal",
     "ZERO_DIGEST",
-    "SlicedUnit",
-    "slice_unit",
-    "shard_granularity",
-    "can_shard",
 ]
 
-# The slicing half (``tessera.slicing``) needs torch; this module must not, so
-# the cutter names are re-exported lazily rather than imported.  The first
-# attribute access imports ``tessera.slicing`` and its torch dependency;
-# everything else in this module works without either.  The private helpers
-# are included because the cutter's own tests reach them through this module
-# (``layout._steps_of``, ``layout._slice_release``).
-_SLICING_NAMES = frozenset({
-    "SlicedUnit",
-    "slice_unit",
-    "shard_granularity",
-    "can_shard",
-    "unsliceable_reason",
-    "shard_cut_reason",
-    "_slicing_facts",
-    "SLICEABLE_SCHEMA_MINOR",
-    "tp_agnostic_at_minor",
-    "_initial_state",
-    "_slice_release",
-    "_slice_step_plane",
-    "_slice_block_plane",
-    "_unwrap",
-    "_manifest_granularity",
-    "_steps_of",
-    "_scale_columns_per_row",
-    "_block_straddles_rows",
-    "_unsliceable_reason",
-    "_lcm",
-})
-
-
-def __getattr__(name: str):
-    if name in _SLICING_NAMES:
-        from . import slicing as _slicing
-
-        return getattr(_slicing, name)
-    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
-
-
-def __dir__():
-    return sorted(set(__all__) | _SLICING_NAMES)
 
 ZERO_DIGEST = bytes(32)
 
@@ -694,9 +649,7 @@ def build_terminal(
 #
 # That half lived here and moved to ``tessera.slicing``: ``SlicedUnit``
 # subclasses ``encode.EncodedUnit`` and the cut replays the trellis, so it
-# needs torch and the byte-layout half must not.  The cutter names stay
-# available as ``tessera.layout`` attributes through the lazy re-export above,
-# so no caller moves.
+# needs torch and the byte-layout half must not.
 
 
 

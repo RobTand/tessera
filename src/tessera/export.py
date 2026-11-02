@@ -52,9 +52,9 @@ from .decode import reconstruct_unit
 from .encode import EncodedUnit, encode_unit, encode_units
 from .errors import GrammarError
 from .grammar import Q256_UNIT, bresenham_rate_schedule
-# The TP-agnosticism rule lives with the cutter (``tessera.slicing``, re-exported
-# lazily here); the exporter reads it rather than restating it.
-from .layout import tp_agnostic_at_minor
+# The TP-agnosticism rule lives with the cutter (``tessera.slicing``); the
+# exporter reads it rather than restating it.
+from .slicing import tp_agnostic_at_minor
 from .manifest import BodyKind, RotationState, ScalePlaneKind, body_rate_cap
 from .structure import STRUCTURE_DENSE, STRUCTURE_ROUTED_MOE, STRUCTURES
 from .trellis import ConvCode
@@ -2549,7 +2549,7 @@ def _write_config(out: Path, grid, code, group, half, rotation, with_diagonals,
         "requires_serve_flags": [],
         # The container schema minor these bytes are written at, and what it
         # admits.  ``tp_agnostic`` is DERIVED from the minor beside it by
-        # ``layout.tp_agnostic_at_minor`` -- the one home of that rule, which
+        # ``slicing.tp_agnostic_at_minor`` -- the one home of that rule, which
         # lives with the cutter -- and never typed: what the exporter knows is
         # whether the bytes it just wrote are sliceable at load, which is a
         # property of the wire (minor 4 appended the shard record and the

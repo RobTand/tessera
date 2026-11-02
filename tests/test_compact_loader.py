@@ -544,7 +544,7 @@ def test_actual_bf16_r7_wire_tp2_cuts_tile_and_history(tensor, rows, columns):
 
     The oracle is ``_bitpack_words`` on the sliced reference body (rate 7 has
     no ``repack_window_body``), and the history oracle is
-    ``layout.slice_unit``'s ``initial_state`` -- computed by the reference
+    ``slicing.slice_unit``'s ``initial_state`` -- computed by the reference
     reader, not by this loader.
     """
     from tessera.compact_prep import parse_compact_wire, prepare_window_compact
