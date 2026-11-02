@@ -110,9 +110,8 @@
     "src/tessera/wire.py"
   ],
   "evidence": "tools/bazel/evidence.py",
-  "median_selected_pct": 1.4,
-  "modules_over_half": 109,
-  "p90_selected_pct": 100.0,
+  "largest_cycle": 61,
+  "reach_budget": 131,
   "test_to_test_imports": [
     "tests/_routed_gate_sdk_fixture.py -> tests/test_routed_gate_staged_store.py",
     "tests/fixtures/generate_full_engine_tp2_protocol.py -> tests/test_full_engine_timing_tp2.py",
@@ -257,5 +256,7 @@
     "tests/test_value_prefetch_numeric.py -> tests/test_window_gemm_grouped.py",
     "tests/test_value_prefetch_public_sdk.py -> tests/test_t4_prefetch_staged_qualification.py",
     "tests/test_value_prefetch_public_sdk.py -> tests/test_value_prefetch_numeric.py"
-  ]
+  ],
+  "uniform_selection_loc_pct": 34.4,
+  "uniform_selection_pct": 18.5
 }
