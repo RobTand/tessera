@@ -69,3 +69,23 @@ def test_a_target_left_out_without_a_reason_is_named(parity):
     assert parity.exclusions_without_reason(targets, nonhermetic={}, quarantine=set()) == ['//tests:test_a']
     assert parity.missing_lanes(targets, ['tests/test_a.py', 'tests/test_b.py']) == [
         'tests/test_b.py: no torch target //tests:test_b', 'tests/test_b.py: no bytes target //tests:test_b.bytes']
+
+
+SECRETS = {'BUILDBUDDY_API_KEY': 'k1', 'MERGIFY_TOKEN': 'k2', 'GITHUB_TOKEN': 'k3',
+           'SOME_SERVICE_API_KEY': 'k4', 'A_DEPLOY_TOKEN': 'k5'}
+
+
+def test_the_bazel_runner_gives_pytest_no_secret(tmp_path):
+    """A Remote Bazel runner holds BUILDBUDDY_API_KEY in its environment; a child
+    that inherits it can print it into an uploaded log."""
+    runtime = _load('runtime', 'tools/bazel/runtime.py')
+    environment = runtime.gate_environment(dict(SECRETS, PATH='/bin'), tmp_path, tmp_path)
+    assert sorted(set(SECRETS) & set(environment)) == []
+    assert environment['PATH'] == '/bin'
+
+
+def test_the_hosted_gate_gives_pytest_no_secret():
+    gate_run = _load('gate_run', 'tools/ci/gate_run.py')
+    environment = gate_run.without_secrets(dict(SECRETS, PATH='/bin'))
+    assert sorted(set(SECRETS) & set(environment)) == []
+    assert environment['PATH'] == '/bin'
