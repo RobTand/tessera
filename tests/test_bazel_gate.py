@@ -165,3 +165,123 @@ def test_impacted_output_is_read_in_either_form():
 def test_the_gate_pins_the_shared_bazel_diff():
     assert bazel_gate.BAZEL_DIFF_URL.endswith('/v70.0.2/bazel-diff-rust-linux-amd64')
     assert bazel_gate.BAZEL_DIFF_SHA256 == '44226a1d1d5239abc8bc6158de1f886fcbbf58e44479ec178df8c01e7e32102e'
+
+
+@pytest.fixture
+def artifact_gate(monkeypatch, tmp_path):
+    output = tmp_path / 'artifacts'
+    output.mkdir()
+    root = tmp_path / 'workspace'
+    root.mkdir()
+    monkeypatch.setenv('BUILDBUDDY_ARTIFACTS_DIRECTORY', str(output))
+    monkeypatch.setenv('BUILDBUDDY_API_KEY', 'fake-runner-secret-for-artifact-tests')
+    monkeypatch.setenv('UNRELATED_TOKEN', 'fake-unrelated-token-never-printed')
+    monkeypatch.setattr(bazel_gate, 'gate_pr', lambda *args: {'verdict': 'pass', 'inputs': []})
+    write_result = bazel_gate.write_result
+    monkeypatch.setattr(bazel_gate, 'write_result', lambda result, directory: write_result(result, directory, root))
+
+    def run():
+        return bazel_gate.main(['pr', '--base', 'a' * 40, '--head', 'b' * 40], workspace=object())
+
+    return root, output, run
+
+
+def test_the_final_scan_covers_both_diagnostic_logs(monkeypatch, artifact_gate):
+    root, output, run = artifact_gate
+    names = ['pr-bazel-remote-grpc.log', 'pr-execution_log.binpb.zst']
+    for name in names:
+        (root / name).write_text('safe diagnostic')
+    scans = []
+    scan = bazel_gate.check_no_secret_leak.main
+
+    def record(argv):
+        scans.append(argv)
+        return scan(argv)
+
+    monkeypatch.setattr(bazel_gate.check_no_secret_leak, 'main', record)
+    assert run() == 0
+    assert all((output / name).is_file() for name in names)
+    assert len(scans) == 1
+    assert str(output) in scans[0]
+    assert ['--env', 'BUILDBUDDY_API_KEY'] == scans[0][1:3]
+
+
+@pytest.mark.parametrize('name', ['pr-bazel-remote-grpc.log', 'pr-execution_log.binpb.zst', 'summary.json'])
+def test_a_secret_artifact_is_removed_and_fails_the_gate(name, artifact_gate, capsys):
+    root, output, run = artifact_gate
+    directory = root if name.startswith('pr-') else output
+    (directory / name).write_text('fake-runner-secret-for-artifact-tests')
+    assert run() == 1
+    assert list(output.iterdir()) == []
+    text = capsys.readouterr().out
+    assert name in text
+    assert 'fake-runner-secret-for-artifact-tests' not in text
+    assert 'fake-unrelated-token-never-printed' not in text
+
+
+@pytest.mark.parametrize('name', ['raw-bep.json', 'nested/events.binpb', 'command.log',
+                                  'nested/bazel_command_log.txt'])
+def test_bep_and_command_logs_are_deleted_even_without_a_secret(name, artifact_gate):
+    _, output, run = artifact_gate
+    path = output / name
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text('safe bytes in a forbidden artifact')
+    assert run() == 1
+    assert not path.exists()
+
+
+@pytest.mark.parametrize('key', [None, ''])
+def test_a_blind_gate_scan_fails_without_deleting_artifacts(key, monkeypatch, artifact_gate, capsys):
+    _, output, run = artifact_gate
+    if key is None:
+        monkeypatch.delenv('BUILDBUDDY_API_KEY')
+    else:
+        monkeypatch.setenv('BUILDBUDDY_API_KEY', key)
+    (output / 'keep.json').write_text('{}')
+    assert run() == 1
+    assert (output / 'keep.json').is_file()
+    assert 'secret scan blind: key unavailable' in capsys.readouterr().out
+
+
+def test_an_incomplete_scan_clears_artifacts_and_fails(artifact_gate):
+    _, output, run = artifact_gate
+    (output / 'broken.gz').write_bytes(b'\x1f\x8btruncated gzip')
+    assert run() == 1
+    assert list(output.iterdir()) == []
+
+
+def test_a_failed_gate_still_scans_its_artifacts(monkeypatch, artifact_gate):
+    _, output, run = artifact_gate
+
+    def fail(*args):
+        raise bazel_gate.GateError('controlled gate failure')
+
+    monkeypatch.setattr(bazel_gate, 'gate_pr', fail)
+    (output / 'summary.json').write_text('fake-runner-secret-for-artifact-tests')
+    assert run() == 1
+    assert list(output.iterdir()) == []
+
+
+@pytest.mark.parametrize('program', ['git', 'bazel'])
+def test_no_gate_child_inherits_the_scanner_key(program, monkeypatch, tmp_path):
+    monkeypatch.setenv('BUILDBUDDY_API_KEY', 'fake-runner-secret-for-artifact-tests')
+    monkeypatch.setenv('MERGIFY_TOKEN', 'fake-mergify-secret')
+    received_names = []
+
+    def execute(command, **options):
+        environment = options.get('env')
+        received_names.extend(name for name in ('BUILDBUDDY_API_KEY', 'MERGIFY_TOKEN')
+                              if environment is None or environment.get(name))
+        return bazel_gate.subprocess.CompletedProcess(command, 0, stdout='ok')
+
+    monkeypatch.setattr(bazel_gate.subprocess, 'run', execute)
+    assert bazel_gate.Workspace(tmp_path).run(program, 'version') == 'ok'
+    assert received_names == []
+
+
+def test_hosted_scans_fail_closed_when_the_key_is_unavailable():
+    text = (ROOT / '.github/workflows/gate.yml').read_text()
+    scans = text.split('python3 tools/ci/check_no_secret_leak.py gate-output')[0:-1]
+    assert len(scans) == 2
+    for preceding in scans:
+        assert 'secret scan blind: key unavailable' in preceding.rsplit('run: |', 1)[-1]

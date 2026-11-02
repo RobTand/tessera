@@ -5,6 +5,8 @@ import importlib.util
 from pathlib import Path
 import sys
 
+import pytest
+
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / 'tools/ci'))
 SPEC = importlib.util.spec_from_file_location('seeded_breaks', ROOT / 'tools/ci/seeded_breaks.py')
@@ -31,3 +33,77 @@ def test_seeds_cover_at_least_eight_places_and_name_existing_files():
     for _, path, _, expected in seeded_breaks.SEEDS:
         assert (ROOT / path).is_file(), path
         assert expected and all(label.startswith('//tests:test_') for label in expected)
+
+
+@pytest.fixture
+def seed_main(monkeypatch, tmp_path):
+    class Workspace:
+        root = tmp_path
+
+        def checkout(self, base):
+            assert base == 'a' * 40
+
+    output = tmp_path / 'artifacts'
+    output.mkdir()
+    monkeypatch.setenv('BUILDBUDDY_ARTIFACTS_DIRECTORY', str(output))
+    monkeypatch.setenv('BUILDBUDDY_API_KEY', 'fake-seed-runner-secret')
+    monkeypatch.setenv('UNRELATED_TOKEN', 'fake-unrelated-seed-token')
+    monkeypatch.setattr(seeded_breaks.bazel_gate, 'Workspace', Workspace)
+    monkeypatch.setattr(seeded_breaks.subprocess, 'check_output', lambda *args, **kwargs: 'a' * 40 + '\n')
+    places = []
+
+    def run_seed(workspace, base, place, path, mutation, expected):
+        places.append(place)
+        return {'place': place, 'path': path, 'impacted_tests': 1, 'failing_selected': [expected[0]],
+                'caught': True, 'example': expected[0]}
+
+    monkeypatch.setattr(seeded_breaks, 'run_seed', run_seed)
+    monkeypatch.setattr(sys, 'argv', ['seeded_breaks.py', '--base', 'a' * 40])
+    return output, places
+
+
+def test_the_seed_step_scans_its_actual_artifact_directory(monkeypatch, seed_main):
+    output, _ = seed_main
+    scans = []
+    scan = seeded_breaks.bazel_gate.check_no_secret_leak.main
+
+    def record(argv):
+        scans.append(argv)
+        return scan(argv)
+
+    monkeypatch.setattr(seeded_breaks.bazel_gate.check_no_secret_leak, 'main', record)
+    assert seeded_breaks.main() == 0
+    assert len(scans) == 1
+    assert str(output) in scans[0]
+    assert ['--env', 'BUILDBUDDY_API_KEY'] == scans[0][1:3]
+
+
+def test_a_seed_step_secret_log_is_deleted_and_fails(seed_main, capsys):
+    output, _ = seed_main
+    (output / 'seed-bazel-remote-grpc.log').write_text('fake-seed-runner-secret')
+    assert seeded_breaks.main() == 1
+    assert list(output.iterdir()) == []
+    text = capsys.readouterr().out
+    assert 'seed-bazel-remote-grpc.log' in text
+    assert 'fake-seed-runner-secret' not in text
+    assert 'fake-unrelated-seed-token' not in text
+
+
+@pytest.mark.parametrize('key', [None, ''])
+def test_a_blind_seed_scan_fails_without_deleting_artifacts(key, monkeypatch, seed_main, capsys):
+    output, _ = seed_main
+    if key is None:
+        monkeypatch.delenv('BUILDBUDDY_API_KEY')
+    else:
+        monkeypatch.setenv('BUILDBUDDY_API_KEY', key)
+    assert seeded_breaks.main() == 1
+    assert (output / 'seeded-breaks.json').is_file()
+    assert 'secret scan blind: key unavailable' in capsys.readouterr().out
+
+
+def test_the_seed_step_rejects_bep_artifacts(seed_main):
+    output, _ = seed_main
+    path = output / 'seed-bep.json'
+    path.write_text('{}')
+    assert seeded_breaks.main() == 1
+    assert not path.exists()
