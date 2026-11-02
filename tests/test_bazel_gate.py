@@ -176,6 +176,7 @@ def artifact_gate(monkeypatch, tmp_path):
     monkeypatch.setenv('BUILDBUDDY_ARTIFACTS_DIRECTORY', str(output))
     monkeypatch.setenv('BUILDBUDDY_API_KEY', 'fake-runner-secret-for-artifact-tests')
     monkeypatch.setenv('UNRELATED_TOKEN', 'fake-unrelated-token-never-printed')
+    monkeypatch.delenv('BBRUN_FINAL_SCAN', raising=False)
     monkeypatch.setattr(bazel_gate, 'gate_pr', lambda *args: {'verdict': 'pass', 'inputs': []})
     write_result = bazel_gate.write_result
     monkeypatch.setattr(bazel_gate, 'write_result', lambda result, directory: write_result(result, directory, root))
@@ -285,3 +286,29 @@ def test_hosted_scans_fail_closed_when_the_key_is_unavailable():
     assert len(scans) == 2
     for preceding in scans:
         assert 'secret scan blind: key unavailable' in preceding.rsplit('run: |', 1)[-1]
+
+
+def test_bbrun_marker_defers_the_gate_scan(monkeypatch, artifact_gate, capsys):
+    _, output, run = artifact_gate
+    monkeypatch.setenv('BBRUN_FINAL_SCAN', '1')
+    monkeypatch.delenv('BUILDBUDDY_API_KEY')
+    assert run() == 0
+    assert (output / 'gate-result.json').is_file()
+    assert 'secret scan deferred to bbrun final scan' in capsys.readouterr().out.splitlines()
+
+
+@pytest.mark.parametrize('marker', ['', '0', 'true', '01'])
+def test_only_the_exact_bbrun_marker_defers_the_gate_scan(marker, monkeypatch, artifact_gate, capsys):
+    _, _, run = artifact_gate
+    monkeypatch.setenv('BBRUN_FINAL_SCAN', marker)
+    monkeypatch.delenv('BUILDBUDDY_API_KEY')
+    assert run() == 1
+    assert 'secret scan blind: key unavailable' in capsys.readouterr().out
+
+
+def test_the_remote_gate_does_not_defer_its_final_scan():
+    class Args:
+        mode, base, head, checkout, branch = 'pr', 'a' * 40, 'b' * 40, '', 'feature'
+        repo, cpu, memory, timeout = remote_gate.REPOSITORY, 4, '8GB', 45
+
+    assert 'BBRUN_FINAL_SCAN' not in json.dumps(remote_gate.run_request(Args))

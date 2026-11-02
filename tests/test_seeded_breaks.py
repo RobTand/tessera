@@ -48,6 +48,7 @@ def seed_main(monkeypatch, tmp_path):
     monkeypatch.setenv('BUILDBUDDY_ARTIFACTS_DIRECTORY', str(output))
     monkeypatch.setenv('BUILDBUDDY_API_KEY', 'fake-seed-runner-secret')
     monkeypatch.setenv('UNRELATED_TOKEN', 'fake-unrelated-seed-token')
+    monkeypatch.delenv('BBRUN_FINAL_SCAN', raising=False)
     monkeypatch.setattr(seeded_breaks.bazel_gate, 'Workspace', Workspace)
     monkeypatch.setattr(seeded_breaks.subprocess, 'check_output', lambda *args, **kwargs: 'a' * 40 + '\n')
     places = []
@@ -107,3 +108,20 @@ def test_the_seed_step_rejects_bep_artifacts(seed_main):
     path.write_text('{}')
     assert seeded_breaks.main() == 1
     assert not path.exists()
+
+
+def test_bbrun_marker_defers_the_seed_scan(monkeypatch, seed_main, capsys):
+    output, _ = seed_main
+    monkeypatch.setenv('BBRUN_FINAL_SCAN', '1')
+    monkeypatch.delenv('BUILDBUDDY_API_KEY')
+    assert seeded_breaks.main() == 0
+    assert (output / 'seeded-breaks.json').is_file()
+    assert 'secret scan deferred to bbrun final scan' in capsys.readouterr().out.splitlines()
+
+
+@pytest.mark.parametrize('marker', ['', '0', 'true', '01'])
+def test_only_the_exact_bbrun_marker_defers_the_seed_scan(marker, monkeypatch, seed_main, capsys):
+    monkeypatch.setenv('BBRUN_FINAL_SCAN', marker)
+    monkeypatch.delenv('BUILDBUDDY_API_KEY')
+    assert seeded_breaks.main() == 1
+    assert 'secret scan blind: key unavailable' in capsys.readouterr().out
