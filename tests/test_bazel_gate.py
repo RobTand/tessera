@@ -286,6 +286,8 @@ def test_hosted_scans_fail_closed_when_the_key_is_unavailable():
     assert len(scans) == 2
     for preceding in scans:
         assert 'secret scan blind: key unavailable' in preceding.rsplit('run: |', 1)[-1]
+    assert text.count('id: artifact_scan') == 2
+    assert text.count("if: always() && steps.artifact_scan.outcome == 'success'") == 2
 
 
 def test_bbrun_marker_defers_the_gate_scan(monkeypatch, artifact_gate, capsys):
