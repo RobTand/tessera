@@ -81,7 +81,7 @@ def test_both_observers_capture_the_real_uniform_launches(tmp_path, probe):
     if not torch.cuda.is_available():
         pytest.skip('the native routed lane is a CUDA path')
     import importlib.util
-    import test_routed_fused_window as fixture
+    import routed_fused_window_support as fixture
 
     stacks = fixture._stacks('e4m3', hidden=256, inter=128, experts=5, seed=880, cut=True)
     native = fixture._fused(fixture._bundles('e4m3', stacks))
