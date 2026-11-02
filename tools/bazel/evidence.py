@@ -352,7 +352,9 @@ class Evidence:
         `RESULTS / f"stub_{name}_census.json"` or `LEGACY / name` names a file
         this resolver can't pin down; read as a pattern, with `*` for each
         unknown part, it names the files it could be. A pattern needs a
-        resolved base inside the repository and a literal part after it.
+        resolved base inside the repository, and a literal in its file name or
+        a directory below the top level. `os.path.join` and `joinpath` chains
+        count as `/` chains, and a chain that resolves fully is an exact file.
         """
         scopes = {id(node): scope for node, scope in scanner.references}
         parents = {child: node for node in walk(tree) for child in ast.iter_child_nodes(node)}
@@ -389,7 +391,6 @@ class Evidence:
             if not values or not all(isinstance(value, (Path, str)) for value in values):
                 continue
             parts = [text(operand) for operand in rest]
-            literal = any(part and part.strip('*') for part in parts)
             tail = '/'.join(part if part is not None else '*' for part in parts)
             for value in values:
                 value = Path(value)
@@ -406,10 +407,12 @@ class Evidence:
                     if pattern in self.file_set:
                         found.add(pattern)  # Exact: a path no call argument carried.
                     continue
-                # With no literal after it, the base itself must be specific:
-                # `serving / name` names a file in one package, `ROOT / name`
-                # or `TESTS / name` names nothing in particular.
-                if not literal and base_text.count('/') < 2:
+                # A pattern must say something about the file: a literal in its
+                # name (`f"stub_{x}_census.json"`), or a directory specific
+                # enough to be a table's home (`serving / name`).
+                # `ROOT / "tests" / name` names nothing in particular.
+                directory, _, filename = pattern.rpartition('/')
+                if not filename.strip('*?') and directory.count('/') < 1:
                     continue
                 if pattern.startswith('..') or pattern in ('.', '*'):
                     continue
