@@ -112,9 +112,13 @@ jobs:
             exit 1
           fi
           echo scopes_uploaded=true >> "$GITHUB_OUTPUT"
+      - name: Explain fork artifact policy
+        if: always() && github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository
+        run: |
+          echo "fork PR: no secrets, artifact upload skipped"
       - id: artifact_scan
         name: Refuse to upload a secret
-        if: always()
+        if: always() && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
         # The scanner reads the values to look for from these variables; it
         # prints names and paths only.
         env:
@@ -126,9 +130,9 @@ jobs:
             echo "secret scan blind: key unavailable"
             exit 1
           fi
-          python3 tools/ci/check_no_secret_leak.py gate-output --env BUILDBUDDY_API_KEY --env MERGIFY_TOKEN
+          python3 tools/ci/check_no_secret_leak.py gate-output --env BUILDBUDDY_API_KEY --env MERGIFY_TOKEN --require BUILDBUDDY_API_KEY --require MERGIFY_TOKEN
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
-        if: always() && steps.artifact_scan.outcome == 'success'
+        if: always() && steps.artifact_scan.outcome == 'success' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
         with:
           name: bazel-gate
           path: gate-output/
@@ -258,9 +262,13 @@ jobs:
         run: >-
           python3 tools/ci/remote_gate.py main --base "$BEFORE" --head "$AFTER"
           --branch master --prs "$PRS" --timeout 100
+      - name: Explain fork artifact policy
+        if: always() && github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository
+        run: |
+          echo "fork PR: no secrets, artifact upload skipped"
       - id: artifact_scan
         name: Refuse to upload a secret
-        if: always()
+        if: always() && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
         # The scanner reads the values to look for from these variables; it
         # prints names and paths only.
         env:
@@ -272,9 +280,9 @@ jobs:
             echo "secret scan blind: key unavailable"
             exit 1
           fi
-          python3 tools/ci/check_no_secret_leak.py gate-output --env BUILDBUDDY_API_KEY --env MERGIFY_TOKEN
+          python3 tools/ci/check_no_secret_leak.py gate-output --env BUILDBUDDY_API_KEY --env MERGIFY_TOKEN --require BUILDBUDDY_API_KEY --require MERGIFY_TOKEN
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
-        if: always() && steps.artifact_scan.outcome == 'success'
+        if: always() && steps.artifact_scan.outcome == 'success' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
         with:
           name: post-merge-${{ github.sha }}
           path: gate-output/

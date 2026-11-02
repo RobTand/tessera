@@ -321,12 +321,15 @@ def write_result(result, directory, root=ROOT):
 def scan_artifacts(directory):
     """Refuse raw event/command logs and scan the actual upload directory."""
     deferred = os.environ.get('BBRUN_FINAL_SCAN') == '1'
-    if not deferred and not os.environ.get('BUILDBUDDY_API_KEY'):
-        print('secret scan blind: key unavailable', flush=True)
-        return False
     names = ['BUILDBUDDY_API_KEY'] + sorted(
         name for name, value in os.environ.items() if value and name != 'BUILDBUDDY_API_KEY'
         and (name in SECRET_NAMES or name.endswith(('_API_KEY', '_TOKEN'))))
+    arguments = [str(directory), *[arg for name in names for arg in ('--env', name)],
+                 '--require', 'BUILDBUDDY_API_KEY']
+    if not deferred and not os.environ.get('BUILDBUDDY_API_KEY'):
+        print('secret scan blind: key unavailable', flush=True)
+        check_no_secret_leak.main(arguments)
+        return False
     forbidden = False
     for path in directory.rglob('*'):
         name = path.name.lower()
@@ -343,7 +346,7 @@ def scan_artifacts(directory):
     if deferred:
         print('secret scan deferred to bbrun final scan', flush=True)
         return not forbidden
-    status = check_no_secret_leak.main([str(directory), *[arg for name in names for arg in ('--env', name)]])
+    status = check_no_secret_leak.main(arguments)
     if status:
         for path in directory.iterdir():
             if path.is_dir() and not path.is_symlink():

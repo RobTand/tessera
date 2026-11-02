@@ -10266,7 +10266,10 @@ a detected secret or incomplete scan clears the directory and fails the step.
 Raw BEP and command logs are deleted and fail the step. Both diagnostic logs
 remain subject to the scan. Only `BBRUN_FINAL_SCAN=1` defers scanning to the
 shared client's final scanner step; `remote_gate.py` does not set that marker.
-Hosted artifact uploads require their keyed scan to succeed.
+Runner scans require the BuildBuddy key. Hosted artifact uploads require both
+the BuildBuddy key and Mergify token in the scan step's environment, and run
+only after a successful scan. Fork PRs log why scans and uploads are skipped.
+
 The hosted gate it replaced had an evidence command that computes
 hosted wall time through the final verdict step and separates setup from tests,
 retaining job timestamps alongside step timestamps when their clocks disagree.
