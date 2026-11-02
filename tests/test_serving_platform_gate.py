@@ -186,11 +186,12 @@ def _dense_scheme(family, rows=256, columns=256):
             "q256": 1024, "wire_bytes": 1}
 
 
+@pytest.mark.parametrize("contract_cached", [False, True], ids=["cold-contract", "warm-contract"])
 @pytest.mark.parametrize("platform", AMD_PLATFORMS)
 @pytest.mark.parametrize("route,family", [("TESSERA_FP8", "TESSERA_E4M3_K1"),
                                           ("TESSERA_NVFP4", "TESSERA_E2M1_K2")])
 def test_the_dense_load_refuses_before_it_imports_the_route(monkeypatch, platform,
-                                                            route, family):
+                                                            route, family, contract_cached):
     """``lane.build_tessera_method`` is what ``TesseraConfig.get_quant_method``
     calls, and the refusal happens before ``import_module``.
 
@@ -205,6 +206,9 @@ def test_the_dense_load_refuses_before_it_imports_the_route(monkeypatch, platfor
     from tessera.serving import lane
 
     _stub_platform(monkeypatch, platform)
+    contract_module.cached_serving_contract.cache_clear()
+    if contract_cached:
+        contract_module.cached_serving_contract()
 
     def never(name, *args, **kwargs):
         raise AssertionError(f"the route module {name!r} was imported before the refusal")
