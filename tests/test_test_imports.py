@@ -78,7 +78,7 @@ def _base_graph(root, revision):
         with tarfile.open(fileobj=io.BytesIO(archive)) as tar:
             tar.extractall(tree, filter="data")
         edges = _test_to_test_edges(tree, files)
-        count = int((tree / COUNT).read_text()) if COUNT in files else len(edges)
+        count = int((tree / COUNT).read_text()) if COUNT in files else None
         return edges, count
 
 
@@ -89,9 +89,15 @@ def _check_test_imports(root, *, base_revision=None):
     assert not added, "New test imports:\n" + "\n".join(sorted(added))
 
     recorded = int((root / COUNT).read_text())
-    assert 0 <= recorded <= previous_count, "The test-to-test import count may only fall"
-    # Credit this PR's removals even if master gained edges since recording its count.
-    expected = max(0, previous_count - len(base - head))
+    assert recorded >= 0, "The test-to-test import count must be nonnegative"
+    if previous_count is None:
+        # A newly introduced figure has no base count to lower. Admit upstream gains
+        # without raising it, but still record any fall below the introduced count.
+        expected = min(recorded, len(head))
+    else:
+        assert recorded <= previous_count, "The test-to-test import count may only fall"
+        # Credit this PR's removals even if master gained edges since recording its count.
+        expected = max(0, previous_count - len(base - head))
     assert recorded == expected, f"Record test-to-test import count {expected} in {COUNT}"
 
 
@@ -215,4 +221,21 @@ def test_an_unreachable_remote_base_does_not_fall_back_to_local_master(import_re
     _git(import_repo, "update-ref", "refs/remotes/origin/master", remote)
     _git(import_repo, "switch", "-q", "change")
     with pytest.raises(AssertionError, match="fetch full git history"):
+        _check_test_imports(import_repo)
+
+
+def test_introducing_the_count_tolerates_edges_gained_on_master(import_repo):
+    _git(import_repo, "switch", "-q", "master")
+    (import_repo / COUNT).unlink()
+    (import_repo / "tests/test_b.py").write_text("import test_c\n")
+    _commit(import_repo)
+    _git(import_repo, "switch", "-q", "change")
+    _git(import_repo, "rebase", "master")
+    (import_repo / "tests/test_a.py").write_text("")
+    # The new figure was recorded before the unrelated B -> C edge reached master.
+    (import_repo / COUNT).write_text("0\n")
+    _check_test_imports(import_repo)
+    (import_repo / "tests/test_b.py").write_text("")
+    (import_repo / COUNT).write_text("1\n")
+    with pytest.raises(AssertionError, match="Record test-to-test import count 0"):
         _check_test_imports(import_repo)
