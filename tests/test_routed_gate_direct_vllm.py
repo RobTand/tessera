@@ -7,7 +7,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from test_routed_gate_staged_store import reader_class
+from routed_gate_staged_store_support import reader_class
 
 
 def direct_fixture(tmp_path, *, digest=None, offset=7, length=10):

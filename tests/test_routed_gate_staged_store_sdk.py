@@ -5,7 +5,7 @@ import pytest
 pytest.importorskip("prismabuild", reason="public schema/lease controls require the published PB SDK")
 from prismabuild import client
 from _routed_gate_sdk_fixture import fixture
-from test_routed_gate_staged_store import reader_class, forbidden_origin
+from routed_gate_staged_store_support import reader_class, forbidden_origin
 
 def test_owned_bytes_survive_origin_and_stage_replacement(tmp_path, monkeypatch):
     reader, staged, opened, sdk = fixture(tmp_path)

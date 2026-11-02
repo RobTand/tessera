@@ -5,7 +5,7 @@ import os
 from pathlib import Path
 from types import SimpleNamespace
 from prismabuild import client
-from test_routed_gate_staged_store import reader_class
+from routed_gate_staged_store_support import reader_class
 
 def fixture(tmp_path, payload=b'owned-wire', expected=None, *, origin='/forbidden-origin/wire', offset=9):
     staged = tmp_path / 'staged'

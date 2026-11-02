@@ -20,8 +20,8 @@ sys.path.insert(0, "/work/tests")
 from tessera import native_window_moe as nwm               # noqa: E402
 from tessera.serving import moe_route                       # noqa: E402
 from tessera.serving.scheme import validate_tessera_moe_scheme  # noqa: E402
-from test_serving_moe_route import _stack, HIDDEN, INTER, EXPERTS   # noqa: E402
-from test_native_window_moe_method import (                 # noqa: E402
+from serving_moe_route_support import _stack, HIDDEN, INTER, EXPERTS   # noqa: E402
+from native_window_moe_method_support import (                 # noqa: E402
     _load_all, _native_layer, bf16_wires_native_data)
 
 

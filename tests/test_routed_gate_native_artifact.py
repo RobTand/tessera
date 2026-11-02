@@ -12,7 +12,7 @@ import pytest
 pytest.importorskip("prismabuild", reason="native public-reader callback controls require the published PB SDK")
 from prismabuild import client
 from _routed_gate_sdk_fixture import fixture
-from test_routed_gate_staged_store import ROOT
+from routed_gate_staged_store_support import ROOT
 
 
 def callback_module():

@@ -92,7 +92,7 @@ def test_cpu_missing_storage_metadata_is_a_load_time_error(field):
 
 def _new_method(family, layout, degree, rank):
     # Reuse the established real-vLLM layer fixture, not its CPU stub_runtime.
-    from test_native_window_moe_method import _native_layer
+    from native_window_moe_method_support import _native_layer
     from vllm.model_executor.layers.fused_moe.fused_moe_method_base import FusedMoEMethodBase
 
     scheme, wires = wire_fixture(family, layout)
