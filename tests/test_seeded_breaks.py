@@ -125,3 +125,38 @@ def test_only_the_exact_bbrun_marker_defers_the_seed_scan(marker, monkeypatch, s
     monkeypatch.delenv('BUILDBUDDY_API_KEY')
     assert seeded_breaks.main() == 1
     assert 'secret scan blind: key unavailable' in capsys.readouterr().out
+
+
+@pytest.mark.parametrize('selector', ['0,7,10', 'library module,JSON fixture,gate tooling',
+                                     '0,JSON fixture,10'])
+def test_the_cli_runs_only_requested_seeds(selector, monkeypatch, seed_main):
+    output, places = seed_main
+    monkeypatch.setattr(sys, 'argv', ['seeded_breaks.py', '--seeds', selector])
+    assert seeded_breaks.main() == 0
+    assert places == ['library module', 'JSON fixture', 'gate tooling']
+    import json
+    rows = json.loads((output / 'seeded-breaks.json').read_text())['rows']
+    assert [row['place'] for row in rows] == places
+
+
+def test_omitting_the_selector_runs_all_seeds(seed_main):
+    _, places = seed_main
+    assert seeded_breaks.main() == 0
+    assert places == [place for place, *_ in seeded_breaks.SEEDS]
+
+
+def test_seed_selection_deduplicates_and_preserves_declared_order(monkeypatch, seed_main):
+    _, places = seed_main
+    monkeypatch.setattr(sys, 'argv', ['seeded_breaks.py', '--seeds', '10,0,library module,7'])
+    assert seeded_breaks.main() == 0
+    assert places == ['library module', 'JSON fixture', 'gate tooling']
+
+
+@pytest.mark.parametrize('selector', ['', '11', '-1', 'unknown place', '0,,1'])
+def test_an_invalid_selector_is_refused_before_running_any_seed(selector, monkeypatch, seed_main):
+    _, places = seed_main
+    monkeypatch.setattr(sys, 'argv', ['seeded_breaks.py', '--seeds', selector])
+    with pytest.raises(SystemExit) as error:
+        seeded_breaks.main()
+    assert error.value.code == 2
+    assert places == []
