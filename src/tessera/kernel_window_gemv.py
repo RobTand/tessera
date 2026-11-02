@@ -992,7 +992,7 @@ class WindowGemvUnit:
 #: because that entry point takes body bits rather than a unit and has no
 #: wire facts to hand the core.
 _NO_START_STATE = (
-    "this unit carries a shard start state (INITIAL_STATE, layout.slice_unit), "
+    "this unit carries a shard start state (INITIAL_STATE, slicing.slice_unit), "
     "and the window GEMV does not take a start state: serving/csrc/window_gemv.cu "
     "supplies state_{-1} = 0 itself -- the L-bit pad that opens a wire column "
     "is not stored, and lane 0 of tile 0 reads its history from that zero pad. "
@@ -1117,7 +1117,7 @@ def prepare_value_unit(body_bits: torch.Tensor, rates: "tuple[int, ...]", window
     bf16 tile -- see :func:`decode_values`); ``None`` means ones.
 
     ``initial_state`` exists only to be refused.  This entry point takes raw
-    bits rather than a unit, so a caller holding a ``layout.SlicedUnit`` would
+    bits rather than a unit, so a caller holding a ``slicing.SlicedUnit`` would
     otherwise pass ``unit.body_bits`` and drop the shard's start state with
     nowhere for the lane to say so; the keyword is the place it says so.
     """

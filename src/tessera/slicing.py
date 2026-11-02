@@ -3,10 +3,9 @@
 This is the slicing half of :mod:`tessera.layout`, cut out so the byte-layout
 half stays importable without torch: :class:`SlicedUnit` subclasses
 :mod:`tessera.encode`'s ``EncodedUnit`` and the cut replays the trellis, so
-this module imports torch and the decoder.  ``tessera.layout`` re-exports the
-cutter names (``SlicedUnit``, ``slice_unit``, ``shard_granularity``,
-``can_shard`` and the private helpers the cutter's own tests reach through
-``layout``) so no caller moves.
+this module imports torch and the decoder.  Callers import the cutter from
+here: a lazy re-export through ``tessera.layout`` made every test that loads
+the byte layer depend on the encoder and serving stack (#1588).
 
 A Tessera artifact is written once, by an exporter that never learns the TP
 degree, and every rank cuts its own shard out of those bytes at load.  That

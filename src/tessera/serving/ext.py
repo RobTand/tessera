@@ -120,7 +120,7 @@ LANE_FIELDS = ("decoder", "requires")
 #: gate decides them from the plan's own statement (the exporter writes
 #: whole, undecorated units; a caller planning otherwise says so); the
 #: byte-time gate reads them off the wire, which is where a start state --
-#: a property of a LATER slice, ``layout.slice_unit`` -- is caught.
+#: a property of a LATER slice, ``slicing.slice_unit`` -- is caught.
 LANE_REQUIREMENT_FIELDS = ("column_rates", "window_bits", "body", "plane",
                            "release_overrides", "diagonals", "rotation",
                            "start_state", "grid_arities", "column_rates_routed_moe")
@@ -161,7 +161,7 @@ LANE_REQUIREMENT_FIELDS = ("column_rates", "window_bits", "body", "plane",
 #: THE BLOCK IS THE LANE'S WHOLE PREDICATE (#264).  Four conditions here
 #: against nine the loader refuses was the defect: ``prepare_from_parsed``
 #: also refuses, by name, RELEASE overrides, diagonals, rotation, a TP
-#: shard's start state (``layout.slice_unit`` stamps ``initial_state``; the
+#: shard's start state (``slicing.slice_unit`` stamps ``initial_state``; the
 #: kernel supplies ``state_{-1} = 0`` itself) and a grid of the wrong arity
 #: -- and none of that was published, so the plan-time and byte-time gates,
 #: which read THIS block, declared READABLE wire the loader refuses module

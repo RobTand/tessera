@@ -451,7 +451,7 @@ def _row_shard(rows=32, cols=96, window_bits=TEST_L, cut=(16, 32)):
     _reparse_shard``) and is what makes the parsed unit a ``SlicedUnit``
     carrying an INITIAL_STATE plane.
     """
-    from tessera.layout import slice_unit
+    from tessera.slicing import slice_unit
     from tessera.trellis import ConvCode
     from tessera.unit_artifact import build_unit_artifact
 

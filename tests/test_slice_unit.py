@@ -4,7 +4,7 @@ One artifact, written by an exporter that never learns the TP degree, and
 every rank cuts its own shard out of those bytes at load.  What makes that
 possible is that a column's body is a bit stream whose only carried state is
 the trellis register -- so the stream can be entered in the middle, provided
-the register at that point travels with it.  ``layout.slice_unit`` does the
+the register at that point travels with it.  ``slicing.slice_unit`` does the
 cutting; the INITIAL_STATE plane is the one thing it adds.
 
 These tests hold the mechanism to what a serving loader has to be able to
@@ -62,7 +62,7 @@ from tessera.grammar import (
 )
 from tessera.errors import GrammarError, ManifestError
 from tessera.export import _plan_for, tcq_cap_q256, wire_recipe
-from tessera.layout import (
+from tessera.slicing import (
     SlicedUnit,
     _scale_columns_per_row,
     _slice_release,

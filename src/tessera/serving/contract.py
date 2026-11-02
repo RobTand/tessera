@@ -899,7 +899,7 @@ def _validate_tensor_parallel(block: Any, platforms: Mapping[str, Any]) -> None:
     The field is an ATTESTATION -- the largest world size a served receipt
     covers -- and NOT a statement about whether the bytes can shard: they can,
     the artifact is TP-agnostic and the loader cuts a unit at load
-    (``tessera.layout.slice_unit``); that is ``loader_axes``.  A unit at 1
+    (``tessera.slicing.slice_unit``); that is ``loader_axes``.  A unit at 1
     names no receipt.  A unit above 1 names a ``world_size_receipts`` entry at
     exactly its world whose serves' traces executed it, and whose single-rank
     KL arms are published; with any unit above 1 the block also publishes the

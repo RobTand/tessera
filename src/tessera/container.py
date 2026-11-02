@@ -81,7 +81,7 @@ SCHEMA_MAJOR = 1
 #: which earlier readers cannot resolve, so a manifest carrying it declares
 #: the minor that can.  Every S6b/LUT artifact keeps the minor it had.
 #: Minor 4 (2026-09-02) appends the shard record -- where a unit sits inside
-#: the unit it was cut from (``layout.slice_unit``) -- and, for a shard cut
+#: the unit it was cut from (``slicing.slice_unit``) -- and, for a shard cut
 #: below row 0, adds the INITIAL_STATE plane to the wire order ahead of BODY.
 #: A whole unit carries no shard record and writes at the minor it always did,
 #: so every artifact written before this bump is byte-identical.

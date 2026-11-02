@@ -219,7 +219,7 @@ first cut's record is unchanged.)
 
 **Why it exists.** A Tessera artifact is tensor-parallel by construction: the
 exporter writes one whole unit and never learns the TP degree, and every rank
-cuts its own shard out of those bytes at load (`layout.slice_unit`). Every
+cuts its own shard out of those bytes at load (`slicing.slice_unit`). Every
 plane restricts — BODY and COMPLETION are per-column streams, the block scale
 planes are indexed `(row × cols + col) // block`, DIAG_SU is per input channel
 and DIAG_SV per output channel, RELEASE restricts by the threshold argument in

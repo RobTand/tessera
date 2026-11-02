@@ -143,7 +143,7 @@ def test_a_window_outside_the_supported_set_is_not_eligible():
 def test_a_shard_start_state_is_not_eligible():
     """A TP row shard starts mid-stream; the kernel supplies state_{-1} = 0
     itself, so a shard keeps the torch lane that threads the state."""
-    from tessera.layout import slice_unit
+    from tessera.slicing import slice_unit
     from tessera.trellis import ConvCode
     from tessera.unit_artifact import build_unit_artifact, parse_unit_artifact
 

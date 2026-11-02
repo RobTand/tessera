@@ -16,7 +16,7 @@ import torch
 from safetensors.torch import load_file
 
 from tessera.fused import parse_fused
-from tessera.layout import can_shard
+from tessera.slicing import can_shard
 from tessera.serving.fp8_route import PreparedTesseraFp8Module, prepare_tessera_fp8_module
 from tessera.serving.sharding import plan_shard, shard_parsed_roles
 from tessera.serving.window import prepare_window

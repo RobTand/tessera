@@ -1344,7 +1344,7 @@ def lane_rate_report(lane: str, rates, contract: "Mapping | None" = None) -> dic
 #: (``bf16_route.gemv_refusal_for_unit``) all decide a unit through the same
 #: function over the same published requirements.  Before that, the contract
 #: published four conditions while the loader refused nine, so a TP row shard
-#: -- ``layout.slice_unit`` stamps ``initial_state`` -- read READABLE at
+#: -- ``slicing.slice_unit`` stamps ``initial_state`` -- read READABLE at
 #: preflight and fell back module by module at load.
 _LANE_WIRE_CHECKS = {
     "column_rates": ("rates", "every_in"),
@@ -1378,7 +1378,7 @@ _CARRIES_REFUSALS = {
     "diagonals": (
         "the unit carries segment-2a diagonals, and the lane applies none"),
     "start_state": (
-        "the unit carries a shard start state (INITIAL_STATE, layout.slice_unit), "
+        "the unit carries a shard start state (INITIAL_STATE, slicing.slice_unit), "
         "and the lane supplies state_{{-1}} = 0 itself -- the L-bit pad that opens "
         "a wire column is not stored, so a shard packed against the pinned start "
         "would decode its first rows to plausible wrong weights; a lane that "
@@ -1499,7 +1499,7 @@ def wire_facts_of_parsed(parsed) -> dict:
     Three facts read a MISSING attribute as its whole-unit value rather than
     as absent evidence, because that is exactly how the loader reads it and
     the loader is what this predicate must agree with (#264): a plain
-    ``EncodedUnit`` has no ``initial_state`` at all (only ``layout.SlicedUnit``
+    ``EncodedUnit`` has no ``initial_state`` at all (only ``slicing.SlicedUnit``
     does), ``diagonals`` is ``None`` on every CHANNEL-plane unit, and a unit
     written before the rotation field decodes as ``RotationState.NONE`` --
     ``prepare_from_parsed`` spells all three with the same ``getattr``
@@ -1602,7 +1602,7 @@ def refuse_unreachable_lane(lane: str, *, grid: str, q256: int, rate_cap: int,
 
     The keyword facts past ``target`` state what the PLAN will write, and
     their defaults are the exporter's own pinned plan: whole units (no shard
-    ``start_state`` -- a slice is a later act, ``layout.slice_unit``, which
+    ``start_state`` -- a slice is a later act, ``slicing.slice_unit``, which
     the byte-time gate reads off the wire), unrotated, no diagonals, no
     RELEASE overrides, a scalar (arity-1) grid.  A caller planning otherwise
     says so and is refused by name.  ``structure`` is what the plan serves the

@@ -14,14 +14,14 @@ WHERE THE CUT HAPPENS.  Every rank loads the WHOLE blob (``wire_bytes`` is a
 element axis to slice), parses it, and then takes its own shard at the UNIT
 level through ``_shard_unit_for_rank``. A row cut preserves the trellis state
 before its first surviving row in the INITIAL_STATE plane. The cut belongs
-to ``tessera.layout.slice_unit``, a wire operation, rather than to a serving
+to ``tessera.slicing.slice_unit``, a wire operation, rather than to a serving
 route reaching into planes it does not own.
 
 AT TP1.  The seam returns the whole unit unchanged -- the same object, so the caller's
 parsed view of it stays valid and the served arithmetic is bit-identical to a
 build with no TP support at all.  At ``tp_size > 1`` the seam CUTS: it asks
-``tessera.layout.can_shard`` first (refusing with the granularity the operator
-can act on), calls ``tessera.layout.slice_unit``, and re-derives the parsed view
+``tessera.slicing.can_shard`` first (refusing with the granularity the operator
+can act on), calls ``tessera.slicing.slice_unit``, and re-derives the parsed view
 by writing the shard and reading it back -- a shard is a whole artifact, so the
 route downstream sees a unit whose manifest describes the rows it actually
 holds.  It still never falls back to "every rank holds the whole weight": that
@@ -29,7 +29,7 @@ would serve correct logits at N times the intended memory and look merely
 disappointing.
 
 TWO GATES, AND THEY ANSWER DIFFERENT QUESTIONS.  ``require_a_cutter`` refuses a
-TP group in a build with no ``tessera.layout.slice_unit`` -- the whole-file
+TP group in a build with no ``tessera.slicing.slice_unit`` -- the whole-file
 answer, asked once per module at method construction.  ``require_axis_supported``
 refuses an axis a route's decoders cannot start, read off ``ROUTE_TP_AXES``
 and asked at ``create_weights`` where ``plan_shard`` has just named the axis.  A
@@ -119,7 +119,7 @@ signature: the layer's declared shape and replication carry the answer.
 Summing the sizes away was the first defect here (#32); reading the tile
 without the layer's global shape and contract was the second (#303).
 
-``shards_i`` is also what ``tessera.layout.can_shard`` must be asked -- it
+``shards_i`` is also what ``tessera.slicing.can_shard`` must be asked -- it
 answers "into how many EQUAL shards", and asking it ``tp_size`` for a
 replicated role would test a finer cut than the one being made.
 
@@ -174,8 +174,8 @@ __all__ = [
 ]
 
 #: The output axis: ColumnParallel and its merged/QKV forms give a rank its own
-#: rows.  The SPELLING is ``tessera.layout``'s, not this module's -- these
-#: strings are passed straight to ``layout.can_shard(unit, tp, axis)``, and a
+#: rows.  The SPELLING is ``tessera.slicing``'s, not this module's -- these
+#: strings are passed straight to ``slicing.can_shard(unit, tp, axis)``, and a
 #: near-miss ("rows" for "row") would be a GrammarError at load on the one
 #: configuration nobody serves yet.  One vocabulary for one concept.
 AXIS_ROWS = "row"
@@ -250,7 +250,7 @@ def axis_status(family: str, axis: str) -> str:
 
 
 def have_unit_slicer() -> bool:
-    """Is ``tessera.layout.slice_unit`` in this build?
+    """Is ``tessera.slicing.slice_unit`` in this build?
 
     The TP gate is keyed on the cutter's PRESENCE rather than deleted outright:
     a build without it must still refuse rather than serve rank 0's whole unit
@@ -258,7 +258,7 @@ def have_unit_slicer() -> bool:
     looks merely disappointing.
     """
     try:
-        from tessera.layout import slice_unit  # noqa: F401
+        from tessera.slicing import slice_unit  # noqa: F401
     except Exception:  # noqa: BLE001 -- an older Tessera, or a partial install
         return False
     return True
@@ -272,7 +272,7 @@ def require_a_cutter(prefix: str, world: int) -> None:
         f"tessera target {prefix!r}: this build cannot serve tensor_parallel_size={int(world)}. A "
         "unit's rows are bit-packed against a shared rate schedule and its trellis carries state "
         "along a row, so a shard is not a byte range -- the loader cuts the unit itself, through "
-        "tessera.layout.slice_unit, which is not in this build. The checkpoint is not the problem "
+        "tessera.slicing.slice_unit, which is not in this build. The checkpoint is not the problem "
         "and does not need re-exporting -- one artifact serves any world size, because the cut "
         "happens at load. Serve with -tp 1, or install a Tessera carrying the unit slicer.")
 
@@ -287,7 +287,7 @@ def artifact_tp_agnostic(config: "Optional[dict]") -> Optional[bool]:
     stamps (``export._write_config``) and is taken verbatim when present --
     the artifact's own word about its own bytes.  ``schema_minor`` is the fact
     it was derived from, and a config that records the minor without the
-    declaration is answered from it through ``layout.tp_agnostic_at_minor``,
+    declaration is answered from it through ``slicing.tp_agnostic_at_minor``,
     the one home of the rule -- so an artifact written by a producer that
     stamps only the wire minor still resolves correctly instead of being
     refused for a spelling.  A config carrying neither gets ``None``: it
@@ -307,7 +307,7 @@ def artifact_tp_agnostic(config: "Optional[dict]") -> Optional[bool]:
     minor = config.get("schema_minor")
     if isinstance(minor, int) and not isinstance(minor, bool):
         try:
-            from tessera.layout import tp_agnostic_at_minor
+            from tessera.slicing import tp_agnostic_at_minor
         except Exception:  # noqa: BLE001 -- an older Tessera, or a partial install
             return None
         return bool(tp_agnostic_at_minor(minor))
@@ -318,7 +318,7 @@ def require_a_cuttable_artifact(prefix: str, world: int, config: "Optional[dict]
     """Refuse a TP group against BYTES that cannot be cut.  ``world<=1`` passes.
 
     The twin of :func:`require_a_cutter`, and the other half of the same
-    question: that one asks whether this BUILD carries ``layout.slice_unit``,
+    question: that one asks whether this BUILD carries ``slicing.slice_unit``,
     this one asks whether the ARTIFACT admits a cut at all.  Both are
     whole-file questions asked once at method construction; the per-axis one
     (``require_axis_supported``) waits for ``create_weights``, where the axis
@@ -349,7 +349,7 @@ def require_a_cuttable_artifact(prefix: str, world: int, config: "Optional[dict]
             f"bytes say no rank can cut a shard out of them, and this is "
             f"tensor_parallel_size={int(world)}. A cut needs the shard record and the "
             "INITIAL_STATE plane the container gained when slicing became expressible "
-            "(tessera.layout.SLICEABLE_SCHEMA_MINOR); wire written below that minor cannot "
+            "(tessera.slicing.SLICEABLE_SCHEMA_MINOR); wire written below that minor cannot "
             "carry a window of a unit at all. Serve with tensor_parallel_size=1, or re-export "
             "the checkpoint with a current exporter -- the TP degree is not an encoding choice "
             "and never was.")
@@ -409,7 +409,7 @@ class RoleShard:
     It equals ``tp_size`` for an ordinary split and is SMALLER when vLLM
     replicates the role across ranks -- ``tp_size // shards`` ranks then hold
     each range, and two of them holding identical rows is the intended
-    arrangement, not a collision.  It is the number ``layout.can_shard`` has to
+    arrangement, not a collision.  It is the number ``slicing.can_shard`` has to
     be asked, because that function answers "into how many EQUAL shards".
     """
 
@@ -578,18 +578,18 @@ def layer_replicas(prefix: str, layer, members) -> Tuple[int, ...]:
 def shard_granularity(unit) -> Optional[Tuple[int, int]]:
     """``(row_gran, col_gran)`` from the wire, or None when the cutter is absent.
 
-    Delegated to ``tessera.layout`` because the granularity is a property of
+    Delegated to ``tessera.slicing`` because the granularity is a property of
     the body's own packing (the trellis's step, the plane's superblock), not
     something a serving route may assume.  None means "the branch that can cut
     a unit is not merged yet" -- callers refuse, they do not guess.
 
-    ``layout.shard_granularity`` accepts an ``EncodedUnit``, a ``ParsedUnit``
+    ``slicing.shard_granularity`` accepts an ``EncodedUnit``, a ``ParsedUnit``
     or a bare ``Manifest``, so a loader may ask with the parse it already
     holds; a ``ParsedUnit`` is the better argument because the function reads
     the superblock and arity off it instead of defaulting them.
     """
     try:
-        from tessera.layout import shard_granularity as _granularity
+        from tessera.slicing import shard_granularity as _granularity
     except Exception:
         return None
     row_gran, col_gran = _granularity(unit)
@@ -597,7 +597,7 @@ def shard_granularity(unit) -> Optional[Tuple[int, int]]:
 
 
 def can_shard(unit, shards: int, axis: str) -> Optional[bool]:
-    """``layout.can_shard``, or None when the cutter is absent.
+    """``slicing.can_shard``, or None when the cutter is absent.
 
     Asked BEFORE a cut rather than inferred from the granularity, because the
     granularity is necessary and not sufficient: a column cut of a unit that
@@ -605,21 +605,21 @@ def can_shard(unit, shards: int, axis: str) -> Optional[bool]:
     ``can_shard`` is where that lives.  None means "cannot answer", which
     callers treat as "refuse", never as "yes".
 
-    The argument is ``shards`` and not ``tp_size``: ``layout.can_shard``
+    The argument is ``shards`` and not ``tp_size``: ``slicing.can_shard``
     answers "into how many EQUAL shards", and a role vLLM replicates across the
     group is cut into fewer of them than there are ranks (``RoleShard.shards``).
     Passing the world size there would test a finer cut than the one being made
     and refuse legal ones.
     """
     try:
-        from tessera.layout import can_shard as _can_shard
+        from tessera.slicing import can_shard as _can_shard
     except Exception:
         return None
     return bool(_can_shard(unit, int(shards), axis))
 
 
 def unsliceable_reason(unit) -> Optional[str]:
-    """``layout.unsliceable_reason``, or None when the cutter is absent.
+    """``slicing.unsliceable_reason``, or None when the cutter is absent.
 
     WHY the wire refuses this unit outright, in the words of the module that
     decided it. ``can_shard`` can refuse the unit outright (rotation, a
@@ -630,7 +630,7 @@ def unsliceable_reason(unit) -> Optional[str]:
     already said no, and the no-cutter case is refused above the callers.
     """
     try:
-        from tessera.layout import unsliceable_reason as _reason
+        from tessera.slicing import unsliceable_reason as _reason
     except Exception:
         return None
     return _reason(unit)
@@ -639,7 +639,7 @@ def unsliceable_reason(unit) -> Optional[str]:
 def shard_cut_reason(unit, shards: int, axis: str) -> Optional[str]:
     """The cutter's requested-window obstruction, if this build exposes it."""
     try:
-        from tessera.layout import shard_cut_reason as _reason
+        from tessera.slicing import shard_cut_reason as _reason
     except Exception:
         return None
     return _reason(unit, int(shards), axis)
@@ -954,7 +954,7 @@ def _unit_extent(unit) -> Tuple[int, int]:
     trellis step, so ``body_bits.shape[0]`` is a STEP count and reading it as a
     row count would halve the extent and cut every rank's shard in the wrong
     place.  A bare ``EncodedUnit`` carries no arity, and arity 1 is then the
-    same assumption ``layout.slice_unit`` itself makes for one.
+    same assumption ``slicing.slice_unit`` itself makes for one.
     """
     from tessera.unit_artifact import ParsedUnit
 
@@ -980,8 +980,8 @@ def _shard_unit_for_rank(unit, plan: ShardPlan, role: RoleShard):
     keep that view, and a TP-capable build serves byte-identical bytes to one
     without this function.
 
-    Above that this asks ``tessera.layout.can_shard`` and then calls
-    ``tessera.layout.slice_unit``, which returns a STANDALONE unit: it decodes
+    Above that this asks ``tessera.slicing.can_shard`` and then calls
+    ``tessera.slicing.slice_unit``, which returns a STANDALONE unit: it decodes
     through the same ``tessera.decode`` entry points to exactly
     ``decode(parent)[r0:r1, c0:c1]``, bit for bit, with no re-encoding.  The
     caller must re-derive its parsed view of what comes back -- a shard's planes
@@ -1008,10 +1008,10 @@ def _shard_unit_for_rank(unit, plan: ShardPlan, role: RoleShard):
     if role.is_whole:
         return unit
     try:
-        from tessera.layout import slice_unit
+        from tessera.slicing import slice_unit
     except Exception as exc:
         raise NotImplementedError(
-            f"tensor parallelism needs tessera.layout.slice_unit, which is not in this build "
+            f"tensor parallelism needs tessera.slicing.slice_unit, which is not in this build "
             f"({exc}): rank {plan.tp_rank} of {plan.tp_size} asked for a {plan.axis} slice of a "
             "unit this plugin can only serve whole.  Serve with tensor_parallel_size=1, or "
             "install a Tessera carrying the unit slicer.") from exc
@@ -1033,7 +1033,7 @@ def check_shard_granularity(plan: ShardPlan, role: RoleShard, unit) -> None:
 
     A unit is not a matrix of independent rows: the body packs along both axes
     and the trellis carries state along a row, so a cut is exact only on the
-    packing's own boundaries.  ``tessera.layout.shard_granularity`` is the
+    packing's own boundaries.  ``tessera.slicing.shard_granularity`` is the
     authority on those; when it is absent the caller has already refused at the
     seam, so this is a no-op rather than a guess.
 
@@ -1043,7 +1043,7 @@ def check_shard_granularity(plan: ShardPlan, role: RoleShard, unit) -> None:
     actually holds.  Both ends of the range are checked -- a legal width
     starting on an illegal offset is the replicated case's own failure mode.
 
-    ``layout.can_shard`` is asked FIRST, with the role's shard count, and is the
+    ``slicing.can_shard`` is asked FIRST, with the role's shard count, and is the
     binding answer: granularity is necessary, not sufficient.  A column cut of a
     unit carrying a RELEASE plane is confined to whole 256-column superblocks,
     and only ``can_shard`` knows that.  Its refusal is ``_cannot_cut``'s, the
@@ -1088,7 +1088,7 @@ def _shard_parse_type():
         """A shard's ``ParsedUnit``: the cut unit now, the shard's manifest when read.
 
         Every route prepares from ``unit``, ``grid``, ``forests`` and ``code``,
-        and a cut unit already is its own: ``layout.slice_unit`` restricts the
+        and a cut unit already is its own: ``slicing.slice_unit`` restricts the
         parent's planes and carries the start state and the shard record on
         the unit (``SlicedUnit``), which is what the reader rebuilds from a
         shard's bytes (``unit_artifact._as_unit``).  What only a write can

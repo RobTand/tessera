@@ -171,7 +171,7 @@ def prepare_bf16_unit(
     if unit.scale_rows is None:
         raise GrammarError("a CHANNEL scale plane needs the unit's row words")
     steps, cols = unit.body_bits.shape
-    # A ROW shard (``layout.slice_unit``) does not enter its columns from the
+    # A ROW shard (``slicing.slice_unit``) does not enter its columns from the
     # pinned zero register, and the window plane's ``L``-bit pad IS that start
     # state -- so threading it costs no resident byte, only the pad bits that
     # were being written as zeros anyway.  A whole unit carries ``None`` and

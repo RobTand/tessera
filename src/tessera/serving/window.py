@@ -572,7 +572,7 @@ def _pack(body_bits, rates, window_bits, initial_state):
             "this unit carries an INITIAL_STATE (a sliced unit), but the installed "
             f"tessera.lane_planes.pack_window_planes takes no initial_state ({exc}).  Packing "
             "it against the pinned zero pad would decode to plausible wrong weights, so it is "
-            "refused; install a Tessera carrying tessera.layout.slice_unit.") from exc
+            "refused; install a Tessera carrying tessera.slicing.slice_unit.") from exc
 
 
 def prepare_window(body_bits: torch.Tensor, rates: Sequence[int], window_bits: int,

@@ -3342,7 +3342,7 @@ Re-stamped 2026-09-14 for the NATIVE span-2 select-plane admission
 (tessera#492).  A rank's rows are a whole number of the kernel's select
 columns only when they are a multiple of ``arity * 8 * span``: the span-L
 trellis packs one select bit per super-symbol, eight to a byte, in one flat
-byte array and resumes no column on a half-byte.  ``layout.shard_granularity``
+byte array and resumes no column on a half-byte.  ``slicing.shard_granularity``
 reports the finer ``arity * span`` boundary -- what ``slice_unit`` cuts
 exactly -- so one super-symbol per column is a LEGAL cut that then died in the
 PACKER ("not a multiple of 16"), after the wire had been cut, naming bytes
@@ -6467,7 +6467,7 @@ route applies an input rotation the sidecar must name it (`shared` in
 contract bumps, and `require_untransformed` learns that consumer; not before.
 
 The **slicing capability API** owes the same answer, and since tessera#304 it
-gives it. `layout.can_shard` is defined as "`slice_unit` will accept that
+gives it. `slicing.can_shard` is defined as "`slice_unit` will accept that
 cut", so the refusals that are properties of the *unit* rather than of the cut
 -- an `R_in`-only rotation, whose column blocks a cut would break into pieces
 that decode to plausible wrong weights, and a scale block that straddles two
@@ -6682,7 +6682,7 @@ than close #285.
 
 The artifact is TP-agnostic: every rank loads the whole container, and
 `serving.sharding.plan_shard` decides which rows or columns of each role
-this rank serves before `shard_parsed_roles` cuts them (`layout.slice_unit`)
+this rank serves before `shard_parsed_roles` cuts them (`slicing.slice_unit`)
 and the route's kernel runs on the slice. Priced == written == served holds
 across ranks only if the plan is exact: a rank serving rows another rank also
 serves, or rows no rank serves, is a module priced once and served as
@@ -6752,7 +6752,7 @@ the cutter, not in the exporter's comment. Both keys go into
 and only the second is what vLLM hands the plugin.
 
 `TesseraConfig._require_a_cutter` now asks two questions, not one:
-`sharding.require_a_cutter` (does this **build** carry `layout.slice_unit`?) and
+`sharding.require_a_cutter` (does this **build** carry `slicing.slice_unit`?) and
 `sharding.require_a_cuttable_artifact` (do these **bytes** admit a cut?). The
 resolution rule, in `sharding.artifact_tp_agnostic`, is **fail closed**: a
 declared `tp_agnostic` is taken verbatim; a config that records only
@@ -7220,7 +7220,7 @@ The predicate is therefore published (`runtime_contract.json` v12,
 lane's **whole** predicate (#264): beside the rates, window, body and plane
 it states the decoration classes the loader refuses by name -- RELEASE
 overrides, diagonals, rotation, a TP shard's start state
-(`layout.slice_unit` stamps `INITIAL_STATE`; the kernel supplies
+(`slicing.slice_unit` stamps `INITIAL_STATE`; the kernel supplies
 `state_{-1} = 0` itself) and the grid's arity. Four published conditions
 against nine refused was #104's failure mode one class over: a TP row
 shard read `READABLE`, exit 0, at preflight while every module fell back
