@@ -6,7 +6,7 @@ import json
 import pytest
 
 from tessera.cached_unit import CachedUnitBundle
-from test_rooted_cached_bundle import rooted
+from rooted_cached_bundle_support import rooted
 from reuse_authority_fixture import AUTHORITY
 
 

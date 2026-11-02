@@ -17,7 +17,7 @@ from tessera.errors import GrammarError
 from tessera.export import ActivationSource
 from tessera.hessian_capture import ReferenceHessianCollection, ReferenceHessians
 from hessian_reference_support import build_reference
-from test_rooted_cached_bundle import rooted
+from rooted_cached_bundle_support import rooted
 from reuse_authority_fixture import AUTHORITY
 
 CLIENT_SCHEMAS = {'catalog_extension': 'prismaquant.joint_catalog_extension.v3',
