@@ -1,4 +1,7 @@
-"""CPU population/independence regressions for #1258, through the real producer.
+"""CPU population/independence regressions for #1258.
+
+Producer integrations use raw evidence; verifier attacks use an independent
+in-memory positive from test_graph_receipt_population_isolation (#1532).
 
 These are protocol fixtures, not GPU/compiled qualification. The legacy AST
 fallback reads the runner's own roster without executing its unsafe startup;
@@ -11,11 +14,13 @@ import ast
 import copy
 import hashlib
 import json
+import os
 from pathlib import Path
 import runpy
 import shlex
 import subprocess
 import sys
+import tempfile
 import urllib.request
 
 import pytest
@@ -112,9 +117,17 @@ def inputs(tmp_path):
 
 def _produce(inputs, eager="e1,e2", graph="g"):
     receipts, manifest, out, _ = inputs
-    result = subprocess.run([sys.executable, str(PRODUCER), str(receipts), str(manifest),
-                             str(out), "--eager", eager, "--graph", graph],
-                            text=True, capture_output=True, timeout=30)
+    # The producer uses tempfile.mkdtemp for its flattened evidence. Own that
+    # scratch under this test, including on refusal/timeout, rather than leaking
+    # it into the host's temp directory. Native threads stay bounded under xdist.
+    with tempfile.TemporaryDirectory(prefix="producer-", dir=out.parent) as scratch:
+        env = {**os.environ, "TMPDIR": scratch, "TMP": scratch, "TEMP": scratch,
+               "OMP_NUM_THREADS": "1", "OPENBLAS_NUM_THREADS": "1",
+               "MKL_NUM_THREADS": "1", "NUMEXPR_NUM_THREADS": "1"}
+        result = subprocess.run([sys.executable, str(PRODUCER), str(receipts), str(manifest),
+                                 str(out), "--eager", eager, "--graph", graph],
+                                text=True, capture_output=True, env=env, timeout=300)
+    # The timeout is only a generous failure bound, never a timing expectation.
     receipt = json.loads(out.read_text()) if out.exists() else None
     return result, receipt
 
@@ -359,8 +372,14 @@ def test_producer_refuses_conflicting_equality_basenames_in_either_order(inputs,
     "overlap", "pass-alias", "duplicate-eager", "duplicate-graph", "declared-total-only",
     "eager-negative-members", "eager-excess-members", "eager-bool-members",
 ])
-def test_verify_rejects_forged_population_and_independence_claims(inputs, attack):
-    receipt = copy.deepcopy(_valid(inputs))
+def test_verify_rejects_forged_population_and_independence_claims(attack):
+    # Keep this public test node, but not its former producer dependency. A
+    # producer that misses its failure bound must not mask verifier policy.
+    from test_graph_receipt_population_isolation import _verifier_receipt
+
+    positive = _verifier_receipt()
+    assert gr.verify(positive, _serve(positive)) is None
+    receipt = copy.deepcopy(positive)
     graph = receipt["arms"][0]
     passes = graph["passes"]
     if attack in {"partial", "declared-total", "bool-counters", "float-counters"}:
@@ -408,3 +427,5 @@ def test_verify_rejects_forged_population_and_independence_claims(inputs, attack
     receipt["attests"] = [gr.attestation(receipt, arm) for arm in receipt["arms"]]
     why = gr.verify(receipt, _serve(receipt))
     assert isinstance(why, str) and why, f"verify accepted forged {attack} receipt"
+    if attack == "extra-pass":
+        assert "malformed population for arm g" in why, why
