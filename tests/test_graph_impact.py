@@ -93,3 +93,25 @@ def test_test_to_test_edges_are_in_reach_mode_until_the_switch_date(tessera):
 def test_the_baseline_records_reach_mode_with_its_switch_date(tessera):
     baseline = json.loads((ROOT / tessera.BASELINE).read_text())
     assert baseline.get('test_to_test') == 'reach' and baseline.get('test_to_test_strict_by') == STRICT_BY
+
+
+def test_the_baseline_stores_no_edge_list(tessera):
+    """New edges are judged by the base revision's graph against the head's. An
+    edge list stored in the baseline goes stale when master gains edges through
+    other merges (TL3 #464), and then edges already on master read as new."""
+    baseline = json.loads((ROOT / tessera.BASELINE).read_text())
+    assert 'edge_groups' not in baseline
+
+
+def test_new_edges_are_judged_against_the_base_revision(tessera):
+    core = tessera.core
+    base = core.measure({'tests/test_a.py': {'src/x.py'}}, {('tests/test_a.py', 'src/x.py')})
+    head = core.measure({'tests/test_a.py': {'src/x.py'}, 'tests/test_b.py': {'src/x.py'}},
+                        {('tests/test_a.py', 'src/x.py'), ('tests/test_b.py', 'tests/test_a.py')})
+    base['edge_groups']['conftest_source'] = ['tests/conftest.py -> src/x.py']
+    head['edge_groups']['conftest_source'] = ['tests/conftest.py -> src/x.py', 'tests/conftest.py -> src/y.py']
+    stored = {'schema': core.SCHEMA, 'figures': {}, 'tolerances': {}, 'reach_budget': 10}
+    compared = tessera.comparison_baseline(stored, base, head)
+    assert core.regressions(head, compared) == ['new conftest_source edge: tests/conftest.py -> src/y.py',
+                                                'new test_to_test edge: tests/test_b.py -> tests/test_a.py']
+    assert core.stale_entries(head, compared) == []
