@@ -42,6 +42,7 @@ import torch
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
 sys.path.insert(0, os.path.join(HERE, "..", "..", "tests"))
+sys.path.insert(0, os.path.join(HERE, "..", "..", "src"))
 
 try:
     import pytest  # noqa: F401  (the test module imports it; the image may not carry it)
@@ -62,7 +63,7 @@ except ImportError:
 
 from bench_geometry import time_call                                       # noqa: E402
 from bench_t8r import ENVELOPE_W, PowerSampler, balanced_routing, kernel_profile  # noqa: E402
-import test_window_gemm_grouped as twgg                                    # noqa: E402
+import window_gemm_grouped_support as twgg                                    # noqa: E402
 
 EXPERTS, TOP_K, HIDDEN, INTER, SWIGLU_LIMIT = 288, 8, 4096, 1024, 10.0
 

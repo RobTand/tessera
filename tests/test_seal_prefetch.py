@@ -36,7 +36,7 @@ from tessera.export import (ActivationSource, _SEAL_PREFETCH_ENV, _prefetch_seal
                             _tensor_signature, device_fingerprint)
 from tessera.manifest import ScalePlaneKind
 
-from test_hessian_reference_capture import reference  # noqa: F401  (fixture)
+from hessian_reference_support import reference  # noqa: F401  (fixture)
 from test_hessian_resident_binding import bound_source, counted, encode_kwargs
 from reuse_authority_fixture import CANONICAL_CAPTURE
 

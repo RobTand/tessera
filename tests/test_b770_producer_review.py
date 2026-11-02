@@ -17,8 +17,8 @@ import box_artifacts
 def selected():
     pytest.importorskip("torch")
     pytest.importorskip("safetensors")
-    import test_export_serving
-    return test_export_serving
+    import export_serving_support
+    return export_serving_support
 import test_t8_partition_launcher as launcher
 from tessera import serving_parts as parts
 
