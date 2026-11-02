@@ -229,6 +229,7 @@ class Facts:
     directories: set = field(default_factory=set)  # repository directories read whole
     patterns: set = field(default_factory=set)     # repository files a built path may name
     bases: set = field(default_factory=set)        # repository directories paths are built on
+    weak: set = field(default_factory=set)         # files a name-only pattern may read: data, never imports
     launches: bool = False
 
 
@@ -332,6 +333,14 @@ class Evidence:
                 if isinstance(value, str) and any(char in value for char in '*?['):
                     value = value.split('*', 1)[0].rsplit('/', 1)[0] or '.'
                 self.note(facts, value, path)
+        # tessera._dev.source_dependencies also follows a base that arrives
+        # through a parameter with a default (`root / "src" / "tessera"`).
+        try:
+            found, _, _ = sd.file_imports(tree, absolute, self.root)
+        except (OSError, ValueError, TypeError, RecursionError):
+            found = set()
+        for value in found:
+            self.note(facts, value, path)
         here = posixpath.dirname(path)
         for node in nodes:
             if not (isinstance(node, ast.Constant) and isinstance(node.value, str)) or len(node.value) > 200:
@@ -344,9 +353,10 @@ class Evidence:
                 sibling = posixpath.normpath(posixpath.join(here, node.value))
                 if sibling in self.file_set:
                     facts.paths.add(sibling)
-        self._bases = facts.bases
+        self._bases, self._weak = facts.bases, set()
         facts.patterns = (self.built_paths(tree, scanner) | self.siblings(tree)
                           | self.tabled(tree, facts.bases)) - facts.paths
+        facts.weak = self._weak - facts.paths - facts.patterns - {path}
         facts.paths.discard(path)
         facts.patterns.discard(path)
         return facts
@@ -412,14 +422,20 @@ class Evidence:
                     if pattern in self.file_set:
                         found.add(pattern)  # Exact: a path no call argument carried.
                     continue
-                # A pattern must say something about the file: a literal in its
-                # name (`f"stub_{x}_census.json"`), or a directory specific
-                # enough to be a table's home (`serving / name`).
-                # `ROOT / "tests" / name` names nothing in particular.
-                directory, _, filename = pattern.rpartition('/')
-                if not filename.strip('*?') and directory.count('/') < 1:
+                # A pattern must say something: a literal after its base, or a
+                # base specific enough to be a table's home (`serving / name`).
+                # A file name nothing pins down, directly under a top-level
+                # directory (`ROOT / "experiments" / name`), is read as data
+                # only, never as an import: `ROOT / "tests" / name` would
+                # otherwise make every test module an input of the reader.
+                literal = any(part and part.strip('*') for part in parts)
+                if not literal and base_text.count('/') < 2:
                     continue
                 if pattern.startswith('..') or pattern in ('.', '*'):
+                    continue
+                directory, _, filename = pattern.rpartition('/')
+                if not filename.strip('*?') and directory.count('/') < 1:
+                    self._weak |= self.matching(pattern)
                     continue
                 found |= self.matching(pattern)
         return found
@@ -567,7 +583,7 @@ class Evidence:
         # conftest enumerates import roots for their names (which top-level
         # names are this tree's own); the files under them are not inputs.
         if is_test_side(path) and PurePosixPath(path).name != 'conftest.py':
-            files |= {file for file in facts.patterns if file not in imports}
+            files |= {file for file in facts.patterns | facts.weak if file not in imports}
             for directory in facts.directories:
                 files |= {file for file in self.files if file.startswith(directory)}
         return files
@@ -576,7 +592,7 @@ class Evidence:
         """Files under the directories a production module enumerates, and the
         files its built paths may name."""
         facts = self.facts[path]
-        found = {file for file in facts.patterns if file not in self.edges(path) | self.programs(path)}
+        found = {file for file in facts.patterns | facts.weak if file not in self.edges(path) | self.programs(path)}
         if facts.directories:
             found |= {file for file in self.files if file.startswith(tuple(facts.directories))}
         return found
