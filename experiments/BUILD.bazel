@@ -835,11 +835,6 @@ filegroup(
 )
 
 filegroup(
-    name = "files/t4_code",
-    srcs = glob(["t4_code/**"], exclude = ["**/BUILD.bazel", "bazel-*/**", "*bazel-remote-grpc.log", "*execution_log.binpb.zst", ".pytest_cache/**", "**/__pycache__/**", "**/*.pyc"]),
-)
-
-filegroup(
     name = "files/t8r_speed",
     srcs = glob(["t8r_speed/**"], exclude = ["**/BUILD.bazel", "bazel-*/**", "*bazel-remote-grpc.log", "*execution_log.binpb.zst", ".pytest_cache/**", "**/__pycache__/**", "**/*.pyc"]),
 )

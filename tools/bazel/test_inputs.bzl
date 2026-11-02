@@ -11,6 +11,10 @@ _CONSTRUCTION_T8 = "//:docs/measurements/construction/2026-10-07/glm53-flash-4la
 _CONSTRUCTION_REASON = "experiments/t8r_speed/bench_dense_module.py reads this construction record through os.path.join over a root computed at run time."
 
 TEST_INPUTS = {
+    "//tests:test_standalone_boundary": struct(
+        data = ["//src/tessera:files"],
+        reason = "scan() reads every module under src/tessera through the root its caller passes (default the repository root).",
+    ),
     "//tests:test_bench_kda_geometry": struct(data = [_CONSTRUCTION_T8], reason = _CONSTRUCTION_REASON),
     "//tests:test_bench_kda_timing_scope": struct(data = [_CONSTRUCTION_T8], reason = _CONSTRUCTION_REASON),
     "//tests:test_export_attention_owners": struct(data = [_CONSTRUCTION_T8], reason = _CONSTRUCTION_REASON),
