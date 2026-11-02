@@ -941,6 +941,9 @@ ts_py_test(
     ],
     deps = [
         "//src/tessera:identity",
+        "//tools:check_wheel",
+        "//tools:ci/gate_boundary",
+        "//tools:ci/gate_collect",
         "//tools:ci/gate_select",
         "//tools:impacted_tests",
         ":test_packaging_lib",
@@ -965,6 +968,9 @@ ts_py_test(
     ],
     deps = [
         "//src/tessera:identity",
+        "//tools:check_wheel",
+        "//tools:ci/gate_boundary",
+        "//tools:ci/gate_collect",
         "//tools:ci/gate_select",
         "//tools:impacted_tests",
         ":test_packaging_lib",
@@ -986,9 +992,11 @@ ts_py_library(
     data = [
         "//tools/bazel:build_files.py",
         "//tools/bazel:requirements.py",
+        "//tools/bazel:runtime.py",
     ],
     deps = [
         "//tools:ci/bazel_parity",
+        "//tools:ci/gate_run",
     ],
 )
 
