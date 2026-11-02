@@ -183,10 +183,12 @@ def summary(base, head, changed, budget):
     hubs = {file for file, count in head['fanout'].items()
             if head['population'] and count / head['population'] > HUB_FRACTION}
     to_hubs = sum(1 for _, target in added if target in hubs)
-    reaches = ', '.join(str(len(head['tests'][test])) for test in new)
+    sizes = [len(head['tests'][test]) for test in new]
+    reaches = ', '.join(str(size) for size in sizes)
+    within = '<=' if all(size <= budget for size in sizes) else 'vs'
     return (f"U {base['uniform_selection_pct']}% -> {head['uniform_selection_pct']}%, "
             f"SCC max {base['largest_cycle']} -> {head['largest_cycle']}, new tests {len(new)}"
-            + (f' (reach {reaches} <= budget {budget})' if new else '')
+            + (f' (reach {reaches} {within} budget {budget})' if new else '')
             + f", new edges {len(added)}, " + (f'{to_hubs} to a hub' if to_hubs else 'none to a hub'))
 
 
