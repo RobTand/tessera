@@ -2,7 +2,9 @@
 import copy
 import hashlib
 import json
+import os
 from pathlib import Path
+from types import SimpleNamespace
 
 import numpy as np
 import pytest
@@ -102,6 +104,51 @@ def test_artifact_attestation_binds_parsed_config_across_weight_pass(tmp_path, m
     monkeypatch.setattr(full_engine_artifact, "_attested_digest", change_after_config)
     with pytest.raises(ValueError, match="changed after its full hash"):
         read_tessera_artifact(tmp_path, with_file_attestation=True)
+
+
+@pytest.mark.parametrize("hardlink", [False, True])
+def test_artifact_attestation_refuses_same_stat_content_mutation(tmp_path, monkeypatch, hardlink):
+    from experiments import full_engine_artifact
+    _artifact(tmp_path)
+    path = tmp_path / "model.safetensors"
+    writer = tmp_path / "writer" if hardlink else path
+    if hardlink:
+        os.link(path, writer)
+    initial = path.stat()
+    real_fstat, real_stat, real_read = os.fstat, Path.stat, os.read
+
+    # Model a filesystem whose ctime clock has not advanced between writes.
+    # Keep size, mtime and inode identity from the real filesystem.
+    def coarse_ctime(value):
+        if (value.st_dev, value.st_ino) != (initial.st_dev, initial.st_ino):
+            return value
+        return SimpleNamespace(st_ctime_ns=initial.st_ctime_ns, **{
+            name: getattr(value, name) for name in
+            ("st_mode", "st_size", "st_mtime_ns", "st_dev", "st_ino")})
+
+    monkeypatch.setattr(full_engine_artifact.os, "fstat", lambda fd: coarse_ctime(real_fstat(fd)))
+    monkeypatch.setattr(Path, "stat", lambda self, *args, **kwargs:
+                        coarse_ctime(real_stat(self, *args, **kwargs)))
+    # An unchanged file must still be accepted under the same clock model.
+    read_tessera_artifact(tmp_path, with_file_attestation=True)
+    changed = False
+
+    def mutate_after_read(fd, count):
+        nonlocal changed
+        data = real_read(fd, count)
+        if data and not changed and real_fstat(fd).st_ino == initial.st_ino:
+            changed = True
+            writer.write_bytes(b"changed while hashing")
+            os.utime(writer, ns=(initial.st_atime_ns, initial.st_mtime_ns))
+            current = real_stat(path)
+            assert (current.st_size, current.st_mtime_ns, current.st_dev, current.st_ino) == (
+                initial.st_size, initial.st_mtime_ns, initial.st_dev, initial.st_ino)
+        return data
+
+    monkeypatch.setattr(full_engine_artifact.os, "read", mutate_after_read)
+    with pytest.raises(ValueError, match="changed during its full hash"):
+        read_tessera_artifact(tmp_path, with_file_attestation=True)
+    assert changed
 
 
 def test_artifact_observation_refuses_a_checkpoint_that_is_not_tessera(tmp_path):
