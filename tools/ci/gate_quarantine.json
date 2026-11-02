@@ -1,6 +1,8 @@
 {
   "lanes": {
-    "bytes": [],
+    "bytes": [
+      "tests/test_stageprev_793_operative.py::test_observer_reports_receiver_name_variants_without_false_refusal"
+    ],
     "torch": [
       "tests/test_projection_smoke.py::test_cpu_dry_run_reads_and_refuses_bad_tensor_bytes[width]",
       "tests/test_projection_smoke.py::test_cpu_dry_run_reads_and_refuses_bad_tensor_bytes[dtype]",
