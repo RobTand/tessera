@@ -173,7 +173,7 @@ def test_failed_second_child_closes_both_opened_reference_owners(collection, mon
 
 
 def test_priced_inputs_binds_the_collection_and_every_child(collection, tmp_path):
-    from test_priced_inputs_snapshot import exporter
+    from priced_inputs_snapshot_support import exporter
     document, paths, _hessians, _provenance = collection
     source = ActivationSource.from_capture(document, canonical_capture=CANONICAL_CAPTURE)
     block = {"schema": "tessera.priced_export_inputs.v2",
