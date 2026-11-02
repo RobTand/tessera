@@ -42,12 +42,12 @@ def test_the_vendored_core_is_the_recorded_copy():
 
 
 def test_no_figure_regresses_past_the_baseline(tessera, head):
-    baseline = json.loads((ROOT / tessera.BASELINE).read_text())
+    baseline = tessera.comparison_baseline(json.loads((ROOT / tessera.BASELINE).read_text()), head, head)
     assert tessera.core.regressions(head, baseline) == []
 
 
 def test_the_baseline_records_every_gain(tessera, head):
-    baseline = json.loads((ROOT / tessera.BASELINE).read_text())
+    baseline = tessera.comparison_baseline(json.loads((ROOT / tessera.BASELINE).read_text()), head, head)
     assert tessera.core.stale_entries(head, baseline) == []
 
 

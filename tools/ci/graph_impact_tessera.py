@@ -113,6 +113,23 @@ def measure_commit(root, commit):
                                    and not (tree / path).is_symlink()])
 
 
+def comparison_baseline(stored, base, head):
+    """The stored baseline, with each edge group taken from the base revision's
+    graph (as far as the head still has it). New edges are then exactly the
+    head's minus the base's, and gone edges are no failure. The baseline file
+    holds no edge list: one recorded at some commit goes stale as soon as master
+    gains edges through other merges (TL3 #464)."""
+    groups = {group: sorted(set(base.get('edge_groups', {}).get(group, ())) & set(rows))
+              for group, rows in head.get('edge_groups', {}).items()}
+    return dict(stored, edge_groups=groups)
+
+
+def stored_record(record):
+    """What the baseline file keeps: figures, budget, tolerances, the
+    test->test mode, count and switch date. Never an edge list."""
+    return {key: value for key, value in record.items() if key != 'edge_groups'}
+
+
 def _at(root, commit, path):
     try:
         return json.loads(_git(root, 'show', f'{commit}:{path}'))
@@ -126,16 +143,25 @@ def check(root, base_commit, head=None, *, write_baseline=False):
     base = measure_commit(root, base_commit)
     changed = set(_git(root, 'diff', '--name-only', '--no-renames', base_commit).split())
     allowlist = root / ALLOWLIST
-    return core.check(
-        base, head, root / BASELINE, allowlist if allowlist.exists() else None,
-        changed_tests=sorted(changed & head['reach'].keys()),
-        base_allowlist=_at(root, base_commit, ALLOWLIST) or {},
-        previous_baseline=_at(root, base_commit, BASELINE) if _at(root, base_commit, BASELINE) and
-        _at(root, base_commit, BASELINE).get('schema') == core.SCHEMA else None,
-        write_baseline=write_baseline,
-        test_packages=head['test_packages'],
-        base_package_max_reach=core.package_max_reach(base),
-        edge_diff=core.diff_edges(base, head))
+    stored = json.loads((root / BASELINE).read_text())
+    compared = comparison_baseline(stored, base, head)
+    previous = _at(root, base_commit, BASELINE)
+    previous = (dict(previous, edge_groups=compared['edge_groups'])
+                if previous and previous.get('schema') == core.SCHEMA else None)
+    with tempfile.TemporaryDirectory() as temporary:
+        path = Path(temporary) / 'graph_impact_baseline.json'
+        path.write_text(json.dumps(compared))
+        code = core.check(
+            base, head, path, allowlist if allowlist.exists() else None,
+            changed_tests=sorted(changed & head['reach'].keys()),
+            base_allowlist=_at(root, base_commit, ALLOWLIST) or {},
+            previous_baseline=previous, write_baseline=write_baseline,
+            test_packages=head['test_packages'],
+            base_package_max_reach=core.package_max_reach(base),
+            edge_diff=core.diff_edges(base, head))
+        if write_baseline and code == 0:
+            (root / BASELINE).write_text(json.dumps(stored_record(json.loads(path.read_text())), indent=2) + '\n')
+    return code
 
 
 def replay(root, live, count):
@@ -179,7 +205,7 @@ def main(argv=None):
         print(f"replay of {result['merges']} merges: mean {result['mean_pct']}%, p50 {result['p50_pct']}%, "
               f"p90 {result['p90_pct']}%")
     if args.write_baseline:
-        (ROOT / BASELINE).write_text(json.dumps(core.baseline_record(live), indent=2) + '\n')
+        (ROOT / BASELINE).write_text(json.dumps(stored_record(core.baseline_record(live)), indent=2) + '\n')
     return 0
 
 
