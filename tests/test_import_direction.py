@@ -37,3 +37,11 @@ def test_the_byte_layer_names_no_cutter():
     offenders = {module: sorted(name for name in imported(module) if name.split('.')[0] == 'slicing')
                  for module in BYTE_LAYER}
     assert {module: names for module, names in offenders.items() if names} == {}
+
+
+def test_the_encoder_names_no_identity_built_from_it():
+    """tessera.encoder_identity runs the exporter, and so the encoder, to
+    compute the encoder's identity. The encoder asking it whether that build
+    was running closed an import cycle through export and the serving stack;
+    it asks tessera.fixture_build instead."""
+    assert 'encoder_identity' not in {name.split('.')[0] for name in imported('encode')}

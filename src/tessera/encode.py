@@ -2344,7 +2344,7 @@ def _refit_scales_lut_metric(
 
     diagnostic = _REFIT_DIAG
     if diagnostic is not None:
-        from .encoder_identity import building
+        from .fixture_build import building
         # The first exported unit computes its identity with internal fixture
         # encodes. Those are not refits of the unit being measured.
         if building():
