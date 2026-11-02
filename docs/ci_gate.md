@@ -125,9 +125,7 @@ output and the shard's job summary. The report crosses xdist to its controller,
 which writes the summary once. JUnit records the final outcome and retry issue,
 and includes both attempts' time in the node's budget.
 Remove a mark in the deflake fix before closing its issue; a remaining mark
-with a closed owner fails the next plan. The first mark is the D30
-`test_term_ignoring_child_group_is_killed_only_after_the_full_grace` under #1529,
-after its JSONDecodeError in attempt 1 of hosted run 41515473406.
+with a closed owner fails the next plan.
 Never rerun a gate to obtain a pass. This single item retry requires an
 explicit mark with an open owner; it does not retry a failed gate or shard.
 
