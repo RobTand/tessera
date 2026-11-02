@@ -30,8 +30,28 @@ from cached_producer_support import (
     encoded,
     _projection,
     _record,
-    _distinct_producer,
 )
+
+
+def _distinct_producer(tmp_path, *, escape=False):
+    """A real package with a changed serving-only file and the same wire owner."""
+    package = tmp_path / "src/tessera"
+    shutil.copytree(ROOT / "src/tessera", package,
+                    ignore=shutil.ignore_patterns("__pycache__", "*.pyc"))
+    shutil.copy2(ROOT / "pyproject.toml", tmp_path / "pyproject.toml")
+    route = package / "serving/scheme.py"
+    route.write_bytes(route.read_bytes() +
+                      f"\n# historical package source seal: {tmp_path.name}\n".encode())
+    if escape:
+        cached = package / "cached_unit.py"
+        cached.write_bytes(cached.read_bytes() + b"\nimport tessera.serving.scheme\n")
+    digest = hashlib.sha256()
+    for path in sorted(p for p in package.rglob("*")
+                       if p.suffix in {".py", ".cu", ".cuh", ".cpp", ".h"}):
+        digest.update(path.relative_to(package).as_posix().encode() + b"\0")
+        digest.update(path.read_bytes())
+        digest.update(b"\0")
+    return package, digest.hexdigest()
 
 
 def test_sealed_historical_identity_accepts_original_without_relabelling(tmp_path, encoded):

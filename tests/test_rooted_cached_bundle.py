@@ -84,7 +84,8 @@ def test_actual_mixed_producers_export_complete_dense_and_expert_roster(tmp_path
     from tessera.fused import parse_fused
     from tessera.historical_producer import load_historical_producer
     from tessera.serving_parts import source_identity
-    from cached_producer_support import _distinct_producer, _exporter, STACK, DIM
+    from test_cached_producer import _distinct_producer
+    from cached_producer_support import _exporter, STACK, DIM
 
     exporter = _exporter()
     source = tmp_path / 'checkpoint'; source.mkdir()
