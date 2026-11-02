@@ -1,15 +1,24 @@
 """Test-to-test imports may only shrink as shared helpers move out of tests."""
 import ast
-from pathlib import Path
+import io
+import json
 import os
+from pathlib import Path
 import subprocess
+import tarfile
+import tempfile
 
 import pytest
 
 
-def _check_test_imports(root):
-    tests = root / "tests"
-    modules = {path.stem: path for path in tests.glob("test_*.py")}
+COUNT = "tests/fixtures/test_to_test_imports_count.txt"
+
+
+def _test_to_test_edges(root, files=None):
+    paths = (root / "tests").glob("test_*.py") if files is None else (root / name for name in files)
+    modules = {path.stem: path for path in paths
+               if path.parent == root / "tests" and path.match("test_*.py")
+               and path.is_file() and not path.is_symlink()}
     actual = set()
     for importer, path in sorted(modules.items()):
         for node in ast.walk(ast.parse(path.read_text(), filename=str(path))):
@@ -34,20 +43,66 @@ def _check_test_imports(root):
                 if imported in modules:
                     actual.add(f"tests/{importer}.py -> tests/{imported}.py")
 
-    recorded = set((tests / "fixtures/test_to_test_imports.txt").read_text().splitlines())
-    assert actual <= recorded, "Unrecorded test imports:\n" + "\n".join(sorted(actual - recorded))
-    assert recorded <= actual, "Remove vanished test imports:\n" + "\n".join(sorted(recorded - actual))
+    return actual
+
+
+def _git(root, *args, binary=False):
+    result = subprocess.run(
+        ["git", *args], cwd=root, capture_output=True, text=not binary, check=True,
+        env={"PATH": os.defpath, "GIT_CONFIG_NOSYSTEM": "1", "GIT_CONFIG_GLOBAL": os.devnull},
+    ).stdout
+    return result if binary else result.strip()
+
+
+def _merge_base(root, explicit=None):
+    """Use the draft base when supplied, otherwise the merge base with master."""
+    if explicit:
+        return _git(root, "rev-parse", "--verify", explicit + "^{commit}")
+    for branch in ("origin/master", "master"):
+        try:
+            return _git(root, "merge-base", "HEAD", branch)
+        except subprocess.CalledProcessError:
+            continue
+    raise AssertionError("No merge base with origin/master or master; fetch full git history")
+
+
+def _base_graph(root, revision):
+    """Read the base's test sources and count without checking out another tree."""
+    files = _git(root, "ls-tree", "-r", "--name-only", revision, "--", "tests").splitlines()
+    archive = _git(root, "archive", "--format=tar", revision, "tests", binary=True)
+    with tempfile.TemporaryDirectory() as temporary:
+        tree = Path(temporary)
+        with tarfile.open(fileobj=io.BytesIO(archive)) as tar:
+            tar.extractall(tree, filter="data")
+        edges = _test_to_test_edges(tree, files)
+        count = int((tree / COUNT).read_text()) if COUNT in files else len(edges)
+        return edges, count
+
+
+def _check_test_imports(root, *, base_revision=None):
+    base, previous_count = _base_graph(root, _merge_base(root, base_revision))
+    head = _test_to_test_edges(root)
+    added = head - base
+    assert not added, "New test imports:\n" + "\n".join(sorted(added))
+
+    recorded = int((root / COUNT).read_text())
+    assert 0 <= recorded <= previous_count, "The test-to-test import count may only fall"
+    # Credit this PR's removals even if master gained edges since recording its count.
+    expected = max(0, previous_count - len(base - head))
+    assert recorded == expected, f"Record test-to-test import count {expected} in {COUNT}"
+
+
+def _draft_base():
+    event_path = os.environ.get("GITHUB_EVENT_PATH")
+    if event_path:
+        pr = json.loads(Path(event_path).read_text()).get("pull_request", {})
+        if pr.get("head", {}).get("ref", "").startswith("mergify/merge-queue/"):
+            return pr["base"]["sha"]
+    return None
 
 
 def test_test_to_test_imports_only_shrink():
-    _check_test_imports(Path(__file__).resolve().parents[1])
-
-
-def _git(root, *args):
-    return subprocess.run(
-        ["git", *args], cwd=root, capture_output=True, text=True, check=True,
-        env={"PATH": os.defpath, "GIT_CONFIG_NOSYSTEM": "1", "GIT_CONFIG_GLOBAL": os.devnull},
-    ).stdout.strip()
+    _check_test_imports(Path(__file__).resolve().parents[1], base_revision=_draft_base())
 
 
 def _commit(root):
@@ -128,3 +183,21 @@ def test_the_remote_master_ref_takes_precedence(import_repo):
 
 def test_the_repository_stores_no_edge_list():
     assert not (Path(__file__).resolve().parent / "fixtures/test_to_test_imports.txt").exists()
+
+
+def test_a_mergify_batch_uses_its_draft_base(import_repo, tmp_path, monkeypatch):
+    (import_repo / "tests/test_a.py").write_text("import test_b\nimport test_c\n")
+    draft_base = _commit(import_repo)
+    event = tmp_path / "event.json"
+    event.write_text(json.dumps({"pull_request": {
+        "head": {"ref": "mergify/merge-queue/master/batch"},
+        "base": {"sha": draft_base},
+    }}))
+    monkeypatch.setenv("GITHUB_EVENT_PATH", str(event))
+    _check_test_imports(import_repo, base_revision=_draft_base())
+
+
+def test_missing_git_history_fails_closed(import_repo):
+    _git(import_repo, "branch", "-D", "master")
+    with pytest.raises(AssertionError, match="fetch full git history"):
+        _check_test_imports(import_repo)
