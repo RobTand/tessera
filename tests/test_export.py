@@ -166,14 +166,14 @@ def test_config_declares_what_its_bytes_admit_at_load_and_derives_it(tmp_path):
     What the exporter actually knows is whether the bytes it just wrote are
     sliceable at load, which is a property of the WIRE and not of any degree an
     operator passes -- so the config records the schema minor it wrote at and
-    derives ``tp_agnostic`` from it through ``layout.tp_agnostic_at_minor``,
+    derives ``tp_agnostic`` from it through ``slicing.tp_agnostic_at_minor``,
     the one home of that rule.  The minor is read back off a blob this export
     wrote rather than compared to the constant, so a config that stopped
     describing its own bytes fails here.
     """
     from safetensors import safe_open
 
-    from tessera.layout import SLICEABLE_SCHEMA_MINOR, tp_agnostic_at_minor
+    from tessera.slicing import SLICEABLE_SCHEMA_MINOR, tp_agnostic_at_minor
     from tessera.unit_artifact import parse_unit_artifact
 
     export_checkpoint({"w": _w()}, {"w": 896}, tmp_path, grid=K2)

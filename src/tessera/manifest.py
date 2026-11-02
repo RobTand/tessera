@@ -565,7 +565,7 @@ class ShardOrigin:
 
     A Tessera artifact is **tensor-parallel by construction**: the exporter
     writes one whole unit and never learns the TP degree, and every rank cuts
-    its own shard out of those bytes at load (``layout.slice_unit``).  This
+    its own shard out of those bytes at load (``slicing.slice_unit``).  This
     record is what makes a shard a first-class unit rather than a fragment --
     it is a complete, self-describing artifact that decodes on its own, and
     this says which rows and columns of which parent it decodes *to*.
@@ -760,7 +760,7 @@ class Manifest:
     body: BodyKind = BodyKind.TCQ
     window_bits: int = 0
     # Schema minor 4 (2026-09-02).  ``shard`` is present only on a unit cut
-    # out of another with ``layout.slice_unit``; a whole unit carries None and
+    # out of another with ``slicing.slice_unit``; a whole unit carries None and
     # writes at the minor it needed before the field existed, so every
     # artifact ever written is byte-identical across this bump.
     shard: "ShardOrigin | None" = None

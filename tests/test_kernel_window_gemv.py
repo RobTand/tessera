@@ -500,7 +500,7 @@ def test_window_linear_seam_and_m_limit():
 
 
 class _ShardParsed(_Parsed):
-    """``_Parsed`` carrying an INITIAL_STATE plane, as ``layout.SlicedUnit`` does."""
+    """``_Parsed`` carrying an INITIAL_STATE plane, as ``slicing.SlicedUnit`` does."""
 
     def __init__(self, body, rates, codes, scale_rows, initial_state):
         super().__init__(body, rates, codes, scale_rows)

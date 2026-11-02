@@ -506,7 +506,7 @@ def test_the_cli_reads_declared_lanes_off_the_manifest(tmp_path, monkeypatch):
 # while ``kernel_window_gemv.prepare_from_parsed`` refuses nine on the same
 # bytes -- RELEASE overrides, diagonals, rotation, a TP shard's start state
 # and the grid's arity were conditions no gate outside the loader could see.
-# A TP row shard (``layout.slice_unit`` stamps ``initial_state``) read
+# A TP row shard (``slicing.slice_unit`` stamps ``initial_state``) read
 # READABLE, exit 0, at preflight, and every module fell back at load: an
 # experiment built to measure the lane measured the fallback, which is #104
 # and #206 one condition class over.
@@ -545,13 +545,13 @@ READABLE_FACTS = {
 def _shard_reparse():
     """A REAL TP row shard of the readable fixture, reparsed from its own bytes.
 
-    ``layout.slice_unit`` stamps ``initial_state`` -- the issue's live case --
+    ``slicing.slice_unit`` stamps ``initial_state`` -- the issue's live case --
     and the facts must come off the shard's serialized wire, not off the
     in-memory slice, because the preflight reads bytes somebody else built.
     """
     import torch  # noqa: F401  (parse needs it; the file already imports kg)
 
-    from tessera.layout import slice_unit
+    from tessera.slicing import slice_unit
     from tessera.trellis import ConvCode
     from tessera.unit_artifact import build_unit_artifact, parse_unit_artifact
 
@@ -660,7 +660,7 @@ def test_the_published_predicate_is_the_full_requirement_set():
 
 def test_the_live_case_a_tp_row_shard_is_refused_at_preflight(tmp_path, monkeypatch, capsys):
     """#264's live failure, end to end off serialized bytes: a TP row shard
-    (``layout.slice_unit`` stamps ``initial_state``) must be UNREACHABLE at
+    (``slicing.slice_unit`` stamps ``initial_state``) must be UNREACHABLE at
     preflight, exit 1, with the start state named.
 
     PRE-FIX (b4e5231): ``lane tessera_window_gemv (requires {'column_rates':

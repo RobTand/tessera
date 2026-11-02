@@ -606,7 +606,7 @@ def build_unit_artifact(
     else:
         alphabet, descendant = _forest_planes(rates, forests)
 
-    # A shard (``layout.slice_unit``) carries three extra things: the start
+    # A shard (``slicing.slice_unit``) carries three extra things: the start
     # state its columns replay from, the per-superblock release counts no
     # spread reproduces, and the record saying where in its parent it sits.
     # A whole unit has ``state_bits == 0`` and no shard record, and then every
@@ -1783,7 +1783,7 @@ def _as_unit(manifest, fields: dict, chunks, device, code, n_released: int):
     default meant a parsed shard, written out again, declared a whole unit's
     total and had the reader respread it onto different positions (tessera#336).
     """
-    from .layout import SlicedUnit
+    from .slicing import SlicedUnit
 
     shard = manifest.shard
     if shard is None:

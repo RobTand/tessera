@@ -12,7 +12,7 @@ Three properties matter and are asserted directly, against REAL units:
    a caller's parsed view of a unit stays valid and the arithmetic is the
    arithmetic of a build with no TP support at all.
 2. **TP>1 cuts, and the cut is the parent's own rows.**  The cut belongs to
-   ``tessera.layout.slice_unit``, and the check here is the one that matters:
+   ``tessera.slicing.slice_unit``, and the check here is the one that matters:
    the shard *decodes* to exactly the parent's slice.  A seam that returned
    some unit of the right shape would pass every structural check and serve
    wrong logits.
@@ -92,18 +92,18 @@ def _decode_unit(unit, parsed):
     return reconstruct_unit(unit, parsed.forests, parsed.code)
 
 
-def _without_tessera_layout(monkeypatch):
-    """Make ``import tessera.layout`` fail, as an older Tessera would."""
+def _without_the_cutter(monkeypatch):
+    """Make ``import tessera.slicing`` fail, as a Tessera without the cutter would."""
     import builtins
 
     real_import = builtins.__import__
 
-    def no_layout(name, *args, **kwargs):
-        if name == "tessera.layout":
-            raise ImportError("no tessera.layout in this build")
+    def no_cutter(name, *args, **kwargs):
+        if name == "tessera.slicing":
+            raise ImportError("no tessera.slicing in this build")
         return real_import(name, *args, **kwargs)
 
-    monkeypatch.setattr(builtins, "__import__", no_layout)
+    monkeypatch.setattr(builtins, "__import__", no_cutter)
 
 
 def _plan(rows, columns, *, out, in_, rank, tp, input_size=None, output_size=None):
@@ -612,18 +612,18 @@ def test_the_seam_refuses_a_cut_the_wire_cannot_express_and_names_the_granularit
 
 @needs_cuda
 def test_the_seam_names_the_slicer_when_the_build_cannot_cut(monkeypatch, units):
-    """An older Tessera has no ``layout.slice_unit``; the refusal says so.
+    """An older Tessera has no ``slicing.slice_unit``; the refusal says so.
 
     This is the branch this whole file used to be about.  It is still real --
     the plugin is installed against whatever ``tessera`` the image carries --
     but it is the exception now, so it is provoked rather than assumed.
     """
-    _without_tessera_layout(monkeypatch)
+    _without_the_cutter(monkeypatch)
     plan = _seam_plan(UNIT_ROWS, UNIT_COLS, AXIS_ROWS, rank=1, tp=4, shards=4)
     with pytest.raises(NotImplementedError) as e:
         _shard_unit_for_rank(units["e4m3"], plan, plan.role("weight"))
     msg = str(e.value)
-    assert "tessera.layout.slice_unit" in msg
+    assert "tessera.slicing.slice_unit" in msg
     assert "tensor_parallel_size=1" in msg
 
 
@@ -814,7 +814,7 @@ def test_a_shard_keeps_its_parent_encoder_identity_and_never_asks_the_current_on
     one it never carried.
     """
     from tessera import encoder_identity
-    from tessera.layout import slice_unit
+    from tessera.slicing import slice_unit
     from tessera.serving.sharding import _reparse_shard
     from tessera.unit_artifact import build_unit_artifact, parse_unit_artifact
 
@@ -968,7 +968,7 @@ def test_a_malformed_shard_record_is_refused_when_cut_not_when_first_read():
     """
     import dataclasses
 
-    from tessera.layout import slice_unit
+    from tessera.slicing import slice_unit
     from tessera.serving.sharding import _reparse_shard
 
     parsed = _legacy("e4m3-1024-window-channel-256c")
@@ -992,12 +992,12 @@ def test_granularity_is_read_off_the_wire_not_guessed(units):
 
 
 def test_granularity_is_none_and_the_check_a_no_op_without_the_cutter(monkeypatch):
-    """No ``tessera.layout``: the answer is None, and the check is a no-op.
+    """No ``tessera.slicing``: the answer is None, and the check is a no-op.
 
     The refusal for a build that cannot cut belongs at the seam, in one place.
     A granularity check that invented a number would refuse the wrong splits.
     """
-    _without_tessera_layout(monkeypatch)
+    _without_the_cutter(monkeypatch)
     sentinel = object()
     assert shard_granularity(sentinel) is None
     plan = plan_shard("m", roles=[("weight", 1024)], columns=2048, out_partitions=[256],
@@ -1057,12 +1057,12 @@ def test_what_an_artifact_says_about_slicing_is_read_off_it_not_assumed():
 
     Three answers, and ``None`` is one of them: a config that does not say is
     not a config that says yes.  The derived spelling and the fact it derives
-    from resolve through the SAME rule (``layout.tp_agnostic_at_minor``), which
+    from resolve through the SAME rule (``slicing.tp_agnostic_at_minor``), which
     is why the minor below is written as an offset from the cutter's own
     constant rather than as a literal 3 -- pinning the number here would make
     this file a second home for the rule.
     """
-    from tessera.layout import SLICEABLE_SCHEMA_MINOR
+    from tessera.slicing import SLICEABLE_SCHEMA_MINOR
     from tessera.serving.sharding import artifact_tp_agnostic
 
     assert artifact_tp_agnostic({"tp_agnostic": True}) is True
@@ -1140,7 +1140,7 @@ def test_a_start_state_is_refused_only_when_the_packer_cannot_take_it(monkeypatc
 
 
 def test_the_seam_speaks_tessera_layouts_axis_vocabulary():
-    """``AXIS_*`` are passed straight to ``layout.can_shard``; a near-miss is a bug."""
+    """``AXIS_*`` are passed straight to ``slicing.can_shard``; a near-miss is a bug."""
     from tessera.serving.sharding import AXIS_COLUMNS, AXIS_ROWS
 
     assert (AXIS_ROWS, AXIS_COLUMNS) == ("row", "column")

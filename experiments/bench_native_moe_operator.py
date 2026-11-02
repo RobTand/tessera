@@ -659,7 +659,7 @@ def verify_rank_local_member_renders(member_inputs, tensors, shape, scheme, *, u
     tensor-parallel agnostic -- so what this rank must hold is the cut the
     loader will make, taken through the loader's own seam:
     ``sharding.shard_parsed_roles`` on the group's own plan, which asks
-    ``tessera.layout.can_shard`` and calls ``slice_unit``.  Comparing the whole
+    ``tessera.slicing.can_shard`` and calls ``slice_unit``.  Comparing the whole
     container against a rank-local render would compare two different widths
     and pass only at a world of one.
 

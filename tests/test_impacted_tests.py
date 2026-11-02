@@ -1194,13 +1194,15 @@ def test_this_repository_narrows_for_a_leaf_source_edit():
 def test_a_file_the_shared_conftest_imports_selects_every_test_below_it():
     """The other half of the same rule, and it is not a regression (#215).
 
-    ``tests/conftest.py`` imports the container, so pytest re-imports the wire
-    for every test in ``tests/`` whether or not that test names it.  Selecting
+    ``tests/conftest.py`` imports the container, so pytest re-imports it for
+    every test in ``tests/`` whether or not that test names it.  Selecting
     fewer than all of them was under-selection, and the receipt says which
-    edge widened it rather than leaving a reader to wonder.
+    edge widened it rather than leaving a reader to wonder.  (The wire was
+    the example until conftest stopped reaching it through tessera.layout's
+    lazy re-export of the cutter, #1588.)
     """
 
-    result = impacted.select(ROOT, ["src/tessera/wire.py"])
+    result = impacted.select(ROOT, ["src/tessera/container.py"])
     population = {str(p.relative_to(ROOT))
                   for p in (ROOT / "tests").rglob("test_*.py")}
 

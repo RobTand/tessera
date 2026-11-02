@@ -182,7 +182,7 @@ def native_select_plane_admission(parsed) -> "tuple[int, int] | None":
     array with no per-column offset to resume on, so the native decoder needs
     each rank's rows to be a whole number of columns of
     ``select_plane_codes_per_byte(span)`` super-symbols: ``arity * 8 * span``.
-    ``layout.shard_granularity`` reports the finer super-symbol boundary
+    ``slicing.shard_granularity`` reports the finer super-symbol boundary
     (``arity * span``) because that is what ``slice_unit`` measures its offsets
     against, so one super-symbol per column slices cleanly and the PACKER is
     where it lands -- naming bytes rather than the cut that produced them.
@@ -440,7 +440,7 @@ def pack_window_planes(
       ``state_{-1}``, so position 0's window needs no boundary test.  The
       pad is ``L`` rather than 8 because the window is ``L`` wide and reaches
       ``L - R`` bits behind position 0.  For a whole unit the pad is zero --
-      the pinned start.  For a **shard** (``layout.slice_unit``) it is that
+      the pinned start.  For a **shard** (``slicing.slice_unit``) it is that
       column's stored start state, written as an ``L``-bit MSB-first integer,
       and the kernel needs no change at all: its window read at ``(t + 1) * R``
       then yields ``(init << R | bits_0) mod 2^L`` at ``t = 0``, which is the
@@ -758,7 +758,7 @@ def pack_unit_for_kernel(unit, forest: AnchorForest, code: ConvCode) -> dict:
     has no completion axis by grammar.
 
     Both branches take a ROW SHARD.  A unit cut below row 0
-    (``layout.slice_unit``) carries the register each column is in at the
+    (``slicing.slice_unit``) carries the register each column is in at the
     cut, and each branch threads it into its own pad -- the window branch's
     ``window_bits`` pad and, here, the span-2 select plane's ``SELECT_PAD``
     (``_thread_start_state``) -- so the decoder that reads the planes starts
@@ -771,7 +771,7 @@ def pack_unit_for_kernel(unit, forest: AnchorForest, code: ConvCode) -> dict:
     if getattr(unit, "body", BodyKind.TCQ) is BodyKind.WINDOW:
         grid = forest.grid if isinstance(forest, AnchorForest) else forest
         return _pack_window_unit(unit, grid)
-    # A row shard (``layout.slice_unit``) carries its columns' trellis
+    # A row shard (``slicing.slice_unit``) carries its columns' trellis
     # register at the cut, ``state_bits`` wide.  The span-2 planes thread it
     # through the select pad exactly as the window branch threads its own
     # (``_thread_start_state``), so the decoders start step 0 from it with no

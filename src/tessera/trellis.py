@@ -324,7 +324,7 @@ class TCQ:
 
         ``initial_state`` is the register the stream starts from.  Zero is the
         pinned start of a whole unit; a **shard** cut below row 0 carries its
-        parent's register on the INITIAL_STATE plane (``layout.slice_unit``),
+        parent's register on the INITIAL_STATE plane (``slicing.slice_unit``),
         and this scalar walk is the oracle the vectorised replay's closed-form
         correction is tested against.
         """
