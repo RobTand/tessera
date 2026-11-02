@@ -348,7 +348,7 @@ def test_unset_piece_major_keeps_every_native_rate_usable(family, grid, monkeypa
 
 def _cpu_units(rates_per_expert, rows, cols, family="value", seed=900):
     """Real ``WindowGemvUnit``s on CPU with per-expert column rates."""
-    from test_window_gemm_grouped import Expert
+    from window_gemm_grouped_support import Expert
 
     return [Expert(rows, cols, rates, seed + i, family=family, device="cpu").unit
             for i, rates in enumerate(rates_per_expert)]

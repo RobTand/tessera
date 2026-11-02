@@ -53,7 +53,7 @@ def compare_bits(left, right):
 
 def prepare(bank, native_root, sanitizer, runner):
     import zipfile
-    from test_window_gemm_grouped import Expert
+    from window_gemm_grouped_support import Expert
     from test_routed_fused_window import _sched, _init
     bank.mkdir(parents=True, exist_ok=False)
     if digest(sanitizer) != SANITIZER_SHA:

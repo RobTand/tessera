@@ -16,7 +16,7 @@ from tessera.cached_unit import CachedUnitBundle
 from tessera.errors import GrammarError
 from tessera.export import ActivationSource
 from tessera.hessian_capture import ReferenceHessianCollection, ReferenceHessians
-from test_hessian_reference_capture import build_reference
+from hessian_reference_support import build_reference
 from test_rooted_cached_bundle import rooted
 from reuse_authority_fixture import AUTHORITY
 
@@ -74,7 +74,7 @@ def test_client_reference_without_its_canonical_capture_refuses_by_name(tmp_path
 
 
 def test_client_reference_collection_without_its_canonical_capture_refuses_by_name(tmp_path):
-    from test_hessian_reference_capture import write_json
+    from hessian_reference_support import write_json
     paths = []
     for part in ('one', 'two'):
         root = tmp_path / part
