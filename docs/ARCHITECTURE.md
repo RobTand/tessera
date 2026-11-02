@@ -2776,9 +2776,11 @@ retain their scope. An explicit TP2/eager/resident run now binds each actual
 worker rank to its physical GPU UUID and a `VLLM_HOST_IP` verified on that
 worker's local interface. Resource report v3 is one rank per envelope but
 carries `observations.rank_world` with both raw capture paths/digests. Its raw
-plan also retains the exact artifact source object and a no-follow per-file
-stat seal from the full-hash pass, allowing change detection without a second
-24 GB weight rehash when the shared file identities remain stable. The
+plan also retains the exact artifact source object and per-file stat seals
+from two matching SHA-256 passes through one no-follow descriptor. The second
+pass rejects content changes hidden by equal size and timestamps during hashing.
+Later metadata checks reuse the seals without rehashing the 24 GB weights when
+the shared file identities remain stable. The
 read-only KV v2 record binds rank/device/host and configured capacity.
 Timing capture v2 prices routed apply plus the actual late final all-reduce as
 two disjoint owner segments, leaving intervening shared and transform work
