@@ -81,10 +81,15 @@ def measure(root: Path, files=None) -> dict:
 
 
 def python_rules(base, head):
-    return [f'new {label}: {entry}' for name, label in (('test_to_test_imports', 'test-to-test import'),
-                                                         ('conftest_source_modules',
-                                                          'source module conftest reaches'))
-            for entry in sorted(set(head[name]) - set(base[name]))]
+    found = []
+    for name, label in (('test_to_test_imports', 'test-to-test import'),
+                        ('conftest_source_modules', 'source module conftest reaches')):
+        added = sorted(set(head[name]) - set(base[name]))
+        if len(added) == 1:
+            found.append(f'new {label}: {added[0]}')
+        elif added:
+            found.append(f'{len(added)} new {label}s: ' + ', '.join(added[:12]) + (', ...' if len(added) > 12 else ''))
+    return found
 
 
 def load_baseline(root=ROOT):
