@@ -1,5 +1,6 @@
 """The public capture reader consumes committed canonical H one unit at a time."""
 import json
+import os
 from pathlib import Path
 import sys
 
@@ -169,8 +170,10 @@ def test_source_change_during_mapping_load_refuses_before_return(reference,monke
     def mutate_after_mapping(*args,**kwargs):
         result=original(*args,**kwargs)
         path=canonical.parent/'inputs/a.pt'
+        before=path.stat()
         with path.open('r+b') as handle:
             handle.seek(-1,2);value=handle.read(1);handle.seek(-1,2);handle.write(bytes([value[0]^1]))
+        os.utime(path, ns=(before.st_atime_ns, before.st_mtime_ns + 1_000_000_000))
         return result
     monkeypatch.setattr(torch,'load',mutate_after_mapping)
     with pytest.raises(GrammarError,match='changed or was replaced'):
