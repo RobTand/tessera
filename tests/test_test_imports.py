@@ -58,12 +58,15 @@ def _merge_base(root, explicit=None):
     """Use the draft base when supplied, otherwise the merge base with master."""
     if explicit:
         return _git(root, "rev-parse", "--verify", explicit + "^{commit}")
-    for branch in ("origin/master", "master"):
-        try:
-            return _git(root, "merge-base", "HEAD", branch)
-        except subprocess.CalledProcessError:
-            continue
-    raise AssertionError("No merge base with origin/master or master; fetch full git history")
+    try:
+        _git(root, "rev-parse", "--verify", "origin/master^{commit}")
+        branch = "origin/master"
+    except subprocess.CalledProcessError:
+        branch = "master"
+    try:
+        return _git(root, "merge-base", "HEAD", branch)
+    except subprocess.CalledProcessError:
+        raise AssertionError(f"No merge base with {branch}; fetch full git history") from None
 
 
 def _base_graph(root, revision):
@@ -177,6 +180,8 @@ def test_the_remote_master_ref_takes_precedence(import_repo):
     _commit(import_repo)
     _git(import_repo, "switch", "-q", "change")
     (import_repo / "tests/test_a.py").write_text("import test_b\nimport test_c\n")
+    _commit(import_repo)
+    _git(import_repo, "branch", "-f", "master", "HEAD")
     with pytest.raises(AssertionError, match="tests/test_a.py -> tests/test_c.py"):
         _check_test_imports(import_repo)
 
@@ -199,5 +204,15 @@ def test_a_mergify_batch_uses_its_draft_base(import_repo, tmp_path, monkeypatch)
 
 def test_missing_git_history_fails_closed(import_repo):
     _git(import_repo, "branch", "-D", "master")
+    with pytest.raises(AssertionError, match="fetch full git history"):
+        _check_test_imports(import_repo)
+
+
+def test_an_unreachable_remote_base_does_not_fall_back_to_local_master(import_repo):
+    _git(import_repo, "checkout", "-q", "--orphan", "unrelated")
+    (import_repo / "tests/test_c.py").write_text("VALUE = 1\n")
+    remote = _commit(import_repo)
+    _git(import_repo, "update-ref", "refs/remotes/origin/master", remote)
+    _git(import_repo, "switch", "-q", "change")
     with pytest.raises(AssertionError, match="fetch full git history"):
         _check_test_imports(import_repo)
