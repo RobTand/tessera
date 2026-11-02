@@ -197,7 +197,7 @@ def test_public_pb_readset_and_whole_bank_phase_contract(tmp_path, complete_phas
 @pytest.mark.parametrize("history", ["none", "zero", "fallback", "declared-wins"])
 def test_fixture_transfer_preserves_native_history_precedence_and_prefix(history):
     import dataclasses
-    from test_window_gemm_grouped import Expert, _states
+    from window_gemm_grouped_support import Expert, _states
     from tessera.window_gemm import _resolve_initial_state
     initial = None if history == "none" else torch.zeros(32, dtype=torch.int32)
     if history in ("fallback", "declared-wins"):
@@ -233,7 +233,7 @@ def test_fixture_transfer_preserves_native_history_precedence_and_prefix(history
 
 def test_actual_retained_fixture_histories_through_public_pinned_reader():
     import io, json, os
-    from test_window_gemm_grouped import _states
+    from window_gemm_grouped_support import _states
     from tessera.window_gemm import _resolve_initial_state
     manifest = os.environ.get("T16_SYNTHETIC_READSET")
     if manifest is None:

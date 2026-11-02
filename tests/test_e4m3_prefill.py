@@ -24,7 +24,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 import fused_bound as fb                                   # noqa: E402
 from test_dense_fused_window import _module, _scheme, _tessera  # noqa: E402
-from test_window_gemm_grouped import _quant                # noqa: E402
+from window_gemm_grouped_support import _quant                # noqa: E402
 
 cuda = pytest.mark.skipif(not torch.cuda.is_available(), reason="the lane is a CUDA GEMM")
 

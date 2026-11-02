@@ -23,7 +23,7 @@ from tessera.errors import GrammarError
 from tessera.export import ActivationSource
 from tessera.hessian_capture import ReferenceHessians
 
-from test_hessian_reference_capture import reference  # noqa: F401  (fixture)
+from hessian_reference_support import reference  # noqa: F401  (fixture)
 from reuse_authority_fixture import CANONICAL_CAPTURE
 
 

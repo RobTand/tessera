@@ -5,7 +5,7 @@ A dense Linear is the E = 1, top-1, unweighted case of the routed lane, so the
 same kernel serves it with identity routing and, for small M, a split over K
 into an fp32 partial workspace that a fixed-order reduce sums before the one
 bf16 rounding.  What this pins, against the same per-role definition oracle
-the grouped and fused routed tests use (``test_window_gemm_grouped.Expert``)
+the grouped and fused routed tests use (``window_gemm_grouped_support.Expert``)
 and against the Triton window GEMM the module keeps as its other lane:
 
 * parity for both window families at M = 1, 3, 64, 65, 200 and 1536, and at
@@ -44,7 +44,7 @@ from tessera.errors import GrammarError                   # noqa: E402
 from tessera.grammar import bresenham_rate_schedule       # noqa: E402
 
 import fused_bound as fb                                  # noqa: E402
-from test_window_gemm_grouped import Expert, _quant  # noqa: E402
+from window_gemm_grouped_support import Expert, _quant  # noqa: E402
 
 cuda = pytest.mark.skipif(not torch.cuda.is_available(), reason="the lane is a CUDA kernel")
 
