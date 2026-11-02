@@ -2,7 +2,7 @@
   "schema": "graph-impact.v1",
   "figures": {
     "u_pct": 18.52801940943251,
-    "loc_u_pct": 34.32246639522027,
+    "loc_u_pct": 34.32082723716565,
     "scc_max": 61
   },
   "tolerances": {
