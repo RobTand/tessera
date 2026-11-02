@@ -98,9 +98,12 @@ def main():
     print(report)
     output = Path(os.environ.get('BUILDBUDDY_ARTIFACTS_DIRECTORY', workspace.root / 'gate-artifacts'))
     output.mkdir(parents=True, exist_ok=True)
-    (output / 'seeded-breaks.json').write_text(json.dumps({'base': base, 'rows': rows}, indent=2))
-    (output / 'seeded-breaks.md').write_text(report + '\n')
-    return 0 if all(row['caught'] for row in rows) else 1
+    try:
+        (output / 'seeded-breaks.json').write_text(json.dumps({'base': base, 'rows': rows}, indent=2))
+        (output / 'seeded-breaks.md').write_text(report + '\n')
+    finally:
+        safe_artifacts = bazel_gate.scan_artifacts(output)
+    return 0 if safe_artifacts and all(row['caught'] for row in rows) else 1
 
 
 if __name__ == '__main__':

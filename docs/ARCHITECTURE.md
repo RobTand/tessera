@@ -10258,7 +10258,16 @@ and arm64 after every merge. A hosted boundary job keeps the no-torch proofs
 and the budget and quarantine policies. Neither covers CUDA-gated tests.
 [The gate reference](ci_gate.md) describes selection, its fail-closed rules,
 the budget-only rerun and the secret rules; [docs/bazel.md](bazel.md) the
-build. The hosted gate it replaced had an evidence command that computes
+build.
+
+Runner steps scan the actual artifact directory in-process with the runner's
+key before exit. A missing key fails the scan without deleting artifacts;
+a detected secret or incomplete scan clears the directory and fails the step.
+Raw BEP and command logs are deleted and fail the step. Both diagnostic logs
+remain subject to the scan. Only `BBRUN_FINAL_SCAN=1` defers scanning to the
+shared client's final scanner step; `remote_gate.py` does not set that marker.
+Hosted artifact uploads require their keyed scan to succeed.
+The hosted gate it replaced had an evidence command that computes
 hosted wall time through the final verdict step and separates setup from tests,
 retaining job timestamps alongside step timestamps when their clocks disagree.
 When steps precede workflow creation, job completion supplies a conservative

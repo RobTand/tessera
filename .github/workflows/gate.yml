@@ -112,7 +112,8 @@ jobs:
             exit 1
           fi
           echo scopes_uploaded=true >> "$GITHUB_OUTPUT"
-      - name: Refuse to upload a secret
+      - id: artifact_scan
+        name: Refuse to upload a secret
         if: always()
         # The scanner reads the values to look for from these variables; it
         # prints names and paths only.
@@ -121,9 +122,13 @@ jobs:
           MERGIFY_TOKEN: ${{ secrets.MERGIFY_TOKEN }}
         run: |
           mkdir -p gate-output
+          if [ -z "${BUILDBUDDY_API_KEY:-}" ]; then
+            echo "secret scan blind: key unavailable"
+            exit 1
+          fi
           python3 tools/ci/check_no_secret_leak.py gate-output --env BUILDBUDDY_API_KEY --env MERGIFY_TOKEN
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
-        if: always()
+        if: always() && steps.artifact_scan.outcome == 'success'
         with:
           name: bazel-gate
           path: gate-output/
@@ -253,7 +258,8 @@ jobs:
         run: >-
           python3 tools/ci/remote_gate.py main --base "$BEFORE" --head "$AFTER"
           --branch master --prs "$PRS" --timeout 100
-      - name: Refuse to upload a secret
+      - id: artifact_scan
+        name: Refuse to upload a secret
         if: always()
         # The scanner reads the values to look for from these variables; it
         # prints names and paths only.
@@ -262,9 +268,13 @@ jobs:
           MERGIFY_TOKEN: ${{ secrets.MERGIFY_TOKEN }}
         run: |
           mkdir -p gate-output
+          if [ -z "${BUILDBUDDY_API_KEY:-}" ]; then
+            echo "secret scan blind: key unavailable"
+            exit 1
+          fi
           python3 tools/ci/check_no_secret_leak.py gate-output --env BUILDBUDDY_API_KEY --env MERGIFY_TOKEN
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
-        if: always()
+        if: always() && steps.artifact_scan.outcome == 'success'
         with:
           name: post-merge-${{ github.sha }}
           path: gate-output/

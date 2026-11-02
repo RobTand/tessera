@@ -21,11 +21,15 @@ import json
 import os
 from pathlib import Path
 import shlex
+import shutil
 import subprocess
 import sys
 import tempfile
 import time
 import urllib.request
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import check_no_secret_leak  # noqa: E402
 
 ROOT = Path(__file__).resolve().parents[2]
 SCHEMA = 'tessera.bazel-gate.v1'
@@ -44,8 +48,8 @@ FALLBACK = [
 CONFIGS = {'amd64': 'remote', 'arm64': 'remote-arm64'}
 DIAGNOSTICS = ['bazel-remote-grpc.log', 'execution_log.binpb.zst']
 TESTS = 'tests(//...)'
-# A Remote Bazel runner holds BuildBuddy's API key in its environment; no child
-# but Bazel needs a credential, and one that inherits it can print it.
+# A Remote Bazel runner holds BuildBuddy's API key. Only the in-process
+# artifact scanner reads it; children use the runner's configured Bazel auth.
 SECRET_NAMES = {'BUILDBUDDY_API_KEY', 'MERGIFY_TOKEN', 'GITHUB_TOKEN'}
 
 
@@ -170,8 +174,7 @@ class Workspace:
 
     def run(self, *command, capture=True, check=True):
         print('$ ' + shlex.join(map(str, command)), flush=True)
-        # Bazel keeps the auth the runner gives it; every other child gets none.
-        environment = None if str(command[0]) == self.bazel else child_environment()
+        environment = child_environment()
         result = subprocess.run(list(map(str, command)), cwd=self.root, text=True, env=environment,
                                 stdout=subprocess.PIPE if capture else None)
         if check and result.returncode:
@@ -315,6 +318,41 @@ def write_result(result, directory, root=ROOT):
             log.replace(directory / log.name)
 
 
+def scan_artifacts(directory):
+    """Refuse raw event/command logs and scan the actual upload directory."""
+    deferred = os.environ.get('BBRUN_FINAL_SCAN') == '1'
+    if not deferred and not os.environ.get('BUILDBUDDY_API_KEY'):
+        print('secret scan blind: key unavailable', flush=True)
+        return False
+    names = ['BUILDBUDDY_API_KEY'] + sorted(
+        name for name, value in os.environ.items() if value and name != 'BUILDBUDDY_API_KEY'
+        and (name in SECRET_NAMES or name.endswith(('_API_KEY', '_TOKEN'))))
+    forbidden = False
+    for path in directory.rglob('*'):
+        name = path.name.lower()
+        if (path.is_file() or path.is_symlink()) and (
+                'bep' in name or name.endswith('.binpb') or name == 'command.log' or 'command_log' in name):
+            display = str(path.relative_to(directory))
+            for variable in names:
+                if value := os.environ.get(variable):
+                    for form in check_no_secret_leak.secret_byte_forms(value):
+                        display = display.replace(form.decode(errors='replace'), '')
+            print(display, flush=True)
+            path.unlink()
+            forbidden = True
+    if deferred:
+        print('secret scan deferred to bbrun final scan', flush=True)
+        return not forbidden
+    status = check_no_secret_leak.main([str(directory), *[arg for name in names for arg in ('--env', name)]])
+    if status:
+        for path in directory.iterdir():
+            if path.is_dir() and not path.is_symlink():
+                shutil.rmtree(path)
+            else:
+                path.unlink()
+    return status == 0 and not forbidden
+
+
 def gate_pr(workspace, base, head, metadata):
     started = time.monotonic()
     workspace.ensure_history()
@@ -404,9 +442,12 @@ def main(argv=None, workspace=None):
         result['error'] = None
     except GateError as error:
         result['error'] = str(error)
-    write_result(result, output)
+    try:
+        write_result(result, output)
+    finally:
+        safe_artifacts = scan_artifacts(output)
     print(json.dumps({key: result.get(key) for key in ['selection', 'error', 'verdict', 'inputs', 'budget_reruns']}))
-    return 0 if passed(result) else 1
+    return 0 if safe_artifacts and passed(result) else 1
 
 
 if __name__ == '__main__':
