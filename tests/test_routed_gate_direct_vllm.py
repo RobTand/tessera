@@ -51,7 +51,9 @@ def test_direct_path_replacement_never_adopts_replacement_bytes(tmp_path):
 def test_direct_inplace_mutation_refuses_and_closes_all_held_files(tmp_path):
     reader,path=direct_fixture(tmp_path)
     fd=reader.direct_files[str(path)]['fd']
+    before = path.stat()
     path.write_bytes(b'prefix!other-wireignored-tail')
+    os.utime(path, ns=(before.st_atime_ns, before.st_mtime_ns + 1_000_000_000))
     with pytest.raises(ValueError,match='identity changed'):reader.read(path,7)
     with pytest.raises(ValueError,match='identity changed'):reader.close()
     assert reader.closed
