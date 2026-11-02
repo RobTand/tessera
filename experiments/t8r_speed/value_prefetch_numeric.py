@@ -54,7 +54,7 @@ def compare_bits(left, right):
 def prepare(bank, native_root, sanitizer, runner):
     import zipfile
     from window_gemm_grouped_support import Expert
-    from test_routed_fused_window import _sched, _init
+    from routed_fused_window_support import _sched, _init
     bank.mkdir(parents=True, exist_ok=False)
     if digest(sanitizer) != SANITIZER_SHA:
         raise ValueError('sanitizer tool identity differs')
@@ -180,7 +180,7 @@ def consume(bank, manifest, out):
         with zipfile.ZipFile(io.BytesIO(reader.read(bank / "runner.zip"))) as archive:
             archive.extractall(runner_dir)
         sys.path.insert(0, str(runner_dir))
-        from test_routed_fused_window import _bundles, _staged_check
+        from routed_fused_window_support import _bundles, _staged_check
         packet = json.loads(reader.read(bank / 'packet.json'))
         if packet['scope'] != SCOPE or packet['source_sha256'] != SOURCE_SHA or packet['arms'] != {k: list(v) for k,v in ARMS.items()}:
             raise ValueError("frozen synthetic packet differs")

@@ -15,7 +15,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 from tessera import routed_fused as rf
 from tessera.native_window_moe import PackedWindowMoeBundles, WindowUnitAxis
 from tessera.window_gemm_grouped import prepare_grouped_window_gemm_from_soa
-from test_routed_fused_window import _sched
+from routed_fused_window_support import _sched
 from window_gemm_grouped_support import Expert
 
 HIDDEN, INTER, EXPERTS = 256, 128, 8

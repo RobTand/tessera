@@ -19,7 +19,7 @@ import pytest
 
 torch = pytest.importorskip("torch")
 
-from test_serving_fp8_route import (_LAST_A, _encode_module, _install_vllm_stubs,  # noqa: E402
+from serving_fp8_route_support import (_LAST_A, _encode_module, _install_vllm_stubs,  # noqa: E402
                                     _reference_fp8_quant, requires_cuda)
 from tessera.serving import lane as serving_lane                     # noqa: E402
 from tessera.serving import native_ops                               # noqa: E402

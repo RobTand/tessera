@@ -13,7 +13,7 @@ import box_artifacts
 import pytest
 import torch
 
-from test_native_timing_panel import canonical_wire, panel
+from native_timing_panel_support import canonical_wire, panel
 from tools import tessera_shape_time_panel as app
 from tools import tessera_shape_time_worker as worker
 from tessera.serving import census_plan, contract, scheme

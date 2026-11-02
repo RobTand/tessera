@@ -296,7 +296,7 @@ def _cpu_load_entry(monkeypatch, flag, mode, vllm_mode):
     from types import SimpleNamespace
 
     from test_piece_major_reader_boundaries import prepared
-    from test_serving_fp8_route import _install_vllm_stubs, _scheme
+    from serving_fp8_route_support import _install_vllm_stubs, _scheme
     from tessera.serving import compile_identity, e4m3_prefill, fp8_route, native_ops
     from tessera.serving.native_window import PreparedDenseNativeModule
 

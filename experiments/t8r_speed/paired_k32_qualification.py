@@ -299,7 +299,7 @@ def compare_reports(baseline, candidate):
 def synthetic_controls(output_dir, *, kernel_profile):
     """Small existing encoded-wire fixtures, distinct from real A8SE evidence."""
     import torch
-    import test_routed_fused_window as fixture
+    import routed_fused_window_support as fixture
     from tessera import routed_fused as rf
     records = {}
     original_sm_count = rf._sm_count
