@@ -253,6 +253,159 @@ class TimingPublication(unittest.TestCase):
         self.assertEqual(result['timing']['passes']['F']['sample_count'], 0)
         self.assertEqual(result['timing']['confidence_interval']['status'], 'unavailable')
 
+    def assert_publication_consistent(self, table):
+        """Every published rate's timing flag, admission and qualified menu tell one story."""
+        scope = publication_scope(table)
+        expected = {'dense': set(), 'routed': set()}
+        rates = []
+        for entry in scope['cells']:
+            kind = entry['cell']['kernel_kind']
+            for rate in entry['rates']:
+                flag = rate['timing'].get('menu_admitted', False)
+                allowed = rate['admission']['status'] == 'allow'
+                self.assertEqual(flag, allowed, (entry['cell']['cell_id'], rate['rung'], rate['admission']))
+                if allowed:
+                    expected[kind].add(rate['rung'])
+                    self.assertIn(rate['rung'], scope['qualified_menu'][kind])
+                    self.assertEqual(rate['timing']['status'], 'measured')
+                    for key in ('numerical', 'native', 'serving'):
+                        self.assertIs(rate['timing'][key + '_qualification_inherited'], False)
+                rates.append(rate)
+        self.assertEqual(scope['qualified_menu'], {kind: sorted(rungs) for kind, rungs in expected.items()})
+        return scope, rates
+
+    def test_foreign_build_measured_timing_does_not_claim_menu_admission(self):
+        table = approved_t4_table()
+        foreign = copy.deepcopy(table)
+        foreign['kernel_build']['id'] = 'other-build'
+        for measurement in foreign['rungs'][0]['measurements']:
+            measurement['measurement_build_id'] = 'other-build'
+        foreign['geometry_classes'] = measured_geometry_classes(foreign)
+        speed = rung_speed(foreign, rung=896, cell_id='dense:o_proj:M1')
+        self.assertEqual(speed['status'], 'measured')
+        self.assertEqual(speed['value_kind'], 'measured')
+        self.assertIn('kernel_time_us', speed)
+        scope = publication_scope(foreign)
+        self.assertEqual(scope['qualified_menu'], {'dense': [], 'routed': []})
+        cell = next(c for c in scope['cells'] if c['cell']['cell_id'] == 'dense:o_proj:M1')
+        rate = cell['rates'][0]
+        self.assertEqual(rate['rung'], 896)
+        self.assertEqual(rate['admission']['status'], 'wait')
+        self.assertEqual(rate['timing']['status'], 'measured')
+        self.assertFalse(rate['timing']['menu_admitted'])
+        self.assertFalse(speed['menu_admitted'])
+
+    def test_menu_admitted_agrees_with_published_admission_and_qualified_menu(self):
+        approved = approved_t4_table()
+        scope, rates = self.assert_publication_consistent(approved)
+        self.assertEqual(scope['qualified_menu'], {'dense': [896], 'routed': [896]})
+        self.assertEqual(len(rates), 20)
+        self.assertTrue(all(rate['timing']['menu_admitted'] for rate in rates))
+        self.assertTrue(all(rate['timing']['kernel_time_us'] == rate['timing']['measurement']['kernel_time_us']
+                            for rate in rates))
+        # Foreign build: timing is still measured, but nothing is admitted.
+        foreign = copy.deepcopy(approved)
+        foreign['kernel_build']['id'] = 'other-build'
+        for measurement in foreign['rungs'][0]['measurements']:
+            measurement['measurement_build_id'] = 'other-build'
+        foreign['geometry_classes'] = measured_geometry_classes(foreign)
+        scope, rates = self.assert_publication_consistent(foreign)
+        self.assertEqual(scope['qualified_menu'], {'dense': [], 'routed': []})
+        self.assertTrue(all(rate['timing']['status'] == 'measured' for rate in rates))
+        self.assertFalse(any(rate['timing']['menu_admitted'] for rate in rates))
+        # An approved-scope field that no longer matches fails only that cell.
+        mutated = copy.deepcopy(approved)
+        target = next(m for m in mutated['rungs'][0]['measurements'] if m['cell_id'] == 'dense:o_proj:M1')
+        target['evidence']['mode'] = 99
+        mutated['geometry_classes'] = measured_geometry_classes(mutated)
+        scope, rates = self.assert_publication_consistent(mutated)
+        broken = next(c for c in scope['cells'] if c['cell']['cell_id'] == 'dense:o_proj:M1')['rates'][0]
+        self.assertEqual(broken['admission']['status'], 'wait')
+        self.assertEqual(broken['timing']['status'], 'measured')
+        self.assertFalse(broken['timing']['menu_admitted'])
+        self.assertEqual(sum(rate['timing']['menu_admitted'] for rate in rates), 19)
+        # A cell that is not declared is not published at all and cannot be admitted.
+        absent = copy.deepcopy(approved)
+        absent['scope']['required_cells'] = [c for c in absent['scope']['required_cells']
+                                             if c['cell_id'] != 'dense:o_proj:M1']
+        absent['rungs'][0]['measurements'] = [m for m in absent['rungs'][0]['measurements']
+                                              if m['cell_id'] != 'dense:o_proj:M1']
+        absent['geometry_classes'] = measured_geometry_classes(absent)
+        scope, rates = self.assert_publication_consistent(absent)
+        self.assertEqual(scope['qualified_menu'], {'dense': [], 'routed': []})
+        self.assertEqual(rung_speed(absent, rung=896, cell_id='dense:o_proj:M1')['status'], 'wait')
+        self.assertNotIn('menu_admitted', rung_speed(absent, rung=896, cell_id='dense:o_proj:M1'))
+        # A build that is not serving qualified admits nothing, though its timing stays measured.
+        unserved = v3_fixture()
+        unserved['kernel_build'].setdefault('metadata', {})['serving_qualified'] = False
+        scope, rates = self.assert_publication_consistent(unserved)
+        self.assertEqual(scope['qualified_menu'], {'dense': [], 'routed': []})
+        first = scope['cells'][0]['rates'][0]
+        self.assertEqual((first['admission']['status'], first['admission']['reason']),
+                         ('wait', 'kernel_not_serving_qualified'))
+        self.assertEqual(first['timing']['status'], 'measured')
+        self.assertFalse(first['timing']['menu_admitted'])
+        self.assertFalse(rung_speed(unserved, rung=768, cell_id='dense:o:M1')['menu_admitted'])
+        # The same table, serving qualified, admits the same rung and cell.
+        unserved['kernel_build']['metadata']['serving_qualified'] = True
+        scope, rates = self.assert_publication_consistent(unserved)
+        self.assertEqual(scope['qualified_menu']['dense'], [768])
+        self.assertTrue(rung_speed(unserved, rung=768, cell_id='dense:o:M1')['menu_admitted'])
+
+    def test_refusals_and_unscoped_tables_carry_no_menu_admission(self):
+        # Held row: the existing hold status, no flag, admission hold.
+        table = approved_t4_table()
+        table['rungs'][0]['anomaly_flags'] = table['rungs'][0]['quality']['anomaly_flags'] = ['reader_bounds']
+        scope, rates = self.assert_publication_consistent(table)
+        for rate in rates:
+            self.assertEqual(rate['timing'], {'status': 'hold', 'reason': 'recorded_correctness_hold'})
+            self.assertNotIn('menu_admitted', rate['timing'])
+            self.assertEqual(rate['admission']['status'], 'hold')
+        # Failed, unsupported and pending cells keep their refusal status.
+        for state in ('pending', 'failed', 'unsupported'):
+            table = v3_fixture()
+            row = table['rungs'][0]
+            cell = row['measurements'][0]
+            identity = geometry_class_identity(table, row['rung'], cell)
+            row.update(measurement_status=state, supported=None)
+            cell.update(measurement_status=state, kernel_time_us=None, kernel_path=None, evidence={}, pass_times_us=[])
+            cell['geometry']['decode_width'].pop('run_widths')
+            table['table_status'] = 'partial'
+            table['geometry_classes'] = measured_geometry_classes(table)
+            for kwargs in ({'cell_id': cell['cell_id']}, {'class_identity': identity}):
+                result = rung_speed(table, rung=row['rung'], **kwargs)
+                self.assertEqual(result['status'], 'wait' if state == 'pending' else state, state)
+                self.assertNotIn('menu_admitted', result)
+                self.assertNotIn('kernel_time_us', result)
+            scope, rates = self.assert_publication_consistent(table)
+            first = scope['cells'][0]['rates'][0]
+            self.assertEqual(first['rung'], row['rung'])
+            self.assertNotEqual(first['admission']['status'], 'allow')
+            self.assertNotIn('menu_admitted', first['timing'])
+            self.assertEqual(scope['qualified_menu']['dense'], [])
+        # A row-level refusal keeps its refusal status and carries no flag.
+        for state in ('failed', 'unsupported'):
+            table = v3_fixture()
+            table['rungs'][0].update(measurement_status=state, supported=False)
+            result = rung_speed(table, rung=768, cell_id='dense:o:M1')
+            self.assertEqual((result['status'], result['reason']), (state, 'recorded_source_refusal'))
+            self.assertNotIn('menu_admitted', result)
+            self.assertNotEqual(decide(table, 768)['status'], 'allow')
+        # A cell that is not declared never raises and carries no flag.
+        table = v3_fixture()
+        for cell_id in ('missing', None):
+            result = rung_speed(table, rung=768, cell_id=cell_id)
+            self.assertEqual(result['status'], 'wait')
+            self.assertFalse(result.get('menu_admitted', False))
+            self.assertNotIn('menu_admitted', result)
+        # A table without scoped v3 semantics has no scoped admission to agree with.
+        legacy = fixture_v2()
+        result = rung_speed(legacy, rung=768, cell_id='dense:o:M1')
+        self.assertEqual(result['status'], 'measured')
+        self.assertIs(result['menu_admitted'], False)
+        self.assertIs(result['numerical_qualification_inherited'], False)
+        self.assertEqual(decide(legacy, cell_ids=['dense:o:M1'])['reason'], 'scoped_policy_requires_v3_table')
+
     def test_measured_samples_must_agree_with_their_pass_median(self):
         for samples in ([1, 2, 3], [1e308]):
             table = v3_fixture()
