@@ -261,6 +261,12 @@ A dominance proof needs a measured higher-rung counterpart for every lower cell;
 The published schema files `docs/schema/allowable-rung-table.v2.schema.json` and `.v3` track the Python schemas, descriptions aside.
 A build with `metadata.serving_qualified` false admits nothing: `admit_rung` returns `wait`, reason `kernel_not_serving_qualified`.
 The allocator may not use such a table until the kernel passes G3 v2 and an end-to-end serve. PACT may read it only as a labelled speed scenario.
+Timing publication (`rung_speed`, and the `timing` of each `publication_scope` rate) reports `menu_admitted` for a measured cell.
+That flag derives from the same canonical scoped admission the sibling `admission` and `qualified_menu` use, for the same rung, cell and build, including the `kernel_not_serving_qualified` refusal.
+It is not policy-menu membership, and a measured timing may be published while `admission` waits (for example a foreign build).
+It is not numerical, native or serving qualification; those `*_qualification_inherited` flags stay false.
+Derived (inherited) timing, and tables without v3 scoped semantics, publish `menu_admitted` false.
+Held, failed, unsupported and pending results keep their refusal status and carry no `menu_admitted` key.
 
 ## Register-direct routed kernel (stage 1; not selected)
 

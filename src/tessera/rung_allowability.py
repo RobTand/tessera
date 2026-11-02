@@ -771,6 +771,20 @@ def _admit_performance_scope(table, row, rung, cell_ids, activation_contract, re
             'numerical_qualification_inherited': False, 'serving_qualification_inherited': False}
 
 
+def _published_admission(table, row, rung, cell_id):
+    """The scoped admission published for one rung and cell, shared by every publication path."""
+    if (table['kernel_build'].get('metadata') or {}).get('serving_qualified') is False:
+        return {'status': 'wait', 'reason': 'kernel_not_serving_qualified', 'rung': rung}
+    return _admit_performance_scope(table, row, rung, [cell_id], None, None)
+
+
+def _menu_admitted(table, row, rung, cell_id):
+    """True only when canonical scoped admission allows this rung, cell and build."""
+    if table['schema'] != 'fleet.rung_allowability.v3':
+        return False
+    return _published_admission(table, row, rung, cell_id)['status'] == 'allow'
+
+
 def rung_speed(table, *, rung, cell_id=None, class_identity=None):
     """Return actual or safe class-derived times without inherited admission."""
     validate_table(table)
@@ -798,7 +812,7 @@ def _rung_speed(table, *, rung, cell_id=None, class_identity=None):
             return {"status": "wait", "reason": "different_geometry_class"}
         return {'status': 'measured', 'value_kind': 'measured', 'rung': rung, 'measurement': measurement,
                 'kernel_time_us': measurement['kernel_time_us'], 'timing': timing_evidence(measurement),
-                'menu_admitted': rung in performant_rungs(table['format'], measurement['kernel_kind']),
+                'menu_admitted': _menu_admitted(table, row, rung, selected_id),
                 'numerical_qualification_inherited': False, 'native_qualification_inherited': False,
                 'serving_qualification_inherited': False}
     if class_identity is None:
@@ -846,9 +860,7 @@ def publication_scope(table, *, unit_inventory=None):
     for cell in table['scope']['required_cells']:
         rates = []
         for rung in performant_rungs(table['format'], cell['kernel_kind']):
-            admission = _admit_performance_scope(table, by_rung.get(rung), rung, [cell['cell_id']], None, None)
-            if (table['kernel_build'].get('metadata') or {}).get('serving_qualified') is False:
-                admission = {'status': 'wait', 'reason': 'kernel_not_serving_qualified', 'rung': rung}
+            admission = _published_admission(table, by_rung.get(rung), rung, cell['cell_id'])
             if admission['status'] == 'allow':
                 qualified[cell['kernel_kind']].add(rung)
             rates.append({'rung': rung, 'admission': admission,
