@@ -29,6 +29,7 @@ import argparse
 import importlib.util
 import io
 import json
+import math
 from pathlib import Path
 import statistics
 import subprocess
@@ -178,7 +179,7 @@ def replay(root, live, count):
             why = 'graph'
         rows.append({'merge': sha, 'selected': selected, 'fraction': selected / population, 'why': why})
     fractions = sorted(row['fraction'] for row in rows)
-    rank = lambda q: fractions[max(0, -(-len(fractions) * q // 1) - 1)] if fractions else 0.0  # noqa: E731
+    rank = lambda q: fractions[max(0, math.ceil(len(fractions) * q) - 1)] if fractions else 0.0  # noqa: E731
     return {'merges': len(rows), 'mean_pct': round(100 * statistics.mean(fractions), 1) if rows else 0.0,
             'p50_pct': round(100 * rank(0.5), 1), 'p90_pct': round(100 * rank(0.9), 1), 'rows': rows}
 
