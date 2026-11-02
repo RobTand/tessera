@@ -6,7 +6,7 @@ tree feeds the SAME quantised activations to the kernel under test and to its
 reference, so a defect in the quantiser is invisible there.  This module holds
 the quantiser to two independent statements:
 
-* the tests' own reference, ``test_serving_fp8_route._reference_fp8_quant``
+* the tests' own reference, ``serving_fp8_route_support._reference_fp8_quant``
   (duplicated in ``test_serving_fp8_gemv``): codes bitwise equal and the
   per-token scale within one fp32 ulp;
 * the arithmetic of the pinned kernel's source, restated here from vLLM
@@ -57,7 +57,7 @@ import torch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
-from test_serving_fp8_route import FP8_MAX, _reference_fp8_quant  # noqa: E402
+from serving_fp8_route_support import FP8_MAX, _reference_fp8_quant  # noqa: E402
 
 cuda = pytest.mark.skipif(not torch.cuda.is_available(), reason="the quantiser is a CUDA op")
 

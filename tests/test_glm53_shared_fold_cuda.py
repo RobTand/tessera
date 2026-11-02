@@ -28,7 +28,7 @@ from tessera import routed_fused as rf                    # noqa: E402
 from tessera.errors import GrammarError                   # noqa: E402
 
 from shared_fold_data import adversarial, served_scale, targeted_failures  # noqa: E402
-from test_routed_fused_window import (HIDDEN, LIBRARY_IDS, TOP_K, _bundles,  # noqa: E402,F401
+from routed_fused_window_support import (HIDDEN, LIBRARY_IDS, TOP_K, _bundles,  # noqa: E402,F401
                                       _fused, _routes, _stacks, cuda, family)
 
 GLM_HIDDEN, GLM_TOP_K = 4096, 8
