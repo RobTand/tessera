@@ -195,8 +195,8 @@ def test_the_dense_load_refuses_before_it_imports_the_route(monkeypatch, platfor
     """``lane.build_tessera_method`` is what ``TesseraConfig.get_quant_method``
     calls, and the refusal happens before ``import_module``.
 
-    Proved rather than asserted: ``importlib.import_module`` is replaced by a
-    function that fails the test if it is reached.  A refusal that arrived
+    The import spy rejects route modules and delegates package-resource
+    imports, with both a cold and a warm contract cache. A refusal that arrived
     after the import would have pulled in the route module, its extension
     loader and vLLM's quantizer namespace -- which on a HIP box is exactly the
     "crash three layers down" this gate replaces.
@@ -210,8 +210,13 @@ def test_the_dense_load_refuses_before_it_imports_the_route(monkeypatch, platfor
     if contract_cached:
         contract_module.cached_serving_contract()
 
+    import_module = importlib.import_module
+    route_modules = {entry["builder"][0] for entry in lane.ROUTES.values()}
+
     def never(name, *args, **kwargs):
-        raise AssertionError(f"the route module {name!r} was imported before the refusal")
+        if name in route_modules:
+            raise AssertionError(f"the route module {name!r} was imported before the refusal")
+        return import_module(name, *args, **kwargs)
 
     monkeypatch.setattr(importlib, "import_module", never)
     with pytest.raises(NativeKernelUnavailableError) as excinfo:
@@ -235,8 +240,12 @@ def test_the_sixteen_bit_load_reaches_its_route_on_the_same_platform(monkeypatch
 
     _stub_platform(monkeypatch, platform)
     reached = []
+    import_module = importlib.import_module
+    route_modules = {entry["builder"][0] for entry in lane.ROUTES.values()}
 
     def record(name, *args, **kwargs):
+        if name not in route_modules:
+            return import_module(name, *args, **kwargs)
         reached.append(name)
         raise RuntimeError("stop here: the gate let this through")
 
