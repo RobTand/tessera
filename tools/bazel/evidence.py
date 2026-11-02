@@ -239,6 +239,8 @@ class Evidence:
         self.root = Path(root)
         self.files = repository_files(self.root) if files is None else files
         self.file_set = set(self.files)
+        self.directories = {'/'.join(parts[:end]) + '/' for parts in (file.split('/') for file in self.files)
+                            for end in range(1, len(parts))}
         self.modules = sorted(path for path in self.files if is_module(path))
         self.aliases = defaultdict(set)
         for path in self.modules:
@@ -275,9 +277,12 @@ class Evidence:
             return None
         if text in self.file_set:
             return text
-        if (self.root / text).is_dir() and not text.startswith(SKIPPED):
-            return text.rstrip('/') + '/'
-        return None
+        try:
+            # Prose can reach here; a name too long for the filesystem names nothing.
+            directory = (self.root / text).is_dir()
+        except OSError:
+            return None
+        return text.rstrip('/') + '/' if directory and not text.startswith(SKIPPED) else None
 
     def read(self, path):
         source = (self.root / path).read_text()
@@ -400,7 +405,7 @@ class Evidence:
                     base_text = value.relative_to(self.root).as_posix()
                 except ValueError:
                     continue
-                if base_text not in ('', '.') and (self.root / base_text).is_dir():
+                if base_text not in ('', '.') and base_text + '/' in self.directories:
                     bases.add(base_text + '/')
                 pattern = posixpath.normpath(posixpath.join(base_text, tail)) if tail else base_text
                 if '*' not in pattern:
