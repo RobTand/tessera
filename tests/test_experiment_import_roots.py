@@ -18,10 +18,25 @@ hardcoded line anywhere -- not just in today's 24 files -- fails it.
 """
 
 import ast
+import os
 import re
+import subprocess
+import sys
 from pathlib import Path
 
 EXPERIMENTS = Path(__file__).resolve().parents[1] / "experiments"
+
+
+def test_grouped_benchmark_resolves_source_without_pythonpath(tmp_path):
+    import pytest
+
+    pytest.importorskip("torch")
+    env = dict(os.environ, PYTHONPATH="")
+    result = subprocess.run(
+        [sys.executable, str(EXPERIMENTS / "t8r_speed/bench_compact_vs_fused.py"), "--help"],
+        cwd=tmp_path, env=env, capture_output=True, text=True, timeout=60,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
 
 #: An absolute path literal that names a source tree: ``/.../src`` or
 #: ``/.../experiments``.  The shared-checkout form (``/home/rob/tessera/src``),
