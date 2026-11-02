@@ -150,3 +150,18 @@ def test_the_workflow_keeps_its_check_names_refs_and_scopes():
     assert 'branches: [master]' in text
     assert 'labeled' not in text
     assert 'check_no_secret_leak.py' in text or 'check-no-secret-leak' in text
+
+
+def test_impacted_output_is_read_in_either_form():
+    """bazel-diff v70.0.2 prints a JSON list with distances when it reads dependency edges."""
+    assert bazel_gate.impacted_labels('[{"label": "@@//tests:test_wire", "targetDistance": 1}]') == \
+        {'//tests:test_wire'}
+    assert bazel_gate.impacted_labels('//tests:test_wire\n@//src/tessera:wire\n') == \
+        {'//tests:test_wire', '//src/tessera:wire'}
+    with pytest.raises(bazel_gate.GateError):
+        bazel_gate.impacted_labels('[{"name": "x"}]')
+
+
+def test_the_gate_pins_the_shared_bazel_diff():
+    assert bazel_gate.BAZEL_DIFF_URL.endswith('/v70.0.2/bazel-diff-rust-linux-amd64')
+    assert bazel_gate.BAZEL_DIFF_SHA256 == '44226a1d1d5239abc8bc6158de1f886fcbbf58e44479ec178df8c01e7e32102e'
