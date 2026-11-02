@@ -84,6 +84,13 @@ ts_py_library(
 )
 
 ts_py_library(
+    name = "ci/check_no_secret_leak",
+    srcs = [
+        "ci/check_no_secret_leak.py",
+    ],
+)
+
+ts_py_library(
     name = "ci/gate_actions",
     srcs = [
         "ci/gate_actions.py",

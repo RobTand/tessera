@@ -114,7 +114,14 @@ jobs:
           echo scopes_uploaded=true >> "$GITHUB_OUTPUT"
       - name: Refuse to upload a secret
         if: always()
-        run: env -u BUILDBUDDY_API_KEY -u MERGIFY_TOKEN python3 tools/ci/check_no_secret_leak.py gate-output
+        # The scanner reads the values to look for from these variables; it
+        # prints names and paths only.
+        env:
+          BUILDBUDDY_API_KEY: ${{ secrets.BUILDBUDDY_API_KEY }}
+          MERGIFY_TOKEN: ${{ secrets.MERGIFY_TOKEN }}
+        run: |
+          mkdir -p gate-output
+          python3 tools/ci/check_no_secret_leak.py gate-output --env BUILDBUDDY_API_KEY --env MERGIFY_TOKEN
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         if: always()
         with:
@@ -248,7 +255,14 @@ jobs:
           --branch master --prs "$PRS" --timeout 100
       - name: Refuse to upload a secret
         if: always()
-        run: env -u BUILDBUDDY_API_KEY python3 tools/ci/check_no_secret_leak.py gate-output
+        # The scanner reads the values to look for from these variables; it
+        # prints names and paths only.
+        env:
+          BUILDBUDDY_API_KEY: ${{ secrets.BUILDBUDDY_API_KEY }}
+          MERGIFY_TOKEN: ${{ secrets.MERGIFY_TOKEN }}
+        run: |
+          mkdir -p gate-output
+          python3 tools/ci/check_no_secret_leak.py gate-output --env BUILDBUDDY_API_KEY --env MERGIFY_TOKEN
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         if: always()
         with:
