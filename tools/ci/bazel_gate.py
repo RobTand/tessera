@@ -164,10 +164,11 @@ class Workspace:
             raise GateError(f'{shlex.join(map(str, command))} exited {result.returncode}')
         return result.stdout if capture else result.returncode
 
-    def ensure_history(self):
-        """Runner-lane tests read history (git ls-tree of old commits)."""
-        if self.run('git', 'rev-parse', '--is-shallow-repository').strip() == 'true':
-            self.run('git', 'fetch', '--quiet', '--no-tags', '--unshallow', 'origin')
+    def ensure_history(self, head):
+        """Hydrate the exact tested revision before queries or runner-lane tests."""
+        from remote_gate import prepare_full_history
+        if not prepare_full_history(head, root=self.root):
+            raise GateError('full history preparation failed; refusing Bazel')
 
     def ensure_commit(self, sha):
         if not sha:
@@ -334,11 +335,11 @@ def scan_artifacts(directory):
 
 def gate_pr(workspace, base, head, metadata):
     started = time.monotonic()
-    workspace.ensure_history()
     for sha in [base, head]:
         workspace.ensure_commit(sha)
-    changed, deleted = workspace.changes(base, head)
     workspace.checkout(head)
+    workspace.ensure_history(head)
+    changed, deleted = workspace.changes(base, head)
     used = workspace.used_sources()
     forced = fallback_files(changed | deleted)
     reads = {path for path in changed | deleted if path in used or path in deleted}
@@ -363,11 +364,11 @@ def gate_pr(workspace, base, head, metadata):
 def gate_main(workspace, base, head, metadata):
     """Full run after a merge, on both architectures, plus what selection would have run."""
     started = time.monotonic()
-    workspace.ensure_history()
     for sha in [base, head]:
         workspace.ensure_commit(sha)
-    changed, deleted = workspace.changes(base, head)
     workspace.checkout(head)
+    workspace.ensure_history(head)
+    changed, deleted = workspace.changes(base, head)
     try:
         used = workspace.used_sources()
         forced = fallback_files(changed | deleted)

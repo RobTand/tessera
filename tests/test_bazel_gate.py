@@ -106,7 +106,7 @@ def test_budget_warnings_preserve_the_first_verdict_without_rerunning(status, mo
     class Workspace(bazel_gate.Workspace):
         def __init__(self):
             self.calls = []
-        def ensure_history(self): pass
+        def ensure_history(self, head): pass
         def ensure_commit(self, sha): pass
         def checkout(self, sha): pass
         def changes(self, base, head): return {'src/tessera/wire.py'}, set()

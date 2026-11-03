@@ -10257,8 +10257,12 @@ hosted lane, bytes-only and torch CPU, on amd64 per pull request and on amd64
 and arm64 after every merge. A hosted boundary job keeps the no-torch proofs
 and the budget and quarantine policies. Neither covers CUDA-gated tests.
 [The gate reference](ci_gate.md) describes selection, its fail-closed rules,
-the budget-only rerun and the secret rules; [docs/bazel.md](bazel.md) the
-build.
+budget warnings and the secret rules; [docs/bazel.md](bazel.md) the
+build. The remote client hydrates all origin history and blobs before the
+first Bazel query, verifies the exact tested HEAD and a complete object graph,
+and removes partial-clone metadata. A shallow or missing-object checkout
+fails before test execution. Budget overruns warn without changing the first
+verdict; assertions and hard TIMEOUTs fail without a rerun.
 
 Runner steps scan the actual artifact directory in-process with the runner's
 key before exit. A missing key fails the scan without deleting artifacts;

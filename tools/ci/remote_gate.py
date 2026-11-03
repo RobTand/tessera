@@ -49,6 +49,91 @@ class BuildBuddy:
             raise RemoteError(f'BuildBuddy {method} failed: {error}') from error
 
 
+def history_environment(environ):
+    return {
+        name: value for name, value in environ.items()
+        if (name in ('PATH', 'HOME', 'TMPDIR', 'LANG', 'VIRTUAL_ENV',
+                     'BUILDBUDDY_ARTIFACTS_DIRECTORY', 'BBRUN_FINAL_SCAN')
+            or name.startswith(('LC_', 'UV_', 'PYTHON')))
+        and not name.endswith(('_API_KEY', '_TOKEN'))
+    }
+
+
+def prepare_full_history(expected_commit, root=None):
+    """Runner-only: hydrate origin without exposing Git diagnostics or credentials."""
+    import json
+    from pathlib import Path
+    import re
+    import subprocess
+
+    root = Path.cwd() if root is None else Path(root)
+    environment = history_environment(os.environ)
+    environment.pop('BBRUN_FINAL_SCAN', None)
+    facts = {'fetched': False, 'objects': 0, 'HEAD': None}
+
+    def git(arguments, *, accepted=(0,), failure='Git command failed'):
+        result = subprocess.run(['git', *arguments], cwd=root, env=environment,
+                                capture_output=True, text=True, timeout=300)
+        if result.returncode not in accepted:
+            raise RuntimeError(failure)
+        return result
+
+    try:
+        if not re.fullmatch(r'[0-9a-f]{40}', expected_commit):
+            raise RuntimeError('a full lowercase commit SHA is required')
+        version = git(['--version']).stdout
+        match = re.match(r'git version (\d+)\.(\d+)', version)
+        if not match or tuple(map(int, match.groups())) < (2, 36):
+            raise RuntimeError('Git 2.36 or newer is required for fetch --refetch --no-filter')
+        shallow = git(['rev-parse', '--is-shallow-repository']).stdout.strip()
+        if shallow not in ('true', 'false'):
+            raise RuntimeError('cannot determine whether checkout is shallow')
+        fetch = ['fetch', '--refetch', '--no-filter', '--tags']
+        if shallow == 'true':
+            fetch.append('--unshallow')
+        fetch.extend(['origin', '+refs/heads/*:refs/remotes/origin/*'])
+        git(fetch, failure='full fetch with --refetch --no-filter failed; refusing Bazel')
+        facts['fetched'] = True
+        head = git(['rev-parse', '--verify', 'HEAD']).stdout.strip()
+        if re.fullmatch(r'[0-9a-f]{40}', head):
+            facts['HEAD'] = head
+        if head != expected_commit:
+            raise RuntimeError('HEAD differs from requested commit after full fetch')
+        objects = git(['rev-list', '--objects', '--missing=print', '--all', 'HEAD'],
+                      failure='cannot verify complete object graph').stdout.splitlines()
+        if not objects or any(line.startswith('?') for line in objects):
+            raise RuntimeError('missing objects remain after full fetch')
+        if any(not re.fullmatch(r'[0-9a-f]{40}', line.split(' ', 1)[0]) for line in objects):
+            raise RuntimeError('cannot verify object identifiers')
+        facts['objects'] = len(objects)
+        # A successful unfiltered refetch can leave old promisor pack markers.
+        # Only discard their metadata after proving the reachable graph complete.
+        pack = root / Path(git(['rev-parse', '--git-path', 'objects/pack']).stdout.strip())
+        for marker in pack.glob('*.promisor'):
+            marker.unlink()
+        for name in ('remote.origin.promisor', 'remote.origin.partialclonefilter',
+                     'extensions.partialclone'):
+            git(['config', '--local', '--unset-all', name], accepted=(0, 5),
+                failure='cannot remove partial-clone metadata')
+        metadata = git(['config', '--get-regexp',
+                        r'^(remote\..*\.(promisor|partialclonefilter)|extensions\.partialclone)$'],
+                       accepted=(0, 1), failure='cannot verify partial-clone metadata')
+        if metadata.returncode != 1 or any(pack.glob('*.promisor')):
+            raise RuntimeError('promisor metadata remains after full fetch')
+        if git(['rev-parse', '--is-shallow-repository']).stdout.strip() != 'false':
+            raise RuntimeError('shallow history remains after full fetch')
+        return True
+    except RuntimeError as error:
+        print('full history preparation failed: ' + str(error), file=sys.stderr, flush=True)
+        return False
+    except BaseException:
+        print('full history preparation failed: Git unavailable or preparation incomplete',
+              file=sys.stderr, flush=True)
+        return False
+    finally:
+        print('full history: ' + json.dumps(facts, sort_keys=True), flush=True)
+
+
 def run_request(args):
     if not args.base or not args.head:
         raise RemoteError('empty base or head: the queue-aware refs were unavailable')
