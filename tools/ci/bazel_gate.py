@@ -9,10 +9,9 @@ failure. Both write gate-result.json to the BuildBuddy artifacts directory,
 and tools/ci/remote_gate.py reads it back. Any detection failure is a gate
 failure, never an empty pass.
 
-A test that failed only on a per-test budget (tools/bazel/python_runner.py
-writes test.outputs/budget_overrun.json) or that Bazel timed out reruns once,
-uncached; the rerun's verdict stands and is recorded as budget_reruns. An
-assertion failure never reruns.
+Per-test budget overruns are warnings and are recorded without changing a
+verdict. Assertion failures and hard timeouts fail on their first attempt.
+There are no test reruns.
 """
 import argparse
 from fnmatch import fnmatch
@@ -111,22 +110,6 @@ def verdict_of(selected, statuses):
     """Every selected test must report PASSED; a missing status fails."""
     failed = sorted(label for label in selected if statuses.get(label) != 'PASSED')
     return ('fail' if failed else 'pass' if selected else 'skipped'), failed
-
-
-def budget_rerun_labels(statuses, overruns):
-    """Labels whose only failure was a budget (the runner's marker) or a Bazel timeout."""
-    return sorted(label for label, status in statuses.items()
-                  if status == 'TIMEOUT' or status == 'FAILED' and label in overruns)
-
-
-def apply_budget_reruns(statuses, labels, rerun):
-    """The rerun's status stands for each rerun label; each is recorded."""
-    merged = dict(statuses)
-    records = []
-    for label in labels:
-        merged[label] = rerun.get(label, 'NO_STATUS')
-        records.append({'label': label, 'first': statuses[label], 'rerun': merged[label]})
-    return merged, records
 
 
 def population_query(architecture):
@@ -242,9 +225,9 @@ class Workspace:
         return impacted_labels(impacted.read_text())
 
     def test(self, targets, config, metadata, log_name, extra=()):
-        """Run targets; return (per-label status, labels that overran only a budget)."""
+        """Run targets; return (per-label status, per-test budget warnings)."""
         if not targets:
-            return {}, set()
+            return {}, []
         patterns = Path(tempfile.gettempdir(), f'{log_name}-targets.txt')
         patterns.write_text('\n'.join(targets) + '\n')
         bep = Path(tempfile.gettempdir(), f'{log_name}-bep.json')
@@ -254,16 +237,17 @@ class Workspace:
                  *diagnostic_logs(log_name), *extra,
                  *[f'--build_metadata={key}={value}' for key, value in metadata.items()],
                  capture=False, check=False)
-        return test_statuses(bep), self.budget_overruns(targets)
+        return test_statuses(bep), self.budget_warnings(targets)
 
-    def budget_overruns(self, targets):
-        found = set()
+    def budget_warnings(self, targets):
+        warnings = []
         logs = self.root / 'bazel-testlogs'
         for label in targets:
             package, _, name = label.removeprefix('//').partition(':')
-            if any((logs / package / name).glob('**/test.outputs/budget_overrun.json')):
-                found.add(label)
-        return found
+            for path in sorted((logs / package / name).glob('**/test.outputs/budget_warnings.json')):
+                for row in json.loads(path.read_text())['warnings']:
+                    warnings.append({'label': label, **row})
+        return warnings
 
     def build(self, targets, config, metadata, log_name):
         if not targets:
@@ -274,14 +258,6 @@ class Workspace:
                             f'--target_pattern_file={patterns}', *diagnostic_logs(f'{log_name}-build'),
                             *[f'--build_metadata={key}={value}' for key, value in metadata.items()],
                             capture=False, check=False)
-
-    def run_with_budget_reruns(self, targets, config, metadata, log_name):
-        statuses, overruns = self.test(targets, config, metadata, log_name)
-        labels = budget_rerun_labels(statuses, overruns)
-        if not labels:
-            return statuses, []
-        rerun, _ = self.test(labels, config, metadata, f'{log_name}-rerun', extra=['--nocache_test_results'])
-        return apply_budget_reruns(statuses, labels, rerun)
 
     def inputs_check(self):
         """Generated files current, lock export current, population parity."""
@@ -371,13 +347,13 @@ def gate_pr(workspace, base, head, metadata):
     tests = workspace.tests('amd64')
     decision = gate_decision(changed, deleted, impacted, used, tests)
     selected_seconds = time.monotonic() - started
-    statuses, reruns = workspace.run_with_budget_reruns(decision['selected'], CONFIGS['amd64'], metadata, 'pr')
+    statuses, warnings = workspace.test(decision['selected'], CONFIGS['amd64'], metadata, 'pr')
     tested_seconds = time.monotonic() - started
     verdict, failed = verdict_of(decision['selected'], statuses)
     inputs = workspace.inputs_check()
     if not workspace.build(decision['build'], CONFIGS['amd64'], metadata, 'pr'):
         inputs.append('bazel build of impacted targets failed: ' + ' '.join(decision['build']))
-    return {**decision, 'verdict': verdict, 'failed': failed, 'budget_reruns': reruns, 'inputs': inputs,
+    return {**decision, 'verdict': verdict, 'failed': failed, 'budget_warnings': warnings, 'inputs': inputs,
             'graph_impact': workspace.graph_impact(base), 'changed': sorted(changed | deleted),
             'durations': {'selection': round(selected_seconds, 1),
                           'tests': round(tested_seconds - selected_seconds, 1),
@@ -405,10 +381,10 @@ def gate_main(workspace, base, head, metadata):
     for architecture, config in CONFIGS.items():
         begun = time.monotonic()
         population = sorted(workspace.tests(architecture))
-        statuses, reruns = workspace.run_with_budget_reruns(population, config, metadata, f'main-{architecture}')
+        statuses, warnings = workspace.test(population, config, metadata, f'main-{architecture}')
         verdict, failed = verdict_of(population, statuses)
         architectures[architecture] = {
-            'verdict': verdict, 'failed': failed, 'tests': len(population), 'budget_reruns': reruns,
+            'verdict': verdict, 'failed': failed, 'tests': len(population), 'budget_warnings': warnings,
             'missed': sorted(label for label in failed if label not in selection['selected']),
             'seconds': round(time.monotonic() - begun, 1)}
     if any(arch['tests'] == 0 for arch in architectures.values()):
@@ -449,7 +425,7 @@ def main(argv=None, workspace=None):
         write_result(result, output)
     finally:
         safe_artifacts = scan_artifacts(output)
-    print(json.dumps({key: result.get(key) for key in ['selection', 'error', 'verdict', 'inputs', 'budget_reruns']}))
+    print(json.dumps({key: result.get(key) for key in ['selection', 'error', 'verdict', 'inputs', 'budget_warnings']}))
     return 0 if safe_artifacts and passed(result) else 1
 
 

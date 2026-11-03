@@ -1,4 +1,4 @@
-"""The Bazel merge gate fails closed, keeps its check names and reruns only budgets (#1589).
+"""The Bazel merge gate fails closed, keeps its check names and reports budget warnings (#1589).
 
 tools/ci/bazel_gate.py runs on a BuildBuddy Remote Bazel runner: it selects the
 tests a change can affect with bazel-diff, runs them, and writes

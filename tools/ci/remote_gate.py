@@ -182,12 +182,16 @@ def explain(result, prs):
         if impact:
             lines.append('graph-impact: ' + impact['summary'])
             lines.extend('graph-impact: FAIL ' + line for line in impact['failures'])
-        lines.extend(f"budget rerun: {row['label']} {row['first']} -> {row['rerun']}"
-                     for row in result.get('budget_reruns', []))
+        lines.extend(f"BUDGET_WARNING: {row['nodeid']}: {row['seconds']:.3f}s > "
+                     f"{row['budget_seconds']:.3f}s policy ({row['label']})"
+                     for row in result.get('budget_warnings', []))
         lines.extend(f'FAILED: {label}' for label in result.get('failed', []))
     else:
         lines.append(f"Merged PRs: {', '.join(f'#{pr}' for pr in prs) or 'unknown'}")
         for arch, info in result.get('architectures', {}).items():
+            lines.extend(f"BUDGET_WARNING: {row['nodeid']}: {row['seconds']:.3f}s > "
+                         f"{row['budget_seconds']:.3f}s policy ({arch}, {row['label']})"
+                         for row in info.get('budget_warnings', []))
             for label in info['failed']:
                 caught = 'not selected: detection miss' if label in info['missed'] else 'was selected'
                 if arch == 'arm64':

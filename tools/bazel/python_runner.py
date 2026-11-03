@@ -6,9 +6,8 @@ its per-test timeouts. The per-test budgets in tools/ci/gate_budget.json apply
 with gate_run's tolerance. A file Bazel shards runs one share of its tests,
 keeping the tests that share a module-scoped fixture together. After the run,
 test.outputs/inventory.json records each node's outcome for parity, and the
-file's seconds. A run that fails only on a per-test budget writes
-test.outputs/budget_overrun.json, so the gate may rerun it once; an assertion
-failure never does.
+file's seconds. Per-test time budgets produce budget_warnings.json and never
+change a verdict. Assertion failures and hard timeouts are not rerun.
 
 With TS_TRACE=1 (`--test_env=TS_TRACE=1`), every Python process the test
 starts records the repository files it imports or opens, and the inventory
@@ -206,26 +205,22 @@ def main():
         # gate_run's rule: no collected test, such as a module-level
         # importorskip, or a shard that holds no group of a small file.
         status = 0
-    if status == 0 and any(outcome != 'skipped' for outcome in nodes.values()):
+    warnings = []
+    if any(outcome != 'skipped' for outcome in nodes.values()):
         try:
             timings = gate_run._budget_timings(junit, [path], config, require_all=False)
         except ValueError as error:
             print(f'no per-test timings for {path}: {error}', file=sys.stderr)
             return 1
-        overruns = [row for row in timings
-                    if row['seconds'] > row['budget_seconds'] * gate_run.BUDGET_ENFORCEMENT_TOLERANCE]
-        for row in overruns:
-            print(f"Per-test time budget exceeded: {row['nodeid']}: {row['seconds']:.3f}s > "
-                  f"{row['budget_seconds']:.3f}s policy", file=sys.stderr)
-        status = 1 if overruns and config.get('enforce', False) else 0
-        if status:
-            # Only a budget failed: every assertion passed. The gate reruns
-            # such a test once, uncached, before its verdict stands.
-            (outputs / 'budget_overrun.json').write_text(json.dumps(
-                {'file': path, 'lane': lane, 'overruns': overruns}))
+        warnings = timings
+        if warnings:
+            gate_run._write_budget_warnings(junit, warnings)
+            (outputs / 'budget_warnings.json').write_text(json.dumps({'warnings': warnings}))
+
     if status == 0:
         (outputs / 'inventory.json').write_text(json.dumps(
-            dict(record, collected=True, nodes=nodes, skip_reasons=population.get('skip_reasons', {}))))
+            dict(record, collected=True, nodes=nodes, budget_warnings=warnings,
+                 skip_reasons=population.get('skip_reasons', {}))))
     return status
 
 
