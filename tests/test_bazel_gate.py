@@ -96,18 +96,60 @@ def test_every_selected_test_must_pass_and_a_missing_status_fails():
     assert bazel_gate.verdict_of([], {}) == ('skipped', [])
 
 
-def test_only_a_budget_overrun_or_a_timeout_is_rerun():
-    statuses = {'//a': 'FAILED', '//b': 'FAILED', '//c': 'TIMEOUT', '//d': 'PASSED'}
-    assert bazel_gate.budget_rerun_labels(statuses, overruns={'//a'}) == ['//a', '//c']
+
+@pytest.mark.parametrize('status', ['PASSED', 'FAILED', 'TIMEOUT'])
+@pytest.mark.parametrize('mode', ['pr', 'main'])
+def test_budget_warnings_preserve_the_first_verdict_without_rerunning(status, mode):
+    warning = {'label': '//tests:test_wire', 'nodeid': 'tests/test_wire.py::test_one',
+               'seconds': 10000, 'budget_seconds': 20}
+
+    class Workspace(bazel_gate.Workspace):
+        def __init__(self):
+            self.calls = []
+        def ensure_history(self): pass
+        def ensure_commit(self, sha): pass
+        def checkout(self, sha): pass
+        def changes(self, base, head): return {'src/tessera/wire.py'}, set()
+        def used_sources(self): return USED
+        def bazel_diff(self, base, head): return {'//tests:test_wire'}
+        def tests(self, architecture): return {'//tests:test_wire'}
+        def inputs_check(self): return []
+        def graph_impact(self, base): return None
+        def build(self, *args): return True
+        def test(self, targets, config, metadata, log_name, extra=()):
+            self.calls.append(config)
+            return {'//tests:test_wire': status}, [warning]
+
+    workspace = Workspace()
+    result = getattr(bazel_gate, 'gate_' + mode)(workspace, 'base', 'head', {})
+    records = [result] if mode == 'pr' else list(result['architectures'].values())
+    assert len(workspace.calls) == len(records)
+    assert len(set(workspace.calls)) == len(records)
+    for record in records:
+        assert record['verdict'] == ('pass' if status == 'PASSED' else 'fail')
+        assert record['budget_warnings'] == [warning]
+        assert 'budget_reruns' not in record
 
 
-def test_a_budget_rerun_passes_once_and_is_recorded():
-    statuses = {'//a': 'FAILED', '//c': 'TIMEOUT', '//d': 'PASSED'}
-    merged, reruns = bazel_gate.apply_budget_reruns(statuses, ['//a', '//c'], {'//a': 'PASSED', '//c': 'FAILED'})
-    assert merged == {'//a': 'PASSED', '//c': 'FAILED', '//d': 'PASSED'}
-    assert reruns == [{'label': '//a', 'first': 'FAILED', 'rerun': 'PASSED'},
-                      {'label': '//c', 'first': 'TIMEOUT', 'rerun': 'FAILED'}]
+def test_budget_warnings_collect_each_shard_without_changing_status(tmp_path):
+    folder = tmp_path / 'bazel-testlogs/tests/test_wire/shard_1_of_2/test.outputs'
+    folder.mkdir(parents=True)
+    warning = {'nodeid': 'tests/test_wire.py::test_one', 'seconds': 10000, 'budget_seconds': 20}
+    (folder / 'budget_warnings.json').write_text(json.dumps({'warnings': [warning]}))
+    assert bazel_gate.Workspace(tmp_path).budget_warnings(['//tests:test_wire']) == [
+        {'label': '//tests:test_wire', **warning}]
 
+
+def test_remote_summary_reports_budget_warnings_on_pr_and_postmerge():
+    warning = {'label': '//tests:test_wire', 'nodeid': 'tests/test_wire.py::test_one',
+               'seconds': 10000, 'budget_seconds': 20}
+    record = {'verdict': 'pass', 'failed': [], 'missed': [], 'budget_warnings': [warning]}
+    for mode in ('pr', 'main'):
+        result = dict(record, mode=mode, base='a'*40, head='b'*40,
+                      architectures={'amd64': record})
+        summary = remote_gate.explain(result, [])
+        assert 'BUDGET_WARNING: tests/test_wire.py::test_one' in summary
+        assert '10000.000s > 20.000s' in summary
 
 def test_gate_children_get_no_secret_from_the_runner():
     environment = bazel_gate.child_environment({'BUILDBUDDY_API_KEY': 'k', 'MERGIFY_TOKEN': 't',
@@ -315,3 +357,29 @@ def test_the_remote_gate_does_not_defer_its_final_scan():
         repo, cpu, memory, timeout = remote_gate.REPOSITORY, 4, '8GB', 45
 
     assert 'BBRUN_FINAL_SCAN' not in json.dumps(remote_gate.run_request(Args))
+
+
+@pytest.mark.parametrize('architecture,pool', [('amd64', 'selfhosted-amd64'),
+                                               ('arm64', 'selfhosted-arm64')])
+def test_both_action_platforms_use_selfhosted_capacity_without_fallback(architecture, pool):
+    import re
+    build = (ROOT / 'tools/bazel/BUILD.bazel').read_text()
+    blocks = re.findall(r'platform\(.*?\n\)', build, re.S)
+    block = next(block for block in blocks if f'name = "linux_{architecture}"' in block)
+    assert f'"Pool": "{pool}"' in block
+    assert '"use-self-hosted-executors": "true"' in block
+    config = 'remote' if architecture == 'amd64' else 'remote-arm64'
+    bazelrc = (ROOT / '.bazelrc').read_text()
+    assert f'build:{config} --remote_local_fallback=false' in bazelrc
+    assert f'build:{config} --platforms=//tools/bazel:linux_{architecture}' in bazelrc
+
+
+@pytest.mark.parametrize('mode', ['pr', 'main'])
+def test_gate_and_postmerge_keep_the_cloud_runner(mode):
+    class Args:
+        base, head, checkout, branch = 'a'*40, 'b'*40, '', 'feature'
+        repo, cpu, memory, timeout = remote_gate.REPOSITORY, 4, '8GB', 45
+    Args.mode = mode
+    properties = remote_gate.run_request(Args)['platform_properties']
+    assert properties['workload-isolation-type'] == 'firecracker'
+    assert 'Pool' not in properties and 'use-self-hosted-executors' not in properties
