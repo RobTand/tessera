@@ -72,10 +72,11 @@ def prepare_full_history(expected_commit, root=None):
     environment = history_environment(os.environ)
     environment.pop('BBRUN_FINAL_SCAN', None)
     facts = {'fetched': False, 'objects': 0, 'HEAD': None}
-    stage = 'validation'
+    stage = 'validate-commit'
 
     def git(arguments, *, accepted=(0,), failure='Git command failed'):
-        result = subprocess.run(['git', *arguments], cwd=root, env=environment,
+        result = subprocess.run(['git', '-c', 'gc.auto=0', '-c', 'maintenance.auto=false',
+                                 *arguments], cwd=root, env=environment,
                                 capture_output=True, text=True, timeout=300)
         if result.returncode not in accepted:
             raise RuntimeError(failure)
@@ -84,28 +85,29 @@ def prepare_full_history(expected_commit, root=None):
     try:
         if not re.fullmatch(r'[0-9a-f]{40}', expected_commit):
             raise RuntimeError('a full lowercase commit SHA is required')
+        stage = 'git-version'
         version = git(['--version']).stdout
         match = re.match(r'git version (\d+)\.(\d+)', version)
         if not match or tuple(map(int, match.groups())) < (2, 36):
             raise RuntimeError('Git 2.36 or newer is required for fetch --refetch --no-filter')
+        stage = 'shallow-check'
         shallow = git(['rev-parse', '--is-shallow-repository']).stdout.strip()
         if shallow not in ('true', 'false'):
             raise RuntimeError('cannot determine whether checkout is shallow')
-        fetch = ['-c', 'gc.auto=0', '-c', 'maintenance.auto=false',
-                 'fetch', '--refetch', '--no-filter', '--tags']
+        fetch = ['fetch', '--refetch', '--no-filter', '--tags']
         if shallow == 'true':
             fetch.append('--unshallow')
         fetch.extend(['origin', '+refs/heads/*:refs/remotes/origin/*'])
         stage = 'fetch'
         git(fetch, failure='full fetch with --refetch --no-filter failed; refusing Bazel')
         facts['fetched'] = True
-        stage = 'head-verification'
+        stage = 'head-check'
         head = git(['rev-parse', '--verify', 'HEAD']).stdout.strip()
         if re.fullmatch(r'[0-9a-f]{40}', head):
             facts['HEAD'] = head
         if head != expected_commit:
             raise RuntimeError('HEAD differs from requested commit after full fetch')
-        stage = 'object-verification'
+        stage = 'object-check'
         objects = git(['rev-list', '--objects', '--missing=print', '--all', 'HEAD'],
                       failure='cannot verify complete object graph').stdout.splitlines()
         if not objects or any(line.startswith('?') for line in objects):
@@ -118,31 +120,31 @@ def prepare_full_history(expected_commit, root=None):
         stage = 'promisor-cleanup'
         pack = root / Path(git(['rev-parse', '--git-path', 'objects/pack']).stdout.strip())
         for marker in pack.glob('*.promisor'):
-            marker.unlink(missing_ok=True)
-        stage = 'config-cleanup'
+            try:
+                marker.unlink()
+            except FileNotFoundError:
+                pass
+        stage = 'partial-clone-cleanup'
         for name in ('remote.origin.promisor', 'remote.origin.partialclonefilter',
                      'extensions.partialclone'):
             git(['config', '--local', '--unset-all', name], accepted=(0, 5),
                 failure='cannot remove partial-clone metadata')
-        stage = 'metadata-verification'
+        stage = 'metadata-check'
         metadata = git(['config', '--get-regexp',
                         r'^(remote\..*\.(promisor|partialclonefilter)|extensions\.partialclone)$'],
                        accepted=(0, 1), failure='cannot verify partial-clone metadata')
         if metadata.returncode != 1 or any(pack.glob('*.promisor')):
             raise RuntimeError('promisor metadata remains after full fetch')
-        stage = 'shallow-verification'
+        stage = 'shallow-check'
         if git(['rev-parse', '--is-shallow-repository']).stdout.strip() != 'false':
             raise RuntimeError('shallow history remains after full fetch')
         return True
     except (OSError, subprocess.SubprocessError, RuntimeError) as error:
-        # Git diagnostics and exception messages can contain credential-bearing
-        # URLs. These controlled stages and exception types are safe to retain.
-        print(f'full history preparation failed: stage={stage} type={type(error).__name__}',
+        print(f'full history preparation failed: {stage} ({type(error).__name__})',
               file=sys.stderr, flush=True)
         return False
     finally:
         print('full history: ' + json.dumps(facts, sort_keys=True), flush=True)
-
 
 def run_request(args, full_shard=None):
     if not args.base or not args.head:

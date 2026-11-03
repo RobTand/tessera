@@ -132,7 +132,7 @@ def test_other_marker_errors_fail_with_safe_stage_and_type(partial_clone, monkey
     monkeypatch.setattr(Path, 'unlink', denied)
     assert not remote_gate.prepare_full_history(head, root=clone)
     output = capsys.readouterr()
-    assert 'stage=promisor-cleanup type=PermissionError' in output.err
+    assert 'promisor-cleanup (PermissionError)' in output.err
     assert private_message not in output.err + output.out
     assert list((clone / '.git/objects/pack').glob('*.promisor'))
 
