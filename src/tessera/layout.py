@@ -653,3 +653,5 @@ def build_terminal(
 
 
 
+
+# Probe 3: hub selection for the Bazel cutover; do not merge.
