@@ -27,7 +27,7 @@ python3 -I /home/rob/tmp/bazel-wave2/tools/bbrun.py test \
   //tests:test_alphabet //tests:test_alphabet.bytes
 ```
 
-- Prefer targeted tests. Full sweeps require the migration lead's slot, with at most one Tessera invocation in flight and `--jobs=16` after all configs.
+- Prefer targeted tests. Keep development runs at one Tessera invocation in flight with `--jobs=16` after all configs. Full sweeps require the migration lead's slot. The gate-fallback exception below does not apply to development runs.
 - For arm64, use `--arch arm64` and `--config=remote-arm64` together. Never use `--cloud`.
 - Read the invocation's terminal verdict, logs and final required-key scan. An uncached proof also requires TestRunner execution metadata on dl380g10 for amd64 or sparky/sparklina for arm64. Target summaries alone do not establish execution.
 - Use local Bazel only for short queries, with `--max_idle_secs=300`. Fleet-local test work goes through PrismaBuild admission.
@@ -69,9 +69,19 @@ After changing target names or tags, run `python3 tools/ci/full_shards.py` and
 commit `tools/bazel/full_targets/`. This performs only a Bazel query. Its two
 lists per architecture must be disjoint and cover every eligible rule and
 test. The gate checks them against a live query and uses each committed file
-with `--target_pattern_file` in a separate serial Remote Bazel run, capped at
-55 minutes. This keeps full fallback and post-merge runs below BuildBuddy's
+with `--target_pattern_file` in a separate Remote Bazel run, capped at
+55 minutes. This keeps each full fallback and post-merge shard below BuildBuddy's
 one-hour limit and avoids the Run action's single-argument size limit.
+
+Only the fail-closed gate `//...` fallback may execute its two shard Runs in
+parallel, at most two concurrent Remote Bazel runs per repository with
+`--jobs=16` each. Actions use the self-hosted pools only, without cloud
+fallback. Selected gates, post-merge records and development runs stay at one
+run per repository. Mergify's 30-minute `checks_timeout` and merge conditions
+are unchanged. The controller encodes the fallback-only bound; it adds no
+scheduler.
+
+TL3 keeps BuildBuddy priority if a fallback batch lands while TL3's queue is backed up.
 
 ## Where tests run
 

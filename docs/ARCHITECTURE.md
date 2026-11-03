@@ -10266,8 +10266,12 @@ verdict; assertions and hard TIMEOUTs fail without a rerun.
 
 Fallback and post-merge full populations are split into two committed target
 files per architecture, including non-test build rules. The client submits
-each with `--target_pattern_file` in a separate serial Remote Bazel run capped
-at 55 minutes. Live-query validation and complete, disjoint result unions
+each with `--target_pattern_file` in a separate Remote Bazel run capped
+at 55 minutes. Only gate fallback permits two concurrent shard runs per repo,
+each with `--jobs=16` on self-hosted action pools; all other paths stay serial.
+Mergify's 30-minute checks timeout and merge conditions are unchanged.
+TL3 retains BuildBuddy priority when its queue is backed up; no scheduler is added.
+Live-query validation and complete, disjoint result unions
 fail closed on drift or missing shards. The combined post-merge record keeps
 all invocation IDs and per-architecture budget warnings.
 

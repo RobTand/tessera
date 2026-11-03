@@ -6,6 +6,7 @@ gate-result.json as a BuildBuddy artifact; this script fetches it. A failed,
 timed-out or disconnected run, or a missing or malformed result, fails here.
 """
 import argparse
+from concurrent.futures import ThreadPoolExecutor
 import json
 import os
 from pathlib import Path
@@ -25,6 +26,7 @@ SCHEMA = 'tessera.bazel-gate.v1'
 DIAGNOSTICS = ('bazel-remote-grpc.log', 'execution_log.binpb.zst')
 DONE = 'COMPLETE_INVOCATION_STATUS'
 LOST = 'DISCONNECTED_INVOCATION_STATUS'
+GATE_FALLBACK_CONCURRENCY = 2
 
 
 class RemoteError(RuntimeError):
@@ -375,8 +377,7 @@ def write_github(path_variable, text):
 
 
 def execute(client, args):
-    """Serial submissions: each Run is terminal before the next one starts."""
-    runs = []
+    """Only gate fallback may overlap two Runs; selected and main stay serial."""
 
     def run(coordinates=None):
         request = run_request(args, full_shard=coordinates)
@@ -393,18 +394,27 @@ def execute(client, args):
             raise RemoteError('remote result has the wrong mode or base')
         # Retain each result for diagnostics; the workflow scans everything before upload.
         (args.output_dir / f'{invocation_id}-{RESULT}').write_text(json.dumps(result, indent=2))
-        runs.append({'id': invocation_id, 'full_shard': coordinates,
-                     'success': invocation.get('success') is True})
+        record = {'id': invocation_id, 'full_shard': coordinates,
+                  'success': invocation.get('success') is True}
         if (invocation.get('success') is not True and result.get('verdict') != 'fail'
                 and not result.get('error') and not result.get('inputs')):
             result.setdefault('inputs', []).append('remote runner did not succeed: ' + invocation_id)
-        return result
+        return result, record
 
-    plan = run()
+    plan, initial = run()
+    runs = [initial]
     if 'full_populations' in plan and not plan.get('error') and not plan.get('inputs'):
         arches = ['amd64'] if args.mode == 'pr' else ['amd64', 'arm64']
-        parts = [run((arch, index)) for arch in arches for index in range(2)]
-        result = merge_full_shards(plan, parts)
+        coordinates = [(arch, index) for arch in arches for index in range(2)]
+        if args.mode == 'pr':
+            if plan.get('selection') != 'fallback':
+                raise RemoteError('only gate fallback may submit parallel full shards')
+            with ThreadPoolExecutor(max_workers=GATE_FALLBACK_CONCURRENCY) as workers:
+                completed = list(workers.map(run, coordinates))
+        else:
+            completed = [run(coordinate) for coordinate in coordinates]
+        runs.extend(record for _, record in completed)
+        result = merge_full_shards(plan, [part for part, _ in completed])
     else:
         result = plan
     result['invocations'] = runs
