@@ -15,6 +15,7 @@ load("//tools/bazel:test_inputs.bzl", "TEST_INPUTS")
 # options and the gate's collection plugin. Each test's budgets are an argument.
 _TEST_DATA = [
     "//:pyproject.toml",
+    "//tests:gate_flaky_inputs",
 ]
 _TEST_DEPS = [
     CONFTEST,

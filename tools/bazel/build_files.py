@@ -52,6 +52,7 @@ CONTRACT_PATH = re.compile(r'[\w.-]+(?:/[\w.-]+)+')
 LANES = ('torch', 'bytes')
 DURATIONS = 'tools/ci/gate_durations.json'
 QUARANTINE = 'tools/ci/gate_quarantine.json'
+FLAKY = 'tools/ci/gate_flaky.json'
 BUDGET = 'tools/ci/gate_budget.json'
 REQUIREMENTS = {'bytes': 'tools/ci/gate_requirements.txt', 'torch': 'tools/ci/gate_torch_requirements.txt'}
 PIN = re.compile(r'^([A-Za-z0-9][A-Za-z0-9._-]*)(?:==|\s*@)', re.MULTILINE)
@@ -195,6 +196,11 @@ def generate(root=ROOT, files=None):
             packages[home].append((name, 'ts_py_test', {
                 'path': path, 'library': label(*owner[path], home), 'data': own, 'deps': programs,
                 **test_attributes(path, lane, durations, quarantine, budget)}))
+    # gate_collect validates the existence of every file named by the flaky
+    # table before collecting any assignment. These are data, not imports.
+    flaky_files = {node.split('::', 1)[0] for node in json.loads((root / FLAKY).read_text())}
+    packages['tests'].append(('gate_flaky_inputs', 'filegroup', {
+        'srcs': sorted(relative(path, 'tests') for path in flaky_files)}))
     # The repository paths runtime_contract.json names, in prose too: the
     # contract tests check that each one exists (tools/bazel/test_inputs.bzl).
     named = {match.rstrip('.') for match in CONTRACT_PATH.findall((root / CONTRACT).read_text())}

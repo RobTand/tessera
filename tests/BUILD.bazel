@@ -233,6 +233,13 @@ ts_py_library(
     ],
 )
 
+filegroup(
+    name = "gate_flaky_inputs",
+    srcs = [
+        "test_graph_attest_d30_memory_guard.py",
+    ],
+)
+
 ts_py_library(
     name = "glm_nightly_cells",
     srcs = [
