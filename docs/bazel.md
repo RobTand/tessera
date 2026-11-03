@@ -111,3 +111,5 @@ Most tests run on BuildBuddy's remote executors. An executor has a few CPUs of a
 - `--config=ci`: CI build metadata, a refusal of a stale `MODULE.bazel.lock`, and the per-test receipts that parity reads.
 
 The approved client supplies authentication. Never place credentials in a command line, test environment or uploaded event file.
+
+This documentation-only migration probe verifies the native gate selection.
