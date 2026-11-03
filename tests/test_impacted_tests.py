@@ -2720,3 +2720,30 @@ def test_this_repository_does_not_gain_an_unnamed_directory_read():
     assert not _exceeds_unnamed_directory_read_ceiling(len(listed), sites), (
         "a directory read whose base cannot be named was added; name its base, "
         "or raise the ceiling here with the reason", len(listed), sites, sorted(listed))
+
+
+def test_only_the_hash_pinned_vendored_scanner_is_exempt(tmp_path):
+    relative = 'tools/ci/check_no_secret_leak.py'
+    path = tmp_path / relative
+    path.parent.mkdir(parents=True)
+    path.write_bytes((ROOT / relative).read_bytes())
+    listed = {relative: [152], 'tools/own_reader.py': [7]}
+    assert _ratcheted_directory_reads(tmp_path, listed) == {'tools/own_reader.py': [7]}
+
+
+def test_a_one_byte_vendor_change_counts_again(tmp_path):
+    relative = 'tools/ci/check_no_secret_leak.py'
+    path = tmp_path / relative
+    path.parent.mkdir(parents=True)
+    path.write_bytes((ROOT / relative).read_bytes() + b'\n')
+    listed = {relative: [152]}
+    assert _ratcheted_directory_reads(tmp_path, listed) == listed
+
+
+def test_the_same_vendor_bytes_at_an_unpinned_path_count_again(tmp_path):
+    relative = 'other/check_no_secret_leak.py'
+    path = tmp_path / relative
+    path.parent.mkdir(parents=True)
+    path.write_bytes((ROOT / 'tools/ci/check_no_secret_leak.py').read_bytes())
+    listed = {relative: [152]}
+    assert _ratcheted_directory_reads(tmp_path, listed) == listed
