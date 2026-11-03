@@ -24,9 +24,22 @@ def test_every_artifact_upload_is_scanned_first():
             if 'actions/upload-artifact@' not in step:
                 continue
             scan = steps[index - 1]
-            assert 'check_no_secret_leak.py' in scan, f'{workflow.name}: an upload is not scanned first'
-            assert '--env BUILDBUDDY_API_KEY' in scan and '--env MERGIFY_TOKEN' in scan, workflow.name
+            assert ('python3 tools/ci/check_no_secret_leak.py ' in scan
+                    or 'python3 tools/ci/bazel_gate.py scan-artifacts ' in scan), \
+                f'{workflow.name}: an upload is not scanned first'
+            # --require both selects the variable for scanning and refuses a missing value.
             assert '--require BUILDBUDDY_API_KEY' in scan and '--require MERGIFY_TOKEN' in scan, workflow.name
+
+
+@pytest.mark.parametrize('name', ['BUILDBUDDY_API_KEY', 'MERGIFY_TOKEN'])
+def test_required_variables_are_scanned_without_a_duplicate_env_flag(name, monkeypatch, tmp_path, capsys):
+    spec = importlib.util.spec_from_file_location('required_secret_scanner', ROOT / 'tools/ci/check_no_secret_leak.py')
+    scanner = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(scanner)
+    monkeypatch.setenv(name, 'fake-required-only-secret')
+    (tmp_path / 'diagnostic.log').write_text('fake-required-only-secret')
+    assert scanner.main([str(tmp_path), '--require', name]) == 1
+    assert f'{name}: secret detected' in capsys.readouterr().out
 
 
 @pytest.mark.parametrize('value', [None, ''])

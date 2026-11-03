@@ -137,7 +137,8 @@ def test_budget_warnings_preserve_the_first_verdict_without_rerunning(status, mo
         assert 'budget_reruns' not in record
 
 
-def test_budget_warnings_collect_each_shard_without_changing_status(tmp_path):
+def test_budget_warnings_collect_each_shard_without_changing_status(tmp_path, monkeypatch):
+    monkeypatch.setattr(bazel_gate, 'ROOT', tmp_path)
     folder = tmp_path / 'bazel-testlogs/tests/test_wire/shard_1_of_2/test.outputs'
     folder.mkdir(parents=True)
     warning = {'nodeid': 'tests/test_wire.py::test_one', 'seconds': 10000, 'budget_seconds': 20}
