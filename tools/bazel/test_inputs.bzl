@@ -5,16 +5,22 @@ listed here reads files through a root or a table the path analysis can't
 follow. The remote executor makes such a read fail rather than pass, which is
 how an entry is found. Keep each entry to the files named, and the reason true.
 Entries are keyed by the test file's target; its `.bytes` lane shares them.
+`packages` names pip packages from tools/bazel/requirements.txt that only the
+torch-lane target installs.
 """
 
 _CONSTRUCTION_T8 = "//:docs/measurements/construction/2026-10-07/glm53-flash-4layer-selected-t8.json"
 _CONSTRUCTION_REASON = "experiments/t8r_speed/bench_dense_module.py reads this construction record through os.path.join over a root computed at run time."
+
+_PRISMAQUANT = "it reads PrismaQuant, pinned in tools/ci/gate_prismaquant_requirements.txt; its own dependencies are heavy, so only the tests that read it carry it."
 
 TEST_INPUTS = {
     "//tests:test_standalone_boundary": struct(
         data = ["//src/tessera:files"],
         reason = "scan() reads every module under src/tessera through the root its caller passes (default the repository root).",
     ),
+    "//tests:test_native_moe_glm_owner": struct(data = [], packages = ["prismaquant"], reason = _PRISMAQUANT),
+    "//tests:test_uniform_control": struct(data = [], packages = ["prismaquant"], reason = _PRISMAQUANT),
     "//tests:test_bench_kda_geometry": struct(data = [_CONSTRUCTION_T8], reason = _CONSTRUCTION_REASON),
     "//tests:test_bench_kda_timing_scope": struct(data = [_CONSTRUCTION_T8], reason = _CONSTRUCTION_REASON),
     "//tests:test_export_attention_owners": struct(data = [_CONSTRUCTION_T8], reason = _CONSTRUCTION_REASON),

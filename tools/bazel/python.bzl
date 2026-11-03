@@ -50,7 +50,10 @@ def ts_py_test(name, path, library, lane, args = [], tags = [], deps = [], data 
         main = "//tools/bazel:python_runner.py",
         srcs = ["//tools/bazel:python_runner.py"],
         args = [path, lane] + args,
-        deps = _unique([library] + deps + _TEST_DEPS + [requirement(package) for package in _LANE_PACKAGES[lane]]),
+        deps = _unique([library] + deps + _TEST_DEPS + [
+            requirement(package)
+            for package in _LANE_PACKAGES[lane] + (getattr(extra, "packages", []) if extra and lane == "torch" else [])
+        ]),
         data = _unique(_TEST_DATA + data + (extra.data if extra else [])),
         tags = tags + extra_tags + ["gate-lane-" + lane],
         exec_properties = exec_properties,

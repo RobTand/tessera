@@ -306,6 +306,10 @@ def test_evaluator_refuses_a_contract_with_api_problems(packet):
 
 def test_observer_reports_receiver_name_variants_without_false_refusal(monkeypatch):
     pytest.importorskip("prismabuild.client")
+    # The observer verifies the installed client against the fleet's published
+    # PrismaBuild checkout; a runner without that publication skips (#1562).
+    if not Path(prepare.PB_ROOT).is_dir():
+        pytest.skip(f"the published PrismaBuild checkout {prepare.PB_ROOT} is not on this box")
     import prismabuild.client as published_client
     real_queue = published_client.PoolQueue
 

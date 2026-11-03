@@ -1,0 +1,7 @@
+# PrismaQuant at a pinned commit, for the torch-lane tests that read it:
+# tests/test_native_moe_glm_owner.py imports prismaquant.native_moe_panel, and
+# tests/test_uniform_control.py prices units against prismaquant's
+# tessera_formats (tests/box_artifacts.py root "prismaquant"). Its own
+# dependencies (transformers, datasets, compressed-tensors, ...) come with it,
+# so under Bazel only those two tests carry it (tools/bazel/test_inputs.bzl).
+prismaquant @ https://github.com/RobTand/prismaquant/archive/f1335b0333749c1f400934b9e0f6ac06a99cf706.tar.gz

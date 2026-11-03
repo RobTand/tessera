@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import importlib.util
 import json
 import math
 import os
@@ -198,6 +199,11 @@ def run_plan(plan: dict, *, root: Path, output: Path, junit: Path,
             limit * BUDGET_ENFORCEMENT_TOLERANCE > PYTEST_TIMEOUT_SECONDS})
         environment['GATE_COLLECTION_DIR'] = str(output.parent.resolve())
         environment['PYTHONPATH'] = str(Path(__file__).resolve().parent) + os.pathsep + str(root / 'src') + os.pathsep + environment.get('PYTHONPATH', '')
+        # tests/box_artifacts.py's "prismaquant" root: the pinned, installed
+        # PrismaQuant (gate_prismaquant_requirements.txt) unless a caller named one.
+        prismaquant = importlib.util.find_spec('prismaquant')
+        if prismaquant is not None and prismaquant.origin and not environment.get('TESSERA_PRISMAQUANT_DIR'):
+            environment['TESSERA_PRISMAQUANT_DIR'] = str(Path(prismaquant.origin).resolve().parent.parent)
         junit.parent.mkdir(parents=True, exist_ok=True)
         profile = ['-X', 'importtime'] if os.environ.get('GATE_PROFILE_STARTUP') == '1' else []
         command = [sys.executable, *profile, '-m', 'pytest', '-n', str(workers), '--dist=loadgroup', '--no-loadscope-reorder',
