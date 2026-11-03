@@ -36,8 +36,8 @@ SEEDS = [
      ['//tests:test_native_operator_resources']),
     ('schema document', 'docs/schema/allowable-rung-table.v2.schema.json', ('replace', '{"seeded": break'),
      ['//tests:test_rung_allowability_structure_spec']),
-    ('test helper', 'tests/_whole_phase_sdk.py', ('append', RAISE), ['//tests:test_value_prefetch']),
-    ('gate tooling', 'tools/ci/gate_select.py', ('append', RAISE), ['//tests:test_gate_']),
+    ('test helper', 'tests/_whole_phase_sdk.py', ('append', RAISE), ['//tests:test_value_prefetch_numeric']),
+    ('gate tooling', 'tools/ci/gate_select.py', ('append', RAISE), ['//tests:test_gate_contract']),
 ]
 
 
@@ -50,8 +50,8 @@ def mutate(root, path, mutation):
 
 
 def seed_verdict(selected, statuses, expected):
-    failing = sorted(label for label in selected if statuses.get(label) != 'PASSED')
-    caught = [label for label in failing if any(label.startswith(prefix) for prefix in expected)]
+    failing = sorted(label for label in selected if statuses.get(label) == 'FAILED')
+    caught = [label for label in failing if label in expected]
     return {'impacted_tests': len(selected), 'failing_selected': failing, 'caught': bool(caught),
             'example': caught[0] if caught else None}
 
