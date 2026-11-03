@@ -117,3 +117,5 @@ Artifact uploads use Python 3.14's standard-library zstd decoder and the byte-id
 Native history hydration requires the standard Remote Bazel clone's object-pack directory at `.git/objects/pack`; an unexpected Git pack location fails closed before marker cleanup. Directory reads use explicit checkout anchors and cleanup consumes the already enumerated path list. The unnamed-directory-read ratchet stays at 117 modules and 171 sites. Its only exemption is the exact path and SHA256 of the byte-identical vendored third-party scanner, not repository code. A changed byte or another path counts again.
 
 The repository directory-read census is isolated in `test_directory_read_census` on the uncached runner lane. It verifies that every eligible tracked Python source appears in its measured graph before checking the unchanged 117-module/171-site ceiling. Scanner unit tests keep their remote placement.
+
+This documentation-only migration probe verifies the native gate selection.
