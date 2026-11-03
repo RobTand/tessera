@@ -28,6 +28,27 @@ def test_an_unexpected_failure_or_an_unselected_test_is_not():
     assert not seeded_breaks.seed_verdict([], {}, ['//tests:test_wire'])['caught']
 
 
+
+@pytest.mark.parametrize('status', ['PASSED', 'TIMEOUT', 'NO_STATUS', 'INCOMPLETE', None])
+def test_only_a_completed_failure_proves_a_seed(status):
+    label = '//tests:test_wire'
+    statuses = {} if status is None else {label: status}
+    assert not seeded_breaks.seed_verdict([label], statuses, [label])['caught']
+
+
+def test_a_family_prefix_does_not_attest_an_exact_target():
+    assert not seeded_breaks.seed_verdict(
+        ['//tests:test_wire.bytes'], {'//tests:test_wire.bytes': 'FAILED'},
+        ['//tests:test_wire'])['caught']
+
+
+def test_every_expected_seed_label_names_a_declared_test_target():
+    import re
+    build = (ROOT / 'tests/BUILD.bazel').read_text()
+    targets = {'//tests:' + name for name in re.findall(r'name = "([^"]+)"', build)}
+    for _, _, _, expected in seeded_breaks.SEEDS:
+        assert set(expected) <= targets, expected
+
 def test_seeds_cover_at_least_eight_places_and_name_existing_files():
     assert len({place for place, *_ in seeded_breaks.SEEDS}) >= 8
     for _, path, _, expected in seeded_breaks.SEEDS:
