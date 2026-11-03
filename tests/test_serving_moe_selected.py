@@ -16,7 +16,11 @@ torch = pytest.importorskip('torch')
 
 from tessera.serving import moe_route
 from tessera.serving.scheme import validate_tessera_moe_scheme
-from test_serving_moe_route import _stack, EXPERTS, HIDDEN, INTER  # the tests dir is on sys.path (conftest)
+from serving_moe_route_support import _stack, EXPERTS, HIDDEN, INTER  # the tests dir is on sys.path (conftest)
+
+from serving_moe_selected_support import (
+    _layer,
+)
 
 
 @pytest.fixture(scope='module')
@@ -166,28 +170,9 @@ def stub_runtime(monkeypatch):
     utils.set_weight_attrs = lambda param, attrs: [setattr(param,k,v) for k,v in attrs.items()]
 
 
-def _layer():
-    layer = torch.nn.Module()
-    layer.moe_config = types.SimpleNamespace(is_act_and_mul=True,
-        moe_parallel_config=types.SimpleNamespace(tp_size=1, tp_rank=0, ep_size=1, dp_size=1,
-            pcp_size=1, sp_size=1, use_ep=False, enable_eplb=False),
-        experts_per_token=2)
-    layer.activation = 'silu'
-    layer.global_num_experts = EXPERTS
-    layer.expert_map = None
-    layer.apply_router_weight_on_input = False
-    layer._expert_routing_tables = lambda: None
-    return layer
-
-
 def _build(scheme, layer):
     config = moe_route.ResearchSelectedMoeConfig(max_experts_per_chunk=2)
     return moe_route.build_tessera_moe_method(scheme,'m','resident',layer,research_selected=config)
-
-
-
-
-
 
 
 _MISSING_PARALLEL_FIELD = object()
@@ -214,9 +199,6 @@ def _parallel_field(layer, field, value):
         delattr(parallel, field)
     else:
         setattr(parallel, field, value)
-
-
-
 
 
 @pytest.mark.parametrize('expected_tp,live_tp', [(1, 2), (2, 1), (2, 3)])
@@ -303,13 +285,9 @@ def test_research_builder_refuses_skipping_final_reduction_at_two_ranks(
         _parallel_method(original_wires[2], layer, 2)
 
 
-
-
 def test_production_streamed_gate_is_not_an_alias_for_research(original_wires):
     with pytest.raises(ValueError):
         moe_route.build_tessera_moe_method(original_wires[2],'m','streamed',_layer())
-
-
 
 
 @pytest.mark.parametrize('mode,graph', [('COMPILE','NONE'),('NONE','FULL')])

@@ -7,7 +7,7 @@ from pathlib import Path
 import pytest
 
 from tessera.cached_unit import CachedUnitBundle, verify_cached_unit
-from test_cached_producer import _record, encoded  # noqa: F401 (shared fixture)
+from cached_producer_support import _record, encoded  # noqa: F401 (shared fixture)
 from rooted_cached_bundle_support import rooted
 import reuse_authority_fixture as fixture
 from reuse_authority_fixture import AUTHORITY

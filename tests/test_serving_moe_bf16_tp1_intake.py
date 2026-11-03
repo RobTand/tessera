@@ -18,7 +18,7 @@ from tessera.serving import moe_route
 from tessera.serving.scheme import TESSERA_BF16, TESSERA_FP8, TESSERA_NVFP4
 # Sibling test modules by their own names: ``tests/conftest.py`` puts this
 # directory on ``sys.path``.
-from test_native_window_moe_method import _native_layer
+from native_window_moe_method_support import _native_layer
 from test_serving_dispatch import _moe_scheme
 
 # The routed scheme this file builds: ``test_serving_dispatch._moe_scheme``'s

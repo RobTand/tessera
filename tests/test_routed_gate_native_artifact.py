@@ -12,7 +12,7 @@ import pytest
 pytest.importorskip("prismabuild", reason="native public-reader callback controls require the published PB SDK")
 from prismabuild import client
 from _routed_gate_sdk_fixture import fixture
-from test_routed_gate_staged_store import ROOT
+from routed_gate_staged_store_support import ROOT
 
 
 def callback_module():
@@ -88,7 +88,10 @@ def test_foreign_already_loaded_module_is_not_adopted(tmp_path,monkeypatch):
 def test_load_mutation_refuses_and_restores_callback(tmp_path,monkeypatch,fault,direct):
     def corrupt(lib,staged):
         if fault=='foreign_origin':lib.__file__='/foreign/module.so'
-        else:staged.write_bytes(b'other-wire')
+        else:
+            before = staged.stat()
+            staged.write_bytes(b'other-wire')
+            os.utime(staged, ns=(before.st_atime_ns, before.st_mtime_ns + 1_000_000_000))
     owner,reader,staged,rf,original,calls=owner_fixture(tmp_path,monkeypatch,exec_hook=corrupt,direct=direct)
     with pytest.raises(ValueError):
         rf.build_library(owner.MODULE,owner.MODULE,lambda *a:pytest.fail('JIT'))
@@ -104,7 +107,9 @@ def test_load_mutation_refuses_and_restores_callback(tmp_path,monkeypatch,fault,
 def test_profile_mutation_refuses_after_fence_and_restores_callback(tmp_path,monkeypatch,direct):
     owner,reader,staged,rf,original,calls=owner_fixture(tmp_path,monkeypatch,direct=direct)
     rf.build_library(owner.MODULE,owner.MODULE,lambda *a:pytest.fail('JIT'))
+    before = staged.stat()
     staged.write_bytes(b'other-wire')
+    os.utime(staged, ns=(before.st_atime_ns, before.st_mtime_ns + 1_000_000_000))
     fences=[]
     with pytest.raises(ValueError):owner.finish(lambda:fences.append(True))
     assert fences==[True] and owner.closed and rf.build_library is original
