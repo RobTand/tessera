@@ -390,6 +390,7 @@ def gate_main(workspace, base, head, metadata):
     workspace.checkout(head)
     workspace.ensure_history(head)
     changed, deleted = workspace.changes(base, head)
+    selection_error = None
     try:
         used = workspace.used_sources()
         forced = fallback_files(changed | deleted)
@@ -398,8 +399,10 @@ def gate_main(workspace, base, head, metadata):
         selection = gate_decision(changed, deleted, impacted, used, workspace.tests('amd64'))
     except GateError as error:
         workspace.checkout(head)
-        selection = {'selection': 'error', 'reason': [str(error)], 'selected': sorted(workspace.tests('amd64'))}
+        selection_error = str(error)
+        selection = {'selection': 'error', 'reason': [selection_error], 'selected': []}
     return {'selection': selection['selection'], 'reason': selection['reason'],
+            'selection_error': selection_error,
             'selected': selection['selected'], 'full_populations': full_populations(workspace, CONFIGS),
             'inputs': workspace.inputs_check(), 'changed': sorted(changed | deleted),
             'durations': {'total': round(time.monotonic() - started, 1)}}

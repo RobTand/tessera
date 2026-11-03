@@ -74,12 +74,25 @@ with `--target_pattern_file` in a separate Remote Bazel run, capped at
 one-hour limit and avoids the Run action's single-argument size limit.
 
 Only the fail-closed gate `//...` fallback may execute its two shard Runs in
-parallel, at most two concurrent Remote Bazel runs per repository with
+parallel, at most two concurrent Remote Bazel runs per gate controller with
 `--jobs=16` each. Actions use the self-hosted pools only, without cloud
-fallback. Selected gates, post-merge records and development runs stay at one
-run per repository. Mergify's 30-minute `checks_timeout` and merge conditions
+fallback. Selected gates and post-merge controllers each run one invocation at
+a time. Agent/development runs stay at one per repository, enforced
+operationally by the migration leads. Mergify's 30-minute `checks_timeout` and merge conditions
 are unchanged. The controller encodes the fallback-only bound; it adds no
 scheduler.
+
+Mergify's existing `max_parallel_checks: 2` bounds batch-draft gates. Two
+batch-draft fallbacks can therefore overlap four Remote Bazel shard Runs,
+self-hosted only, when Bazel, lock or gate-workflow inputs change. Existing
+per-PR/per-SHA workflow concurrency stays in place. A shared GitHub job
+concurrency group would let newer pending jobs cancel older required checks,
+so this cutover adds no such group or scheduler.
+
+Excess action demand queues on the executors. On dl380g10's 40 CPUs, the
+four-wide case is expected to produce longer shards, without executor
+refusals or timeouts. A refusal or timeout observed under concurrency is a
+finding to report.
 
 TL3 keeps BuildBuddy priority if a fallback batch lands while TL3's queue is backed up.
 

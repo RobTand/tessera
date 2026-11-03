@@ -22,8 +22,8 @@ test --test_env=OPENBLAS_NUM_THREADS=1
 
 # Pass the BuildBuddy API key header from the environment or a private rc
 # file. Never commit the key. BuildBuddy's free plan is shared with TL3's,
-# PrismaBuild's and PrismaQuant's gates, so Tessera takes at most 16 of its
-# executors' slots at a time.
+# PrismaBuild's and PrismaQuant's gates. Each invocation has 16 jobs; parallel
+# gate-fallback shards queue excess action demand on the self-hosted pools.
 build:remote --remote_cache=grpcs://remote.buildbuddy.io
 build:remote --remote_download_minimal
 build:remote --jobs=16

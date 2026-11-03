@@ -10269,13 +10269,21 @@ verdict; assertions and hard TIMEOUTs fail without a rerun.
 Fallback and post-merge full populations are split into two committed target
 files per architecture, including non-test build rules. The client submits
 each with `--target_pattern_file` in a separate Remote Bazel run capped
-at 55 minutes. Only gate fallback permits two concurrent shard runs per repo,
+at 55 minutes. Only gate fallback permits two concurrent shard runs per controller,
 each with `--jobs=16` on self-hosted action pools; all other paths stay serial.
-Mergify's 30-minute checks timeout and merge conditions are unchanged.
+Mergify's 30-minute checks timeout and merge conditions are unchanged. Its two
+parallel batch checks can overlap four self-hosted shard Runs for two fallbacks
+on Bazel, lock or gate-workflow changes. Excess demand queues on executors;
+on dl380g10's 40 CPUs the expected effect is longer shards, not refusal or
+timeout. Report any contrary proof result. Agent/development admission stays
+operationally limited to one run per repo. No shared GitHub job group is added.
 TL3 retains BuildBuddy priority when its queue is backed up; no scheduler is added.
 Live-query validation and complete, disjoint result unions
 fail closed on drift or missing shards. The combined post-merge record keeps
-all invocation IDs and per-architecture budget warnings.
+all invocation IDs and per-architecture budget warnings. Post-merge detection
+errors remain gate-errors while full coverage completes; unknown selection
+is not counted as a measured detection miss. Required checks need the complete
+Bazel job, including the final keyed scan, to succeed.
 
 Runner steps scan the actual artifact directory in-process with the runner's
 key before exit. A missing key fails the scan without deleting artifacts;

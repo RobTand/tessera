@@ -283,7 +283,7 @@ def merge_full_shards(plan, parts):
             bad |= bool(row['bazel_exit'] or row['failed'] or row['verdict'] == 'fail')
         records[arch] = {'verdict': 'fail' if bad else 'pass', 'failed': sorted(failed),
                          'tests': len(expected['tests']), 'budget_warnings': warnings,
-                         'missed': sorted(failed - set(plan['selected']))}
+                         'missed': [] if plan.get('selection_error') else sorted(failed - set(plan['selected']))}
     merged.pop('full_populations')
     if plan['mode'] == 'pr':
         merged.update({key: records['amd64'][key]
@@ -313,7 +313,7 @@ def post_merge_record(result, prs, seconds):
     """One machine-readable line per post-merge run."""
     failures = {arch: info['failed'] for arch, info in result.get('architectures', {}).items()}
     missed = {arch: info['missed'] for arch, info in result.get('architectures', {}).items()}
-    if result.get('error') or result.get('inputs'):
+    if result.get('error') or result.get('inputs') or result.get('selection_error'):
         verdict = 'gate-error'
     elif missed.get('amd64'):
         verdict = 'detection-miss'
@@ -328,7 +328,8 @@ def post_merge_record(result, prs, seconds):
             'selected': len(result.get('selected', [])),
             'tests': {arch: row['tests'] for arch, row in result.get('architectures', {}).items()},
             'failures': failures, 'missed': missed, 'seconds': round(seconds, 1),
-            'error': result.get('error'), 'inputs': result.get('inputs'),
+            'error': result.get('error'), 'selection_error': result.get('selection_error'),
+            'inputs': result.get('inputs'),
             'invocations': result.get('invocations', []),
             'budget_warnings': {arch: row.get('budget_warnings', [])
                                 for arch, row in result.get('architectures', {}).items()}}
@@ -338,6 +339,8 @@ def explain(result, prs):
     lines = [f"Bazel gate ({result['mode']}) {result['base'][:12]}..{result['head'][:12]}"]
     if result.get('error'):
         lines.append(f"Detection failed: {result['error']}")
+    if result.get('selection_error'):
+        lines.append('Post-merge selection failed: ' + result['selection_error'])
     if result.get('inputs'):
         lines.append('Stale generated inputs, parity drift or growing budgets; fix with '
                      'tools/bazel/generate.sh: ' + '; '.join(result['inputs']))
@@ -359,7 +362,9 @@ def explain(result, prs):
                          for row in info.get('budget_warnings', []))
             for label in info['failed']:
                 caught = 'not selected: detection miss' if label in info['missed'] else 'was selected'
-                if arch == 'arm64':
+                if result.get('selection_error'):
+                    caught = 'selection unavailable: detection failed'
+                elif arch == 'arm64':
                     caught = 'arm64 runs only after merge'
                 lines.append(f'FAILED on {arch}: {label} ({caught})')
     return '\n'.join(lines)
@@ -370,7 +375,7 @@ def aggregate(needs):
     passed, and the hosted boundary job (no-torch proofs, policies) passed."""
     gate = needs.get('bazel', {})
     values = gate.get('outputs', {})
-    if gate.get('result') not in ('success', 'failure') or values.get('scopes_uploaded') != 'true':
+    if gate.get('result') != 'success' or values.get('scopes_uploaded') != 'true':
         raise RuntimeError(f'The Bazel gate did not finish detection and scope upload: {gate}')
     if values.get('tests') != 'success':
         raise RuntimeError('The Bazel gate failed: see the Bazel job')
