@@ -1778,6 +1778,7 @@ ts_py_library(
         "test_dense_prepared_census.py",
         "test_dev_mode_seal_check.py",
         "test_diagonals.py",
+        "test_directory_read_census.py",
         "test_doc_alphabet_70.py",
         "test_doc_route_71.py",
         "test_doc_scope_69.py",
@@ -4890,6 +4891,48 @@ ts_py_library(
         "//src/tessera:encode_cycle",
         "//src/tessera:errors",
         "//src/tessera:trellis",
+    ],
+)
+
+ts_py_test(
+    name = "test_directory_read_census",
+    path = "tests/test_directory_read_census.py",
+    library = ":test_directory_read_census_lib",
+    deps = [
+        "//tools:__init__",
+    ],
+    lane = "torch",
+    args = [
+        "--budget='{\"enforce\":true,\"seconds\":80,\"slow\":{}}'",
+    ],
+    timeout = "moderate",
+)
+
+ts_py_test(
+    name = "test_directory_read_census.bytes",
+    path = "tests/test_directory_read_census.py",
+    library = ":test_directory_read_census_lib",
+    deps = [
+        "//tools:__init__",
+    ],
+    lane = "bytes",
+    args = [
+        "--budget='{\"enforce\":true,\"seconds\":80,\"slow\":{}}'",
+    ],
+    timeout = "moderate",
+)
+
+ts_py_library(
+    name = "test_directory_read_census_lib",
+    srcs = [
+        "test_directory_read_census.py",
+    ],
+    data = [
+        "//tools/bazel:nonhermetic.bzl",
+    ],
+    deps = [
+        "//tools:ci/check_no_secret_leak",
+        "//tools:impacted_tests",
     ],
 )
 
@@ -11065,6 +11108,7 @@ ts_py_library(
         "test_dense_prepared_census.py",
         "test_dev_mode_seal_check.py",
         "test_diagonals.py",
+        "test_directory_read_census.py",
         "test_doc_alphabet_70.py",
         "test_doc_route_71.py",
         "test_doc_scope_69.py",
@@ -11828,6 +11872,7 @@ ts_py_library(
         "test_dense_prepared_census.py",
         "test_dev_mode_seal_check.py",
         "test_diagonals.py",
+        "test_directory_read_census.py",
         "test_doc_alphabet_70.py",
         "test_doc_route_71.py",
         "test_doc_scope_69.py",
@@ -22503,9 +22548,6 @@ ts_py_test(
     name = "test_secret_scan",
     path = "tests/test_secret_scan.py",
     library = ":test_secret_scan_lib",
-    deps = [
-        "//tools:__init__",
-    ],
     lane = "torch",
     args = [
         "--budget='{\"enforce\":true,\"seconds\":80,\"slow\":{}}'",
@@ -22517,9 +22559,6 @@ ts_py_test(
     name = "test_secret_scan.bytes",
     path = "tests/test_secret_scan.py",
     library = ":test_secret_scan_lib",
-    deps = [
-        "//tools:__init__",
-    ],
     lane = "bytes",
     args = [
         "--budget='{\"enforce\":true,\"seconds\":80,\"slow\":{}}'",
@@ -22533,13 +22572,11 @@ ts_py_library(
         "test_secret_scan.py",
     ],
     data = [
-        "//:README.md",
         "//:files/.github/workflows",
         "//tools:ci/check_no_secret_leak.sha256",
     ],
     deps = [
         "//tools:ci/check_no_secret_leak",
-        "//tools:impacted_tests",
     ],
 )
 
@@ -28450,6 +28487,7 @@ ts_py_library(
         "test_dense_prepared_census.py",
         "test_dev_mode_seal_check.py",
         "test_diagonals.py",
+        "test_directory_read_census.py",
         "test_doc_alphabet_70.py",
         "test_doc_route_71.py",
         "test_doc_scope_69.py",

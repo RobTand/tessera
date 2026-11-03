@@ -70,9 +70,22 @@ def test_the_unnamed_directory_read_ceiling_bounds_modules_and_sites_independent
 
 
 def test_this_repository_does_not_gain_an_unnamed_directory_read():
-    listed = _ratcheted_directory_reads(
-        ROOT, impacted.select(ROOT, ["README.md"])["unnamed_directory_reads"])
+    checkout = subprocess.check_output(
+        ['git', 'rev-parse', '--show-toplevel'], cwd=ROOT, text=True).strip()
+    assert Path(checkout).resolve() == ROOT.resolve(), 'census must use the repository checkout'
+    tracked = subprocess.check_output(['git', 'ls-files', '-z', '--', '*.py'], cwd=ROOT).decode().split('\0')
+    expected = {path for path in tracked if path and not any(
+        part in impacted.SKIP_DIRS for part in Path(path).parts[:-1])}
+    assert expected, 'the checkout must contain tracked Python sources'
+    unnamed = {}
+    by_name, _, _, _ = impacted.import_graph(ROOT, unnamed_reads=unnamed)
+    observed = {path.relative_to(ROOT).as_posix() for path in by_name.values()}
+    missing = expected - observed
+    assert not missing, f'tracked Python sources missing from directory census: {len(missing)}'
+    listed = _ratcheted_directory_reads(ROOT, unnamed)
     sites = sum(len(lines) for lines in listed.values())
+    print(f'directory census: tracked_python={len(expected)} observed_python={len(observed)} '
+          f'missing={len(missing)} modules={len(listed)} sites={sites}')
     assert not _exceeds_unnamed_directory_read_ceiling(len(listed), sites), (
         "a directory read whose base cannot be named was added; name its base, "
         "or raise the ceiling here with the reason", len(listed), sites, sorted(listed))

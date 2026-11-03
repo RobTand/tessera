@@ -383,6 +383,7 @@
           "//tests:test_dense_prepared_census_lib",
           "//tests:test_dev_mode_seal_check",
           "//tests:test_dev_mode_seal_check.bytes",
+          "//tests:test_directory_read_census.bytes",
           "//tests:test_doc_route_71",
           "//tests:test_doc_route_71.bytes",
           "//tests:test_doc_route_71_lib",
@@ -1123,6 +1124,7 @@
           "//tests:test_dense_prefill_cross_check_merge",
           "//tests:test_dev_mode_seal_check",
           "//tests:test_dev_mode_seal_check.bytes",
+          "//tests:test_directory_read_census.bytes",
           "//tests:test_doc_route_71",
           "//tests:test_doc_route_71.bytes",
           "//tests:test_e4m3_ladder",
@@ -1532,7 +1534,7 @@
         ],
         "index": 0,
         "file": "tools/bazel/full_targets/amd64-0.targets",
-        "sha256": "09c77056a3dc5d868f057dbd7db0c8e28b91cb516a81eebd7492e2af87273084"
+        "sha256": "3fc77162dbce2c3da3e6d341dc096f50c1e9904b19365157bf46aab6e5d72d17"
       },
       {
         "rules": [
@@ -1957,6 +1959,8 @@
           "//tests:test_diagonals",
           "//tests:test_diagonals.bytes",
           "//tests:test_diagonals_lib",
+          "//tests:test_directory_read_census",
+          "//tests:test_directory_read_census_lib",
           "//tests:test_doc_alphabet_70",
           "//tests:test_doc_alphabet_70.bytes",
           "//tests:test_doc_alphabet_70_lib",
@@ -2734,6 +2738,7 @@
           "//tests:test_dense_prefill_native_closure.bytes",
           "//tests:test_diagonals",
           "//tests:test_diagonals.bytes",
+          "//tests:test_directory_read_census",
           "//tests:test_doc_alphabet_70",
           "//tests:test_doc_alphabet_70.bytes",
           "//tests:test_doc_scope_69",
@@ -3181,7 +3186,7 @@
         ],
         "index": 1,
         "file": "tools/bazel/full_targets/amd64-1.targets",
-        "sha256": "dd7d9c13b72653f193b47693c2bcc1c90e5790129f4ae4f35ce3682e3f6c7e3a"
+        "sha256": "5e1707b6f4bf5b2c0393572e233916b639f5fa702503aaa730aa4618e22b2cbb"
       }
     ],
     "arm64": [
@@ -5117,6 +5122,7 @@
           "//tests:test_diagonals",
           "//tests:test_diagonals.bytes",
           "//tests:test_diagonals_lib",
+          "//tests:test_directory_read_census_lib",
           "//tests:test_doc_alphabet_70",
           "//tests:test_doc_alphabet_70.bytes",
           "//tests:test_doc_alphabet_70_lib",
@@ -6324,7 +6330,7 @@
         ],
         "index": 1,
         "file": "tools/bazel/full_targets/arm64-1.targets",
-        "sha256": "fdec6b9811c134ed1cf6a9ff45cbafa66dd08aa1c4d20c1b919c38586acf4cee"
+        "sha256": "ee53e0c90ac71afd035a82a62fe9950983d24904dd57c21b4df9d12e9db02953"
       }
     ]
   }

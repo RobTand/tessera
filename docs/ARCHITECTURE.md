@@ -10299,7 +10299,11 @@ vendored scanner remains unchanged. Unscannable files are excluded with a
 diagnostic and the remaining set must pass a clean second scan; secret hits
 and unknown diagnostics clear the directory and fail. Raw BEP and command logs
 are deleted and fail the step. Both diagnostic logs remain subject to the scan.
-The directory-read ratchet retains 117/171, with only an exact-path, exact-hash
+The directory-read census has an isolated, uncached runner target. It checks
+that its graph contains every eligible tracked Python file before applying
+the ceiling, so partial remote runfiles cannot silently reduce the population.
+Scanner unit tests remain remotely executable. The ratchet retains 117/171,
+with only an exact-path, exact-hash
 exemption for pinned vendored third-party scanner code. Only `BBRUN_FINAL_SCAN=1` defers scanning to the
 shared client's final scanner step; `remote_gate.py` does not set that marker.
 Runner scans require the BuildBuddy key. Hosted artifact uploads require both
