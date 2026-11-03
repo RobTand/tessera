@@ -12,6 +12,7 @@ import json
 from pathlib import Path
 
 import pytest
+from accounting_source_support import isolated_prismaquant_imports
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -125,7 +126,8 @@ def test_prismaquant_is_pinned_and_hash_locked_for_the_tests_that_read_it():
     assert '/archive/' in entry[1] and entry[2].strip().startswith('--hash=sha256:')
 
 
-def test_the_runner_points_box_artifacts_at_an_installed_prismaquant(monkeypatch, tmp_path):
+def test_the_runner_points_box_artifacts_at_an_installed_prismaquant(
+        monkeypatch, tmp_path, isolated_prismaquant_imports):
     runtime = _load('runtime', 'tools/bazel/runtime.py')
     package = tmp_path / 'site' / 'prismaquant'
     package.mkdir(parents=True)

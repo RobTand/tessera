@@ -1175,6 +1175,7 @@ ts_py_library(
     deps = [
         "//tools:ci/bazel_parity",
         "//tools:ci/gate_run",
+        ":accounting_source_support",
     ],
 )
 
