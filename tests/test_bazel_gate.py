@@ -319,33 +319,87 @@ def test_an_incomplete_artifact_with_a_secret_hit_still_fails(monkeypatch, artif
     assert list(output.iterdir()) == []
 
 
-def test_native_scanner_bootstrap_scrubs_children_and_replaces_the_process(monkeypatch, tmp_path):
+@pytest.fixture
+def scanner_python_archive(monkeypatch):
+    import hashlib
+    import io
+    import tarfile
+
+    payload = io.BytesIO()
+    executable = b'pinned scanner interpreter fixture'
+    with tarfile.open(fileobj=payload, mode='w:gz') as archive:
+        member = tarfile.TarInfo('python/bin/python3.14')
+        member.size = len(executable)
+        member.mode = 0o755
+        archive.addfile(member, io.BytesIO(executable))
+    data = payload.getvalue()
+    monkeypatch.setattr(bazel_gate, 'SCANNER_PYTHON_SHA256', hashlib.sha256(data).hexdigest(), raising=False)
+    requests, commands, received = [], [], []
+
+    def download(url, **kwargs):
+        assert url.startswith('https://') and url.endswith('.tar.gz')
+        requests.append(url)
+        return io.BytesIO(data)
+
+    def no_pip(argv, **kwargs):
+        commands.append(argv)
+        received.extend(name for name in ('BUILDBUDDY_API_KEY', 'UNRELATED_TOKEN')
+                        if kwargs.get('env', {}).get(name))
+        assert argv[1:3] == ['-m', 'pip'], 'the scanner bootstrap must not spawn children'
+        return bazel_gate.subprocess.CompletedProcess(argv, 1, stdout='', stderr='No module named pip')
+
+    monkeypatch.setattr(bazel_gate.urllib.request, 'urlopen', download)
+    monkeypatch.setattr(bazel_gate.subprocess, 'run', no_pip)
+    return data, executable, requests, commands, received
+
+
+def test_native_scanner_bootstrap_works_without_pip_and_replaces_the_process(
+        monkeypatch, tmp_path, scanner_python_archive):
+    _, executable, requests, commands, received = scanner_python_archive
     monkeypatch.setenv('BUILDBUDDY_API_KEY', 'fake-bootstrap-secret')
     monkeypatch.setenv('UNRELATED_TOKEN', 'fake-bootstrap-token')
     monkeypatch.setattr(bazel_gate.sys, 'version_info', (3, 12))
     monkeypatch.setattr(bazel_gate.tempfile, 'gettempdir', lambda: str(tmp_path))
-    commands, received = [], []
-
-    def command(argv, **kwargs):
-        commands.append(argv)
-        received.extend(name for name in ('BUILDBUDDY_API_KEY', 'UNRELATED_TOKEN')
-                        if kwargs.get('env', {}).get(name))
-        return bazel_gate.subprocess.CompletedProcess(argv, 0, stdout='/managed/python3.14\n')
 
     class ReplacedProcess(Exception):
         pass
 
     def replace(path, arguments):
-        assert path == '/managed/python3.14'
-        assert arguments[0] == path
+        assert Path(path).read_bytes() == executable
+        assert Path(path).name == 'python3.14'
+        assert arguments == [str(path), *bazel_gate.sys.argv]
         raise ReplacedProcess
 
-    monkeypatch.setattr(bazel_gate.subprocess, 'run', command)
     monkeypatch.setattr(bazel_gate.os, 'execv', replace)
     with pytest.raises(ReplacedProcess):
         bazel_gate.require_scan_python()
+    assert len(requests) == 1
+    assert commands == []
     assert received == []
-    assert any('3.14.0' in argv and 'install' in argv for argv in commands)
+
+
+def test_native_scanner_bootstrap_rejects_a_changed_archive_before_execution(
+        monkeypatch, scanner_python_archive):
+    import io
+    data, *_ = scanner_python_archive
+    monkeypatch.setattr(bazel_gate.sys, 'version_info', (3, 12))
+    monkeypatch.setattr(bazel_gate.urllib.request, 'urlopen', lambda *args, **kwargs: io.BytesIO(data + b'changed'))
+    monkeypatch.setattr(bazel_gate.os, 'execv', lambda *args: pytest.fail('unverified interpreter executed'))
+    with pytest.raises(bazel_gate.GateError, match='SHA256'):
+        bazel_gate.require_scan_python()
+
+
+def test_native_scanner_bootstrap_fails_closed_when_the_download_fails(monkeypatch, scanner_python_archive):
+    import urllib.error
+    monkeypatch.setattr(bazel_gate.sys, 'version_info', (3, 12))
+
+    def unavailable(*args, **kwargs):
+        raise urllib.error.URLError('synthetic download failure')
+
+    monkeypatch.setattr(bazel_gate.urllib.request, 'urlopen', unavailable)
+    monkeypatch.setattr(bazel_gate.os, 'execv', lambda *args: pytest.fail('unavailable interpreter executed'))
+    with pytest.raises(bazel_gate.GateError, match='scanner bootstrap failed'):
+        bazel_gate.require_scan_python()
 
 
 def test_hosted_upload_scans_use_python_314_and_the_exclusion_wrapper():
