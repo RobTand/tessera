@@ -422,6 +422,18 @@ def scan_artifacts(directory, required=('BUILDBUDDY_API_KEY',)):
     return status == 0 and not forbidden
 
 
+def publish_artifacts(directory):
+    """Publish fixed staging only after its complete scan or explicit deferral."""
+    if not scan_artifacts(directory):
+        return False
+    upload = Path(os.environ.get('BUILDBUDDY_ARTIFACTS_DIRECTORY', directory))
+    if upload != directory:
+        # Each runner step owns its initially empty automatic upload directory.
+        upload.parent.mkdir(parents=True, exist_ok=True)
+        os.replace(directory, upload)
+    return True
+
+
 def gate_pr(workspace, base, head, metadata):
     started = time.monotonic()
     for sha in [base, head]:
@@ -560,13 +572,7 @@ def main(argv=None, workspace=None):
     try:
         write_result(result, output)
     finally:
-        safe_artifacts = scan_artifacts(output)
-    upload = Path(os.environ.get('BUILDBUDDY_ARTIFACTS_DIRECTORY', output))
-    if upload != output and safe_artifacts:
-        # Only the completely scanned, fixed staging tree reaches the Run API.
-        # Each runner step owns its initially empty automatic upload directory.
-        upload.parent.mkdir(parents=True, exist_ok=True)
-        os.replace(output, upload)
+        safe_artifacts = publish_artifacts(output)
     print(json.dumps({key: result.get(key) for key in ['selection', 'error', 'verdict', 'inputs', 'budget_warnings']}))
     return 0 if safe_artifacts and passed(result) else 1
 

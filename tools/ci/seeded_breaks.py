@@ -10,7 +10,6 @@ tens of targets, not the suite.
 """
 import argparse
 import json
-import os
 from pathlib import Path
 import subprocess
 import sys
@@ -111,15 +110,16 @@ def main():
     workspace.checkout(base)
     report = table(rows)
     print(report)
-    output = Path(os.environ.get('BUILDBUDDY_ARTIFACTS_DIRECTORY', workspace.root / 'gate-artifacts'))
+    output = bazel_gate.ROOT / 'gate-artifacts'
     output.mkdir(parents=True, exist_ok=True)
     try:
         (output / 'seeded-breaks.json').write_text(json.dumps({'base': base, 'rows': rows}, indent=2))
         (output / 'seeded-breaks.md').write_text(report + '\n')
     finally:
-        safe_artifacts = bazel_gate.scan_artifacts(output)
+        safe_artifacts = bazel_gate.publish_artifacts(output)
     return 0 if safe_artifacts and all(row['caught'] for row in rows) else 1
 
 
 if __name__ == '__main__':
+    bazel_gate.require_scan_python()
     sys.exit(main())

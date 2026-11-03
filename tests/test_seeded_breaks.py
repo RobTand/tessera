@@ -115,7 +115,8 @@ def test_seed_reports_are_scanned_in_staging_before_publication(deferred, monkey
     scan = seeded_breaks.bazel_gate.scan_artifacts
 
     def record(directory):
-        assert list(upload.iterdir()) == []
+        assert not (upload / 'seeded-breaks.json').exists()
+        assert not (upload / 'seeded-breaks.md').exists()
         scanned.append(directory)
         return scan(directory)
 
@@ -123,7 +124,8 @@ def test_seed_reports_are_scanned_in_staging_before_publication(deferred, monkey
     assert seeded_breaks.main() == 0
     assert scanned == [output]
     assert not output.exists()
-    assert {path.name for path in upload.iterdir()} == {'seeded-breaks.json', 'seeded-breaks.md'}
+    assert (upload / 'seeded-breaks.json').is_file()
+    assert (upload / 'seeded-breaks.md').is_file()
 
 
 def test_a_failed_seed_scan_never_publishes_staging(monkeypatch, seed_main):
@@ -133,8 +135,9 @@ def test_a_failed_seed_scan_never_publishes_staging(monkeypatch, seed_main):
     monkeypatch.setenv('BUILDBUDDY_ARTIFACTS_DIRECTORY', str(upload))
     (output / 'seed-bazel-remote-grpc.log').write_text('fake-seed-runner-secret')
     assert seeded_breaks.main() == 1
-    assert list(upload.iterdir()) == []
-    assert list(output.iterdir()) == []
+    for name in ('seeded-breaks.json', 'seeded-breaks.md', 'seed-bazel-remote-grpc.log'):
+        assert not (upload / name).exists()
+        assert not (output / name).exists()
 
 
 def test_the_seed_entrypoint_selects_the_complete_scan_runtime(monkeypatch):

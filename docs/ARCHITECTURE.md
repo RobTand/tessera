@@ -10285,7 +10285,9 @@ errors remain gate-errors while full coverage completes; unknown selection
 is not counted as a measured detection miss. Required checks need the complete
 Bazel job, including the final keyed scan, to succeed.
 
-Runner steps scan a fixed checkout staging directory in-process with the
+The gate and seeded-breaks harness share the scan-and-publish boundary and
+select the same scanner runtime before execution. Runner steps scan a fixed
+checkout staging directory in-process with the
 runner's key before publishing it to the automatic artifact directory. A
 missing key fails without publishing. Python 3.14 provides the standard-library
 zstd decoder for native and hosted required-key scans. The byte-identical
