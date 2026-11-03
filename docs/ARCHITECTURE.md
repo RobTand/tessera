@@ -10260,7 +10260,9 @@ and the budget and quarantine policies. Neither covers CUDA-gated tests.
 budget warnings and the secret rules; [docs/bazel.md](bazel.md) the
 build. The remote client hydrates all origin history and blobs before the
 first Bazel query, verifies the exact tested HEAD and a complete object graph,
-and removes partial-clone metadata. A shallow or missing-object checkout
+and removes partial-clone metadata. Fetch disables automatic GC and maintenance;
+cleanup tolerates only an already-removed marker. Other errors retain a safe
+stage and type, and interrupts propagate. A shallow or missing-object checkout
 fails before test execution. Budget overruns warn without changing the first
 verdict; assertions and hard TIMEOUTs fail without a rerun.
 
