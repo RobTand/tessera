@@ -30,6 +30,7 @@ python3 -I "$BBRUN_CLIENT" test \
 - Prefer targeted tests. Full sweeps require the migration lead's slot, with at most one Tessera invocation in flight and `--jobs=16` after all configs.
 - For arm64, use `--arch arm64` and `--config=remote-arm64` together. Never use `--cloud`.
 - Read the invocation's terminal verdict, logs and final required-key scan. An uncached proof also requires TestRunner execution metadata on dl380g10 for amd64 or sparky/sparklina for arm64. Target summaries alone do not establish execution.
+- Each target retains its device, skip reasons and uncollected modules in `test.outputs/surface.json`, including when pytest fails. Successful targets also write `inventory.json`. The CI download configuration retrieves these structured outputs.
 - Use local Bazel only for short queries, with `--max_idle_secs=300`. Fleet-local test work goes through PrismaBuild admission.
 
 ## How the build is generated

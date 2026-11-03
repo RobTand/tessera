@@ -139,7 +139,7 @@ def main():
     outputs = Path(os.environ.get('TEST_UNDECLARED_OUTPUTS_DIR', private))
     outputs.mkdir(parents=True, exist_ok=True)
     junit = Path(os.environ.get('XML_OUTPUT_FILE') or outputs / 'junit.xml')
-    surface = private / 'surface.json'
+    surface = outputs / 'surface.json'
     gate_budget, config = budget(root, budget_argument)
     environment['GATE_ASSIGNED_FILES'] = json.dumps([path])
     environment['GATE_DESELECT'] = json.dumps(deselect)

@@ -209,3 +209,47 @@ def test_a_budget_edit_changes_only_its_test_action():
             right, lane, {}, {}, after)
     assert 'tools/ci/gate_budget.json' not in _shared_inputs(), (
         'the complete budget table is a shared test input; it overrides per-file --budget isolation')
+
+
+@pytest.mark.parametrize('exit_code', [0, 1])
+def test_the_bazel_runner_retains_its_population_after_pytest(monkeypatch, tmp_path, exit_code):
+    """The downloadable receipt survives both a passing and a failing child."""
+    from types import SimpleNamespace
+
+    runner = _load('bazel_python_runner', 'tools/bazel/python_runner.py')
+    private, outputs, scratch = (tmp_path / name for name in ('private', 'outputs', 'scratch'))
+    private.mkdir()
+    scratch.mkdir()
+    path = 'tests/test_fixture.py'
+    population = {
+        'role': 'population', 'cuda': False, 'device': 'fixture CPU',
+        'cuda_surface': {'executed': 0},
+        'counts': {'passed': int(exit_code == 0), 'failed': int(exit_code != 0), 'skipped': 0},
+        'not_collected': [], 'skip_reasons': {},
+    }
+    monkeypatch.chdir(tmp_path)
+    for name in ('TS_BAZEL_LANE', 'TS_TRACE', 'TEST_TOTAL_SHARDS', 'XML_OUTPUT_FILE'):
+        monkeypatch.delenv(name, raising=False)
+    monkeypatch.setenv('TEST_TMPDIR', str(private))
+    monkeypatch.setenv('TEST_UNDECLARED_OUTPUTS_DIR', str(outputs))
+    monkeypatch.setattr(runner.sys, 'argv', ['runner', path, 'bytes', '--budget={}'])
+    monkeypatch.setattr(runner, 'prepare_remote_test', lambda root: (scratch, {}))
+    rules = SimpleNamespace(BUDGET_ENFORCEMENT_TOLERANCE=1.5, timings=lambda *a, **kw: [])
+    monkeypatch.setattr(runner, 'budget', lambda *args: (rules, {'slow': {}}))
+
+    def child(command, **kwargs):
+        surface = Path(next(arg.removeprefix('--surface-json=') for arg in command
+                            if arg.startswith('--surface-json=')))
+        surface.write_text(json.dumps(population))
+        junit = Path(next(arg.removeprefix('--junitxml=') for arg in command
+                          if arg.startswith('--junitxml=')))
+        failure = '<failure message="fixture failure"/>' if exit_code else ''
+        junit.write_text('<testsuites><testsuite><testcase file="' + path +
+                         '" classname="tests.test_fixture" name="test_case">' + failure +
+                         '</testcase></testsuite></testsuites>')
+        return SimpleNamespace(returncode=exit_code)
+
+    monkeypatch.setattr(runner.subprocess, 'run', child)
+    assert runner.main() == exit_code
+    assert not scratch.exists()
+    assert json.loads((outputs / 'surface.json').read_text()) == population

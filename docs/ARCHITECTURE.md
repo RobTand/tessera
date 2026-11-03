@@ -10280,6 +10280,9 @@ tolerance used by both the hosted gate and Bazel. Only the hosted
 commit. The shared Bazel runner depends on the pure module, so a slow-node
 budget edit does not invalidate tests that use a different file's budget.
 Tests that inspect the complete table retain it as an input.
+Each Bazel target retains pytest's structured population in
+`test.outputs/surface.json` on passing and failing runs. The existing CI
+download configuration retrieves it alongside the target's other outputs.
 
 `tools/ci/gate_flaky.json` grants one retry to exact nodes owned by open
 deflake issues. The hosted planner checks owners with the quarantine client
