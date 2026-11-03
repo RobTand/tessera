@@ -383,3 +383,42 @@ def test_gate_and_postmerge_keep_the_cloud_runner(mode):
     properties = remote_gate.run_request(Args)['platform_properties']
     assert properties['workload-isolation-type'] == 'firecracker'
     assert 'Pool' not in properties and 'use-self-hosted-executors' not in properties
+
+
+@pytest.mark.parametrize('pytest_status,failure', [(0, ''), (1, '<failure>assertion</failure>'),
+                                                 (1, '<error>hard timeout</error>')])
+def test_python_runner_warns_without_overriding_assertions_or_timeouts(
+        tmp_path, monkeypatch, pytest_status, failure):
+    import sys
+    from types import SimpleNamespace
+    runner = _load('python_runner', 'tools/bazel/python_runner.py')
+    real_gate = _load('runner_gate_run', 'tools/ci/gate_run.py')
+    path = 'tests/test_wire.py'
+    warning = {'nodeid': path+'::test_one', 'seconds': 10000, 'budget_seconds': 20}
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.delenv('TS_BAZEL_LANE', raising=False)
+    monkeypatch.delenv('TS_TRACE', raising=False)
+    monkeypatch.delenv('TEST_TOTAL_SHARDS', raising=False)
+    monkeypatch.setenv('TEST_TMPDIR', str(tmp_path))
+    outputs = tmp_path / 'outputs'
+    monkeypatch.setenv('TEST_UNDECLARED_OUTPUTS_DIR', str(outputs))
+    monkeypatch.setenv('XML_OUTPUT_FILE', str(tmp_path/'junit.xml'))
+    monkeypatch.setattr(sys, 'argv', ['python_runner.py', path, 'torch', '--budget={}'])
+    monkeypatch.setattr(runner, 'prepare_remote_test', lambda root: (tmp_path/'scratch', {}))
+    monkeypatch.setattr(runner, 'budget', lambda *args: (
+        real_gate, {'seconds': 20, 'slow': {}, 'enforce': True}))
+    calls = []
+    def execute(command, **kwargs):
+        calls.append(command)
+        (tmp_path/'surface.json').write_text(json.dumps({'not_collected': []}))
+        (tmp_path/'junit.xml').write_text(
+            '<testsuite><testcase file="tests/test_wire.py" classname="tests.test_wire" '
+            f'name="test_one" time="10000">{failure}</testcase></testsuite>')
+        return SimpleNamespace(returncode=pytest_status)
+    monkeypatch.setattr(runner.subprocess, 'run', execute)
+    assert runner.main() == pytest_status
+    assert len(calls) == 1
+    assert json.loads((outputs/'budget_warnings.json').read_text())['warnings'] == [warning]
+    assert not (outputs/'budget_overrun.json').exists()
+    if pytest_status == 0:
+        assert json.loads((outputs/'inventory.json').read_text())['budget_warnings'] == [warning]
