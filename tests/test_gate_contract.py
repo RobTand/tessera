@@ -339,7 +339,8 @@ def test_budget_overruns_warn_without_changing_test_verdict(tmp_path, monkeypatc
     assert record['budget_warnings'] == [
         {'nodeid': 'tests/test_a.py::test_one', 'seconds': seconds, 'budget_seconds': 20}]
     assert record['budget']['status'] == 'pass'
-    for text in (junit.read_text(), summary.read_text()):
+    import xml.etree.ElementTree as ET
+    for text in (ET.parse(junit).find('.//system-out').text, summary.read_text()):
         assert 'BUDGET_WARNING: tests/test_a.py::test_one' in text
         assert f'{seconds:.3f}s > 20.000s' in text
         assert 'within' not in text
