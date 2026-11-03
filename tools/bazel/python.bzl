@@ -21,7 +21,7 @@ _TEST_DEPS = [
     CONFTEST,
     "//tools/bazel:runner",
     "//tools:ci/gate_collect",
-    "//tools:ci/gate_run",
+    "//tools:ci/gate_budget",
 ]
 _LANE_PACKAGES = {"bytes": BYTES_PACKAGES, "torch": TORCH_PACKAGES}
 

@@ -109,17 +109,17 @@ def test_budget_cannot_grow_against_base(tmp_path, config):
     subprocess.run(['git', '-c', 'user.name=test', '-c', 'user.email=test@example.invalid',
                     'commit', '-qm', 'base'], cwd=tmp_path, check=True)
     path.write_text(json.dumps(config))
-    with pytest.raises(runner.BudgetFailure, match='may not grow'):
+    with pytest.raises(runner.gate_budget.BudgetFailure, match='may not grow'):
         runner._budget_policy(tmp_path, 'HEAD')
 
 
 def test_budget_tolerance_and_measurement_mode(tmp_path):
     runner = load('gate_run')
-    assert runner.BUDGET_ENFORCEMENT_TOLERANCE == 1.5
+    assert runner.gate_budget.BUDGET_ENFORCEMENT_TOLERANCE == 1.5
     junit = tmp_path / 'junit.xml'
     junit.write_text('<testsuite><testcase file="tests/test_a.py" classname="tests.test_a" '
                      'name="test_one" time="31" /></testsuite>')
-    rows = runner._budget_timings(junit, ['tests/test_a.py'], {'seconds': 20, 'slow': {}})
+    rows = runner.gate_budget.timings(junit, ['tests/test_a.py'], {'seconds': 20, 'slow': {}})
     assert rows == [{'nodeid': 'tests/test_a.py::test_one', 'seconds': 31, 'budget_seconds': 20}]
 
 
@@ -240,7 +240,7 @@ def test_grouped_junit_keeps_exact_budget_and_evidence_identity(tmp_path, name, 
                      'classname="tests.test_matched_reach" name="' + name + '" '
                      'time="177" /></testsuite>')
     runner = load('gate_run')
-    assert runner._budget_timings(junit, [filename], {'seconds': 20, 'slow': {nodeid: 100}}) == [
+    assert runner.gate_budget.timings(junit, [filename], {'seconds': 20, 'slow': {nodeid: 100}}) == [
         {'nodeid': nodeid, 'seconds': 177, 'budget_seconds': 100}]
     assert list(load('gate_evidence').cases(junit))[0]['nodeid'] == nodeid
 

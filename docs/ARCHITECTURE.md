@@ -10272,6 +10272,15 @@ Recorded slow-node budgets also set their runtime timeouts when their
 1.5-times allowance exceeds the default 300-second pytest cap; the JSON
 limits and final budget checks are unchanged.
 
+Bazel runs one test file per target and lane. The generator embeds that file's
+budget defaults and slow-node limits in its arguments. The pure
+`tools/ci/gate_budget.py` owns validation, JUnit timing interpretation and the
+tolerance used by both the hosted gate and Bazel. Only the hosted
+`gate_run.py` reads the complete budget table and checks it against the target
+commit. The shared Bazel runner depends on the pure module, so a slow-node
+budget edit does not invalidate tests that use a different file's budget.
+Tests that inspect the complete table retain it as an input.
+
 `tools/ci/gate_flaky.json` grants one retry to exact nodes owned by open
 deflake issues. The hosted planner checks owners with the quarantine client
 and always selects marked files for exact collection validation.

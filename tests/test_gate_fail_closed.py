@@ -50,7 +50,7 @@ def test_enforced_budget_cannot_be_disabled(tmp_path):
     subprocess.run(['git', '-c', 'user.name=test', '-c', 'user.email=test@example.invalid',
                     'commit', '-qm', 'base'], cwd=tmp_path, check=True)
     path.write_text(json.dumps({'seconds': 20, 'slow': {}, 'enforce': False}))
-    with pytest.raises(runner.BudgetFailure, match='disabled'):
+    with pytest.raises(runner.gate_budget.BudgetFailure, match='disabled'):
         runner._budget_policy(tmp_path, 'HEAD')
 
 
@@ -84,7 +84,7 @@ def test_budget_excludes_module_level_skips_but_keeps_test_skips(tmp_path, ident
                     '<skipped type="pytest.skip" /></testcase>'
                     '<testcase file="tests/test_a.py" classname="tests.test_a" name="test_a" time="0">'
                     '<skipped /></testcase></testsuite>')
-    assert runner._budget_timings(path, ['tests/test_a.py', 'tests/test_gpu.py'],
+    assert runner.gate_budget.timings(path, ['tests/test_a.py', 'tests/test_gpu.py'],
                                   {'seconds': 20, 'slow': {}}, require_all=False) == []
 
 

@@ -7,6 +7,8 @@ stale. tools/ci/bazel_parity.py holds Bazel's test population to the hosted
 gate's: every gate test file has one target per lane, and a target the cloud
 gate leaves out says why.
 """
+import ast
+from functools import lru_cache
 import importlib.util
 import json
 from pathlib import Path
@@ -137,3 +139,73 @@ def test_the_runner_points_box_artifacts_at_an_installed_prismaquant(
     assert environment['TESSERA_PRISMAQUANT_DIR'] == str(tmp_path / 'site')
     explicit = runtime.gate_environment({'TESSERA_PRISMAQUANT_DIR': '/elsewhere'}, tmp_path, tmp_path)
     assert explicit['TESSERA_PRISMAQUANT_DIR'] == '/elsewhere'
+
+
+def _shared_inputs():
+    """Follow the generated targets the shared pytest macro actually declares."""
+    constants = {}
+    for name in ('lanes.bzl', 'python.bzl'):
+        for statement in ast.parse((ROOT / 'tools/bazel' / name).read_text()).body:
+            if isinstance(statement, ast.Assign) and len(statement.targets) == 1:
+                target = statement.targets[0]
+                if isinstance(target, ast.Name):
+                    if target.id in {'_TEST_DEPS', '_TEST_DATA'}:
+                        constants[target.id] = [constants[value.id] if isinstance(value, ast.Name)
+                                                 else ast.literal_eval(value) for value in statement.value.elts]
+                    elif target.id == 'CONFTEST':
+                        constants[target.id] = ast.literal_eval(statement.value)
+
+    @lru_cache(None)
+    def rules(package):
+        found = {}
+        for statement in ast.parse((ROOT / package / 'BUILD.bazel').read_text()).body:
+            if not isinstance(statement, ast.Expr) or not isinstance(statement.value, ast.Call):
+                continue
+            attributes = {keyword.arg: keyword.value for keyword in statement.value.keywords}
+            if 'name' in attributes:
+                found[ast.literal_eval(attributes['name'])] = attributes
+        return found
+
+    files, pending, visited = set(), constants['_TEST_DEPS'] + constants['_TEST_DATA'], set()
+    while pending:
+        label = pending.pop()
+        if label in visited or label.startswith('@'):
+            continue
+        visited.add(label)
+        package, name = label.removeprefix('//').split(':', 1)
+        if (ROOT / package / name).is_file():
+            files.add((Path(package) / name).as_posix())
+            continue
+        attributes = rules(package)[name]
+        for kind in ('srcs', 'data', 'deps'):
+            expression = attributes.get(kind)
+            if expression is None:
+                continue
+            if isinstance(expression, ast.Call):
+                assert isinstance(expression.func, ast.Name) and expression.func.id == 'glob'
+                patterns = ast.literal_eval(expression.args[0])
+                excluded = next((ast.literal_eval(keyword.value) for keyword in expression.keywords
+                                 if keyword.arg == 'exclude'), [])
+                matches = {path for pattern in patterns for path in (ROOT / package).glob(pattern)
+                           if path.is_file()}
+                matches -= {path for pattern in excluded for path in (ROOT / package).glob(pattern)}
+                files.update(path.relative_to(ROOT).as_posix() for path in matches)
+                continue
+            for dependency in ast.literal_eval(expression):
+                pending.append(dependency if dependency.startswith(('//', '@'))
+                               else f'//{package}:{dependency.removeprefix(":")}')
+    return files
+
+
+def test_a_budget_edit_changes_only_its_test_action():
+    build_files = _load('build_files', 'tools/bazel/build_files.py')
+    left, right = 'tests/test_left.py', 'tests/test_right.py'
+    before = {'seconds': 20, 'slow': {left + '::test_slow': 40}, 'enforce': True}
+    after = dict(before, slow={left + '::test_slow': 30})
+    for lane in build_files.LANES:
+        assert build_files.test_attributes(left, lane, {}, {}, before) != build_files.test_attributes(
+            left, lane, {}, {}, after)
+        assert build_files.test_attributes(right, lane, {}, {}, before) == build_files.test_attributes(
+            right, lane, {}, {}, after)
+    assert 'tools/ci/gate_budget.json' not in _shared_inputs(), (
+        'the complete budget table is a shared test input; it overrides per-file --budget isolation')

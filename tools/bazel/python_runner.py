@@ -118,11 +118,11 @@ def outcomes(junit):
 
 
 def budget(root, argument):
-    """gate_run and this file's slice of tools/ci/gate_budget.json, which
+    """The budget rules and this file's policy slice, which
     tools/bazel/build_files.py passes as --budget."""
     sys.path.insert(0, str(root / 'tools/ci'))
-    import gate_run
-    return gate_run, gate_run._budget_limits(json.loads(argument))
+    import gate_budget
+    return gate_budget, gate_budget.limits(json.loads(argument))
 
 
 def main():
@@ -140,12 +140,12 @@ def main():
     outputs.mkdir(parents=True, exist_ok=True)
     junit = Path(os.environ.get('XML_OUTPUT_FILE') or outputs / 'junit.xml')
     surface = private / 'surface.json'
-    gate_run, config = budget(root, budget_argument)
+    gate_budget, config = budget(root, budget_argument)
     environment['GATE_ASSIGNED_FILES'] = json.dumps([path])
     environment['GATE_DESELECT'] = json.dumps(deselect)
     environment['GATE_TEST_TIMEOUTS'] = json.dumps({
-        node: limit * gate_run.BUDGET_ENFORCEMENT_TOLERANCE for node, limit in config['slow'].items()
-        if node.split('::', 1)[0] == path and limit * gate_run.BUDGET_ENFORCEMENT_TOLERANCE > PYTEST_TIMEOUT_SECONDS})
+        node: limit * gate_budget.BUDGET_ENFORCEMENT_TOLERANCE for node, limit in config['slow'].items()
+        if node.split('::', 1)[0] == path and limit * gate_budget.BUDGET_ENFORCEMENT_TOLERANCE > PYTEST_TIMEOUT_SECONDS})
     plugins = ['-p', 'gate_collect']
     if os.environ.get('TEST_TOTAL_SHARDS'):
         Path(os.environ['TEST_SHARD_STATUS_FILE']).touch()
@@ -208,12 +208,12 @@ def main():
         status = 0
     if status == 0 and any(outcome != 'skipped' for outcome in nodes.values()):
         try:
-            timings = gate_run._budget_timings(junit, [path], config, require_all=False)
+            timings = gate_budget.timings(junit, [path], config, require_all=False)
         except ValueError as error:
             print(f'no per-test timings for {path}: {error}', file=sys.stderr)
             return 1
         overruns = [row for row in timings
-                    if row['seconds'] > row['budget_seconds'] * gate_run.BUDGET_ENFORCEMENT_TOLERANCE]
+                    if row['seconds'] > row['budget_seconds'] * gate_budget.BUDGET_ENFORCEMENT_TOLERANCE]
         for row in overruns:
             print(f"Per-test time budget exceeded: {row['nodeid']}: {row['seconds']:.3f}s > "
                   f"{row['budget_seconds']:.3f}s policy", file=sys.stderr)

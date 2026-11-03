@@ -10,7 +10,7 @@ The hosted gate's own files stay the sources of truth:
 - `tools/ci/gate_requirements.txt` and `tools/ci/gate_torch_requirements.txt` pin the packages.
 - `tools/ci/gate_quarantine.json` holds the node-level quarantine.
 - `tools/ci/gate_flaky.json` names recorded retry nodes. Its referenced test files are shared data inputs because the collection plugin validates every file before collecting an assignment.
-- `tools/ci/gate_budget.json` sets per-test budgets.
+- `tools/ci/gate_budget.json` sets per-test budgets. The generator embeds each file's slice in its target arguments; the shared runtime uses the pure `tools/ci/gate_budget.py` checks without reading the table. A slow-node limit change invalidates that file's targets, while a default or enforcement change updates every affected target. Tests that inspect the complete table retain it as an input.
 - `tools/ci/gate_durations.json` gives per-file times; a file over 40 s is split into Bazel test shards.
 
 ## Running tests

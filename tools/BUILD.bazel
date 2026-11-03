@@ -108,6 +108,16 @@ ts_py_library(
 )
 
 ts_py_library(
+    name = "ci/gate_budget",
+    srcs = [
+        "ci/gate_budget.py",
+    ],
+    deps = [
+        ":ci/gate_junit",
+    ],
+)
+
+ts_py_library(
     name = "ci/gate_collect",
     srcs = [
         "ci/gate_collect.py",
@@ -190,7 +200,7 @@ ts_py_library(
         "ci/gate_budget.json",
     ],
     deps = [
-        ":ci/gate_junit",
+        ":ci/gate_budget",
     ],
 )
 

@@ -13,11 +13,10 @@ import sys
 import xml.etree.ElementTree as ET
 
 NO_VERDICT = 75
-BUDGET_ENFORCEMENT_TOLERANCE = 1.5
 PYTEST_TIMEOUT_SECONDS = 300
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from gate_junit import test_name
+import gate_budget
 
 
 SECRET_NAMES = {'BUILDBUDDY_API_KEY', 'MERGIFY_TOKEN', 'GITHUB_TOKEN'}
@@ -34,24 +33,9 @@ class BoundaryFailure(ValueError):
     """A boundary proof failed with a final verdict."""
 
 
-class BudgetFailure(ValueError):
-    """A definite policy failure, never an infrastructure retry."""
-
-
-def _budget_limits(config):
-    if not isinstance(config, dict) or not isinstance(config.get('slow'), dict):
-        raise BudgetFailure('Test budget requires seconds and a slow map')
-    limits = [config.get('seconds'), *config['slow'].values()]
-    if (any(isinstance(limit, bool) or not isinstance(limit, (int, float)) or
-            not math.isfinite(limit) or limit <= 0 for limit in limits) or
-            any(not isinstance(name, str) or not name for name in config['slow'])):
-        raise BudgetFailure('Test budget limits must be finite positive seconds')
-    return config
-
-
 def _budget_policy(root, base_sha):
     path = 'tools/ci/gate_budget.json'
-    current = _budget_limits(json.loads((root / path).read_text()))
+    current = gate_budget.limits(json.loads((root / path).read_text()))
     baseline = current
     if base_sha:
         # Check the commit separately: an unavailable target is not a bootstrap.
@@ -64,53 +48,22 @@ def _budget_policy(root, base_sha):
         if tree.stdout.strip():
             blob = subprocess.run(['git', 'show', f'{base_sha}:{path}'], cwd=root,
                                   text=True, capture_output=True, check=True)
-            baseline = _budget_limits(json.loads(blob.stdout))
+            baseline = gate_budget.limits(json.loads(blob.stdout))
     if baseline.get('enforce', False) and not current.get('enforce', False):
-        raise BudgetFailure('Enforced test budgets may not be disabled')
+        raise gate_budget.BudgetFailure('Enforced test budgets may not be disabled')
     if (current['seconds'] > baseline['seconds'] or
             not current['slow'].keys() <= baseline['slow'].keys() or
             any(limit > baseline['slow'][name] for name, limit in current['slow'].items())):
-        raise BudgetFailure('Test budgets and the explicit slow list may not grow versus the target')
+        raise gate_budget.BudgetFailure('Test budgets and the explicit slow list may not grow versus the target')
     return current
-
-
-def _budget_timings(junit, files, config, require_all=True):
-    observed, seconds = set(), {}
-    for case in ET.parse(junit).iter('testcase'):
-        filename, name = case.get('file', '').removeprefix('./'), case.get('name', '')
-        name = test_name(name)
-        classname = case.get('classname', '')
-        if not classname and case.find('skipped') is not None and (name in files or filename in files):
-            continue  # A module-level importorskip is not a test timing.
-        if filename not in files or not name:
-            raise ValueError('JUnit timing has missing or unexpected test identity')
-        module = filename.removesuffix('.py').replace('/', '.')
-        if classname != module and not classname.startswith(module + '.'):
-            raise ValueError('JUnit timing cannot resolve test class: ' + classname)
-        classes = classname[len(module):].lstrip('.').replace('.', '::')
-        nodeid = filename + '::' + (classes + '::' if classes else '') + name
-        try:
-            elapsed = float(case.attrib['time'])
-        except (KeyError, ValueError) as error:
-            raise ValueError('JUnit timing missing or invalid for ' + nodeid) from error
-        if not math.isfinite(elapsed) or elapsed < 0:
-            raise ValueError('JUnit timing must be finite nonnegative seconds: ' + nodeid)
-        observed.add(filename)
-        seconds[nodeid] = seconds.get(nodeid, 0) + elapsed
-    if require_all and observed != set(files):
-        raise ValueError('JUnit timings do not cover every assigned file')
-    return [{'nodeid': nodeid, 'seconds': elapsed,
-             'budget_seconds': config['slow'].get(nodeid, config['seconds'])}
-            for nodeid, elapsed in sorted(seconds.items())
-            if elapsed > config['slow'].get(nodeid, config['seconds'])]
 
 
 def _write_budget_warnings(junit, warnings):
     messages = [
         f"BUDGET_WARNING: {row['nodeid']}: {row['seconds']:.3f}s > "
         f"{row['budget_seconds']:.3f}s policy; within "
-        f"{BUDGET_ENFORCEMENT_TOLERANCE:g}x tolerance "
-        f"({row['budget_seconds'] * BUDGET_ENFORCEMENT_TOLERANCE:.3f}s)"
+        f"{gate_budget.BUDGET_ENFORCEMENT_TOLERANCE:g}x tolerance "
+        f"({row['budget_seconds'] * gate_budget.BUDGET_ENFORCEMENT_TOLERANCE:.3f}s)"
         for row in warnings]
     text = '\n'.join(messages)
     print(text)
@@ -193,10 +146,10 @@ def run_plan(plan: dict, *, root: Path, output: Path, junit: Path,
                                                   if target.split('::', 1)[0] in files])
         environment['GATE_ASSIGNED_FILES'] = json.dumps(files)
         environment['GATE_TEST_TIMEOUTS'] = json.dumps({
-            node: limit * BUDGET_ENFORCEMENT_TOLERANCE
+            node: limit * gate_budget.BUDGET_ENFORCEMENT_TOLERANCE
             for node, limit in config['slow'].items()
             if node.split('::', 1)[0] in files and
-            limit * BUDGET_ENFORCEMENT_TOLERANCE > PYTEST_TIMEOUT_SECONDS})
+            limit * gate_budget.BUDGET_ENFORCEMENT_TOLERANCE > PYTEST_TIMEOUT_SECONDS})
         environment['GATE_COLLECTION_DIR'] = str(output.parent.resolve())
         environment['PYTHONPATH'] = str(Path(__file__).resolve().parent) + os.pathsep + str(root / 'src') + os.pathsep + environment.get('PYTHONPATH', '')
         # tests/box_artifacts.py's "prismaquant" root: the pinned, installed
@@ -243,11 +196,11 @@ def run_plan(plan: dict, *, root: Path, output: Path, junit: Path,
                                     not record['surface']['device'].startswith('torch ')):
                 raise ValueError('torch lane requires torch and zero uncollected modules')
             record['collection'] = collection_coverage(output.parent, files, record['surface'], workers)
-            costs = _budget_timings(junit, files, config, require_all=False)
+            costs = gate_budget.timings(junit, files, config, require_all=False)
             overruns, warnings = [], []
             for row in costs:
                 target = (overruns if row['seconds'] >
-                          row['budget_seconds'] * BUDGET_ENFORCEMENT_TOLERANCE else warnings)
+                          row['budget_seconds'] * gate_budget.BUDGET_ENFORCEMENT_TOLERANCE else warnings)
                 target.append(row)
             enforcing = config.get('enforce', False)
             record['budget'].update(status='fail' if overruns and enforcing else 'pass', enforce=enforcing,
@@ -257,9 +210,9 @@ def run_plan(plan: dict, *, root: Path, output: Path, junit: Path,
                     record['verdict'] = 'fail'
                 print('Per-test time budget exceeded:')
                 for row in overruns:
-                    limit = row['budget_seconds'] * BUDGET_ENFORCEMENT_TOLERANCE
+                    limit = row['budget_seconds'] * gate_budget.BUDGET_ENFORCEMENT_TOLERANCE
                     print(f"{row['nodeid']}: {row['seconds']:.3f}s > {limit:.3f}s "
-                          f"(policy {row['budget_seconds']:.3f}s x {BUDGET_ENFORCEMENT_TOLERANCE:g})")
+                          f"(policy {row['budget_seconds']:.3f}s x {gate_budget.BUDGET_ENFORCEMENT_TOLERANCE:g})")
             if warnings:
                 _write_budget_warnings(junit, warnings)
         except (OSError, ValueError, ET.ParseError) as error:
@@ -273,7 +226,7 @@ def run_plan(plan: dict, *, root: Path, output: Path, junit: Path,
         record['verdict'] = 'fail'
         record['boundary'] = {'status': 'fail', 'reason': str(error)}
         code = 1
-    except BudgetFailure as error:
+    except gate_budget.BudgetFailure as error:
         record['verdict'] = 'fail'
         record['budget'] = {'status': 'fail', 'reason': str(error), 'baseline_sha': plan.get('base_sha')}
         print('GATE_BUDGET_FAILURE: ' + str(error))
