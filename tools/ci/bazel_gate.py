@@ -25,9 +25,11 @@ import shlex
 import shutil
 import subprocess
 import sys
+import tarfile
 import tempfile
 import time
 import urllib.request
+import urllib.error
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import check_no_secret_leak  # noqa: E402
@@ -40,6 +42,17 @@ RESULT = 'gate-result.json'
 # The one bazel-diff pin TL3, PrismaBuild, PrismaQuant and Tessera share.
 BAZEL_DIFF_URL = 'https://github.com/Tinder/bazel-diff/releases/download/v70.0.2/bazel-diff-rust-linux-amd64'
 BAZEL_DIFF_SHA256 = '44226a1d1d5239abc8bc6158de1f886fcbbf58e44479ec178df8c01e7e32102e'
+
+# CPython 3.14.0, build 20251014, from Astral uv 0.9.5 download-metadata.json.
+# Verify the complete archive before extracting or executing any of its bytes.
+SCANNER_PYTHONS = {
+    'x86_64': (
+        'https://github.com/astral-sh/python-build-standalone/releases/download/20251014/cpython-3.14.0%2B20251014-x86_64-unknown-linux-gnu-install_only_stripped.tar.gz',
+        '493c477b4a88bb1ea2f6c6f57fa0e88ffbe55d9e7b1405c4699f2d41c04eb154'),
+    'aarch64': (
+        'https://github.com/astral-sh/python-build-standalone/releases/download/20251014/cpython-3.14.0%2B20251014-aarch64-unknown-linux-gnu-install_only_stripped.tar.gz',
+        '7dbb43b742c040835a277318355fb359b41e509dbf4fbb614da38005a9290e16'),
+}
 
 # A change to any of these can move every target: test everything. Patterns
 # without '/' name root files. Other workflows are ordinary inputs.
@@ -68,16 +81,26 @@ def child_environment(environ=None):
 
 def require_scan_python():
     """Keep the keyed scanner in-process, using Python's stdlib zstd decoder."""
+    machine = os.uname().machine
+    if machine not in SCANNER_PYTHONS:
+        raise GateError(f'unsupported scanner machine: {machine}')
     if sys.version_info[:2] == (3, 14):
         return
-    bootstrap = Path(tempfile.gettempdir()) / 'tessera-scanner-bootstrap'
-    workspace = Workspace()
-    workspace.run(sys.executable, '-m', 'pip', 'install', '--quiet', '--no-deps',
-                  '--target', bootstrap, 'uv==0.9.5')
-    uv = bootstrap / 'bin/uv'
-    workspace.run(uv, 'python', 'install', '3.14.0')
-    python = workspace.run(uv, 'python', 'find', '--managed-python', '3.14.0').strip()
-    os.execv(python, [python, *sys.argv])
+    url, expected = SCANNER_PYTHONS[machine]
+    try:
+        with urllib.request.urlopen(url, timeout=120) as response:
+            data = response.read()
+        if hashlib.sha256(data).hexdigest() != expected:
+            raise GateError('scanner bootstrap archive SHA256 mismatch')
+        # Keep the private directory alive across exec. The new gate process
+        # needs the interpreter's stdlib and shared libraries until it exits.
+        bootstrap = Path(tempfile.mkdtemp(prefix='tessera-scanner-'))
+        with tarfile.open(fileobj=io.BytesIO(data), mode='r:gz') as archive:
+            archive.extractall(bootstrap, filter='data')
+        python = str(bootstrap / 'python/bin/python3.14')
+        os.execv(python, [python, *sys.argv])
+    except (OSError, tarfile.TarError, ValueError) as error:
+        raise GateError(f'scanner bootstrap failed: {type(error).__name__}') from error
 
 
 # fnmatch's * also crosses '/', so 'tools/bazel/*' covers the whole tree.

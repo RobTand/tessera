@@ -163,7 +163,8 @@ def test_artifact_secrets_are_step_scoped_and_required():
         assert '        env:\n' in step
         for name in ('BUILDBUDDY_API_KEY', 'MERGIFY_TOKEN'):
             assert f'{name}: ${{{{ secrets.{name} }}}}' in step
-            assert f'--env {name}' in step and f'--require {name}' in step
+            # --require scans the value and rejects a missing or empty key.
+            assert f'--require {name}' in step
 
 
 def test_fork_prs_skip_artifact_scans_and_uploads_with_a_reason():

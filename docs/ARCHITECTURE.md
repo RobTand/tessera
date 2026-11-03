@@ -10290,7 +10290,11 @@ select the same scanner runtime before execution. Runner steps scan a fixed
 checkout staging directory in-process with the
 runner's key before publishing it to the automatic artifact directory. A
 missing key fails without publishing. Python 3.14 provides the standard-library
-zstd decoder for native and hosted required-key scans. The byte-identical
+zstd decoder for native and hosted required-key scans. Native bootstrap needs
+no pip: it selects the x86_64 or aarch64 CPython 3.14.0 build 20251014 archive
+from Astral uv 0.9.5 metadata, verifies its pinned SHA256, and replaces the
+process in place. Unknown machines fail closed. No installer child receives
+a key. The byte-identical
 vendored scanner remains unchanged. Unscannable files are excluded with a
 diagnostic and the remaining set must pass a clean second scan; secret hits
 and unknown diagnostics clear the directory and fail. Raw BEP and command logs
