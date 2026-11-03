@@ -29,7 +29,7 @@ def _digest(path):
 
 
 def _attested_digest(path, *, capture_bytes=False):
-    """Hash a regular file through one no-follow FD and retain its stat seal."""
+    """Hash and confirm a regular file through one no-follow FD; retain its stat seal."""
     path = Path(path)
     if path.name != str(path).split("/")[-1] or path.is_symlink():
         raise ValueError("artifact identity file must be a regular non-symlink basename")
@@ -49,9 +49,13 @@ def _attested_digest(path, *, capture_bytes=False):
             hashed.update(block)
             if chunks is not None:
                 chunks.append(block)
+        os.lseek(descriptor, 0, os.SEEK_SET)
+        confirmed = hashlib.sha256()
+        while block := os.read(descriptor, 8 * 1024 * 1024):
+            confirmed.update(block)
         final = fields(os.fstat(descriptor))
         current = fields(path.stat(follow_symlinks=False))
-        if initial != final or final != current:
+        if initial != final or final != current or hashed.digest() != confirmed.digest():
             raise ValueError("artifact identity file changed during its full hash")
         return (hashed.hexdigest(), final, b"".join(chunks)) if capture_bytes else (hashed.hexdigest(), final)
     finally:

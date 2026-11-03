@@ -2776,10 +2776,20 @@ retain their scope. An explicit TP2/eager/resident run now binds each actual
 worker rank to its physical GPU UUID and a `VLLM_HOST_IP` verified on that
 worker's local interface. Resource report v3 is one rank per envelope but
 carries `observations.rank_world` with both raw capture paths/digests. Its raw
-plan also retains the exact artifact source object and a no-follow per-file
-stat seal from the full-hash pass, allowing change detection without a second
-24 GB weight rehash when the shared file identities remain stable. The
-read-only KV v2 record binds rank/device/host and configured capacity.
+plan also retains the exact artifact source object and per-file stat seals
+from two matching SHA-256 passes through one no-follow descriptor. The second
+pass rejects content changes hidden by equal size and timestamps during hashing.
+For the roughly 24 GB served weights, full attestation now reads and hashes
+roughly 48 GB instead of 24 GB. At the measured local sequential read-and-SHA-256
+rate of 0.408 GB/s, that is about 118 seconds instead of 59 seconds, adding
+59 seconds. This rate came from three passes over a generated 2 GiB local tmpfs
+file, with creation excluded; slower storage can increase the cost. The second
+full hash is deliberate and must not be optimised out. A possible future
+refinement is `statx` `STATX_CHANGE_COOKIE` (`i_version`), where the kernel supports
+it, as an extra cheap change signal.
+Later metadata checks reuse the seals without rehashing the 24 GB weights when
+the shared file identities remain stable. The read-only KV v2 record binds
+rank/device/host and configured capacity.
 Timing capture v2 prices routed apply plus the actual late final all-reduce as
 two disjoint owner segments, leaving intervening shared and transform work
 in direct fixed gaps. Timing observation v2 cites both ranks' raw arms,
