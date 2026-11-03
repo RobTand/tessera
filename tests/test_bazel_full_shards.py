@@ -151,3 +151,102 @@ def test_hard_timeout_or_failed_build_fails_the_combined_verdict(mode):
     parts[0]['bazel_exit'] = 1
     merged = remote.merge_full_shards(plan, parts)
     assert merged['inputs']
+
+
+@pytest.mark.parametrize('mode', ['pr', 'main'])
+@pytest.mark.parametrize('failed', [False, True])
+def test_client_runs_each_shard_once_and_waits_before_submitting_next(tmp_path, monkeypatch, mode, failed):
+    remote = load('remote_gate')
+    plan, parts = results(mode)
+    if failed:
+        parts[0].update(verdict='fail', failed=['//tests:a'], bazel_exit=3)
+    queue = [dict(row, schema=remote.SCHEMA, base='a' * 40, error=None)
+             for row in [plan, *parts]]
+    events = []
+
+    class Args:
+        base, head, checkout, branch = 'a' * 40, 'b' * 40, '', 'master'
+        repo, cpu, memory, timeout = remote.REPOSITORY, 4, '8GB', 55
+        output_dir = tmp_path
+    Args.mode = mode
+
+    class Client:
+        def call(self, method, request, **options):
+            assert method == 'Run'
+            index = sum(event[0] == 'submit' for event in events)
+            assert index == 0 or events[-1] == ('complete', index - 1)
+            events.append(('submit', index))
+            return {'invocationId': str(index)}
+
+    def terminal(client, invocation_id, deadline):
+        index = int(invocation_id)
+        events.append(('complete', index))
+        return {'success': not (failed and index == 1), 'index': index}
+
+    monkeypatch.setattr(remote, 'await_invocation', terminal)
+    monkeypatch.setattr(remote, 'diagnostics', lambda *args: [])
+    monkeypatch.setattr(remote, 'fetch', lambda client, invocation, name:
+                        json.dumps(queue[invocation['index']]).encode())
+    merged = remote.execute(Client(), Args)
+    assert len(merged['invocations']) == 1 + len(parts)
+    assert len(events) == 2 * len(queue)
+    if mode == 'pr':
+        assert merged['verdict'] == ('fail' if failed else 'pass')
+    else:
+        assert merged['architectures']['amd64']['verdict'] == ('fail' if failed else 'pass')
+    assert merged['inputs'] == []
+
+
+def test_full_runner_uses_the_committed_list_and_retains_bazel_exit(tmp_path, monkeypatch):
+    gate = load('bazel_gate')
+    shards = load('full_shards')
+    shards.generate(tmp_path, XML)
+    part = shards.validate(tmp_path, XML, 'amd64', 0)
+    calls = []
+    workspace = gate.Workspace(tmp_path)
+
+    def run(*command, **options):
+        calls.append(command)
+        return 1
+
+    monkeypatch.setattr(workspace, 'run', run)
+    monkeypatch.setattr(workspace, 'budget_warnings', lambda targets: [])
+    workspace.test(part['tests'], 'remote', {}, 'full-amd64-0',
+                   extra=('--noremote_accept_cached', '--nocache_test_results'),
+                   pattern_file=Path(part['path']))
+    assert workspace.last_test_exit == 1
+    assert len(calls) == 1
+    command = calls[0]
+    assert f"--target_pattern_file={part['path']}" in command
+    assert '--jobs=16' in command
+    assert '--noremote_accept_cached' in command and '--nocache_test_results' in command
+    assert not any(argument.startswith('//') for argument in command)
+
+
+def test_fallback_returns_a_plan_without_running_tests_or_builds():
+    gate = load('bazel_gate')
+
+    class Workspace:
+        def ensure_commit(self, sha): pass
+        def checkout(self, sha): pass
+        def ensure_history(self, sha): pass
+        def changes(self, base, head): return {'.bazelrc'}, set()
+        def used_sources(self): return set()
+        def tests(self, architecture): return {'//tests:a'}
+        def inputs_check(self): return []
+        def graph_impact(self, base): return None
+        def full_plan(self, architectures):
+            return {'amd64': [{'rules': ['//tests:a', '//src:library'], 'tests': ['//tests:a']}]}
+
+    result = gate.gate_pr(Workspace(), 'base', 'head', {})
+    assert result['selection'] == 'fallback' and result['all_scopes']
+    assert result['full_populations']['amd64']['rules'] == ['//src:library', '//tests:a']
+    assert 'verdict' not in result
+
+
+def test_postmerge_without_both_architectures_is_never_a_pass():
+    remote = load('remote_gate')
+    row = {'schema': remote.SCHEMA, 'mode': 'main', 'head': 'b' * 40,
+           'architectures': {'amd64': {'verdict': 'pass', 'failed': []}}}
+    with pytest.raises(remote.RemoteError, match='complete post-merge'):
+        remote.parse_result(json.dumps(row), row['head'])

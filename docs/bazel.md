@@ -21,7 +21,7 @@ Run Bazel through the approved shared `bbrun.py` client. It keeps credentials in
 python3 -I /home/rob/tmp/bazel-wave2/tools/bbrun.py test \
   --repo https://github.com/RobTand/tessera \
   --commit FULL_COMMIT_SHA --branch bbrun/tessera-tests \
-  --arch amd64 --timeout 15 -- \
+  --arch amd64 --full-history --timeout 15 -- \
   bazel test --config=remote --jobs=16 \
   --nocache_test_results --noremote_accept_cached \
   //tests:test_alphabet //tests:test_alphabet.bytes
@@ -64,6 +64,14 @@ The C++ that CPU tests compile at run time (torch's `cpp_extension`, Inductor's 
 3. Commit the `BUILD.bazel` changes it writes.
 
 The same applies after you add a module or an import, or a fixture a test reads. `tests/test_bazel_build.py` fails when a generated file is stale, when a gate file lacks a target in a lane, or when a target the cloud gate leaves out has no reason.
+
+After changing target names or tags, run `python3 tools/ci/full_shards.py` and
+commit `tools/bazel/full_targets/`. This performs only a Bazel query. Its two
+lists per architecture must be disjoint and cover every eligible rule and
+test. The gate checks them against a live query and uses each committed file
+with `--target_pattern_file` in a separate serial Remote Bazel run, capped at
+55 minutes. This keeps full fallback and post-merge runs below BuildBuddy's
+one-hour limit and avoids the Run action's single-argument size limit.
 
 ## Where tests run
 

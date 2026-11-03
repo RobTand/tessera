@@ -82,6 +82,8 @@ ts_py_library(
     ],
     deps = [
         ":ci/check_no_secret_leak",
+        ":ci/full_shards",
+        ":ci/remote_gate",
     ],
 )
 
@@ -102,6 +104,13 @@ ts_py_library(
     name = "ci/check_no_secret_leak",
     srcs = [
         "ci/check_no_secret_leak.py",
+    ],
+)
+
+ts_py_library(
+    name = "ci/full_shards",
+    srcs = [
+        "ci/full_shards.py",
     ],
 )
 

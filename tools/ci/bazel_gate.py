@@ -29,6 +29,7 @@ import urllib.request
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import check_no_secret_leak  # noqa: E402
+import full_shards  # noqa: E402
 
 ROOT = Path(__file__).resolve().parents[2]
 SCHEMA = 'tessera.bazel-gate.v1'
@@ -43,6 +44,7 @@ BAZEL_DIFF_SHA256 = '44226a1d1d5239abc8bc6158de1f886fcbbf58e44479ec178df8c01e7e3
 FALLBACK = [
     'MODULE.bazel', 'MODULE.bazel.lock', '.bazelrc', '.bazelversion', '.bazelignore', 'BUILD.bazel',
     'tools/bazel/*', '.github/workflows/gate.yml', 'tools/ci/bazel_gate.py', 'tools/ci/remote_gate.py',
+    'tools/ci/full_shards.py',
 ]
 CONFIGS = {'amd64': 'remote', 'arm64': 'remote-arm64'}
 DIAGNOSTICS = ['bazel-remote-grpc.log', 'execution_log.binpb.zst']
@@ -225,20 +227,32 @@ class Workspace:
         self.diff_files = {'hashes': hashes, 'edges': edges, 'executable': executable}
         return impacted_labels(impacted.read_text())
 
-    def test(self, targets, config, metadata, log_name, extra=()):
+    def test(self, targets, config, metadata, log_name, extra=(), pattern_file=None):
         """Run targets; return (per-label status, per-test budget warnings)."""
-        if not targets:
+        self.last_test_exit = 0
+        if not targets and pattern_file is None:
             return {}, []
-        patterns = Path(tempfile.gettempdir(), f'{log_name}-targets.txt')
-        patterns.write_text('\n'.join(targets) + '\n')
+        patterns = pattern_file or Path(tempfile.gettempdir(), f'{log_name}-targets.txt')
+        if pattern_file is None:
+            patterns.write_text('\n'.join(targets) + '\n')
         bep = Path(tempfile.gettempdir(), f'{log_name}-bep.json')
         bep.unlink(missing_ok=True)
-        self.run(self.bazel, 'test', f'--config={config}', '--config=ci', '--keep_going',
+        self.last_test_exit = self.run(self.bazel, 'test', f'--config={config}', '--config=ci',
+                 '--jobs=16', '--spawn_strategy=remote,local', '--keep_going',
                  f'--target_pattern_file={patterns}', f'--build_event_json_file={bep}',
                  *diagnostic_logs(log_name), *extra,
                  *[f'--build_metadata={key}={value}' for key, value in metadata.items()],
                  capture=False, check=False)
         return test_statuses(bep), self.budget_warnings(targets)
+
+    def full_plan(self, architectures):
+        xml = self.run(self.bazel, 'query', '//...', '--output=xml', '--keep_going=false')
+        try:
+            parts = {arch: [full_shards.validate(self.root, xml, arch, index)
+                            for index in range(full_shards.COUNT)] for arch in architectures}
+        except ValueError as error:
+            raise GateError(str(error)) from error
+        return parts
 
     def budget_warnings(self, targets):
         warnings = []
@@ -265,7 +279,8 @@ class Workspace:
         problems = []
         for command in ([sys.executable, 'tools/bazel/build_files.py', '--check'],
                         [sys.executable, 'tools/bazel/requirements.py', '--check'],
-                        [sys.executable, 'tools/ci/bazel_parity.py']):
+                        [sys.executable, 'tools/ci/bazel_parity.py'],
+                        [sys.executable, 'tools/ci/full_shards.py', '--check']):
             if self.run(*command, capture=False, check=False):
                 problems.append(shlex.join(map(str, command)))
         return problems
@@ -348,10 +363,16 @@ def gate_pr(workspace, base, head, metadata):
     tests = workspace.tests('amd64')
     decision = gate_decision(changed, deleted, impacted, used, tests)
     selected_seconds = time.monotonic() - started
+    if decision['selection'] == 'fallback':
+        return {**decision, 'full_populations': full_populations(workspace, ['amd64']),
+                'inputs': workspace.inputs_check(), 'graph_impact': workspace.graph_impact(base),
+                'changed': sorted(changed | deleted), 'durations': {'selection': selected_seconds}}
     statuses, warnings = workspace.test(decision['selected'], CONFIGS['amd64'], metadata, 'pr')
     tested_seconds = time.monotonic() - started
     verdict, failed = verdict_of(decision['selected'], statuses)
     inputs = workspace.inputs_check()
+    if getattr(workspace, 'last_test_exit', 0):
+        inputs.append('bazel test exited nonzero')
     if not workspace.build(decision['build'], CONFIGS['amd64'], metadata, 'pr'):
         inputs.append('bazel build of impacted targets failed: ' + ' '.join(decision['build']))
     return {**decision, 'verdict': verdict, 'failed': failed, 'budget_warnings': warnings, 'inputs': inputs,
@@ -378,30 +399,47 @@ def gate_main(workspace, base, head, metadata):
     except GateError as error:
         workspace.checkout(head)
         selection = {'selection': 'error', 'reason': [str(error)], 'selected': sorted(workspace.tests('amd64'))}
-    architectures = {}
-    for architecture, config in CONFIGS.items():
-        begun = time.monotonic()
-        population = sorted(workspace.tests(architecture))
-        statuses, warnings = workspace.test(population, config, metadata, f'main-{architecture}')
-        verdict, failed = verdict_of(population, statuses)
-        architectures[architecture] = {
-            'verdict': verdict, 'failed': failed, 'tests': len(population), 'budget_warnings': warnings,
-            'missed': sorted(label for label in failed if label not in selection['selected']),
-            'seconds': round(time.monotonic() - begun, 1)}
-    if any(arch['tests'] == 0 for arch in architectures.values()):
-        raise GateError('an architecture executed no tests: ' + json.dumps(
-            {name: arch['tests'] for name, arch in architectures.items()}))
     return {'selection': selection['selection'], 'reason': selection['reason'],
-            'selected': selection['selected'], 'architectures': architectures,
+            'selected': selection['selected'], 'full_populations': full_populations(workspace, CONFIGS),
             'inputs': workspace.inputs_check(), 'changed': sorted(changed | deleted),
             'durations': {'total': round(time.monotonic() - started, 1)}}
+
+
+def full_populations(workspace, architectures):
+    parts = workspace.full_plan(architectures)
+    populations = {arch: {kind: sorted(label for part in shards for label in part[kind])
+                          for kind in ('rules', 'tests')} for arch, shards in parts.items()}
+    if any(not row['tests'] for row in populations.values()):
+        raise GateError('an architecture has no eligible tests')
+    return populations
+
+
+def gate_full_shard(workspace, head, metadata, architecture, index):
+    workspace.ensure_commit(head)
+    workspace.checkout(head)
+    workspace.ensure_history(head)
+    parts = workspace.full_plan([architecture])
+    part = parts[architecture][index]
+    statuses, warnings = workspace.test(
+        part['tests'], CONFIGS[architecture], metadata, f'full-{architecture}-{index}',
+        extra=('--noremote_accept_cached', '--nocache_test_results'), pattern_file=Path(part['path']))
+    verdict, failed = verdict_of(part['tests'], statuses)
+    bazel_exit = workspace.last_test_exit
+    return {'full_shard': {'architecture': architecture, 'index': index},
+            'selected': part['tests'], 'full_rules': part['rules'], 'failed': failed,
+            'verdict': 'fail' if bazel_exit else verdict, 'bazel_exit': bazel_exit,
+            'budget_warnings': warnings, 'inputs': []}
 
 
 def passed(result):
     if result.get('error') or result.get('inputs'):
         return False
+    if result.get('full_populations'):
+        return True  # A plan is not a test verdict; remote_gate requires every shard.
+    if result.get('full_shard'):
+        return result['verdict'] != 'fail' and not result['bazel_exit']
     if result['mode'] == 'main':
-        return all(not arch['failed'] for arch in result['architectures'].values())
+        return all(arch['verdict'] == 'pass' for arch in result['architectures'].values())
     impact = result.get('graph_impact')
     return result['verdict'] != 'fail' and not (impact and impact['exit'])
 
@@ -412,13 +450,25 @@ def main(argv=None, workspace=None):
     parser.add_argument('--base', required=True)
     parser.add_argument('--head', required=True)
     parser.add_argument('--branch', default='')
+    parser.add_argument('--plan-full', action='store_true', help='return full plans for separate Run requests')
+    parser.add_argument('--full-shard', help='architecture:index of a committed full target file')
     args = parser.parse_args(argv)
     output = Path(os.environ.get('BUILDBUDDY_ARTIFACTS_DIRECTORY', ROOT / 'gate-artifacts'))
     metadata = {'COMMIT_SHA': args.head, 'BRANCH_NAME': args.branch}
     result = {'schema': SCHEMA, 'mode': args.mode, 'base': args.base, 'head': args.head}
     try:
-        gate = gate_pr if args.mode == 'pr' else gate_main
-        result.update(gate(workspace or Workspace(), args.base, args.head, metadata))
+        if args.full_shard:
+            try:
+                architecture, number = args.full_shard.split(':')
+                index = int(number)
+                if architecture not in CONFIGS or index not in range(full_shards.COUNT):
+                    raise ValueError
+            except ValueError as error:
+                raise GateError('invalid full-shard coordinates') from error
+            result.update(gate_full_shard(workspace or Workspace(), args.head, metadata, architecture, index))
+        else:
+            gate = gate_pr if args.mode == 'pr' else gate_main
+            result.update(gate(workspace or Workspace(), args.base, args.head, metadata))
         result['error'] = None
     except GateError as error:
         result['error'] = str(error)

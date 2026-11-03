@@ -126,19 +126,27 @@ def prepare_full_history(expected_commit, root=None):
     except RuntimeError as error:
         print('full history preparation failed: ' + str(error), file=sys.stderr, flush=True)
         return False
-    except BaseException:
-        print('full history preparation failed: Git unavailable or preparation incomplete',
+    except BaseException as error:
+        print('full history preparation failed: Git unavailable or preparation incomplete ('
+              + type(error).__name__ + ')',
               file=sys.stderr, flush=True)
         return False
     finally:
         print('full history: ' + json.dumps(facts, sort_keys=True), flush=True)
 
 
-def run_request(args):
+def run_request(args, full_shard=None):
     if not args.base or not args.head:
         raise RemoteError('empty base or head: the queue-aware refs were unavailable')
     command = ['tools/ci/bazel_gate.py', args.mode, '--base', args.base,
                '--head', args.head, '--branch', args.branch]
+    if full_shard is None:
+        command.append('--plan-full')
+    else:
+        arch, index = full_shard
+        if arch not in ('amd64', 'arm64') or type(index) is not int or index not in range(2):
+            raise RemoteError('invalid full-shard coordinates')
+        command.extend(['--full-shard', f'{arch}:{index}'])
     return {
         'repo': args.repo,
         'branch': args.branch,
@@ -156,7 +164,8 @@ def run_request(args):
             'workload-isolation-type': 'firecracker',
             'recycle-runner': 'true',
         },
-        'timeout': f'{args.timeout}m',
+        # BuildBuddy's free tier disconnects every Remote Bazel run at one hour.
+        'timeout': f'{min(args.timeout, 55)}m',
         'wait_until': 'STARTED',
     }
 
@@ -211,10 +220,66 @@ def parse_result(raw, head):
         raise RemoteError(f'{RESULT} is not JSON: {error}') from error
     if not isinstance(result, dict) or result.get('schema') != SCHEMA or result.get('head') != head:
         raise RemoteError(f'{RESULT} has the wrong schema or head')
-    if result.get('error') is None and result.get('mode') == 'pr' and result.get('verdict') not in (
-            'pass', 'fail', 'skipped'):
+    if result.get('mode') not in ('pr', 'main'):
+        raise RemoteError(f'{RESULT} has the wrong mode')
+    if (result.get('error') is None and result.get('mode') == 'pr'
+            and 'full_populations' not in result and result.get('verdict') not in (
+            'pass', 'fail', 'skipped')):
         raise RemoteError(f'{RESULT} has no verdict')
+    if (result.get('error') is None and result['mode'] == 'main'
+            and 'full_populations' not in result and 'full_shard' not in result
+            and set(result.get('architectures', {})) != {'amd64', 'arm64'}):
+        raise RemoteError(f'{RESULT} has no complete post-merge verdict')
     return result
+
+
+def merge_full_shards(plan, parts):
+    """Accept exactly two complete, disjoint result records per requested arch."""
+    arches = ['amd64'] if plan['mode'] == 'pr' else ['amd64', 'arm64']
+    if set(plan.get('full_populations', {})) != set(arches):
+        raise RemoteError('full plan has the wrong architecture populations')
+    if len(parts) != 2 * len(arches):
+        raise RemoteError('full run is missing shard records')
+    merged = dict(plan, inputs=list(plan.get('inputs', [])))
+    records = {}
+    for arch in arches:
+        expected = plan['full_populations'][arch]
+        rows = [part for part in parts if part.get('full_shard', {}).get('architecture') == arch]
+        if (len(rows) != 2 or {part['full_shard'].get('index') for part in rows} != {0, 1}
+                or any(type(part['full_shard'].get('index')) is not int for part in rows)):
+            raise RemoteError('full run has missing or duplicate shard coordinates')
+        rows.sort(key=lambda row: row['full_shard']['index'])
+        for kind, field in (('tests', 'selected'), ('rules', 'full_rules')):
+            labels = [label for row in rows for label in row.get(field, [])]
+            if (not expected.get(kind) or len(expected[kind]) != len(set(expected[kind]))
+                    or len(labels) != len(set(labels)) or set(labels) != set(expected[kind])):
+                raise RemoteError('full shard union differs from the planned ' + kind)
+        failed, warnings, bad = set(), [], False
+        for row in rows:
+            if row.get('head') != plan['head'] or row.get('mode') != plan['mode'] or row.get('error'):
+                raise RemoteError('full shard has the wrong head, mode or an error')
+            if (row.get('verdict') not in ('pass', 'fail', 'skipped')
+                    or type(row.get('bazel_exit')) is not int
+                    or not isinstance(row.get('failed'), list)
+                    or (row.get('verdict') == 'skipped' and row['selected'])
+                    or not set(row['failed']) <= set(row['selected'])):
+                raise RemoteError('full shard has no valid test/build verdict')
+            if row['bazel_exit'] and not (row['bazel_exit'] == 3 and row['failed']):
+                merged['inputs'].append(f"bazel full shard {arch}:{row['full_shard']['index']} exited {row['bazel_exit']}")
+            merged['inputs'].extend(row.get('inputs', []))
+            failed.update(row['failed'])
+            warnings.extend(row.get('budget_warnings', []))
+            bad |= bool(row['bazel_exit'] or row['failed'] or row['verdict'] == 'fail')
+        records[arch] = {'verdict': 'fail' if bad else 'pass', 'failed': sorted(failed),
+                         'tests': len(expected['tests']), 'budget_warnings': warnings,
+                         'missed': sorted(failed - set(plan['selected']))}
+    merged.pop('full_populations')
+    if plan['mode'] == 'pr':
+        merged.update({key: records['amd64'][key]
+                       for key in ('verdict', 'failed', 'budget_warnings')})
+    else:
+        merged['architectures'] = records
+    return merged
 
 
 def outputs(result):
@@ -241,17 +306,21 @@ def post_merge_record(result, prs, seconds):
         verdict = 'gate-error'
     elif missed.get('amd64'):
         verdict = 'detection-miss'
-    elif failures.get('amd64'):
+    elif failures.get('amd64') or result.get('architectures', {}).get('amd64', {}).get('verdict') == 'fail':
         verdict = 'selected-but-failed'
-    elif failures.get('arm64'):
+    elif failures.get('arm64') or result.get('architectures', {}).get('arm64', {}).get('verdict') == 'fail':
         verdict = 'arm64-only'
     else:
         verdict = 'pass'
     return {'merge_sha': result['head'], 'base_sha': result['base'], 'prs': prs,
             'verdict': verdict, 'selection': result.get('selection'),
-            'selected': len(result.get('selected', [])), 'tests': result.get('tests'),
+            'selected': len(result.get('selected', [])),
+            'tests': {arch: row['tests'] for arch, row in result.get('architectures', {}).items()},
             'failures': failures, 'missed': missed, 'seconds': round(seconds, 1),
-            'error': result.get('error'), 'inputs': result.get('inputs')}
+            'error': result.get('error'), 'inputs': result.get('inputs'),
+            'invocations': result.get('invocations', []),
+            'budget_warnings': {arch: row.get('budget_warnings', [])
+                                for arch, row in result.get('architectures', {}).items()}}
 
 
 def explain(result, prs):
@@ -305,6 +374,43 @@ def write_github(path_variable, text):
             handle.write(text)
 
 
+def execute(client, args):
+    """Serial submissions: each Run is terminal before the next one starts."""
+    runs = []
+
+    def run(coordinates=None):
+        request = run_request(args, full_shard=coordinates)
+        invocation_id = client.call('Run', request, timeout=600).get('invocationId')
+        if not invocation_id:
+            raise RemoteError('BuildBuddy Run returned no invocation id')
+        print(f'Remote Bazel run: https://app.buildbuddy.io/invocation/{invocation_id}', flush=True)
+        invocation = await_invocation(
+            client, invocation_id, time.monotonic() + (int(request['timeout'][:-1]) + 10) * 60)
+        for name, data in diagnostics(client, invocation):
+            (args.output_dir / f'{invocation_id}-{name}').write_bytes(data)
+        result = parse_result(fetch(client, invocation, RESULT), args.head)
+        if result.get('mode') != args.mode or result.get('base') != args.base:
+            raise RemoteError('remote result has the wrong mode or base')
+        # Retain each result for diagnostics; the workflow scans everything before upload.
+        (args.output_dir / f'{invocation_id}-{RESULT}').write_text(json.dumps(result, indent=2))
+        runs.append({'id': invocation_id, 'full_shard': coordinates,
+                     'success': invocation.get('success') is True})
+        if (invocation.get('success') is not True and result.get('verdict') != 'fail'
+                and not result.get('error') and not result.get('inputs')):
+            result.setdefault('inputs', []).append('remote runner did not succeed: ' + invocation_id)
+        return result
+
+    plan = run()
+    if 'full_populations' in plan and not plan.get('error') and not plan.get('inputs'):
+        arches = ['amd64'] if args.mode == 'pr' else ['amd64', 'arm64']
+        parts = [run((arch, index)) for arch in arches for index in range(2)]
+        result = merge_full_shards(plan, parts)
+    else:
+        result = plan
+    result['invocations'] = runs
+    return result
+
+
 def main(argv=None):
     argv = sys.argv[1:] if argv is None else argv
     if argv[:1] == ['aggregate']:
@@ -331,14 +437,7 @@ def main(argv=None):
     args.output_dir.mkdir(parents=True, exist_ok=True)
     try:
         client = BuildBuddy(os.environ.get('BUILDBUDDY_API_KEY', ''))
-        invocation_id = client.call('Run', run_request(args), timeout=600).get('invocationId')
-        if not invocation_id:
-            raise RemoteError('BuildBuddy Run returned no invocation id')
-        print(f'Remote Bazel run: https://app.buildbuddy.io/invocation/{invocation_id}', flush=True)
-        invocation = await_invocation(client, invocation_id, started + (args.timeout + 10) * 60)
-        for name, data in diagnostics(client, invocation):
-            (args.output_dir / name).write_bytes(data)
-        result = parse_result(fetch(client, invocation, RESULT), args.head)
+        result = execute(client, args)
     except RemoteError as error:
         print(f'::error::{error}', flush=True)
         write_github('GITHUB_OUTPUT', 'scopes_ready=false\ntests=failure\n')
@@ -348,7 +447,7 @@ def main(argv=None):
     print(summary, flush=True)
     write_github('GITHUB_STEP_SUMMARY', '```\n' + summary + '\n```\n')
     write_github('GITHUB_OUTPUT', ''.join(f'{k}={v}\n' for k, v in outputs(result).items()))
-    ok = invocation.get('success') and not result.get('error') and not result.get('inputs')
+    ok = not result.get('error') and not result.get('inputs')
     if args.mode == 'main':
         record = post_merge_record(result, prs, time.monotonic() - started)
         line = json.dumps(record)

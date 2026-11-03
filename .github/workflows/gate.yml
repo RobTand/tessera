@@ -35,7 +35,7 @@ jobs:
     name: Bazel
     if: github.event_name == 'pull_request'
     runs-on: ubuntu-24.04
-    timeout-minutes: 60
+    timeout-minutes: 180
     outputs:
       tests: ${{ steps.gate.outputs.tests }}
       base: ${{ steps.target.outputs.base }}
@@ -231,7 +231,7 @@ jobs:
     name: Post-merge full run
     if: github.event_name == 'push'
     runs-on: ubuntu-24.04
-    timeout-minutes: 120
+    timeout-minutes: 335
     permissions:
       contents: read
       pull-requests: read
@@ -261,7 +261,7 @@ jobs:
           PRS: ${{ steps.prs.outputs.prs }}
         run: >-
           python3 tools/ci/remote_gate.py main --base "$BEFORE" --head "$AFTER"
-          --branch master --prs "$PRS" --timeout 100
+          --branch master --prs "$PRS" --timeout 55
       - name: Explain fork artifact policy
         if: always() && github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository
         run: |

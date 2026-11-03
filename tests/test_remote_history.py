@@ -34,6 +34,9 @@ def test_full_history_hydrates_a_real_shallow_partial_clone(tmp_path, monkeypatc
     clone = tmp_path / 'clone'
     git(tmp_path, 'clone', '--depth=1', '--filter=blob:none', '--no-checkout',
         origin.as_uri(), str(clone))
+    # Remote Bazel has checked out the requested revision before this preflight.
+    # Match bbrun's real fixture, including materializing the current tree.
+    git(clone, 'checkout', '--detach', head)
     assert git(clone, 'rev-parse', '--is-shallow-repository') == 'true'
     assert git(clone, 'config', '--get', 'remote.origin.promisor') == 'true'
     monkeypatch.setenv('BUILDBUDDY_API_KEY', 'fake-fixture-key')

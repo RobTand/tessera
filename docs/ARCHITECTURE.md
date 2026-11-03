@@ -10264,6 +10264,13 @@ and removes partial-clone metadata. A shallow or missing-object checkout
 fails before test execution. Budget overruns warn without changing the first
 verdict; assertions and hard TIMEOUTs fail without a rerun.
 
+Fallback and post-merge full populations are split into two committed target
+files per architecture, including non-test build rules. The client submits
+each with `--target_pattern_file` in a separate serial Remote Bazel run capped
+at 55 minutes. Live-query validation and complete, disjoint result unions
+fail closed on drift or missing shards. The combined post-merge record keeps
+all invocation IDs and per-architecture budget warnings.
+
 Runner steps scan the actual artifact directory in-process with the runner's
 key before exit. A missing key fails the scan without deleting artifacts;
 a detected secret or incomplete scan clears the directory and fails the step.

@@ -106,6 +106,7 @@ def test_budget_warnings_preserve_the_first_verdict_without_rerunning(status, mo
     class Workspace(bazel_gate.Workspace):
         def __init__(self):
             self.calls = []
+            self.last_test_exit = 0
         def ensure_history(self, head): pass
         def ensure_commit(self, sha): pass
         def checkout(self, sha): pass
@@ -116,13 +117,18 @@ def test_budget_warnings_preserve_the_first_verdict_without_rerunning(status, mo
         def inputs_check(self): return []
         def graph_impact(self, base): return None
         def build(self, *args): return True
-        def test(self, targets, config, metadata, log_name, extra=()):
+        def full_plan(self, architectures):
+            return {arch: [{"tests": ["//tests:test_wire"],
+                            "rules": ["//tests:test_wire"], "path": "/committed/targets"}]
+                    for arch in architectures}
+        def test(self, targets, config, metadata, log_name, extra=(), pattern_file=None):
             self.calls.append(config)
             return {'//tests:test_wire': status}, [warning]
 
     workspace = Workspace()
-    result = getattr(bazel_gate, 'gate_' + mode)(workspace, 'base', 'head', {})
-    records = [result] if mode == 'pr' else list(result['architectures'].values())
+    records = ([bazel_gate.gate_pr(workspace, 'base', 'head', {})] if mode == 'pr' else
+               [bazel_gate.gate_full_shard(workspace, 'head', {}, arch, 0)
+                for arch in ('amd64', 'arm64')])
     assert len(workspace.calls) == len(records)
     assert len(set(workspace.calls)) == len(records)
     for record in records:
