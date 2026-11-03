@@ -9,6 +9,8 @@ deliberate and untouched.
 
 import signal
 import subprocess
+import time
+from types import SimpleNamespace
 
 import pytest
 
@@ -124,15 +126,15 @@ def _check_completed_lifecycles(monkeypatch, previous):
         with monkeypatch.context() as patch:
             patch.setattr(suite_deadline.subprocess, "Popen", popen)
             patch.setattr(suite_deadline.os, "killpg", lambda *args: groups.append(args))
-            patch.setattr(suite_deadline.time, "sleep", sleeps.append)
+            clock = SimpleNamespace(sleep=sleeps.append)
             if outcome == "launch_failure":
                 with pytest.raises(OSError) as exc:
-                    suite_deadline.run(["leader"], 2.0, 0.25)
+                    suite_deadline.run(["leader"], 2.0, 0.25, clock=clock)
                 assert exc.value is launch_error
             else:
                 expected = {"success": 7, "timeout_term": 124, "timeout_kill": 137,
                             signal.SIGTERM: 143, signal.SIGINT: 130}[outcome]
-                assert suite_deadline.run(["leader"], 2.0, 0.25) == expected
+                assert suite_deadline.run(["leader"], 2.0, 0.25, clock=clock) == expected
         assert _handlers() == previous, outcome
         if outcome in ("timeout_term", "timeout_kill"):
             assert groups == [(process.pid, signal.SIGTERM), (process.pid, signal.SIGKILL)]
@@ -143,6 +145,23 @@ def _check_completed_lifecycles(monkeypatch, previous):
             assert process.waits == [2.0, 0.25]
         else:
             assert groups == []
+
+
+def test_lifecycle_grace_clock_does_not_capture_another_owners_sleep(monkeypatch):
+    signal_group = suite_deadline._signal_group
+    other_sleeps = []
+
+    def signal_group_with_other_owner(pid, signum):
+        signal_group(pid, signum)
+        if signum == signal.SIGKILL:
+            # Force the interleaving seen with the route trace's 1s flusher,
+            # without racing a daemon thread or changing the process clock.
+            time.sleep(1.0)
+            other_sleeps.append(1.0)
+
+    monkeypatch.setattr(suite_deadline, "_signal_group", signal_group_with_other_owner)
+    _check_completed_lifecycles(monkeypatch, _handlers())
+    assert other_sleeps == [1.0, 1.0, 1.0, 1.0]
 
 
 @pytest.mark.parametrize("setup_signal", _HANDLER_SIGNALS, ids=lambda sig: sig.name)

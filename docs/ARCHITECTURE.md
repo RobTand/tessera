@@ -4043,6 +4043,11 @@ dispositions. Installation shares the protected execution/cleanup lifecycle:
 partial setup restores those snapshots even when a setter mutates then raises,
 and TERM/INT during setup returns the usual 143/130 without launching a child.
 Setup rollback attempts every restoration without masking the original failure.
+The grace sleep accepts a call-local clock provider. Lifecycle tests inject
+that provider instead of patching the process-wide `time.sleep`, so unrelated
+serving telemetry threads retain their real sleep. `Popen.wait(timeout=...)`
+continues to own the process-wait clock; its test double returns or raises
+directly without reading a real clock.
 Every wait after KILL is bounded by that same grace: a leader that cannot be
 reaped (a D-state process on a wedged GPU) is reported on stderr and the
 attempt exits 137, so the deadline that bounds the run is itself bounded.
