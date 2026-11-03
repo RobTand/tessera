@@ -27,7 +27,7 @@ bazel_gate = _load('bazel_gate', 'tools/ci/bazel_gate.py')
 remote_gate = _load('remote_gate', 'tools/ci/remote_gate.py')
 
 TESTS = {'//tests:test_wire', '//tests:test_wire.bytes', '//tests:test_export'}
-USED = {'src/tessera/wire.py', 'src/tessera/export.py', 'tests/test_wire.py', 'tests/fixtures/a.json',
+USED = {'src/fixture/wire.py', 'src/fixture/export.py', 'tests/test_fixture_wire.py', 'tests/fixtures/a.json',
         'tests/BUILD.bazel', 'src/tessera/BUILD.bazel', 'docs/ARCHITECTURE.md',
         '.github/workflows/ci.yml'}
 
@@ -37,7 +37,7 @@ def plan(changed, impacted=(), deleted=(), used=USED, tests=TESTS):
 
 
 def test_impacted_tests_are_selected_and_packages_become_scopes():
-    decision = plan(['src/tessera/wire.py'], ['//src/tessera:wire', '//tests:test_wire', '//tests:test_wire.bytes'])
+    decision = plan(['src/fixture/wire.py'], ['//src/tessera:wire', '//tests:test_wire', '//tests:test_wire.bytes'])
     assert decision['selected'] == ['//tests:test_wire', '//tests:test_wire.bytes']
     assert decision['scopes'] == ['//src/tessera', '//tests']
     assert decision['build'] == ['//src/tessera:wire']
@@ -49,7 +49,7 @@ def test_impacted_tests_are_selected_and_packages_become_scopes():
                                   'tools/bazel/requirements.txt', '.github/workflows/gate.yml',
                                   'tools/ci/bazel_gate.py', 'tools/ci/remote_gate.py'])
 def test_build_lock_and_gate_workflow_changes_test_everything(path):
-    decision = plan([path, 'src/tessera/wire.py'])
+    decision = plan([path, 'src/fixture/wire.py'])
     assert decision['selection'] == 'fallback'
     assert decision['selected'] == sorted(TESTS)
     assert decision['build'] == ['//...'] and decision['all_scopes']
@@ -82,7 +82,7 @@ def test_a_file_no_target_reads_selects_nothing():
 
 def test_a_relevant_change_with_nothing_impacted_fails_closed():
     with pytest.raises(bazel_gate.GateError, match='no impacted targets'):
-        plan(['src/tessera/wire.py'], [])
+        plan(['src/fixture/wire.py'], [])
 
 
 def test_a_build_file_edit_that_moves_no_rule_hash_tests_everything():
@@ -100,7 +100,7 @@ def test_every_selected_test_must_pass_and_a_missing_status_fails():
 @pytest.mark.parametrize('status', ['PASSED', 'FAILED', 'TIMEOUT'])
 @pytest.mark.parametrize('mode', ['pr', 'main'])
 def test_budget_warnings_preserve_the_first_verdict_without_rerunning(status, mode):
-    warning = {'label': '//tests:test_wire', 'nodeid': 'tests/test_wire.py::test_one',
+    warning = {'label': '//tests:test_wire', 'nodeid': 'tests/test_fixture_wire.py::test_one',
                'seconds': 10000, 'budget_seconds': 20}
 
     class Workspace(bazel_gate.Workspace):
@@ -110,7 +110,7 @@ def test_budget_warnings_preserve_the_first_verdict_without_rerunning(status, mo
         def ensure_history(self, head): pass
         def ensure_commit(self, sha): pass
         def checkout(self, sha): pass
-        def changes(self, base, head): return {'src/tessera/wire.py'}, set()
+        def changes(self, base, head): return {'src/fixture/wire.py'}, set()
         def used_sources(self): return USED
         def bazel_diff(self, base, head): return {'//tests:test_wire'}
         def tests(self, architecture): return {'//tests:test_wire'}
@@ -141,21 +141,21 @@ def test_budget_warnings_collect_each_shard_without_changing_status(tmp_path, mo
     monkeypatch.setattr(bazel_gate, 'ROOT', tmp_path)
     folder = tmp_path / 'bazel-testlogs/tests/test_wire/shard_1_of_2/test.outputs'
     folder.mkdir(parents=True)
-    warning = {'nodeid': 'tests/test_wire.py::test_one', 'seconds': 10000, 'budget_seconds': 20}
+    warning = {'nodeid': 'tests/test_fixture_wire.py::test_one', 'seconds': 10000, 'budget_seconds': 20}
     (folder / 'budget_warnings.json').write_text(json.dumps({'warnings': [warning]}))
     assert bazel_gate.Workspace(tmp_path).budget_warnings(['//tests:test_wire']) == [
         {'label': '//tests:test_wire', **warning}]
 
 
 def test_remote_summary_reports_budget_warnings_on_pr_and_postmerge():
-    warning = {'label': '//tests:test_wire', 'nodeid': 'tests/test_wire.py::test_one',
+    warning = {'label': '//tests:test_wire', 'nodeid': 'tests/test_fixture_wire.py::test_one',
                'seconds': 10000, 'budget_seconds': 20}
     record = {'verdict': 'pass', 'failed': [], 'missed': [], 'budget_warnings': [warning]}
     for mode in ('pr', 'main'):
         result = dict(record, mode=mode, base='a'*40, head='b'*40,
                       architectures={'amd64': record})
         summary = remote_gate.explain(result, [])
-        assert 'BUDGET_WARNING: tests/test_wire.py::test_one' in summary
+        assert 'BUDGET_WARNING: tests/test_fixture_wire.py::test_one' in summary
         assert '10000.000s > 20.000s' in summary
 
 def test_gate_children_get_no_secret_from_the_runner():
@@ -206,7 +206,7 @@ def test_postmerge_retains_detection_failure_without_fabricating_selection():
         def ensure_history(self, head): pass
         def ensure_commit(self, sha): pass
         def checkout(self, sha): pass
-        def changes(self, base, head): return {'src/tessera/wire.py'}, set()
+        def changes(self, base, head): return {'src/fixture/wire.py'}, set()
         def used_sources(self): raise bazel_gate.GateError('fixture graph unavailable')
         def tests(self, architecture): return TESTS
         def inputs_check(self): return []
@@ -581,7 +581,7 @@ def test_python_runner_warns_without_overriding_assertions_or_timeouts(
     from types import SimpleNamespace
     runner = _load('python_runner', 'tools/bazel/python_runner.py')
     real_gate = _load('runner_gate_run', 'tools/ci/gate_run.py')
-    path = 'tests/test_wire.py'
+    path = 'tests/test_fixture_wire.py'
     warning = {'nodeid': path+'::test_one', 'seconds': 10000, 'budget_seconds': 20}
     monkeypatch.chdir(tmp_path)
     monkeypatch.delenv('TS_BAZEL_LANE', raising=False)
@@ -600,7 +600,7 @@ def test_python_runner_warns_without_overriding_assertions_or_timeouts(
         calls.append(command)
         (tmp_path/'surface.json').write_text(json.dumps({'not_collected': []}))
         (tmp_path/'junit.xml').write_text(
-            '<testsuite><testcase file="tests/test_wire.py" classname="tests.test_wire" '
+            '<testsuite><testcase file="tests/test_fixture_wire.py" classname="tests.test_fixture_wire" '
             f'name="test_one" time="10000">{failure}</testcase></testsuite>')
         return SimpleNamespace(returncode=pytest_status)
     monkeypatch.setattr(runner.subprocess, 'run', execute)

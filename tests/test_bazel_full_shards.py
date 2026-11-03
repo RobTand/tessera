@@ -11,8 +11,15 @@ import pytest
 ROOT = Path(__file__).resolve().parents[1]
 
 
+MODULES = {
+    'full_shards': ROOT / 'tools/ci/full_shards.py',
+    'remote_gate': ROOT / 'tools/ci/remote_gate.py',
+    'bazel_gate': ROOT / 'tools/ci/bazel_gate.py',
+}
+
+
 def load(name):
-    spec = importlib.util.spec_from_file_location(name, ROOT / f'tools/ci/{name}.py')
+    spec = importlib.util.spec_from_file_location(name, MODULES[name])
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module
