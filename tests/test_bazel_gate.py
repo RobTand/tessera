@@ -191,6 +191,35 @@ def test_the_required_checks_need_scopes_bazel_and_the_boundary():
             remote_gate.aggregate(broken)
 
 
+def test_required_checks_reject_a_failed_final_scan_after_tests_and_scopes_pass():
+    needs = {'bazel': {'result': 'failure',
+                       'outputs': {'scopes_uploaded': 'true', 'tests': 'success'}},
+             'boundary': {'result': 'success'}}
+    with pytest.raises(RuntimeError):
+        remote_gate.aggregate(needs)
+
+
+def test_postmerge_retains_detection_failure_without_fabricating_selection():
+    class Workspace(bazel_gate.Workspace):
+        def __init__(self): pass
+        def ensure_history(self, head): pass
+        def ensure_commit(self, sha): pass
+        def checkout(self, sha): pass
+        def changes(self, base, head): return {'src/tessera/wire.py'}, set()
+        def used_sources(self): raise bazel_gate.GateError('fixture graph unavailable')
+        def tests(self, architecture): return TESTS
+        def inputs_check(self): return []
+        def full_plan(self, architectures):
+            return {arch: [{'tests': sorted(TESTS), 'rules': sorted(TESTS)}]
+                    for arch in architectures}
+
+    result = bazel_gate.gate_main(Workspace(), 'base', 'head', {})
+    assert result['selection_error'] == 'fixture graph unavailable'
+    assert result['selection'] == 'error' and result['selected'] == []
+    assert set(result['full_populations']) == {'amd64', 'arm64'}
+    assert all(set(row['tests']) == TESTS for row in result['full_populations'].values())
+
+
 def test_the_workflow_keeps_its_check_names_refs_and_scopes():
     text = (ROOT / '.github/workflows/gate.yml').read_text()
     assert '    name: pr-gate\n' in text and '    name: gate\n' in text

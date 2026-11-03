@@ -155,11 +155,15 @@ def test_hard_timeout_or_failed_build_fails_the_combined_verdict(mode):
     assert merged['inputs']
 
 
+@pytest.mark.parametrize('selection_failed', [False, True])
 @pytest.mark.parametrize('failed', [False, True])
-def test_postmerge_runs_each_shard_once_and_waits_before_submitting_next(tmp_path, monkeypatch, failed):
+def test_postmerge_runs_each_shard_once_and_waits_before_submitting_next(
+        tmp_path, monkeypatch, failed, selection_failed):
     mode = 'main'
     remote = load('remote_gate')
     plan, parts = results(mode)
+    if selection_failed:
+        plan.update(selection='error', selection_error='fixture graph unavailable', selected=[])
     if failed:
         parts[0].update(verdict='fail', failed=['//tests:a'], bazel_exit=3)
     queue = [dict(row, schema=remote.SCHEMA, base='a' * 40, error=None)
@@ -197,6 +201,13 @@ def test_postmerge_runs_each_shard_once_and_waits_before_submitting_next(tmp_pat
     else:
         assert merged['architectures']['amd64']['verdict'] == ('fail' if failed else 'pass')
     assert merged['inputs'] == []
+    record = remote.post_merge_record(merged, [], 1)
+    if selection_failed:
+        assert record['verdict'] == 'gate-error'
+        assert record['selection_error'] == 'fixture graph unavailable'
+        assert not any(record['missed'].values()), 'unknown selection is not a measured detection miss'
+    else:
+        assert record['verdict'] == ('selected-but-failed' if failed else 'pass')
 
 
 @pytest.mark.parametrize('committed', [False, True])
