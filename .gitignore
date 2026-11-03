@@ -46,3 +46,8 @@ report.md
 # (`keep_intermediates=False`); this is the belt for a build that died before
 # the cleanup ran.  It is a build intermediate, never a tree artifact.
 src/tessera/serving/csrc/*.hip
+
+# Bazel's output links and the diagnostic logs .bazelrc writes (docs/bazel.md).
+/bazel-*
+/*bazel-remote-grpc.log
+/*execution_log.binpb.zst
