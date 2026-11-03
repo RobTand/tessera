@@ -2,6 +2,8 @@
 import importlib.util
 import json
 from pathlib import Path
+import shlex
+import threading
 
 import pytest
 
@@ -153,9 +155,9 @@ def test_hard_timeout_or_failed_build_fails_the_combined_verdict(mode):
     assert merged['inputs']
 
 
-@pytest.mark.parametrize('mode', ['pr', 'main'])
 @pytest.mark.parametrize('failed', [False, True])
-def test_client_runs_each_shard_once_and_waits_before_submitting_next(tmp_path, monkeypatch, mode, failed):
+def test_postmerge_runs_each_shard_once_and_waits_before_submitting_next(tmp_path, monkeypatch, failed):
+    mode = 'main'
     remote = load('remote_gate')
     plan, parts = results(mode)
     if failed:
@@ -197,7 +199,8 @@ def test_client_runs_each_shard_once_and_waits_before_submitting_next(tmp_path, 
     assert merged['inputs'] == []
 
 
-def test_full_runner_uses_the_committed_list_and_retains_bazel_exit(tmp_path, monkeypatch):
+@pytest.mark.parametrize('committed', [False, True])
+def test_runner_uses_pattern_files_and_retains_bazel_exit(tmp_path, monkeypatch, committed):
     gate = load('bazel_gate')
     shards = load('full_shards')
     shards.generate(tmp_path, XML)
@@ -213,11 +216,16 @@ def test_full_runner_uses_the_committed_list_and_retains_bazel_exit(tmp_path, mo
     monkeypatch.setattr(workspace, 'budget_warnings', lambda targets: [])
     workspace.test(part['tests'], 'remote', {}, 'full-amd64-0',
                    extra=('--noremote_accept_cached', '--nocache_test_results'),
-                   pattern_file=Path(part['path']))
+                   pattern_file=Path(part['path']) if committed else None)
     assert workspace.last_test_exit == 1
     assert len(calls) == 1
     command = calls[0]
-    assert f"--target_pattern_file={part['path']}" in command
+    patterns = next(argument.split('=', 1)[1] for argument in command
+                    if argument.startswith('--target_pattern_file='))
+    if committed:
+        assert patterns == part['path']
+    else:
+        assert Path(patterns).read_text().splitlines() == part['tests']
     assert '--jobs=16' in command
     assert '--noremote_accept_cached' in command and '--nocache_test_results' in command
     assert not any(argument.startswith('//') for argument in command)
@@ -250,3 +258,62 @@ def test_postmerge_without_both_architectures_is_never_a_pass():
            'architectures': {'amd64': {'verdict': 'pass', 'failed': []}}}
     with pytest.raises(remote.RemoteError, match='complete post-merge'):
         remote.parse_result(json.dumps(row), row['head'])
+
+
+@pytest.mark.parametrize('case', ['fallback', 'selected', 'postmerge'])
+def test_only_gate_fallback_overlaps_and_never_exceeds_two_runs(tmp_path, monkeypatch, case):
+    remote = load('remote_gate')
+    mode = 'main' if case == 'postmerge' else 'pr'
+    plan, parts = results(mode)
+    if case == 'selected':
+        plan.pop('full_populations')
+        plan.update(selection='impacted', verdict='pass', failed=[], budget_warnings=[])
+    records = {'plan': plan, **{f"{row['full_shard']['architecture']}:{row['full_shard']['index']}": row
+                               for row in parts}}
+    records = {key: dict(value, schema=remote.SCHEMA, base='a' * 40, error=None)
+               for key, value in records.items()}
+    lock = threading.Lock()
+    overlap = threading.Barrier(2)
+    state = {'active': 0, 'peak': 0, 'submissions': []}
+    bound = 2 if case == 'fallback' else 1
+
+    class Args:
+        base, head, checkout, branch = 'a' * 40, 'b' * 40, '', 'master'
+        repo, cpu, memory, timeout = remote.REPOSITORY, 4, '8GB', 55
+        output_dir = tmp_path
+    Args.mode = mode
+
+    class Client:
+        def call(self, method, request, **options):
+            assert method == 'Run'
+            command = shlex.split(request['steps'][0]['run'])
+            coordinate = (command[command.index('--full-shard') + 1]
+                          if '--full-shard' in command else 'plan')
+            assert not any(argument.startswith('//') for argument in command)
+            with lock:
+                if coordinate != 'plan':
+                    assert state['submissions'][0] == 'plan'
+                state['submissions'].append(coordinate)
+                state['active'] += 1
+                state['peak'] = max(state['peak'], state['active'])
+                assert state['active'] <= bound
+            return {'invocationId': coordinate}
+
+    def terminal(client, invocation_id, deadline):
+        if case == 'fallback' and invocation_id != 'plan':
+            # A serial controller cannot reach this rendezvous. No timing race
+            # is needed to prove that both separate Runs overlap.
+            overlap.wait(timeout=5)
+        with lock:
+            state['active'] -= 1
+        return {'success': True, 'id': invocation_id}
+
+    monkeypatch.setattr(remote, 'await_invocation', terminal)
+    monkeypatch.setattr(remote, 'diagnostics', lambda *args: [])
+    monkeypatch.setattr(remote, 'fetch', lambda client, invocation, name:
+                        json.dumps(records[invocation['id']]).encode())
+    result = remote.execute(Client(), Args)
+    expected = ['plan'] if case == 'selected' else ['plan', *list(records)[1:]]
+    assert sorted(state['submissions']) == sorted(expected)
+    assert state['active'] == 0 and state['peak'] == bound
+    assert len(result['invocations']) == len(expected)
