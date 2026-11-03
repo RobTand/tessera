@@ -1181,6 +1181,35 @@ ts_py_library(
 )
 
 ts_py_test(
+    name = "test_bazel_cutover_probe_new",
+    path = "tests/test_bazel_cutover_probe_new.py",
+    library = ":test_bazel_cutover_probe_new_lib",
+    lane = "torch",
+    args = [
+        "--budget='{\"enforce\":true,\"seconds\":80,\"slow\":{}}'",
+    ],
+    timeout = "moderate",
+)
+
+ts_py_test(
+    name = "test_bazel_cutover_probe_new.bytes",
+    path = "tests/test_bazel_cutover_probe_new.py",
+    library = ":test_bazel_cutover_probe_new_lib",
+    lane = "bytes",
+    args = [
+        "--budget='{\"enforce\":true,\"seconds\":80,\"slow\":{}}'",
+    ],
+    timeout = "moderate",
+)
+
+ts_py_library(
+    name = "test_bazel_cutover_probe_new_lib",
+    srcs = [
+        "test_bazel_cutover_probe_new.py",
+    ],
+)
+
+ts_py_test(
     name = "test_bazel_full_shards",
     path = "tests/test_bazel_full_shards.py",
     library = ":test_bazel_full_shards_lib",
@@ -1724,6 +1753,7 @@ ts_py_library(
         "test_b770_producer_review.py",
         "test_batched_encode_identity.py",
         "test_bazel_build.py",
+        "test_bazel_cutover_probe_new.py",
         "test_bazel_full_shards.py",
         "test_bazel_gate.py",
         "test_bench_kda_geometry.py",
@@ -11053,6 +11083,7 @@ ts_py_library(
         "test_b770_producer_review.py",
         "test_batched_encode_identity.py",
         "test_bazel_build.py",
+        "test_bazel_cutover_probe_new.py",
         "test_bazel_full_shards.py",
         "test_bazel_gate.py",
         "test_bench_kda_geometry.py",
@@ -11817,6 +11848,7 @@ ts_py_library(
         "test_b770_producer_review.py",
         "test_batched_encode_identity.py",
         "test_bazel_build.py",
+        "test_bazel_cutover_probe_new.py",
         "test_bazel_full_shards.py",
         "test_bazel_gate.py",
         "test_bench_kda_geometry.py",
@@ -28432,6 +28464,7 @@ ts_py_library(
         "test_b770_producer_review.py",
         "test_batched_encode_identity.py",
         "test_bazel_build.py",
+        "test_bazel_cutover_probe_new.py",
         "test_bazel_full_shards.py",
         "test_bazel_gate.py",
         "test_bench_kda_geometry.py",

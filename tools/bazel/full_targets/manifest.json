@@ -1867,6 +1867,9 @@
           "//tests:test_batched_encode_identity",
           "//tests:test_batched_encode_identity.bytes",
           "//tests:test_bazel_build_lib",
+          "//tests:test_bazel_cutover_probe_new",
+          "//tests:test_bazel_cutover_probe_new.bytes",
+          "//tests:test_bazel_cutover_probe_new_lib",
           "//tests:test_bazel_full_shards",
           "//tests:test_bazel_full_shards_lib",
           "//tests:test_bazel_gate",
@@ -2674,6 +2677,8 @@
           "//tests:test_b770_producer_review",
           "//tests:test_batched_encode_identity",
           "//tests:test_batched_encode_identity.bytes",
+          "//tests:test_bazel_cutover_probe_new",
+          "//tests:test_bazel_cutover_probe_new.bytes",
           "//tests:test_bazel_full_shards",
           "//tests:test_bazel_gate",
           "//tests:test_bench_kda_timing_scope",
@@ -3186,7 +3191,7 @@
         ],
         "index": 1,
         "file": "tools/bazel/full_targets/amd64-1.targets",
-        "sha256": "5e1707b6f4bf5b2c0393572e233916b639f5fa702503aaa730aa4618e22b2cbb"
+        "sha256": "3af4632d972238b374be10d29f4a73e63bd4d716dc26c504d122ae761b28d8dc"
       }
     ],
     "arm64": [
@@ -5031,6 +5036,9 @@
           "//tests:test_batched_encode_identity",
           "//tests:test_batched_encode_identity.bytes",
           "//tests:test_bazel_build_lib",
+          "//tests:test_bazel_cutover_probe_new",
+          "//tests:test_bazel_cutover_probe_new.bytes",
+          "//tests:test_bazel_cutover_probe_new_lib",
           "//tests:test_bazel_full_shards",
           "//tests:test_bazel_full_shards_lib",
           "//tests:test_bazel_gate",
@@ -5828,6 +5836,8 @@
           "//tests:test_b770_producer_review",
           "//tests:test_batched_encode_identity",
           "//tests:test_batched_encode_identity.bytes",
+          "//tests:test_bazel_cutover_probe_new",
+          "//tests:test_bazel_cutover_probe_new.bytes",
           "//tests:test_bazel_full_shards",
           "//tests:test_bazel_gate",
           "//tests:test_bench_kda_timing_scope",
@@ -6330,7 +6340,7 @@
         ],
         "index": 1,
         "file": "tools/bazel/full_targets/arm64-1.targets",
-        "sha256": "ee53e0c90ac71afd035a82a62fe9950983d24904dd57c21b4df9d12e9db02953"
+        "sha256": "c970bc997a50dd9f0338fc3d993366bc7d2178bd501365e4cfe9039686990a6d"
       }
     ]
   }

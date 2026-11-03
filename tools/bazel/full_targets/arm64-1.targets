@@ -327,6 +327,9 @@
 //tests:test_batched_encode_identity
 //tests:test_batched_encode_identity.bytes
 //tests:test_bazel_build_lib
+//tests:test_bazel_cutover_probe_new
+//tests:test_bazel_cutover_probe_new.bytes
+//tests:test_bazel_cutover_probe_new_lib
 //tests:test_bazel_full_shards
 //tests:test_bazel_full_shards_lib
 //tests:test_bazel_gate
