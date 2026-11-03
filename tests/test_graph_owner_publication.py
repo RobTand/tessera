@@ -10,7 +10,7 @@ import subprocess
 import sys
 
 from child_env import child_env
-from test_graph_owner_hooks import HOOK, MANAGER, RUNNER
+from graph_owner_hooks_support import HOOK, MANAGER, RUNNER
 
 
 PROBE = r'''

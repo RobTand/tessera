@@ -123,7 +123,7 @@ def test_for_unit_and_cached_wire_identity_consume_verified_h(reference):
 
 
 def test_priced_v2_requires_exact_reference_binding_even_with_same_old_seal(reference,tmp_path):
-    from test_priced_inputs_snapshot import exporter
+    from priced_inputs_snapshot_support import exporter
     handoff,payload,H,*_=reference
     source=ActivationSource.from_capture(handoff, canonical_capture=CANONICAL_CAPTURE)
     block=dict(schema='tessera.priced_export_inputs.v2',hessian_capture_sha256=source.capture_sha256(),

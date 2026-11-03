@@ -22,7 +22,7 @@ from pathlib import Path
 
 import pytest
 import box_artifacts
-from test_accounting_source import isolated_prismaquant_imports, package_roots
+from accounting_source_support import isolated_prismaquant_imports, package_roots
 from tessera.errors import TesseraError
 
 ROOT = Path(__file__).resolve().parents[1]

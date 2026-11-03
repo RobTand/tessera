@@ -36,12 +36,12 @@ pytest.importorskip("vllm.config")
 from tessera.errors import GrammarError
 from tessera.serving import moe_route
 from tessera.serving.scheme import validate_tessera_moe_scheme
-# Sibling test modules by their own names: ``tests/conftest.py`` puts this
+# Shared helper modules by their own names: ``tests/conftest.py`` puts this
 # directory on ``sys.path``, while ``tests.<module>`` needs the checkout root
 # there too and resolves to whatever top-level ``tests`` package an
 # interpreter happens to carry (the GB10 venv carries one).
-from test_serving_moe_route import _stack, _encode, EXPERTS
-from test_native_window_moe_method import (_SharedSpy, _fp8_reference, _native_layer,
+from serving_moe_route_support import _stack, _encode, EXPERTS
+from native_window_moe_method_support import (_SharedSpy, _fp8_reference, _native_layer,
                                          HIDDEN, INTER)
 
 H, N, E = HIDDEN, INTER, EXPERTS
