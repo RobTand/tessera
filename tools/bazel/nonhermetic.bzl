@@ -56,6 +56,7 @@ NONHERMETIC = {
     "//tests:test_cuda_surface": struct(tags = ["runner"], reason = "the source identity it verifies is measured with git, which a remote executor's runfiles don't have."),
     "//tests:test_bazel_build": struct(tags = ["runner"], reason = "it regenerates every BUILD file, which lists the repository's files with git ls-files."),
     "//tests:test_gate_selection": struct(tags = ["runner"], reason = _GIT),
+    "//tests:test_graph_impact": struct(tags = ["runner"], reason = "it measures the tracked checkout with git ls-files and compares the merge-base graph; a declared file subset cannot represent that repository-wide contract."),
     "//tests:test_runtime_image_pin": struct(tags = ["runner"], reason = "it lists every tracked file with git ls-files to find copies of the pin."),
     "//tests:test_serving_identity_1095": struct(tags = ["runner"], reason = "it reads a historical commit's tree with git ls-tree."),
     "//tests:test_serving_manifest_json": struct(tags = ["runner"], reason = _GIT),
