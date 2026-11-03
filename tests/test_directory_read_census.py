@@ -109,3 +109,9 @@ def test_the_repository_census_uses_the_full_checkout_runner():
     entry = f'"//tests:{Path(__file__).stem}": struct(tags = ["runner"]'
     assert entry in (ROOT / 'tools/bazel/nonhermetic.bzl').read_text(), (
         'a repository-wide census must run against the complete Git checkout, not partial runfiles')
+
+
+def test_the_census_refuses_a_partial_python_population(monkeypatch):
+    monkeypatch.setattr(impacted, 'import_graph', lambda *args, **kwargs: ({}, {}, set(), {}))
+    with pytest.raises(AssertionError, match='tracked Python sources missing'):
+        test_this_repository_does_not_gain_an_unnamed_directory_read()
