@@ -111,6 +111,23 @@ ts_py_library(
     ],
 )
 
+ts_py_library(
+    name = "export_serving_support",
+    srcs = [
+        "export_serving_support.py",
+    ],
+    data = [
+        "//:pyproject.toml",
+        "//src/tessera:files",
+    ],
+    deps = [
+        "//src/tessera:__init___cycle",
+        "//src/tessera:bf16_route_cycle",
+        "//src/tessera:export_serving",
+        "//src/tessera:source_profiles",
+    ],
+)
+
 filegroup(
     name = "files/data",
     srcs = glob(["data/**"], exclude = ["**/BUILD.bazel", "bazel-*/**", "*bazel-remote-grpc.log", "*execution_log.binpb.zst", ".pytest_cache/**", "**/__pycache__/**", "**/*.pyc"]),
@@ -216,6 +233,18 @@ ts_py_library(
 )
 
 ts_py_library(
+    name = "hessian_reference_support",
+    srcs = [
+        "hessian_reference_support.py",
+    ],
+    deps = [
+        "//src/tessera:__init___cycle",
+        "//src/tessera:bf16_route_cycle",
+        ":reuse_authority_fixture",
+    ],
+)
+
+ts_py_library(
     name = "mapper_probes",
     srcs = [
         "mapper_probes.py",
@@ -244,6 +273,21 @@ ts_py_library(
         "//src/tessera:__init___cycle",
         "//src/tessera:bf16_route_cycle",
         ":native_window_moe_stock_crosscheck_cycle",
+    ],
+)
+
+ts_py_library(
+    name = "native_timing_panel_support",
+    srcs = [
+        "native_timing_panel_support.py",
+    ],
+    deps = [
+        "//src/tessera:__init___cycle",
+        "//src/tessera:bf16_route_cycle",
+        "//src/tessera:fused_frame",
+        "//src/tessera:serving/census_plan",
+        "//src/tessera:serving/timing_panel",
+        ":box_artifacts",
     ],
 )
 
@@ -279,6 +323,40 @@ ts_py_library(
     name = "reuse_authority_fixture",
     srcs = [
         "reuse_authority_fixture.py",
+    ],
+)
+
+ts_py_library(
+    name = "rooted_cached_bundle_support",
+    srcs = [
+        "rooted_cached_bundle_support.py",
+    ],
+    deps = [
+        ":reuse_authority_fixture",
+    ],
+)
+
+ts_py_library(
+    name = "routed_fused_window_support",
+    srcs = [
+        "routed_fused_window_support.py",
+    ],
+    deps = [
+        "//src/tessera:__init___cycle",
+        "//src/tessera:bf16_route_cycle",
+        ":fused_bound",
+        ":window_gemm_grouped_support",
+    ],
+)
+
+ts_py_library(
+    name = "serving_fp8_route_support",
+    srcs = [
+        "serving_fp8_route_support.py",
+    ],
+    deps = [
+        "//src/tessera:__init___cycle",
+        "//src/tessera:bf16_route_cycle",
     ],
 )
 
@@ -619,6 +697,9 @@ ts_py_test(
     name = "test_audit_byte_baseline",
     path = "tests/test_audit_byte_baseline.py",
     library = ":test_audit_byte_baseline_lib",
+    deps = [
+        "//src/tessera:identity",
+    ],
     lane = "torch",
     args = [
         "--budget='{\"enforce\":true,\"seconds\":80,\"slow\":{\"tests/test_audit_byte_baseline.py::test_cpu_class_export_read_roundtrip_preserves_source_wire_bytes[False]\":520,\"tests/test_audit_byte_baseline.py::test_cpu_class_export_read_roundtrip_preserves_source_wire_bytes[True]\":522,\"tests/test_audit_byte_baseline.py::test_projection_matrix_reaches_padding_and_all_direct_buffer_dtypes\":290}}'",
@@ -630,6 +711,9 @@ ts_py_test(
     name = "test_audit_byte_baseline.bytes",
     path = "tests/test_audit_byte_baseline.py",
     library = ":test_audit_byte_baseline_lib",
+    deps = [
+        "//src/tessera:identity",
+    ],
     lane = "bytes",
     args = [
         "--budget='{\"enforce\":true,\"seconds\":80,\"slow\":{\"tests/test_audit_byte_baseline.py::test_cpu_class_export_read_roundtrip_preserves_source_wire_bytes[False]\":520,\"tests/test_audit_byte_baseline.py::test_cpu_class_export_read_roundtrip_preserves_source_wire_bytes[True]\":522,\"tests/test_audit_byte_baseline.py::test_projection_matrix_reaches_padding_and_all_direct_buffer_dtypes\":290}}'",
@@ -884,7 +968,7 @@ ts_py_library(
         "//src/tessera:source_profiles",
         "//tools:provision_producer_env",
         ":box_artifacts",
-        ":test_export_serving_lib",
+        ":export_serving_support",
         ":test_t8_partition_launcher_lib",
     ],
 )
@@ -1347,15 +1431,21 @@ ts_py_library(
         "box_artifacts.py",
         "child_env.py",
         "conftest.py",
+        "export_serving_support.py",
         "fused_bound.py",
         "glm_nightly_cells.py",
         "graph_attest_lifecycle.py",
+        "hessian_reference_support.py",
         "mapper_probes.py",
         "native_dense_prefill_cross_check.py",
         "native_moe_protocol_probe.py",
+        "native_timing_panel_support.py",
         "native_window_moe_stock_crosscheck.py",
         "nvfp4_reference.py",
         "reuse_authority_fixture.py",
+        "rooted_cached_bundle_support.py",
+        "routed_fused_window_support.py",
+        "serving_fp8_route_support.py",
         "shared_fold_data.py",
         "standalone_boundary_allowlist.txt",
         "test_1146_routed_880_912_admission.py",
@@ -1494,6 +1584,7 @@ ts_py_library(
         "test_gate_contract.py",
         "test_gate_evidence.py",
         "test_gate_fail_closed.py",
+        "test_gate_flaky.py",
         "test_gate_population.py",
         "test_gate_quarantine.py",
         "test_gate_selection.py",
@@ -1534,6 +1625,7 @@ ts_py_library(
         "test_graph_owner_publication.py",
         "test_graph_receipt.py",
         "test_graph_receipt_population.py",
+        "test_graph_receipt_population_isolation.py",
         "test_grid_digest_cache.py",
         "test_grid_space_continuity.py",
         "test_guarded_reexports.py",
@@ -1831,6 +1923,7 @@ ts_py_library(
         "test_tcq_graph.py",
         "test_tessera1175_power_bounds.py",
         "test_tessera_producer_plan.py",
+        "test_test_imports.py",
         "test_tl3_harness_table.py",
         "test_tp2_reference_kl_514.py",
         "test_tp2_run_plan_bootstrap_env.py",
@@ -1874,6 +1967,7 @@ ts_py_library(
         "test_wire_device_unpack.py",
         "test_wire_packed_uniform.py",
         "test_wire_unpack_memory.py",
+        "window_gemm_grouped_support.py",
         "window_lut_reference.py",
         "window_pack_reference.py",
         "withdrawn_cells.py",
@@ -1927,7 +2021,6 @@ ts_py_test(
         "//src/tessera:identity.py",
     ],
     deps = [
-        "//experiments:glm53_508_graph_qual/eq-member-508",
         "//src/tessera:identity",
     ],
     lane = "torch",
@@ -1945,7 +2038,6 @@ ts_py_test(
         "//src/tessera:identity.py",
     ],
     deps = [
-        "//experiments:glm53_508_graph_qual/eq-member-508",
         "//src/tessera:identity",
     ],
     lane = "bytes",
@@ -1964,7 +2056,7 @@ ts_py_library(
         "//src/tessera:__init___cycle",
         "//src/tessera:bf16_route_cycle",
         ":reuse_authority_fixture",
-        ":test_rooted_cached_bundle_lib",
+        ":rooted_cached_bundle_support",
     ],
 )
 
@@ -2027,8 +2119,8 @@ ts_py_library(
         "//src/tessera:footprint",
         "//src/tessera:fused",
         "//src/tessera:historical_producer",
+        ":hessian_reference_support",
         ":reuse_authority_fixture",
-        ":test_hessian_reference_capture_lib",
     ],
 )
 
@@ -2077,8 +2169,8 @@ ts_py_library(
         "//src/tessera:__init___cycle",
         "//src/tessera:bf16_route_cycle",
         ":reuse_authority_fixture",
+        ":rooted_cached_bundle_support",
         ":test_cached_producer_lib",
-        ":test_rooted_cached_bundle_lib",
     ],
 )
 
@@ -4319,7 +4411,7 @@ ts_py_library(
         "//src/tessera:bf16_route_cycle",
         "//src/tessera:errors",
         ":fused_bound",
-        ":test_window_gemm_grouped_lib",
+        ":window_gemm_grouped_support",
     ],
 )
 
@@ -4740,10 +4832,10 @@ ts_py_library(
         "//src/tessera:bf16_route_cycle",
         "//src/tessera:serving/flags",
         ":fused_bound",
+        ":serving_fp8_route_support",
         ":test_dense_fused_window_lib",
         ":test_piece_major_reader_boundaries_lib",
-        ":test_serving_fp8_route_lib",
-        ":test_window_gemm_grouped_lib",
+        ":window_gemm_grouped_support",
     ],
 )
 
@@ -5478,12 +5570,8 @@ ts_py_test(
         "//experiments:t8_census/profile_unit_encode",
         "//experiments:t8r_speed/ab_stageprev_accept",
         "//experiments:t8r_speed/bench_class_dispatch",
-        "//experiments:t8r_speed/bench_dense_module",
         "//experiments:t8r_speed/bench_e4m3_prefill",
         "//experiments:t8r_speed/bench_fp8_large_m",
-        "//experiments:t8r_speed/bench_geometry",
-        "//experiments:t8r_speed/bench_rates",
-        "//experiments:t8r_speed/bench_t8r",
         "//experiments:t8r_speed/bench_uniform_production_arm",
         "//experiments:t8r_speed/finalize_native_build",
         "//experiments:t8r_speed/nccl_sweep/nccl_sweep",
@@ -5497,7 +5585,6 @@ ts_py_test(
         "//experiments:window_gemv_latency_ratio",
         "//experiments:window_gemv_load",
         "//experiments:window_gemv_trace_summary",
-        "//src/tessera:bf16_route_cycle",
         "//src/tessera:export_serving",
         "//src/tessera:identity",
         "//src/tessera:serving/build_identity",
@@ -5779,12 +5866,8 @@ ts_py_test(
         "//experiments:t8_census/profile_unit_encode",
         "//experiments:t8r_speed/ab_stageprev_accept",
         "//experiments:t8r_speed/bench_class_dispatch",
-        "//experiments:t8r_speed/bench_dense_module",
         "//experiments:t8r_speed/bench_e4m3_prefill",
         "//experiments:t8r_speed/bench_fp8_large_m",
-        "//experiments:t8r_speed/bench_geometry",
-        "//experiments:t8r_speed/bench_rates",
-        "//experiments:t8r_speed/bench_t8r",
         "//experiments:t8r_speed/bench_uniform_production_arm",
         "//experiments:t8r_speed/finalize_native_build",
         "//experiments:t8r_speed/nccl_sweep/nccl_sweep",
@@ -5798,7 +5881,6 @@ ts_py_test(
         "//experiments:window_gemv_latency_ratio",
         "//experiments:window_gemv_load",
         "//experiments:window_gemv_trace_summary",
-        "//src/tessera:bf16_route_cycle",
         "//src/tessera:export_serving",
         "//src/tessera:identity",
         "//src/tessera:serving/build_identity",
@@ -5838,6 +5920,9 @@ ts_py_library(
     ],
     data = [
         "//experiments:files",
+    ],
+    deps = [
+        "//experiments:t8r_speed/bench_compact_vs_fused",
     ],
 )
 
@@ -6118,6 +6203,9 @@ ts_py_test(
     name = "test_export_ignore_completeness",
     path = "tests/test_export_ignore_completeness.py",
     library = ":test_export_ignore_completeness_lib",
+    deps = [
+        "//src/tessera:identity",
+    ],
     lane = "torch",
     args = [
         "--budget='{\"enforce\":true,\"seconds\":80,\"slow\":{}}'",
@@ -6129,6 +6217,9 @@ ts_py_test(
     name = "test_export_ignore_completeness.bytes",
     path = "tests/test_export_ignore_completeness.py",
     library = ":test_export_ignore_completeness_lib",
+    deps = [
+        "//src/tessera:identity",
+    ],
     lane = "bytes",
     args = [
         "--budget='{\"enforce\":true,\"seconds\":80,\"slow\":{}}'",
@@ -6144,7 +6235,7 @@ ts_py_library(
     deps = [
         "//src/tessera:__init___cycle",
         "//src/tessera:export_serving",
-        ":test_export_serving_lib",
+        ":export_serving_support",
     ],
 )
 
@@ -6246,6 +6337,9 @@ ts_py_test(
     name = "test_export_moe_layouts",
     path = "tests/test_export_moe_layouts.py",
     library = ":test_export_moe_layouts_lib",
+    deps = [
+        "//src/tessera:identity",
+    ],
     lane = "torch",
     args = [
         "--budget='{\"enforce\":true,\"seconds\":80,\"slow\":{}}'",
@@ -6257,6 +6351,9 @@ ts_py_test(
     name = "test_export_moe_layouts.bytes",
     path = "tests/test_export_moe_layouts.py",
     library = ":test_export_moe_layouts_lib",
+    deps = [
+        "//src/tessera:identity",
+    ],
     lane = "bytes",
     args = [
         "--budget='{\"enforce\":true,\"seconds\":80,\"slow\":{}}'",
@@ -6273,7 +6370,7 @@ ts_py_library(
         "//src/tessera:__init___cycle",
         "//src/tessera:export_serving",
         ":box_artifacts",
-        ":test_export_serving_lib",
+        ":export_serving_support",
     ],
 )
 
@@ -6281,6 +6378,9 @@ ts_py_test(
     name = "test_export_moe_write",
     path = "tests/test_export_moe_write.py",
     library = ":test_export_moe_write_lib",
+    deps = [
+        "//src/tessera:identity",
+    ],
     lane = "torch",
     args = [
         "--budget='{\"enforce\":true,\"seconds\":80,\"slow\":{}}'",
@@ -6293,6 +6393,9 @@ ts_py_test(
     name = "test_export_moe_write.bytes",
     path = "tests/test_export_moe_write.py",
     library = ":test_export_moe_write_lib",
+    deps = [
+        "//src/tessera:identity",
+    ],
     lane = "bytes",
     args = [
         "--budget='{\"enforce\":true,\"seconds\":80,\"slow\":{}}'",
@@ -6310,7 +6413,7 @@ ts_py_library(
         "//src/tessera:bf16_route_cycle",
         "//src/tessera:export_serving",
         "//src/tessera:fused",
-        ":test_export_serving_lib",
+        ":export_serving_support",
     ],
 )
 
@@ -6359,6 +6462,9 @@ ts_py_test(
     name = "test_export_routed_resident_pricing",
     path = "tests/test_export_routed_resident_pricing.py",
     library = ":test_export_routed_resident_pricing_lib",
+    deps = [
+        "//src/tessera:identity",
+    ],
     lane = "torch",
     args = [
         "--budget='{\"enforce\":true,\"seconds\":80,\"slow\":{\"tests/test_export_routed_resident_pricing.py::test_mtp_duplicate_is_its_own_line_item_and_the_total_is_the_sum[runtime]\":161,\"tests/test_export_routed_resident_pricing.py::test_routed_stack_bytes_are_the_native_owner_allocation[reference]\":231}}'",
@@ -6371,6 +6477,9 @@ ts_py_test(
     name = "test_export_routed_resident_pricing.bytes",
     path = "tests/test_export_routed_resident_pricing.py",
     library = ":test_export_routed_resident_pricing_lib",
+    deps = [
+        "//src/tessera:identity",
+    ],
     lane = "bytes",
     args = [
         "--budget='{\"enforce\":true,\"seconds\":80,\"slow\":{\"tests/test_export_routed_resident_pricing.py::test_mtp_duplicate_is_its_own_line_item_and_the_total_is_the_sum[runtime]\":161,\"tests/test_export_routed_resident_pricing.py::test_routed_stack_bytes_are_the_native_owner_allocation[reference]\":231}}'",
@@ -6397,6 +6506,9 @@ ts_py_test(
     name = "test_export_serving",
     path = "tests/test_export_serving.py",
     library = ":test_export_serving_lib",
+    deps = [
+        "//src/tessera:identity",
+    ],
     lane = "torch",
     args = [
         "--budget='{\"enforce\":true,\"seconds\":80,\"slow\":{\"tests/test_export_serving.py::test_a_selected_producer_seals_its_receipt_and_commit\":286,\"tests/test_export_serving.py::test_joined_expert_encodes_group_across_names_and_write_the_one_unit_bytes[2]\":527,\"tests/test_export_serving.py::test_joined_expert_encodes_group_across_names_and_write_the_one_unit_bytes[5]\":357}}'",
@@ -6409,6 +6521,9 @@ ts_py_test(
     name = "test_export_serving.bytes",
     path = "tests/test_export_serving.py",
     library = ":test_export_serving_lib",
+    deps = [
+        "//src/tessera:identity",
+    ],
     lane = "bytes",
     args = [
         "--budget='{\"enforce\":true,\"seconds\":80,\"slow\":{\"tests/test_export_serving.py::test_a_selected_producer_seals_its_receipt_and_commit\":286,\"tests/test_export_serving.py::test_joined_expert_encodes_group_across_names_and_write_the_one_unit_bytes[2]\":527,\"tests/test_export_serving.py::test_joined_expert_encodes_group_across_names_and_write_the_one_unit_bytes[5]\":357}}'",
@@ -6422,8 +6537,8 @@ ts_py_library(
         "test_export_serving.py",
     ],
     data = [
-        "//:pyproject.toml",
-        "//src/tessera:files",
+        "//src/tessera:serving/csrc/window_gemv.cu",
+        "//src/tessera:serving/runtime_contract.json",
     ],
     deps = [
         "//src/tessera:__init___cycle",
@@ -6432,8 +6547,8 @@ ts_py_library(
         "//src/tessera:bf16_route_cycle",
         "//src/tessera:exact",
         "//src/tessera:export_serving",
-        "//src/tessera:identity",
         "//src/tessera:source_profiles",
+        ":export_serving_support",
         ":test_serving_parts_lib",
     ],
 )
@@ -7796,6 +7911,7 @@ ts_py_library(
         "//tools:ci/gate_collect",
         "//tools:ci/gate_doc_readers",
         "//tools:ci/gate_evidence",
+        "//tools:ci/gate_flaky",
         "//tools:ci/gate_junit",
         "//tools:ci/gate_partition",
         "//tools:ci/gate_refresh",
@@ -7867,6 +7983,7 @@ ts_py_library(
         "//tools:ci/gate_collect",
         "//tools:ci/gate_doc_readers",
         "//tools:ci/gate_evidence",
+        "//tools:ci/gate_flaky",
         "//tools:ci/gate_junit",
         "//tools:ci/gate_partition",
         "//tools:ci/gate_refresh",
@@ -7939,6 +8056,80 @@ ts_py_library(
         "//tools:ci/gate_collect",
         "//tools:ci/gate_doc_readers",
         "//tools:ci/gate_evidence",
+        "//tools:ci/gate_flaky",
+        "//tools:ci/gate_junit",
+        "//tools:ci/gate_partition",
+        "//tools:ci/gate_refresh",
+        "//tools:ci/gate_replay",
+        "//tools:ci/gate_run",
+        "//tools:ci/gate_select",
+    ],
+)
+
+ts_py_test(
+    name = "test_gate_flaky",
+    path = "tests/test_gate_flaky.py",
+    library = ":test_gate_flaky_lib",
+    data = [
+        "//tools/bazel:build_files.py",
+        "//tools/bazel:generate.sh",
+        "//tools/bazel:requirements.py",
+    ],
+    deps = [
+        "//src/tessera:identity",
+        "//tools:check_wheel",
+        "//tools:impacted_tests",
+        ":test_packaging_lib",
+        ":test_provenance_lib",
+        ":test_standalone_boundary_lib",
+    ],
+    lane = "torch",
+    args = [
+        "--budget='{\"enforce\":true,\"seconds\":80,\"slow\":{}}'",
+    ],
+    timeout = "moderate",
+)
+
+ts_py_test(
+    name = "test_gate_flaky.bytes",
+    path = "tests/test_gate_flaky.py",
+    library = ":test_gate_flaky_lib",
+    data = [
+        "//tools/bazel:build_files.py",
+        "//tools/bazel:generate.sh",
+        "//tools/bazel:requirements.py",
+    ],
+    deps = [
+        "//src/tessera:identity",
+        "//tools:check_wheel",
+        "//tools:impacted_tests",
+        ":test_packaging_lib",
+        ":test_provenance_lib",
+        ":test_standalone_boundary_lib",
+    ],
+    lane = "bytes",
+    args = [
+        "--budget='{\"enforce\":true,\"seconds\":80,\"slow\":{}}'",
+    ],
+    timeout = "moderate",
+)
+
+ts_py_library(
+    name = "test_gate_flaky_lib",
+    srcs = [
+        "test_gate_flaky.py",
+    ],
+    data = [
+        "//tools:ci/gate_flaky.json",
+    ],
+    deps = [
+        "//tools:ci/bazel_parity",
+        "//tools:ci/gate_actions",
+        "//tools:ci/gate_boundary",
+        "//tools:ci/gate_collect",
+        "//tools:ci/gate_doc_readers",
+        "//tools:ci/gate_evidence",
+        "//tools:ci/gate_flaky",
         "//tools:ci/gate_junit",
         "//tools:ci/gate_partition",
         "//tools:ci/gate_refresh",
@@ -8005,6 +8196,7 @@ ts_py_library(
         "//:.github/workflows/gate.yml",
         "//tools:ci/gate_budget.json",
         "//tools:ci/gate_durations.json",
+        "//tools:ci/gate_flaky.json",
         "//tools:ci/gate_quarantine.json",
         "//tools:ci/gate_replay_sample.json",
         "//tools:ci/gate_requirements.txt",
@@ -8017,6 +8209,7 @@ ts_py_library(
         "//tools:ci/gate_collect",
         "//tools:ci/gate_doc_readers",
         "//tools:ci/gate_evidence",
+        "//tools:ci/gate_flaky",
         "//tools:ci/gate_junit",
         "//tools:ci/gate_partition",
         "//tools:ci/gate_refresh",
@@ -8476,8 +8669,8 @@ ts_py_library(
         "//src/tessera:__init___cycle",
         "//src/tessera:bf16_route_cycle",
         "//src/tessera:errors",
+        ":routed_fused_window_support",
         ":shared_fold_data",
-        ":test_routed_fused_window_lib",
     ],
 )
 
@@ -9965,7 +10158,7 @@ ts_py_library(
 ts_py_test(
     name = "test_graph_receipt_population",
     path = "tests/test_graph_receipt_population.py",
-    library = ":test_graph_receipt_population_lib",
+    library = ":test_graph_receipt_population_lib_cycle",
     deps = [
         "//experiments:glm53_508_graph_qual/eq-member-508",
         "//src/tessera:identity",
@@ -9981,7 +10174,7 @@ ts_py_test(
 ts_py_test(
     name = "test_graph_receipt_population.bytes",
     path = "tests/test_graph_receipt_population.py",
-    library = ":test_graph_receipt_population_lib",
+    library = ":test_graph_receipt_population_lib_cycle",
     deps = [
         "//experiments:glm53_508_graph_qual/eq-member-508",
         "//src/tessera:identity",
@@ -9994,10 +10187,41 @@ ts_py_test(
     timeout = "moderate",
 )
 
+ts_py_test(
+    name = "test_graph_receipt_population_isolation",
+    path = "tests/test_graph_receipt_population_isolation.py",
+    library = ":test_graph_receipt_population_lib_cycle",
+    deps = [
+        "//experiments:glm53_508_graph_qual/eq-member-508",
+        "//src/tessera:identity",
+    ],
+    lane = "torch",
+    args = [
+        "--budget='{\"enforce\":true,\"seconds\":80,\"slow\":{}}'",
+    ],
+    timeout = "moderate",
+)
+
+ts_py_test(
+    name = "test_graph_receipt_population_isolation.bytes",
+    path = "tests/test_graph_receipt_population_isolation.py",
+    library = ":test_graph_receipt_population_lib_cycle",
+    deps = [
+        "//experiments:glm53_508_graph_qual/eq-member-508",
+        "//src/tessera:identity",
+    ],
+    lane = "bytes",
+    args = [
+        "--budget='{\"enforce\":true,\"seconds\":80,\"slow\":{}}'",
+    ],
+    timeout = "moderate",
+)
+
 ts_py_library(
-    name = "test_graph_receipt_population_lib",
+    name = "test_graph_receipt_population_lib_cycle",
     srcs = [
         "test_graph_receipt_population.py",
+        "test_graph_receipt_population_isolation.py",
     ],
     deps = [
         "//experiments:glm53_508_graph_qual/equal-508",
@@ -10201,6 +10425,7 @@ ts_py_library(
         "//src/tessera:__init___cycle",
         "//src/tessera:bf16_route_cycle",
         "//src/tessera:errors",
+        ":hessian_reference_support",
         ":reuse_authority_fixture",
         ":test_priced_inputs_snapshot_lib",
     ],
@@ -10249,8 +10474,8 @@ ts_py_library(
         "//src/tessera:__init___cycle",
         "//src/tessera:bf16_route_cycle",
         "//src/tessera:errors",
+        ":hessian_reference_support",
         ":reuse_authority_fixture",
-        ":test_hessian_reference_capture_lib",
         ":test_priced_inputs_snapshot_lib",
     ],
 )
@@ -10292,8 +10517,8 @@ ts_py_library(
         "//src/tessera:__init___cycle",
         "//src/tessera:bf16_route_cycle",
         "//src/tessera:errors",
+        ":hessian_reference_support",
         ":reuse_authority_fixture",
-        ":test_hessian_reference_capture_lib",
     ],
 )
 
@@ -10340,8 +10565,8 @@ ts_py_library(
         "//src/tessera:__init___cycle",
         "//src/tessera:bf16_route_cycle",
         "//src/tessera:errors",
+        ":hessian_reference_support",
         ":reuse_authority_fixture",
-        ":test_hessian_reference_capture_lib",
     ],
 )
 
@@ -10563,15 +10788,21 @@ ts_py_library(
         "box_artifacts.py",
         "child_env.py",
         "conftest.py",
+        "export_serving_support.py",
         "fused_bound.py",
         "glm_nightly_cells.py",
         "graph_attest_lifecycle.py",
+        "hessian_reference_support.py",
         "mapper_probes.py",
         "native_dense_prefill_cross_check.py",
         "native_moe_protocol_probe.py",
+        "native_timing_panel_support.py",
         "native_window_moe_stock_crosscheck.py",
         "nvfp4_reference.py",
         "reuse_authority_fixture.py",
+        "rooted_cached_bundle_support.py",
+        "routed_fused_window_support.py",
+        "serving_fp8_route_support.py",
         "shared_fold_data.py",
         "standalone_boundary_allowlist.txt",
         "test_1146_routed_880_912_admission.py",
@@ -10711,6 +10942,7 @@ ts_py_library(
         "test_gate_contract.py",
         "test_gate_evidence.py",
         "test_gate_fail_closed.py",
+        "test_gate_flaky.py",
         "test_gate_population.py",
         "test_gate_quarantine.py",
         "test_gate_selection.py",
@@ -10751,6 +10983,7 @@ ts_py_library(
         "test_graph_owner_publication.py",
         "test_graph_receipt.py",
         "test_graph_receipt_population.py",
+        "test_graph_receipt_population_isolation.py",
         "test_grid_digest_cache.py",
         "test_grid_space_continuity.py",
         "test_guarded_reexports.py",
@@ -11047,6 +11280,7 @@ ts_py_library(
         "test_tcq_graph.py",
         "test_tessera1175_power_bounds.py",
         "test_tessera_producer_plan.py",
+        "test_test_imports.py",
         "test_tl3_harness_table.py",
         "test_tp2_reference_kl_514.py",
         "test_tp2_run_plan_bootstrap_env.py",
@@ -11090,6 +11324,7 @@ ts_py_library(
         "test_wire_device_unpack.py",
         "test_wire_packed_uniform.py",
         "test_wire_unpack_memory.py",
+        "window_gemm_grouped_support.py",
         "window_lut_reference.py",
         "window_pack_reference.py",
         "withdrawn_cells.py",
@@ -11302,15 +11537,21 @@ ts_py_library(
         "_whole_phase_sdk.py",
         "box_artifacts.py",
         "conftest.py",
+        "export_serving_support.py",
         "fused_bound.py",
         "glm_nightly_cells.py",
         "graph_attest_lifecycle.py",
+        "hessian_reference_support.py",
         "mapper_probes.py",
         "native_dense_prefill_cross_check.py",
         "native_moe_protocol_probe.py",
+        "native_timing_panel_support.py",
         "native_window_moe_stock_crosscheck.py",
         "nvfp4_reference.py",
         "reuse_authority_fixture.py",
+        "rooted_cached_bundle_support.py",
+        "routed_fused_window_support.py",
+        "serving_fp8_route_support.py",
         "shared_fold_data.py",
         "standalone_boundary_allowlist.txt",
         "test_1146_routed_880_912_admission.py",
@@ -11450,6 +11691,7 @@ ts_py_library(
         "test_gate_contract.py",
         "test_gate_evidence.py",
         "test_gate_fail_closed.py",
+        "test_gate_flaky.py",
         "test_gate_population.py",
         "test_gate_quarantine.py",
         "test_gate_selection.py",
@@ -11490,6 +11732,7 @@ ts_py_library(
         "test_graph_owner_publication.py",
         "test_graph_receipt.py",
         "test_graph_receipt_population.py",
+        "test_graph_receipt_population_isolation.py",
         "test_grid_digest_cache.py",
         "test_grid_space_continuity.py",
         "test_guarded_reexports.py",
@@ -11784,6 +12027,7 @@ ts_py_library(
         "test_tcq_graph.py",
         "test_tessera1175_power_bounds.py",
         "test_tessera_producer_plan.py",
+        "test_test_imports.py",
         "test_tl3_harness_table.py",
         "test_tp2_reference_kl_514.py",
         "test_tp2_run_plan_bootstrap_env.py",
@@ -11827,6 +12071,7 @@ ts_py_library(
         "test_wire_device_unpack.py",
         "test_wire_packed_uniform.py",
         "test_wire_unpack_memory.py",
+        "window_gemm_grouped_support.py",
         "window_lut_reference.py",
         "window_pack_reference.py",
         "withdrawn_cells.py",
@@ -14699,7 +14944,7 @@ ts_py_library(
     deps = [
         "//src/tessera:__init___cycle",
         "//src/tessera:bf16_route_cycle",
-        ":test_serving_fp8_route_lib",
+        ":serving_fp8_route_support",
     ],
 )
 
@@ -15276,7 +15521,7 @@ ts_py_library(
         "//tools:tessera_shape_time_panel",
         "//tools:tessera_shape_time_worker",
         ":box_artifacts",
-        ":test_native_timing_panel_lib",
+        ":native_timing_panel_support",
     ],
 )
 
@@ -15330,7 +15575,7 @@ ts_py_library(
         "//tools:tessera_shape_time_panel",
         "//tools:tessera_shape_time_worker",
         ":box_artifacts",
-        ":test_native_timing_panel_lib",
+        ":native_timing_panel_support",
     ],
 )
 
@@ -15370,10 +15615,9 @@ ts_py_library(
     deps = [
         "//src/tessera:__init___cycle",
         "//src/tessera:bf16_route_cycle",
-        "//src/tessera:fused_frame",
         "//src/tessera:serving/census_plan",
         "//src/tessera:serving/timing_panel",
-        ":box_artifacts",
+        ":native_timing_panel_support",
     ],
 )
 
@@ -15540,7 +15784,7 @@ ts_py_library(
         "//src/tessera:__init___cycle",
         "//src/tessera:bf16_route_cycle",
         "//src/tessera:errors",
-        ":test_window_gemm_grouped_lib",
+        ":window_gemm_grouped_support",
     ],
 )
 
@@ -16220,7 +16464,7 @@ ts_py_library(
         "//src/tessera:serving/timing_panel",
         "//tools:tessera_panel_baseline",
         ":box_artifacts",
-        ":test_native_timing_panel_lib",
+        ":native_timing_panel_support",
     ],
 )
 
@@ -16410,7 +16654,7 @@ ts_py_library(
         "//src/tessera:bf16_route_cycle",
         "//src/tessera:errors",
         "//src/tessera:serving/flags",
-        ":test_window_gemm_grouped_lib",
+        ":window_gemm_grouped_support",
     ],
 )
 
@@ -16537,7 +16781,7 @@ ts_py_library(
         "//experiments:t8r_speed/stageprev_probe",
         "//src/tessera:__init___cycle",
         "//src/tessera:bf16_route_cycle",
-        ":test_routed_fused_window_lib",
+        ":routed_fused_window_support",
     ],
 )
 
@@ -17729,7 +17973,7 @@ ts_py_library(
         "//src/tessera:export_serving",
         "//src/tessera:producer_authority",
         "//tools:glm_cpu_cached_pack_probe",
-        ":test_hessian_reference_capture_lib",
+        ":hessian_reference_support",
     ],
 )
 
@@ -18853,12 +19097,8 @@ ts_py_test(
         "//experiments:t8_census/profile_unit_encode",
         "//experiments:t8r_speed/ab_stageprev_accept",
         "//experiments:t8r_speed/bench_class_dispatch",
-        "//experiments:t8r_speed/bench_dense_module",
         "//experiments:t8r_speed/bench_e4m3_prefill",
         "//experiments:t8r_speed/bench_fp8_large_m",
-        "//experiments:t8r_speed/bench_geometry",
-        "//experiments:t8r_speed/bench_rates",
-        "//experiments:t8r_speed/bench_t8r",
         "//experiments:t8r_speed/bench_uniform_production_arm",
         "//experiments:t8r_speed/finalize_native_build",
         "//experiments:t8r_speed/nccl_sweep/nccl_sweep",
@@ -19154,12 +19394,8 @@ ts_py_test(
         "//experiments:t8_census/profile_unit_encode",
         "//experiments:t8r_speed/ab_stageprev_accept",
         "//experiments:t8r_speed/bench_class_dispatch",
-        "//experiments:t8r_speed/bench_dense_module",
         "//experiments:t8r_speed/bench_e4m3_prefill",
         "//experiments:t8r_speed/bench_fp8_large_m",
-        "//experiments:t8r_speed/bench_geometry",
-        "//experiments:t8r_speed/bench_rates",
-        "//experiments:t8r_speed/bench_t8r",
         "//experiments:t8r_speed/bench_uniform_production_arm",
         "//experiments:t8r_speed/finalize_native_build",
         "//experiments:t8r_speed/nccl_sweep/nccl_sweep",
@@ -19714,7 +19950,6 @@ ts_py_test(
         "//src/tessera:identity.py",
     ],
     deps = [
-        "//experiments:glm53_508_graph_qual/eq-member-508",
         "//src/tessera:identity",
     ],
     lane = "torch",
@@ -19732,7 +19967,6 @@ ts_py_test(
         "//src/tessera:identity.py",
     ],
     deps = [
-        "//experiments:glm53_508_graph_qual/eq-member-508",
         "//src/tessera:identity",
     ],
     lane = "bytes",
@@ -19751,9 +19985,9 @@ ts_py_library(
         "//src/tessera:__init___cycle",
         "//src/tessera:bf16_route_cycle",
         "//src/tessera:errors",
+        ":hessian_reference_support",
         ":reuse_authority_fixture",
-        ":test_hessian_reference_capture_lib",
-        ":test_rooted_cached_bundle_lib",
+        ":rooted_cached_bundle_support",
     ],
 )
 
@@ -19841,6 +20075,7 @@ ts_py_library(
         "//src/tessera:fused",
         "//src/tessera:historical_producer",
         ":reuse_authority_fixture",
+        ":rooted_cached_bundle_support",
         ":test_cached_producer_lib",
     ],
 )
@@ -20252,7 +20487,8 @@ ts_py_library(
         "//src/tessera:bf16_route_cycle",
         "//src/tessera:errors",
         ":fused_bound",
-        ":test_window_gemm_grouped_lib",
+        ":routed_fused_window_support",
+        ":window_gemm_grouped_support",
     ],
 )
 
@@ -20981,8 +21217,8 @@ ts_py_library(
     deps = [
         "//src/tessera:__init___cycle",
         "//src/tessera:bf16_route_cycle",
-        ":test_routed_fused_window_lib",
-        ":test_window_gemm_grouped_lib",
+        ":routed_fused_window_support",
+        ":window_gemm_grouped_support",
     ],
 )
 
@@ -21968,8 +22204,8 @@ ts_py_library(
         "//src/tessera:encode_cycle",
         "//src/tessera:errors",
         "//src/tessera:window_viterbi",
+        ":hessian_reference_support",
         ":reuse_authority_fixture",
-        ":test_hessian_reference_capture_lib",
         ":test_hessian_resident_binding_lib",
     ],
 )
@@ -22961,12 +23197,8 @@ ts_py_test(
         "//experiments:t8_census/profile_unit_encode",
         "//experiments:t8r_speed/ab_stageprev_accept",
         "//experiments:t8r_speed/bench_class_dispatch",
-        "//experiments:t8r_speed/bench_dense_module",
         "//experiments:t8r_speed/bench_e4m3_prefill",
         "//experiments:t8r_speed/bench_fp8_large_m",
-        "//experiments:t8r_speed/bench_geometry",
-        "//experiments:t8r_speed/bench_rates",
-        "//experiments:t8r_speed/bench_t8r",
         "//experiments:t8r_speed/bench_uniform_production_arm",
         "//experiments:t8r_speed/finalize_native_build",
         "//experiments:t8r_speed/nccl_sweep/nccl_sweep",
@@ -23263,12 +23495,8 @@ ts_py_test(
         "//experiments:t8_census/profile_unit_encode",
         "//experiments:t8r_speed/ab_stageprev_accept",
         "//experiments:t8r_speed/bench_class_dispatch",
-        "//experiments:t8r_speed/bench_dense_module",
         "//experiments:t8r_speed/bench_e4m3_prefill",
         "//experiments:t8r_speed/bench_fp8_large_m",
-        "//experiments:t8r_speed/bench_geometry",
-        "//experiments:t8r_speed/bench_rates",
-        "//experiments:t8r_speed/bench_t8r",
         "//experiments:t8r_speed/bench_uniform_production_arm",
         "//experiments:t8r_speed/finalize_native_build",
         "//experiments:t8r_speed/nccl_sweep/nccl_sweep",
@@ -24036,12 +24264,8 @@ ts_py_test(
         "//experiments:t8_census/profile_unit_encode",
         "//experiments:t8r_speed/ab_stageprev_accept",
         "//experiments:t8r_speed/bench_class_dispatch",
-        "//experiments:t8r_speed/bench_dense_module",
         "//experiments:t8r_speed/bench_e4m3_prefill",
         "//experiments:t8r_speed/bench_fp8_large_m",
-        "//experiments:t8r_speed/bench_geometry",
-        "//experiments:t8r_speed/bench_rates",
-        "//experiments:t8r_speed/bench_t8r",
         "//experiments:t8r_speed/bench_uniform_production_arm",
         "//experiments:t8r_speed/finalize_native_build",
         "//experiments:t8r_speed/nccl_sweep/nccl_sweep",
@@ -24338,12 +24562,8 @@ ts_py_test(
         "//experiments:t8_census/profile_unit_encode",
         "//experiments:t8r_speed/ab_stageprev_accept",
         "//experiments:t8r_speed/bench_class_dispatch",
-        "//experiments:t8r_speed/bench_dense_module",
         "//experiments:t8r_speed/bench_e4m3_prefill",
         "//experiments:t8r_speed/bench_fp8_large_m",
-        "//experiments:t8r_speed/bench_geometry",
-        "//experiments:t8r_speed/bench_rates",
-        "//experiments:t8r_speed/bench_t8r",
         "//experiments:t8r_speed/bench_uniform_production_arm",
         "//experiments:t8r_speed/finalize_native_build",
         "//experiments:t8r_speed/nccl_sweep/nccl_sweep",
@@ -25450,6 +25670,7 @@ ts_py_library(
         "//src/tessera:bf16_route_cycle",
         "//src/tessera:decode",
         "//src/tessera:serving/flags",
+        ":serving_fp8_route_support",
     ],
 )
 
@@ -25530,7 +25751,7 @@ ts_py_library(
     deps = [
         "//src/tessera:__init___cycle",
         "//src/tessera:bf16_route_cycle",
-        ":test_serving_fp8_route_lib",
+        ":serving_fp8_route_support",
     ],
 )
 
@@ -27695,15 +27916,21 @@ ts_py_library(
         "box_artifacts.py",
         "child_env.py",
         "conftest.py",
+        "export_serving_support.py",
         "fused_bound.py",
         "glm_nightly_cells.py",
         "graph_attest_lifecycle.py",
+        "hessian_reference_support.py",
         "mapper_probes.py",
         "native_dense_prefill_cross_check.py",
         "native_moe_protocol_probe.py",
+        "native_timing_panel_support.py",
         "native_window_moe_stock_crosscheck.py",
         "nvfp4_reference.py",
         "reuse_authority_fixture.py",
+        "rooted_cached_bundle_support.py",
+        "routed_fused_window_support.py",
+        "serving_fp8_route_support.py",
         "shared_fold_data.py",
         "standalone_boundary_allowlist.txt",
         "test_1146_routed_880_912_admission.py",
@@ -27843,6 +28070,7 @@ ts_py_library(
         "test_gate_contract.py",
         "test_gate_evidence.py",
         "test_gate_fail_closed.py",
+        "test_gate_flaky.py",
         "test_gate_population.py",
         "test_gate_quarantine.py",
         "test_gate_selection.py",
@@ -27883,6 +28111,7 @@ ts_py_library(
         "test_graph_owner_publication.py",
         "test_graph_receipt.py",
         "test_graph_receipt_population.py",
+        "test_graph_receipt_population_isolation.py",
         "test_grid_digest_cache.py",
         "test_grid_space_continuity.py",
         "test_guarded_reexports.py",
@@ -28179,6 +28408,7 @@ ts_py_library(
         "test_tcq_graph.py",
         "test_tessera1175_power_bounds.py",
         "test_tessera_producer_plan.py",
+        "test_test_imports.py",
         "test_tl3_harness_table.py",
         "test_tp2_reference_kl_514.py",
         "test_tp2_run_plan_bootstrap_env.py",
@@ -28222,6 +28452,7 @@ ts_py_library(
         "test_wire_device_unpack.py",
         "test_wire_packed_uniform.py",
         "test_wire_unpack_memory.py",
+        "window_gemm_grouped_support.py",
         "window_lut_reference.py",
         "window_pack_reference.py",
         "withdrawn_cells.py",
@@ -29619,6 +29850,9 @@ ts_py_test(
     data = [
         "//experiments:t8_census/ab_stage.sh",
     ],
+    deps = [
+        "//src/tessera:identity",
+    ],
     lane = "torch",
     args = [
         "--budget='{\"enforce\":true,\"seconds\":80,\"slow\":{}}'",
@@ -29632,6 +29866,9 @@ ts_py_test(
     library = ":test_t8_batch_probe_lib",
     data = [
         "//experiments:t8_census/ab_stage.sh",
+    ],
+    deps = [
+        "//src/tessera:identity",
     ],
     lane = "bytes",
     args = [
@@ -29655,7 +29892,7 @@ ts_py_library(
         "//src/tessera:bf16_route_cycle",
         "//src/tessera:export_serving",
         "//src/tessera:structure",
-        ":test_export_serving_lib",
+        ":export_serving_support",
     ],
 )
 
@@ -30103,6 +30340,38 @@ ts_py_library(
         "//src/tessera:bf16_route_cycle",
         "//src/tessera:producer_plan",
         "//src/tessera:source_digest_cache",
+    ],
+)
+
+ts_py_test(
+    name = "test_test_imports",
+    path = "tests/test_test_imports.py",
+    library = ":test_test_imports_lib",
+    lane = "torch",
+    args = [
+        "--budget='{\"enforce\":true,\"seconds\":80,\"slow\":{}}'",
+    ],
+    timeout = "moderate",
+)
+
+ts_py_test(
+    name = "test_test_imports.bytes",
+    path = "tests/test_test_imports.py",
+    library = ":test_test_imports_lib",
+    lane = "bytes",
+    args = [
+        "--budget='{\"enforce\":true,\"seconds\":80,\"slow\":{}}'",
+    ],
+    timeout = "moderate",
+)
+
+ts_py_library(
+    name = "test_test_imports_lib",
+    srcs = [
+        "test_test_imports.py",
+    ],
+    data = [
+        "fixtures/test_to_test_imports_count.txt",
     ],
 )
 
@@ -30601,12 +30870,8 @@ ts_py_test(
         "//experiments:t8_census/profile_unit_encode",
         "//experiments:t8r_speed/ab_stageprev_accept",
         "//experiments:t8r_speed/bench_class_dispatch",
-        "//experiments:t8r_speed/bench_dense_module",
         "//experiments:t8r_speed/bench_e4m3_prefill",
         "//experiments:t8r_speed/bench_fp8_large_m",
-        "//experiments:t8r_speed/bench_geometry",
-        "//experiments:t8r_speed/bench_rates",
-        "//experiments:t8r_speed/bench_t8r",
         "//experiments:t8r_speed/bench_uniform_production_arm",
         "//experiments:t8r_speed/finalize_native_build",
         "//experiments:t8r_speed/nccl_sweep/nccl_sweep",
@@ -30903,12 +31168,8 @@ ts_py_test(
         "//experiments:t8_census/profile_unit_encode",
         "//experiments:t8r_speed/ab_stageprev_accept",
         "//experiments:t8r_speed/bench_class_dispatch",
-        "//experiments:t8r_speed/bench_dense_module",
         "//experiments:t8r_speed/bench_e4m3_prefill",
         "//experiments:t8r_speed/bench_fp8_large_m",
-        "//experiments:t8r_speed/bench_geometry",
-        "//experiments:t8r_speed/bench_rates",
-        "//experiments:t8r_speed/bench_t8r",
         "//experiments:t8r_speed/bench_uniform_production_arm",
         "//experiments:t8r_speed/finalize_native_build",
         "//experiments:t8r_speed/nccl_sweep/nccl_sweep",
@@ -31804,12 +32065,8 @@ ts_py_test(
         "//experiments:t8_census/profile_unit_encode",
         "//experiments:t8r_speed/ab_stageprev_accept",
         "//experiments:t8r_speed/bench_class_dispatch",
-        "//experiments:t8r_speed/bench_dense_module",
         "//experiments:t8r_speed/bench_e4m3_prefill",
         "//experiments:t8r_speed/bench_fp8_large_m",
-        "//experiments:t8r_speed/bench_geometry",
-        "//experiments:t8r_speed/bench_rates",
-        "//experiments:t8r_speed/bench_t8r",
         "//experiments:t8r_speed/bench_uniform_production_arm",
         "//experiments:t8r_speed/finalize_native_build",
         "//experiments:t8r_speed/nccl_sweep/nccl_sweep",
@@ -32106,12 +32363,8 @@ ts_py_test(
         "//experiments:t8_census/profile_unit_encode",
         "//experiments:t8r_speed/ab_stageprev_accept",
         "//experiments:t8r_speed/bench_class_dispatch",
-        "//experiments:t8r_speed/bench_dense_module",
         "//experiments:t8r_speed/bench_e4m3_prefill",
         "//experiments:t8r_speed/bench_fp8_large_m",
-        "//experiments:t8r_speed/bench_geometry",
-        "//experiments:t8r_speed/bench_rates",
-        "//experiments:t8r_speed/bench_t8r",
         "//experiments:t8r_speed/bench_uniform_production_arm",
         "//experiments:t8r_speed/finalize_native_build",
         "//experiments:t8r_speed/nccl_sweep/nccl_sweep",
@@ -32973,7 +33226,7 @@ ts_py_library(
     ],
     deps = [
         "//experiments:t8r_speed/value_prefetch_numeric",
-        ":test_routed_fused_window_lib",
+        ":routed_fused_window_support",
     ],
 )
 
@@ -33019,7 +33272,7 @@ ts_py_library(
         "//src/tessera:__init___cycle",
         "//src/tessera:bf16_route_cycle",
         ":_whole_phase_sdk",
-        ":test_window_gemm_grouped_lib",
+        ":window_gemm_grouped_support",
     ],
 )
 
@@ -33259,7 +33512,7 @@ ts_py_library(
         "//src/tessera:bf16_route_cycle",
         "//src/tessera:errors",
         ":fused_bound",
-        ":window_pack_reference",
+        ":window_gemm_grouped_support",
     ],
 )
 
@@ -33848,6 +34101,18 @@ ts_py_library(
         "//src/tessera:__init___cycle",
         "//src/tessera:errors",
         "//src/tessera:wire",
+    ],
+)
+
+ts_py_library(
+    name = "window_gemm_grouped_support",
+    srcs = [
+        "window_gemm_grouped_support.py",
+    ],
+    deps = [
+        "//src/tessera:__init___cycle",
+        "//src/tessera:bf16_route_cycle",
+        ":window_pack_reference",
     ],
 )
 

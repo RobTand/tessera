@@ -112,6 +112,10 @@ ts_py_library(
     srcs = [
         "ci/gate_collect.py",
     ],
+    deps = [
+        ":ci/gate_flaky",
+        ":ci/gate_junit",
+    ],
 )
 
 ts_py_library(
@@ -128,6 +132,16 @@ ts_py_library(
     ],
     deps = [
         ":ci/gate_junit",
+    ],
+)
+
+ts_py_library(
+    name = "ci/gate_flaky",
+    srcs = [
+        "ci/gate_flaky.py",
+    ],
+    data = [
+        "ci/gate_flaky.json",
     ],
 )
 
@@ -191,6 +205,7 @@ ts_py_library(
     ],
     deps = [
         ":ci/gate_doc_readers",
+        ":ci/gate_flaky",
         ":ci/gate_partition",
     ],
 )

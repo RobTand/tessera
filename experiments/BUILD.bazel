@@ -3561,7 +3561,7 @@ ts_py_library(
     deps = [
         "//src/tessera:__init___cycle",
         "//src/tessera:bf16_route_cycle",
-        "//tests:test_window_gemm_grouped_lib",
+        "//tests:window_gemm_grouped_support",
         ":t8r_speed/bench_geometry",
         ":t8r_speed/bench_t8r",
     ],
@@ -3803,7 +3803,7 @@ ts_py_library(
     deps = [
         "//src/tessera:__init___cycle",
         "//src/tessera:bf16_route_cycle",
-        "//tests:test_routed_fused_window_lib",
+        "//tests:routed_fused_window_support",
     ],
 )
 
@@ -3997,8 +3997,8 @@ ts_py_library(
     deps = [
         "//src/tessera:__init___cycle",
         "//src/tessera:bf16_route_cycle",
-        "//tests:test_routed_fused_window_lib",
-        "//tests:test_window_gemm_grouped_lib",
+        "//tests:routed_fused_window_support",
+        "//tests:window_gemm_grouped_support",
         ":t8r_speed/pb_staged_store",
     ],
 )
