@@ -149,22 +149,87 @@ ts_py_library(
 
 filegroup(
     name = "files/data",
-    srcs = glob(["data/**"], exclude = ["**/BUILD.bazel", "bazel-*/**", "*bazel-remote-grpc.log", "*execution_log.binpb.zst", ".pytest_cache/**", "**/__pycache__/**", "**/*.pyc"]),
+    srcs = [
+        "data/audit_value_slice.pt",
+        "data/legacy/bf16-1024-window-channel-256c.tessera",
+        "data/legacy/e2m1-256-c1-lut-512c.tessera",
+        "data/legacy/e2m1-256-cfull-lut-512c-parent.tessera",
+        "data/legacy/e2m1-256-cfull-lut-512c-shard-r8-16.tessera",
+        "data/legacy/e2m1-256-cfull-lut-512c.tessera",
+        "data/legacy/e2m1-256-cfull-lut-diag-256c.tessera",
+        "data/legacy/e2m1-256-cfull-s6b-512c.tessera",
+        "data/legacy/e2m1-768-release256-256c.tessera",
+        "data/legacy/e2m1x2-640-window-lut-256c.tessera",
+        "data/legacy/e2m1x2-896-tcq-lut-256c.tessera",
+        "data/legacy/e4m3-1024-window-channel-256c.tessera",
+        "data/legacy/generate_legacy_blobs.py",
+        "data/legacy/manifest.json",
+        "data/refit-cancellation/README.md",
+        "data/refit-cancellation/e4m3-1024-window-channel-256c.tessera",
+    ],
 )
 
 filegroup(
     name = "files/data/legacy",
-    srcs = glob(["data/legacy/**"], exclude = ["**/BUILD.bazel", "bazel-*/**", "*bazel-remote-grpc.log", "*execution_log.binpb.zst", ".pytest_cache/**", "**/__pycache__/**", "**/*.pyc"]),
+    srcs = [
+        "data/legacy/bf16-1024-window-channel-256c.tessera",
+        "data/legacy/e2m1-256-c1-lut-512c.tessera",
+        "data/legacy/e2m1-256-cfull-lut-512c-parent.tessera",
+        "data/legacy/e2m1-256-cfull-lut-512c-shard-r8-16.tessera",
+        "data/legacy/e2m1-256-cfull-lut-512c.tessera",
+        "data/legacy/e2m1-256-cfull-lut-diag-256c.tessera",
+        "data/legacy/e2m1-256-cfull-s6b-512c.tessera",
+        "data/legacy/e2m1-768-release256-256c.tessera",
+        "data/legacy/e2m1x2-640-window-lut-256c.tessera",
+        "data/legacy/e2m1x2-896-tcq-lut-256c.tessera",
+        "data/legacy/e4m3-1024-window-channel-256c.tessera",
+        "data/legacy/generate_legacy_blobs.py",
+        "data/legacy/manifest.json",
+    ],
 )
 
 filegroup(
     name = "files/fixtures",
-    srcs = glob(["fixtures/**"], exclude = ["**/BUILD.bazel", "bazel-*/**", "*bazel-remote-grpc.log", "*execution_log.binpb.zst", ".pytest_cache/**", "**/__pycache__/**", "**/*.pyc"]),
+    srcs = [
+        "fixtures/d41_structure_spec_harvest/glm53_tp2_spec.json",
+        "fixtures/d41_structure_spec_harvest/gpu0/bench_geometry_harvest.json",
+        "fixtures/d41_structure_spec_harvest/quality.json",
+        "fixtures/frozen_eager_2dbac191/EVIDENCE.md",
+        "fixtures/frozen_eager_2dbac191/manifest.json",
+        "fixtures/frozen_eager_2dbac191/runtime.tar.gz",
+        "fixtures/full_engine_resource_ledger.json",
+        "fixtures/generate_full_engine_tp2_protocol.py",
+        "fixtures/generate_route_census_mtp_r5.py",
+        "fixtures/graph_batch_kl/window.json",
+        "fixtures/graph_impact_baseline.json",
+        "fixtures/lane_eligibility_cells_v22.json",
+        "fixtures/lane_eligibility_cells_withdrawn_v31.json",
+        "fixtures/lane_eligibility_cells_withdrawn_v38.json",
+        "fixtures/lane_eligibility_cells_withdrawn_v39.json",
+        "fixtures/mla_runtime_original_imports.py",
+        "fixtures/native_operator_resource_qualification.json",
+        "fixtures/native_operator_resource_static_startup.json",
+        "fixtures/netdata-native-cadence-826.json",
+        "fixtures/netdata-power-aligned-arm-819.json",
+        "fixtures/pb_manifest_sdk/LICENSE",
+        "fixtures/pb_manifest_sdk/README.md",
+        "fixtures/pb_manifest_sdk/core.py",
+        "fixtures/pb_manifest_sdk/data_manifest.py",
+        "fixtures/pb_manifest_sdk/manifest_layout.py",
+        "fixtures/pynccl_lifecycle_20260929.json",
+        "fixtures/route_census_mtp_k1_r5.json",
+        "fixtures/t4_tcq_cells_historical.json",
+        "fixtures/test_to_test_imports_count.txt",
+    ],
 )
 
 filegroup(
     name = "files/fixtures/d41_structure_spec_harvest",
-    srcs = glob(["fixtures/d41_structure_spec_harvest/**"], exclude = ["**/BUILD.bazel", "bazel-*/**", "*bazel-remote-grpc.log", "*execution_log.binpb.zst", ".pytest_cache/**", "**/__pycache__/**", "**/*.pyc"]),
+    srcs = [
+        "fixtures/d41_structure_spec_harvest/glm53_tp2_spec.json",
+        "fixtures/d41_structure_spec_harvest/gpu0/bench_geometry_harvest.json",
+        "fixtures/d41_structure_spec_harvest/quality.json",
+    ],
 )
 
 ts_py_library(
@@ -1166,15 +1231,26 @@ ts_py_library(
         "test_bazel_build.py",
     ],
     data = [
+        "//:pyproject.toml",
+        "//src/tessera:serving/runtime_contract.json",
         "//tools/bazel:files",
         "//tools:ci/gate_budget.json",
+        "//tools:ci/gate_durations.json",
+        "//tools:ci/gate_flaky.json",
         "//tools:ci/gate_prismaquant_requirements.txt",
+        "//tools:ci/gate_quarantine.json",
         "//tools:ci/gate_requirements.txt",
+        "//tools:ci/gate_torch_requirements.txt",
     ],
     deps = [
+        "//src/tessera:__init___cycle",
+        "//src/tessera:_dev/__init__",
+        "//src/tessera:_dev/suite_source",
+        "//src/tessera:bf16_route_cycle",
         "//tools:ci/bazel_parity",
         "//tools:ci/gate_run",
         ":accounting_source_support",
+        ":conftest",
     ],
 )
 

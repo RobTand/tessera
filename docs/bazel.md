@@ -51,6 +51,16 @@ The evidence follows PrismaBuild's rules: real imports only, test paths as data,
 
 A test that reads an undeclared repository file finds it missing on the remote executor and fails; it doesn't pass silently.
 
+Generation uses `tessera._dev.suite_source.measured_source` to distinguish source
+from executor metadata. Only paths in a verified `excluded_metadata` report are
+left out of the source inventory, resolved read facts and filegroup inputs.
+Directory filegroups list their files from this inventory. The handwritten
+`tools/bazel:files` group loads its roster from generated `lanes.bzl`. This keeps a
+PrismaBuild closure stamp out of generated BUILD files, even when an experiment
+globs for the stamp. A closure-shaped filename without verified ownership stays
+an input. Verified executor metadata is absent from Bazel's materialized source
+tree. Tests that exercise a source verifier still supply its actual inputs.
+
 The C++ that CPU tests compile at run time (torch's `cpp_extension`, Inductor's CPU kernels) uses the `toolchains_buildbuddy` gcc toolchain, pinned to the executor image. The runner hands its compiler to each test as `CC` and `CXX`. No test in the cloud gate needs CUDA.
 
 ## Adding a test file

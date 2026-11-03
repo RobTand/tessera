@@ -18,6 +18,15 @@ The workflow executes the tested Python event-identity decision before planning 
 
 The Bazel build described in `docs/bazel.md` derives one target per test file and CPU lane from dependency evidence (#1589). It shares the hosted pins and collection policy, including file inputs validated by the flaky-node table. Repository-wide Git checks use the uncached amd64 runner lane; hermetic actions use self-hosted BuildBuddy pools. The hosted gate remains active until the separate cutover.
 
+Bazel generation filters executor metadata through the existing source verifier
+contract. Only `measured_source` results with `verification == "verified"`
+exclude their reported `excluded_metadata` paths from the source inventory.
+Resolved reads and directory filegroups use that same inventory, so a glob
+cannot reintroduce an excluded closure stamp. The handwritten Bazel tools
+filegroup loads its generated source roster from `tools/bazel/lanes.bzl`.
+Ordinary and unverified closure-shaped files remain inputs. Tests that invoke
+a source verifier still provide its inputs.
+
 Final gate summaries report each CPU lane’s pass, failure, skip and uncollected counts, verbatim skip reasons, device details and zero CUDA allocation. CPU passes do not cover CUDA.
 
 

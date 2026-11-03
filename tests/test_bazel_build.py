@@ -253,3 +253,107 @@ def test_the_bazel_runner_retains_its_population_after_pytest(monkeypatch, tmp_p
     assert runner.main() == exit_code
     assert not scratch.exists()
     assert json.loads((outputs / 'surface.json').read_text()) == population
+
+
+def test_only_verified_executor_metadata_is_left_out_of_bazel_inputs(tmp_path, monkeypatch):
+    import hashlib
+    import shlex
+    import subprocess
+    import sys
+
+    from tessera._dev.suite_source import measured_source
+
+    build_files = _load('build_files', 'tools/bazel/build_files.py')
+    root = tmp_path / 'snapshot'
+    root.mkdir()
+    for directory in ('experiments', 'docs', 'tests', 'tools/bazel', 'tools/ci', 'src/tessera/serving'):
+        (root / directory).mkdir(parents=True, exist_ok=True)
+    for name, text in {
+        'pyproject.toml': '', 'tests/conftest.py': '',
+        'tools/bazel/test_inputs.bzl': '["//:files/docs"]',
+        'tools/bazel/helper.txt': 'ordinary tool input',
+        'tools/ci/gate_durations.json': '{"lanes": {}}',
+        'tools/ci/gate_quarantine.json': '{"lanes": {}}',
+        'tools/ci/gate_budget.json': '{"seconds": 1, "slow": {}}',
+        'tools/ci/gate_flaky.json': '[]',
+        'tools/ci/gate_requirements.txt': '', 'tools/ci/gate_torch_requirements.txt': '',
+        'src/tessera/serving/runtime_contract.json': '{}',
+        'docs/report.txt': 'ordinary source', 'docs/other.txt': 'another source',
+    }.items():
+        (root / name).write_text(text)
+    reader = 'experiments/reader.py'
+    (root / reader).write_text(
+        'from pathlib import Path\n'
+        'root = Path(__file__).resolve().parents[1]\n'
+        'records = list(root.glob("*.json"))\n'
+        'first_record = records[0].read_text()\n')
+    generated = 'executor.metadata.json'
+    nested = 'docs/executor.metadata.json'
+    tool_metadata = 'tools/bazel/executor.metadata.json'
+    ordinary = '.pbrun-closure.ffeeddccbbaa9988.json'
+    for name in (generated, nested, tool_metadata, ordinary):
+        (root / name).write_text('{}')
+    subprocess.run(['git', 'init', '-q', str(root)], check=True)
+    subprocess.run(['git', 'add', '.'], cwd=root, check=True)
+    subprocess.run(['git', '-c', 'user.name=test', '-c', 'user.email=test@example.invalid',
+                    'commit', '-qm', 'snapshot'], cwd=root, check=True)
+    verifier = tmp_path / 'verifier.py'
+    entries = [{'path': name, 'bytes': 2, 'sha256': hashlib.sha256(b'{}').hexdigest()}
+               for name in (generated, nested, tool_metadata)]
+    verifier.write_text('import json\nprint(json.dumps(' + repr({'generated': entries}) + '))\n')
+    monkeypatch.setenv('TESSERA_SOURCE_VERIFIER', shlex.join([sys.executable, str(verifier)]))
+    assert measured_source(root)['verification'] == 'verified'
+    listed = build_files.repository_files(root)
+    assert generated not in listed, 'verified executor metadata was treated as repository source'
+    assert ordinary in listed, 'a closure-shaped basename is not proof of executor ownership'
+    assert nested not in listed and tool_metadata not in listed
+    raw_roster = [*listed, generated, nested, tool_metadata]
+    for files in (None, raw_roster):
+        evidence = build_files.Evidence(root, files=files)
+        assert generated not in evidence.files
+        assert generated not in evidence.facts[reader].paths
+        assert generated not in evidence.data(reader), 'a resolved glob reintroduced executor metadata'
+        assert ordinary in evidence.data(reader)
+    rendered = build_files.generate(root)
+    groups = [node for node in ast.parse(rendered['']).body
+              if isinstance(node, ast.Expr) and isinstance(node.value, ast.Call)
+              and isinstance(node.value.func, ast.Name) and node.value.func.id == 'filegroup']
+    docs_group = next(node.value for node in groups
+                      if ast.literal_eval(next(arg.value for arg in node.value.keywords
+                                               if arg.arg == 'name')) == 'files/docs')
+    srcs = next(arg.value for arg in docs_group.keywords if arg.arg == 'srcs')
+    if isinstance(srcs, ast.Call):
+        patterns = ast.literal_eval(srcs.args[0])
+        inputs = {str(path.relative_to(root)) for pattern in patterns
+                  for path in root.glob(pattern + '/*' if pattern.endswith('/**') else pattern)
+                  if path.is_file()}
+    else:
+        inputs = set(ast.literal_eval(srcs))
+    assert nested not in inputs, 'generated filegroup reintroduced verified executor metadata'
+    assert {'docs/report.txt', 'docs/other.txt'} <= inputs
+    tool_rosters = [node.value for node in ast.parse(rendered['tools/bazel/lanes.bzl']).body
+                    if isinstance(node, ast.Assign)
+                    and any(isinstance(target, ast.Name) and target.id == 'BAZEL_TOOL_FILES'
+                            for target in node.targets)]
+    assert tool_rosters, 'handwritten tools/bazel filegroup lacks a verified source roster'
+    tool_inputs = ast.literal_eval(tool_rosters[0])
+    assert 'executor.metadata.json' not in tool_inputs
+    assert 'helper.txt' in tool_inputs
+    handwritten = ast.parse((ROOT / 'tools/bazel/BUILD.bazel').read_text())
+    tool_group = next(node.value for node in handwritten.body
+                      if isinstance(node, ast.Expr) and isinstance(node.value, ast.Call)
+                      and isinstance(node.value.func, ast.Name) and node.value.func.id == 'filegroup')
+    tool_srcs = next(arg.value for arg in tool_group.keywords if arg.arg == 'srcs')
+    assert isinstance(tool_srcs, ast.Name) and tool_srcs.id == 'BAZEL_TOOL_FILES'
+    for name in (generated, nested, tool_metadata):
+        (root / name).unlink()
+    assert build_files.generate(root) == rendered, 'executor metadata changed generated BUILD text'
+    for name in (generated, nested, tool_metadata):
+        (root / name).write_text('{}')
+    entries[0]['sha256'] = '0' * 64
+    verifier.write_text('import json\nprint(json.dumps(' + repr({'generated': entries}) + '))\n')
+    assert measured_source(root)['verification'] == 'unknown'
+    assert generated in build_files.repository_files(root), 'unverified metadata is an ordinary input'
+    assert generated in build_files.Evidence(root).data(reader)
+    monkeypatch.delenv('TESSERA_SOURCE_VERIFIER')
+    assert generated in build_files.repository_files(root), 'no verifier proves no metadata exclusion'

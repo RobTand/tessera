@@ -1,5 +1,7 @@
 load("@rules_python//python:py_library.bzl", "py_library")
 
+load(":lanes.bzl", "BAZEL_TOOL_FILES")
+
 package(default_visibility = ["//visibility:public"])
 
 # Tests read these files by path; tools/bazel/build_files.py names them.
@@ -7,7 +9,7 @@ exports_files(glob(["**"]))
 
 filegroup(
     name = "files",
-    srcs = glob(["**"], exclude = ["BUILD.bazel"]),
+    srcs = BAZEL_TOOL_FILES,
 )
 
 # One pinned rbe-ubuntu24-04 index: these are its amd64 and arm64 manifests,

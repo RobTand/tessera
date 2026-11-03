@@ -87,7 +87,7 @@ def tree_name(directory):
 
 class Trees:
     """Name a set of files by the fewest labels: a directory whose every file is
-    in the set becomes one glob filegroup in its package."""
+    in the set becomes one filegroup in its package."""
 
     def __init__(self, files):
         self.under = defaultdict(set)
@@ -164,8 +164,8 @@ def test_attributes(path, lane, durations, quarantine, budget):
 
 def generate(root=ROOT, files=None):
     """{package directory: BUILD.bazel text} for every generated package."""
-    files = repository_files(root) if files is None else files
     graph = Graph(Evidence(root, files))
+    files = graph.evidence.files
     evidence, edges, data = graph.evidence, graph.edges, graph.data
     owner, libraries = {}, []
     for component in strongly_connected(evidence.modules, edges):
@@ -216,19 +216,20 @@ def generate(root=ROOT, files=None):
         if package == HANDWRITTEN[0].rstrip('/'):
             continue  # Its BUILD file, written by hand, declares :files.
         for directory in directories:
-            pattern = directory + '/**' if directory else '**'
             packages[package].append((tree_name(directory), 'filegroup', {
-                'srcs': f'glob([{json.dumps(pattern)}], exclude = {json.dumps(GLOB_EXCLUDE)})'}))
+                'srcs': sorted(relative(path, package) for path in trees.under[package, directory])}))
     rendered = {package: render_package(package, targets) for package, targets in packages.items()}
-    rendered['tools/bazel/lanes.bzl'] = render_lanes(lane_packages(root), owner[CONFTEST])
+    tool_files = sorted(relative(path, 'tools/bazel') for path in files if path.startswith('tools/bazel/'))
+    rendered['tools/bazel/lanes.bzl'] = render_lanes(lane_packages(root), owner[CONFTEST], tool_files)
     return rendered
 
 
-def render_lanes(packages, conftest):
-    lines = [HEADER, '"""The pip packages each hosted gate lane installs, and the shared conftest."""\n']
+def render_lanes(packages, conftest, tool_files):
+    lines = [HEADER, '"""Hosted gate packages, shared conftest, and Bazel tool source inputs."""\n']
     for lane in LANES:
         lines.append(f'{lane.upper()}_PACKAGES = {strings(packages[lane], "    ")}\n')
     lines.append(f'CONFTEST = "//{conftest[0]}:{conftest[1]}"\n')
+    lines.append(f'BAZEL_TOOL_FILES = {strings(tool_files, "    ")}\n')
     return '\n'.join(lines)
 
 

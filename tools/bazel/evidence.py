@@ -40,6 +40,7 @@ import textwrap
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / 'src'))
 from tessera._dev import source_dependencies as sd  # noqa: E402
+from tessera._dev.suite_source import measured_source  # noqa: E402
 
 # Bazel packages that hold modules. Every other file belongs to the root
 # package. tools/bazel is written by hand.
@@ -74,13 +75,22 @@ def walk(tree):
     return _WALKED[key][1]
 
 
-def repository_files(root=ROOT):
-    """Tracked and untracked, unignored files: a new test counts before `git add`."""
-    output = subprocess.run(['git', 'ls-files', '-z', '--cached', '--others', '--exclude-standard'],
-                            cwd=root, capture_output=True, check=True).stdout.decode()
-    return sorted(path for path in set(output.split('\0')) if path and not path.startswith(SKIPPED)
-                  and PurePosixPath(path).name != 'BUILD.bazel'
-                  and (root / path).is_file() and not (root / path).is_symlink())
+def repository_files(root=ROOT, files=None):
+    """Source inputs, excluding only metadata vouched for by the source verifier.
+
+    A new test counts before ``git add``. Unknown ownership excludes nothing;
+    a closure-shaped basename is still an ordinary input without verification.
+    """
+    if files is None:
+        output = subprocess.run(['git', 'ls-files', '-z', '--cached', '--others', '--exclude-standard'],
+                                cwd=root, capture_output=True, check=True).stdout.decode()
+        files = sorted(path for path in set(output.split('\0')) if path and not path.startswith(SKIPPED)
+                       and PurePosixPath(path).name != 'BUILD.bazel'
+                       and (root / path).is_file() and not (root / path).is_symlink())
+    source = measured_source(root)
+    generated = {entry['path'] for entry in source['excluded_metadata']} \
+        if source['verification'] == 'verified' else set()
+    return [path for path in files if path not in generated]
 
 
 def package_of(path):
@@ -238,7 +248,7 @@ class Evidence:
 
     def __init__(self, root=ROOT, files=None):
         self.root = Path(root).resolve()
-        self.files = repository_files(self.root) if files is None else files
+        self.files = repository_files(self.root, files=files)
         self.file_set = set(self.files)
         self.directories = {'/'.join(parts[:end]) + '/' for parts in (file.split('/') for file in self.files)
                             for end in range(1, len(parts))}
