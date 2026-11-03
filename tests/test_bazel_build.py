@@ -8,6 +8,7 @@ gate's: every gate test file has one target per lane, and a target the cloud
 gate leaves out says why.
 """
 import importlib.util
+import json
 from pathlib import Path
 
 import pytest
@@ -93,14 +94,13 @@ def test_the_hosted_gate_gives_pytest_no_secret():
 
 def test_no_target_timeout_cuts_off_its_slowest_recorded_node():
     build_files = _load('build_files', 'tools/bazel/build_files.py')
-    import json
-
     durations, quarantine = build_files.gate_tables(ROOT)
     budget = json.loads((ROOT / build_files.BUDGET).read_text())
     classes = {'moderate': 300, 'long': 900, 'eternal': 3600}
     mismatches = []
-    for path in sorted((ROOT / 'tests').glob('test_*.py')):
-        relative = path.relative_to(ROOT).as_posix()
+    for relative in build_files.repository_files(ROOT):
+        if not build_files.is_test(relative):
+            continue
         slowest = max([budget['seconds']] + [seconds for node, seconds in budget['slow'].items()
                                             if node.split('::', 1)[0] == relative])
         for lane in build_files.LANES:

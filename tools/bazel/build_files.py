@@ -152,7 +152,13 @@ def test_attributes(path, lane, durations, quarantine, budget):
         shards = min(MAX_SHARDS, math.ceil(seconds / SHARD_SECONDS))
         attributes['shard_count'] = shards
         seconds /= shards
-    attributes['timeout'] = 'long' if seconds is not None and seconds * 3 > 300 else 'moderate'
+    # A slow node stays in one shard. Averaging the file's time across shards
+    # must not cut off that node before its existing hosted-gate allowance.
+    needed = max(seconds or 0, own['seconds'], *own['slow'].values()) * 3
+    attributes['timeout'] = next((name for name, limit in (
+        ('moderate', 300), ('long', 900), ('eternal', 3600)) if limit >= needed), None)
+    if attributes['timeout'] is None:
+        raise GenerationError(f'{path} ({lane}) needs {needed:g}s, beyond Bazel\'s maximum timeout')
     return attributes
 
 

@@ -796,7 +796,7 @@ ts_py_test(
     args = [
         "--budget='{\"enforce\":true,\"seconds\":80,\"slow\":{\"tests/test_audit_byte_baseline.py::test_cpu_class_export_read_roundtrip_preserves_source_wire_bytes[False]\":520,\"tests/test_audit_byte_baseline.py::test_cpu_class_export_read_roundtrip_preserves_source_wire_bytes[True]\":522,\"tests/test_audit_byte_baseline.py::test_projection_matrix_reaches_padding_and_all_direct_buffer_dtypes\":290}}'",
     ],
-    timeout = "long",
+    timeout = "eternal",
 )
 
 ts_py_test(
@@ -810,7 +810,7 @@ ts_py_test(
     args = [
         "--budget='{\"enforce\":true,\"seconds\":80,\"slow\":{\"tests/test_audit_byte_baseline.py::test_cpu_class_export_read_roundtrip_preserves_source_wire_bytes[False]\":520,\"tests/test_audit_byte_baseline.py::test_cpu_class_export_read_roundtrip_preserves_source_wire_bytes[True]\":522,\"tests/test_audit_byte_baseline.py::test_projection_matrix_reaches_padding_and_all_direct_buffer_dtypes\":290}}'",
     ],
-    timeout = "moderate",
+    timeout = "eternal",
 )
 
 ts_py_library(
@@ -1349,7 +1349,7 @@ ts_py_test(
         "--budget='{\"enforce\":true,\"seconds\":80,\"slow\":{\"tests/test_bench_routed_load_nvfp4.py::test_a_layer_streams_with_a_bounded_read_ahead\":318,\"tests/test_bench_routed_load_nvfp4.py::test_the_helpers_read_a_parts_directory\":434}}'",
     ],
     shard_count = 6,
-    timeout = "moderate",
+    timeout = "eternal",
 )
 
 ts_py_test(
@@ -1363,7 +1363,7 @@ ts_py_test(
     args = [
         "--budget='{\"enforce\":true,\"seconds\":80,\"slow\":{\"tests/test_bench_routed_load_nvfp4.py::test_a_layer_streams_with_a_bounded_read_ahead\":318,\"tests/test_bench_routed_load_nvfp4.py::test_the_helpers_read_a_parts_directory\":434}}'",
     ],
-    timeout = "moderate",
+    timeout = "eternal",
 )
 
 ts_py_library(
@@ -6527,7 +6527,7 @@ ts_py_test(
         "--budget='{\"enforce\":true,\"seconds\":80,\"slow\":{\"tests/test_export_plan_cache.py::test_a_second_pass_over_many_shapes_recomputes_nothing\":278}}'",
     ],
     shard_count = 3,
-    timeout = "moderate",
+    timeout = "long",
 )
 
 ts_py_test(
@@ -6541,7 +6541,7 @@ ts_py_test(
     args = [
         "--budget='{\"enforce\":true,\"seconds\":80,\"slow\":{\"tests/test_export_plan_cache.py::test_a_second_pass_over_many_shapes_recomputes_nothing\":278}}'",
     ],
-    timeout = "moderate",
+    timeout = "long",
 )
 
 ts_py_library(
@@ -6568,7 +6568,7 @@ ts_py_test(
         "--budget='{\"enforce\":true,\"seconds\":80,\"slow\":{\"tests/test_export_routed_resident_pricing.py::test_mtp_duplicate_is_its_own_line_item_and_the_total_is_the_sum[runtime]\":161,\"tests/test_export_routed_resident_pricing.py::test_routed_stack_bytes_are_the_native_owner_allocation[reference]\":231}}'",
     ],
     shard_count = 2,
-    timeout = "moderate",
+    timeout = "long",
 )
 
 ts_py_test(
@@ -6582,7 +6582,7 @@ ts_py_test(
     args = [
         "--budget='{\"enforce\":true,\"seconds\":80,\"slow\":{\"tests/test_export_routed_resident_pricing.py::test_mtp_duplicate_is_its_own_line_item_and_the_total_is_the_sum[runtime]\":161,\"tests/test_export_routed_resident_pricing.py::test_routed_stack_bytes_are_the_native_owner_allocation[reference]\":231}}'",
     ],
-    timeout = "moderate",
+    timeout = "long",
 )
 
 ts_py_library(
@@ -6612,7 +6612,7 @@ ts_py_test(
         "--budget='{\"enforce\":true,\"seconds\":80,\"slow\":{\"tests/test_export_serving.py::test_a_selected_producer_seals_its_receipt_and_commit\":286,\"tests/test_export_serving.py::test_joined_expert_encodes_group_across_names_and_write_the_one_unit_bytes[2]\":527,\"tests/test_export_serving.py::test_joined_expert_encodes_group_across_names_and_write_the_one_unit_bytes[5]\":357}}'",
     ],
     shard_count = 8,
-    timeout = "moderate",
+    timeout = "eternal",
 )
 
 ts_py_test(
@@ -6626,7 +6626,7 @@ ts_py_test(
     args = [
         "--budget='{\"enforce\":true,\"seconds\":80,\"slow\":{\"tests/test_export_serving.py::test_a_selected_producer_seals_its_receipt_and_commit\":286,\"tests/test_export_serving.py::test_joined_expert_encodes_group_across_names_and_write_the_one_unit_bytes[2]\":527,\"tests/test_export_serving.py::test_joined_expert_encodes_group_across_names_and_write_the_one_unit_bytes[5]\":357}}'",
     ],
-    timeout = "moderate",
+    timeout = "eternal",
 )
 
 ts_py_library(
@@ -10869,7 +10869,7 @@ ts_py_test(
         "--budget='{\"enforce\":true,\"seconds\":80,\"slow\":{\"tests/test_impacted_manual_gate.py::test_real_gate_is_selected_as_a_pytest_target\":210}}'",
     ],
     shard_count = 2,
-    timeout = "moderate",
+    timeout = "long",
 )
 
 ts_py_test(
@@ -10885,7 +10885,7 @@ ts_py_test(
         "--budget='{\"enforce\":true,\"seconds\":80,\"slow\":{\"tests/test_impacted_manual_gate.py::test_real_gate_is_selected_as_a_pytest_target\":210}}'",
     ],
     shard_count = 2,
-    timeout = "moderate",
+    timeout = "long",
 )
 
 ts_py_library(
@@ -10913,7 +10913,7 @@ ts_py_test(
         "--budget='{\"enforce\":true,\"seconds\":80,\"slow\":{\"tests/test_impacted_tests.py::test_a_docs_architecture_change_selects_the_issue_ref_guard\":222,\"tests/test_impacted_tests.py::test_a_package_init_change_selects_every_test_that_imports_the_package\":225,\"tests/test_impacted_tests.py::test_pytest_import_roots_resolve_the_bare_helper_imports[box_artifacts]\":180,\"tests/test_impacted_tests.py::test_readonly_checkout_queries_do_not_repeat_source_analysis\":221,\"tests/test_impacted_tests.py::test_this_repository_does_not_gain_an_unnamed_directory_read\":217}}'",
     ],
     shard_count = 3,
-    timeout = "moderate",
+    timeout = "long",
 )
 
 ts_py_test(
@@ -10928,7 +10928,7 @@ ts_py_test(
         "--budget='{\"enforce\":true,\"seconds\":80,\"slow\":{\"tests/test_impacted_tests.py::test_a_docs_architecture_change_selects_the_issue_ref_guard\":222,\"tests/test_impacted_tests.py::test_a_package_init_change_selects_every_test_that_imports_the_package\":225,\"tests/test_impacted_tests.py::test_pytest_import_roots_resolve_the_bare_helper_imports[box_artifacts]\":180,\"tests/test_impacted_tests.py::test_readonly_checkout_queries_do_not_repeat_source_analysis\":221,\"tests/test_impacted_tests.py::test_this_repository_does_not_gain_an_unnamed_directory_read\":217}}'",
     ],
     shard_count = 3,
-    timeout = "moderate",
+    timeout = "long",
 )
 
 ts_py_library(
@@ -11642,7 +11642,7 @@ ts_py_test(
         "--budget='{\"enforce\":true,\"seconds\":80,\"slow\":{\"tests/test_inductor_determinism_knob.py::test_two_fresh_cache_cpu_builds_per_arm_and_what_the_knob_did\":369}}'",
     ],
     shard_count = 3,
-    timeout = "moderate",
+    timeout = "eternal",
 )
 
 ts_py_test(
@@ -11653,7 +11653,7 @@ ts_py_test(
     args = [
         "--budget='{\"enforce\":true,\"seconds\":80,\"slow\":{\"tests/test_inductor_determinism_knob.py::test_two_fresh_cache_cpu_builds_per_arm_and_what_the_knob_did\":369}}'",
     ],
-    timeout = "moderate",
+    timeout = "eternal",
 )
 
 ts_py_library(
@@ -12842,7 +12842,7 @@ ts_py_test(
         "--budget='{\"enforce\":true,\"seconds\":80,\"slow\":{\"tests/test_kernel_shape_guards.py::test_the_prefill_gemm_copies_a_strided_activation_and_is_off_the_served_path\":301}}'",
     ],
     shard_count = 4,
-    timeout = "moderate",
+    timeout = "eternal",
 )
 
 ts_py_test(
@@ -12857,7 +12857,7 @@ ts_py_test(
     args = [
         "--budget='{\"enforce\":true,\"seconds\":80,\"slow\":{\"tests/test_kernel_shape_guards.py::test_the_prefill_gemm_copies_a_strided_activation_and_is_off_the_served_path\":301}}'",
     ],
-    timeout = "moderate",
+    timeout = "eternal",
 )
 
 ts_py_library(
@@ -15719,7 +15719,7 @@ ts_py_test(
         "--budget='{\"enforce\":true,\"seconds\":80,\"slow\":{\"tests/test_native_shape_time_scopes.py::test_routed_tp2_panel_validates\":175}}'",
     ],
     shard_count = 4,
-    timeout = "moderate",
+    timeout = "long",
 )
 
 ts_py_test(
@@ -15736,7 +15736,7 @@ ts_py_test(
     args = [
         "--budget='{\"enforce\":true,\"seconds\":80,\"slow\":{\"tests/test_native_shape_time_scopes.py::test_routed_tp2_panel_validates\":175}}'",
     ],
-    timeout = "moderate",
+    timeout = "long",
 )
 
 ts_py_library(
@@ -18182,7 +18182,7 @@ ts_py_test(
         "--budget='{\"enforce\":true,\"seconds\":80,\"slow\":{\"tests/test_producer_plan_public.py::test_substack_projection_keeps_uniform_plan_and_prices_units[False]\":284,\"tests/test_producer_plan_public.py::test_substack_projection_keeps_uniform_plan_and_prices_units[True]\":298}}'",
     ],
     shard_count = 3,
-    timeout = "moderate",
+    timeout = "long",
 )
 
 ts_py_test(
@@ -18196,7 +18196,7 @@ ts_py_test(
     args = [
         "--budget='{\"enforce\":true,\"seconds\":80,\"slow\":{\"tests/test_producer_plan_public.py::test_substack_projection_keeps_uniform_plan_and_prices_units[False]\":284,\"tests/test_producer_plan_public.py::test_substack_projection_keeps_uniform_plan_and_prices_units[True]\":298}}'",
     ],
-    timeout = "moderate",
+    timeout = "long",
 )
 
 ts_py_library(
