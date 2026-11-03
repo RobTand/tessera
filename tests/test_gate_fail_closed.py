@@ -11,8 +11,15 @@ import pytest
 ROOT = Path(__file__).resolve().parents[1]
 
 
+MODULES = {
+    'gate_actions': ROOT / 'tools/ci/gate_actions.py',
+    'gate_run': ROOT / 'tools/ci/gate_run.py',
+    'gate_select': ROOT / 'tools/ci/gate_select.py',
+}
+
+
 def load(name):
-    spec = importlib.util.spec_from_file_location(name, ROOT / 'tools/ci' / f'{name}.py')
+    spec = importlib.util.spec_from_file_location(name, MODULES[name])
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module
