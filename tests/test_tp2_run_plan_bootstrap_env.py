@@ -81,22 +81,26 @@ def _bootstrap_ran(env):
 
 
 def _assert_mode_environment(env, mode, plan):
+    # Compare named keys only: a failing assertion on the whole mapping would
+    # print every value in it, credentials included.
+    names = frozenset(env)
     parts = env["PYTHONPATH"].split(os.pathsep)
-    assert "PYTORCH_CUDA_ALLOC_CONF" not in env
+    assert "PYTORCH_CUDA_ALLOC_CONF" not in names
     assert env["VLLM_WORKER_MULTIPROC_METHOD"] == "spawn"
     if mode == "resources":
         assert Path(env["TESSERA_ENGINE_RESOURCE_PLAN"]) == plan.resolve()
         assert parts == [str(BOOTSTRAP), str(ROOT)]
-        assert "TESSERA_ENGINE_TIMING_PLAN" not in env
-        assert _bootstrap_ran(env)
+        assert "TESSERA_ENGINE_TIMING_PLAN" not in names
+        ran = _bootstrap_ran(env)
+        assert ran, "the spawned interpreter did not run the resource bootstrap"
     elif mode == "timings":
         assert Path(env["TESSERA_ENGINE_TIMING_PLAN"]) == plan.resolve()
         assert parts == [str(ROOT)]
-        assert "TESSERA_ENGINE_RESOURCE_PLAN" not in env
+        assert "TESSERA_ENGINE_RESOURCE_PLAN" not in names
     else:
         assert parts == [str(ROOT)]
-        assert "TESSERA_ENGINE_RESOURCE_PLAN" not in env
-        assert "TESSERA_ENGINE_TIMING_PLAN" not in env
+        assert "TESSERA_ENGINE_RESOURCE_PLAN" not in names
+        assert "TESSERA_ENGINE_TIMING_PLAN" not in names
 
 
 @pytest.mark.parametrize("mode", ["resources", "timings", "kv"])
