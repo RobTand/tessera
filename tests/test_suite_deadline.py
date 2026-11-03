@@ -9,6 +9,7 @@ deliberate and untouched.
 
 import signal
 import subprocess
+import time
 
 import pytest
 
@@ -143,6 +144,23 @@ def _check_completed_lifecycles(monkeypatch, previous):
             assert process.waits == [2.0, 0.25]
         else:
             assert groups == []
+
+
+def test_lifecycle_grace_clock_does_not_capture_another_owners_sleep(monkeypatch):
+    signal_group = suite_deadline._signal_group
+    other_sleeps = []
+
+    def signal_group_with_other_owner(pid, signum):
+        signal_group(pid, signum)
+        if signum == signal.SIGKILL:
+            # Force the interleaving seen with the route trace's 1s flusher,
+            # without racing a daemon thread or changing the process clock.
+            time.sleep(1.0)
+            other_sleeps.append(1.0)
+
+    monkeypatch.setattr(suite_deadline, "_signal_group", signal_group_with_other_owner)
+    _check_completed_lifecycles(monkeypatch, _handlers())
+    assert other_sleeps == [1.0, 1.0, 1.0, 1.0]
 
 
 @pytest.mark.parametrize("setup_signal", _HANDLER_SIGNALS, ids=lambda sig: sig.name)
