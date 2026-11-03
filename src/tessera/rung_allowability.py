@@ -957,3 +957,5 @@ def rung_quality(rung, *, lower_rung, upper_rung, lower_value, upper_value):
             'anchors': [lower_rung, upper_rung], 'fraction': fraction,
             'numerical_qualification_inherited': False}
 
+
+# Probe 2: leaf selection for the Bazel cutover; do not merge.
