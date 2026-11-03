@@ -15,10 +15,10 @@ The hosted gate's own files stay the sources of truth:
 
 ## Running tests
 
-Run Bazel through the approved shared `bbrun.py` client. It keeps credentials in request headers and routes Tessera actions to `selfhosted-amd64` on dl380g10 or `selfhosted-arm64` on the Sparks, with no cloud fallback. Use a pushed commit on an approved scratch ref that triggers no workflow; delete the ref after the run is terminal.
+Run Bazel through the approved shared `bbrun.py` client. Set `BBRUN_CLIENT` to its installed path on the submission host. It keeps credentials in request headers and routes Tessera actions to `selfhosted-amd64` on dl380g10 or `selfhosted-arm64` on the Sparks, with no cloud fallback. Use a pushed commit on an approved scratch ref that triggers no workflow; delete the ref after the run is terminal.
 
 ```sh
-python3 -I /home/rob/tmp/bazel-wave2/tools/bbrun.py test \
+python3 -I "$BBRUN_CLIENT" test \
   --repo https://github.com/RobTand/tessera \
   --commit FULL_COMMIT_SHA --branch bbrun/tessera-tests \
   --arch amd64 --timeout 15 -- \

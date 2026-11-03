@@ -3,7 +3,7 @@
 A test target holds its own file, every module it imports transitively, the
 modules tests/conftest.py imports, and the data of each. Bazel reruns the test
 when any of those files changes. tools/bazel/build_files.py writes these
-targets; tools/ci/import_fanout.py measures them.
+targets.
 """
 from __future__ import annotations
 
