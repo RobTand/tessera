@@ -89,3 +89,22 @@ def test_the_hosted_gate_gives_pytest_no_secret():
     environment = gate_run.without_secrets(dict(SECRETS, PATH='/bin'))
     assert sorted(set(SECRETS) & set(environment)) == []
     assert environment['PATH'] == '/bin'
+
+
+def test_no_target_timeout_cuts_off_its_slowest_recorded_node():
+    build_files = _load('build_files', 'tools/bazel/build_files.py')
+    import json
+
+    durations, quarantine = build_files.gate_tables(ROOT)
+    budget = json.loads((ROOT / build_files.BUDGET).read_text())
+    classes = {'moderate': 300, 'long': 900, 'eternal': 3600}
+    mismatches = []
+    for path in sorted((ROOT / 'tests').glob('test_*.py')):
+        relative = path.relative_to(ROOT).as_posix()
+        slowest = max([budget['seconds']] + [seconds for node, seconds in budget['slow'].items()
+                                            if node.split('::', 1)[0] == relative])
+        for lane in build_files.LANES:
+            attributes = build_files.test_attributes(relative, lane, durations, quarantine, budget)
+            if classes[attributes['timeout']] < slowest * 3:
+                mismatches.append(f"{relative} ({lane}): {attributes['timeout']} < {slowest}s x 3")
+    assert mismatches == []
