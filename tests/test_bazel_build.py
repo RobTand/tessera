@@ -12,6 +12,7 @@ import json
 from pathlib import Path
 
 import pytest
+from accounting_source_support import isolated_prismaquant_imports
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -108,3 +109,31 @@ def test_no_target_timeout_cuts_off_its_slowest_recorded_node():
             if classes[attributes['timeout']] < slowest * 3:
                 mismatches.append(f"{relative} ({lane}): {attributes['timeout']} < {slowest}s x 3")
     assert mismatches == []
+
+
+def test_both_lanes_install_the_prismabuild_sdk():
+    """The SDK is stdlib-only, so the no-torch lane runs its consumers too
+    instead of skipping them (Rob, 2026-11-02: install the library a test needs)."""
+    text = (ROOT / 'tools/ci/gate_requirements.txt').read_text()
+    assert any(line.startswith('prismabuild @ ') for line in text.splitlines())
+
+
+def test_prismaquant_is_pinned_and_hash_locked_for_the_tests_that_read_it():
+    requirements = _load('requirements', 'tools/bazel/requirements.py')
+    assert 'tools/ci/gate_prismaquant_requirements.txt' in requirements.SOURCES
+    export = (ROOT / requirements.EXPORT).read_text()
+    entry = export[export.index('\nprismaquant @ '):].split('\n', 3)
+    assert '/archive/' in entry[1] and entry[2].strip().startswith('--hash=sha256:')
+
+
+def test_the_runner_points_box_artifacts_at_an_installed_prismaquant(
+        monkeypatch, tmp_path, isolated_prismaquant_imports):
+    runtime = _load('runtime', 'tools/bazel/runtime.py')
+    package = tmp_path / 'site' / 'prismaquant'
+    package.mkdir(parents=True)
+    (package / '__init__.py').write_text('')
+    monkeypatch.syspath_prepend(str(tmp_path / 'site'))
+    environment = runtime.gate_environment({'PATH': '/bin'}, tmp_path, tmp_path)
+    assert environment['TESSERA_PRISMAQUANT_DIR'] == str(tmp_path / 'site')
+    explicit = runtime.gate_environment({'TESSERA_PRISMAQUANT_DIR': '/elsewhere'}, tmp_path, tmp_path)
+    assert explicit['TESSERA_PRISMAQUANT_DIR'] == '/elsewhere'
