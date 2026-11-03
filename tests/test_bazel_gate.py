@@ -246,17 +246,16 @@ def test_the_gate_pins_the_shared_bazel_diff():
 
 @pytest.fixture
 def artifact_gate(monkeypatch, tmp_path):
-    output = tmp_path / 'artifacts'
-    output.mkdir()
     root = tmp_path / 'workspace'
     root.mkdir()
+    output = root / 'gate-artifacts'
+    output.mkdir()
+    monkeypatch.setattr(bazel_gate, 'ROOT', root)
     monkeypatch.setenv('BUILDBUDDY_ARTIFACTS_DIRECTORY', str(output))
     monkeypatch.setenv('BUILDBUDDY_API_KEY', 'fake-runner-secret-for-artifact-tests')
     monkeypatch.setenv('UNRELATED_TOKEN', 'fake-unrelated-token-never-printed')
     monkeypatch.delenv('BBRUN_FINAL_SCAN', raising=False)
     monkeypatch.setattr(bazel_gate, 'gate_pr', lambda *args: {'verdict': 'pass', 'inputs': []})
-    write_result = bazel_gate.write_result
-    monkeypatch.setattr(bazel_gate, 'write_result', lambda result, directory: write_result(result, directory, root))
 
     def run():
         return bazel_gate.main(['pr', '--base', 'a' * 40, '--head', 'b' * 40], workspace=object())
@@ -287,7 +286,7 @@ def test_the_final_scan_covers_both_diagnostic_logs(monkeypatch, artifact_gate):
 
 @pytest.mark.parametrize('leak', [False, True])
 def test_zstd_diagnostics_are_decoded_before_upload(leak, monkeypatch, artifact_gate):
-    from compression import zstd
+    zstd = pytest.importorskip('compression.zstd', reason='the production scanner uses Python 3.14')
     root, output, run = artifact_gate
     name = 'pr-execution_log.binpb.zst'
     secret = 'S' * 3000
@@ -301,10 +300,9 @@ def test_zstd_diagnostics_are_decoded_before_upload(leak, monkeypatch, artifact_
 
 
 def test_an_unscannable_artifact_is_excluded_but_safe_artifacts_remain(monkeypatch, artifact_gate, capsys):
-    from compression import zstd
     root, output, run = artifact_gate
     name = 'pr-execution_log.binpb.zst'
-    (root / name).write_bytes(zstd.compress(b'safe diagnostic'))
+    (root / name).write_bytes(b'\x28\xb5\x2f\xfd safe diagnostic without an available decoder')
     monkeypatch.setattr(bazel_gate.check_no_secret_leak, 'zstd', None)
     assert run() == 0
     assert not (output / name).exists()
@@ -358,6 +356,16 @@ def test_hosted_upload_scans_use_python_314_and_the_exclusion_wrapper():
         assert 'bazel_gate.py scan-artifacts' in section
 
 
+def test_only_the_scanned_staging_tree_is_published(monkeypatch, artifact_gate):
+    root, output, run = artifact_gate
+    upload = root / 'remote-upload'
+    upload.mkdir()
+    monkeypatch.setenv('BUILDBUDDY_ARTIFACTS_DIRECTORY', str(upload))
+    assert run() == 0
+    assert not output.exists()
+    assert (upload / 'gate-result.json').exists()
+
+
 @pytest.mark.parametrize('name', ['pr-bazel-remote-grpc.log', 'pr-execution_log.binpb.zst', 'summary.json'])
 def test_a_secret_artifact_is_removed_and_fails_the_gate(name, artifact_gate, capsys):
     root, output, run = artifact_gate
@@ -395,11 +403,12 @@ def test_a_blind_gate_scan_fails_without_deleting_artifacts(key, monkeypatch, ar
     assert 'secret scan blind: key unavailable' in capsys.readouterr().out
 
 
-def test_an_incomplete_scan_clears_artifacts_and_fails(artifact_gate):
+def test_an_unreadable_compressed_artifact_is_excluded(artifact_gate):
     _, output, run = artifact_gate
     (output / 'broken.gz').write_bytes(b'\x1f\x8btruncated gzip')
-    assert run() == 1
-    assert list(output.iterdir()) == []
+    assert run() == 0
+    assert not (output / 'broken.gz').exists()
+    assert (output / 'gate-result.json').exists()
 
 
 def test_a_failed_gate_still_scans_its_artifacts(monkeypatch, artifact_gate):
@@ -433,7 +442,7 @@ def test_no_gate_child_inherits_the_scanner_key(program, monkeypatch, tmp_path):
 
 def test_hosted_scans_fail_closed_when_the_key_is_unavailable():
     text = (ROOT / '.github/workflows/gate.yml').read_text()
-    scans = text.split('python3 tools/ci/check_no_secret_leak.py gate-output')[0:-1]
+    scans = text.split('python3 tools/ci/bazel_gate.py scan-artifacts gate-output')[0:-1]
     assert len(scans) == 2
     for preceding in scans:
         assert 'secret scan blind: key unavailable' in preceding.rsplit('run: |', 1)[-1]

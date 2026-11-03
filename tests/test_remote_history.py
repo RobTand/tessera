@@ -18,7 +18,7 @@ def git(root, *arguments):
 
 
 @pytest.fixture
-def partial_clone(tmp_path):
+def partial_clone(tmp_path, monkeypatch):
     origin = tmp_path / 'origin'
     origin.mkdir()
     git(origin, 'init', '--initial-branch=master')
@@ -35,6 +35,7 @@ def partial_clone(tmp_path):
     git(origin, 'commit', '-m', 'new')
     head = git(origin, 'rev-parse', 'HEAD')
     clone = tmp_path / 'clone'
+    monkeypatch.setattr(remote_gate, 'ROOT', clone)
     git(tmp_path, 'clone', '--depth=1', '--filter=blob:none', '--no-checkout',
         origin.as_uri(), str(clone))
     # Remote Bazel has checked out the requested revision before this preflight.

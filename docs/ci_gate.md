@@ -233,3 +233,5 @@ are policy failures. The comparison uses the event's base tip. A stale PR
 that still carries an entry removed on master must merge master before it
 can pass. A Mergify batch containing quarantine growth and another PR's
 code fails the quarantine-only rule; land the growth separately first.
+
+The final required-key scans run under Python 3.14 to decode compact zstd execution logs. If the pinned scanner still reports a file as not scanned, the upload wrapper excludes that file and requires a clean second scan. A secret hit remains fatal even when an incomplete scan takes precedence in the core's exit code. The vendored scanner bytes are unchanged. Native artifacts are scanned in the fixed checkout staging directory before publication; hosted artifacts are scanned in `gate-output`.

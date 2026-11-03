@@ -14,8 +14,10 @@ verdict. Assertion failures and hard timeouts fail on their first attempt.
 There are no test reruns.
 """
 import argparse
+import contextlib
 from fnmatch import fnmatch
 import hashlib
+import io
 import json
 import os
 from pathlib import Path
@@ -62,6 +64,20 @@ def child_environment(environ=None):
     environ = os.environ if environ is None else environ
     return {name: value for name, value in environ.items()
             if name not in SECRET_NAMES and not name.endswith(('_API_KEY', '_TOKEN'))}
+
+
+def require_scan_python():
+    """Keep the keyed scanner in-process, using Python's stdlib zstd decoder."""
+    if sys.version_info[:2] == (3, 14):
+        return
+    bootstrap = Path(tempfile.gettempdir()) / 'tessera-scanner-bootstrap'
+    workspace = Workspace()
+    workspace.run(sys.executable, '-m', 'pip', 'install', '--quiet', '--no-deps',
+                  '--target', bootstrap, 'uv==0.9.5')
+    uv = bootstrap / 'bin/uv'
+    workspace.run(uv, 'python', 'install', '3.14.0')
+    python = workspace.run(uv, 'python', 'find', '--managed-python', '3.14.0').strip()
+    os.execv(python, [python, *sys.argv])
 
 
 # fnmatch's * also crosses '/', so 'tools/bazel/*' covers the whole tree.
@@ -256,10 +272,10 @@ class Workspace:
 
     def budget_warnings(self, targets):
         warnings = []
-        logs = self.root / 'bazel-testlogs'
+        logs = ROOT / 'bazel-testlogs'
         for label in targets:
             package, _, name = label.removeprefix('//').partition(':')
-            for path in sorted((logs / package / name).glob('**/test.outputs/budget_warnings.json')):
+            for path in sorted(logs.glob(f'{package}/{name}/**/test.outputs/budget_warnings.json')):
                 for row in json.loads(path.read_text())['warnings']:
                     warnings.append({'label': label, **row})
         return warnings
@@ -302,28 +318,35 @@ def diagnostic_logs(prefix):
             f'--execution_log_compact_file={prefix}-{DIAGNOSTICS[1]}']
 
 
-def write_result(result, directory, root=ROOT):
+def write_result(result, directory):
     directory.mkdir(parents=True, exist_ok=True)
     (directory / RESULT).write_text(json.dumps(result, indent=2) + '\n')
     for suffix in DIAGNOSTICS:
-        for log in root.glob(f'*{suffix}'):
+        for log in ROOT.glob(f'*{suffix}'):
             log.replace(directory / log.name)
 
 
-def scan_artifacts(directory):
+def scan_artifacts(directory, required=('BUILDBUDDY_API_KEY',)):
     """Refuse raw event/command logs and scan the actual upload directory."""
     deferred = os.environ.get('BBRUN_FINAL_SCAN') == '1'
     names = ['BUILDBUDDY_API_KEY'] + sorted(
         name for name, value in os.environ.items() if value and name != 'BUILDBUDDY_API_KEY'
         and (name in SECRET_NAMES or name.endswith(('_API_KEY', '_TOKEN'))))
     arguments = [str(directory), *[arg for name in names for arg in ('--env', name)],
-                 '--require', 'BUILDBUDDY_API_KEY']
-    if not deferred and not os.environ.get('BUILDBUDDY_API_KEY'):
+                 *[arg for name in required for arg in ('--require', name)]]
+    if not deferred and any(not os.environ.get(name) for name in required):
         print('secret scan blind: key unavailable', flush=True)
         check_no_secret_leak.main(arguments)
         return False
     forbidden = False
-    for path in directory.rglob('*'):
+    if directory.resolve() == (ROOT / 'gate-artifacts').resolve():
+        artifacts = list((ROOT / 'gate-artifacts').rglob('*'))
+    elif directory.resolve() == (ROOT / 'gate-output').resolve():
+        artifacts = list((ROOT / 'gate-output').rglob('*'))
+    else:
+        print('refusing an upload directory outside the gate staging paths', flush=True)
+        return False
+    for path in artifacts:
         name = path.name.lower()
         if (path.is_file() or path.is_symlink()) and (
                 'bep' in name or name.endswith('.binpb') or name == 'command.log' or 'command_log' in name):
@@ -338,13 +361,64 @@ def scan_artifacts(directory):
     if deferred:
         print('secret scan deferred to bbrun final scan', flush=True)
         return not forbidden
-    status = check_no_secret_leak.main(arguments)
+    def scan():
+        diagnostics = io.StringIO()
+        with contextlib.redirect_stdout(diagnostics), contextlib.redirect_stderr(diagnostics):
+            status = check_no_secret_leak.main(arguments)
+        return status, diagnostics.getvalue()
+
+    status, diagnostics = scan()
+    if diagnostics:
+        forms = sorted({form.decode(errors='replace')
+                        for name in names if (value := os.environ.get(name))
+                        for form in check_no_secret_leak.secret_byte_forms(value)}, key=len, reverse=True)
+
+        def redact(message):
+            while any(value in message for value in forms):
+                for value in forms:
+                    message = message.replace(value, '')
+            return message
+
+        reasons = ('zstd: not scanned (compression.zstd unavailable)',
+                   'compressed nesting limit, not scanned', 'gzip member unreadable, not scanned',
+                   'zstd member unreadable, not scanned', 'unreadable path, not scanned')
+        reports = {}
+        for path in artifacts:
+            if path.is_dir():
+                continue
+            for reason in reasons:
+                report = redact(f'{path}: {reason}')
+                if report in reports and reports[report] != path:
+                    status = 1
+                    break
+                reports[report] = path
+        lines = diagnostics.splitlines()
+        # Secret hits, directory failures and unknown diagnostics stay fatal,
+        # including a hit hidden by the shared scanner's incomplete-scan status.
+        if status in (0, 75) and all(line in reports for line in lines):
+            for path in {reports[line] for line in lines}:
+                try:
+                    path.unlink(missing_ok=True)
+                except OSError:
+                    print('artifact exclusion failed; upload refused', flush=True)
+                    return False
+                print(redact(f'{path}: excluded from upload (not fully scanned)'), flush=True)
+            status, diagnostics = scan()
+            if diagnostics:
+                status = 75
+        else:
+            status = status or 75
+    print(diagnostics, end='', flush=True)
     if status:
-        for path in directory.iterdir():
-            if path.is_dir() and not path.is_symlink():
-                shutil.rmtree(path)
-            else:
-                path.unlink()
+        for path in sorted(artifacts, key=lambda item: len(item.parts), reverse=True):
+            try:
+                if path.is_dir() and not path.is_symlink():
+                    path.rmdir()
+                else:
+                    path.unlink(missing_ok=True)
+            except OSError:
+                print('private artifact cleanup failed; upload refused', flush=True)
+                return False
     return status == 0 and not forbidden
 
 
@@ -448,6 +522,14 @@ def passed(result):
 
 
 def main(argv=None, workspace=None):
+    argv = sys.argv[1:] if argv is None else argv
+    if argv[:1] == ['scan-artifacts']:
+        parser = argparse.ArgumentParser(description='Scan the complete upload set; exclude unscannable files.')
+        parser.add_argument('directory', type=Path)
+        parser.add_argument('--require', action='append', default=[])
+        args = parser.parse_args(argv[1:])
+        required = tuple(dict.fromkeys(['BUILDBUDDY_API_KEY', *args.require]))
+        return 0 if scan_artifacts(args.directory, required) else 1
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('mode', choices=['pr', 'main'])
     parser.add_argument('--base', required=True)
@@ -456,7 +538,7 @@ def main(argv=None, workspace=None):
     parser.add_argument('--plan-full', action='store_true', help='return full plans for separate Run requests')
     parser.add_argument('--full-shard', help='architecture:index of a committed full target file')
     args = parser.parse_args(argv)
-    output = Path(os.environ.get('BUILDBUDDY_ARTIFACTS_DIRECTORY', ROOT / 'gate-artifacts'))
+    output = ROOT / 'gate-artifacts'
     metadata = {'COMMIT_SHA': args.head, 'BRANCH_NAME': args.branch}
     result = {'schema': SCHEMA, 'mode': args.mode, 'base': args.base, 'head': args.head}
     try:
@@ -479,9 +561,16 @@ def main(argv=None, workspace=None):
         write_result(result, output)
     finally:
         safe_artifacts = scan_artifacts(output)
+    upload = Path(os.environ.get('BUILDBUDDY_ARTIFACTS_DIRECTORY', output))
+    if upload != output and safe_artifacts:
+        # Only the completely scanned, fixed staging tree reaches the Run API.
+        # Each runner step owns its initially empty automatic upload directory.
+        upload.parent.mkdir(parents=True, exist_ok=True)
+        os.replace(output, upload)
     print(json.dumps({key: result.get(key) for key in ['selection', 'error', 'verdict', 'inputs', 'budget_warnings']}))
     return 0 if safe_artifacts and passed(result) else 1
 
 
 if __name__ == '__main__':
+    require_scan_python()
     sys.exit(main())

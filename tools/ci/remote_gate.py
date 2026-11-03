@@ -21,6 +21,7 @@ IMAGE = ('docker://gcr.io/flame-public/rbe-ubuntu24-04@sha256:'
          '5f0c01e5f6d79e58d7a996330de33aa38ce599bf8431eaf27521e7602daadf50')
 REPOSITORY = 'https://github.com/RobTand/tessera'
 RESULT = 'gate-result.json'
+ROOT = Path(__file__).resolve().parents[2]
 SCHEMA = 'tessera.bazel-gate.v1'
 # Diagnostic logs, by suffix: each test or build run names its own.
 DIAGNOSTICS = ('bazel-remote-grpc.log', 'execution_log.binpb.zst')
@@ -119,7 +120,9 @@ def prepare_full_history(expected_commit, root=None):
         # Only discard their metadata after proving the reachable graph complete.
         stage = 'promisor-cleanup'
         pack = root / Path(git(['rev-parse', '--git-path', 'objects/pack']).stdout.strip())
-        for marker in pack.glob('*.promisor'):
+        if pack.resolve() != (ROOT / '.git/objects/pack').resolve():
+            raise RuntimeError('the Remote Bazel clone has a nonstandard object-pack path')
+        for marker in (ROOT / '.git/objects/pack').glob('*.promisor'):
             try:
                 marker.unlink()
             except FileNotFoundError:
@@ -133,7 +136,7 @@ def prepare_full_history(expected_commit, root=None):
         metadata = git(['config', '--get-regexp',
                         r'^(remote\..*\.(promisor|partialclonefilter)|extensions\.partialclone)$'],
                        accepted=(0, 1), failure='cannot verify partial-clone metadata')
-        if metadata.returncode != 1 or any(pack.glob('*.promisor')):
+        if metadata.returncode != 1 or any((ROOT / '.git/objects/pack').glob('*.promisor')):
             raise RuntimeError('promisor metadata remains after full fetch')
         stage = 'shallow-check'
         if git(['rev-parse', '--is-shallow-repository']).stdout.strip() != 'false':

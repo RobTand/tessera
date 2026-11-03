@@ -11940,6 +11940,7 @@ ts_py_library(
         "//src/tessera:container",
         "//src/tessera:kernel",
         "//tools:__init__",
+        "//tools:ci/check_no_secret_leak",
         "//tools:impacted_tests",
         "//tools:tessera_route_census",
         ":box_artifacts",

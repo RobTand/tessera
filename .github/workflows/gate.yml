@@ -116,9 +116,15 @@ jobs:
         if: always() && github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository
         run: |
           echo "fork PR: no secrets, artifact upload skipped"
+      - id: scan_python
+        name: Python with the standard-library zstd decoder
+        if: always() && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
+        with:
+          python-version: '3.14'
       - id: artifact_scan
         name: Refuse to upload a secret
-        if: always() && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
+        if: always() && steps.scan_python.outcome == 'success' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
         # The scanner reads the values to look for from these variables; it
         # prints names and paths only.
         env:
@@ -130,7 +136,8 @@ jobs:
             echo "secret scan blind: key unavailable"
             exit 1
           fi
-          python3 tools/ci/check_no_secret_leak.py gate-output --env BUILDBUDDY_API_KEY --env MERGIFY_TOKEN --require BUILDBUDDY_API_KEY --require MERGIFY_TOKEN
+          # Runs the byte-identical check_no_secret_leak.py in-process.
+          python3 tools/ci/bazel_gate.py scan-artifacts gate-output --require BUILDBUDDY_API_KEY --require MERGIFY_TOKEN
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         if: always() && steps.artifact_scan.outcome == 'success' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
         with:
@@ -266,9 +273,15 @@ jobs:
         if: always() && github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository
         run: |
           echo "fork PR: no secrets, artifact upload skipped"
+      - id: scan_python
+        name: Python with the standard-library zstd decoder
+        if: always() && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
+        with:
+          python-version: '3.14'
       - id: artifact_scan
         name: Refuse to upload a secret
-        if: always() && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
+        if: always() && steps.scan_python.outcome == 'success' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
         # The scanner reads the values to look for from these variables; it
         # prints names and paths only.
         env:
@@ -280,7 +293,8 @@ jobs:
             echo "secret scan blind: key unavailable"
             exit 1
           fi
-          python3 tools/ci/check_no_secret_leak.py gate-output --env BUILDBUDDY_API_KEY --env MERGIFY_TOKEN --require BUILDBUDDY_API_KEY --require MERGIFY_TOKEN
+          # Runs the byte-identical check_no_secret_leak.py in-process.
+          python3 tools/ci/bazel_gate.py scan-artifacts gate-output --require BUILDBUDDY_API_KEY --require MERGIFY_TOKEN
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         if: always() && steps.artifact_scan.outcome == 'success' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
         with:

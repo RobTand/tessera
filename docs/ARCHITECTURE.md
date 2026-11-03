@@ -10285,11 +10285,16 @@ errors remain gate-errors while full coverage completes; unknown selection
 is not counted as a measured detection miss. Required checks need the complete
 Bazel job, including the final keyed scan, to succeed.
 
-Runner steps scan the actual artifact directory in-process with the runner's
-key before exit. A missing key fails the scan without deleting artifacts;
-a detected secret or incomplete scan clears the directory and fails the step.
-Raw BEP and command logs are deleted and fail the step. Both diagnostic logs
-remain subject to the scan. Only `BBRUN_FINAL_SCAN=1` defers scanning to the
+Runner steps scan a fixed checkout staging directory in-process with the
+runner's key before publishing it to the automatic artifact directory. A
+missing key fails without publishing. Python 3.14 provides the standard-library
+zstd decoder for native and hosted required-key scans. The byte-identical
+vendored scanner remains unchanged. Unscannable files are excluded with a
+diagnostic and the remaining set must pass a clean second scan; secret hits
+and unknown diagnostics clear the directory and fail. Raw BEP and command logs
+are deleted and fail the step. Both diagnostic logs remain subject to the scan.
+The directory-read ratchet retains 117/171, with only an exact-path, exact-hash
+exemption for pinned vendored third-party scanner code. Only `BBRUN_FINAL_SCAN=1` defers scanning to the
 shared client's final scanner step; `remote_gate.py` does not set that marker.
 Runner scans require the BuildBuddy key. Hosted artifact uploads require both
 the BuildBuddy key and Mergify token in the scan step's environment, and run
