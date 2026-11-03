@@ -62,6 +62,7 @@ NONHERMETIC = {
     "//tests:test_serving_manifest_json": struct(tags = ["runner"], reason = _GIT),
     "//tests:test_t4_fused_qualify": struct(tags = ["runner"], reason = _GIT),
     "//tests:test_t4_prepare_inputs_release_gate": struct(tags = ["runner"], reason = _GIT),
+    "//tests:test_test_imports": struct(tags = ["runner"], reason = "it compares the actual checkout's test imports with its Git merge base using ls-tree and archive, which remote runfiles cannot supply."),
 }
 
 def nonhermetic(name):
