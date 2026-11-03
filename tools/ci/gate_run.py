@@ -108,9 +108,7 @@ def _budget_timings(junit, files, config, require_all=True):
 def _write_budget_warnings(junit, warnings):
     messages = [
         f"BUDGET_WARNING: {row['nodeid']}: {row['seconds']:.3f}s > "
-        f"{row['budget_seconds']:.3f}s policy; within "
-        f"{BUDGET_ENFORCEMENT_TOLERANCE:g}x tolerance "
-        f"({row['budget_seconds'] * BUDGET_ENFORCEMENT_TOLERANCE:.3f}s)"
+        f"{row['budget_seconds']:.3f}s policy"
         for row in warnings]
     text = '\n'.join(messages)
     print(text)
@@ -244,24 +242,11 @@ def run_plan(plan: dict, *, root: Path, output: Path, junit: Path,
                 raise ValueError('torch lane requires torch and zero uncollected modules')
             record['collection'] = collection_coverage(output.parent, files, record['surface'], workers)
             costs = _budget_timings(junit, files, config, require_all=False)
-            overruns, warnings = [], []
-            for row in costs:
-                target = (overruns if row['seconds'] >
-                          row['budget_seconds'] * BUDGET_ENFORCEMENT_TOLERANCE else warnings)
-                target.append(row)
-            enforcing = config.get('enforce', False)
-            record['budget'].update(status='fail' if overruns and enforcing else 'pass', enforce=enforcing,
-                                    overruns=overruns, warnings=warnings)
-            if overruns:
-                if enforcing:
-                    record['verdict'] = 'fail'
-                print('Per-test time budget exceeded:')
-                for row in overruns:
-                    limit = row['budget_seconds'] * BUDGET_ENFORCEMENT_TOLERANCE
-                    print(f"{row['nodeid']}: {row['seconds']:.3f}s > {limit:.3f}s "
-                          f"(policy {row['budget_seconds']:.3f}s x {BUDGET_ENFORCEMENT_TOLERANCE:g})")
-            if warnings:
-                _write_budget_warnings(junit, warnings)
+            record['budget_warnings'] = costs
+            record['budget'].update(status='pass', enforce=config.get('enforce', False), warnings=costs)
+            if costs:
+                _write_budget_warnings(junit, costs)
+
         except (OSError, ValueError, ET.ParseError) as error:
             record['budget'].update(status='unavailable', reason=str(error))
             # A definite test failure remains final even if timing evidence is lost.

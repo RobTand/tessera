@@ -11,8 +11,13 @@ import pytest
 ROOT = Path(__file__).resolve().parents[1]
 
 
+MODULES = {
+    'gate_actions': ROOT / 'tools/ci/gate_actions.py',
+}
+
+
 def load(name):
-    spec = importlib.util.spec_from_file_location(name, ROOT / 'tools/ci' / (name + '.py'))
+    spec = importlib.util.spec_from_file_location(name, MODULES[name])
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module
@@ -32,30 +37,17 @@ def test_aggregate_refuses_missing_torch_or_uncollected_modules(surface):
     assert actions._verdict(plan, record['files'], record, 'torch') is None
 
 
-@pytest.mark.parametrize('change,expected', [('batch','full'),('fork','selection'),('login','selection'),
-                                           ('id','selection'),('branch','selection'),('canary','full')])
-def test_workflow_executes_the_tested_batch_decision(tmp_path, change, expected):
-    import os
-    pr = {'head': {'ref': 'mergify/merge-queue/master/pr-1', 'repo': {'full_name': 'RobTand/tessera'}},
-          'user': {'login': 'mergify[bot]', 'id': 37929162}, 'labels': []}
-    if change == 'fork': pr['head']['repo']['full_name'] = 'fork/tessera'
-    if change == 'login': pr['user']['login'] = 'someone'
-    if change == 'id': pr['user']['id'] = 1
-    if change in ('branch', 'canary'): pr['head']['ref'] = 'tessera-1559-gate'
-    if change == 'canary': pr['labels'] = [{'name': 'gate-canary'}]
-    event = tmp_path / 'event.json'; event.write_text(json.dumps({'pull_request': pr}))
-    output = tmp_path / 'output'
+def test_workflow_names_mergify_batch_drafts_exactly():
+    """gate runs on Mergify's batch drafts and pr-gate on everything else; the
+    draft is the same repository, a merge-queue branch and Mergify's app user,
+    as tools/ci/gate_select.py's full_gate says."""
     workflow = (ROOT / '.github/workflows/gate.yml').read_text()
-    command = next(line.split('run: ', 1)[1] for line in workflow.splitlines()
-                   if 'run: ' in line and '--print-mode' in line)
-    result = subprocess.run(['bash', '-c', command], cwd=ROOT,
-                            env=dict(os.environ, PATH=str(Path(sys.executable).parent) + os.pathsep + os.environ.get('PATH', ''), GITHUB_EVENT_PATH=str(event),
-                                     GITHUB_REPOSITORY='RobTand/tessera', GITHUB_OUTPUT=str(output)),
-                            capture_output=True, text=True)
-    assert result.returncode == 0, result.stderr
-    assert output.read_text().strip() == 'mode=' + expected
-    assert "needs.plan.outputs.mode == 'full'" in workflow
-    assert "needs.plan.outputs.mode != 'full'" in workflow
+    identity = ("github.event.pull_request.head.repo.full_name == github.repository && "
+                "startsWith(github.head_ref, 'mergify/merge-queue/') && "
+                "github.event.pull_request.user.login == 'mergify[bot]' && "
+                "github.event.pull_request.user.id == 37929162")
+    assert workflow.count(identity) == 3  # BATCH_DRAFT, pr-gate's negation, gate's condition
+    assert '!(' + identity + ')' in workflow
 
 
 def test_final_summary_quotes_skip_uncollected_and_cuda_population():

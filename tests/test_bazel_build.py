@@ -137,3 +137,20 @@ def test_the_runner_points_box_artifacts_at_an_installed_prismaquant(
     assert environment['TESSERA_PRISMAQUANT_DIR'] == str(tmp_path / 'site')
     explicit = runtime.gate_environment({'TESSERA_PRISMAQUANT_DIR': '/elsewhere'}, tmp_path, tmp_path)
     assert explicit['TESSERA_PRISMAQUANT_DIR'] == '/elsewhere'
+
+
+@pytest.mark.parametrize('target,required_input', [
+    ('//tests:test_bazel_gate', '//tools/bazel:BUILD.bazel'),
+    ('//tests:test_seeded_breaks', '//tests:BUILD.bazel'),
+])
+def test_build_contract_readers_declare_the_files_they_open(target, required_input):
+    import ast
+    tree = ast.parse((ROOT / 'tools/bazel/test_inputs.bzl').read_text())
+    table = next(node.value for node in tree.body if isinstance(node, ast.Assign)
+                 and any(isinstance(name, ast.Name) and name.id == 'TEST_INPUTS'
+                         for name in node.targets))
+    entry = next((value for key, value in zip(table.keys, table.values)
+                  if ast.literal_eval(key) == target), None)
+    data = [] if entry is None else next(ast.literal_eval(field.value)
+                                        for field in entry.keywords if field.arg == 'data')
+    assert required_input in data, f'{target} must carry its BUILD file read in both runfiles lanes'
