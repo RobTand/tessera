@@ -64,8 +64,9 @@ def seed_main(monkeypatch, tmp_path):
         def checkout(self, base):
             assert base == 'a' * 40
 
-    output = tmp_path / 'artifacts'
+    output = tmp_path / 'gate-artifacts'
     output.mkdir()
+    monkeypatch.setattr(seeded_breaks.bazel_gate, 'ROOT', tmp_path)
     monkeypatch.setenv('BUILDBUDDY_ARTIFACTS_DIRECTORY', str(output))
     monkeypatch.setenv('BUILDBUDDY_API_KEY', 'fake-seed-runner-secret')
     monkeypatch.setenv('UNRELATED_TOKEN', 'fake-unrelated-seed-token')
@@ -99,6 +100,62 @@ def test_the_seed_step_scans_its_actual_artifact_directory(monkeypatch, seed_mai
     assert str(output) in scans[0]
     assert ['--env', 'BUILDBUDDY_API_KEY'] == scans[0][1:3]
     assert ['--require', 'BUILDBUDDY_API_KEY'] == scans[0][-2:]
+
+
+@pytest.mark.parametrize('deferred', [False, True])
+def test_seed_reports_are_scanned_in_staging_before_publication(deferred, monkeypatch, seed_main):
+    output, _ = seed_main
+    upload = output.parent / 'automatic-upload'
+    upload.mkdir()
+    monkeypatch.setenv('BUILDBUDDY_ARTIFACTS_DIRECTORY', str(upload))
+    if deferred:
+        monkeypatch.setenv('BBRUN_FINAL_SCAN', '1')
+        monkeypatch.delenv('BUILDBUDDY_API_KEY')
+    scanned = []
+    scan = seeded_breaks.bazel_gate.scan_artifacts
+
+    def record(directory):
+        assert list(upload.iterdir()) == []
+        scanned.append(directory)
+        return scan(directory)
+
+    monkeypatch.setattr(seeded_breaks.bazel_gate, 'scan_artifacts', record)
+    assert seeded_breaks.main() == 0
+    assert scanned == [output]
+    assert not output.exists()
+    assert {path.name for path in upload.iterdir()} == {'seeded-breaks.json', 'seeded-breaks.md'}
+
+
+def test_a_failed_seed_scan_never_publishes_staging(monkeypatch, seed_main):
+    output, _ = seed_main
+    upload = output.parent / 'automatic-upload'
+    upload.mkdir()
+    monkeypatch.setenv('BUILDBUDDY_ARTIFACTS_DIRECTORY', str(upload))
+    (output / 'seed-bazel-remote-grpc.log').write_text('fake-seed-runner-secret')
+    assert seeded_breaks.main() == 1
+    assert list(upload.iterdir()) == []
+    assert list(output.iterdir()) == []
+
+
+def test_the_seed_entrypoint_selects_the_complete_scan_runtime(monkeypatch):
+    import argparse
+    import runpy
+
+    class RuntimeSelected(Exception):
+        pass
+
+    def select_runtime():
+        raise RuntimeSelected
+
+    def premature_workspace():
+        raise AssertionError('seed execution started before selecting the scan runtime')
+
+    monkeypatch.setattr(seeded_breaks.bazel_gate, 'require_scan_python', select_runtime)
+    monkeypatch.setattr(seeded_breaks.bazel_gate, 'Workspace', premature_workspace)
+    monkeypatch.setattr(argparse.ArgumentParser, 'parse_args',
+                        lambda *args, **kwargs: argparse.Namespace(base='HEAD', seeds=[]))
+    with pytest.raises(RuntimeSelected):
+        runpy.run_path(str(ROOT / 'tools/ci/seeded_breaks.py'), run_name='__main__')
 
 
 def test_a_seed_step_secret_log_is_deleted_and_fails(seed_main, capsys):
