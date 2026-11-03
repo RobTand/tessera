@@ -71,6 +71,21 @@ ts_py_library(
 )
 
 ts_py_library(
+    name = "ci/bazel_gate",
+    srcs = [
+        "ci/bazel_gate.py",
+    ],
+    data = [
+        "//:.github/workflows/gate.yml",
+        "//tools/bazel:build_files.py",
+        "//tools/bazel:requirements.py",
+    ],
+    deps = [
+        ":ci/check_no_secret_leak",
+    ],
+)
+
+ts_py_library(
     name = "ci/bazel_parity",
     srcs = [
         "ci/bazel_parity.py",
@@ -167,6 +182,17 @@ ts_py_library(
 )
 
 ts_py_library(
+    name = "ci/gate_policy",
+    srcs = [
+        "ci/gate_policy.py",
+    ],
+    deps = [
+        ":ci/gate_run",
+        ":ci/gate_select",
+    ],
+)
+
+ts_py_library(
     name = "ci/gate_refresh",
     srcs = [
         "ci/gate_refresh.py",
@@ -231,6 +257,13 @@ ts_py_library(
     ],
     data = [
         "//tests:fixtures/graph_impact_baseline.json",
+    ],
+)
+
+ts_py_library(
+    name = "ci/remote_gate",
+    srcs = [
+        "ci/remote_gate.py",
     ],
 )
 
