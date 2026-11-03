@@ -285,6 +285,79 @@ def test_the_final_scan_covers_both_diagnostic_logs(monkeypatch, artifact_gate):
     assert ['--require', 'BUILDBUDDY_API_KEY'] == scans[0][-2:]
 
 
+@pytest.mark.parametrize('leak', [False, True])
+def test_zstd_diagnostics_are_decoded_before_upload(leak, monkeypatch, artifact_gate):
+    from compression import zstd
+    root, output, run = artifact_gate
+    name = 'pr-execution_log.binpb.zst'
+    secret = 'S' * 3000
+    monkeypatch.setenv('BUILDBUDDY_API_KEY', secret)
+    payload = secret.encode() if leak else b'safe diagnostic'
+    compressed = zstd.compress(payload)
+    assert secret.encode() not in compressed
+    (root / name).write_bytes(compressed)
+    assert run() == int(leak)
+    assert (output / name).exists() is not leak
+
+
+def test_an_unscannable_artifact_is_excluded_but_safe_artifacts_remain(monkeypatch, artifact_gate, capsys):
+    from compression import zstd
+    root, output, run = artifact_gate
+    name = 'pr-execution_log.binpb.zst'
+    (root / name).write_bytes(zstd.compress(b'safe diagnostic'))
+    monkeypatch.setattr(bazel_gate.check_no_secret_leak, 'zstd', None)
+    assert run() == 0
+    assert not (output / name).exists()
+    assert (output / 'gate-result.json').exists()
+    assert 'excluded from upload' in capsys.readouterr().out
+
+
+def test_an_incomplete_artifact_with_a_secret_hit_still_fails(monkeypatch, artifact_gate):
+    _, output, run = artifact_gate
+    (output / 'mixed.zst').write_bytes(b'\x28\xb5\x2f\xfd fake-runner-secret-for-artifact-tests')
+    monkeypatch.setattr(bazel_gate.check_no_secret_leak, 'zstd', None)
+    assert run() == 1
+    assert list(output.iterdir()) == []
+
+
+def test_native_scanner_bootstrap_scrubs_children_and_replaces_the_process(monkeypatch, tmp_path):
+    monkeypatch.setenv('BUILDBUDDY_API_KEY', 'fake-bootstrap-secret')
+    monkeypatch.setenv('UNRELATED_TOKEN', 'fake-bootstrap-token')
+    monkeypatch.setattr(bazel_gate.sys, 'version_info', (3, 12))
+    monkeypatch.setattr(bazel_gate.tempfile, 'gettempdir', lambda: str(tmp_path))
+    commands, received = [], []
+
+    def command(argv, **kwargs):
+        commands.append(argv)
+        received.extend(name for name in ('BUILDBUDDY_API_KEY', 'UNRELATED_TOKEN')
+                        if kwargs.get('env', {}).get(name))
+        return bazel_gate.subprocess.CompletedProcess(argv, 0, stdout='/managed/python3.14\n')
+
+    class ReplacedProcess(Exception):
+        pass
+
+    def replace(path, arguments):
+        assert path == '/managed/python3.14'
+        assert arguments[0] == path
+        raise ReplacedProcess
+
+    monkeypatch.setattr(bazel_gate.subprocess, 'run', command)
+    monkeypatch.setattr(bazel_gate.os, 'execv', replace)
+    with pytest.raises(ReplacedProcess):
+        bazel_gate.require_scan_python()
+    assert received == []
+    assert any('3.14.0' in argv and 'install' in argv for argv in commands)
+
+
+def test_hosted_upload_scans_use_python_314_and_the_exclusion_wrapper():
+    import re
+    text = (ROOT / '.github/workflows/gate.yml').read_text()
+    for job in ('bazel', 'post-merge'):
+        section = re.split(r'\n  [a-z][\w-]*:\n', text.split('\n  ' + job + ':\n', 1)[1])[0]
+        assert "python-version: '3.14'" in section
+        assert 'bazel_gate.py scan-artifacts' in section
+
+
 @pytest.mark.parametrize('name', ['pr-bazel-remote-grpc.log', 'pr-execution_log.binpb.zst', 'summary.json'])
 def test_a_secret_artifact_is_removed_and_fails_the_gate(name, artifact_gate, capsys):
     root, output, run = artifact_gate
