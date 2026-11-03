@@ -333,7 +333,10 @@ def scanner_python_archive(monkeypatch):
         member.mode = 0o755
         archive.addfile(member, io.BytesIO(executable))
     data = payload.getvalue()
-    monkeypatch.setattr(bazel_gate, 'SCANNER_PYTHON_SHA256', hashlib.sha256(data).hexdigest(), raising=False)
+    monkeypatch.setattr(bazel_gate, 'SCANNER_PYTHONS', {
+        machine: (f'https://fixture.invalid/{machine}.tar.gz', hashlib.sha256(data).hexdigest())
+        for machine in ('x86_64', 'aarch64')}, raising=False)
+    monkeypatch.setattr(bazel_gate.os, 'uname', lambda: type('Machine', (), {'machine': 'x86_64'})())
     requests, commands, received = [], [], []
 
     def download(url, **kwargs):
@@ -353,9 +356,11 @@ def scanner_python_archive(monkeypatch):
     return data, executable, requests, commands, received
 
 
+@pytest.mark.parametrize('machine', ['x86_64', 'aarch64'])
 def test_native_scanner_bootstrap_works_without_pip_and_replaces_the_process(
-        monkeypatch, tmp_path, scanner_python_archive):
+        monkeypatch, tmp_path, scanner_python_archive, machine):
     _, executable, requests, commands, received = scanner_python_archive
+    monkeypatch.setattr(bazel_gate.os, 'uname', lambda: type('Machine', (), {'machine': machine})())
     monkeypatch.setenv('BUILDBUDDY_API_KEY', 'fake-bootstrap-secret')
     monkeypatch.setenv('UNRELATED_TOKEN', 'fake-bootstrap-token')
     monkeypatch.setattr(bazel_gate.sys, 'version_info', (3, 12))
@@ -373,9 +378,20 @@ def test_native_scanner_bootstrap_works_without_pip_and_replaces_the_process(
     monkeypatch.setattr(bazel_gate.os, 'execv', replace)
     with pytest.raises(ReplacedProcess):
         bazel_gate.require_scan_python()
-    assert len(requests) == 1
+    assert requests == [f'https://fixture.invalid/{machine}.tar.gz']
     assert commands == []
     assert received == []
+
+
+@pytest.mark.parametrize('version', [(3, 12), (3, 14)])
+def test_native_scanner_bootstrap_refuses_an_unknown_machine_before_download(
+        monkeypatch, scanner_python_archive, version):
+    _, _, requests, commands, _ = scanner_python_archive
+    monkeypatch.setattr(bazel_gate.sys, 'version_info', version)
+    monkeypatch.setattr(bazel_gate.os, 'uname', lambda: type('Machine', (), {'machine': 'unknown'})())
+    with pytest.raises(bazel_gate.GateError, match='unsupported scanner machine: unknown'):
+        bazel_gate.require_scan_python()
+    assert requests == [] and commands == []
 
 
 def test_native_scanner_bootstrap_rejects_a_changed_archive_before_execution(
