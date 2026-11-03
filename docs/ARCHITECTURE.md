@@ -10302,7 +10302,10 @@ are deleted and fail the step. Both diagnostic logs remain subject to the scan.
 The directory-read census has an isolated, uncached runner target. It checks
 that its graph contains every eligible tracked Python file before applying
 the ceiling, so partial remote runfiles cannot silently reduce the population.
-Scanner unit tests remain remotely executable. The ratchet retains 117/171,
+Scanner unit tests remain remotely executable. Remote contract tests that read
+BUILD files declare those files explicitly in `tools/bazel/test_inputs.bzl`;
+the generator excludes BUILD files from inferred source inputs. Both test lanes
+share the declaration. The ratchet retains 117/171,
 with only an exact-path, exact-hash
 exemption for pinned vendored third-party scanner code. Only `BBRUN_FINAL_SCAN=1` defers scanning to the
 shared client's final scanner step; `remote_gate.py` does not set that marker.

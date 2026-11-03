@@ -1169,6 +1169,7 @@ ts_py_library(
         "//tools/bazel:build_files.py",
         "//tools/bazel:requirements.py",
         "//tools/bazel:runtime.py",
+        "//tools/bazel:test_inputs.bzl",
         "//tools:ci/gate_prismaquant_requirements.txt",
         "//tools:ci/gate_requirements.txt",
     ],
