@@ -57,7 +57,8 @@ def _kill_owned(process, kill_after_s):
         _wait_bounded(process, kill_after_s, "interrupt")
 
 
-def run(command, timeout_s, kill_after_s):
+def run(command, timeout_s, kill_after_s, *, clock=time):
+    """Use a call-local grace clock; process waits own their timeout clocks."""
     timeout_s, kill_after_s = positive_seconds(timeout_s), positive_seconds(kill_after_s)
     process = None
     # Snapshot before mutation: a setter can take effect and then raise, and
@@ -79,7 +80,7 @@ def run(command, timeout_s, kill_after_s):
             _signal_group(process.pid, signal.SIGTERM)
             # Do not reap/poll the leader during this grace. Its unreaped PID
             # anchors ownership even if it exits before a resistant child.
-            time.sleep(kill_after_s)
+            clock.sleep(kill_after_s)
             _signal_group(process.pid, signal.SIGKILL)
             code = _wait_bounded(process, kill_after_s, "deadline")
             status = 137 if code is None or code == -signal.SIGKILL else 124
