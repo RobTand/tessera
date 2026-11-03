@@ -49,7 +49,7 @@ ts_py_library(
         "_routed_gate_sdk_fixture.py",
     ],
     deps = [
-        ":test_routed_gate_staged_store_lib",
+        ":routed_gate_staged_store_support",
     ],
 )
 
@@ -66,9 +66,28 @@ ts_py_library(
 )
 
 ts_py_library(
+    name = "accounting_source_support",
+    srcs = [
+        "accounting_source_support.py",
+    ],
+)
+
+ts_py_library(
     name = "box_artifacts",
     srcs = [
         "box_artifacts.py",
+    ],
+)
+
+ts_py_library(
+    name = "cached_producer_support",
+    srcs = [
+        "cached_producer_support.py",
+    ],
+    deps = [
+        "//src/tessera:__init___cycle",
+        "//src/tessera:bf16_route_cycle",
+        "//src/tessera:export_serving",
     ],
 )
 
@@ -233,6 +252,16 @@ ts_py_library(
 )
 
 ts_py_library(
+    name = "graph_owner_hooks_support",
+    srcs = [
+        "graph_owner_hooks_support.py",
+    ],
+    deps = [
+        "//experiments:glm53_508_graph_qual/digest/usercustomize",
+    ],
+)
+
+ts_py_library(
     name = "hessian_reference_support",
     srcs = [
         "hessian_reference_support.py",
@@ -272,7 +301,7 @@ ts_py_library(
     deps = [
         "//src/tessera:__init___cycle",
         "//src/tessera:bf16_route_cycle",
-        ":native_window_moe_stock_crosscheck_cycle",
+        ":native_window_moe_stock_crosscheck",
     ],
 )
 
@@ -292,18 +321,30 @@ ts_py_library(
 )
 
 ts_py_library(
-    name = "native_window_moe_stock_crosscheck_cycle",
+    name = "native_window_moe_method_support",
+    srcs = [
+        "native_window_moe_method_support.py",
+    ],
+    deps = [
+        "//src/tessera:__init___cycle",
+        "//src/tessera:bf16_route_cycle",
+        "//src/tessera:fused",
+        ":serving_moe_route_support",
+        ":serving_moe_selected_support",
+    ],
+)
+
+ts_py_library(
+    name = "native_window_moe_stock_crosscheck",
     srcs = [
         "native_window_moe_stock_crosscheck.py",
-        "test_native_window_moe_method.py",
     ],
     deps = [
         "//src/tessera:__init___cycle",
         "//src/tessera:bf16_route_cycle",
         "//src/tessera:decode",
-        "//src/tessera:fused",
-        ":test_serving_moe_route_lib",
-        ":test_serving_moe_selected_lib",
+        ":native_window_moe_method_support",
+        ":serving_moe_route_support",
     ],
 )
 
@@ -316,6 +357,17 @@ ts_py_library(
         "//src/tessera:__init___cycle",
         "//src/tessera:bf16_route_cycle",
         "//src/tessera:fused",
+    ],
+)
+
+ts_py_library(
+    name = "priced_inputs_snapshot_support",
+    srcs = [
+        "priced_inputs_snapshot_support.py",
+    ],
+    deps = [
+        "//src/tessera:__init___cycle",
+        "//src/tessera:export_serving",
     ],
 )
 
@@ -350,6 +402,17 @@ ts_py_library(
 )
 
 ts_py_library(
+    name = "routed_gate_staged_store_support",
+    srcs = [
+        "routed_gate_staged_store_support.py",
+    ],
+    deps = [
+        "//experiments:t8r_speed/bench_t8r",
+        "//experiments:t8r_speed/pb_staged_store",
+    ],
+)
+
+ts_py_library(
     name = "serving_fp8_route_support",
     srcs = [
         "serving_fp8_route_support.py",
@@ -357,6 +420,27 @@ ts_py_library(
     deps = [
         "//src/tessera:__init___cycle",
         "//src/tessera:bf16_route_cycle",
+    ],
+)
+
+ts_py_library(
+    name = "serving_moe_route_support",
+    srcs = [
+        "serving_moe_route_support.py",
+    ],
+    deps = [
+        "//src/tessera:__init___cycle",
+        "//src/tessera:bf16_route_cycle",
+    ],
+)
+
+ts_py_library(
+    name = "serving_moe_selected_support",
+    srcs = [
+        "serving_moe_selected_support.py",
+    ],
+    deps = [
+        ":serving_moe_route_support",
     ],
 )
 
@@ -442,6 +526,7 @@ ts_py_library(
         "//src/tessera:__init___cycle",
         "//src/tessera:errors",
         "//tools:_accounting_source",
+        ":accounting_source_support",
     ],
 )
 
@@ -1428,24 +1513,32 @@ ts_py_library(
         "_routed_classes_plugin_fixture.py",
         "_routed_gate_sdk_fixture.py",
         "_whole_phase_sdk.py",
+        "accounting_source_support.py",
         "box_artifacts.py",
+        "cached_producer_support.py",
         "child_env.py",
         "conftest.py",
         "export_serving_support.py",
         "fused_bound.py",
         "glm_nightly_cells.py",
         "graph_attest_lifecycle.py",
+        "graph_owner_hooks_support.py",
         "hessian_reference_support.py",
         "mapper_probes.py",
         "native_dense_prefill_cross_check.py",
         "native_moe_protocol_probe.py",
         "native_timing_panel_support.py",
+        "native_window_moe_method_support.py",
         "native_window_moe_stock_crosscheck.py",
         "nvfp4_reference.py",
+        "priced_inputs_snapshot_support.py",
         "reuse_authority_fixture.py",
         "rooted_cached_bundle_support.py",
         "routed_fused_window_support.py",
+        "routed_gate_staged_store_support.py",
         "serving_fp8_route_support.py",
+        "serving_moe_route_support.py",
+        "serving_moe_selected_support.py",
         "shared_fold_data.py",
         "standalone_boundary_allowlist.txt",
         "test_1146_routed_880_912_admission.py",
@@ -1620,6 +1713,7 @@ ts_py_library(
         "test_graph_attest_producer_identity.py",
         "test_graph_attest_tp2.py",
         "test_graph_attest_window_scenarios.py",
+        "test_graph_impact.py",
         "test_graph_owner_hooks.py",
         "test_graph_owner_lifecycle.py",
         "test_graph_owner_publication.py",
@@ -2103,7 +2197,6 @@ ts_py_library(
         "test_cached_producer.py",
     ],
     data = [
-        "//:pyproject.toml",
         "//src/tessera:identity.py",
         "//src/tessera:layout.py",
         "//src/tessera:provenance.py",
@@ -2115,10 +2208,10 @@ ts_py_library(
         "//src/tessera:bf16_route_cycle",
         "//src/tessera:container",
         "//src/tessera:errors",
-        "//src/tessera:export_serving",
         "//src/tessera:footprint",
         "//src/tessera:fused",
         "//src/tessera:historical_producer",
+        ":cached_producer_support",
         ":hessian_reference_support",
         ":reuse_authority_fixture",
     ],
@@ -2132,7 +2225,6 @@ ts_py_test(
         "//src/tessera:identity.py",
     ],
     deps = [
-        "//experiments:glm53_508_graph_qual/eq-member-508",
         "//src/tessera:identity",
     ],
     lane = "torch",
@@ -2150,7 +2242,6 @@ ts_py_test(
         "//src/tessera:identity.py",
     ],
     deps = [
-        "//experiments:glm53_508_graph_qual/eq-member-508",
         "//src/tessera:identity",
     ],
     lane = "bytes",
@@ -2168,9 +2259,9 @@ ts_py_library(
     deps = [
         "//src/tessera:__init___cycle",
         "//src/tessera:bf16_route_cycle",
+        ":cached_producer_support",
         ":reuse_authority_fixture",
         ":rooted_cached_bundle_support",
-        ":test_cached_producer_lib",
     ],
 )
 
@@ -7852,6 +7943,7 @@ ts_py_test(
     data = [
         "//tools/bazel:build_files.py",
         "//tools/bazel:generate.sh",
+        "//tools/bazel:graph.py",
         "//tools/bazel:requirements.py",
     ],
     deps = [
@@ -7876,6 +7968,7 @@ ts_py_test(
     data = [
         "//tools/bazel:build_files.py",
         "//tools/bazel:generate.sh",
+        "//tools/bazel:graph.py",
         "//tools/bazel:requirements.py",
     ],
     deps = [
@@ -7918,6 +8011,8 @@ ts_py_library(
         "//tools:ci/gate_replay",
         "//tools:ci/gate_run",
         "//tools:ci/gate_select",
+        "//tools:ci/graph_impact",
+        "//tools:ci/graph_impact_tessera",
         ":conftest",
         ":test_matched_reach_lib",
     ],
@@ -7930,6 +8025,7 @@ ts_py_test(
     data = [
         "//tools/bazel:build_files.py",
         "//tools/bazel:generate.sh",
+        "//tools/bazel:graph.py",
         "//tools/bazel:requirements.py",
     ],
     deps = [
@@ -7954,6 +8050,7 @@ ts_py_test(
     data = [
         "//tools/bazel:build_files.py",
         "//tools/bazel:generate.sh",
+        "//tools/bazel:graph.py",
         "//tools/bazel:requirements.py",
     ],
     deps = [
@@ -7990,6 +8087,8 @@ ts_py_library(
         "//tools:ci/gate_replay",
         "//tools:ci/gate_run",
         "//tools:ci/gate_select",
+        "//tools:ci/graph_impact",
+        "//tools:ci/graph_impact_tessera",
     ],
 )
 
@@ -8000,6 +8099,7 @@ ts_py_test(
     data = [
         "//tools/bazel:build_files.py",
         "//tools/bazel:generate.sh",
+        "//tools/bazel:graph.py",
         "//tools/bazel:requirements.py",
     ],
     deps = [
@@ -8024,6 +8124,7 @@ ts_py_test(
     data = [
         "//tools/bazel:build_files.py",
         "//tools/bazel:generate.sh",
+        "//tools/bazel:graph.py",
         "//tools/bazel:requirements.py",
     ],
     deps = [
@@ -8063,6 +8164,8 @@ ts_py_library(
         "//tools:ci/gate_replay",
         "//tools:ci/gate_run",
         "//tools:ci/gate_select",
+        "//tools:ci/graph_impact",
+        "//tools:ci/graph_impact_tessera",
     ],
 )
 
@@ -8073,6 +8176,7 @@ ts_py_test(
     data = [
         "//tools/bazel:build_files.py",
         "//tools/bazel:generate.sh",
+        "//tools/bazel:graph.py",
         "//tools/bazel:requirements.py",
     ],
     deps = [
@@ -8097,6 +8201,7 @@ ts_py_test(
     data = [
         "//tools/bazel:build_files.py",
         "//tools/bazel:generate.sh",
+        "//tools/bazel:graph.py",
         "//tools/bazel:requirements.py",
     ],
     deps = [
@@ -8136,6 +8241,8 @@ ts_py_library(
         "//tools:ci/gate_replay",
         "//tools:ci/gate_run",
         "//tools:ci/gate_select",
+        "//tools:ci/graph_impact",
+        "//tools:ci/graph_impact_tessera",
     ],
 )
 
@@ -8146,6 +8253,7 @@ ts_py_test(
     data = [
         "//tools/bazel:build_files.py",
         "//tools/bazel:generate.sh",
+        "//tools/bazel:graph.py",
         "//tools/bazel:requirements.py",
     ],
     deps = [
@@ -8170,6 +8278,7 @@ ts_py_test(
     data = [
         "//tools/bazel:build_files.py",
         "//tools/bazel:generate.sh",
+        "//tools/bazel:graph.py",
         "//tools/bazel:requirements.py",
     ],
     deps = [
@@ -8201,6 +8310,7 @@ ts_py_library(
         "//tools:ci/gate_replay_sample.json",
         "//tools:ci/gate_requirements.txt",
         "//tools:ci/gate_torch_requirements.txt",
+        "//tools:ci/graph_impact.sha256",
     ],
     deps = [
         "//tools:ci/bazel_parity",
@@ -8216,6 +8326,8 @@ ts_py_library(
         "//tools:ci/gate_replay",
         "//tools:ci/gate_run",
         "//tools:ci/gate_select",
+        "//tools:ci/graph_impact",
+        "//tools:ci/graph_impact_tessera",
     ],
 )
 
@@ -9999,6 +10111,48 @@ ts_py_library(
 )
 
 ts_py_test(
+    name = "test_graph_impact",
+    path = "tests/test_graph_impact.py",
+    library = ":test_graph_impact_lib",
+    data = [
+        "//tools/bazel:graph.py",
+    ],
+    lane = "torch",
+    args = [
+        "--budget='{\"enforce\":true,\"seconds\":80,\"slow\":{}}'",
+    ],
+    timeout = "moderate",
+)
+
+ts_py_test(
+    name = "test_graph_impact.bytes",
+    path = "tests/test_graph_impact.py",
+    library = ":test_graph_impact_lib",
+    data = [
+        "//tools/bazel:graph.py",
+    ],
+    lane = "bytes",
+    args = [
+        "--budget='{\"enforce\":true,\"seconds\":80,\"slow\":{}}'",
+    ],
+    timeout = "moderate",
+)
+
+ts_py_library(
+    name = "test_graph_impact_lib",
+    srcs = [
+        "test_graph_impact.py",
+    ],
+    data = [
+        "//tools:ci/graph_impact.sha256",
+    ],
+    deps = [
+        "//tools:ci/graph_impact",
+        "//tools:ci/graph_impact_tessera",
+    ],
+)
+
+ts_py_test(
     name = "test_graph_owner_hooks",
     path = "tests/test_graph_owner_hooks.py",
     library = ":test_graph_owner_hooks_lib",
@@ -10032,10 +10186,10 @@ ts_py_library(
         "test_graph_owner_hooks.py",
     ],
     deps = [
-        "//experiments:glm53_508_graph_qual/digest/usercustomize",
         "//src/tessera:__init___cycle",
         "//src/tessera:bf16_route_cycle",
         ":child_env",
+        ":graph_owner_hooks_support",
         ":test_glm53_graphs_lib",
     ],
 )
@@ -10077,7 +10231,7 @@ ts_py_library(
         "//src/tessera:__init___cycle",
         "//src/tessera:bf16_route_cycle",
         ":child_env",
-        ":test_graph_owner_hooks_lib",
+        ":graph_owner_hooks_support",
     ],
 )
 
@@ -10118,7 +10272,7 @@ ts_py_library(
         "//src/tessera:__init___cycle",
         "//src/tessera:bf16_route_cycle",
         ":child_env",
-        ":test_graph_owner_hooks_lib",
+        ":graph_owner_hooks_support",
     ],
 )
 
@@ -10426,8 +10580,8 @@ ts_py_library(
         "//src/tessera:bf16_route_cycle",
         "//src/tessera:errors",
         ":hessian_reference_support",
+        ":priced_inputs_snapshot_support",
         ":reuse_authority_fixture",
-        ":test_priced_inputs_snapshot_lib",
     ],
 )
 
@@ -10475,8 +10629,8 @@ ts_py_library(
         "//src/tessera:bf16_route_cycle",
         "//src/tessera:errors",
         ":hessian_reference_support",
+        ":priced_inputs_snapshot_support",
         ":reuse_authority_fixture",
-        ":test_priced_inputs_snapshot_lib",
     ],
 )
 
@@ -10785,24 +10939,32 @@ ts_py_library(
         "_routed_classes_plugin_fixture.py",
         "_routed_gate_sdk_fixture.py",
         "_whole_phase_sdk.py",
+        "accounting_source_support.py",
         "box_artifacts.py",
+        "cached_producer_support.py",
         "child_env.py",
         "conftest.py",
         "export_serving_support.py",
         "fused_bound.py",
         "glm_nightly_cells.py",
         "graph_attest_lifecycle.py",
+        "graph_owner_hooks_support.py",
         "hessian_reference_support.py",
         "mapper_probes.py",
         "native_dense_prefill_cross_check.py",
         "native_moe_protocol_probe.py",
         "native_timing_panel_support.py",
+        "native_window_moe_method_support.py",
         "native_window_moe_stock_crosscheck.py",
         "nvfp4_reference.py",
+        "priced_inputs_snapshot_support.py",
         "reuse_authority_fixture.py",
         "rooted_cached_bundle_support.py",
         "routed_fused_window_support.py",
+        "routed_gate_staged_store_support.py",
         "serving_fp8_route_support.py",
+        "serving_moe_route_support.py",
+        "serving_moe_selected_support.py",
         "shared_fold_data.py",
         "standalone_boundary_allowlist.txt",
         "test_1146_routed_880_912_admission.py",
@@ -10978,6 +11140,7 @@ ts_py_library(
         "test_graph_attest_producer_identity.py",
         "test_graph_attest_tp2.py",
         "test_graph_attest_window_scenarios.py",
+        "test_graph_impact.py",
         "test_graph_owner_hooks.py",
         "test_graph_owner_lifecycle.py",
         "test_graph_owner_publication.py",
@@ -11535,23 +11698,31 @@ ts_py_library(
         "_routed_classes_plugin_fixture.py",
         "_routed_gate_sdk_fixture.py",
         "_whole_phase_sdk.py",
+        "accounting_source_support.py",
         "box_artifacts.py",
+        "cached_producer_support.py",
         "conftest.py",
         "export_serving_support.py",
         "fused_bound.py",
         "glm_nightly_cells.py",
         "graph_attest_lifecycle.py",
+        "graph_owner_hooks_support.py",
         "hessian_reference_support.py",
         "mapper_probes.py",
         "native_dense_prefill_cross_check.py",
         "native_moe_protocol_probe.py",
         "native_timing_panel_support.py",
+        "native_window_moe_method_support.py",
         "native_window_moe_stock_crosscheck.py",
         "nvfp4_reference.py",
+        "priced_inputs_snapshot_support.py",
         "reuse_authority_fixture.py",
         "rooted_cached_bundle_support.py",
         "routed_fused_window_support.py",
+        "routed_gate_staged_store_support.py",
         "serving_fp8_route_support.py",
+        "serving_moe_route_support.py",
+        "serving_moe_selected_support.py",
         "shared_fold_data.py",
         "standalone_boundary_allowlist.txt",
         "test_1146_routed_880_912_admission.py",
@@ -11727,6 +11898,7 @@ ts_py_library(
         "test_graph_attest_producer_identity.py",
         "test_graph_attest_tp2.py",
         "test_graph_attest_window_scenarios.py",
+        "test_graph_impact.py",
         "test_graph_owner_hooks.py",
         "test_graph_owner_lifecycle.py",
         "test_graph_owner_publication.py",
@@ -15770,7 +15942,7 @@ ts_py_library(
         "//src/tessera:fused_frame",
         "//src/tessera:serving/flags",
         ":_routed_classes_plugin_fixture",
-        ":native_window_moe_stock_crosscheck_cycle",
+        ":native_window_moe_method_support",
         ":test_routed_window_classes_cuda_lib",
     ],
 )
@@ -15791,7 +15963,7 @@ ts_py_library(
 ts_py_test(
     name = "test_native_window_moe_method",
     path = "tests/test_native_window_moe_method.py",
-    library = ":native_window_moe_stock_crosscheck_cycle",
+    library = ":test_native_window_moe_method_lib",
     deps = [
         "//src/tessera:identity",
     ],
@@ -15805,7 +15977,7 @@ ts_py_test(
 ts_py_test(
     name = "test_native_window_moe_method.bytes",
     path = "tests/test_native_window_moe_method.py",
-    library = ":native_window_moe_stock_crosscheck_cycle",
+    library = ":test_native_window_moe_method_lib",
     deps = [
         "//src/tessera:identity",
     ],
@@ -15814,6 +15986,20 @@ ts_py_test(
         "--budget='{\"enforce\":true,\"seconds\":80,\"slow\":{}}'",
     ],
     timeout = "moderate",
+)
+
+ts_py_library(
+    name = "test_native_window_moe_method_lib",
+    srcs = [
+        "test_native_window_moe_method.py",
+    ],
+    deps = [
+        "//src/tessera:__init___cycle",
+        "//src/tessera:bf16_route_cycle",
+        ":native_window_moe_method_support",
+        ":native_window_moe_stock_crosscheck",
+        ":serving_moe_route_support",
+    ],
 )
 
 ts_py_test(
@@ -17109,8 +17295,8 @@ ts_py_library(
         "//src/tessera:bf16_route_cycle",
         "//src/tessera:errors",
         "//src/tessera:export_serving",
+        ":accounting_source_support",
         ":box_artifacts",
-        ":test_accounting_source_lib",
     ],
 )
 
@@ -17341,7 +17527,7 @@ ts_py_library(
         "//src/tessera:__init___cycle",
         "//src/tessera:bf16_route_cycle",
         "//src/tessera:errors",
-        "//src/tessera:export_serving",
+        ":priced_inputs_snapshot_support",
     ],
 )
 
@@ -20074,6 +20260,7 @@ ts_py_library(
         "//src/tessera:bf16_route_cycle",
         "//src/tessera:fused",
         "//src/tessera:historical_producer",
+        ":cached_producer_support",
         ":reuse_authority_fixture",
         ":rooted_cached_bundle_support",
         ":test_cached_producer_lib",
@@ -20546,7 +20733,7 @@ ts_py_library(
         "test_routed_gate_direct_vllm.py",
     ],
     deps = [
-        ":test_routed_gate_staged_store_lib",
+        ":routed_gate_staged_store_support",
     ],
 )
 
@@ -20647,7 +20834,7 @@ ts_py_library(
         "//src/tessera:_dev/__init__",
         "//src/tessera:_dev/native_identity",
         ":_routed_gate_sdk_fixture",
-        ":test_routed_gate_staged_store_lib",
+        ":routed_gate_staged_store_support",
     ],
 )
 
@@ -20812,7 +20999,7 @@ ts_py_library(
     ],
     deps = [
         "//experiments:t8r_speed/bench_t8r",
-        "//experiments:t8r_speed/pb_staged_store",
+        ":routed_gate_staged_store_support",
     ],
 )
 
@@ -20871,7 +21058,7 @@ ts_py_library(
     ],
     deps = [
         ":_routed_gate_sdk_fixture",
-        ":test_routed_gate_staged_store_lib",
+        ":routed_gate_staged_store_support",
     ],
 )
 
@@ -26080,7 +26267,7 @@ ts_py_library(
     deps = [
         "//src/tessera:__init___cycle",
         "//src/tessera:bf16_route_cycle",
-        ":native_window_moe_stock_crosscheck_cycle",
+        ":native_window_moe_method_support",
         ":test_serving_dispatch_lib",
     ],
 )
@@ -26201,6 +26388,7 @@ ts_py_library(
     deps = [
         "//src/tessera:__init___cycle",
         "//src/tessera:bf16_route_cycle",
+        ":serving_moe_route_support",
     ],
 )
 
@@ -26281,7 +26469,8 @@ ts_py_library(
         "//src/tessera:bf16_route_cycle",
         "//src/tessera:decode",
         "//src/tessera:fused",
-        ":test_serving_moe_route_lib",
+        ":serving_moe_route_support",
+        ":serving_moe_selected_support",
     ],
 )
 
@@ -26323,8 +26512,8 @@ ts_py_library(
         "//src/tessera:bf16_route_cycle",
         "//src/tessera:errors",
         "//src/tessera:kernel_wire",
-        ":native_window_moe_stock_crosscheck_cycle",
-        ":test_serving_moe_route_lib",
+        ":native_window_moe_method_support",
+        ":serving_moe_route_support",
     ],
 )
 
@@ -27913,24 +28102,32 @@ ts_py_library(
         "_routed_classes_plugin_fixture.py",
         "_routed_gate_sdk_fixture.py",
         "_whole_phase_sdk.py",
+        "accounting_source_support.py",
         "box_artifacts.py",
+        "cached_producer_support.py",
         "child_env.py",
         "conftest.py",
         "export_serving_support.py",
         "fused_bound.py",
         "glm_nightly_cells.py",
         "graph_attest_lifecycle.py",
+        "graph_owner_hooks_support.py",
         "hessian_reference_support.py",
         "mapper_probes.py",
         "native_dense_prefill_cross_check.py",
         "native_moe_protocol_probe.py",
         "native_timing_panel_support.py",
+        "native_window_moe_method_support.py",
         "native_window_moe_stock_crosscheck.py",
         "nvfp4_reference.py",
+        "priced_inputs_snapshot_support.py",
         "reuse_authority_fixture.py",
         "rooted_cached_bundle_support.py",
         "routed_fused_window_support.py",
+        "routed_gate_staged_store_support.py",
         "serving_fp8_route_support.py",
+        "serving_moe_route_support.py",
+        "serving_moe_selected_support.py",
         "shared_fold_data.py",
         "standalone_boundary_allowlist.txt",
         "test_1146_routed_880_912_admission.py",
@@ -28106,6 +28303,7 @@ ts_py_library(
         "test_graph_attest_producer_identity.py",
         "test_graph_attest_tp2.py",
         "test_graph_attest_window_scenarios.py",
+        "test_graph_impact.py",
         "test_graph_owner_hooks.py",
         "test_graph_owner_lifecycle.py",
         "test_graph_owner_publication.py",
@@ -33063,8 +33261,8 @@ ts_py_library(
         "//src/tessera:export_serving",
         "//src/tessera:uniform_control",
         "//tools:_accounting_source",
+        ":accounting_source_support",
         ":box_artifacts",
-        ":test_accounting_source_lib",
     ],
 )
 

@@ -211,6 +211,23 @@ ts_py_library(
 )
 
 ts_py_library(
+    name = "ci/graph_impact",
+    srcs = [
+        "ci/graph_impact.py",
+    ],
+)
+
+ts_py_library(
+    name = "ci/graph_impact_tessera",
+    srcs = [
+        "ci/graph_impact_tessera.py",
+    ],
+    data = [
+        "//tests:fixtures/graph_impact_baseline.json",
+    ],
+)
+
+ts_py_library(
     name = "compact_prep_probe",
     srcs = [
         "compact_prep_probe.py",
