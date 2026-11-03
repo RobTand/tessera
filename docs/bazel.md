@@ -9,24 +9,28 @@ The hosted gate's own files stay the sources of truth:
 
 - `tools/ci/gate_requirements.txt` and `tools/ci/gate_torch_requirements.txt` pin the packages.
 - `tools/ci/gate_quarantine.json` holds the node-level quarantine.
+- `tools/ci/gate_flaky.json` names recorded retry nodes. Its referenced test files are shared data inputs because the collection plugin validates every file before collecting an assignment.
 - `tools/ci/gate_budget.json` sets per-test budgets.
 - `tools/ci/gate_durations.json` gives per-file times; a file over 40 s is split into Bazel test shards.
 
 ## Running tests
 
-Run Bazel on BuildBuddy, never with a local Bazel server on a fleet host. `bb remote` runs the Bazel client on a BuildBuddy runner, mirrors your uncommitted changes, and sends every test to remote execution:
+Run Bazel through the approved shared `bbrun.py` client. It keeps credentials in request headers and routes Tessera actions to `selfhosted-amd64` on dl380g10 or `selfhosted-arm64` on the Sparks, with no cloud fallback. Use a pushed commit on an approved scratch ref that triggers no workflow; delete the ref after the run is terminal.
 
 ```sh
-BUILDBUDDY_API_KEY="$(cat ~/.config/buildbuddy/api_key)" GIT_REPO_DEFAULT_BRANCH=master \
-  bb remote \
-  --container_image=docker://gcr.io/flame-public/rbe-ubuntu24-04@sha256:5f0c01e5f6d79e58d7a996330de33aa38ce599bf8431eaf27521e7602daadf50 \
-  --runner_exec_properties=EstimatedCPU=4 --runner_exec_properties=EstimatedMemory=8GB \
-  test //tests:test_alphabet //tests:test_alphabet.bytes --config=remote --jobs=16
+python3 -I /home/rob/tmp/bazel-wave2/tools/bbrun.py test \
+  --repo https://github.com/RobTand/tessera \
+  --commit FULL_COMMIT_SHA --branch bbrun/tessera-tests \
+  --arch amd64 --timeout 15 -- \
+  bazel test --config=remote --jobs=16 \
+  --nocache_test_results --noremote_accept_cached \
+  //tests:test_alphabet //tests:test_alphabet.bytes
 ```
 
-- **Run targeted tests, not `//...`.** BuildBuddy's executors are shared with the merge gates of TL3, PrismaBuild and PrismaQuant.
-- **Read the verdict** from the command's exit status and the invocation it links, not from the start message.
-- **Use local Bazel only for short query commands,** with `--max_idle_secs=300` (for example `bazel --max_idle_secs=300 query ...`).
+- Prefer targeted tests. Full sweeps require the migration lead's slot, with at most one Tessera invocation in flight and `--jobs=16` after all configs.
+- For arm64, use `--arch arm64` and `--config=remote-arm64` together. Never use `--cloud`.
+- Read the invocation's terminal verdict, logs and final required-key scan. An uncached proof also requires TestRunner execution metadata on dl380g10 for amd64 or sparky/sparklina for arm64. Target summaries alone do not establish execution.
+- Use local Bazel only for short queries, with `--max_idle_secs=300`. Fleet-local test work goes through PrismaBuild admission.
 
 ## How the build is generated
 
@@ -70,4 +74,4 @@ Most tests run on BuildBuddy's remote executors. An executor has a few CPUs of a
 - `--config=remote-arm64`: the same, on BuildBuddy's linux/arm64 executors.
 - `--config=ci`: CI build metadata, a refusal of a stale `MODULE.bazel.lock`, and the per-test receipts that parity reads.
 
-Pass the API key header from the environment or a private rc file. Never commit it.
+The approved client supplies authentication. Never place credentials in a command line, test environment or uploaded event file.

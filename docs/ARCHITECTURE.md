@@ -16,6 +16,8 @@ Documentation-only gate changes run the fast standalone, packaging and provenanc
 
 The workflow executes the tested Python event-identity decision before planning and uses its output for both final check names. Torch lanes require a CPU torch installation and zero uncollected modules at both runner and aggregate boundaries.
 
+The Bazel build described in `docs/bazel.md` derives one target per test file and CPU lane from dependency evidence (#1589). It shares the hosted pins and collection policy, including file inputs validated by the flaky-node table. Repository-wide Git checks use the uncached amd64 runner lane; hermetic actions use self-hosted BuildBuddy pools. The hosted gate remains active until the separate cutover.
+
 Final gate summaries report each CPU lane’s pass, failure, skip and uncollected counts, verbatim skip reasons, device details and zero CUDA allocation. CPU passes do not cover CUDA.
 
 
