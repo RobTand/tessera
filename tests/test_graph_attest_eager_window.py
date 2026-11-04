@@ -479,12 +479,17 @@ def test_certified_mode_computes_identity_digests_and_agrees(bound_files, monkey
 
 
 def census_actions(pb, tmp_path):
+    import venv
+
+    environment = tmp_path / "fixture-python"
+    venv.EnvBuilder(symlinks=False, with_pip=False).create(environment)
+    python = str(environment / "bin" / "python")
     (tmp_path / "fixture.py").write_text("# CPU fixture closure")
-    toolchain = {**pb.executable_toolchain_contract(sys.executable), **pb.live_platform_toolchain_contract()}
+    toolchain = {**pb.executable_toolchain_contract(python), **pb.live_platform_toolchain_contract()}
     actions = []
     for kind in ("generation", "price", "pair"):
         task_class = "generation" if kind == "generation" else "measurement"
-        command = [sys.executable, "fixture.py"] if kind != "pair" else [sys.executable, "rank_window.py", "--rank", "1", "--run", str(tmp_path / "inputs.json")]
+        command = [python, "fixture.py"] if kind != "pair" else [python, "rank_window.py", "--rank", "1", "--run", str(tmp_path / "inputs.json")]
         action = pb.seal_action(dict(schema=pb.ACTION_SCHEMA_V2,
             task=dict(definition_id="tests/window4-census", definition_version="1", task_class=task_class,
                       determinism="deterministic", artifact_family="generic", artifact_kind="generic",
@@ -517,7 +522,6 @@ def test_complete_census_allows_prices_but_refuses_another_sealed_pair(tmp_path,
     with pytest.raises(pb.ActionContractError): watch.other_windows(observed)
 
 
-
 def test_census_fixture_keeps_sdk_identity_during_source_link_churn(tmp_path, monkeypatch):
     import hashlib
     import os
@@ -529,6 +533,7 @@ def test_census_fixture_keeps_sdk_identity_during_source_link_churn(tmp_path, mo
     pb = pytest.importorskip("prismabuild.core", reason="requires the published PB SDK")
     from prismabuild import immutable_files
 
+    runfiles_python = Path(sys.executable).resolve()
     shared = tmp_path / "shared-python"
     venv.EnvBuilder(symlinks=False, with_pip=False).create(shared)
     source = shared / "bin" / "python"
@@ -567,7 +572,11 @@ def test_census_fixture_keeps_sdk_identity_during_source_link_churn(tmp_path, mo
     actions = census_actions(pb, tmp_path)
     executable, = {action["task"]["argv"][0] for action in actions}
     private = Path(executable)
+    identity = pb.identify_executable(private)
+    hashed = Path(identity["resolved_path"])
+    assert hashed == private.resolve()
     assert not private.is_symlink()
+    assert (hashed.stat().st_dev, hashed.stat().st_ino) != (runfiles_python.stat().st_dev, runfiles_python.stat().st_ino)
     assert (private.stat().st_dev, private.stat().st_ino) != (source.stat().st_dev, source.stat().st_ino)
     assert hashlib.sha256(private.read_bytes()).hexdigest() == expected_sha
     for action in actions:
