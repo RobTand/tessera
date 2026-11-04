@@ -277,3 +277,64 @@ def test_collector_applies_the_measured_timeout_to_the_exact_node(tmp_path):
                              '--timeout=300', '--rootdir', str(tmp_path), str(tmp_path/'tests')],
                             cwd=tmp_path, env=env, capture_output=True, text=True)
     assert result.returncode == 0, result.stdout + result.stderr
+
+
+@pytest.mark.parametrize('seconds', [21, 31, 10000])
+@pytest.mark.parametrize('failure', ['', '<failure>assertion</failure>', '<error>hard timeout</error>'])
+def test_budget_overruns_warn_without_changing_test_verdict(tmp_path, monkeypatch, seconds, failure):
+    runner = load('gate_run')
+    monkeypatch.setattr(runner, '_budget_policy', lambda *args: {
+        'seconds': 20, 'slow': {}, 'enforce': True})
+    monkeypatch.setattr(runner, 'cpu_population', lambda *args: {
+        'role': 'population', 'cuda': False, 'cuda_surface': {'executed': 0},
+        'not_collected': [], 'device': 'torch CPU', 'counts': {'failed' if failure else 'passed': 1}})
+    monkeypatch.setattr(runner, 'collection_coverage', lambda *args: {'status': 'pass'})
+    summary = tmp_path / 'summary.md'
+    monkeypatch.setenv('GITHUB_STEP_SUMMARY', str(summary))
+    junit = tmp_path / 'junit.xml'
+    calls = []
+
+    def execute(command, **kwargs):
+        calls.append(command)
+        junit.write_text('<testsuite><testcase file="tests/test_a.py" classname="tests.test_a" '
+                         f'name="test_one" time="{seconds}">{failure}</testcase></testsuite>')
+        return SimpleNamespace(returncode=1 if failure else 0)
+
+    code = runner.run_plan(fixture_plan(), root=tmp_path, output=tmp_path / 'result.json',
+                           junit=junit, workers=1, lane='torch', execute=execute, affinity={0})
+    assert code == (1 if failure else 0)
+    assert len(calls) == 1
+    record = json.loads((tmp_path / 'result.json').read_text())
+    assert record['budget_warnings'] == [
+        {'nodeid': 'tests/test_a.py::test_one', 'seconds': seconds, 'budget_seconds': 20}]
+    assert record['budget']['status'] == 'pass'
+    for text in (junit.read_text(), summary.read_text()):
+        assert 'BUDGET_WARNING: tests/test_a.py::test_one' in text
+        assert f'{seconds:.3f}s > 20.000s' in text
+        assert 'within' not in text
+
+
+def test_hosted_aggregate_reports_budget_warnings_without_retry(tmp_path):
+    actions = load('gate_actions')
+    plan = fixture_plan()
+    assignments = [{'index': i, 'lane': lane, 'files': ['tests/test_a.py']}
+                   for i, lane in enumerate(('bytes', 'torch'))]
+    warning = {'nodeid': 'tests/test_a.py::test_one', 'seconds': 10000, 'budget_seconds': 20}
+    records = {i: dict(verdict(plan, row['lane'], 'pass', 0), budget_warnings=[warning])
+               for i, row in enumerate(assignments)}
+    result = actions.assess_attempts(plan, assignments, {1: records})
+    assert result['exit_code'] == 0
+    assert result['retry_indices'] == []
+    assert result['budget_warnings'] == [dict(warning, lane=row['lane']) for row in assignments]
+    for name, value in [('plan.json', plan), ('matrix.json', {'include': assignments})]:
+        (tmp_path / name).write_text(json.dumps(value))
+    for index, record in records.items():
+        folder = tmp_path / f'gate-result-a1-{index}'
+        folder.mkdir()
+        (folder / 'result.json').write_text(json.dumps(record))
+    summary = tmp_path / 'summary.md'
+    assert actions.main(['finish', '--plan', str(tmp_path / 'plan.json'), '--matrix',
+        str(tmp_path / 'matrix.json'), '--artifacts', str(tmp_path), '--output',
+        str(tmp_path / 'final.json'), '--summary', str(summary)]) == 0
+    assert 'tests/test_a.py::test_one' in summary.read_text()
+    assert '10000.000s > 20.000s' in summary.read_text()
