@@ -21,16 +21,21 @@ Run Bazel through the approved shared `bbrun.py` client. It keeps credentials in
 python3 -I /home/rob/tmp/bazel-wave2/tools/bbrun.py test \
   --repo https://github.com/RobTand/tessera \
   --commit FULL_COMMIT_SHA --branch bbrun/tessera-tests \
-  --arch amd64 --timeout 15 -- \
+  --arch amd64 --full-history --timeout 15 -- \
   bazel test --config=remote --jobs=16 \
   --nocache_test_results --noremote_accept_cached \
   //tests:test_alphabet //tests:test_alphabet.bytes
 ```
 
-- Prefer targeted tests. Full sweeps require the migration lead's slot, with at most one Tessera invocation in flight and `--jobs=16` after all configs.
+- Prefer targeted tests. Keep development runs at one Tessera invocation in flight with `--jobs=16` after all configs. Full sweeps require the migration lead's slot. The gate-fallback exception below does not apply to development runs.
 - For arm64, use `--arch arm64` and `--config=remote-arm64` together. Never use `--cloud`.
 - Read the invocation's terminal verdict, logs and final required-key scan. An uncached proof also requires TestRunner execution metadata on dl380g10 for amd64 or sparky/sparklina for arm64. Target summaries alone do not establish execution.
 - Use local Bazel only for short queries, with `--max_idle_secs=300`. Fleet-local test work goes through PrismaBuild admission.
+
+Per-test budget overruns appear in `budget_warnings` and the gate summary.
+They do not change the test verdict or start another attempt. Hard TIMEOUTs
+and assertion failures fail on their first attempt. The static budget-growth
+check remains enforced.
 
 ## How the build is generated
 
@@ -60,6 +65,37 @@ The C++ that CPU tests compile at run time (torch's `cpp_extension`, Inductor's 
 
 The same applies after you add a module or an import, or a fixture a test reads. `tests/test_bazel_build.py` fails when a generated file is stale, when a gate file lacks a target in a lane, or when a target the cloud gate leaves out has no reason.
 
+After changing target names or tags, run `python3 tools/ci/full_shards.py` and
+commit `tools/bazel/full_targets/`. This performs only a Bazel query. Its two
+lists per architecture must be disjoint and cover every eligible rule and
+test. The gate checks them against a live query and uses each committed file
+with `--target_pattern_file` in a separate Remote Bazel run, capped at
+55 minutes. This keeps each full fallback and post-merge shard below BuildBuddy's
+one-hour limit and avoids the Run action's single-argument size limit.
+
+Only the fail-closed gate `//...` fallback may execute its two shard Runs in
+parallel, at most two concurrent Remote Bazel runs per gate controller with
+`--jobs=16` each. Actions use the self-hosted pools only, without cloud
+fallback. Selected gates and post-merge controllers each run one invocation at
+a time. Agent/development runs stay at one per repository, enforced
+operationally by the migration leads. Mergify's 30-minute `checks_timeout` and merge conditions
+are unchanged. The controller encodes the fallback-only bound; it adds no
+scheduler.
+
+Mergify's existing `max_parallel_checks: 2` bounds batch-draft gates. Two
+batch-draft fallbacks can therefore overlap four Remote Bazel shard Runs,
+self-hosted only, when Bazel, lock or gate-workflow inputs change. Existing
+per-PR/per-SHA workflow concurrency stays in place. A shared GitHub job
+concurrency group would let newer pending jobs cancel older required checks,
+so this cutover adds no such group or scheduler.
+
+Excess action demand queues on the executors. On dl380g10's 40 CPUs, the
+four-wide case is expected to produce longer shards, without executor
+refusals or timeouts. A refusal or timeout observed under concurrency is a
+finding to report.
+
+TL3 keeps BuildBuddy priority if a fallback batch lands while TL3's queue is backed up.
+
 ## Where tests run
 
 Most tests run on BuildBuddy's remote executors. An executor has a few CPUs of a larger host, no network, no `.git`, and every input staged as executable. `tools/bazel/nonhermetic.bzl` names the tests that need more, each with its reason:
@@ -75,3 +111,9 @@ Most tests run on BuildBuddy's remote executors. An executor has a few CPUs of a
 - `--config=ci`: CI build metadata, a refusal of a stale `MODULE.bazel.lock`, and the per-test receipts that parity reads.
 
 The approved client supplies authentication. Never place credentials in a command line, test environment or uploaded event file.
+
+Artifact uploads use Python 3.14's standard-library zstd decoder and the byte-identical vendored scanner. Native runners select a pinned CPython 3.14.0 build 20251014 archive by `uname -m` (`x86_64` or `aarch64`), verify its SHA256 from Astral uv 0.9.5 metadata, then replace the gate process in place. This needs no pip and gives no key to a child. Other machines fail closed. Bazel's test interpreters remain unchanged. The gate and seeded-breaks harness share one scan-and-publish boundary: scan fixed `gate-artifacts` staging, then publish it to the runner's automatic upload directory. Both entrypoints select the same scanner runtime. Hosted scans use `gate-output`. Any file still reported as not scanned is excluded with a diagnostic, and the remaining set must pass a clean second scan. Secret hits and unknown scanner diagnostics fail and clear the upload set.
+
+Native history hydration requires the standard Remote Bazel clone's object-pack directory at `.git/objects/pack`; an unexpected Git pack location fails closed before marker cleanup. Directory reads use explicit checkout anchors and cleanup consumes the already enumerated path list. The unnamed-directory-read ratchet stays at 117 modules and 171 sites. Its only exemption is the exact path and SHA256 of the byte-identical vendored third-party scanner, not repository code. A changed byte or another path counts again.
+
+The repository directory-read census is isolated in `test_directory_read_census` on the uncached runner lane. It verifies that every eligible tracked Python source appears in its measured graph before checking the unchanged 117-module/171-site ceiling. Scanner unit tests keep their remote placement.

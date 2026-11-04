@@ -22,11 +22,11 @@ test --test_env=OPENBLAS_NUM_THREADS=1
 
 # Pass the BuildBuddy API key header from the environment or a private rc
 # file. Never commit the key. BuildBuddy's free plan is shared with TL3's,
-# PrismaBuild's and PrismaQuant's gates, so Tessera takes at most 40 of its
-# executors' slots at a time.
+# PrismaBuild's and PrismaQuant's gates. Each invocation has 16 jobs; parallel
+# gate-fallback shards queue excess action demand on the self-hosted pools.
 build:remote --remote_cache=grpcs://remote.buildbuddy.io
 build:remote --remote_download_minimal
-build:remote --jobs=40
+build:remote --jobs=16
 build:remote --remote_executor=grpcs://remote.buildbuddy.io
 build:remote --bes_backend=grpcs://remote.buildbuddy.io
 build:remote --bes_results_url=https://app.buildbuddy.io/invocation/
@@ -40,7 +40,7 @@ build:remote --nobuild_runfile_links
 # only, so the client stays on amd64. The post-merge run uses it.
 build:remote-arm64 --remote_cache=grpcs://remote.buildbuddy.io
 build:remote-arm64 --remote_download_minimal
-build:remote-arm64 --jobs=40
+build:remote-arm64 --jobs=16
 build:remote-arm64 --remote_executor=grpcs://remote.buildbuddy.io
 build:remote-arm64 --bes_backend=grpcs://remote.buildbuddy.io
 build:remote-arm64 --bes_results_url=https://app.buildbuddy.io/invocation/
@@ -61,3 +61,5 @@ build:ci --remote_download_regex=.*/test\.outputs/.*
 # Runner-lane tests (tools/bazel/nonhermetic.bzl) run on the Remote Bazel
 # runner, which is amd64: the arm64 pass leaves them out.
 test:remote-arm64 --test_tag_filters=-runner
+# Budget warnings are read from each test's undeclared outputs.
+test:ci --nozip_undeclared_test_outputs
