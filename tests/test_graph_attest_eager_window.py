@@ -478,10 +478,7 @@ def test_certified_mode_computes_identity_digests_and_agrees(bound_files, monkey
     assert result["runtime_contract_sha256"] == benchmark.CONTRACT_SHA
 
 
-def test_complete_census_allows_prices_but_refuses_another_sealed_pair(tmp_path, monkeypatch):
-    pb = pytest.importorskip("prismabuild.core", reason="requires the published PB SDK")
-    import watch_window_queue as watch
-    monkeypatch.setattr(watch, "REQUESTS", tmp_path / "requests")
+def census_actions(pb, tmp_path):
     (tmp_path / "fixture.py").write_text("# CPU fixture closure")
     toolchain = {**pb.executable_toolchain_contract(sys.executable), **pb.live_platform_toolchain_contract()}
     actions = []
@@ -495,10 +492,19 @@ def test_complete_census_allows_prices_but_refuses_another_sealed_pair(tmp_path,
             inputs=[], code_closure=pb.build_code_closure(tmp_path, ["fixture.py"]), params=dict(command=command),
             environment=dict(variables={"GRAPH_WINDOW_INPUT_SHA256": "a" * 64} if kind == "pair" else {}, toolchain=toolchain),
             execution_scope=dict(portability="host_class_keyed", platform_key=None, host_class="gb10")))
+        actions.append(action)
+    return actions
+
+
+def test_complete_census_allows_prices_but_refuses_another_sealed_pair(tmp_path, monkeypatch):
+    pb = pytest.importorskip("prismabuild.core", reason="requires the published PB SDK")
+    import watch_window_queue as watch
+    monkeypatch.setattr(watch, "REQUESTS", tmp_path / "requests")
+    actions = census_actions(pb, tmp_path)
+    for action in actions:
         path = watch.REQUESTS / action["action_key"][:2] / (action["action_key"] + ".json")
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(json.dumps(action))
-        actions.append(action)
     observed = dict(complete=True, queue_snapshot=dict(jobs=[dict(state="READY", action_key=a["action_key"]) for a in actions]))
     assert [row["action_key"] for row in watch.other_windows(observed)] == [actions[2]["action_key"]]
     observed["queue_snapshot"]["jobs"].pop()
@@ -509,6 +515,71 @@ def test_complete_census_allows_prices_but_refuses_another_sealed_pair(tmp_path,
     observed["complete"] = True
     path.write_text("{}")
     with pytest.raises(pb.ActionContractError): watch.other_windows(observed)
+
+
+
+def test_census_fixture_keeps_sdk_identity_during_source_link_churn(tmp_path, monkeypatch):
+    import hashlib
+    import os
+    import subprocess
+    import time
+    from types import SimpleNamespace
+    import venv
+
+    pb = pytest.importorskip("prismabuild.core", reason="requires the published PB SDK")
+    from prismabuild import immutable_files
+
+    shared = tmp_path / "shared-python"
+    venv.EnvBuilder(symlinks=False, with_pip=False).create(shared)
+    source = shared / "bin" / "python"
+    expected_sha = hashlib.sha256(source.read_bytes()).hexdigest()
+    monkeypatch.setitem(globals(), "sys", SimpleNamespace(executable=str(source)))
+    original_sha256 = immutable_files.new_sha256
+    links = []
+
+    def sha256_with_owned_link_churn():
+        digest = original_sha256()
+        linked = False
+
+        def update(chunk):
+            nonlocal linked
+            if not linked:
+                before = source.stat()
+                deadline = time.monotonic() + 5
+                while True:
+                    link = tmp_path / f"owned-link-{len(links)}"
+                    os.link(source, link)
+                    links.append(link)
+                    after = source.stat()
+                    if after.st_ctime_ns != before.st_ctime_ns:
+                        break
+                    assert time.monotonic() < deadline, "owned link churn did not advance ctime"
+                    link.unlink()
+                assert after.st_nlink > before.st_nlink
+                assert (after.st_dev, after.st_ino, after.st_size, after.st_mode, after.st_mtime_ns) == (
+                    before.st_dev, before.st_ino, before.st_size, before.st_mode, before.st_mtime_ns)
+                linked = True
+            digest.update(chunk)
+
+        return SimpleNamespace(update=update, hexdigest=digest.hexdigest)
+
+    monkeypatch.setattr(immutable_files, "new_sha256", sha256_with_owned_link_churn)
+    actions = census_actions(pb, tmp_path)
+    executable, = {action["task"]["argv"][0] for action in actions}
+    private = Path(executable)
+    assert not private.is_symlink()
+    assert (private.stat().st_dev, private.stat().st_ino) != (source.stat().st_dev, source.stat().st_ino)
+    assert hashlib.sha256(private.read_bytes()).hexdigest() == expected_sha
+    for action in actions:
+        assert action["environment"]["toolchain"]["argv0.sha256"] == expected_sha
+        assert action["environment"]["toolchain"]["argv0.bytes"] == str(source.stat().st_size)
+        pb.validate_action(action)
+    done = subprocess.run([executable, "-c", "import json; print(json.dumps({'runnable': True}))"],
+                          capture_output=True, text=True, check=True, timeout=30)
+    assert json.loads(done.stdout) == {"runnable": True}
+    with pytest.raises(pb.ActionContractError, match="action executable changed while it was read"):
+        pb.executable_toolchain_contract(source)
+    assert hashlib.sha256(source.read_bytes()).hexdigest() == expected_sha
 
 
 def test_sampler_reads_the_actual_admitted_cpu_cgroup_not_a_gpu_claim():
