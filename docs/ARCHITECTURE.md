@@ -10251,18 +10251,69 @@ fallback one. A census (`tools/tessera_route_census.py`) that reads
 
 `.github/workflows/ci.yml` provides `branch rule`, `pure`, and tag-only
 `publish`. `.github/workflows/gate.yml` adds `pr-gate` on PR pushes and
-`gate` on authenticated Mergify batch drafts or same-repository canaries.
-Both test the bytes-only and torch CPU populations on hosted x64 and ARM.
-Neither covers CUDA-gated tests. [The gate reference](ci_gate.md) describes
-selection that falls back to full on silent output for changed paths,
-a docs-only tier including documentation and issue-snapshot readers, hosted-duration file sharding and xdist groups derived from module fixture scopes,
-with scheduling costs and bootstrap limits refreshed from retained hosted JUnit
-and an 80-second default derived from twice the measured 39.884-second
-cold planning cost on the two architecture assignments,
-verdict retries, measured and enforced test budgets,
-issue-owned quarantine parsed once for growth, owner checks and deselection,
-with a strict lanes/issues schema and growth checks covering both paths of renames, restored matched-reach coverage with exact standard-sample
-reuse in its test fixture, and the required-check transition. Its evidence command computes
+`gate` on authenticated Mergify batch drafts. Both run the tests bazel-diff
+selects on BuildBuddy, through Bazel (#1589): one target per test file and
+hosted lane, bytes-only and torch CPU, on amd64 per pull request and on amd64
+and arm64 after every merge. A hosted boundary job keeps the no-torch proofs
+and the budget and quarantine policies. Neither covers CUDA-gated tests.
+[The gate reference](ci_gate.md) describes selection, its fail-closed rules,
+budget warnings and the secret rules; [docs/bazel.md](bazel.md) the
+build. The remote client hydrates all origin history and blobs before the
+first Bazel query, verifies the exact tested HEAD and a complete object graph,
+and removes partial-clone metadata. Fetch disables automatic GC and maintenance;
+cleanup tolerates only an already-removed marker. Other errors retain a safe
+stage and type, and interrupts propagate. A shallow or missing-object checkout
+fails before test execution. Budget overruns warn without changing the first
+verdict; assertions and hard TIMEOUTs fail without a rerun.
+
+Fallback and post-merge full populations are split into two committed target
+files per architecture, including non-test build rules. The client submits
+each with `--target_pattern_file` in a separate Remote Bazel run capped
+at 55 minutes. Only gate fallback permits two concurrent shard runs per controller,
+each with `--jobs=16` on self-hosted action pools; all other paths stay serial.
+Mergify's 30-minute checks timeout and merge conditions are unchanged. Its two
+parallel batch checks can overlap four self-hosted shard Runs for two fallbacks
+on Bazel, lock or gate-workflow changes. Excess demand queues on executors;
+on dl380g10's 40 CPUs the expected effect is longer shards, not refusal or
+timeout. Report any contrary proof result. Agent/development admission stays
+operationally limited to one run per repo. No shared GitHub job group is added.
+TL3 retains BuildBuddy priority when its queue is backed up; no scheduler is added.
+Live-query validation and complete, disjoint result unions
+fail closed on drift or missing shards. The combined post-merge record keeps
+all invocation IDs and per-architecture budget warnings. Post-merge detection
+errors remain gate-errors while full coverage completes; unknown selection
+is not counted as a measured detection miss. Required checks need the complete
+Bazel job, including the final keyed scan, to succeed.
+
+The gate and seeded-breaks harness share the scan-and-publish boundary and
+select the same scanner runtime before execution. Runner steps scan a fixed
+checkout staging directory in-process with the
+runner's key before publishing it to the automatic artifact directory. A
+missing key fails without publishing. Python 3.14 provides the standard-library
+zstd decoder for native and hosted required-key scans. Native bootstrap needs
+no pip: it selects the x86_64 or aarch64 CPython 3.14.0 build 20251014 archive
+from Astral uv 0.9.5 metadata, verifies its pinned SHA256, and replaces the
+process in place. Unknown machines fail closed. No installer child receives
+a key. The byte-identical
+vendored scanner remains unchanged. Unscannable files are excluded with a
+diagnostic and the remaining set must pass a clean second scan; secret hits
+and unknown diagnostics clear the directory and fail. Raw BEP and command logs
+are deleted and fail the step. Both diagnostic logs remain subject to the scan.
+The directory-read census has an isolated, uncached runner target. It checks
+that its graph contains every eligible tracked Python file before applying
+the ceiling, so partial remote runfiles cannot silently reduce the population.
+Scanner unit tests remain remotely executable. Remote contract tests that read
+BUILD files declare those files explicitly in `tools/bazel/test_inputs.bzl`;
+the generator excludes BUILD files from inferred source inputs. Both test lanes
+share the declaration. The ratchet retains 117/171,
+with only an exact-path, exact-hash
+exemption for pinned vendored third-party scanner code. Only `BBRUN_FINAL_SCAN=1` defers scanning to the
+shared client's final scanner step; `remote_gate.py` does not set that marker.
+Runner scans require the BuildBuddy key. Hosted artifact uploads require both
+the BuildBuddy key and Mergify token in the scan step's environment, and run
+only after a successful scan. Fork PRs log why scans and uploads are skipped.
+
+The hosted gate it replaced had an evidence command that computes
 hosted wall time through the final verdict step and separates setup from tests,
 retaining job timestamps alongside step timestamps when their clocks disagree.
 When steps precede workflow creation, job completion supplies a conservative

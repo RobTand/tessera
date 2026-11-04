@@ -1169,6 +1169,7 @@ ts_py_library(
         "//tools/bazel:build_files.py",
         "//tools/bazel:requirements.py",
         "//tools/bazel:runtime.py",
+        "//tools/bazel:test_inputs.bzl",
         "//tools:ci/gate_prismaquant_requirements.txt",
         "//tools:ci/gate_requirements.txt",
     ],
@@ -1176,6 +1177,162 @@ ts_py_library(
         "//tools:ci/bazel_parity",
         "//tools:ci/gate_run",
         ":accounting_source_support",
+    ],
+)
+
+ts_py_test(
+    name = "test_bazel_full_shards",
+    path = "tests/test_bazel_full_shards.py",
+    library = ":test_bazel_full_shards_lib",
+    data = [
+        "//tools/bazel:build_files.py",
+        "//tools/bazel:full_targets/manifest.json",
+        "//tools/bazel:generate.sh",
+        "//tools/bazel:requirements.py",
+    ],
+    deps = [
+        "//src/tessera:identity",
+        "//tools:ci/bazel_parity",
+        "//tools:ci/gate_select",
+        "//tools:ci/graph_impact",
+        "//tools:ci/graph_impact_tessera",
+        "//tools:impacted_tests",
+        ":test_packaging_lib",
+        ":test_provenance_lib",
+        ":test_standalone_boundary_lib",
+    ],
+    lane = "torch",
+    args = [
+        "--budget='{\"enforce\":true,\"seconds\":80,\"slow\":{}}'",
+    ],
+    timeout = "moderate",
+)
+
+ts_py_test(
+    name = "test_bazel_full_shards.bytes",
+    path = "tests/test_bazel_full_shards.py",
+    library = ":test_bazel_full_shards_lib",
+    data = [
+        "//tools/bazel:build_files.py",
+        "//tools/bazel:full_targets/manifest.json",
+        "//tools/bazel:generate.sh",
+        "//tools/bazel:requirements.py",
+    ],
+    deps = [
+        "//src/tessera:identity",
+        "//tools:ci/bazel_parity",
+        "//tools:ci/gate_select",
+        "//tools:ci/graph_impact",
+        "//tools:ci/graph_impact_tessera",
+        "//tools:impacted_tests",
+        ":test_packaging_lib",
+        ":test_provenance_lib",
+        ":test_standalone_boundary_lib",
+    ],
+    lane = "bytes",
+    args = [
+        "--budget='{\"enforce\":true,\"seconds\":80,\"slow\":{}}'",
+    ],
+    timeout = "moderate",
+)
+
+ts_py_library(
+    name = "test_bazel_full_shards_lib",
+    srcs = [
+        "test_bazel_full_shards.py",
+    ],
+    data = [
+        "//tools/bazel:full_targets/manifest.json",
+    ],
+    deps = [
+        "//tools:ci/bazel_gate",
+        "//tools:ci/full_shards",
+        "//tools:ci/remote_gate",
+    ],
+)
+
+ts_py_test(
+    name = "test_bazel_gate",
+    path = "tests/test_bazel_gate.py",
+    library = ":test_bazel_gate_lib",
+    data = [
+        "//tools/bazel:build_files.py",
+        "//tools/bazel:generate.sh",
+        "//tools/bazel:requirements.py",
+    ],
+    deps = [
+        "//src/tessera:identity",
+        "//tools:check_wheel",
+        "//tools:ci/bazel_parity",
+        "//tools:ci/gate_boundary",
+        "//tools:ci/gate_collect",
+        "//tools:ci/gate_select",
+        "//tools:ci/graph_impact",
+        "//tools:ci/graph_impact_tessera",
+        "//tools:impacted_tests",
+        ":test_packaging_lib",
+        ":test_provenance_lib",
+        ":test_standalone_boundary_lib",
+    ],
+    lane = "torch",
+    args = [
+        "--budget='{\"enforce\":true,\"seconds\":80,\"slow\":{}}'",
+    ],
+    timeout = "moderate",
+)
+
+ts_py_test(
+    name = "test_bazel_gate.bytes",
+    path = "tests/test_bazel_gate.py",
+    library = ":test_bazel_gate_lib",
+    data = [
+        "//tools/bazel:build_files.py",
+        "//tools/bazel:generate.sh",
+        "//tools/bazel:requirements.py",
+    ],
+    deps = [
+        "//src/tessera:identity",
+        "//tools:check_wheel",
+        "//tools:ci/bazel_parity",
+        "//tools:ci/gate_boundary",
+        "//tools:ci/gate_collect",
+        "//tools:ci/gate_select",
+        "//tools:ci/graph_impact",
+        "//tools:ci/graph_impact_tessera",
+        "//tools:impacted_tests",
+        ":test_packaging_lib",
+        ":test_provenance_lib",
+        ":test_standalone_boundary_lib",
+    ],
+    lane = "bytes",
+    args = [
+        "--budget='{\"enforce\":true,\"seconds\":80,\"slow\":{}}'",
+    ],
+    timeout = "moderate",
+)
+
+ts_py_library(
+    name = "test_bazel_gate_lib",
+    srcs = [
+        "test_bazel_gate.py",
+    ],
+    data = [
+        "//:.bazelignore",
+        "//:.bazelrc",
+        "//:.bazelversion",
+        "//:MODULE.bazel",
+        "//:MODULE.bazel.lock",
+        "//:docs/ARCHITECTURE.md",
+        "//:files/.github/workflows",
+        "//tools/bazel:generate.sh",
+        "//tools/bazel:python.bzl",
+        "//tools/bazel:python_runner.py",
+        "//tools/bazel:requirements.txt",
+    ],
+    deps = [
+        "//tools:ci/bazel_gate",
+        "//tools:ci/gate_run",
+        "//tools:ci/remote_gate",
     ],
 )
 
@@ -1567,6 +1724,8 @@ ts_py_library(
         "test_b770_producer_review.py",
         "test_batched_encode_identity.py",
         "test_bazel_build.py",
+        "test_bazel_full_shards.py",
+        "test_bazel_gate.py",
         "test_bench_kda_geometry.py",
         "test_bench_kda_timing_scope.py",
         "test_bench_routed_load_nvfp4.py",
@@ -1620,6 +1779,7 @@ ts_py_library(
         "test_dense_prepared_census.py",
         "test_dev_mode_seal_check.py",
         "test_diagonals.py",
+        "test_directory_read_census.py",
         "test_doc_alphabet_70.py",
         "test_doc_route_71.py",
         "test_doc_scope_69.py",
@@ -1886,6 +2046,7 @@ ts_py_library(
         "test_regdirect_op_cuda.py",
         "test_regdirect_run_sh.py",
         "test_release_tail_sharding.py",
+        "test_remote_history.py",
         "test_report_full_engine_resources_evidence.py",
         "test_research_selected_driver_imports.py",
         "test_residency_plan.py",
@@ -1928,6 +2089,8 @@ ts_py_library(
         "test_scale_codec.py",
         "test_scale_refit.py",
         "test_seal_prefetch.py",
+        "test_secret_scan.py",
+        "test_seeded_breaks.py",
         "test_selected_bf16_math.py",
         "test_selected_population.py",
         "test_selected_window_kernel.py",
@@ -4729,6 +4892,48 @@ ts_py_library(
         "//src/tessera:encode_cycle",
         "//src/tessera:errors",
         "//src/tessera:trellis",
+    ],
+)
+
+ts_py_test(
+    name = "test_directory_read_census",
+    path = "tests/test_directory_read_census.py",
+    library = ":test_directory_read_census_lib",
+    deps = [
+        "//tools:__init__",
+    ],
+    lane = "torch",
+    args = [
+        "--budget='{\"enforce\":true,\"seconds\":80,\"slow\":{}}'",
+    ],
+    timeout = "moderate",
+)
+
+ts_py_test(
+    name = "test_directory_read_census.bytes",
+    path = "tests/test_directory_read_census.py",
+    library = ":test_directory_read_census_lib",
+    deps = [
+        "//tools:__init__",
+    ],
+    lane = "bytes",
+    args = [
+        "--budget='{\"enforce\":true,\"seconds\":80,\"slow\":{}}'",
+    ],
+    timeout = "moderate",
+)
+
+ts_py_library(
+    name = "test_directory_read_census_lib",
+    srcs = [
+        "test_directory_read_census.py",
+    ],
+    data = [
+        "//tools/bazel:nonhermetic.bzl",
+    ],
+    deps = [
+        "//tools:ci/check_no_secret_leak",
+        "//tools:impacted_tests",
     ],
 )
 
@@ -7950,15 +8155,9 @@ ts_py_test(
     name = "test_gate_contract",
     path = "tests/test_gate_contract.py",
     library = ":test_gate_contract_lib",
-    data = [
-        "//tools/bazel:build_files.py",
-        "//tools/bazel:generate.sh",
-        "//tools/bazel:graph.py",
-        "//tools/bazel:requirements.py",
-    ],
     deps = [
         "//src/tessera:identity",
-        "//tools:check_wheel",
+        "//tools:ci/gate_boundary",
         "//tools:impacted_tests",
         ":test_packaging_lib",
         ":test_provenance_lib",
@@ -7975,15 +8174,9 @@ ts_py_test(
     name = "test_gate_contract.bytes",
     path = "tests/test_gate_contract.py",
     library = ":test_gate_contract_lib",
-    data = [
-        "//tools/bazel:build_files.py",
-        "//tools/bazel:generate.sh",
-        "//tools/bazel:graph.py",
-        "//tools/bazel:requirements.py",
-    ],
     deps = [
         "//src/tessera:identity",
-        "//tools:check_wheel",
+        "//tools:ci/gate_boundary",
         "//tools:impacted_tests",
         ":test_packaging_lib",
         ":test_provenance_lib",
@@ -8002,27 +8195,19 @@ ts_py_library(
         "test_gate_contract.py",
     ],
     data = [
+        "//:.bazelrc",
         "//:files/.github/workflows",
         "//tools:ci/gate_budget.json",
         "//tools:ci/gate_durations.json",
         "//tools:ci/gate_quarantine.json",
     ],
     deps = [
-        "//tools:ci/bazel_parity",
         "//tools:ci/gate_actions",
-        "//tools:ci/gate_boundary",
         "//tools:ci/gate_collect",
-        "//tools:ci/gate_doc_readers",
         "//tools:ci/gate_evidence",
-        "//tools:ci/gate_flaky",
-        "//tools:ci/gate_junit",
         "//tools:ci/gate_partition",
-        "//tools:ci/gate_refresh",
-        "//tools:ci/gate_replay",
         "//tools:ci/gate_run",
         "//tools:ci/gate_select",
-        "//tools:ci/graph_impact",
-        "//tools:ci/graph_impact_tessera",
         ":conftest",
         ":test_matched_reach_lib",
     ],
@@ -8032,15 +8217,8 @@ ts_py_test(
     name = "test_gate_evidence",
     path = "tests/test_gate_evidence.py",
     library = ":test_gate_evidence_lib",
-    data = [
-        "//tools/bazel:build_files.py",
-        "//tools/bazel:generate.sh",
-        "//tools/bazel:graph.py",
-        "//tools/bazel:requirements.py",
-    ],
     deps = [
         "//src/tessera:identity",
-        "//tools:check_wheel",
         "//tools:impacted_tests",
         ":test_packaging_lib",
         ":test_provenance_lib",
@@ -8057,15 +8235,8 @@ ts_py_test(
     name = "test_gate_evidence.bytes",
     path = "tests/test_gate_evidence.py",
     library = ":test_gate_evidence_lib",
-    data = [
-        "//tools/bazel:build_files.py",
-        "//tools/bazel:generate.sh",
-        "//tools/bazel:graph.py",
-        "//tools/bazel:requirements.py",
-    ],
     deps = [
         "//src/tessera:identity",
-        "//tools:check_wheel",
         "//tools:impacted_tests",
         ":test_packaging_lib",
         ":test_provenance_lib",
@@ -8084,21 +8255,8 @@ ts_py_library(
         "test_gate_evidence.py",
     ],
     deps = [
-        "//tools:ci/bazel_parity",
-        "//tools:ci/gate_actions",
-        "//tools:ci/gate_boundary",
-        "//tools:ci/gate_collect",
-        "//tools:ci/gate_doc_readers",
         "//tools:ci/gate_evidence",
-        "//tools:ci/gate_flaky",
-        "//tools:ci/gate_junit",
-        "//tools:ci/gate_partition",
-        "//tools:ci/gate_refresh",
-        "//tools:ci/gate_replay",
-        "//tools:ci/gate_run",
         "//tools:ci/gate_select",
-        "//tools:ci/graph_impact",
-        "//tools:ci/graph_impact_tessera",
     ],
 )
 
@@ -8106,15 +8264,10 @@ ts_py_test(
     name = "test_gate_fail_closed",
     path = "tests/test_gate_fail_closed.py",
     library = ":test_gate_fail_closed_lib",
-    data = [
-        "//tools/bazel:build_files.py",
-        "//tools/bazel:generate.sh",
-        "//tools/bazel:graph.py",
-        "//tools/bazel:requirements.py",
-    ],
     deps = [
         "//src/tessera:identity",
-        "//tools:check_wheel",
+        "//tools:ci/gate_boundary",
+        "//tools:ci/gate_collect",
         "//tools:impacted_tests",
         ":test_packaging_lib",
         ":test_provenance_lib",
@@ -8131,15 +8284,10 @@ ts_py_test(
     name = "test_gate_fail_closed.bytes",
     path = "tests/test_gate_fail_closed.py",
     library = ":test_gate_fail_closed_lib",
-    data = [
-        "//tools/bazel:build_files.py",
-        "//tools/bazel:generate.sh",
-        "//tools/bazel:graph.py",
-        "//tools/bazel:requirements.py",
-    ],
     deps = [
         "//src/tessera:identity",
-        "//tools:check_wheel",
+        "//tools:ci/gate_boundary",
+        "//tools:ci/gate_collect",
         "//tools:impacted_tests",
         ":test_packaging_lib",
         ":test_provenance_lib",
@@ -8161,21 +8309,9 @@ ts_py_library(
         "//tools:ci/gate_budget.json",
     ],
     deps = [
-        "//tools:ci/bazel_parity",
         "//tools:ci/gate_actions",
-        "//tools:ci/gate_boundary",
-        "//tools:ci/gate_collect",
-        "//tools:ci/gate_doc_readers",
-        "//tools:ci/gate_evidence",
-        "//tools:ci/gate_flaky",
-        "//tools:ci/gate_junit",
-        "//tools:ci/gate_partition",
-        "//tools:ci/gate_refresh",
-        "//tools:ci/gate_replay",
         "//tools:ci/gate_run",
         "//tools:ci/gate_select",
-        "//tools:ci/graph_impact",
-        "//tools:ci/graph_impact_tessera",
     ],
 )
 
@@ -8183,15 +8319,8 @@ ts_py_test(
     name = "test_gate_flaky",
     path = "tests/test_gate_flaky.py",
     library = ":test_gate_flaky_lib",
-    data = [
-        "//tools/bazel:build_files.py",
-        "//tools/bazel:generate.sh",
-        "//tools/bazel:graph.py",
-        "//tools/bazel:requirements.py",
-    ],
     deps = [
         "//src/tessera:identity",
-        "//tools:check_wheel",
         "//tools:impacted_tests",
         ":test_packaging_lib",
         ":test_provenance_lib",
@@ -8208,15 +8337,8 @@ ts_py_test(
     name = "test_gate_flaky.bytes",
     path = "tests/test_gate_flaky.py",
     library = ":test_gate_flaky_lib",
-    data = [
-        "//tools/bazel:build_files.py",
-        "//tools/bazel:generate.sh",
-        "//tools/bazel:graph.py",
-        "//tools/bazel:requirements.py",
-    ],
     deps = [
         "//src/tessera:identity",
-        "//tools:check_wheel",
         "//tools:impacted_tests",
         ":test_packaging_lib",
         ":test_provenance_lib",
@@ -8238,21 +8360,9 @@ ts_py_library(
         "//tools:ci/gate_flaky.json",
     ],
     deps = [
-        "//tools:ci/bazel_parity",
-        "//tools:ci/gate_actions",
-        "//tools:ci/gate_boundary",
         "//tools:ci/gate_collect",
-        "//tools:ci/gate_doc_readers",
-        "//tools:ci/gate_evidence",
         "//tools:ci/gate_flaky",
-        "//tools:ci/gate_junit",
-        "//tools:ci/gate_partition",
-        "//tools:ci/gate_refresh",
-        "//tools:ci/gate_replay",
-        "//tools:ci/gate_run",
         "//tools:ci/gate_select",
-        "//tools:ci/graph_impact",
-        "//tools:ci/graph_impact_tessera",
     ],
 )
 
@@ -8260,20 +8370,6 @@ ts_py_test(
     name = "test_gate_population",
     path = "tests/test_gate_population.py",
     library = ":test_gate_population_lib",
-    data = [
-        "//tools/bazel:build_files.py",
-        "//tools/bazel:generate.sh",
-        "//tools/bazel:graph.py",
-        "//tools/bazel:requirements.py",
-    ],
-    deps = [
-        "//src/tessera:identity",
-        "//tools:check_wheel",
-        "//tools:impacted_tests",
-        ":test_packaging_lib",
-        ":test_provenance_lib",
-        ":test_standalone_boundary_lib",
-    ],
     lane = "torch",
     args = [
         "--budget='{\"enforce\":true,\"seconds\":80,\"slow\":{}}'",
@@ -8285,20 +8381,6 @@ ts_py_test(
     name = "test_gate_population.bytes",
     path = "tests/test_gate_population.py",
     library = ":test_gate_population_lib",
-    data = [
-        "//tools/bazel:build_files.py",
-        "//tools/bazel:generate.sh",
-        "//tools/bazel:graph.py",
-        "//tools/bazel:requirements.py",
-    ],
-    deps = [
-        "//src/tessera:identity",
-        "//tools:check_wheel",
-        "//tools:impacted_tests",
-        ":test_packaging_lib",
-        ":test_provenance_lib",
-        ":test_standalone_boundary_lib",
-    ],
     lane = "bytes",
     args = [
         "--budget='{\"enforce\":true,\"seconds\":80,\"slow\":{}}'",
@@ -8313,32 +8395,9 @@ ts_py_library(
     ],
     data = [
         "//:.github/workflows/gate.yml",
-        "//tools:ci/gate_budget.json",
-        "//tools:ci/gate_durations.json",
-        "//tools:ci/gate_flaky.json",
-        "//tools:ci/gate_prismaquant_requirements.txt",
-        "//tools:ci/gate_quarantine.json",
-        "//tools:ci/gate_replay_sample.json",
-        "//tools:ci/gate_requirements.txt",
-        "//tools:ci/gate_torch_requirements.txt",
-        "//tools:ci/graph_impact.sha256",
     ],
     deps = [
-        "//tools:ci/bazel_parity",
         "//tools:ci/gate_actions",
-        "//tools:ci/gate_boundary",
-        "//tools:ci/gate_collect",
-        "//tools:ci/gate_doc_readers",
-        "//tools:ci/gate_evidence",
-        "//tools:ci/gate_flaky",
-        "//tools:ci/gate_junit",
-        "//tools:ci/gate_partition",
-        "//tools:ci/gate_refresh",
-        "//tools:ci/gate_replay",
-        "//tools:ci/gate_run",
-        "//tools:ci/gate_select",
-        "//tools:ci/graph_impact",
-        "//tools:ci/graph_impact_tessera",
     ],
 )
 
@@ -10994,6 +11053,8 @@ ts_py_library(
         "test_b770_producer_review.py",
         "test_batched_encode_identity.py",
         "test_bazel_build.py",
+        "test_bazel_full_shards.py",
+        "test_bazel_gate.py",
         "test_bench_kda_geometry.py",
         "test_bench_kda_timing_scope.py",
         "test_bench_routed_load_nvfp4.py",
@@ -11048,6 +11109,7 @@ ts_py_library(
         "test_dense_prepared_census.py",
         "test_dev_mode_seal_check.py",
         "test_diagonals.py",
+        "test_directory_read_census.py",
         "test_doc_alphabet_70.py",
         "test_doc_route_71.py",
         "test_doc_scope_69.py",
@@ -11313,6 +11375,7 @@ ts_py_library(
         "test_regdirect_op_cuda.py",
         "test_regdirect_run_sh.py",
         "test_release_tail_sharding.py",
+        "test_remote_history.py",
         "test_report_full_engine_resources_evidence.py",
         "test_research_selected_driver_imports.py",
         "test_residency_plan.py",
@@ -11355,6 +11418,8 @@ ts_py_library(
         "test_scale_codec.py",
         "test_scale_refit.py",
         "test_seal_prefetch.py",
+        "test_secret_scan.py",
+        "test_seeded_breaks.py",
         "test_selected_bf16_math.py",
         "test_selected_population.py",
         "test_selected_window_kernel.py",
@@ -11752,6 +11817,8 @@ ts_py_library(
         "test_b770_producer_review.py",
         "test_batched_encode_identity.py",
         "test_bazel_build.py",
+        "test_bazel_full_shards.py",
+        "test_bazel_gate.py",
         "test_bench_kda_geometry.py",
         "test_bench_kda_timing_scope.py",
         "test_bench_routed_load_nvfp4.py",
@@ -11806,6 +11873,7 @@ ts_py_library(
         "test_dense_prepared_census.py",
         "test_dev_mode_seal_check.py",
         "test_diagonals.py",
+        "test_directory_read_census.py",
         "test_doc_alphabet_70.py",
         "test_doc_route_71.py",
         "test_doc_scope_69.py",
@@ -12071,6 +12139,7 @@ ts_py_library(
         "test_regdirect_op_cuda.py",
         "test_regdirect_run_sh.py",
         "test_release_tail_sharding.py",
+        "test_remote_history.py",
         "test_report_full_engine_resources_evidence.py",
         "test_research_selected_driver_imports.py",
         "test_residency_plan.py",
@@ -12113,6 +12182,8 @@ ts_py_library(
         "test_scale_codec.py",
         "test_scale_refit.py",
         "test_seal_prefetch.py",
+        "test_secret_scan.py",
+        "test_seeded_breaks.py",
         "test_selected_bf16_math.py",
         "test_selected_population.py",
         "test_selected_window_kernel.py",
@@ -19014,6 +19085,72 @@ ts_py_library(
 )
 
 ts_py_test(
+    name = "test_remote_history",
+    path = "tests/test_remote_history.py",
+    library = ":test_remote_history_lib",
+    data = [
+        "//tools/bazel:build_files.py",
+        "//tools/bazel:generate.sh",
+        "//tools/bazel:requirements.py",
+    ],
+    deps = [
+        "//src/tessera:identity",
+        "//tools:ci/bazel_gate",
+        "//tools:ci/bazel_parity",
+        "//tools:ci/gate_select",
+        "//tools:ci/graph_impact",
+        "//tools:ci/graph_impact_tessera",
+        "//tools:impacted_tests",
+        ":test_packaging_lib",
+        ":test_provenance_lib",
+        ":test_standalone_boundary_lib",
+    ],
+    lane = "torch",
+    args = [
+        "--budget='{\"enforce\":true,\"seconds\":80,\"slow\":{}}'",
+    ],
+    timeout = "moderate",
+)
+
+ts_py_test(
+    name = "test_remote_history.bytes",
+    path = "tests/test_remote_history.py",
+    library = ":test_remote_history_lib",
+    data = [
+        "//tools/bazel:build_files.py",
+        "//tools/bazel:generate.sh",
+        "//tools/bazel:requirements.py",
+    ],
+    deps = [
+        "//src/tessera:identity",
+        "//tools:ci/bazel_gate",
+        "//tools:ci/bazel_parity",
+        "//tools:ci/gate_select",
+        "//tools:ci/graph_impact",
+        "//tools:ci/graph_impact_tessera",
+        "//tools:impacted_tests",
+        ":test_packaging_lib",
+        ":test_provenance_lib",
+        ":test_standalone_boundary_lib",
+    ],
+    lane = "bytes",
+    args = [
+        "--budget='{\"enforce\":true,\"seconds\":80,\"slow\":{}}'",
+    ],
+    timeout = "moderate",
+)
+
+ts_py_library(
+    name = "test_remote_history_lib",
+    srcs = [
+        "test_remote_history.py",
+    ],
+    deps = [
+        "//tools:ci/remote_gate",
+    ],
+)
+
+ts_py_test(
     name = "test_report_full_engine_resources_evidence",
     path = "tests/test_report_full_engine_resources_evidence.py",
     library = ":test_report_full_engine_resources_evidence_lib",
@@ -22405,6 +22542,144 @@ ts_py_library(
         ":hessian_reference_support",
         ":reuse_authority_fixture",
         ":test_hessian_resident_binding_lib",
+    ],
+)
+
+ts_py_test(
+    name = "test_secret_scan",
+    path = "tests/test_secret_scan.py",
+    library = ":test_secret_scan_lib",
+    lane = "torch",
+    args = [
+        "--budget='{\"enforce\":true,\"seconds\":80,\"slow\":{}}'",
+    ],
+    timeout = "moderate",
+)
+
+ts_py_test(
+    name = "test_secret_scan.bytes",
+    path = "tests/test_secret_scan.py",
+    library = ":test_secret_scan_lib",
+    lane = "bytes",
+    args = [
+        "--budget='{\"enforce\":true,\"seconds\":80,\"slow\":{}}'",
+    ],
+    timeout = "moderate",
+)
+
+ts_py_library(
+    name = "test_secret_scan_lib",
+    srcs = [
+        "test_secret_scan.py",
+    ],
+    data = [
+        "//:files/.github/workflows",
+        "//tools:ci/check_no_secret_leak.sha256",
+    ],
+    deps = [
+        "//tools:ci/check_no_secret_leak",
+    ],
+)
+
+ts_py_test(
+    name = "test_seeded_breaks",
+    path = "tests/test_seeded_breaks.py",
+    library = ":test_seeded_breaks_lib",
+    data = [
+        "//:pyproject.toml",
+        "//experiments:t8_census/profile_unit_encode.sh",
+        "//experiments:t8r_speed/ab_arms.sh",
+        "//experiments:t8r_speed/bench_t8r.sh",
+        "//experiments:t8r_speed/build_ext.sh",
+        "//tools/bazel:build_files.py",
+        "//tools/bazel:generate.sh",
+        "//tools/bazel:requirements.py",
+    ],
+    deps = [
+        "//experiments:routed_pair_oracle",
+        "//experiments:t8_census/profile_unit_encode",
+        "//experiments:t8r_speed/bench_class_dispatch",
+        "//experiments:t8r_speed/bench_geometry",
+        "//experiments:t8r_speed/bench_t8r",
+        "//experiments:t8r_speed/bench_uniform_production_arm",
+        "//experiments:t8r_speed/finalize_native_build",
+        "//experiments:t8r_speed/stageprev_793_claim_contract_cycle",
+        "//src/tessera:identity",
+        "//src/tessera:provenance",
+        "//src/tessera:rung_allowability",
+        "//tools:check_wheel",
+        "//tools:ci/bazel_parity",
+        "//tools:ci/gate_select",
+        "//tools:ci/graph_impact",
+        "//tools:ci/graph_impact_tessera",
+        "//tools:impacted_tests",
+        "//tools:tessera_attest",
+        ":_whole_phase_sdk",
+        ":test_alphabet_lib",
+        ":test_packaging_lib",
+        ":test_provenance_lib",
+        ":test_standalone_boundary_lib",
+    ],
+    lane = "torch",
+    args = [
+        "--budget='{\"enforce\":true,\"seconds\":80,\"slow\":{}}'",
+    ],
+    timeout = "moderate",
+)
+
+ts_py_test(
+    name = "test_seeded_breaks.bytes",
+    path = "tests/test_seeded_breaks.py",
+    library = ":test_seeded_breaks_lib",
+    data = [
+        "//:pyproject.toml",
+        "//experiments:t8_census/profile_unit_encode.sh",
+        "//experiments:t8r_speed/ab_arms.sh",
+        "//experiments:t8r_speed/bench_t8r.sh",
+        "//experiments:t8r_speed/build_ext.sh",
+        "//tools/bazel:build_files.py",
+        "//tools/bazel:generate.sh",
+        "//tools/bazel:requirements.py",
+    ],
+    deps = [
+        "//experiments:routed_pair_oracle",
+        "//experiments:t8_census/profile_unit_encode",
+        "//experiments:t8r_speed/bench_class_dispatch",
+        "//experiments:t8r_speed/bench_geometry",
+        "//experiments:t8r_speed/bench_t8r",
+        "//experiments:t8r_speed/bench_uniform_production_arm",
+        "//experiments:t8r_speed/finalize_native_build",
+        "//experiments:t8r_speed/stageprev_793_claim_contract_cycle",
+        "//src/tessera:identity",
+        "//src/tessera:provenance",
+        "//src/tessera:rung_allowability",
+        "//tools:check_wheel",
+        "//tools:ci/bazel_parity",
+        "//tools:ci/gate_select",
+        "//tools:ci/graph_impact",
+        "//tools:ci/graph_impact_tessera",
+        "//tools:impacted_tests",
+        "//tools:tessera_attest",
+        ":_whole_phase_sdk",
+        ":test_alphabet_lib",
+        ":test_packaging_lib",
+        ":test_provenance_lib",
+        ":test_standalone_boundary_lib",
+    ],
+    lane = "bytes",
+    args = [
+        "--budget='{\"enforce\":true,\"seconds\":80,\"slow\":{}}'",
+    ],
+    timeout = "moderate",
+)
+
+ts_py_library(
+    name = "test_seeded_breaks_lib",
+    srcs = [
+        "test_seeded_breaks.py",
+    ],
+    deps = [
+        "//tools:ci/seeded_breaks",
     ],
 )
 
@@ -28157,6 +28432,8 @@ ts_py_library(
         "test_b770_producer_review.py",
         "test_batched_encode_identity.py",
         "test_bazel_build.py",
+        "test_bazel_full_shards.py",
+        "test_bazel_gate.py",
         "test_bench_kda_geometry.py",
         "test_bench_kda_timing_scope.py",
         "test_bench_routed_load_nvfp4.py",
@@ -28211,6 +28488,7 @@ ts_py_library(
         "test_dense_prepared_census.py",
         "test_dev_mode_seal_check.py",
         "test_diagonals.py",
+        "test_directory_read_census.py",
         "test_doc_alphabet_70.py",
         "test_doc_route_71.py",
         "test_doc_scope_69.py",
@@ -28477,6 +28755,7 @@ ts_py_library(
         "test_regdirect_op_cuda.py",
         "test_regdirect_run_sh.py",
         "test_release_tail_sharding.py",
+        "test_remote_history.py",
         "test_report_full_engine_resources_evidence.py",
         "test_research_selected_driver_imports.py",
         "test_residency_plan.py",
@@ -28519,6 +28798,8 @@ ts_py_library(
         "test_scale_codec.py",
         "test_scale_refit.py",
         "test_seal_prefetch.py",
+        "test_secret_scan.py",
+        "test_seeded_breaks.py",
         "test_selected_bf16_math.py",
         "test_selected_population.py",
         "test_selected_window_kernel.py",

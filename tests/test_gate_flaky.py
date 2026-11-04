@@ -16,8 +16,14 @@ ROOT = Path(__file__).resolve().parents[1]
 NODE = 'tests/test_probe.py::test_probe'
 
 
+MODULES = {
+    'gate_flaky': ROOT / 'tools/ci/gate_flaky.py',
+    'gate_select': ROOT / 'tools/ci/gate_select.py',
+}
+
+
 def load(name):
-    spec = importlib.util.spec_from_file_location(name, ROOT / 'tools/ci' / f'{name}.py')
+    spec = importlib.util.spec_from_file_location(name, MODULES[name])
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module
