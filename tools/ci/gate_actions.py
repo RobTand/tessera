@@ -74,7 +74,11 @@ def assess_attempts(plan, assignments, attempts):
             effective[index] = attempt
             if verdict == 'fail':
                 failed.append(index)
-    return {'schema': 'prismabuild.gate_aggregate.v1', 'retry_indices': sorted(retry),
+    warnings = [dict(warning, lane=attempts[attempt][index]['lane'])
+                for index, attempt in effective.items()
+                for warning in attempts[attempt][index].get('budget_warnings', [])]
+    return {'schema': 'prismabuild.gate_aggregate.v1', 'budget_warnings': warnings,
+            'retry_indices': sorted(retry),
             'failed_indices': sorted(failed), 'missing_indices': sorted(missing),
             'effective_attempts': effective, 'exit_code': 1 if failed else 75 if missing else 0}
 
@@ -151,11 +155,17 @@ def main(argv=None):
         message = f"{marker}: failed shards {result['failed_indices']}; missing verdicts {result['missing_indices']}"
         records = [attempts[attempt][index] for index, attempt in result['effective_attempts'].items()]
         population = population_summary(records)
+        warnings = '\n'.join(
+            f"BUDGET_WARNING: {row['nodeid']}: {row['seconds']:.3f}s > "
+            f"{row['budget_seconds']:.3f}s policy ({row['lane']})"
+            for row in result['budget_warnings'])
         print(message)
         print(population)
+        if warnings:
+            print(warnings)
         if args.summary:
             with args.summary.open('a') as handle:
-                handle.write('## Gate verdict\n\n' + message + '\n\n```text\n' + population + '\n```\n')
+                handle.write('## Gate verdict\n\n' + message + '\n\n```text\n' + population + '\n' + warnings + '\n```\n')
         return result['exit_code']
     except (OSError, ValueError, KeyError, TypeError) as error:
         print('NO_VERDICT: ' + str(error), file=sys.stderr)

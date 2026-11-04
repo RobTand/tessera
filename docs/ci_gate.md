@@ -1,30 +1,32 @@
-# Hosted CPU merge gate
+# Merge gate
 
-Every PR push selects tests with `tools/impacted_tests.py`, Tessera's reverse
-import graph. Selector errors and empty selector output for changed paths select
-the full population. Changes to gate or
-workflow files, and the selector itself, also select the full population.
-Documentation-only changes outside `docs/schema/` select standalone, packaging
-and provenance checks plus all test modules naming Markdown, reStructuredText
-or issue-snapshot inputs, including tests that import such readers through
-helper modules. `tools/ci/gate_doc_readers.py` scans Python modules under
-`tests/` without importing them and follows their reverse import closure.
-It includes transitive helper imports, package and bare imports, relative
-imports and ambiguous module spellings. Only test files enter the selection;
-unrelated helpers do not. Comments and docstrings are citations, not input declarations.
-This conservatively retains fixture-only consumers too. Parse/read errors
-select the full population. Ordinary changes retain reverse-import and
-explicit data-read dependencies. Named kernel-generated boot ID, memory maps
-and mount records create no repository dependency; arbitrary external paths
-and proc aliases retain conservative consumers. The final check is `pr-gate`.
-The workflow handles `opened`, `synchronize`, and `reopened` events. Label
-changes take effect on the next push or reopen.
+The merge gate runs on Bazel through BuildBuddy (#1589); [docs/bazel.md](bazel.md) describes the build.
+`.github/workflows/gate.yml` keeps the required check names: `pr-gate` on ordinary pull requests, needed to queue, and `gate` on Mergify's batch drafts, needed to merge. It has three working jobs.
 
-The final `gate` check runs the full CPU population on same-repository Mergify
-batch heads. Their branches start `mergify/merge-queue/`, and their author must
-have login `mergify[bot]` and numeric ID 37929162. Same-repository PRs labelled
-`gate-canary` use that full path too. The checkout is the event's head SHA,
-which is the integrated commit for a batch draft.
+- **Bazel.** It starts `tools/ci/bazel_gate.py` on a Remote Bazel runner through `tools/ci/remote_gate.py`. Base and head are Mergify's queue-aware refs for a batch draft (`scopes-git-refs`). For an ordinary pull request they are GitHub's merge commit and its first parent, current master.
+  - bazel-diff v70.0.2 selects the impacted targets.
+  - A change to Bazel's own inputs (`MODULE.bazel`, its lock, `.bazelrc`, the root `BUILD.bazel`, `tools/bazel/**`), to `gate.yml` or to the gate scripts tests everything.
+  - A Python file no target holds fails the gate: the BUILD files are stale. Any other file no target reads selects nothing.
+  - Detection that can't establish what to test fails the gate; it never passes empty.
+  - The selected tests run on amd64 remote executors, and the runner lane on the runner's own checkout.
+  - The impacted targets' packages are uploaded to Mergify as scopes (`scopes-upload`).
+  - In the same run, the generated BUILD files, the lock export and the static population parity (`tools/ci/bazel_parity.py`) must be current. The graph-impact check (`tools/ci/graph_impact_tessera.py`) prints its summary line and fails a deepening change.
+- **Boundary.** On a hosted runner with only the no-torch pins, it keeps the proofs the no-torch lane made beside its tests: the byte layer imports without torch, an empty denylist refuses, the wheel and sdist ship what they must, and the standalone-boundary allowlist only shrinks (`tools/ci/gate_boundary.py`). `tools/ci/gate_policy.py` adds the base-relative policies below: budgets never grow, and quarantine grows only in a change of its own, with open owners.
+- **Post-merge.** On every push to master, two disjoint shards per architecture cover `//...` on amd64 and arm64, excluding manual/GPU targets and the amd64 runner lane on arm64. It records `POST_MERGE_RECORD`, which says whether the merged change's own selection would have caught each failure. An architecture that executes no test is an error.
+
+**Full runs.** Fallback and post-merge selection return a plan. Each shard is a separate Remote Bazel run capped at 55 minutes. Only gate fallback permits at most two concurrent shard runs per gate controller, `--jobs=16` each, using self-hosted action pools without cloud fallback. Each selected gate and post-merge controller stays serial. Agent/development admission remains operationally limited to one run per repository. Mergify's 30-minute `checks_timeout` and merge conditions are unchanged. Its existing two parallel batch checks can overlap two fallback gates with two shards each, four self-hosted Remote Bazel Runs for Bazel, lock or gate-workflow changes. Excess demand queues on the executors; on dl380g10's 40 CPUs the expected effect is longer shards rather than refusal or timeout. Report any contrary proof result. Per-PR/per-SHA workflow concurrency remains, without a shared job group or scheduler. TL3 keeps BuildBuddy priority when a fallback batch lands while its queue is backed up; no scheduler is added. Every shard uses a committed `tools/bazel/full_targets/*.targets` file through `--target_pattern_file`, never inline full-population labels. The generator partitions every eligible rule, including non-test build targets, by `sha256(label).digest()[0] % 2`. A live query must match the committed lists and manifest. The client requires exactly two disjoint, complete shard results per architecture at the tested HEAD and keeps every invocation ID in the merged record. Missing results, build errors and hard TIMEOUTs fail. Fulls disable both remote result acceptance and local test-result caching.
+
+**History.** Before the first Bazel query in every runner, the client hydrates all origin branches, tags and blobs with the approved bbrun full-history preflight. It verifies the tested HEAD is unchanged, that no reachable objects are missing, and that no shallow or promisor metadata remains. Fetch disables automatic GC and maintenance. Cleanup accepts an already-removed promisor marker; other failures retain their stage and type without Git diagnostics or exception messages. Interrupts propagate.
+
+**Final verdicts.** Required checks require the complete Bazel job to succeed, including its final keyed artifact scan. A post-merge selection error remains a `gate-error` while every full shard still executes. Unknown selection is not published as a measured detection miss.
+
+**Budgets.** Per-test budget overruns appear in `budget_warnings` and summaries without changing a verdict. Assertions and hard TIMEOUTs fail on the first attempt. There are no budget-only or timeout reruns. The budget-growth check remains enforced.
+
+**Secrets.** No child the gate starts on the runner, other than Bazel, gets `BUILDBUDDY_API_KEY`, `MERGIFY_TOKEN`, `GITHUB_TOKEN` or any `*_API_KEY` or `*_TOKEN`. `tools/ci/check_no_secret_leak.py` must pass before any artifact upload.
+
+CUDA-gated tests are not covered: every Bazel test runs with `CUDA_VISIBLE_DEVICES` empty, and the 30 files whose every node needs CUDA are tagged `gpu` and left out. Their run stays on PrismaBuild with `--strict-cuda`.
+
+The sections below describe the hosted gate this replaced. Its populations, budgets and quarantine rules carry over into the Bazel runner (`tools/bazel/python_runner.py`); its scheduling does not.
 
 ## CPU populations
 
@@ -231,3 +233,5 @@ are policy failures. The comparison uses the event's base tip. A stale PR
 that still carries an entry removed on master must merge master before it
 can pass. A Mergify batch containing quarantine growth and another PR's
 code fails the quarantine-only rule; land the growth separately first.
+
+The final required-key scans run under Python 3.14 to decode compact zstd execution logs. If the pinned scanner still reports a file as not scanned, the upload wrapper excludes that file and requires a clean second scan. A secret hit remains fatal even when an incomplete scan takes precedence in the core's exit code. The vendored scanner bytes are unchanged. Native artifacts are scanned in the fixed checkout staging directory before publication; hosted artifacts are scanned in `gate-output`.

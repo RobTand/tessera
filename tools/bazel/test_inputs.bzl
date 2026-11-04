@@ -15,6 +15,14 @@ _CONSTRUCTION_REASON = "experiments/t8r_speed/bench_dense_module.py reads this c
 _PRISMAQUANT = "it reads PrismaQuant, pinned in tools/ci/gate_prismaquant_requirements.txt; its own dependencies are heavy, so only the tests that read it carry it."
 
 TEST_INPUTS = {
+    "//tests:test_bazel_gate": struct(
+        data = ["//tools/bazel:BUILD.bazel"],
+        reason = "the pool contract reads the handwritten platform BUILD file; BUILD files are excluded from inferred source inputs.",
+    ),
+    "//tests:test_seeded_breaks": struct(
+        data = ["//tests:BUILD.bazel"],
+        reason = "the exact-label contract reads the generated test target declarations; BUILD files are excluded from inferred source inputs.",
+    ),
     "//tests:test_standalone_boundary": struct(
         data = ["//src/tessera:files"],
         reason = "scan() reads every module under src/tessera through the root its caller passes (default the repository root).",

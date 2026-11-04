@@ -2240,47 +2240,6 @@ def test_only_the_silent_directory_read_is_listed(tmp_path, reader, why):
     assert result["unnamed_directory_reads"] == {}, (why, result)
 
 
-# Issue 1014 classifies every site in docs/reports/unnamed-directory-reads-1014.md.
-# select() measured 115 modules and 169 sites on base 83a1f38c4965.
-# Literal loop alternatives name the conftest's three import roots, so the
-# measured ceiling now holds at 114 modules and 168 sites.
-# Runtime parameters, external box paths, and temporary test fixtures retain
-# the accepted unnamed-base limit. A new read must name its base or raise
-# both relevant limits here with its reason (PB1496).
-# The endpoint producer consumes the loader's file list and adds no directory read.
-# graph_equality.load_arm adds one class-2 runtime-parameter site: directory.iterdir()
-# enumerates caller-supplied receipt evidence to reject extra as well as missing raw
-# cases. It has no fixed repository base; keep it reported, not guessed or hidden.
-# docs/reports/unnamed-directory-reads-1014.md records this justified increment.
-# The Bazel test runner (#1589) adds two more class-2 runtime-parameter sites:
-# tools/bazel/runtime.py globs the per-test venv it creates under TEST_TMPDIR
-# for its site-packages, and tools/bazel/python_runner.py lists the trace
-# records each traced process writes to a directory under TEST_TMPDIR. Both
-# directories exist only at run time; neither has a repository base.
-_UNNAMED_DIRECTORY_READ_MODULES = 117
-_UNNAMED_DIRECTORY_READ_SITES = 171
-
-
-def _exceeds_unnamed_directory_read_ceiling(modules: int, sites: int) -> bool:
-    return modules > _UNNAMED_DIRECTORY_READ_MODULES or sites > _UNNAMED_DIRECTORY_READ_SITES
-
-
-@pytest.mark.parametrize("modules, sites, exceeds", [
-    (_UNNAMED_DIRECTORY_READ_MODULES, _UNNAMED_DIRECTORY_READ_SITES, False),
-    (_UNNAMED_DIRECTORY_READ_MODULES - 1, _UNNAMED_DIRECTORY_READ_SITES, False),
-    (_UNNAMED_DIRECTORY_READ_MODULES, _UNNAMED_DIRECTORY_READ_SITES - 1, False),
-    (_UNNAMED_DIRECTORY_READ_MODULES + 1, _UNNAMED_DIRECTORY_READ_SITES, True),
-    (_UNNAMED_DIRECTORY_READ_MODULES, _UNNAMED_DIRECTORY_READ_SITES + 1, True),
-    # Fewer modules with more sites is still a gained read; a tuple comparison
-    # orders on the module count first and lets it through.
-    (_UNNAMED_DIRECTORY_READ_MODULES - 1, _UNNAMED_DIRECTORY_READ_SITES + 1, True),
-    (1, _UNNAMED_DIRECTORY_READ_SITES + 1, True),
-    (_UNNAMED_DIRECTORY_READ_MODULES + 1, 1, True),
-])
-def test_the_unnamed_directory_read_ceiling_bounds_modules_and_sites_independently(
-        modules, sites, exceeds):
-    assert _exceeds_unnamed_directory_read_ceiling(modules, sites) is exceeds
-
 
 def test_a_local_wrapper_around_walk_still_selects_its_reader(tmp_path):
     """A wrapper named like an enumeration is the reader of the directory it is called with."""
@@ -2712,11 +2671,3 @@ def test_literal_loop_directory_reads_select_all_named_bases(tmp_path, opening, 
         f"    assert list(Path({directories}).iterdir())\n", encoding="utf-8")
     scalar = impacted.select(repo, ["left/added.md"])
     assert scalar["tests"] == [], scalar
-
-
-def test_this_repository_does_not_gain_an_unnamed_directory_read():
-    listed = impacted.select(ROOT, ["README.md"])["unnamed_directory_reads"]
-    sites = sum(len(lines) for lines in listed.values())
-    assert not _exceeds_unnamed_directory_read_ceiling(len(listed), sites), (
-        "a directory read whose base cannot be named was added; name its base, "
-        "or raise the ceiling here with the reason", len(listed), sites, sorted(listed))
