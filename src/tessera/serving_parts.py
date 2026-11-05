@@ -313,22 +313,25 @@ def exporter_code_root() -> Path:
 
 
 def _installed_commit_id() -> "str | None":
-    """The commit the running Tessera was installed from, if recorded.
+    """Return the installed Tessera commit if its distribution records one.
 
-    A non-editable pip install from git records ``direct_url.json`` with the
-    commit in its dist-info; an editable install is a checkout, so git
-    answers before this is ever asked.  The search is restricted to the
-    directory holding the imported ``tessera`` package: a global scan would
-    happily return some OTHER environment's install of Tessera, which is
-    the same provenance hole stamped as a value (#691 item 4).
+    Search only the directory that holds the imported ``tessera`` package.
+    Match the distribution name before reading ``direct_url.json``.
+    Other distributions cannot supply the Tessera commit.
     """
+    from . import DISTRIBUTION
+
     holder = Path(__file__).resolve().parents[1]
     try:
         from importlib.metadata import distributions
     except ImportError:
         return None
+    owner_name = re.sub(r"[-_.]+", "-", DISTRIBUTION).lower()
     for dist in distributions(path=[str(holder)]):
         try:
+            name = re.sub(r"[-_.]+", "-", dist.metadata.get("Name", "")).lower()
+            if name != owner_name:
+                continue
             text = dist.read_text("direct_url.json")
         except Exception:
             continue
