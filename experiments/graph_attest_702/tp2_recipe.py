@@ -97,6 +97,27 @@ def require_producer(root: Path, commit: str, expected: str, *, exact_head: bool
     return digest
 
 
+BATCH_KL_REFUSAL = (
+    "batch KL refused: no batch-KL scorer is available; #2566/#1318 handoff lacks "
+    "owner-supported live TP2/MTP1 target-model attachment, target/drafter attribution, "
+    "request/row alignment and complete batch outputs with observed execution provenance; "
+    "configured handoff is not an implemented adapter")
+
+
+def batch_kl_scorer():
+    """The one home for batch-KL scorer availability and its refusal (#1570).
+
+    window_driver.prepare consults it before any plan, disk check, write, serve
+    or probe; LocalArm.collect_kl consults it again at the live probe seam. It
+    takes no configuration: a BATCH_KL declaration is intake, never proof that
+    a scorer exists. No owner-supported adapter exists, so it always refuses.
+    A reviewed adapter replaces this body and returns a callable
+    ``scorer(local_arm, arm, peer_meta)``; CPU tests replace this function to
+    model a present scorer.
+    """
+    raise Refused(BATCH_KL_REFUSAL)
+
+
 def check_control_record(recorded, current, *, where, refusal):
     """Scope/geometry/comparability must still match exactly; only the recorded
     run identity (commits, digests, stamps) is a D32 seal that dev mode stamps."""

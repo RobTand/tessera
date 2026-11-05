@@ -124,6 +124,10 @@ def prepare(root: Path, path: Path, env: dict, predecessor_path: Path | None, ce
     recipe.require_producer(Path(__file__).resolve().parents[2], env.get("PRODUCER_COMMIT", ""),
                             env.get("PRODUCER_SHA256", ""), exact_head=True)
     config = recipe.inputs(env, live=True)
+    if config.get("batch_kl") is not None:
+        # #1570: refuse a batch-KL window here, before planning, disk checks,
+        # any write, serve or probe. The declaration is never the scorer.
+        recipe.batch_kl_scorer()
     mode = config.get("window_mode", "graph-control")
     arms = recipe.plan(path, mode=mode, matrix_cells=config.get("matrix_cells"))
     if any(arm.get("fabric", config["fabric"]) != config["fabric"] for arm in arms):
