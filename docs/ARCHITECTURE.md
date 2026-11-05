@@ -6877,6 +6877,33 @@ loader gates on them. That declaration is about the bytes and is
 derived from them, so it is exactly the kind of statement this paragraph
 declines to make about vLLM's replication rule, which is neither.)
 
+**World-size evidence: grammar in the wheel, retained bytes at an explicit
+root (tessera#1194).** Two checks read a `world_size_receipts` entry, and they
+are not the same claim. `validate_serving_contract` is the packaged check. It
+checks grammar only: one `route_traces` path per rank of the receipt's world,
+each under `WORLD_SIZE_DATA_ROOT`, and a refusal of an empty list that names
+the `route_traces` field. It reads no `experiments/` file, so it works from
+the wheel, and it returns `None`. A grammar pass is never verified retained
+evidence. `contract.verify_world_size_evidence` is the evidence boundary. The
+caller gives it an explicit `evidence_root` and a binding of each trace path
+to the sha256 and byte size of its retained bytes (the receipt markdown quotes
+the sha256 beside each path). It never discovers a checkout. It resolves each
+path under the root, symlinks included, and refuses a path that resolves
+outside it. It then holds the raw file bytes to the binding's size and to
+their sha256, the same hash the tree test reads. Only a full pass returns
+`evidence: verified_retained_evidence` with one record per serve and rank.
+Each refusal names the serve, the trace and the reason, and each reason is a
+`WORLD_SIZE_*` constant in `contract.py` that the tests derive their
+expectations from: an empty list, a path named twice, an unbound trace, a
+size mismatch, changed bytes, a missing file and an escape from the root.
+**The duplicate scope is one serve.** A path named twice inside one serve is
+refused, because each rank of a serve writes its own trace. Two serves may
+name the same file: each serve still has one trace per rank, and the verifier
+verifies the shared file once for each serve against its binding. Before
+tessera#1194 the packaged check kept one set of trace paths for the whole
+receipt and refused that sharing. The committed receipt names four distinct
+files, so its result does not change.
+
 ### 3.9 The MX scale plane is priced, written and decoded, and served by nothing
 
 Schema minor 8 (2026-09-09, #443 bullets 1 and 2) adds `ScalePlaneKind.MX`

@@ -1606,6 +1606,195 @@ def test_the_single_rank_kl_block_is_the_committed_table(contract):
         assert block["issue"] in text and "route_only" in text
 
 
+# --- retained world-size evidence (tessera#1194) ------------------------------
+#
+# The packaged validator checks grammar only.  The retained bytes are checked
+# by ``contract.verify_world_size_evidence`` against an explicit evidence root
+# and a sha256-and-size binding per trace.  The tests below build synthetic
+# evidence under ``tmp_path``; they read no retained artifact.  Every expected
+# reason is the owner's constant.  Refusals the grammar already made before
+# tessera#1194 keep their tests above: the rank count is
+# ``test_a_serve_needs_one_route_trace_per_rank``.
+
+
+def _evidence_verifier():
+    import tessera.serving.contract as owner
+
+    assert hasattr(owner, "verify_world_size_evidence"), (
+        "tessera.serving.contract owns no verify_world_size_evidence")
+    return owner
+
+
+def _synthetic_world_size_evidence(root, receipt) -> dict:
+    """Write synthetic bytes at every trace path ``receipt`` names, under
+    ``root``, and return the sha256-and-size binding of each path."""
+    import hashlib
+
+    paths = sorted({path for serve in receipt["serves"] for path in serve["route_traces"]})
+    contents = {path: json.dumps({"schema": "tessera.route_trace/1", "synthetic": path,
+                                  "entries": []}, sort_keys=True).encode("utf-8")
+                for path in paths}
+    for path, raw in contents.items():
+        (root / path).parent.mkdir(parents=True, exist_ok=True)
+        (root / path).write_bytes(raw)
+    return {path: {"sha256": hashlib.sha256(raw).hexdigest(), "size": len(raw)}
+            for path, raw in contents.items()}
+
+
+def test_world_size_receipt_shared_trace_between_serves(contract, tmp_path):
+    """Two serves may name one file; one serve may not name a file twice."""
+    def share(c):
+        serves = c["tensor_parallel"]["world_size_receipts"][0]["serves"]
+        serves[1]["route_traces"] = list(serves[0]["route_traces"])
+
+    shared = _mutated(contract, share)
+    try:
+        validate_serving_contract(shared)
+    except ValueError as error:
+        refusal = str(error)
+    else:
+        refusal = None
+    assert refusal is None, refusal
+
+    owner = _evidence_verifier()
+    receipt = shared["tensor_parallel"]["world_size_receipts"][0]
+    bindings = _synthetic_world_size_evidence(tmp_path, receipt)
+    verified = owner.verify_world_size_evidence(receipt, evidence_root=tmp_path,
+                                                bindings=bindings)
+    assert verified["evidence"] == owner.WORLD_SIZE_EVIDENCE_VERIFIED
+    per_serve = [[t["path"] for t in verified["traces"] if t["serve"] == j]
+                 for j in range(len(receipt["serves"]))]
+    assert per_serve == [serve["route_traces"] for serve in receipt["serves"]]
+
+    def repeat(c):
+        serve = c["tensor_parallel"]["world_size_receipts"][0]["serves"][0]
+        serve["route_traces"] = [serve["route_traces"][0]] * len(serve["route_traces"])
+
+    first = contract["tensor_parallel"]["world_size_receipts"][0]["serves"][0]["route_traces"][0]
+    with pytest.raises(ValueError, match=re.escape(
+            f"route_traces[1] {first!r} {owner.WORLD_SIZE_TRACE_REPEATED}")):
+        validate_serving_contract(_mutated(contract, repeat))
+
+
+def test_world_size_evidence_refuses_an_empty_route_traces_list(contract, tmp_path):
+    owner = _evidence_verifier()
+    receipt = copy.deepcopy(contract["tensor_parallel"]["world_size_receipts"][0])
+    bindings = _synthetic_world_size_evidence(tmp_path, receipt)
+    receipt["serves"][1]["route_traces"] = []
+    with pytest.raises(ValueError, match=re.escape(
+            f"serves[1].route_traces {owner.WORLD_SIZE_EVIDENCE_EMPTY}")):
+        owner.verify_world_size_evidence(receipt, evidence_root=tmp_path, bindings=bindings)
+    bad = _mutated(contract, lambda c: c["tensor_parallel"]["world_size_receipts"][0]
+                   ["serves"][1].__setitem__("route_traces", []))
+    with pytest.raises(ValueError, match=re.escape(
+            f"serves[1].route_traces {owner.WORLD_SIZE_EVIDENCE_EMPTY}")):
+        validate_serving_contract(bad)
+
+
+def test_world_size_evidence_refuses_a_path_repeated_inside_one_serve(contract, tmp_path):
+    owner = _evidence_verifier()
+    receipt = copy.deepcopy(contract["tensor_parallel"]["world_size_receipts"][0])
+    bindings = _synthetic_world_size_evidence(tmp_path, receipt)
+    traces = receipt["serves"][0]["route_traces"]
+    traces[1] = traces[0]
+    with pytest.raises(ValueError, match=re.escape(
+            f"serves[0].route_traces[1] {traces[0]!r} {owner.WORLD_SIZE_TRACE_REPEATED}")):
+        owner.verify_world_size_evidence(receipt, evidence_root=tmp_path, bindings=bindings)
+
+
+def test_world_size_evidence_refuses_changed_bytes(contract, tmp_path):
+    owner = _evidence_verifier()
+    receipt = copy.deepcopy(contract["tensor_parallel"]["world_size_receipts"][0])
+    bindings = _synthetic_world_size_evidence(tmp_path, receipt)
+    path = receipt["serves"][1]["route_traces"][0]
+    raw = bytearray((tmp_path / path).read_bytes())
+    raw[0:1] = b" "  # one byte changed, the size kept
+    (tmp_path / path).write_bytes(bytes(raw))
+    with pytest.raises(ValueError, match=re.escape(
+            f"route_traces[0] {path!r} {owner.WORLD_SIZE_EVIDENCE_DIGEST_MISMATCH}")):
+        owner.verify_world_size_evidence(receipt, evidence_root=tmp_path, bindings=bindings)
+
+
+def test_world_size_evidence_refuses_a_size_mismatch(contract, tmp_path):
+    owner = _evidence_verifier()
+    receipt = copy.deepcopy(contract["tensor_parallel"]["world_size_receipts"][0])
+    bindings = _synthetic_world_size_evidence(tmp_path, receipt)
+    path = receipt["serves"][0]["route_traces"][1]
+    bindings[path] = {**bindings[path], "size": bindings[path]["size"] + 1}
+    with pytest.raises(ValueError, match=re.escape(
+            f"route_traces[1] {path!r} {owner.WORLD_SIZE_EVIDENCE_SIZE_MISMATCH}")):
+        owner.verify_world_size_evidence(receipt, evidence_root=tmp_path, bindings=bindings)
+
+
+def test_world_size_evidence_refuses_a_symlink_out_of_the_root(contract, tmp_path):
+    import hashlib
+
+    owner = _evidence_verifier()
+    receipt = copy.deepcopy(contract["tensor_parallel"]["world_size_receipts"][0])
+    root = tmp_path / "evidence"
+    bindings = _synthetic_world_size_evidence(root, receipt)
+    path = receipt["serves"][0]["route_traces"][0]
+    outside = tmp_path / "outside.json"
+    outside.write_bytes(b'{"outside": true}')
+    (root / path).unlink()
+    try:
+        (root / path).symlink_to(outside)
+    except (OSError, NotImplementedError) as error:  # pragma: no cover - no symlinks here
+        pytest.skip(f"this file system makes no symlink: {error}")
+    # The binding matches the outside bytes, so only containment refuses it.
+    raw = outside.read_bytes()
+    bindings[path] = {"sha256": hashlib.sha256(raw).hexdigest(), "size": len(raw)}
+    with pytest.raises(ValueError, match=re.escape(
+            f"route_traces[0] {path!r} {owner.WORLD_SIZE_EVIDENCE_ESCAPE}")):
+        owner.verify_world_size_evidence(receipt, evidence_root=root, bindings=bindings)
+
+
+def test_world_size_evidence_refuses_an_unbound_trace(contract, tmp_path):
+    owner = _evidence_verifier()
+    receipt = copy.deepcopy(contract["tensor_parallel"]["world_size_receipts"][0])
+    bindings = _synthetic_world_size_evidence(tmp_path, receipt)
+    path = receipt["serves"][1]["route_traces"][1]
+    del bindings[path]
+    with pytest.raises(ValueError, match=re.escape(
+            f"route_traces[1] {path!r} {owner.WORLD_SIZE_EVIDENCE_UNBOUND}")):
+        owner.verify_world_size_evidence(receipt, evidence_root=tmp_path, bindings=bindings)
+    with pytest.raises(ValueError, match=re.escape(owner.WORLD_SIZE_EVIDENCE_ROOT_REQUIRED)):
+        owner.verify_world_size_evidence(receipt, evidence_root=None, bindings=bindings)
+
+
+def test_world_size_evidence_accepts_valid_contained_evidence(contract, tmp_path):
+    owner = _evidence_verifier()
+    receipt = copy.deepcopy(contract["tensor_parallel"]["world_size_receipts"][0])
+    bindings = _synthetic_world_size_evidence(tmp_path, receipt)
+    verified = owner.verify_world_size_evidence(receipt, evidence_root=tmp_path,
+                                                bindings=bindings)
+    assert verified["evidence"] == owner.WORLD_SIZE_EVIDENCE_VERIFIED
+    assert verified["receipt"] == receipt["id"]
+    assert [(t["serve"], t["rank"], t["path"]) for t in verified["traces"]] == [
+        (j, k, path) for j, serve in enumerate(receipt["serves"])
+        for k, path in enumerate(serve["route_traces"])]
+    for trace in verified["traces"]:
+        assert {"sha256": trace["sha256"], "size": trace["size"]} == bindings[trace["path"]]
+
+
+def test_packaged_validation_is_grammar_only_without_experiment_files(contract, tmp_path,
+                                                                      monkeypatch):
+    owner = _evidence_verifier()
+    monkeypatch.chdir(tmp_path)
+    assert not (tmp_path / "experiments").exists()
+    result = validate_serving_contract(contract)
+    assert result is None
+    assert result != owner.WORLD_SIZE_EVIDENCE_VERIFIED
+    # The same receipt is not verified evidence under a root that holds no file.
+    receipt = copy.deepcopy(contract["tensor_parallel"]["world_size_receipts"][0])
+    path = receipt["serves"][0]["route_traces"][0]
+    bindings = {p: {"sha256": "0" * 64, "size": 0}
+                for serve in receipt["serves"] for p in serve["route_traces"]}
+    with pytest.raises(ValueError, match=re.escape(
+            f"route_traces[0] {path!r} {owner.WORLD_SIZE_EVIDENCE_MISSING}")):
+        owner.verify_world_size_evidence(receipt, evidence_root=tmp_path, bindings=bindings)
+
+
 def test_a_loader_axis_that_disagrees_with_the_code_is_refused(contract):
     """The document may neither widen nor narrow what the loader does: a row
     refusal the code no longer makes (units[0] is TESSERA_E2M1_K2, whose row

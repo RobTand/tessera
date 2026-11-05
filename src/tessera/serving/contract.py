@@ -173,6 +173,19 @@ __all__ = [
     "stock_kernel_override_refusal",
     "route_wire_spelling",
     "validate_serving_contract",
+    "verify_world_size_evidence",
+    "WORLD_SIZE_EVIDENCE_BAD_BINDING",
+    "WORLD_SIZE_EVIDENCE_DIGEST_MISMATCH",
+    "WORLD_SIZE_EVIDENCE_EMPTY",
+    "WORLD_SIZE_EVIDENCE_ESCAPE",
+    "WORLD_SIZE_EVIDENCE_MISSING",
+    "WORLD_SIZE_EVIDENCE_ROOT_MISSING",
+    "WORLD_SIZE_EVIDENCE_ROOT_REQUIRED",
+    "WORLD_SIZE_EVIDENCE_SIZE_MISMATCH",
+    "WORLD_SIZE_EVIDENCE_UNBOUND",
+    "WORLD_SIZE_EVIDENCE_VERIFIED",
+    "WORLD_SIZE_TRACE_PER_RANK",
+    "WORLD_SIZE_TRACE_REPEATED",
     "ALLOWABLE_RULES",
     "cell_covers_rung",
     "derived_cell_run_tables",
@@ -703,6 +716,168 @@ SINGLE_RANK_KL_READINGS = ("abs_dlogprob", "renormalized_kl", "topk_kl_lower_bou
 #: (tessera#514, experiments/results/glm53_a4_stub_tp2_reference_kl_514.json).
 SINGLE_RANK_KL_EXCESS = ("abs_dlogprob_p50", "abs_dlogprob_p99")
 
+# --- world-size evidence: the refusals, spelled once (tessera#1194) ---------
+#
+# The packaged validator checks a receipt's GRAMMAR and nothing else; the
+# retained bytes are :func:`verify_world_size_evidence`'s business.  Every
+# reason below is the one spelling of that refusal: both functions build their
+# message from it, and tests derive the expected text from it.
+
+#: A trace path named twice inside ONE serve.  The scope is the serve: two
+#: serves may name the same file (each rank of each serve still names its own
+#: trace), and the verifier then verifies it once per serve.
+WORLD_SIZE_TRACE_REPEATED = "is named twice; each rank of each serve writes its own trace"
+
+#: A serve whose ``route_traces`` list is not one path per rank of the world.
+WORLD_SIZE_TRACE_PER_RANK = "must name one route trace per rank"
+
+#: A serve whose ``route_traces`` list is empty.
+WORLD_SIZE_EVIDENCE_EMPTY = "names no route trace; a serve retains one route trace per rank"
+
+#: The caller passed no evidence root.  The verifier never discovers a checkout.
+WORLD_SIZE_EVIDENCE_ROOT_REQUIRED = (
+    "world-size evidence needs an explicit evidence root; the verifier does not "
+    "discover a checkout")
+
+#: The evidence root is not an existing directory.
+WORLD_SIZE_EVIDENCE_ROOT_MISSING = "is not an existing directory to verify evidence under"
+
+#: A trace path with no digest-and-size binding from the caller.
+WORLD_SIZE_EVIDENCE_UNBOUND = "has no sha256 and size binding to verify its bytes against"
+
+#: A binding that is not ``{"sha256": <64 hex>, "size": <int >= 0>}``.
+WORLD_SIZE_EVIDENCE_BAD_BINDING = "has a binding that is not {sha256: 64 lower-case hex, size: int}"
+
+#: A trace path that resolves, through ``..`` or a symlink, outside the root.
+WORLD_SIZE_EVIDENCE_ESCAPE = "resolves outside the evidence root"
+
+#: A trace path that is not a regular file under the root.
+WORLD_SIZE_EVIDENCE_MISSING = "is not a file under the evidence root"
+
+#: The retained bytes are not as long as the binding says.
+WORLD_SIZE_EVIDENCE_SIZE_MISMATCH = "has a byte size that is not its binding's size"
+
+#: The retained bytes do not hash to the binding's sha256: changed bytes.
+WORLD_SIZE_EVIDENCE_DIGEST_MISMATCH = "has bytes whose sha256 is not its binding's sha256"
+
+#: What :func:`verify_world_size_evidence` returns in ``evidence``.  The
+#: packaged validator returns ``None`` and never this value: grammar is not
+#: verified retained evidence.
+WORLD_SIZE_EVIDENCE_VERIFIED = "verified_retained_evidence"
+
+
+def _trace_refusal(where: str, k: int, trace: Any, reason: str, detail: str = "") -> ValueError:
+    """The one message shape of a trace refusal: the field, the trace, the reason."""
+    return ValueError(f"{where}.route_traces[{k}] {trace!r} {reason}{detail}")
+
+
+def _require_serve_route_traces(traces: Any, where: str, world: Any) -> list:
+    """One serve's ``route_traces``, by grammar: a non-empty list, one path per
+    rank of ``world``, each under :data:`WORLD_SIZE_DATA_ROOT`, none named
+    twice IN THIS SERVE.  The duplicate scope is the serve, not the receipt:
+    two serves that name one file each still name one trace per rank."""
+    if not isinstance(traces, list):
+        raise ValueError(f"{where}.route_traces must be a list of route trace paths, "
+                         f"got {traces!r}")
+    if not traces:
+        raise ValueError(f"{where}.route_traces {WORLD_SIZE_EVIDENCE_EMPTY}")
+    if type(world) is int and len(traces) != world:
+        raise ValueError(f"{where}.route_traces {WORLD_SIZE_TRACE_PER_RANK}, {world} of them, "
+                         f"got {traces!r}")
+    seen: set = set()
+    for k, trace in enumerate(traces):
+        _require_data_path(trace, f"{where}.route_traces[{k}]")
+        if trace in seen:
+            raise _trace_refusal(where, k, trace, WORLD_SIZE_TRACE_REPEATED)
+        seen.add(trace)
+    return traces
+
+
+def _require_trace_binding(binding: Any, where: str, k: int, trace: str) -> tuple:
+    if binding is None:
+        raise _trace_refusal(where, k, trace, WORLD_SIZE_EVIDENCE_UNBOUND)
+    if (not isinstance(binding, Mapping) or set(binding) != {"sha256", "size"}
+            or not isinstance(binding["sha256"], str)
+            or not re.fullmatch(r"[0-9a-f]{64}", binding["sha256"])
+            or type(binding["size"]) is not int or binding["size"] < 0):
+        raise _trace_refusal(where, k, trace, WORLD_SIZE_EVIDENCE_BAD_BINDING,
+                             f", got {binding!r}")
+    return binding["sha256"], binding["size"]
+
+
+def verify_world_size_evidence(receipt: Mapping[str, Any], *, evidence_root: Any,
+                               bindings: Mapping[str, Any]) -> dict:
+    """Verify a world-size receipt's retained route traces, or raise.
+
+    This is the evidence boundary, separate from the packaged grammar check
+    (:func:`validate_serving_contract`, which reads no ``experiments/`` file
+    and returns ``None``, never :data:`WORLD_SIZE_EVIDENCE_VERIFIED`).
+
+    ``evidence_root`` is the directory the receipt's repository paths are
+    relative to.  The caller names it; nothing here discovers a checkout.
+    ``bindings`` maps each trace path to ``{"sha256": <hex>, "size": <int>}``,
+    the caller's record of the retained bytes (the receipt markdown quotes the
+    sha256 beside each path).  Each trace is resolved under the root, symlinks
+    included, and refused if it resolves outside it; its bytes are then held
+    to the binding's size and to its sha256 over the raw file bytes.  A path
+    named twice inside one serve is refused; two serves may share one file,
+    and it is verified once for each serve.
+
+    Returns ``{"evidence": WORLD_SIZE_EVIDENCE_VERIFIED, "receipt": id,
+    "traces": [{"serve", "rank", "path", "sha256", "size"}, ...]}``.
+    """
+    import os
+    from pathlib import Path
+
+    if evidence_root is None or not isinstance(evidence_root, (str, os.PathLike)) \
+            or not os.fspath(evidence_root):
+        raise ValueError(f"{WORLD_SIZE_EVIDENCE_ROOT_REQUIRED}, got {evidence_root!r}")
+    if not isinstance(receipt, Mapping):
+        raise ValueError(f"a world-size receipt must be a mapping, got {receipt!r}")
+    where = f"world_size_receipts[{receipt.get('id')!r}]"
+    root_path = Path(evidence_root)
+    if not root_path.is_dir():
+        raise ValueError(f"{where} evidence root {os.fspath(evidence_root)!r} "
+                         f"{WORLD_SIZE_EVIDENCE_ROOT_MISSING}")
+    root = root_path.resolve(strict=True)
+    if not isinstance(bindings, Mapping):
+        raise ValueError(f"{where} bindings must map each trace path to its sha256 and size, "
+                         f"got {bindings!r}")
+    serves = receipt.get("serves")
+    if not isinstance(serves, list) or not serves:
+        raise ValueError(f"{where}.serves must be a non-empty list of serve records")
+    verified = []
+    for j, serve in enumerate(serves):
+        at = f"{where}.serves[{j}]"
+        if not isinstance(serve, Mapping) or "route_traces" not in serve:
+            raise ValueError(f"{at}.route_traces is missing")
+        traces = _require_serve_route_traces(serve["route_traces"], at,
+                                             receipt.get("world_size"))
+        for k, trace in enumerate(traces):
+            sha256, size = _require_trace_binding(bindings.get(trace), at, k, trace)
+            try:
+                resolved = root.joinpath(*trace.split("/")).resolve()
+            except (OSError, RuntimeError) as error:
+                raise _trace_refusal(at, k, trace, WORLD_SIZE_EVIDENCE_MISSING,
+                                     f": {error}") from error
+            if resolved != root and root not in resolved.parents:
+                raise _trace_refusal(at, k, trace, WORLD_SIZE_EVIDENCE_ESCAPE,
+                                     f" (to {os.fspath(resolved)!r})")
+            if not resolved.is_file():
+                raise _trace_refusal(at, k, trace, WORLD_SIZE_EVIDENCE_MISSING)
+            raw = resolved.read_bytes()
+            if len(raw) != size:
+                raise _trace_refusal(at, k, trace, WORLD_SIZE_EVIDENCE_SIZE_MISMATCH,
+                                     f": {len(raw)} bytes, bound to {size}")
+            digest = hashlib.sha256(raw).hexdigest()
+            if digest != sha256:
+                raise _trace_refusal(at, k, trace, WORLD_SIZE_EVIDENCE_DIGEST_MISMATCH,
+                                     f": {digest}, bound to {sha256}")
+            verified.append({"serve": j, "rank": k, "path": trace,
+                             "sha256": digest, "size": len(raw)})
+    return {"evidence": WORLD_SIZE_EVIDENCE_VERIFIED, "receipt": receipt.get("id"),
+            "traces": verified}
+
 
 def _require_data_path(value: Any, where: str) -> str:
     """A repository path under :data:`WORLD_SIZE_DATA_ROOT`, or raise.
@@ -816,7 +991,6 @@ def _validate_world_size_receipt(receipt: Any, where: str, platforms: Mapping[st
     serves = receipt["serves"]
     if not isinstance(serves, list) or not serves:
         raise ValueError(f"{where}.serves must be a non-empty list of serve records")
-    traces_seen: set = set()
     for j, serve in enumerate(serves):
         at = f"{where}.serves[{j}]"
         _require_keys(serve, at, required={"role", "image", "tessera_tree", "hosts", "flags",
@@ -840,17 +1014,7 @@ def _validate_world_size_receipt(receipt: Any, where: str, platforms: Mapping[st
             raise ValueError(
                 f"{at}.flags ask for tensor_parallel_size {asked or 'nothing'}, and this receipt "
                 f"covers a world of {world}: a serve record must be the serve at that world")
-        traces = serve["route_traces"]
-        if not isinstance(traces, list) or len(traces) != world:
-            raise ValueError(
-                f"{at}.route_traces must name one route trace per rank, {world} of them, "
-                f"got {traces!r}")
-        for k, trace in enumerate(traces):
-            _require_data_path(trace, f"{at}.route_traces[{k}]")
-            if trace in traces_seen:
-                raise ValueError(f"{at}.route_traces[{k}] {trace!r} is named twice; each rank of "
-                                 "each serve writes its own trace")
-            traces_seen.add(trace)
+        _require_serve_route_traces(serve["route_traces"], at, world)
     executed = _require_distinct_strings(receipt["executed_units"], f"{where}.executed_units")
     undeclared = sorted(set(executed) - declared_units)
     if undeclared:
