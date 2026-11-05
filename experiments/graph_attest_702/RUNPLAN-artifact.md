@@ -38,13 +38,25 @@ served profiling/power and ship-card qualification remain separate gates.
 
 ## Batch-KL companion: integration only (tessera#1365)
 
-**Production disposition: unavailable, explicitly refused.** The existing live
-`LocalArm.probes` seam calls `collect_kl(arm, peer_meta)` exactly once when
-`config.batch_kl` is present, before writing successful probe status. The current
-implementation refuses even if a handoff declaration is configured: no supported
-live adapter has been supplied. The existing native protocol publishes failure
-and coupled abort, runs owned cleanup and copies partial outputs; it does not
-complete that arm or proceed to the next. No second serve or isolated scorer is
+**Production disposition: unavailable, explicitly refused at prepare time
+(tessera#1570).** One rule, `tp2_recipe.batch_kl_scorer()`, owns batch-KL scorer
+availability and its refusal message. It reads no configuration, so a `BATCH_KL`
+declaration (whatever its `handoff`) is never proof of a scorer. No supported
+live adapter has been supplied, so it always raises `Refused` ("batch KL refused:
+no batch-KL scorer is available; #2566/#1318 handoff lacks ..."). `window_driver
+prepare` consults it immediately after parsing inputs when `config.batch_kl` is
+present: the window refuses before planning, predecessor handoffs, D1 diskcheck,
+`ROOT` creation or any `inputs.json`/`manifest.json` write, and therefore before
+any arm serves or runs probes. No GPU time is spent. Windows without `BATCH_KL`
+never consult it. The live `LocalArm.probes` seam still calls
+`collect_kl(arm, peer_meta)` exactly once when `config.batch_kl` is present,
+before writing successful probe status; `collect_kl` consults the same rule, so
+the two refusals cannot drift. If it is ever reached without a scorer, the
+existing native protocol publishes failure and coupled abort, runs owned cleanup
+and copies partial outputs; it does not complete that arm or proceed to the next.
+A reviewed adapter replaces the rule's body and returns
+`scorer(local_arm, arm, peer_meta)`; CPU tests model a present scorer by
+replacing `tp2_recipe.batch_kl_scorer`. No second serve or isolated scorer is
 run, no speculative guard is bypassed, and MTP1 remains unchanged.
 
 Owner-facing disposition for existing prismaquant#2566 / tessera#1318 (delivery
