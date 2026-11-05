@@ -393,16 +393,15 @@ class LocalArm:
         """Live attachment seam; no owner-supported TP2/MTP1 adapter is available.
 
         Configuration is an intake declaration, never authority to execute an
-        arbitrary scorer or to bypass target/drafter attribution. An eventual
-        reviewed adapter must use this arm's container, tick and envelope.
+        arbitrary scorer or to bypass target/drafter attribution. Availability
+        and its refusal live only in recipe.batch_kl_scorer, which prepare
+        also consults (#1570). An eventual reviewed adapter must use this
+        arm's container, tick and envelope.
         """
         self.tick()
         self.envelope.remaining()
-        raise Refused(
-            "batch KL refused: #2566/#1318 handoff lacks owner-supported live "
-            "TP2/MTP1 target-model attachment, target/drafter attribution, "
-            "request/row alignment and complete batch outputs with observed "
-            "execution provenance; configured handoff is not an implemented adapter")
+        scorer = recipe.batch_kl_scorer()
+        return scorer(self, arm, peer_meta)
 
     def probes(self, arm, peer_meta):
         if self.config.get("window_mode") in recipe.BENCHMARK_PAIRS:

@@ -152,6 +152,96 @@ def test_submit_keeps_full_manifest_seal(prepared_submission):
     assert not (root / "submission-started.json").exists()
 
 
+def _prepare_window(tmp_path, monkeypatch, declaration):
+    """Drive the real window_driver.prepare on CPU (#1570).
+
+    Only external source/artifact authentication, the plan file and host
+    disk/predecessor probes are inert. The fixture root is portable local
+    storage, so an admitted prepare stops at the real shared-storage gate.
+    Every planning, disk-check and write step after the parsed inputs is
+    recorded, so a test can show that a refusal came before all of them.
+    """
+    monkeypatch.setenv("PRISMAQUANT_DEV_MODE", "1")
+    monkeypatch.delenv("BATCH_KL", raising=False)
+    artifact = tmp_path / "artifact"
+    artifact.mkdir()
+    (artifact / "config.json").write_text("{}")
+    root = tmp_path / "window"
+    env = dict(TS=str(tmp_path / "source"), ARTIFACT=str(artifact),
+               RECEIPTS=str(root / "arms"), FABRIC="socket",
+               SOURCE_COMMIT="c" * 40, SOURCE_SHA256="a" * 64,
+               PRODUCER_COMMIT="d" * 40, PRODUCER_SHA256="e" * 64,
+               **({} if declaration is None else dict(BATCH_KL=declaration)))
+    inputs = recipe.inputs
+    def inert_inputs(env, *, live):
+        return inputs({**env, "PRISMAQUANT_DEV_MODE": "1"}, live=False)
+    monkeypatch.setattr(recipe, "inputs", inert_inputs)
+    monkeypatch.setattr(recipe, "require_producer", lambda *a, **kw: None)
+    events = []
+    def record(name, value=None):
+        def step(*args, **kwargs):
+            events.append(name)
+            return value
+        return step
+    monkeypatch.setattr(recipe, "plan", lambda *a, **kw: events.append("plan") or [dict(arm="aGR", fabric="socket")])
+    monkeypatch.setattr(window_driver, "handoffs", record("handoffs", []))
+    monkeypatch.setattr(window_driver, "diskcheck", record("diskcheck", []))
+    monkeypatch.setattr(window_driver, "atomic_json", record("atomic_json"))
+    def prepare():
+        window_driver.prepare(root, tmp_path / "plan.txt", env, None, ["1" * 64, "2" * 64])
+    return root, env, events, prepare
+
+
+@pytest.mark.parametrize("claim", ["owner-pending", "owner-supported"])
+def test_prepare_refuses_batch_kl_without_scorer_before_any_write(tmp_path, monkeypatch, claim):
+    # A declaration may claim an owner adapter; it is still never a scorer.
+    declaration = DECLARATION if claim == "owner-pending" else json.dumps(dict(
+        handoff=claim, endpoint="http://127.0.0.1:1/score", tool="scorer",
+        output="batch-kl.json", scoring=dict(expected_rows=4)))
+    root, _, events, prepare = _prepare_window(tmp_path, monkeypatch, declaration)
+    with pytest.raises(window.Refused) as refused:
+        prepare()
+    message = str(refused.value)
+    assert "batch-KL scorer" in message and "#2566/#1318" in message, \
+        "prepare did not refuse for the missing batch-KL scorer"
+    assert events == [], "prepare planned, disk-checked or wrote before the scorer refusal"
+    assert not root.exists()
+    assert not (root / "inputs.json").exists() and not (root / "manifest.json").exists()
+
+
+def test_prepare_with_batch_kl_scorer_writes_declaration_to_both_ranks(tmp_path, monkeypatch):
+    root, env, events, prepare = _prepare_window(tmp_path, monkeypatch, DECLARATION)
+    consulted = []
+    def scorer(*args, **kwargs):
+        consulted.append((args, kwargs))
+        return lambda local, arm, peer_meta: dict(report="batch-kl.json")
+    monkeypatch.setattr(recipe, "batch_kl_scorer", scorer, raising=False)
+    # With a scorer present, prepare continues to its next real gate unchanged.
+    with pytest.raises(window.Refused, match="rendezvous must be shared"):
+        prepare()
+    assert consulted == [((), {})], "prepare never consulted the batch-KL scorer seam"
+    assert events == ["plan"]
+    config = recipe.inputs(env, live=True)
+    assert config["batch_kl"] == json.loads(DECLARATION)
+    root.mkdir()
+    _write(root / "inputs.json", dict(config=config))
+    rows = window_driver.rows(root, config, env)
+    assert len(rows) == 2
+    for row in rows:
+        assert row["env"]["BATCH_KL"] == DECLARATION
+
+
+def test_prepare_without_batch_kl_never_consults_scorer(tmp_path, monkeypatch):
+    root, _, events, prepare = _prepare_window(tmp_path, monkeypatch, None)
+    def scorer(*args, **kwargs):
+        raise AssertionError("a window without BATCH_KL consulted the batch-KL scorer")
+    monkeypatch.setattr(recipe, "batch_kl_scorer", scorer, raising=False)
+    with pytest.raises(window.Refused, match="rendezvous must be shared"):
+        prepare()
+    assert events == ["plan"]
+    assert not root.exists()
+
+
 @pytest.mark.parametrize("missing_rank", [0, 1])
 def test_companion_requires_each_native_rank_replay_population(evidence, missing_rank):
     graph = evidence.graph
