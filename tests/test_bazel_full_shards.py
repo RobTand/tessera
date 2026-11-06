@@ -9,6 +9,9 @@ import pytest
 
 
 ROOT = Path(__file__).resolve().parents[1]
+# Rob, 2026-11-06: six balanced shards keep the slowest full-fallback shard
+# inside Mergify's 30-minute checks_timeout. The count is the decision.
+SHARDS = 6
 
 
 MODULES = {
@@ -49,7 +52,7 @@ def test_committed_files_partition_every_eligible_rule_and_test(tmp_path):
     shards = load('full_shards')
     shards.generate(tmp_path, XML)
     for arch in ['amd64', 'arm64']:
-        parts = [shards.validate(tmp_path, XML, arch, index) for index in range(4)]
+        parts = [shards.validate(tmp_path, XML, arch, index) for index in range(SHARDS)]
         rules = [set(part['rules']) for part in parts]
         tests = [set(part['tests']) for part in parts]
         expected_tests = {'//tests:a', '//tests:b', '//tests:c'}
@@ -64,29 +67,28 @@ def test_committed_files_partition_every_eligible_rule_and_test(tmp_path):
             assert Path(part['path']).read_text().splitlines() == sorted(part['rules'])
 
 
-def test_four_shards_balance_measured_target_runtimes(tmp_path, duration_inventory):
+def test_six_shards_balance_measured_target_runtimes(tmp_path, duration_inventory):
     shards = load('full_shards')
-    durations = {**dict(zip(['//tests:a', '//tests:b', '//tests:c', '//tests:d'],
-                            [100, 90, 80, 70])),
-                 **dict(zip(['//tests:a.bytes', '//tests:b.bytes', '//tests:c.bytes', '//tests:d.bytes'],
-                            [10, 20, 30, 40]))}
+    names = 'abcdef'
+    durations = {**{f'//tests:{name}': 100 - 10 * index for index, name in enumerate(names)},
+                 **{f'//tests:{name}.bytes': 10 + 10 * index for index, name in enumerate(names)}}
     duration_inventory.write_text(json.dumps({'seconds': durations}))
-    labels = [f'//tests:{name}{suffix}' for name in 'abcd' for suffix in ['', '.bytes']]
+    labels = [f'//tests:{name}{suffix}' for name in names for suffix in ['', '.bytes']]
     xml = '<query>' + ''.join(f'<rule name="{label}" class="py_test"/>' for label in labels) + '</query>'
     shards.generate(tmp_path, xml)
-    parts = [shards.validate(tmp_path, xml, 'amd64', index) for index in range(4)]
-    assert [part['estimated_seconds'] for part in parts] == [110, 110, 110, 110]
+    parts = [shards.validate(tmp_path, xml, 'amd64', index) for index in range(SHARDS)]
+    assert [part['estimated_seconds'] for part in parts] == [110] * SHARDS
     assert all(len(part['tests']) == 2 for part in parts)
     assert set.union(*(set(part['tests']) for part in parts)) == set(labels)
 
 
-def test_four_shards_balance_counts_when_no_timings_exist(tmp_path):
+def test_six_shards_balance_counts_when_no_timings_exist(tmp_path):
     shards = load('full_shards')
     labels = [f'//tests:test_{index}' for index in range(12)]
     xml = '<query>' + ''.join(f'<rule name="{label}" class="py_test"/>' for label in labels) + '</query>'
     shards.generate(tmp_path, xml)
-    parts = [shards.validate(tmp_path, xml, 'amd64', index) for index in range(4)]
-    assert [len(part['tests']) for part in parts] == [3, 3, 3, 3]
+    parts = [shards.validate(tmp_path, xml, 'amd64', index) for index in range(SHARDS)]
+    assert [len(part['tests']) for part in parts] == [2] * SHARDS
 
 
 @pytest.mark.parametrize('arch', ['amd64', 'arm64'])
@@ -102,13 +104,13 @@ def test_real_target_population_balances_measured_bazel_runtime(arch):
         for label in rules) + '</query>'
     _, planned = shards.planned(ROOT, xml)
     parts = planned['architectures'][arch]
-    assert len(parts) == 4
+    assert len(parts) == SHARDS
     assert set(tests) <= timings.keys(), 'real targets must have measured runtimes'
     assert sorted(label for part in parts for label in part['tests']) == tests
     loads = [sum(timings[label] for label in part['tests']) for part in parts]
-    # With this real population, even the final four shortest targets suffice
+    # With this real population, even the final six shortest targets suffice
     # to fill the remaining difference between longest-first shard loads.
-    assert max(loads) - min(loads) <= sum(sorted(timings[label] for label in tests)[:4])
+    assert max(loads) - min(loads) <= sum(sorted(timings[label] for label in tests)[:SHARDS])
     assert [part['estimated_seconds'] for part in parts] == pytest.approx(loads)
 
 
@@ -137,7 +139,7 @@ def test_changed_lists_or_populations_fail_closed(tmp_path, mutation):
         shards.validate(tmp_path, xml, 'amd64', 0)
 
 
-@pytest.mark.parametrize('arch,index', [('cloud', 0), ('amd64', -1), ('arm64', 4)])
+@pytest.mark.parametrize('arch,index', [('cloud', 0), ('amd64', -1), ('arm64', SHARDS)])
 def test_invalid_shard_coordinates_fail_closed(tmp_path, arch, index):
     shards = load('full_shards')
     shards.generate(tmp_path, XML)
@@ -153,7 +155,7 @@ def test_run_requests_use_short_shard_coordinates_and_stay_under_an_hour():
     initial = remote.run_request(Args)
     assert '--plan-full' in initial['steps'][0]['run']
     for arch in ['amd64', 'arm64']:
-        for index in range(4):
+        for index in range(SHARDS):
             request = remote.run_request(Args, full_shard=(arch, index))
             assert f'--full-shard {arch}:{index}' in request['steps'][0]['run']
             assert int(request['timeout'].removesuffix('m')) < 60
@@ -162,7 +164,7 @@ def test_run_requests_use_short_shard_coordinates_and_stay_under_an_hour():
 
 
 def results(mode='pr'):
-    tests = ['//tests:a', '//tests:b', '//tests:c', '//tests:d']
+    tests = [f'//tests:{name}' for name in 'abcdef'[:SHARDS]]
     arches = ['amd64'] if mode == 'pr' else ['amd64', 'arm64']
     plan = {'head': 'b' * 40, 'mode': mode, 'selection': 'fallback', 'selected': tests,
             'scopes': [], 'all_scopes': True, 'inputs': [], 'graph_impact': None,
@@ -343,7 +345,7 @@ def test_postmerge_without_both_architectures_is_never_a_pass():
 
 
 @pytest.mark.parametrize('case', ['fallback', 'selected', 'postmerge'])
-def test_only_gate_fallback_overlaps_and_never_exceeds_four_runs(tmp_path, monkeypatch, case):
+def test_only_gate_fallback_overlaps_and_never_exceeds_six_runs(tmp_path, monkeypatch, case):
     remote = load('remote_gate')
     mode = 'main' if case == 'postmerge' else 'pr'
     plan, parts = results(mode)
@@ -355,9 +357,9 @@ def test_only_gate_fallback_overlaps_and_never_exceeds_four_runs(tmp_path, monke
     records = {key: dict(value, schema=remote.SCHEMA, base='a' * 40, error=None)
                for key, value in records.items()}
     lock = threading.Lock()
-    overlap = threading.Barrier(4)
+    overlap = threading.Barrier(SHARDS)
     state = {'active': 0, 'peak': 0, 'submissions': []}
-    bound = 4 if case == 'fallback' else 1
+    bound = SHARDS if case == 'fallback' else 1
 
     class Args:
         base, head, checkout, branch = 'a' * 40, 'b' * 40, '', 'master'
@@ -384,7 +386,7 @@ def test_only_gate_fallback_overlaps_and_never_exceeds_four_runs(tmp_path, monke
     def terminal(client, invocation_id, deadline):
         if case == 'fallback' and invocation_id != 'plan':
             # A serial controller cannot reach this rendezvous. No timing race
-            # is needed to prove that all four separate Runs overlap.
+            # is needed to prove that all six separate Runs overlap.
             overlap.wait(timeout=5)
         with lock:
             state['active'] -= 1
