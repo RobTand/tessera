@@ -37,23 +37,64 @@ XML = '''<query>
 </query>'''
 
 
+@pytest.fixture(autouse=True)
+def duration_inventory(tmp_path):
+    path = tmp_path / 'tools/ci/gate_durations.json'
+    path.parent.mkdir(parents=True)
+    path.write_text(json.dumps({'lanes': {'torch': {}, 'bytes': {}}}))
+    return path
+
+
 def test_committed_files_partition_every_eligible_rule_and_test(tmp_path):
     shards = load('full_shards')
     shards.generate(tmp_path, XML)
     for arch in ['amd64', 'arm64']:
-        parts = [shards.validate(tmp_path, XML, arch, index) for index in range(2)]
+        parts = [shards.validate(tmp_path, XML, arch, index) for index in range(4)]
         rules = [set(part['rules']) for part in parts]
         tests = [set(part['tests']) for part in parts]
         expected_tests = {'//tests:a', '//tests:b', '//tests:c'}
         if arch == 'amd64':
             expected_tests.add('//tests:runner')
-        assert not rules[0] & rules[1]
+        assert sum(map(len, rules)) == len(set.union(*rules))
         assert set.union(*rules) == expected_tests | {'//tools:binary', '//src:library'}
-        assert not tests[0] & tests[1]
+        assert sum(map(len, tests)) == len(set.union(*tests))
         assert set.union(*tests) == expected_tests
         for part in parts:
             assert Path(part['path']).is_relative_to(tmp_path / 'tools/bazel/full_targets')
             assert Path(part['path']).read_text().splitlines() == sorted(part['rules'])
+
+
+def test_four_shards_balance_measured_target_times_by_lane(tmp_path, duration_inventory):
+    shards = load('full_shards')
+    durations = {'torch': dict(zip(['tests/a.py', 'tests/b.py', 'tests/c.py', 'tests/d.py'],
+                                  [100, 90, 80, 70])),
+                 'bytes': dict(zip(['tests/a.py', 'tests/b.py', 'tests/c.py', 'tests/d.py'],
+                                  [10, 20, 30, 40]))}
+    duration_inventory.write_text(json.dumps({'lanes': durations}))
+    labels = [f'//tests:{name}{suffix}' for name in 'abcd' for suffix in ['', '.bytes']]
+    xml = '<query>' + ''.join(f'<rule name="{label}" class="py_test"/>' for label in labels) + '</query>'
+    shards.generate(tmp_path, xml)
+    parts = [shards.validate(tmp_path, xml, 'amd64', index) for index in range(4)]
+    assert [part['estimated_seconds'] for part in parts] == [110, 110, 110, 110]
+    assert all(len(part['tests']) == 2 for part in parts)
+    assert set.union(*(set(part['tests']) for part in parts)) == set(labels)
+
+
+def test_four_shards_balance_counts_when_no_timings_exist(tmp_path):
+    shards = load('full_shards')
+    labels = [f'//tests:test_{index}' for index in range(12)]
+    xml = '<query>' + ''.join(f'<rule name="{label}" class="py_test"/>' for label in labels) + '</query>'
+    shards.generate(tmp_path, xml)
+    parts = [shards.validate(tmp_path, xml, 'amd64', index) for index in range(4)]
+    assert [len(part['tests']) for part in parts] == [3, 3, 3, 3]
+
+
+def test_changed_timing_inventory_invalidates_the_committed_plan(tmp_path, duration_inventory):
+    shards = load('full_shards')
+    shards.generate(tmp_path, XML)
+    duration_inventory.write_text(json.dumps({'lanes': {'torch': {'tests/a.py': 100}, 'bytes': {}}}))
+    with pytest.raises(ValueError, match='differ from live query'):
+        shards.validate(tmp_path, XML, 'amd64', 0)
 
 
 @pytest.mark.parametrize('mutation', ['file', 'live-query', 'manifest'])
@@ -73,7 +114,7 @@ def test_changed_lists_or_populations_fail_closed(tmp_path, mutation):
         shards.validate(tmp_path, xml, 'amd64', 0)
 
 
-@pytest.mark.parametrize('arch,index', [('cloud', 0), ('amd64', -1), ('arm64', 2)])
+@pytest.mark.parametrize('arch,index', [('cloud', 0), ('amd64', -1), ('arm64', 4)])
 def test_invalid_shard_coordinates_fail_closed(tmp_path, arch, index):
     shards = load('full_shards')
     shards.generate(tmp_path, XML)
@@ -89,7 +130,7 @@ def test_run_requests_use_short_shard_coordinates_and_stay_under_an_hour():
     initial = remote.run_request(Args)
     assert '--plan-full' in initial['steps'][0]['run']
     for arch in ['amd64', 'arm64']:
-        for index in range(2):
+        for index in range(4):
             request = remote.run_request(Args, full_shard=(arch, index))
             assert f'--full-shard {arch}:{index}' in request['steps'][0]['run']
             assert int(request['timeout'].removesuffix('m')) < 60
@@ -98,7 +139,7 @@ def test_run_requests_use_short_shard_coordinates_and_stay_under_an_hour():
 
 
 def results(mode='pr'):
-    tests = ['//tests:a', '//tests:b']
+    tests = ['//tests:a', '//tests:b', '//tests:c', '//tests:d']
     arches = ['amd64'] if mode == 'pr' else ['amd64', 'arm64']
     plan = {'head': 'b' * 40, 'mode': mode, 'selection': 'fallback', 'selected': tests,
             'scopes': [], 'all_scopes': True, 'inputs': [], 'graph_impact': None,
@@ -279,7 +320,7 @@ def test_postmerge_without_both_architectures_is_never_a_pass():
 
 
 @pytest.mark.parametrize('case', ['fallback', 'selected', 'postmerge'])
-def test_only_gate_fallback_overlaps_and_never_exceeds_two_runs(tmp_path, monkeypatch, case):
+def test_only_gate_fallback_overlaps_and_never_exceeds_four_runs(tmp_path, monkeypatch, case):
     remote = load('remote_gate')
     mode = 'main' if case == 'postmerge' else 'pr'
     plan, parts = results(mode)
@@ -291,9 +332,9 @@ def test_only_gate_fallback_overlaps_and_never_exceeds_two_runs(tmp_path, monkey
     records = {key: dict(value, schema=remote.SCHEMA, base='a' * 40, error=None)
                for key, value in records.items()}
     lock = threading.Lock()
-    overlap = threading.Barrier(2)
+    overlap = threading.Barrier(4)
     state = {'active': 0, 'peak': 0, 'submissions': []}
-    bound = 2 if case == 'fallback' else 1
+    bound = 4 if case == 'fallback' else 1
 
     class Args:
         base, head, checkout, branch = 'a' * 40, 'b' * 40, '', 'master'
@@ -320,7 +361,7 @@ def test_only_gate_fallback_overlaps_and_never_exceeds_two_runs(tmp_path, monkey
     def terminal(client, invocation_id, deadline):
         if case == 'fallback' and invocation_id != 'plan':
             # A serial controller cannot reach this rendezvous. No timing race
-            # is needed to prove that both separate Runs overlap.
+            # is needed to prove that all four separate Runs overlap.
             overlap.wait(timeout=5)
         with lock:
             state['active'] -= 1
