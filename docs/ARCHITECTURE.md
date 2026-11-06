@@ -10266,19 +10266,27 @@ stage and type, and interrupts propagate. A shallow or missing-object checkout
 fails before test execution. Budget overruns warn without changing the first
 verdict; assertions and hard TIMEOUTs fail without a rerun.
 
-Fallback and post-merge full populations are split into two committed target
-files per architecture, including non-test build rules. The client submits
-each with `--target_pattern_file` in a separate Remote Bazel run capped
-at 55 minutes. Only gate fallback permits two concurrent shard runs per controller,
+Fallback and post-merge full populations are split into four committed target
+files per architecture, including non-test build rules. `gate_partition.py`
+balances test targets longest-first by measured per-target Bazel runtimes in
+`full_target_durations.json`, including test startup and excluding scheduling
+wait. The inventory records the maximum observed target-summary runtime from
+its named full-fallback Runs and covers all 994 amd64 targets; arm64 planning
+reuses those CPU measurements. Unknown targets use the inventory's p90 estimate
+(one second without timings). Without timings this balances by count. Non-test rules fill
+the smallest rule populations by count. The manifest records estimated test seconds. The client submits
+each with `--target_pattern_file` in a separate Remote Bazel run. The PR gate
+uses its 45-minute default; the post-merge workflow explicitly requests 55 minutes.
+Only gate fallback permits four concurrent shard runs per controller,
 each with `--jobs=16` on self-hosted action pools; all other paths stay serial.
 Mergify's 30-minute checks timeout and merge conditions are unchanged. Its two
-parallel batch checks can overlap four self-hosted shard Runs for two fallbacks
-on Bazel, lock or gate-workflow changes. Excess demand queues on executors;
-on dl380g10's 40 CPUs the expected effect is longer shards, not refusal or
-timeout. Report any contrary proof result. Agent/development admission stays
+parallel batch checks can overlap eight self-hosted shard Runs for two fallbacks
+on Bazel, lock or gate-workflow changes. Excess demand queues on executors.
+If four shards exceed 45 minutes, report completed/total targets, wall time and
+scheduling-wait share per shard; do not raise the timeout or rerun. Agent/development admission stays
 operationally limited to one run per repo. No shared GitHub job group is added.
 TL3 retains BuildBuddy priority when its queue is backed up; no scheduler is added.
-Live-query validation and complete, disjoint result unions
+Live-query and timing-inventory validation and complete, disjoint four-shard result unions
 fail closed on drift or missing shards. The combined post-merge record keeps
 all invocation IDs and per-architecture budget warnings. Post-merge detection
 errors remain gate-errors while full coverage completes; unknown selection

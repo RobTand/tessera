@@ -16,6 +16,9 @@ import time
 import urllib.error
 import urllib.request
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import full_shards  # noqa: E402
+
 API = 'https://app.buildbuddy.io/api/v1/'
 IMAGE = ('docker://gcr.io/flame-public/rbe-ubuntu24-04@sha256:'
          '5f0c01e5f6d79e58d7a996330de33aa38ce599bf8431eaf27521e7602daadf50')
@@ -27,7 +30,7 @@ SCHEMA = 'tessera.bazel-gate.v1'
 DIAGNOSTICS = ('bazel-remote-grpc.log', 'execution_log.binpb.zst')
 DONE = 'COMPLETE_INVOCATION_STATUS'
 LOST = 'DISCONNECTED_INVOCATION_STATUS'
-GATE_FALLBACK_CONCURRENCY = 2
+GATE_FALLBACK_CONCURRENCY = full_shards.COUNT
 
 
 class RemoteError(RuntimeError):
@@ -158,7 +161,7 @@ def run_request(args, full_shard=None):
         command.append('--plan-full')
     else:
         arch, index = full_shard
-        if arch not in ('amd64', 'arm64') or type(index) is not int or index not in range(2):
+        if arch not in full_shards.ARCHES or type(index) is not int or index not in range(full_shards.COUNT):
             raise RemoteError('invalid full-shard coordinates')
         command.extend(['--full-shard', f'{arch}:{index}'])
     return {
@@ -248,18 +251,19 @@ def parse_result(raw, head):
 
 
 def merge_full_shards(plan, parts):
-    """Accept exactly two complete, disjoint result records per requested arch."""
+    """Accept every complete, disjoint shard result per requested arch."""
     arches = ['amd64'] if plan['mode'] == 'pr' else ['amd64', 'arm64']
     if set(plan.get('full_populations', {})) != set(arches):
         raise RemoteError('full plan has the wrong architecture populations')
-    if len(parts) != 2 * len(arches):
+    if len(parts) != full_shards.COUNT * len(arches):
         raise RemoteError('full run is missing shard records')
     merged = dict(plan, inputs=list(plan.get('inputs', [])))
     records = {}
     for arch in arches:
         expected = plan['full_populations'][arch]
         rows = [part for part in parts if part.get('full_shard', {}).get('architecture') == arch]
-        if (len(rows) != 2 or {part['full_shard'].get('index') for part in rows} != {0, 1}
+        if (len(rows) != full_shards.COUNT
+                or {part['full_shard'].get('index') for part in rows} != set(range(full_shards.COUNT))
                 or any(type(part['full_shard'].get('index')) is not int for part in rows)):
             raise RemoteError('full run has missing or duplicate shard coordinates')
         rows.sort(key=lambda row: row['full_shard']['index'])
@@ -394,7 +398,7 @@ def write_github(path_variable, text):
 
 
 def execute(client, args):
-    """Only gate fallback may overlap two Runs; selected and main stay serial."""
+    """Only gate fallback may overlap four Runs; selected and main stay serial."""
 
     def run(coordinates=None):
         request = run_request(args, full_shard=coordinates)
@@ -422,7 +426,7 @@ def execute(client, args):
     runs = [initial]
     if 'full_populations' in plan and not plan.get('error') and not plan.get('inputs'):
         arches = ['amd64'] if args.mode == 'pr' else ['amd64', 'arm64']
-        coordinates = [(arch, index) for arch in arches for index in range(2)]
+        coordinates = [(arch, index) for arch in arches for index in range(full_shards.COUNT)]
         if args.mode == 'pr':
             if plan.get('selection') != 'fallback':
                 raise RemoteError('only gate fallback may submit parallel full shards')
