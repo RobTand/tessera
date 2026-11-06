@@ -1167,6 +1167,7 @@ ts_py_library(
     ],
     data = [
         "//tools/bazel:build_files.py",
+        "//tools/bazel:lanes.bzl",
         "//tools/bazel:requirements.py",
         "//tools/bazel:runtime.py",
         "//tools/bazel:test_inputs.bzl",

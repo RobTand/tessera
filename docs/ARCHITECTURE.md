@@ -10283,7 +10283,12 @@ fail closed on drift or missing shards. The combined post-merge record keeps
 all invocation IDs and per-architecture budget warnings. Post-merge detection
 errors remain gate-errors while full coverage completes; unknown selection
 is not counted as a measured detection miss. Required checks need the complete
-Bazel job, including the final keyed scan, to succeed.
+Bazel job, including the final keyed scan, to succeed. Its generated-input
+check requires exact equality between expected outputs and Git-tracked
+generator-owned paths, rejects generator-owned untracked files, and compares
+contents. Ownership uses declared output paths and the generated header in
+indexed or untracked files. This includes `tools/bazel/lanes.bzl` and excludes
+handwritten BUILD files without that header.
 
 The gate and seeded-breaks harness share the scan-and-publish boundary and
 select the same scanner runtime before execution. Runner steps scan a fixed
