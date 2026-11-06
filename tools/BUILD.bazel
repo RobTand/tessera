@@ -112,6 +112,12 @@ ts_py_library(
     srcs = [
         "ci/full_shards.py",
     ],
+    data = [
+        "ci/gate_durations.json",
+    ],
+    deps = [
+        ":ci/gate_partition",
+    ],
 )
 
 ts_py_library(
@@ -273,6 +279,9 @@ ts_py_library(
     name = "ci/remote_gate",
     srcs = [
         "ci/remote_gate.py",
+    ],
+    deps = [
+        ":ci/full_shards",
     ],
 )
 

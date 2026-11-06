@@ -1243,6 +1243,7 @@ ts_py_library(
     ],
     data = [
         "//tools/bazel:full_targets/manifest.json",
+        "//tools:ci/gate_durations.json",
     ],
     deps = [
         "//tools:ci/bazel_gate",
