@@ -321,14 +321,22 @@ def _installed_commit_id() -> "str | None":
     directory holding the imported ``tessera`` package: a global scan would
     happily return some OTHER environment's install of Tessera, which is
     the same provenance hole stamped as a value (#691 item 4).
+    Only the Tessera distribution can supply the commit.
+    Compare names after normalization.
     """
+    from . import DISTRIBUTION
+
     holder = Path(__file__).resolve().parents[1]
     try:
         from importlib.metadata import distributions
     except ImportError:
         return None
+    expected_name = re.sub(r"[-_.]+", "-", DISTRIBUTION).lower()
     for dist in distributions(path=[str(holder)]):
         try:
+            name = dist.metadata.get("Name") or ""
+            if re.sub(r"[-_.]+", "-", name).lower() != expected_name:
+                continue
             text = dist.read_text("direct_url.json")
         except Exception:
             continue
