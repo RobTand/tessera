@@ -1642,22 +1642,18 @@ def _synthetic_world_size_evidence(root, receipt) -> dict:
 
 
 def test_world_size_receipt_shared_trace_between_serves(contract, tmp_path):
-    """Two serves may name one file; one serve may not name a file twice."""
-    def share(c):
-        serves = c["tensor_parallel"]["world_size_receipts"][0]["serves"]
-        serves[1]["route_traces"] = list(serves[0]["route_traces"])
-
-    shared = _mutated(contract, share)
+    c = copy.deepcopy(contract)
+    serves = c["tensor_parallel"]["world_size_receipts"][0]["serves"]
+    serves[1]["route_traces"] = list(serves[0]["route_traces"])
+    reason = None
     try:
-        validate_serving_contract(shared)
-    except ValueError as error:
-        refusal = str(error)
-    else:
-        refusal = None
-    assert refusal is None, refusal
+        validate_serving_contract(c)
+    except ValueError as e:
+        reason = str(e).rsplit("' ", 1)[-1]
+    assert reason is None, reason
 
     owner = _evidence_verifier()
-    receipt = shared["tensor_parallel"]["world_size_receipts"][0]
+    receipt = c["tensor_parallel"]["world_size_receipts"][0]
     bindings = _synthetic_world_size_evidence(tmp_path, receipt)
     verified = owner.verify_world_size_evidence(receipt, evidence_root=tmp_path,
                                                 bindings=bindings)
