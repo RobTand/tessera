@@ -1905,6 +1905,7 @@ ts_py_library(
         "test_impacted_tests.py",
         "test_import_direction.py",
         "test_inductor_determinism_knob.py",
+        "test_installed_commit.py",
         "test_issue1253_mla_collection.py",
         "test_issue56_column_groups.py",
         "test_issue_refs.py",
@@ -11234,6 +11235,7 @@ ts_py_library(
         "test_impacted_manual_gate.py",
         "test_import_direction.py",
         "test_inductor_determinism_knob.py",
+        "test_installed_commit.py",
         "test_issue1253_mla_collection.py",
         "test_issue56_column_groups.py",
         "test_issue_refs.py",
@@ -11736,6 +11738,45 @@ ts_py_library(
 )
 
 ts_py_test(
+    name = "test_installed_commit",
+    path = "tests/test_installed_commit.py",
+    library = ":test_installed_commit_lib",
+    deps = [
+        "//src/tessera:identity",
+    ],
+    lane = "torch",
+    args = [
+        "--budget='{\"enforce\":true,\"seconds\":80,\"slow\":{}}'",
+    ],
+    timeout = "moderate",
+)
+
+ts_py_test(
+    name = "test_installed_commit.bytes",
+    path = "tests/test_installed_commit.py",
+    library = ":test_installed_commit_lib",
+    deps = [
+        "//src/tessera:identity",
+    ],
+    lane = "bytes",
+    args = [
+        "--budget='{\"enforce\":true,\"seconds\":80,\"slow\":{}}'",
+    ],
+    timeout = "moderate",
+)
+
+ts_py_library(
+    name = "test_installed_commit_lib",
+    srcs = [
+        "test_installed_commit.py",
+    ],
+    deps = [
+        "//src/tessera:__init___cycle",
+        "//src/tessera:bf16_route_cycle",
+    ],
+)
+
+ts_py_test(
     name = "test_issue1253_mla_collection",
     path = "tests/test_issue1253_mla_collection.py",
     library = ":test_issue1253_mla_collection_lib",
@@ -11999,6 +12040,7 @@ ts_py_library(
         "test_impacted_tests.py",
         "test_import_direction.py",
         "test_inductor_determinism_knob.py",
+        "test_installed_commit.py",
         "test_issue56_column_groups.py",
         "test_issue_refs.py",
         "test_jit_build_lock_600.py",
@@ -28614,6 +28656,7 @@ ts_py_library(
         "test_impacted_tests.py",
         "test_import_direction.py",
         "test_inductor_determinism_knob.py",
+        "test_installed_commit.py",
         "test_issue1253_mla_collection.py",
         "test_issue56_column_groups.py",
         "test_issue_refs.py",
