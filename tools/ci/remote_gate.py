@@ -398,7 +398,7 @@ def write_github(path_variable, text):
 
 
 def execute(client, args):
-    """Only gate fallback may overlap four Runs; selected and main stay serial."""
+    """Only gate fallback may overlap its six shard Runs; selected and main stay serial."""
 
     def run(coordinates=None):
         request = run_request(args, full_shard=coordinates)

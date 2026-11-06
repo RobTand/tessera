@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Generate and validate four balanced CPU target lists per architecture.
+"""Generate and validate six balanced CPU target lists per architecture.
 
 The disjoint union includes every eligible rule from `bazel query //...`,
 including non-test build targets. Each separate Run request retains the PR
@@ -19,7 +19,9 @@ import gate_partition  # noqa: E402
 ROOT = Path(__file__).resolve().parents[2]
 DIRECTORY = Path('tools/bazel/full_targets')
 ARCHES = ('amd64', 'arm64')
-COUNT = 4
+# Rob, 2026-11-06: six shards keep the slowest one inside Mergify's 30-minute
+# checks_timeout. Land only at <= 25 min per shard; never raise the timeout.
+COUNT = 6
 
 
 def populations(query_xml):

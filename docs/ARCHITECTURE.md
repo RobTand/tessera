@@ -10266,7 +10266,7 @@ stage and type, and interrupts propagate. A shallow or missing-object checkout
 fails before test execution. Budget overruns warn without changing the first
 verdict; assertions and hard TIMEOUTs fail without a rerun.
 
-Fallback and post-merge full populations are split into four committed target
+Fallback and post-merge full populations are split into six committed target
 files per architecture, including non-test build rules. `gate_partition.py`
 balances test targets longest-first by measured per-target Bazel runtimes in
 `full_target_durations.json`, including test startup and excluding scheduling
@@ -10277,16 +10277,16 @@ reuses those CPU measurements. Unknown targets use the inventory's p90 estimate
 the smallest rule populations by count. The manifest records estimated test seconds. The client submits
 each with `--target_pattern_file` in a separate Remote Bazel run. The PR gate
 uses its 45-minute default; the post-merge workflow explicitly requests 55 minutes.
-Only gate fallback permits four concurrent shard runs per controller,
+Only gate fallback permits six concurrent shard runs per controller,
 each with `--jobs=16` on self-hosted action pools; all other paths stay serial.
 Mergify's 30-minute checks timeout and merge conditions are unchanged. Its two
-parallel batch checks can overlap eight self-hosted shard Runs for two fallbacks
+parallel batch checks can overlap twelve self-hosted shard Runs for two fallbacks
 on Bazel, lock or gate-workflow changes. Excess demand queues on executors.
-If four shards exceed 45 minutes, report completed/total targets, wall time and
+Six shards (Rob, 2026-11-06) aim for at most 25 minutes per shard inside the 30-minute queue timeout. If six shards exceed 45 minutes, report completed/total targets, wall time and
 scheduling-wait share per shard; do not raise the timeout or rerun. Agent/development admission stays
 operationally limited to one run per repo. No shared GitHub job group is added.
 TL3 retains BuildBuddy priority when its queue is backed up; no scheduler is added.
-Live-query and timing-inventory validation and complete, disjoint four-shard result unions
+Live-query and timing-inventory validation and complete, disjoint six-shard result unions
 fail closed on drift or missing shards. The combined post-merge record keeps
 all invocation IDs and per-architecture budget warnings. Post-merge detection
 errors remain gate-errors while full coverage completes; unknown selection
