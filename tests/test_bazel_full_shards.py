@@ -89,6 +89,29 @@ def test_four_shards_balance_counts_when_no_timings_exist(tmp_path):
     assert [len(part['tests']) for part in parts] == [3, 3, 3, 3]
 
 
+@pytest.mark.parametrize('arch', ['amd64', 'arm64'])
+def test_real_target_population_balances_measured_bazel_runtime(arch):
+    shards = load('full_shards')
+    manifest = json.loads((ROOT / 'tools/bazel/full_targets/manifest.json').read_text())
+    timings = json.loads((ROOT / 'tools/ci/full_target_durations.json').read_text())['seconds']
+    committed = manifest['architectures'][arch]
+    tests = sorted({label for part in committed for label in part['tests']})
+    rules = sorted({label for part in committed for label in part['rules']})
+    xml = '<query>' + ''.join(
+        f'<rule name="{label}" class="{ "py_test" if label in tests else "py_library" }"/>'
+        for label in rules) + '</query>'
+    _, planned = shards.planned(ROOT, xml)
+    parts = planned['architectures'][arch]
+    assert len(parts) == 4
+    assert set(tests) <= timings.keys(), 'real targets must have measured runtimes'
+    assert sorted(label for part in parts for label in part['tests']) == tests
+    loads = [sum(timings[label] for label in part['tests']) for part in parts]
+    # With this real population, even the final four shortest targets suffice
+    # to fill the remaining difference between longest-first shard loads.
+    assert max(loads) - min(loads) <= sum(sorted(timings[label] for label in tests)[:4])
+    assert [part['estimated_seconds'] for part in parts] == pytest.approx(loads)
+
+
 def test_changed_timing_inventory_invalidates_the_committed_plan(tmp_path, duration_inventory):
     shards = load('full_shards')
     shards.generate(tmp_path, XML)
