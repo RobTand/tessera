@@ -18,7 +18,7 @@ The merge gate runs on Bazel through BuildBuddy (#1589); [docs/bazel.md](bazel.m
 
 **History.** Before the first Bazel query in every runner, the client hydrates all origin branches, tags and blobs with the approved bbrun full-history preflight. It verifies the tested HEAD is unchanged, that no reachable objects are missing, and that no shallow or promisor metadata remains. Fetch disables automatic GC and maintenance. Cleanup accepts an already-removed promisor marker; other failures retain their stage and type without Git diagnostics or exception messages. Interrupts propagate.
 
-**Final verdicts.** Required checks require the complete Bazel job to succeed, including its final keyed artifact scan. A post-merge selection error remains a `gate-error` while every full shard still executes. Unknown selection is not published as a measured detection miss.
+**Final verdicts.** Required checks require the complete Bazel job to succeed, including its final keyed artifact scan. A post-merge selection error remains a `gate-error` while every full shard still executes. Unknown selection is not published as a measured detection miss. Any failed generated-input or parity check sets `gate-result.json`'s final `verdict` to `fail` and exits nonzero. Its existing `inputs` strings retain the check command, exit code and last 8192 diagnostic characters. Selected tests, failed-test labels, budget warnings and full population plans remain available.
 
 **Budgets.** Per-test budget overruns appear in `budget_warnings` and summaries without changing a verdict. Assertions and hard TIMEOUTs fail on the first attempt. There are no budget-only or timeout reruns. The budget-growth check remains enforced.
 

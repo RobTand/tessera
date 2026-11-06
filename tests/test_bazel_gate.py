@@ -610,3 +610,95 @@ def test_python_runner_warns_without_overriding_assertions_or_timeouts(
     assert not (outputs/'budget_overrun.json').exists()
     if pytest_status == 0:
         assert json.loads((outputs/'inventory.json').read_text())['budget_warnings'] == [warning]
+
+
+@pytest.mark.parametrize('mode', ['pr', 'main', 'fallback'])
+@pytest.mark.parametrize('checker,message', [
+    ('full_shards.py', 'full target lists differ from live query; regenerate full_shards.py'),
+    ('bazel_parity.py', 'tests/test_wire.py: no bytes target //tests:test_wire.bytes'),
+])
+@pytest.mark.parametrize('stale', [False, True])
+def test_generated_input_failure_matches_final_verdict(
+        tmp_path, monkeypatch, mode, checker, message, stale):
+    import shutil
+    import subprocess
+
+    root = tmp_path / 'workspace'
+    (root / 'tools/ci').mkdir(parents=True)
+    (root / 'tools/bazel').mkdir()
+    (root / 'tests').mkdir()
+    sources = [ROOT / 'tools/ci/full_shards.py', ROOT / 'tools/ci/bazel_parity.py',
+               ROOT / 'tools/ci/gate_select.py', ROOT / 'tools/ci/gate_partition.py',
+               ROOT / 'tools/ci/gate_doc_readers.py', ROOT / 'tools/ci/gate_flaky.py']
+    for source in sources:
+        shutil.copyfile(source, root / 'tools/ci' / source.name)
+    for name in ('nonhermetic.bzl', 'test_inputs.bzl'):
+        (root / 'tools/bazel' / name).write_text('')
+    (root / 'tools/ci/gate_quarantine.json').write_text('{"lanes": {"bytes": [], "torch": []}}')
+    (root / 'tests/test_wire.py').write_text('def test_wire(): pass\n')
+    build = ''.join('ts_py_test(\n    name = "' + name + '",\n'
+                    '    path = "tests/test_wire.py",\n)\n'
+                    for name in ('test_wire', 'test_wire.bytes'))
+    (root / 'tests/BUILD.bazel').write_text(build)
+    xml = '<query><rule class="py_test" name="//tests:test_wire"/></query>'
+    bazel_gate.full_shards.generate(root, xml)
+    query = root / 'query.xml'
+    query.write_text(xml)
+    subprocess.run(['git', 'init', '--quiet', str(root)], check=True)
+    if stale and checker == 'full_shards.py':
+        query.write_text(xml.replace('</query>', '<rule class="py_test" name="//tests:test_added"/></query>'))
+    if stale and checker == 'bazel_parity.py':
+        (root / 'tests/BUILD.bazel').write_text(build[:build.index('ts_py_test(', 1)])
+    run = subprocess.run
+
+    def transport(command, **kwargs):
+        # Execute the real selected checker. Other generated checks are successful
+        # external responses, so neither their inputs nor their policies are under test.
+        if len(command) > 1 and str(command[1]).startswith(('tools/bazel/', 'tools/ci/')):
+            if Path(command[1]).name != checker:
+                return subprocess.CompletedProcess(command, 0, stdout='', stderr='')
+            if checker == 'full_shards.py':
+                command = [*command, '--query-xml', str(query)]
+        return run(command, **kwargs)
+
+    monkeypatch.setattr(bazel_gate.subprocess, 'run', transport)
+    monkeypatch.setattr(bazel_gate, 'ROOT', root)
+    monkeypatch.setenv('BUILDBUDDY_API_KEY', 'generated-input-test-secret')
+    monkeypatch.setenv('BUILDBUDDY_ARTIFACTS_DIRECTORY', str(root / 'gate-artifacts'))
+    monkeypatch.delenv('BBRUN_FINAL_SCAN', raising=False)
+    warning = {'label': '//tests:test_wire', 'nodeid': 'test_wire', 'seconds': 10, 'budget_seconds': 1}
+
+    class Workspace(bazel_gate.Workspace):
+        def ensure_commit(self, sha): pass
+        def checkout(self, sha): pass
+        def ensure_history(self, head): pass
+        def changes(self, base, head):
+            return ({'tools/ci/bazel_gate.py'} if mode == 'fallback' else {'src/fixture/wire.py'}), set()
+        def used_sources(self): return USED
+        def bazel_diff(self, base, head): return {'//tests:test_wire'}
+        def tests(self, architecture): return {'//tests:test_wire'}
+        def graph_impact(self, base): return None
+        def build(self, *args): return True
+        def test(self, *args): return {'//tests:test_wire': 'PASSED'}, [warning]
+        def full_plan(self, architectures):
+            return {arch: [{'rules': ['//tests:test_wire'], 'tests': ['//tests:test_wire']}]
+                    for arch in architectures}
+
+    exit_code = bazel_gate.main([mode if mode != 'fallback' else 'pr', '--base', 'a'*40, '--head', 'b'*40],
+                               workspace=Workspace(root))
+    result = json.loads((root / 'gate-artifacts/gate-result.json').read_text())
+    print('GENERATED_INPUT_RESULT ' + json.dumps({'checker': checker, 'stale': stale, 'exit': exit_code,
+                                                'result': result}))
+    assert exit_code == int(stale)
+    if stale:
+        assert result.get('verdict') == 'fail', result
+        assert any(checker in problem and message in problem for problem in result['inputs'])
+    else:
+        assert result['inputs'] == []
+        if mode == 'pr':
+            assert result['verdict'] == 'pass'
+    if mode == 'pr':
+        assert result['selected'] == ['//tests:test_wire'] and result['failed'] == []
+        assert result['budget_warnings'] == [warning]
+    else:
+        assert result['full_populations']['amd64']['tests'] == ['//tests:test_wire']

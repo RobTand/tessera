@@ -10283,7 +10283,11 @@ fail closed on drift or missing shards. The combined post-merge record keeps
 all invocation IDs and per-architecture budget warnings. Post-merge detection
 errors remain gate-errors while full coverage completes; unknown selection
 is not counted as a measured detection miss. Required checks need the complete
-Bazel job, including the final keyed scan, to succeed.
+Bazel job, including the final keyed scan, to succeed. Failed generated-input
+or parity checks set the final runner verdict to `fail` and exit nonzero.
+The existing `inputs` strings retain each failed command, exit code and last
+8192 diagnostic characters, while prior test evidence and full plans remain.
+Detection errors also record a final `fail` verdict.
 
 The gate and seeded-breaks harness share the scan-and-publish boundary and
 select the same scanner runtime before execution. Runner steps scan a fixed
