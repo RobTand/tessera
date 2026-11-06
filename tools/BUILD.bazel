@@ -113,7 +113,7 @@ ts_py_library(
         "ci/full_shards.py",
     ],
     data = [
-        "ci/gate_durations.json",
+        "ci/full_target_durations.json",
     ],
     deps = [
         ":ci/gate_partition",

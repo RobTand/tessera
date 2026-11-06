@@ -39,9 +39,9 @@ XML = '''<query>
 
 @pytest.fixture(autouse=True)
 def duration_inventory(tmp_path):
-    path = tmp_path / 'tools/ci/gate_durations.json'
+    path = tmp_path / 'tools/ci/full_target_durations.json'
     path.parent.mkdir(parents=True)
-    path.write_text(json.dumps({'lanes': {'torch': {}, 'bytes': {}}}))
+    path.write_text(json.dumps({'seconds': {}}))
     return path
 
 
@@ -64,13 +64,13 @@ def test_committed_files_partition_every_eligible_rule_and_test(tmp_path):
             assert Path(part['path']).read_text().splitlines() == sorted(part['rules'])
 
 
-def test_four_shards_balance_measured_target_times_by_lane(tmp_path, duration_inventory):
+def test_four_shards_balance_measured_target_runtimes(tmp_path, duration_inventory):
     shards = load('full_shards')
-    durations = {'torch': dict(zip(['tests/a.py', 'tests/b.py', 'tests/c.py', 'tests/d.py'],
-                                  [100, 90, 80, 70])),
-                 'bytes': dict(zip(['tests/a.py', 'tests/b.py', 'tests/c.py', 'tests/d.py'],
-                                  [10, 20, 30, 40]))}
-    duration_inventory.write_text(json.dumps({'lanes': durations}))
+    durations = {**dict(zip(['//tests:a', '//tests:b', '//tests:c', '//tests:d'],
+                            [100, 90, 80, 70])),
+                 **dict(zip(['//tests:a.bytes', '//tests:b.bytes', '//tests:c.bytes', '//tests:d.bytes'],
+                            [10, 20, 30, 40]))}
+    duration_inventory.write_text(json.dumps({'seconds': durations}))
     labels = [f'//tests:{name}{suffix}' for name in 'abcd' for suffix in ['', '.bytes']]
     xml = '<query>' + ''.join(f'<rule name="{label}" class="py_test"/>' for label in labels) + '</query>'
     shards.generate(tmp_path, xml)
@@ -115,7 +115,7 @@ def test_real_target_population_balances_measured_bazel_runtime(arch):
 def test_changed_timing_inventory_invalidates_the_committed_plan(tmp_path, duration_inventory):
     shards = load('full_shards')
     shards.generate(tmp_path, XML)
-    duration_inventory.write_text(json.dumps({'lanes': {'torch': {'tests/a.py': 100}, 'bytes': {}}}))
+    duration_inventory.write_text(json.dumps({'seconds': {'//tests:a': 100}}))
     with pytest.raises(ValueError, match='differ from live query'):
         shards.validate(tmp_path, XML, 'amd64', 0)
 

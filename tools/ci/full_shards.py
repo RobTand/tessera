@@ -47,17 +47,11 @@ def populations(query_xml):
 
 
 def partition(population, durations):
-    unknown = {lane: gate_partition.default_unknown_seconds(costs)
-               for lane, costs in durations.items()}
-    costs = {}
-    for label in population['tests']:
-        package, name = label.removeprefix('//').split(':')
-        lane = 'bytes' if name.endswith('.bytes') else 'torch'
-        path = f'{package}/{name.removesuffix(".bytes")}.py'
-        costs[label] = durations[lane].get(path, unknown[lane])
+    unknown = gate_partition.default_unknown_seconds(durations)
     parts = [{'rules': list(row['files']), 'tests': row['files'],
               'estimated_seconds': row['estimated_seconds']}
-             for row in gate_partition.shards(population['tests'], costs, COUNT, unknown_seconds=1)]
+             for row in gate_partition.shards(population['tests'], durations, COUNT,
+                                               unknown_seconds=unknown)]
     for label in sorted(set(population['rules']) - set(population['tests'])):
         min(parts, key=lambda part: len(part['rules']))['rules'].append(label)
     for part in parts:
@@ -66,7 +60,7 @@ def partition(population, durations):
 
 
 def planned(root, query_xml):
-    durations = json.loads((root / 'tools/ci/gate_durations.json').read_text())['lanes']
+    durations = json.loads((root / 'tools/ci/full_target_durations.json').read_text())['seconds']
     files, manifest = {}, {'schema': 'tessera.full-shards.v1', 'architectures': {}}
     for arch, population in populations(query_xml).items():
         shards = []

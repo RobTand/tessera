@@ -10268,9 +10268,12 @@ verdict; assertions and hard TIMEOUTs fail without a rerun.
 
 Fallback and post-merge full populations are split into four committed target
 files per architecture, including non-test build rules. `gate_partition.py`
-balances test targets longest-first by each CPU lane's measured file times in
-`gate_durations.json`; unknown files use the lane's p90 estimate (one second
-without timings). Without timings this balances by count. Non-test rules fill
+balances test targets longest-first by measured per-target Bazel runtimes in
+`full_target_durations.json`, including test startup and excluding scheduling
+wait. The inventory records the maximum observed target-summary runtime from
+its named full-fallback Runs and covers all 994 amd64 targets; arm64 planning
+reuses those CPU measurements. Unknown targets use the inventory's p90 estimate
+(one second without timings). Without timings this balances by count. Non-test rules fill
 the smallest rule populations by count. The manifest records estimated test seconds. The client submits
 each with `--target_pattern_file` in a separate Remote Bazel run. The PR gate
 uses its 45-minute default; the post-merge workflow explicitly requests 55 minutes.
