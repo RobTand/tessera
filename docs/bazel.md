@@ -65,18 +65,21 @@ The C++ that CPU tests compile at run time (torch's `cpp_extension`, Inductor's 
 
 The same applies after you add a module or an import, or a fixture a test reads. `tests/test_bazel_build.py` fails when a generated file is stale, when a gate file lacks a target in a lane, or when a target the cloud gate leaves out has no reason.
 
-After changing target names, tags or `tools/ci/gate_durations.json`, run `python3 tools/ci/full_shards.py` and
+After changing target names, tags or `tools/ci/full_target_durations.json`, run `python3 tools/ci/full_shards.py` and
 commit `tools/bazel/full_targets/`. This performs only a Bazel query. Its six
 lists per architecture must be disjoint and cover every eligible rule and
 test. The gate checks them against a live query and uses each committed file
 with `--target_pattern_file` in a separate Remote Bazel run. The PR gate uses
 its 45-minute default; the post-merge workflow explicitly requests 55 minutes.
 The lists avoid the Run action's single-argument size limit. Test targets are
-balanced longest-first by their lane's measured per-file times in
-`gate_durations.json`, reusing `gate_partition.py`. Unknown files use their
-lane's p90 estimate, or one second when no timings exist, giving count balance
-without timings. Non-test build rules fill the smallest rule populations by
-count. The manifest records each shard's estimated test seconds.
+balanced longest-first by measured per-target runtimes in the flat `seconds`
+map in `tools/ci/full_target_durations.json`, reusing `gate_partition.py`.
+Both architectures use that inventory; it has no per-lane timing maps.
+Unknown targets use its nearest-rank p90, or one second when that value is
+zero or the inventory is empty, giving count balance without timings. Non-test
+build rules fill the smallest rule populations by count. The manifest records summed estimated
+test seconds, not shard wall time. The <=25-minute wall target needs a real
+gate measurement.
 
 Only the fail-closed gate `//...` fallback may execute its six shard Runs in
 parallel, at most six concurrent Remote Bazel runs per gate controller with

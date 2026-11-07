@@ -9,8 +9,8 @@ import pytest
 
 
 ROOT = Path(__file__).resolve().parents[1]
-# Rob, 2026-11-06: six balanced shards keep the slowest full-fallback shard
-# inside Mergify's 30-minute checks_timeout. The count is the decision.
+# Rob, 2026-11-06: six balanced shards target Mergify's 30-minute checks_timeout.
+# Wall time needs a real gate measurement. The count is the decision.
 SHARDS = 6
 
 
