@@ -629,7 +629,8 @@ def test_generated_input_failure_matches_final_verdict(
     (root / 'tests').mkdir()
     sources = [ROOT / 'tools/ci/full_shards.py', ROOT / 'tools/ci/bazel_parity.py',
                ROOT / 'tools/ci/gate_select.py', ROOT / 'tools/ci/gate_partition.py',
-               ROOT / 'tools/ci/gate_doc_readers.py', ROOT / 'tools/ci/gate_flaky.py']
+               ROOT / 'tools/ci/gate_doc_readers.py', ROOT / 'tools/ci/gate_flaky.py',
+               ROOT / 'tools/ci/full_target_durations.json']
     for source in sources:
         shutil.copyfile(source, root / 'tools/ci' / source.name)
     for name in ('nonhermetic.bzl', 'test_inputs.bzl'):
