@@ -21,6 +21,9 @@ The Bazel build described in `docs/bazel.md` derives one target per test file an
 Final gate summaries report each CPU lane’s pass, failure, skip and uncollected counts, verbatim skip reasons, device details and zero CUDA allocation. CPU passes do not cover CUDA.
 
 
+Re-stamped 2026-11-08 for native suite transport and saved-ID authority.
+CPU scope only; GPU/container qualification remains required.
+
 Re-stamped 2026-10-09 for the migrated GB and D1 producer caller (tessera#944).
 Re-stamped 2026-10-09 for the canonical T4 performant menu (issue #1103).
 CEO decision dec-1009-095820-aebb approves dense [896] and routed [896] as performance-only TCQ menus.
@@ -2505,9 +2508,8 @@ Re-stamped 2026-09-28 for the source-verifier seam (tessera#599, step 3).
 closure records. A test population leaves an executor-generated file out of
 its source hash only when a verifier, declared in `TESSERA_SOURCE_VERIFIER`,
 vouches for it. Tessera still checks each vouched-for file against the commit.
-`tools/merge_suite.py` declares PrismaBuild's `pbsnapshot.py verify`. The
-seam fails closed, as described in "Each population retains the actual Git
-snapshot commit" below. `src/tessera` now names a client only through the
+`tools/merge_suite.py` now uses the no-verifier path and hashes all tracked
+files. The seam remains available for other declared source verifiers. `src/tessera` now names a client only through the
 `prismaquant.tessera.v1` wire-ID literals.
 
 Re-stamped 2026-09-28 for the serving code identity (contract v41). A cell's
@@ -3971,78 +3973,34 @@ allocator sees is `docs/tessera-one-format.md` §5.
 
 ### 1.1 Integration suite placement
 
-`tools/merge_suite.py` dispatches its device populations only through
-PrismaBuild. Live GPU submissions require an explicit `--gpu-tag` and pass
-`--exclusive`: the deployed scheduler derives the complete GPU reservation
-from that worker's advertised capacity, rather than treating one logical slot
-as physical exclusion. The native GPU arm remains serial under `--strict-cuda`,
-which has three legs since tessera#152: it refuses a device-less session
-before anything runs, refuses at the end a run in which no test allocated on
-the device (torch's own allocator counter, published as
-`cuda_surface.executed`), and refuses a run that skipped because this box
-holds no checkpoint or serve log a gate needs -- `tests/box_artifacts.py`
-resolves those roots and names each one's environment variable, so a GPU box
-without them cannot claim the surface;
-the x86 arm spends its declared `--cpus N` as pytest `-n N` (serial at one).
-Each pytest process explicitly receives `OMP_NUM_THREADS=1`,
-`MKL_NUM_THREADS=1`, `OPENBLAS_NUM_THREADS=1` and `MAX_JOBS=1`, overriding pool
-defaults and preventing each xdist worker's native math or extension compiler
-from multiplying its one-CPU share. The per-process limits are recorded in
-each arm's receipt; these environment settings are not an OS-level CPU quota.
-An explicit `--gpu-image` enables the container GPU arm. It requires
-`--gpu-deps-site`, its `--gpu-deps-sha256` seal, and a new owned
-`--gpu-cache-dir` on local disk outside the checkout. The shared container
-owner refuses known network filesystem types before command construction,
-cache creation or launch, naming the path, mount point and filesystem type.
-The coordinator calls the same rule before any action is submitted. A
-not-yet-created cache uses its nearest existing parent, judged by the mount
-id its opened descriptor reports in `/proc/self/fdinfo` — the mount the
-kernel actually serves at that path — resolved to its single mountinfo
-entry; mount-point depth, table order and parent identities play no part.
-An `autofs`
-entry alone refuses because its backing filesystem is not stably mounted.
-The shared mount reader in `tessera._dev.native_identity` also owns native
-mapped-device provenance; unresolved cache mount provenance fails closed.
-`tools/_suite_container.py` owns
-the finite runner grammar and Docker argv; `tools/suite_container.py` launches
-it only inside an admitted PB action. GPU `--cpus N` becomes pytest `-n N
---dist worksteal` with the same aggregate reservation. Use `--gpu-cpus` and
-`--gpu-mem-gb` when its population needs different CPU
-or aggregate memory reservations from the x86 arm. The pinned image must
-already be local according to PB's `--container-image` contract. Scoped
-dependencies declare their versions and every file's path, mode, length and
-SHA-256 (`tessera.suite_dependencies.v1`); changed bytes or a symlink refuse.
-The runner checks the dependency seal at entry and exit, so a host-side
-mutation during pytest cannot turn a clean summary into a successful action.
-The source and declared data roots mount readonly at their actual absolute
-paths, while the surface directory and action-owned cache mount writable.
-`--artifact-root ENV=PATH` uses the names owned by `tests/box_artifacts.py`;
-these overrides are sealed, mounted and forwarded to pytest. The helper
-disables user-site imports, bytecode writes and implicit pytest plugin
-autoload, fixes the Python entrypoint/workdir and native thread limits, and
-keeps pytest temporary files and compiler caches outside the source tree.
-PB's Docker shim retains responsibility for scope ownership, affinity,
-memory containment and exact-attempt termination.
+`tools/merge_suite.py` submits its CPU population through native Flux. The
+versioned `fv1-explicit-perf-memory.v1` profile declares performance cores and
+1-GiB memory leaves on the installed resource model. Each job is bounded to
+four cores, 16 GiB and thirty minutes. Every job starts with an empty
+environment and an explicit allowlist, with native math/build threads bounded
+to one. The x86 interpreter capability selects x86, without a host pin.
+GPU and container intentions remain explicit and refuse before any arm launches
+until their native admission contract is qualified. Strict-CUDA population,
+allocation, artifact and serving gates are unchanged.
 
-For a resumed arm, `pytest_command` records the effective command from its
-uniquely authenticated producer. `python` names the explicit interpreter of
-that command's `-m pytest` form, including the container's inner interpreter.
-It is unknown for a console pytest entry point or an unbound population;
-the configured arm default is not observed runtime metadata.
+The source is a clean detached shared checkout. The launch records its actual
+tracked path/mode/byte identity through `suite_source.measured_source`, without
+a generated closure stamp or verifier. The payload checks the source before
+and after execution. Pytest's own entry/publication span and worker agreement
+checks remain independent. Temporary files use job-ID local scratch, removed
+on exit and retained in the payload evidence. A missing cleanup record is
+incomplete evidence, never proof that a native `clean` event fenced readers.
 
-The receipt reader recognizes only the canonical relative runner path and
-its shared finite grammar, never arbitrary Docker tokens or shell fragments.
-It keeps the existing snapshot/stamp/request/publication/terminal checks and
-additionally reads the exact request's authenticated Git bundle (bounded to
-256 MiB), comparing the runner and shared owner blobs with the coordinator's
-sources. A receipt assembly verifies each distinct bundle once; this is
-ephemeral verification state, not a second source-identity cache. A modified
-runner, option/environment/mount shadow, worker/reservation mismatch, unknown
-producer, unverified source or different effective source remains non-green.
-Resume reads only the action keys the population's verified producer stamps
-name. It does not scan unrelated fleet history; several named producers or
-conflicting terminal records remain ambiguous, and an unstamped population
-cannot acquire an exit from another action.
+Each arm saves immutable launch intent, the native jobspec and the exact
+returned ID before waiting. An unknown acknowledgement is never retried
+implicitly. Resume uses that ID only, checks the broker generation and original
+jobspec, and retains status, eventlog, allocation, stdout/stderr and JUnit.
+It reads one population snapshot and binds its exact path, digest, verified
+source and summary counts to that same job. Query failure is unknown; a
+nonzero native ending remains red after an early clean publication. Historical
+PB receipts are not reinterpreted as native evidence. No scheduler, service,
+result cache, CAS or queue reader is introduced.
+
 The sealed inner command also uses `tessera._dev.suite_deadline`, launched through
 `tools/suite_deadline.py` with the arm's named Python. `--timeout-s` must be
 positive and finite; expiry signals its owned process group with TERM, then
@@ -4101,15 +4059,8 @@ names no executor:
   `unknown`. With no verifier declared, nothing is left out, so arms that
   carry different generated files never agree on a source.
 
-`tools/merge_suite.py`, which submits both arms through PrismaBuild, declares
-PrismaBuild's published `pbsnapshot.py verify` (RobTand/prismabuild#1280). That
-tool verifies pbrun's closure stamp against the exact sealed action request,
-and its entries carry the `action_key` and `request_sha256` that the resume
-path below binds on. Until a PrismaBuild generation with that tool is
-published, the declared verifier cannot run, so every population is `unknown`
-and names no producer. That is a refusal, never an unverified acceptance.
-Other stamp-looking tracked files remain source. Post-materialization dirty
-state and a failed verification yield `unknown`.
+`tools/merge_suite.py` declares no source verifier. Every tracked file is
+source, including stamp-looking files. A dirty or changed tree yields unknown.
 That hash is of a **span**, not of an instant: `tests/conftest.py` captures the
 identity above its first import of the code under test and the publication is
 bound to it, so a checkout fast-forwarded cleanly mid-run publishes `unknown`
@@ -4181,36 +4132,13 @@ also leaves the comparison unknown. Dry runs do not persist this file. The obser
 provenance: it adds no identity seal or result gate and does not replace source
 validation or the measured commit reported by each population.
 
-A **resumed** receipt (`--resume <dir>`) rebuilds each arm from the population
-it published and, since tessera#218, borrows that arm's exit status from
-PrismaBuild's own outcome record -- shown as `0 (pool)`, never as a status this
-process saw. Since tessera#294 the borrowing is admitted only on evidence the
-population and the record each carry, and absent evidence is absent, not
-agreement. The producer is found by parsing the sealed request's command in the
-shapes this tool seals -- `pytest`, `<python> -m pytest`, or either under
-`tools/suite_deadline.py ... --` -- and taking its *effective* (last)
-`--surface-json`; any other program that names the path is refused by name
-(`echo pytest --surface-json <path>` exits 0 having written nothing), and a
-program string passed to `-c` is not read. A candidate is then bound or
-refused, by reason, on three legs: the request's `checkout_snapshot.commit`
-and the population's `commit` are both present and equal; the population's
-verified source stamp (`source_identity.excluded_metadata[].action_key`, which
-`tessera._dev.suite_source` records only from a source verifier's answer) names
-that action and its `request_sha256` is the digest of the request bytes read;
-and the record's top-level status is `executed` or `failed` -- the two the
-worker writes together with the attempt's own `detail` (a
-`lease_lost_max_attempts` record keeps an earlier attempt's, as `dbd91b92` did)
--- with that attempt's captured stdout containing the run's own publication
-line for this path and a pytest summary line whose counts are the population's,
-both drawn from `terminalreporter.stats`. The
-clock is not evidence: #218's 600 s allowance between the file's mtime and the
-claim asserted how quickly a retry may follow, which nothing here measures, and
-it admitted a retry five minutes behind; it is gone with the inference. A
-population without the stamp (pre-stamp, or `unknown` source) names no producer,
-so its counts are read and no status is adopted; two bound records of the one
-producer are no single status and adopt none. Across the 281 historical
-populations under `/mnt/shared/tessera-suite-receipts` exactly the three
-stamped ones bind.
+A resumed receipt reads the known Flux ID's terminal status. It does not
+search for candidate producers. The original jobspec must equal the saved
+command/resources/environment, and the population must match the launch's
+verified source. The effective pytest `--surface-json` path, announced SHA-256
+and terminal summary must match the one publication snapshot read into the
+receipt. Missing or conflicting evidence leaves the exit unobserved. Published
+failures remain conclusive; their absence cannot prove a successful ending.
 
 That publication line has **one home**, `tessera._dev.surface_publication`:
 `tests/conftest.py` writes it from there and `tools/merge_suite.py` reads it
@@ -4240,16 +4168,16 @@ runs the test files `tools/impacted_tests.py` selects as shards, each one a
 recorded for the action its producer stamp names), and the receipt comes from
 `merge_suite._assemble_receipt`. The set adds four checks that a single arm
 cannot make. The sealed commands must run the selected files exactly, each
-once. No pbrun return code may be non-zero. Each client writes its result to
+once. Every known native job must have a bound successful terminal result. Each client writes its result to
 `client.<shard>.json` when it exits, and `--resume` reads those files back, so a
-population rejected for a pbrun code stays rejected; a shard with no file says
+population rejected for a nonzero native ending stays rejected; a shard with no file says
 `not recorded` and the pool's records decide it alone. No shard may leave a
 module uncollected. These checks refuse in both modes. The comparison of the
 shards' effective source with the checkout's own is a seal (D32), so it goes
 through `tessera.dev_mode.seal_check`. In dev mode, the default, it stamps one
 `[DEV-MODE]` line, computes no digest of the checkout and does not refuse. In
 certified mode (`PRISMAQUANT_DEV_MODE=0`) it measures the checkout with no
-verifier, and a population over another tree is not green. At most eight pbrun
+verifier, and a population over another tree is not green. At most eight native submission clients
 clients run at once (D21); more shards queue behind them. The report keeps one
 block per shard and every skip reason verbatim, from the surface's own
 histogram. `--resume` rebuilds the receipt without submitting. An aggregate that

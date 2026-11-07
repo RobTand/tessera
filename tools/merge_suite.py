@@ -1,84 +1,10 @@
 #!/usr/bin/env python3
-"""Run the suite on the merge result, on both device populations, once.
+"""Run explicit suite populations through native Flux and retain bound receipts.
 
-tessera#112: master was red on three CUDA-gated tests while GitHub Actions,
-the x86 pool suite and a local CPU run all read green.  Not one of those three
-signals could have seen the failure, and none of them said so.  The CUDA-gated
-surface is exercised by nothing automatic.
-
-*How big is that surface?*  **467 tests**, on ``d11dc01``, measured rather
-than estimated.  The device-less x86 arm's own skip histogram on that commit
-names 467 skips whose verbatim reason is a CUDA or GPU path; the GPU arm on
-the same commit skipped 13, none of them device-shaped.  The issue's "450-480"
-was a subtraction between two runs of two different commits on two different
-boxes, which is an estimate; this is one commit, two arms, each arm publishing
-its own population.
-
-Read the two arms with their run modes attached, because they are not
-otherwise comparable.  The GPU arm ran serially -- the cu130 venv has no xdist
--- under ``--strict-cuda`` on an NVIDIA GB10, and published 1910 passed / 0
-failed / 13 skipped.  The x86 arm ran ``-n 8`` on dl380g10 and published 1406
-passed / **5 failed** / 499 skipped.  All five failures are in
-``tests/test_cuda_surface.py`` -- exactly that file's five tests that read back
-a surface a child pytest wrote -- and they failed because
-``PYTEST_XDIST_WORKER`` is inherited by a nested run (see
-``tests/conftest.py::_worker_id``).  Green against red here is a run-mode
-difference, not a device one.  The arms also collected 1923 and 1910 items;
-that 13-item gap is not chased here and is not the surface figure.
-
-Two facts shape what this tool is.
-
-*A suite result is meaningless without its population.*  "1404 passed / 487
-skipped" and "1381 passed / 497 skipped" are not two measurements of the same
-thing; they are two different populations, and quoting either alone is how a
-red commit reads green.  So this submits **both** arms and writes **one**
-receipt holding both, side by side.  There is no way to quote one from it
-without the other being on the same screen.
-
-*The GPU arm must not be able to lie.*  It runs with ``--strict-cuda``, which
-refuses a session that has no CUDA device instead of skipping the surface it
-was submitted to cover.  A placement that lands the GPU arm on a box without a
-device now fails loudly; before, it would have returned a green tick.
-
-*The receipt must outlive the terminal.*  ``--record`` appends one row per arm
-to ``docs/status/suite-populations.md``, which is where a reader of the repo
-looks; and if the submitting session dies while the pool carries on -- which is
-how the first real run went -- ``--resume <receipt dir>`` rebuilds the receipt
-from the populations the runs published, and takes the exit status from the
-pool's own outcome record for the action that wrote that population -- shown
-as ``0 (pool)``, so a status nobody here watched is not mistaken for one this
-process saw.  "Wrote" is the action's **effective** pytest ``--surface-json``
-argument, read out of a command shape this tool seals (``pytest``, ``python -m
-pytest``, or those under ``tools/suite_deadline.py ... --``; any other program
-is refused by name), and bound to the population by evidence the population
-and the record each carry: the sealed snapshot's commit is the population's,
-the population's verified source stamp names that action and digests its
-request, and the recorded attempt's own stdout says it published this path,
-with the digest of the bytes it wrote and with these counts.  That
-publication line has one home -- ``tessera._dev.surface_publication``, which
-``tests/conftest.py`` writes it from and this file reads it with -- because a
-sentence spelled once in the producer and once in the consumer is a contract
-neither knows it is in, and it was one until #331.
-
-A command that merely mentions the path, one that
-overrides the option later, ``echo pytest``, a request with no snapshot, a
-population with no stamp, a lease-lost record, and a retry that never
-published are none of them this file's producer, and absent evidence is
-absent, not agreement.  Where no single record is bound -- still in flight,
-refused, or two records of the producer -- the row stays ``not observed`` and
-nothing is borrowed: published failures prove red, their absence does not
-prove green.
-
-Everything about scheduling is PrismaBuild's: this composes ``pbrun``
-invocations and reads what they return.  It never runs a suite itself, never
-sshes anywhere, and a refused placement comes back as the refusal it is.
-``--cpus N`` is spent as well as declared: above 1 it becomes pytest's ``-n``,
-so the reservation and the command cannot disagree.  It is clamped **per
-arm**: the legacy GPU arm selects serial execution, while the x86 arm uses
-``-n``. The clamp originated when the GPU interpreter lacked xdist. Current
-direct PrismaBuild submissions can use scoped xdist on both populations with
-independent process state and aggregate CPU/memory reservations. This wrapper
-retains its existing per-arm setting; it does not detect runtime capability.
+Each arm saves its immutable source, command, resources and exact native ID.
+Resume submits nothing. One population snapshot is bound to that job's original
+jobspec, verified tracked source, publication digest, summary and final status.
+CPU evidence does not qualify the CUDA or container population.
 """
 from __future__ import annotations
 
@@ -98,7 +24,7 @@ from typing import NamedTuple
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from tessera._dev.suite_deadline import positive_seconds as _positive_seconds  # noqa: E402
-from tessera._dev.suite_source import VERIFIER_ENV  # noqa: E402
+import _suite_flux as suite_flux  # noqa: E402
 import _suite_container as suite_container  # noqa: E402
 from tessera._dev.surface_publication import (  # noqa: E402
     POPULATION,
@@ -106,67 +32,16 @@ from tessera._dev.surface_publication import (  # noqa: E402
     published_digests,
 )
 
-PBRUN = Path("/mnt/shared/prismabuild-fleet/repo/tools/pbrun.py")
 SHARED_ROOT = Path("/mnt/shared")
-#: Surface reports are written OUTSIDE the checkout on purpose.  pbrun binds a
-#: command's identity to the checkout's git delta, so an artefact dropped into
-#: the tree moves the action key of every later submission from it -- a cache
-#: miss dressed up as a different action.
 DEFAULT_RECEIPT_ROOT = SHARED_ROOT / "tessera-suite-receipts"
-
-# Each arm has one reserved CPU per pytest process: the GPU arm is serial,
-# while xdist spends the x86 reservation as one process per core. Native math
-# threads and per-process extension builds must not multiply that reservation.
-PROCESS_THREAD_LIMITS = dict.fromkeys(
-    ("OMP_NUM_THREADS", "MKL_NUM_THREADS", "OPENBLAS_NUM_THREADS", "MAX_JOBS"), "1"
-)
-#: The import path the suite's own child processes inherit, spelled the way
-#: CI states it: ``.github/workflows/ci.yml`` runs pytest under
-#: ``PYTHONPATH=src``.  ``tests/conftest.py`` puts the tree's roots on
-#: ``sys.path`` for the pytest process itself, but a test that starts an
-#: interpreter of its own inherits an environment, not that list -- the
-#: batch-891-895 x86 population (receipt ``20261003T230852``, issue #914)
-#: failed ``test_forest_grid_roster`` and, as its probe-child cascade,
-#: ``test_collection_probe`` on exactly this: green under CI's export, red
-#: under a gate that never declared it.  Relative on purpose -- pbrun
-#: materialises each action's checkout at a per-action path, and ``src``
-#: resolves against the checkout cwd every process in the action shares.
+PROCESS_THREAD_LIMITS = suite_flux.THREADS
 CHILD_ENV = {"PYTHONPATH": "src"}
-#: The source verifier each arm declares (``tessera._dev.suite_source``).  A
-#: pbrun checkout carries the closure stamp pbrun generated; PrismaBuild's own
-#: published ``pbsnapshot.py verify`` says which file that is and which sealed
-#: action wrote it, and the population's ``excluded_metadata`` records its
-#: answer -- the producer stamp the resume path below binds on.  The system
-#: interpreter runs it, as it runs every published PrismaBuild tool: the arm's
-#: venv is the code under test's, not PrismaBuild's.
-SOURCE_VERIFIER = ("/usr/bin/python3",
-                   str(SHARED_ROOT / "prismabuild-fleet" / "repo" / "tools" / "pbsnapshot.py"),
-                   "verify")
-# Cleanup backstop, matching the deployed PB worker's TERM grace. The inner
-# command also enforces its deadline within the PB action's admitted timeout.
 TIMEOUT_KILL_AFTER_S = 5.0
 
-#: Where the pool publishes what it did.  A finished action's outcome record
-#: carries the exit status the worker actually saw; the CAS request beside it
-#: carries the command that action ran.  Reading those two is how a resumed
-#: receipt can state an exit status instead of declining to -- derived from a
-#: table PrismaBuild publishes, never inferred from the population's contents.
-POOL_ROOT = SHARED_ROOT / "prismabuild-fleet"
-POOL_QUEUE = POOL_ROOT / "pb-queue"
-POOL_CAS_REQUESTS = POOL_ROOT / "cas" / "requests"
-
-#: The two arms, and why each is spelled the way it is.  The interpreter is
-#: named rather than inherited: a pool action runs in a sealed environment, so
-#: ``sys.executable`` here is a fact about the submitting box, not the target.
-#:
-#: ``fans_out`` is a property of the ARM, not of the submission.  ``--cpus`` is
-#: one number for a run and the two arms cannot spend it the same way, so an
-#: arm that must run serially says so here and clamps its own share.
 ARMS = {
     "gpu": {
         "why": "the CUDA-gated surface; nothing else exercises it",
         "python": "/home/rob/dq-runs/venvs/prismaquant-cu130/bin/python",
-        "pbrun_flags": ["--gpu", "--exclusive"],
         "strict_cuda": True,
         "fans_out": False,
         "serial_because": (
@@ -179,7 +54,6 @@ ARMS = {
         "why": "the device-less population: torch present, no CUDA device, "
                "which is what dl380g10 actually reports",
         "python": "/home/rob/venvs/pb-cpu/bin/python",
-        "pbrun_flags": ["--tag", "x86"],
         "strict_cuda": False,
         "needs_shared_checkout": True,
         "fans_out": True,
@@ -341,7 +215,7 @@ def _command(arm: dict, surface_json: Path, extra: list[str],
     if cpus > 1:
         # The retained native mode is loadfile. The explicit container arm
         # uses independent process state and worksteal under its own contract.
-        command += ["-n", str(cpus), "--dist", arm.get("dist", "loadfile")]
+        command += ["-n", str(cpus), "--dist", arm.get("dist", "worksteal")]
         if arm.get("container"):
             command += ["-p", "xdist.plugin"]
     if arm["strict_cuda"]:
@@ -358,94 +232,44 @@ def _timed_command(command: list[str], timeout_s: float) -> list[str]:
             "--kill-after-s", str(grace), "--", *command]
 
 
-def _submit(name: str, arm: dict, args, receipt_dir: Path) -> dict:
-    surface_json = receipt_dir / f"surface.{name}.json"
-    image = getattr(args, "gpu_image", "") if name == "gpu" else ""
-    if image:
-        arm = {**arm, "python": "/usr/bin/python3", "fans_out": True,
-               "dist": "worksteal", "container": True}
-    # The reservation is this ARM's, not the run's: an arm clamped to serial
-    # must not hold the cores it was told to spend, or the ledger says the box
-    # is busy while seven of its cores idle.
-    requested_cpus = (getattr(args, "gpu_cpus", None) or args.cpus) if name == "gpu" else args.cpus
-    mem_gb = (getattr(args, "gpu_mem_gb", None) or args.mem_gb) if name == "gpu" else args.mem_gb
-    cpus = _arm_cpus(arm, requested_cpus)
-    command = _command(arm, surface_json, args.pytest_arg, cpus)
-    artifact_roots = getattr(args, "artifact_root", [])
-    if image:
-        runner = ["--image", image, "--deps-site", args.gpu_deps_site,
-                  "--deps-sha256", args.gpu_deps_sha256,
-                  "--surface-dir", str(receipt_dir), "--cache-dir", args.gpu_cache_dir]
-        for root in getattr(args, "gpu_data_root", []):
-            runner += ["--data-root", root]
-        for root in artifact_roots:
-            runner += ["--artifact-root", root]
-        suite_container.parse([*runner, "--", *command])
-        command = ["/usr/bin/python3", suite_container.RUNNER, *runner, "--", *command]
-    command = _timed_command(command, args.timeout_s)
-    flags = list(arm["pbrun_flags"])
-    if name == "gpu" and args.gpu_tag:
-        flags += ["--tag", args.gpu_tag]
-    invocation = [
-        sys.executable, str(PBRUN),
-        *flags,
-        "--cpus", str(cpus),
-        # --exclusive derives full GPU capacity from the selected worker's
-        # live offer through pbrun.exclusive_gpu_demand, never from a slot guess.
-        "--demand", f"mem_gb={mem_gb}",
-        "--cwd", str(args.checkout),
-        "--timeout-s", str(args.timeout_s),
-        "--wait-s", str(args.wait_s),
-        *[part for key, value in {**PROCESS_THREAD_LIMITS, **CHILD_ENV}.items()
-          for part in ("--env", f"{key}={value}")],
-        "--env", f"{VERIFIER_ENV}={shlex.join(SOURCE_VERIFIER)}",
-        *(["--container-image", image] if image else []),
-        *[part for value in artifact_roots for part in ("--env", value)],
-        "--", *command,
-    ]
-    record = {
-        "arm": name,
-        "why": arm["why"],
-        "python": arm["python"],
-        # What this arm was SUBMITTED to cover, carried on the record so the
-        # verdict can check the population against it without reaching back
-        # into a table the receipt does not contain.
-        "requires_cuda": bool(arm["strict_cuda"]),
-        # The run mode, on the record, because a pass count of one arm read
-        # against the other's differs by more than the device: the five
-        # failures on ``82f0047`` were an ``-n``-only defect.
-        "cpus_requested": requested_cpus,
-        "cpus_used": cpus,
-        "mem_gb": mem_gb,
-        "process_thread_limits": dict(PROCESS_THREAD_LIMITS),
-        # The environment beyond the thread limits that this arm declared, on
-        # the record, so a receipt reader can see the population ran under the
-        # same import contract CI states rather than inferring it (#914).
-        "declared_env": dict(CHILD_ENV),
-        "source_verifier": shlex.join(SOURCE_VERIFIER),
-        "timeout_s": args.timeout_s,
-        "timeout_kill_after_s": TIMEOUT_KILL_AFTER_S,
-        "timeout_scope": "per attempt; excludes queue time, retries and detached descendants",
-        "pbrun": " ".join(shlex.quote(part) for part in invocation),
-    }
-    if image:
-        record["container_image"] = image
-        record["dependency_site"] = args.gpu_deps_site
-        record["dependency_sha256"] = args.gpu_deps_sha256
-    if cpus != requested_cpus:
-        record["cpus_note"] = arm.get("serial_because", "")
-    if args.dry_run:
-        record["status"] = "not submitted (--dry-run)"
-        return record
+def _preflight(arm: dict, args) -> dict:
+    if arm["strict_cuda"] or getattr(args, "gpu_image", "") or arm.get("container"):
+        raise ValueError("native GPU/container suite admission is not qualified; preserve the requested arm")
+    roots = {}
+    for item in getattr(args, "artifact_root", []):
+        key, separator, value = item.partition("=")
+        if not separator or key in roots:
+            raise ValueError("artifact roots require unique ENV=PATH declarations")
+        roots[key] = value
+    suite_flux.validate(_arm_cpus(arm, args.cpus), args.mem_gb, args.timeout_s, roots)
+    _positive_seconds(args.wait_s)
+    return roots
 
-    started = time.monotonic()
-    proc = subprocess.run(invocation, capture_output=True, text=True)
-    record["returncode"] = proc.returncode
-    record["elapsed_s"] = round(time.monotonic() - started, 1)
-    record["stderr_tail"] = proc.stderr.strip().splitlines()[-6:]
-    record["stdout_tail"] = proc.stdout.strip().splitlines()[-6:]
-    _attach_surface(record, surface_json)
-    return record
+
+def _submit(name: str, arm: dict, args, receipt_dir: Path) -> dict:
+    roots = _preflight(arm, args)
+    surface_json = receipt_dir / f"surface.{name}.json"
+    cpus = _arm_cpus(arm, args.cpus)
+    command = _command(arm, surface_json, args.pytest_arg, cpus)
+    command += ["--junitxml", str(receipt_dir / f"junit.{name}.xml"), "--durations=10"]
+    destination, refusal = _effective_surface_json(command)
+    if refusal or destination != str(surface_json):
+        raise ValueError("pytest arguments change the declared population path")
+    command = _timed_command(command, args.timeout_s)
+    if args.dry_run:
+        return {"arm": name, "why": arm["why"], "python": arm["python"],
+                "requires_cuda": arm["strict_cuda"], "command": command,
+                "cpus_used": cpus, "mem_gb": args.mem_gb,
+                "status": "not submitted (--dry-run)",
+                "flux": shlex.join(command)}
+    directory = receipt_dir / f"flux.{name}"
+    suite_flux.submit(directory, args.checkout, command, cpus, args.mem_gb,
+                      args.timeout_s, roots)
+    try:
+        suite_flux.wait(directory, args.wait_s)
+    except subprocess.TimeoutExpired:
+        pass  # A client wait limit does not cancel or resubmit the native ID.
+    return _resume(name, arm, receipt_dir)
 
 
 #: What a surface file has to say about itself before this tool will read it
@@ -723,278 +547,6 @@ def _summary_counts(stdout: str) -> tuple[dict | None, str | None]:
     return None, None
 
 
-#: The outcome statuses PrismaBuild's worker writes together with the attempt
-#: they describe: ``finish()`` replaces ``detail`` and sets one of these.  The
-#: lease reaper's ``lease_lost_max_attempts`` moves the record without
-#: touching ``detail``, so that record's detail is whatever attempt last
-#: finished -- an earlier one's, as observed on ``dbd91b92``.
-_FINAL_ATTEMPT_STATUSES = ("executed", "failed")
-
-
-def _binding_refusal(key: str, payload: dict, request_bytes: bytes,
-                     outcome: dict,
-                     published: "_Publication | None",
-                     verified_bundles: dict | None = None) -> str | None:
-    """Why this finished action's status is not this population's, or ``None``.
-
-    ``published`` is one read of the surface file -- its bytes, their digest
-    and their parse together -- and every leg below reads that one snapshot.
-    This function does not open the path, and it used to: it took the parsed
-    population its caller had read earlier and re-opened the same pathname to
-    hash it, so a retry landing between the two reads had its bytes
-    authenticated while the earlier attempt's source verification and producer
-    stamp stayed on the record (#340).  Two honest reads of one name are not
-    one publication, and the type is what says so.
-
-    A status is adopted only from the action the population itself names, for
-    the attempt that itself says it published this file.  Each leg is a
-    required piece of evidence and a record without it is refused for the
-    absence: #218 compared identities only where both sides were present,
-    which let a request with no snapshot and an outcome with no claim time
-    pass every check by having nothing to check (#294).
-
-    * the **tree**: the sealed request's ``checkout_snapshot.commit`` and the
-      population's ``commit`` are both present and equal;
-    * the **producer**: the population carries ``suite_source``'s verified
-      stamp -- ``source_identity.excluded_metadata[].action_key`` -- naming
-      this action, and the stamp's ``request_sha256`` is the digest of the
-      request bytes read here, so the population and the pool agree on which
-      request this is.  A population without the stamp (pre-stamp, or
-      ``unknown`` source) names no producer and adopts no status; its counts
-      are still read;
-    * the **attempt**: the outcome's top-level status is one the worker
-      writes with the final attempt's own ``detail``, and that attempt's
-      captured stdout says it published a population at this path -- with the
-      **digest** of the bytes it wrote, which must be the digest of the
-      publication read above -- and printed the counts that publication
-      holds.
-      The pool requeues on any non-zero exit and a retry may die before
-      publishing; what tells the attempts apart is what each said it wrote.
-      #218 told them apart by a 600 s clock allowance between the file's
-      mtime and the claim, which bounded how quickly a retry may follow -- a
-      thing this tool does not know -- and admitted a retry five minutes
-      behind.
-
-      The publication line is not spelled here.  It is
-      ``tessera._dev.surface_publication``'s, which ``tests/conftest.py``
-      writes it from: a contract two modules each state is two rules that
-      drift, and this one drifted silently by construction -- the only test
-      of the join wrote the parser's own string back to it, so a reworded
-      producer left every arm of every resumed receipt ``not observed`` with
-      nothing red anywhere (#331).  The digest is why the join is now
-      evidence and not a matched sentence: an attempt that overwrote this
-      path with a population of *identical counts* is refused on bytes, which
-      the counts leg below cannot see.  A line with no digest -- every run
-      captured before #331, whose stdout is what a resume of an old receipt
-      reads -- is bound on path and counts alone, because that is all such an
-      attempt ever said.
-    """
-
-    if published is None:
-        return ("this path holds no population this tool read as one, so "
-                "there is nothing for an action's status to be the status of")
-    snapshot = (payload.get("params") or {}).get("checkout_snapshot")
-    stamped = snapshot.get("commit") if isinstance(snapshot, dict) else None
-    measured = published.payload.get("commit")
-    if not stamped:
-        return ("the request has no checkout_snapshot.commit, so the tree it "
-                "ran is not established")
-    if not measured:
-        return ("the population names no commit, so the tree it measured is "
-                "not established")
-    if stamped != measured:
-        return (f"the action ran snapshot commit {stamped[:12]} while the "
-                f"population says it measured {measured[:12]}")
-
-    identity = published.payload.get("source_identity") or {}
-    stamps = [entry for entry in (identity.get("excluded_metadata") or [])
-              if isinstance(entry, dict) and entry.get("action_key")]
-    if not stamps:
-        return ("the population names no sealed action as its producer (no "
-                "source_identity.excluded_metadata action_key), so no "
-                "action's status is its status")
-    named = [entry for entry in stamps if entry.get("action_key") == key]
-    if not named:
-        others = ", ".join(str(entry["action_key"])[:12] for entry in stamps)
-        return (f"the population names action {others} as its producer, "
-                f"not {key[:12]}")
-    digest = hashlib.sha256(request_bytes).hexdigest()
-    for entry in named:
-        expected = entry.get("request_sha256")
-        if expected != digest:
-            return ("the population's request_sha256 "
-                    f"{str(expected)[:12]} is not the digest of this request "
-                    f"({digest[:12]}), so the request it verified against is "
-                    "not the one read here")
-
-    status = outcome.get("status")
-    attempt = outcome.get("attempts")
-    if status not in _FINAL_ATTEMPT_STATUSES:
-        return (f"outcome status is {status!r}, whose detail is not the final "
-                "attempt's own -- only executed/failed records carry the "
-                "attempt they describe")
-    stdout = (outcome.get("detail") or {}).get("stdout")
-    if not isinstance(stdout, str):
-        stdout = ""
-    # The sentence is not restated here: `tessera._dev.surface_publication` is
-    # the one home the conftest writes it from, so a reword moves both sides
-    # or neither (#331).
-    announced = published_digests(stdout, published.path, POPULATION)
-    if not announced:
-        return (f"the attempt whose status is recorded (attempt {attempt}) "
-                "never said it published a population at this path")
-    digests = [value for value in announced if value]
-    # Against the publication that was READ, never against the path again: the
-    # bytes the digest authenticates and the metadata the verdict consumes are
-    # the same snapshot or this leg proves nothing about the other legs (#340).
-    if digests and published.digest not in digests:
-        return (f"the attempt whose status is recorded (attempt {attempt}) "
-                f"published sha256 {digests[0][:12]} at this path and the "
-                f"population read here is {published.digest[:12]}, so the "
-                "population this receipt holds is not the one that attempt "
-                "wrote")
-    counts, line = _summary_counts(stdout)
-    if counts is None:
-        return (f"the attempt whose status is recorded (attempt {attempt}) "
-                "printed no terminal summary, so what it published is not "
-                "established")
-    held = published.payload.get("counts") or {}
-    differing = [bucket for bucket in _COMPARED_COUNTS
-                 if counts[bucket] != int(held.get(bucket) or 0)]
-    if differing:
-        return (f"the attempt's summary line `{line}` disagrees with the "
-                "population's counts ("
-                + ", ".join(f"{held.get(b) or 0} {b}" for b in differing)
-                + "), so the population at this path is not what that "
-                "attempt published")
-    command = (payload.get("params") or {}).get("command") or []
-    # Only the exact runner path is recognized by the grammar. Its name is
-    # still no authority: authenticate the actual runner and shared owner
-    # blobs from this request's immutable snapshot before adopting its exit.
-    try:
-        container = _container_spec(command)
-        if container is not None:
-            suite_container.admission(container, payload)
-            suite_container.source_bound(payload, POOL_CAS_REQUESTS.parent, verified_bundles)
-    except (ValueError, OSError, KeyError, IndexError, subprocess.SubprocessError) as error:
-        return "container runner source refused: " + str(error)
-    return None
-
-
-def _pool_actions_that_wrote(surface_json: Path,
-                             published: "_Publication | None" = None,
-                             ) -> tuple[list, list]:
-    """The finished pool actions whose command wrote this population.
-
-    ``published`` is the one read of ``surface_json`` this receipt is about --
-    not the path to read again.  The caller opened it; this hands that same
-    snapshot to every candidate's binding, so no action's status can be
-    authenticated against bytes other than the ones the record carries (#340).
-
-    A resumed receipt used to have no exit status at all: the submitting
-    process died, so nobody in this program watched the run.  But somebody
-    did.  PrismaBuild's worker waits on the child, records the status it saw
-    in the action's outcome record, and leaves that record in
-    ``pb-queue/done`` or ``pb-queue/failed`` -- a machine-readable table the
-    pool publishes about its own execution.  Reading it is not guessing, and
-    it is not the forbidden move either: the number comes from the runtime
-    that ran the thing, not from this program's opinion about what a clean
-    summary implies.
-
-    The join is the action's **effective** ``--surface-json`` argument, parsed
-    out of a pytest command this tool recognises in its CAS request
-    (``_pytest_argv``) -- not the presence of the path somewhere in argv,
-    which made every reader of the file a candidate writer, and not the
-    presence of the word ``pytest``, which made ``echo`` one.  A command of a
-    shape this tool does not parse that nevertheless names the path is listed
-    among the refusals with its program's name; one that does not name it is
-    simply not about this population.
-
-    A match is then bound to the population it claims to have written, or
-    refused with the reason (``_binding_refusal``): the population must name
-    that action as its producer and the recorded attempt must say it
-    published this file.  Returns the bound producers and the refusals,
-    because the caller must be able to tell one from several: two records of
-    the producer (the pool disagreeing with itself about one action) have no
-    single exit status, and picking one would be exactly the overclaim the
-    rest of this file refuses.
-    """
-
-    wanted = str(Path(surface_json))
-    stamps = ((published.payload.get("source_identity") or {}).get("excluded_metadata") or []) if published else []
-    keys = {entry.get("action_key") for entry in stamps if isinstance(entry, dict)
-            and isinstance(entry.get("action_key"), str)
-            and re.fullmatch(r"[0-9a-f]{64}", entry["action_key"])}
-    if not keys:
-        return [], ["the population names no sealed action as its producer "
-                    "(no source_identity.excluded_metadata action_key)"]
-    found: list[dict] = []
-    refused: list[str] = []
-    verified_bundles: dict = {}
-    terminal_keys: set[str] = set()
-    for state in ("done", "failed"):
-        folder = POOL_QUEUE / state
-        if not folder.is_dir():
-            continue
-        # The population names its producer(s). Unrelated history cannot
-        # supply an exit; reading it made a real resume exceed its 300-second
-        # PB budget. Multiple producers and duplicate terminal states still
-        # go through every binding check and remain ambiguous.
-        for key in sorted(keys):
-            outcome_path = folder / f"{key}.json"
-            if not outcome_path.is_file():
-                continue
-            terminal_keys.add(key)
-            request = POOL_CAS_REQUESTS / key[:2] / f"{key}.json"
-            try:
-                request_bytes = request.read_bytes()
-                request_payload = json.loads(request_bytes)
-            except (OSError, ValueError):
-                continue
-            if not isinstance(request_payload, dict):
-                continue
-            command = [str(part) for part in
-                       (request_payload.get("params") or {}).get("command") or []]
-            destination, unparsed = _effective_surface_json(command)
-            if unparsed is not None:
-                # Named only where it claimed this path: an unrelated build
-                # never mentions it, and listing every action in the pool
-                # would bury the one refusal a reader needs to see.
-                if any(wanted in part for part in command):
-                    refused.append(f"{key[:12]}: {unparsed}")
-                continue
-            if destination is None or str(Path(destination)) != wanted:
-                continue
-            try:
-                outcome = json.loads(outcome_path.read_text())
-            except (OSError, ValueError):
-                continue
-            if not isinstance(outcome, dict):
-                continue
-            refusal = _binding_refusal(key, request_payload, request_bytes,
-                                       outcome, published, verified_bundles)
-            if refusal:
-                refused.append(f"{key[:12]}: {refusal}")
-                continue
-            detail = outcome.get("detail") or {}
-            found.append({
-                "action_key": key,
-                "queue_state": state,
-                "returncode": detail.get("returncode"),
-                "worker_status": detail.get("status"),
-                "attempts": outcome.get("attempts"),
-                "host": outcome.get("claimed_host"),
-                "elapsed_s": detail.get("elapsed_s"),
-                # The command is what says whether that run fanned out, which
-                # a resumed receipt otherwise cannot know: the process that
-                # chose the mode is gone.
-                "command": command,
-            })
-    for key in sorted(keys - terminal_keys):
-        refused.append(f"{key[:12]}: no terminal done/failed record for the named producer")
-    return found, refused
-
-
 def _cpus_of_command(command: list) -> int | None:
     """The run mode a recorded command actually ran under.
 
@@ -1018,114 +570,57 @@ def _cpus_of_command(command: list) -> int | None:
         return None
 
 
-def _attach_pool_exit_status(record: dict, surface_json: Path,
-                             published: "_Publication | None") -> None:
-    """Let the pool answer the question this process cannot.
-
-    Three outcomes, and the two that are not "one action" both leave the row
-    unobserved rather than borrowing a number:
-
-    * exactly one finished record is bound to this population -- the action it
-      names as producer, for an attempt that says it published this file --
-      and carries an integer status: that status is the exit status, and the
-      row says where it came from;
-    * none is -- the run may still be in flight, its record may have been
-      reaped, the population may name no producer, or every record naming the
-      path was refused (listed on the record, by reason) -- and nobody here
-      saw an exit;
-    * several are -- two records of the producing action.  There is no single
-      status to report, so none is reported and the row says how many.
-    """
-
-    # The publication the caller read, not ``record["surface"]`` re-derived
-    # from the path: the record's fields and the bytes a status is
-    # authenticated against must be one snapshot (#340).
-    matches, refused = _pool_actions_that_wrote(surface_json, published)
-    if refused:
-        record["pool_actions_refused"] = refused
-        record["exit_status_note"] += (
-            " The named producer did not establish a bound terminal status: "
-            + "; ".join(refused) + ".")
-    if len(matches) == 1 and isinstance(matches[0].get("returncode"), int):
-        pool = matches[0]
-        record["returncode"] = pool["returncode"]
-        record["exit_status_observed"] = True
-        record["exit_status_source"] = "pool"
-        record["pool_action"] = pool
-        # The authenticated producer's effective command names its runtime;
-        # configured arm defaults describe a prospective submission instead.
-        argv, _ = _pytest_argv(pool.get("command") or [])
-        record["pytest_command"] = argv
-        record["python"] = (argv[0] if argv and len(argv) >= 3
-                            and _PYTHON_NAME.match(Path(argv[0]).name)
-                            and argv[1:3] == ["-m", "pytest"] else None)
-        record["exit_status_note"] = (
-            "the submitting process did not survive to watch this run, so the "
-            "exit status is the one PrismaBuild's worker recorded for action "
-            f"{pool['action_key'][:12]} on {pool['host']} -- read from the "
-            "pool's own outcome record, not inferred from the population."
-        )
-        # Same source, same reason: the run mode is in the command that action
-        # ran, so a resumed row can name it instead of leaving it blank.
-        mode = _cpus_of_command(pool.get("command") or [])
-        if mode is not None:
-            record["cpus_used"] = mode
-        return
-    if matches:
-        record["pool_actions_matching"] = [m["action_key"] for m in matches]
-        record["exit_status_note"] += (
-            f" {len(matches)} finished pool actions wrote this population's "
-            "path, so there is no single exit status to read and none is "
-            "borrowed."
-        )
+def _native_binding_refusal(native: dict, published: "_Publication | None", stdout: str):
+    if published is None:
+        return "no population publication was read"
+    if native.get("query_errors") or not native.get("exit_status_observed"):
+        return "native terminal status is unknown: " + "; ".join(native.get("query_errors", []))
+    command = native.get("command", [])
+    destination, refusal = _effective_surface_json(command)
+    if refusal or destination != str(published.path):
+        return "native command does not write the declared population"
+    identity = published.payload.get("source_identity") or {}
+    expected = native.get("source") or {}
+    if (identity.get("verification") != "verified"
+            or identity.get("sha256") != expected.get("sha256")
+            or identity.get("snapshot_commit") != expected.get("snapshot_commit")
+            or published.payload.get("commit") != expected.get("snapshot_commit")):
+        return "population source differs from the immutable native launch"
+    announced = published_digests(stdout, published.path, POPULATION)
+    if published.digest not in announced:
+        return "native job did not announce this exact population digest and path"
+    counts, _ = _summary_counts(stdout)
+    held = published.payload.get("counts") or {}
+    if counts is None or any(counts[key] != int(held.get(key) or 0) for key in _COMPARED_COUNTS):
+        return "native job terminal summary disagrees with population counts"
+    return None
 
 
 def _resume(name: str, arm: dict, receipt_dir: Path) -> dict:
-    """Assemble an arm's record from the population it already published.
-
-    The receipt was the one part of this tool that only existed while the
-    submitting terminal did.  When that process dies -- an interrupted session,
-    a dropped connection -- the suite keeps running on the pool and writes its
-    surface to shared storage, and the receipt that was supposed to hold the
-    two populations together is simply never written.  A result that survives
-    only in a live scrollback is what #112 item 1 asks us to stop producing, so
-    the tool should not have that shape itself.
-
-    The exit status this process never watched is read from the one runtime
-    that did: PrismaBuild's worker records it in the action's outcome record,
-    and the action is found by the effective ``--surface-json`` output of the
-    pytest command in its own sealed request, bound to this population's
-    source and attempt.
-    It is never reconstructed from ``counts.failed`` -- a run can exit non-zero
-    after a clean summary (a crash in teardown, an internal error, a timeout
-    kill), so failures in the surface prove red while their absence does not
-    prove green.  Where no single finished action wrote the path, the record
-    says ``not observed`` and borrows nothing; a requeued action is one such
-    case, and the pool requeues on any non-zero exit, so a red suite spends a
-    while with no status at all.
-    """
-
-    record = {
-        "arm": name,
-        "why": arm["why"],
-        "python": None,
-        "requires_cuda": bool(arm["strict_cuda"]),
-        "resumed": True,
-        "exit_status_observed": False,
-        "returncode": None,
-        "exit_status_note": (
-            "assembled after the fact from the population this run published; "
-            "the submitting process did not survive to observe an exit status. "
-            "Failures in the surface below are conclusive; their absence is "
-            "not, so this arm cannot be called green from this receipt alone."
-        ),
-    }
+    record = {"arm": name, "why": arm["why"], "python": None,
+              "requires_cuda": bool(arm["strict_cuda"]), "resumed": True,
+              "exit_status_observed": False, "returncode": None,
+              "exit_status_source": "Flux", "exit_status_note": "native evidence is incomplete"}
     surface_json = receipt_dir / f"surface.{name}.json"
-    # One read, carried forward.  The pool may still be writing this path
-    # while the receipt is assembled, so reading it twice is reading two
-    # possibly different publications and calling them one (#340).
     published = _attach_surface(record, surface_json)
-    _attach_pool_exit_status(record, surface_json, published)
+    directory = receipt_dir / f"flux.{name}"
+    native = suite_flux.collect(directory)
+    record["native_job"] = native
+    stdout = (directory / "stdout").read_text() if (directory / "stdout").exists() else ""
+    refusal = _native_binding_refusal(native, published, stdout)
+    # A native nonzero ending remains conclusive even if publication failed.
+    if native.get("exit_status_observed") and native.get("returncode") != 0:
+        record["returncode"] = native["returncode"]
+    if refusal:
+        record["binding_refusal"] = refusal
+        record["exit_status_note"] = refusal
+    else:
+        record.update(returncode=native["returncode"], exit_status_observed=True,
+                      exit_status_note="bound to saved native Flux ID " + native["job_id"])
+        command, _ = _pytest_argv(native["command"])
+        record["pytest_command"] = command
+        record["python"] = command[0] if command else None
+        record["cpus_used"] = _cpus_of_command(command)
     return record
 
 
@@ -1441,7 +936,7 @@ different source, and is unknown for legacy or unverifiable populations.
 `source <hash>` beside a row's snapshot commit names that verified source.
 Pass counts alone do not establish a same-source merge check.
 
-`exit` is the status the submitting process observed. `0 (pool)` is a status
+`exit` is the status the submitting process observed. `0 (Flux)` is a status
 this program did not watch and did not guess: the run was resumed, and the
 number is the one PrismaBuild's own worker recorded for the action the
 population names as its producer, for the attempt whose own output says it
@@ -1516,8 +1011,8 @@ def _record_markdown(path: Path, receipt: dict) -> None:
             # watched and a status read out of the pool's outcome record are
             # both facts, and they are not the same fact -- one of them is
             # about a run nobody here was present for.
-            if record.get("exit_status_source") == "pool":
-                exit_text += " (pool)"
+            if record.get("exit_status_source") == "Flux":
+                exit_text += " (Flux)"
         else:
             # Never a bare number here: this process did not watch the run, and
             # a row that looks watched when it was not is the same overclaim
@@ -1602,20 +1097,6 @@ def _keep_any_previous(path: Path):
     return kept
 
 
-def use_pool_root(pool_root) -> None:
-    """Point the readers at this pool.
-
-    Module-level because that is where the readers look, and because a test
-    that monkeypatches them is doing the same thing this does.  A tool that
-    reads arms of its own calls this instead of restating the two paths.
-    """
-
-    global POOL_QUEUE, POOL_CAS_REQUESTS
-    root = Path(pool_root).resolve()
-    POOL_QUEUE = root / "pb-queue"
-    POOL_CAS_REQUESTS = root / "cas" / "requests"
-
-
 def _assemble_receipt(arms: list[dict], checkout: Path, *, assembled_by: str,
                       submission_master: dict | None = None) -> dict:
     """The receipt for these arm records: one owner for what a receipt says.
@@ -1627,7 +1108,7 @@ def _assemble_receipt(arms: list[dict], checkout: Path, *, assembled_by: str,
 
     commits = _commits_measured(arms)
     return {
-        "schema": "tessera.merge_suite.v1",
+        "schema": "tessera.merge_suite.flux.v2",
         "generated_utc": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
         "submitted_from": os.uname().nodename,
         "assembled_by": assembled_by,
@@ -1672,19 +1153,19 @@ def main() -> int:
     ap.add_argument("--mem-gb", type=int, default=16)
     ap.add_argument("--gpu-cpus", type=int, default=None, help="GPU arm process reservation; defaults to --cpus")
     ap.add_argument("--gpu-mem-gb", type=int, default=None, help="GPU aggregate host memory; defaults to --mem-gb")
-    ap.add_argument("--gpu-image", default="", help="immutable PB-local image; enables GPU xdist")
+    ap.add_argument("--gpu-image", default="", help="immutable local image; enables GPU xdist")
     ap.add_argument("--gpu-deps-site", default="", help="readonly scoped pytest/xdist site")
     ap.add_argument("--gpu-deps-sha256", default="", help="suite_dependencies.v1 content seal")
     ap.add_argument("--gpu-cache-dir", default="",
                     help="new owned writable directory on local disk outside the source")
-    ap.add_argument("--gpu-data-root", action="append", default=[str(POOL_ROOT)],
+    ap.add_argument("--gpu-data-root", action="append", default=[],
                     help="canonical same-path readonly data mount; repeatable")
     ap.add_argument("--artifact-root", action="append", default=[], metavar="ENV=PATH",
                     help="box_artifacts root override, sealed and mounted; repeatable")
-    ap.add_argument("--timeout-s", type=_positive_seconds, default=3600.0,
+    ap.add_argument("--timeout-s", type=_positive_seconds, default=1200.0,
                     help="positive finite per-attempt inner deadline; TERM then KILL "
                          "after 5s, not a queue/retry lifetime limit")
-    ap.add_argument("--wait-s", type=float, default=5400.0)
+    ap.add_argument("--wait-s", type=float, default=1800.0)
     ap.add_argument("--out", default="",
                     help="receipt path; default is a timestamped file under "
                          f"{DEFAULT_RECEIPT_ROOT}")
@@ -1700,19 +1181,8 @@ def main() -> int:
                          "For a run whose submitting process died while the "
                          "pool kept going -- the exit status is recorded as "
                          "unobserved rather than guessed")
-    ap.add_argument("--pool-root", default=str(POOL_ROOT),
-                    help="where PrismaBuild publishes what it did: "
-                         "<root>/pb-queue holds the outcome records a resumed "
-                         "receipt reads its exit status from, and "
-                         "<root>/cas/requests the commands that identify which "
-                         "action wrote which population. Naming it is what "
-                         "lets a test read a pool it built rather than the "
-                         "live one -- a scan of the real queue is an NFS read "
-                         "per finished action and grows with the fleet's "
-                         "history, which took two tests past their timeout "
-                         "here")
     ap.add_argument("--dry-run", action="store_true",
-                    help="print the pbrun invocations and submit nothing")
+                    help="print native payload intentions and submit nothing")
     args = ap.parse_args()
     if args.cpus < 1 or args.mem_gb < 1 or any(value is not None and value < 1
                                               for value in (args.gpu_cpus, args.gpu_mem_gb)):
@@ -1728,30 +1198,17 @@ def main() -> int:
         except (OSError, ValueError) as exc:
             ap.error(str(exc))
 
-    use_pool_root(args.pool_root)
 
     args.checkout = Path(args.checkout).resolve()
     wanted = args.arm or sorted(ARMS)
-    if "gpu" in wanted and not args.gpu_tag and not (args.resume or args.dry_run):
-        print("merge_suite: live GPU submission requires --gpu-tag to select "
-              "the worker whose full GPU capacity pbrun reserves", file=sys.stderr)
-        return 2
-
-    shared = str(args.checkout).startswith(str(SHARED_ROOT))
-    for name in wanted:
-        # A resume submits nothing, so a placement constraint has nothing to
-        # constrain: the run it is reading already happened somewhere.
-        if args.resume:
-            break
-        if ARMS[name].get("needs_shared_checkout") and not shared:
-            print(
-                f"merge_suite: the {name} arm needs a checkout under "
-                f"{SHARED_ROOT} -- pbrun pins an action to the submitting box "
-                f"when its tree exists on one box only, and {args.checkout} "
-                "does. Copy the tree there, or drop this arm and say in the "
-                "receipt that only one population was covered.",
-                file=sys.stderr)
-            return 2
+    if not args.resume:
+        try:
+            for name in wanted:
+                _preflight(ARMS[name], args)
+            if not args.dry_run:
+                suite_flux.source(args.checkout)
+        except (ValueError, OSError) as exc:
+            ap.error(str(exc))
 
     stamp = time.strftime("%Y%m%dT%H%M%S")
     receipt_dir = Path(args.resume).resolve() if args.resume \

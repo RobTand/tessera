@@ -6,7 +6,7 @@ splits that set into shards, submits each shard through
 ``tools/merge_suite.py`` as one arm, and writes one receipt for the whole
 population.  It owns no verdict of its own: every shard is read the way a
 merge_suite arm is read (its published population, its source identity, and the
-exit status PrismaBuild's worker recorded), and the receipt comes from
+exit status Flux's worker recorded), and the receipt comes from
 ``merge_suite._assemble_receipt``.  What this tool adds is what a set of shards
 needs and a single arm does not:
 
@@ -16,7 +16,7 @@ needs and a single arm does not:
   checkout that chose the files, not only the same source as each other; in
   dev mode (D32, the default) that comparison is a seal, so it is stamped and
   not computed;
-* no pbrun return code may be non-zero, and no shard may leave a module
+* no Flux client return code may be non-zero, and no shard may leave a module
   uncollected.
 
 Without those three, a population could be green over a file nobody ran, over
@@ -53,14 +53,14 @@ from tessera.dev_mode import NOT_COMPUTED, dev_mode_enabled, seal_check  # noqa:
 #: claim it supports is re-checked against the pool's sealed commands.
 SELECTION = "selection.json"
 RECEIPT = "receipt.json"
-#: What each pbrun client reported when it exited, written then, so a resume
+#: What each Flux client client reported when it exited, written then, so a resume
 #: after the submitter dies reads the client's own result and not only the
-#: pool's.  The pool's record of an action can be clean while pbrun returned 1.
+#: pool's.  The pool's record of an action can be clean while Flux client returned 1.
 CLIENT = "client.{name}.json"
-_CLIENT_FIELDS = ("returncode", "elapsed_s", "stderr_tail", "pbrun")
+_CLIENT_FIELDS = ("returncode", "elapsed_s", "stderr_tail", "flux")
 SELECTOR = Path(__file__).resolve().parent / "impacted_tests.py"
 DEFAULT_RECEIPT_ROOT = merge_suite.SHARED_ROOT / "tessera-selected-populations"
-#: D21: one agent keeps at most eight PrismaBuild clients at once, because each
+#: D21: one agent keeps at most eight Flux clients at once, because each
 #: client snapshots and hashes its checkout on the control seat.  The shard
 #: count is a separate number: shards past this many queue behind the clients.
 MAX_CLIENTS = 8
@@ -167,6 +167,8 @@ def submit_all(selection: dict, args, receipt_dir: Path) -> dict[str, dict]:
         timeout_s=args.timeout_s, wait_s=args.wait_s, checkout=args.checkout,
         dry_run=args.dry_run, artifact_root=args.artifact_root)
     shards = selection["shards"]
+    for name, files in shards.items():
+        merge_suite._preflight(shard_arm(name, files, selection.get("python")), submission)
 
     def client(name: str, files: list[str]) -> dict:
         sent = merge_suite._submit(name, shard_arm(name, files, selection.get("python")),
@@ -219,7 +221,7 @@ def population_problems(selection: dict, records: list[dict]) -> list[str]:
     """What the shards together fail to establish, beyond what each one did.
 
     merge_suite judges each shard.  Four things belong to the set: the files
-    the sealed commands ran, the exit codes pbrun gave, the modules a shard did
+    the sealed commands ran, the exit codes Flux client gave, the modules a shard did
     not collect (a pass count never shows them), and, as a seal,
     the tree the selector read (``checkout_source``).  Every problem is named;
     none is a warning.
@@ -230,7 +232,7 @@ def population_problems(selection: dict, records: list[dict]) -> list[str]:
     ran: dict[str, int] = {}
     for record in records:
         name = record["arm"]
-        action = record.get("pool_action")
+        action = record.get("native_job")
         if not action:
             problems.append(f"{name}: no sealed command is bound to this shard, so what it ran is unknown")
             continue
@@ -250,7 +252,7 @@ def population_problems(selection: dict, records: list[dict]) -> list[str]:
                             f"{', '.join(map(str, uncollected[:3]))}")
         code = record.get("submit_returncode")
         if code not in (0, None):
-            problems.append(f"{name}: pbrun returned {code}")
+            problems.append(f"{name}: Flux client returned {code}")
     selected = set(selection["tests"])
     if set(expected) != {record["arm"] for record in records}:
         problems.append("the shards read back are not the shards the selection names")
@@ -271,7 +273,7 @@ def assemble(selection: dict, receipt_dir: Path, checkout: Path, *,
 
     Each shard's record is merge_suite's resumed reading of its published
     population: the pool's own outcome record supplies the exit status, bound
-    to the population by its producer stamp.  pbrun's return code is not that
+    to the population by its producer stamp.  Flux client's return code is not that
     record, so each client's own result is read back from the file it wrote
     when it exited.  A run this process watched and a resume read the same
     files; a shard with none says ``not recorded``.
@@ -287,14 +289,14 @@ def assemble(selection: dict, receipt_dir: Path, checkout: Path, *,
             record["submit_returncode"] = sent.get("returncode")
             record["submit_elapsed_s"] = sent.get("elapsed_s")
             record["submit_stderr_tail"] = sent.get("stderr_tail")
-            record["pbrun"] = sent.get("pbrun")
+            record["flux"] = sent.get("flux")
         records.append(record)
     receipt = merge_suite._assemble_receipt(
         records, checkout, assembled_by=assembled_by,
         submission_master=merge_suite._read_submission_master(receipt_dir))
     head_source, source_problems = checkout_source(records, checkout)
     problems = population_problems(selection, records) + source_problems
-    receipt["schema"] = "tessera.selected_population.v1"
+    receipt["schema"] = "tessera.selected_population.flux.v2"
     receipt["selection"] = selection
     receipt["checkout_source"] = head_source
     receipt["population_problems"] = problems
@@ -344,18 +346,16 @@ def main(argv: list[str] | None = None) -> int:
                     help="interpreter every shard runs under; the x86 arm's own when omitted")
     ap.add_argument("--cpus", type=int, default=2, help="cores per shard, also pytest's -n")
     ap.add_argument("--mem-gb", type=int, default=4)
-    ap.add_argument("--timeout-s", type=float, default=2400.0)
-    ap.add_argument("--wait-s", type=float, default=3000.0)
+    ap.add_argument("--timeout-s", type=float, default=1200.0)
+    ap.add_argument("--wait-s", type=float, default=1800.0)
     ap.add_argument("--artifact-root", action="append", default=[], metavar="ENV=PATH")
     ap.add_argument("--pytest-arg", action="append", default=[])
     ap.add_argument("--out", default="", help="receipt directory; default is a timestamped one")
     ap.add_argument("--resume", default="", help="a receipt directory; submit nothing")
-    ap.add_argument("--pool-root", default=str(merge_suite.POOL_ROOT))
     ap.add_argument("--dry-run", action="store_true")
     args = ap.parse_args(argv)
     if args.shards < 1 or args.cpus < 1 or args.mem_gb < 1:
         ap.error("shards, cpus and memory must be positive")
-    merge_suite.use_pool_root(args.pool_root)
     args.checkout = Path(args.checkout).resolve()
 
     if args.resume:
@@ -386,11 +386,12 @@ def main(argv: list[str] | None = None) -> int:
         submitted = submit_all(selection, args, receipt_dir)
         if args.dry_run:
             for record in submitted.values():
-                print(record["pbrun"])
+                print(record["flux"])
             return 0
 
     receipt = assemble(selection, receipt_dir, args.checkout,
                        assembled_by="resume" if args.resume else "submit")
+    merge_suite._keep_any_previous(receipt_dir / RECEIPT)
     (receipt_dir / RECEIPT).write_text(json.dumps(receipt, indent=2) + "\n")
     print("\n".join(report_lines(receipt)))
     print(f"selected_population: receipt {receipt_dir / RECEIPT}")
