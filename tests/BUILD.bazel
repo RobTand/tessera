@@ -1327,6 +1327,7 @@ ts_py_library(
         "//tools/bazel:python_runner.py",
         "//tools/bazel:requirements.txt",
         "//tools/bazel:test_inputs.bzl",
+        "//tools:ci/full_target_durations.json",
         "//tools:ci/gate_quarantine.json",
     ],
     deps = [
