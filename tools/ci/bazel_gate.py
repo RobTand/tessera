@@ -320,8 +320,13 @@ class Workspace:
                         [sys.executable, 'tools/bazel/requirements.py', '--check'],
                         [sys.executable, 'tools/ci/bazel_parity.py'],
                         [sys.executable, 'tools/ci/full_shards.py', '--check']):
-            if self.run(*command, capture=False, check=False):
-                problems.append(shlex.join(map(str, command)))
+            name = shlex.join(map(str, command))
+            print('$ ' + name, flush=True)
+            result = subprocess.run(command, cwd=self.root, text=True, stdout=subprocess.PIPE,
+                                    stderr=subprocess.STDOUT, env=child_environment())
+            print(result.stdout, end='', flush=True)
+            if result.returncode:
+                problems.append(f'{name} exited {result.returncode}: {result.stdout.strip()[-8192:]}')
         return problems
 
     def graph_impact(self, base):
@@ -592,6 +597,8 @@ def main(argv=None, workspace=None):
         result['error'] = None
     except GateError as error:
         result['error'] = str(error)
+    if result.get('error') or result.get('inputs'):
+        result['verdict'] = 'fail'
     try:
         write_result(result, output)
     finally:
