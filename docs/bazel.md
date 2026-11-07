@@ -65,16 +65,24 @@ The C++ that CPU tests compile at run time (torch's `cpp_extension`, Inductor's 
 
 The same applies after you add a module or an import, or a fixture a test reads. `tests/test_bazel_build.py` fails when a generated file is stale, when a gate file lacks a target in a lane, or when a target the cloud gate leaves out has no reason.
 
-After changing target names or tags, run `python3 tools/ci/full_shards.py` and
-commit `tools/bazel/full_targets/`. This performs only a Bazel query. Its two
+After changing target names, tags or `tools/ci/full_target_durations.json`, run `python3 tools/ci/full_shards.py` and
+commit `tools/bazel/full_targets/`. This performs only a Bazel query. Its six
 lists per architecture must be disjoint and cover every eligible rule and
 test. The gate checks them against a live query and uses each committed file
-with `--target_pattern_file` in a separate Remote Bazel run, capped at
-55 minutes. This keeps each full fallback and post-merge shard below BuildBuddy's
-one-hour limit and avoids the Run action's single-argument size limit.
+with `--target_pattern_file` in a separate Remote Bazel run. The PR gate uses
+its 45-minute default; the post-merge workflow explicitly requests 55 minutes.
+The lists avoid the Run action's single-argument size limit. Test targets are
+balanced longest-first by measured per-target runtimes in the flat `seconds`
+map in `tools/ci/full_target_durations.json`, reusing `gate_partition.py`.
+Both architectures use that inventory; it has no per-lane timing maps.
+Unknown targets use its nearest-rank p90, or one second when that value is
+zero or the inventory is empty, giving count balance without timings. Non-test
+build rules fill the smallest rule populations by count. The manifest records summed estimated
+test seconds, not shard wall time. The <=25-minute wall target needs a real
+gate measurement.
 
-Only the fail-closed gate `//...` fallback may execute its two shard Runs in
-parallel, at most two concurrent Remote Bazel runs per gate controller with
+Only the fail-closed gate `//...` fallback may execute its six shard Runs in
+parallel, at most six concurrent Remote Bazel runs per gate controller with
 `--jobs=16` each. Actions use the self-hosted pools only, without cloud
 fallback. Selected gates and post-merge controllers each run one invocation at
 a time. Agent/development runs stay at one per repository, enforced
@@ -83,16 +91,16 @@ are unchanged. The controller encodes the fallback-only bound; it adds no
 scheduler.
 
 Mergify's existing `max_parallel_checks: 2` bounds batch-draft gates. Two
-batch-draft fallbacks can therefore overlap four Remote Bazel shard Runs,
+batch-draft fallbacks can therefore overlap twelve Remote Bazel shard Runs,
 self-hosted only, when Bazel, lock or gate-workflow inputs change. Existing
 per-PR/per-SHA workflow concurrency stays in place. A shared GitHub job
 concurrency group would let newer pending jobs cancel older required checks,
 so this cutover adds no such group or scheduler.
 
-Excess action demand queues on the executors. On dl380g10's 40 CPUs, the
-four-wide case is expected to produce longer shards, without executor
-refusals or timeouts. A refusal or timeout observed under concurrency is a
-finding to report.
+Excess action demand queues on the executors. Six shards (Rob, 2026-11-06) aim for a slowest shard of at most 25 minutes
+inside the 30-minute queue timeout. If six shards exceed the
+45-minute PR limit, report each shard's completed/total targets, wall time and
+scheduling-wait share. Do not raise the timeout or rerun a timed-out gate.
 
 TL3 keeps BuildBuddy priority if a fallback batch lands while TL3's queue is backed up.
 
