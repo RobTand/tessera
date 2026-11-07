@@ -10,6 +10,7 @@ gate leaves out says why.
 import importlib.util
 import json
 from pathlib import Path
+import subprocess
 
 import pytest
 from accounting_source_support import isolated_prismaquant_imports
@@ -35,6 +36,75 @@ def test_the_generated_build_files_are_current():
     stale = [key for key, text in generated.items()
              if build_files.output_path(ROOT, key).read_text() != text]
     assert stale == [], 'run tools/bazel/generate.sh'
+
+
+@pytest.fixture
+def generated_checkout(tmp_path, monkeypatch):
+    build_files = _load('build_files', 'tools/bazel/build_files.py')
+    generated = {'': build_files.HEADER + '# root\n',
+                 'tools/bazel/lanes.bzl': build_files.HEADER + '# lanes\n'}
+    subprocess.run(['git', 'init', '-q', str(tmp_path)], check=True)
+    for key, text in generated.items():
+        path = build_files.output_path(tmp_path, key)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(text)
+    (tmp_path / 'tools/bazel/BUILD.bazel').write_text('# Handwritten.\n')
+    subprocess.run(['git', 'add', '.'], cwd=tmp_path, check=True)
+    monkeypatch.setattr(build_files, 'generate', lambda root: generated)
+    return build_files, tmp_path
+
+
+def test_generated_check_accepts_tracked_outputs_and_handwritten_builds(generated_checkout):
+    build_files, root = generated_checkout
+    assert build_files.main(['--check', '--root', str(root)]) == 0
+
+
+@pytest.mark.parametrize('relative', ['retired/BUILD.bazel', 'tools/bazel/retired.bzl'])
+def test_generated_check_rejects_retired_outputs(generated_checkout, relative):
+    build_files, root = generated_checkout
+    path = root / relative
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(build_files.HEADER + '# retired\n')
+    subprocess.run(['git', 'add', relative], cwd=root, check=True)
+    with pytest.raises(SystemExit, match=relative):
+        build_files.main(['--check', '--root', str(root)])
+
+
+@pytest.mark.parametrize('relative', ['BUILD.bazel', 'tools/bazel/lanes.bzl',
+                                      'retired/BUILD.bazel', 'tools/bazel/retired.bzl'])
+def test_generated_check_rejects_untracked_outputs(generated_checkout, relative):
+    build_files, root = generated_checkout
+    path = root / relative
+    if path.exists():
+        subprocess.run(['git', 'rm', '--cached', relative], cwd=root, check=True)
+    else:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(build_files.HEADER + '# retired\n')
+    with pytest.raises(SystemExit, match=relative):
+        build_files.main(['--check', '--root', str(root)])
+
+
+@pytest.mark.parametrize('change', ['missing', 'changed'])
+def test_generated_check_rejects_stale_contents(generated_checkout, change):
+    build_files, root = generated_checkout
+    path = root / 'BUILD.bazel'
+    if change == 'missing':
+        path.unlink()
+    else:
+        path.write_text('# Changed content without the generated header.\n')
+    with pytest.raises(SystemExit, match='BUILD.bazel'):
+        build_files.main(['--check', '--root', str(root)])
+
+
+def test_generated_check_rejects_generation_errors(generated_checkout, monkeypatch):
+    build_files, root = generated_checkout
+
+    def broken(root):
+        raise build_files.GenerationError('invalid evidence')
+
+    monkeypatch.setattr(build_files, 'generate', broken)
+    with pytest.raises(SystemExit, match='Cannot generate BUILD files: invalid evidence'):
+        build_files.main(['--check', '--root', str(root)])
 
 
 def test_the_lock_export_names_the_gate_pins():

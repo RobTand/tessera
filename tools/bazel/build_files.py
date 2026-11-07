@@ -16,7 +16,7 @@ from the source, and this generator turns them into targets:
   files that take long on hosted runners.
 
 Run tools/bazel/generate.sh after adding a module, test, import or fixture.
---check fails, naming each stale file, when a committed BUILD.bazel differs.
+--check fails on stale contents, retired tracked outputs or untracked outputs.
 """
 from __future__ import annotations
 
@@ -27,6 +27,7 @@ import math
 from pathlib import Path, PurePosixPath
 import re
 import shlex
+import subprocess
 import sys
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -260,6 +261,26 @@ def output_path(root, key):
     return root / key if key.endswith('.bzl') else root / key / 'BUILD.bazel'
 
 
+def generated_paths(root, expected, cached):
+    """Generator-owned paths in the index or untracked tree, including ignored files."""
+    output = subprocess.run(['git', 'ls-files', '-z', '--cached' if cached else '--others',
+                             '--', '*BUILD.bazel', '*.bzl'],
+                            cwd=root, capture_output=True, check=True).stdout.decode()
+    owned = set()
+    for relative in set(output.split('\0')) - {''}:
+        if relative in expected:
+            owned.add(relative)
+            continue
+        # Read tracked headers from the index: a worktree deletion or edit
+        # must not hide a retired generated output. Handwritten files lack it.
+        text = (subprocess.run(['git', 'show', ':' + relative], cwd=root,
+                               capture_output=True, check=True).stdout.decode()
+                if cached else (root / relative).read_text())
+        if text.startswith(HEADER):
+            owned.add(relative)
+    return owned
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--check', action='store_true')
@@ -269,17 +290,24 @@ def main(argv=None):
         generated = generate(args.root)
     except GenerationError as error:
         sys.exit(f'Cannot generate BUILD files: {error}')
-    stale = []
+    stale = set()
+    if args.check:
+        expected = {str(output_path(args.root, key).relative_to(args.root)) for key in generated}
+        tracked = generated_paths(args.root, expected, cached=True)
+        untracked = generated_paths(args.root, expected, cached=False)
+        stale.update(expected ^ tracked)
+        stale.update(untracked)
     for key, text in sorted(generated.items()):
         path = output_path(args.root, key)
         if path.exists() and path.read_text() == text:
             continue
         if args.check:
-            stale.append(str(path.relative_to(args.root)))
+            stale.add(str(path.relative_to(args.root)))
         else:
             path.write_text(text)
     if stale:
-        sys.exit('Generated BUILD files are stale: ' + ', '.join(stale) + f'\nFix: {FIX}')
+        sys.exit('Generated BUILD files are stale: ' + ', '.join(sorted(stale))
+                 + f'\nFix: {FIX}; git add expected outputs and git rm retired outputs')
     return 0
 
 
