@@ -142,6 +142,13 @@ def require_allocation(allocation, demand, affinity, mapped):
         raise ValueError("actual native allocation/resources/affinity differ")
 
 
+def require_original_launch(intent, digest, jobspec):
+    """The original wrapper argv authenticates all saved launch bytes."""
+    wrapper_python = intent["command"][0] if intent.get("resources") else "/usr/bin/python3"
+    if jobspec["tasks"][0]["command"] != [wrapper_python, "tools/_suite_flux.py", "payload", intent["directory"], digest]:
+        raise ValueError("original native command does not authenticate this launch digest")
+
+
 def submit(directory, checkout, command, cores, memory, timeout, environment, *, application=None,
            gpus=0, architecture="x86_64"):
     validate(cores, memory, timeout, environment)
@@ -175,7 +182,7 @@ def submit(directory, checkout, command, cores, memory, timeout, environment, *,
            "PRISMAQUANT_DEV_MODE": "0", **THREADS, **environment}
     if container is not None:
         env["XDG_RUNTIME_DIR"] = "/run/user/1000"
-    wrapper = ["/usr/bin/python3", "tools/_suite_flux.py", "payload", str(directory), digest]
+    wrapper = [command[0], "tools/_suite_flux.py", "payload", str(directory), digest]
     args = ["submit", "--env=-*", *[f"--env={k}={v}" for k, v in sorted(env.items())],
             f"--resources-shape=node/slot/[core={cores}/perf=1;memory={memory}" + (";gpu=1]" if gpus else "]"),
             "--requires=" + architecture, "-t", f"{timeout + 10}s", "--cwd", str(checkout),
@@ -221,6 +228,7 @@ def collect(directory):
         expected = json.loads((directory / "jobspec.json").read_bytes())
         if original != expected:
             raise ValueError("native jobspec differs from saved command/resources/environment")
+        require_original_launch(intent, digest, original)
         # No environments are copied into the public record.
         events = checked(["job", "eventlog", "--format=json", saved_id])
         (directory / "eventlog.jsonl").write_text(events)
@@ -297,11 +305,12 @@ def payload(directory, digest):
         raise ValueError("launch bytes changed")
     intent = json.loads(raw)
     saved = json.loads((directory / "submission.json").read_bytes())
+    original = json.loads(checked(["job", "info", "--original", os.environ["FLUX_JOB_ID"], "jobspec"]))
     if (saved["state"] not in ("submitted", "unknown") or saved["launch_sha256"] != digest
             or (saved["state"] == "submitted" and job_id(saved["job_id"]) != job_id(os.environ["FLUX_JOB_ID"]))
-            or json.loads(checked(["job", "info", "--original", os.environ["FLUX_JOB_ID"], "jobspec"]))
-            != json.loads((directory / "jobspec.json").read_bytes())):
+            or original != json.loads((directory / "jobspec.json").read_bytes())):
         raise ValueError("payload original native job/launch differs")
+    require_original_launch(intent, digest, original)
     if Path.cwd() != Path(intent["checkout"]) or source(Path.cwd()) != intent["source"]:
         raise ValueError("source changed before payload")
     if intent["application"] is not None:
@@ -321,10 +330,8 @@ def payload(directory, digest):
               "affinity": sorted(os.sched_getaffinity(0))}
     if intent.get("resources") is not None:
         allocation = json.loads(checked(["job", "info", os.environ["FLUX_JOB_ID"], "R"]))
-        cores = allocation["execution"]["R_lite"][0]["children"]["core"]
-        mapped = subprocess.check_output([f"{PREFIX}/deps/bin/hwloc-calc", "--physical-output", "--intersect", "PU", "--sep", ",", "core:" + cores],
-                                         env={"PATH": "/usr/bin:/bin", "LD_LIBRARY_PATH": f"{PREFIX}/deps/lib"}, text=True, timeout=30)
-        record["allocated_affinity"] = sorted(int(cpu) for cpu in mapped.strip().split(","))
+        record["allocated_affinity"] = sorted({int(pu) for node in allocation["scheduling"]["graph"]["nodes"]
+            if node["metadata"]["type"] == "core" for pu in node["metadata"]["properties"]["os-pus"].split(",")})
         require_allocation(allocation, intent["resources"], record["affinity"], record["allocated_affinity"])
         if os.uname().machine != intent["resources"]["architecture"]:
             raise ValueError("payload architecture differs from native intention")

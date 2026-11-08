@@ -23,13 +23,14 @@ def test_payload_exception_stops_owned_group_and_preserves_cleanup_error(tmp_pat
     monkeypatch.chdir(tmp_path)
     monkeypatch.setenv("FLUX_JOB_ID", "123")
     identity = {"snapshot_commit": "a" * 40, "sha256": "b" * 64}
-    intent = {"checkout": str(tmp_path), "source": identity, "application": None,
+    intent = {"directory": str(directory), "checkout": str(tmp_path), "source": identity, "application": None,
               "command": ["python", "payload"], "timeout_s": 60, "runtime": {"sha256": "c" * 64}}
     flux.save(directory / "launch.json", intent)
     digest = flux.hashlib.sha256((directory / "launch.json").read_bytes()).hexdigest()
     flux.save(directory / "submission.json", {"state": "submitted", "job_id": "123", "launch_sha256": digest})
-    flux.save(directory / "jobspec.json", {"known": "original jobspec"})
-    monkeypatch.setattr(flux, "checked", lambda args: '{"known":"original jobspec"}')
+    original = {"tasks": [{"command": ["/usr/bin/python3", "tools/_suite_flux.py", "payload", str(directory), digest]}]}
+    flux.save(directory / "jobspec.json", original)
+    monkeypatch.setattr(flux, "checked", lambda args: json.dumps(original))
     monkeypatch.setattr(flux, "source", lambda path: identity)
     monkeypatch.setattr(flux, "runtime_identity", lambda *args, **kwargs: intent["runtime"])
     monkeypatch.setattr(flux.subprocess, "check_output", lambda *args, **kwargs: "xfs")
@@ -74,13 +75,14 @@ def test_interrupt_publishes_cleanup_without_waiting_for_an_exit_seal(tmp_path, 
     monkeypatch.chdir(tmp_path)
     monkeypatch.setenv("FLUX_JOB_ID", "123")
     identity = {"snapshot_commit": "a" * 40, "sha256": "b" * 64}
-    intent = {"checkout": str(tmp_path), "source": identity, "application": None,
+    intent = {"directory": str(directory), "checkout": str(tmp_path), "source": identity, "application": None,
               "command": ["python", "payload"], "timeout_s": 60, "runtime": {"sha256": "c" * 64}}
     flux.save(directory / "launch.json", intent)
     digest = flux.hashlib.sha256((directory / "launch.json").read_bytes()).hexdigest()
     flux.save(directory / "submission.json", {"state": "submitted", "job_id": "123", "launch_sha256": digest})
-    flux.save(directory / "jobspec.json", {"known": "original jobspec"})
-    monkeypatch.setattr(flux, "checked", lambda args: '{"known":"original jobspec"}')
+    original = {"tasks": [{"command": ["/usr/bin/python3", "tools/_suite_flux.py", "payload", str(directory), digest]}]}
+    flux.save(directory / "jobspec.json", original)
+    monkeypatch.setattr(flux, "checked", lambda args: json.dumps(original))
     observations = []
     def source(path):
         if "source" in observations:

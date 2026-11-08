@@ -1035,7 +1035,7 @@ def _native_jobs(module, monkeypatch):
 
 
 @pytest.mark.parametrize("mutation,phrase", [
-    ("reader", "command"), ("override", "command"), ("source", "source"),
+    ("reader", "command"), ("override", "command"), ("source", "launch digest"),
     ("no-announcement", "announce"), ("counts", "counts"), ("replacement", "digest"),
     ("missing-payload", "incomplete"), ("query", "incomplete"), ("jobspec", "incomplete")])
 def test_native_resume_binds_saved_id_command_source_and_publication(tmp_path, monkeypatch, mutation, phrase):
