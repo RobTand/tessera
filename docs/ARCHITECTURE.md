@@ -3991,6 +3991,10 @@ allocator sees is `docs/tessera-one-format.md` §5.
 
 ### 1.1 Integration suite placement
 
+The default paired invocation applies image/dependency/cache options only to
+the GPU arm. Explicit CPU-only invocation with GPU image options refuses.
+Both final arm intentions are preflighted before any native submission.
+
 Re-stamped 2026-11-08 for G01 parent CID ownership correction. Cleanup retains
 the captured CID when its file disappears, refuses conflicting replacement,
 and reports uncaptured partial creation as unknown scope, never removal.

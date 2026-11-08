@@ -242,8 +242,7 @@ def _timed_command(command: list[str], timeout_s: float) -> list[str]:
 
 
 def _preflight(arm: dict, args) -> dict:
-    if ((arm["strict_cuda"] and not arm.get("container"))
-            or (not arm["strict_cuda"] and getattr(args, "gpu_image", ""))):
+    if arm["strict_cuda"] and not arm.get("container"):
         raise ValueError("native GPU/container suite requires explicit immutable image/dependencies and GPU arm")
     roots = {}
     for item in getattr(args, "artifact_root", []):
@@ -1248,6 +1247,8 @@ def main() -> int:
 
     args.checkout = Path(args.checkout).resolve()
     wanted = args.arm or sorted(ARMS)
+    if args.gpu_image and "gpu" not in wanted:
+        ap.error("GPU image options require the GPU arm")
     configured = {name: {**ARMS[name], **({"targets": args.target} if args.target else {}),
                           **({"python": args.python} if args.python and name == "x86" else {})}
                   for name in wanted}
