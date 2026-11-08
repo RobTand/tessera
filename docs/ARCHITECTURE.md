@@ -4168,11 +4168,10 @@ the line now carries the **SHA-256 of the bytes the run published**, and an
 attempt binds only when the population this receipt holds still hashes to what
 the attempt announced. A second attempt that overwrote the population with one
 of *identical counts* -- a different device, different skip reasons, the same
-buckets -- is refused on bytes, which the counts leg cannot see. A line with no
-digest is still bound on path and counts alone: that is every run captured
-before #331, including the three historical populations above, and a reader
-that demanded the stronger evidence from stdout that never carried it would
-lose them. `tests/test_merge_suite.py` drives one real
+buckets -- is refused on bytes, which the counts leg cannot see. Historical receipts captured before #331 bound lines without a digest on
+path and counts alone. Those retained records keep that historical meaning.
+New native receipts require the exact announced digest and cannot adopt those
+old records as native execution evidence. `tests/test_merge_suite.py` drives one real
 `pytest --surface-json` run's stdout through the reader, so the join is
 exercised by output no test wrote.
 

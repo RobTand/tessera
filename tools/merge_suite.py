@@ -187,26 +187,11 @@ def _population_of(checkout: Path, submission_master: dict | None = None) -> dic
 
 def _command(arm: dict, surface_json: Path, extra: list[str],
              cpus: int = 1) -> list[str]:
-    """The command, with the core count it is submitted under actually used.
+    """Compose owned targets, process count and population publication options.
 
-    ``--cpus`` is a reservation: the pool holds that many cores on the chosen
-    box for the life of the action.  A serial pytest submitted under ``--cpus
-    8`` idles seven of them, which is the over-declaration the pool exists to
-    prevent -- it is how a box ends up oversubscribed on paper and idle in
-    fact, and the mirror of the under-declaration that swapped sparklina on
-    2026-09-03.  So the declaration and the command are derived from one
-    number rather than chosen separately.
-
-    The legacy arm table selects which populations fan out. ``-n`` requires
-    pytest-xdist in the target interpreter; current scoped environments provide
-    it. Direct PrismaBuild submissions may parallelize independent GPU tests
-    with an aggregate memory reservation. The serial setting here is the
-    wrapper's retained policy, not a claim that a shared GPU prevents speedup.
-
-    The number passes through ``_arm_cpus`` rather than being used as given:
-    an arm configured without fanout clamps to serial, so one
-    ``--cpus 8`` can submit an ``-n 8`` x86 arm and a serial GPU arm in the
-    same run.  Before that, ``--cpus 8`` composed ``-n 8`` for both.
+    The native CPU reservation and pytest worker count come from the same
+    value. Retained GPU arm metadata stays serial and cannot authorize native
+    admission before that transport is separately qualified.
     """
 
     _validate_pytest_extra(extra)
@@ -1174,18 +1159,9 @@ def main() -> int:
     ap.add_argument("--arm", action="append", choices=sorted(ARMS),
                     default=[], help="repeatable; default is both")
     ap.add_argument("--gpu-tag", default="",
-                    help="explicit GPU worker tag (e.g. sparky or sparklina); "
-                         "required for live GPU submissions. pbrun --exclusive "
-                         "reserves that worker's advertised full GPU capacity")
+                    help="retained GPU placement intent; native GPU admission remains unqualified")
     ap.add_argument("--cpus", type=int, default=1,
-                    help="cores each arm that can use them will ACTUALLY use: "
-                         "declared to the pool and, above 1, passed to pytest "
-                         "as -n so the reservation and the command cannot "
-                         "disagree. Clamped to 1 for any arm that cannot fan "
-                         "out -- the legacy GPU arm always selects serial "
-                         "execution, independently of installed xdist -- "
-                         "so one number can submit an -n x86 arm and a serial "
-                         "GPU arm in the same run. Default 1")
+                    help="declared native cores and pytest workers, 1..4; default 1")
     ap.add_argument("--mem-gb", type=int, default=16)
     ap.add_argument("--gpu-cpus", type=int, default=None, help="GPU arm process reservation; defaults to --cpus")
     ap.add_argument("--gpu-mem-gb", type=int, default=None, help="GPU aggregate host memory; defaults to --mem-gb")
@@ -1217,9 +1193,8 @@ def main() -> int:
     ap.add_argument("--resume", default="",
                     help="submit nothing; assemble the receipt from the "
                          "surface.<arm>.json files already in this directory. "
-                         "For a run whose submitting process died while the "
-                         "pool kept going -- the exit status is recorded as "
-                         "unobserved rather than guessed")
+                         "Reads saved native IDs and their terminal records; "
+                         "missing evidence stays unobserved")
     ap.add_argument("--dry-run", action="store_true",
                     help="print native payload intentions and submit nothing")
     args = ap.parse_args()
