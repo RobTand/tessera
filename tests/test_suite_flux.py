@@ -145,3 +145,15 @@ def test_submit_environment_and_runtime_budget_are_explicit(suite, tmp_path, mon
                                 "OMP_NUM_THREADS", "MKL_NUM_THREADS", "OPENBLAS_NUM_THREADS", "TORCH_NUM_THREADS", "MAX_JOBS", "KL_TOOL_DIR"}
     assert environment["PYTHONPATH"] == "src"
     assert all(environment[name] == "1" for name in flux.THREADS)
+
+
+@pytest.mark.parametrize('targets', [
+    ['tests/a', 'tests/a-b.py', 'tests/a/test_x.py'],
+    ['tests/test_a.py', 'tests/test_a.py.bak', 'tests/test_a.py::test_x'],
+])
+def test_nonadjacent_target_overlap_refuses(suite, targets):
+    """Pre-fix: unit3-parent-overlap-pre retained two DID NOT RAISE failures."""
+    arm = {**suite.ARMS['x86'], 'targets': ['tests/a-b.py', 'tests/a/test_x.py']}
+    assert suite._command(arm, Path('/out/surface.json'), [], 1)
+    with pytest.raises(ValueError, match='overlap'):
+        suite._command({**arm, 'targets': targets}, Path('/out/surface.json'), [], 1)

@@ -10519,3 +10519,7 @@ The topology specifies two nodes with one rank and one CUDA device per node.
 Defaults, serving pins, kernels, and the T-16 decode-once interface remain unchanged.
 
 The initial gate quarantine also excludes the single no-vLLM benchmark import probe whose newly added bare piece-major helper import fails under file-spec loading. Its open P2 owner tracks the import-context repair outside the gate footprint; other cohort isolation tests stay active.
+
+Native suite target admission compares all bounded target pairs. A sibling
+whose name sorts between a directory and its child cannot hide an overlapping
+selection. Parent regression evidence is in the 2026-11-08 Flux migration record.
