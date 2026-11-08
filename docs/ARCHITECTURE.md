@@ -3973,6 +3973,10 @@ allocator sees is `docs/tessera-one-format.md` §5.
 
 ### 1.1 Integration suite placement
 
+Re-stamped 2026-11-08 from `tools/merge_suite.py`, `tools/selected_population.py`,
+`tools/_suite_flux.py` and `tools/_suite_runtime.py`. CPU transport qualification
+is unit3 only; GPU, container, full-suite and production qualification remain separate.
+
 `tools/merge_suite.py` submits its CPU population through native Flux. The
 versioned `fv1-explicit-perf-memory.v1` profile declares performance cores and
 1-GiB memory leaves on the installed resource model. Each job is bounded to
@@ -3990,13 +3994,16 @@ and after execution. Pytest's own entry/publication span and worker agreement
 checks remain independent. Temporary files use job-ID local scratch, removed
 on exit and retained in the payload evidence. A missing cleanup record is
 incomplete evidence, never proof that a native `clean` event fenced readers.
+The payload owns its child process group. Exceptions stop that group before
+scratch cleanup; process and scratch cleanup errors remain in the payload record.
 
 Each arm saves immutable launch intent, the native jobspec and the exact
 returned ID before waiting. An unknown acknowledgement is never retried
 implicitly. Resume uses that ID only, checks the broker generation and original
 jobspec, and retains status, eventlog, allocation, stdout/stderr and JUnit.
 The native runtime seal hashes the named interpreter, standard library and
-installed package bytes at submission, entry and exit. This extends the existing
+installed package bytes at submission, entry and exit. It records directory
+aliases and measures their resolved contents once, including cyclic aliases. This extends the existing
 scoped container dependency seal to host runtimes without importing the suite
 dependencies. Admission verifies the qualified config and live resource graph,
 as well as recording the broker generation. Selection records resolved base/head
@@ -4036,8 +4043,8 @@ not a bound on queueing/retries, detached sessions/containers, or descendants
 left after a command completes before its deadline. Host `timeout` binaries
 are not trusted as interchangeable: the dl380g10 uutils 0.8.0 probe returned
 137 while leaving a same-group child in state S; both Sparks had GNU 9.4.
-The deployed pbrun seals `--timeout-s` as `execution_timeout_s`; its pool
-applies the effective action budget and records requested/effective values
+Historically the deployed pbrun sealed `--timeout-s` as `execution_timeout_s`; its pool
+applied the effective action budget and records requested/effective values
 and any ceiling clamp (verified 2026-09-07 against the published client and
 pool). A worker's outer nonzero status is still not evidence of the inner
 numeric 124/137: retain the inner logs and command deadline/grace per arm.
@@ -4172,23 +4179,26 @@ exercised by output no test wrote.
 runs the test files `tools/impacted_tests.py` selects as shards, each one a
 `merge_suite.py` x86 arm that runs named files and publishes its own
 `--surface-json`. It owns no verdict. Each shard is read through `_resume`
-(the published population, its source identity, and the exit status the pool
-recorded for the action its producer stamp names), and the receipt comes from
+(the published population, its source identity, and the terminal status Flux
+recorded for its saved native ID), and the receipt comes from
 `merge_suite._assemble_receipt`. The set adds four checks that a single arm
 cannot make. The sealed commands must run the selected files exactly, each
 once. Every known native job must have a bound successful terminal result. Each client writes its result to
 `client.<shard>.json` when it exits, and `--resume` reads those files back, so a
 population rejected for a nonzero native ending stays rejected; a shard with no file says
-`not recorded` and the pool's records decide it alone. No shard may leave a
+`not recorded` and the native job's records decide it alone. No shard may leave a
 module uncollected. These checks refuse in both modes. The comparison of the
 shards' effective source with the checkout's own is a seal (D32), so it goes
 through `tessera.dev_mode.seal_check`. In dev mode, the default, it stamps one
 `[DEV-MODE]` line, computes no digest of the checkout and does not refuse. In
 certified mode (`PRISMAQUANT_DEV_MODE=0`) it measures the checkout with no
-verifier, and a population over another tree is not green. At most eight native submission clients
+verifier, and a population over another tree is not green. At most eight native submission
 clients run at once (D21); more shards queue behind them. The report keeps one
 block per shard and every skip reason verbatim, from the surface's own
-histogram. `--resume` rebuilds the receipt without submitting. An aggregate that
+histogram. `--resume` rebuilds the receipt without submitting. `--target` permits a bounded
+explicit subset of the selector's file population. The selection retains the
+original `verdict` and `selector_tests`, and labels its subset `scope`. A full
+selector answer with this scope is never a full-suite result. An aggregate that
 reads a shard's last summary line alone, drops the exit status, or counts a
 missing summary as zero is the defect #1069 records, and this tool is its
 replacement.
@@ -4207,8 +4217,8 @@ B's exit 0, and returned `green on 1 population(s)` -- a source-verification
 bypass assembled out of two honest reads. So the surface file is read exactly
 once, by `_read_publication`, into a `_Publication` carrying its path, its
 bytes, their digest and their parse; `_attach_surface` returns that one
-snapshot and `_resume` hands it to the binding. `_binding_refusal` no longer
-opens a path at all, and there is no constructor that takes a payload someone
+snapshot and `_resume` hands it to the binding. `_native_binding_refusal` never
+opens a path, and there is no constructor that takes a payload someone
 else parsed, so the invariant is structural rather than remembered. The record
 publishes `surface_sha256` -- which publication it is about -- and the file is
 free to change afterwards: what the receipt states is a true statement about

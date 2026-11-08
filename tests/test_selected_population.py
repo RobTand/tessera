@@ -495,3 +495,23 @@ def test_replaced_selection_cannot_borrow_saved_native_jobs(tmp_path, monkeypatc
     receipt = _receipt(world)
     assert not receipt["verdict"].startswith("green")
     assert any("immutable selection" in problem for problem in receipt["population_problems"])
+
+
+def test_explicit_scope_preserves_full_selector_verdict_and_source(tmp_path, monkeypatch):
+    checkout = _checkout(tmp_path)
+    (checkout / "tests").mkdir()
+    for name in ("test_a.py", "test_b.py"):
+        (checkout / "tests" / name).write_text("def test_one(): pass\n")
+    _git(checkout, "add", "."); _git(checkout, "commit", "-qm", "tests")
+    selector = tmp_path / "selector.py"
+    selector.write_text('print(\'{"verdict":"full","tests":["tests/test_a.py","tests/test_b.py"]}\')\n')
+    monkeypatch.setattr(sp, "SELECTOR", selector)
+    monkeypatch.setattr(sp.merge_suite.suite_flux, "source", lambda path: measured_source(path, verifier=None))
+    result = sp.choose(checkout, "HEAD~1", 2, targets=["tests/test_a.py"])
+    assert result["verdict"] == "full"
+    assert result["selector_tests"] == ["tests/test_a.py", "tests/test_b.py"]
+    assert result["tests"] == ["tests/test_a.py"]
+    assert result["scope"] == "explicit subset of selector population"
+    assert result["shards"] == {"shard-00": ["tests/test_a.py"]}
+    with pytest.raises(ValueError, match="selected"):
+        sp.choose(checkout, "HEAD~1", 2, targets=["tests/not_selected.py"])

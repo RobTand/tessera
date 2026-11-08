@@ -286,56 +286,26 @@ Treat as constraints. Violate slogans when judgment says so.
   `--surface-json PATH` writes the same population as a table, which is what a receipt should read; under `-n` each
   worker writes its own `surface.<arm>.<workerid>.json` share and only the
   controller writes the population, so a shard can never be read as a run.
-  `tools/merge_suite.py` submits both arms through `pbrun` -- the GPU-visible
-  one under `--strict-cuda`, the device-less x86 one (torch, no CUDA device)
-  -- and writes **one** receipt holding both side by side, so neither can be quoted without the
-  other, appending a row per arm to `docs/status/suite-populations.md` under
-  `--record`. Each arm declares the environment the suite is written for --
-  the thread limits and the CI-spelled `PYTHONPATH=src` (`tests/conftest.py`
-  reaches only the pytest process; a test's own child interpreter inherits
-  the environment) -- and the receipt's arm record carries it as
-  `declared_env`, so a population red for want of a declaration cannot be
-  read as source red (#914). A run whose population must read an out-of-tree
-  provider declares it the same way: `--artifact-root ENV=PATH` rides into
-  the sealed environment verbatim (`TESSERA_PRISMAQUANT_WORKTREE` for the
-  pinned accountant, which `tests/box_artifacts.py` resolves ahead of its
-  documented default), so the declaration travels with the sealed action
-  instead of living in a shell profile. That ledger is where a suite result
-  is recorded; read the two
-  adjacent rows, not one of them -- an arm a run did not submit is written as
-  `not submitted in this run`, so a lone row cannot be read as a whole result
-  -- and read each row's `mode` beside its `device`, because two rows of one
-  commit can differ by how they ran and not by the box they ran on. The legacy
-  `merge_suite.py` wrapper currently clamps its GPU arm to `serial` while its
-  x86 arm takes `-n N`. That wrapper's behavior is not a requirement for direct
-  local validation; use the parallel execution rule above for those runs.
-  If the submitting session dies while the pool carries on -- which is how
-  every GPU submission on this branch has gone -- `--resume <receipt dir>`
-  rebuilds the receipt from the populations the runs published. Its exit
-  status is then the one **PrismaBuild's worker** recorded for the action that
-  wrote that population, found by the `--surface-json` path in the action's
-  own command and shown as `0 (pool)` so a status nobody here watched is not
-  mistaken for one this process saw. When no single finished action wrote the
-  path -- still in flight, requeued, or two of them did -- the row stays `not
-  observed` and no status is borrowed, because published failures prove red
-  while their absence does not prove green. **Retries follow the action
-  policy**, so an arm still awaiting a configured retry reads `not observed`;
-  the `failed` column carries a published failure. Both historical red rows
-  on `d11dc01` and `82f0047` were retrying; current single-attempt actions
-  terminate after their first non-zero exit. Each row names the commit **that arm** reported measuring, not
-  the one the receipt was assembled against: the arms are separate processes
-  on separate boxes, and a GPU arm queued behind a held reservation can place
-  after the checkout has moved. Two different source trees in one run are two
-  measurements, not a merge receipt. PrismaBuild's parentless snapshot IDs can
-  also differ solely because their action-specific closure stamps differ.
-  Preserve those raw IDs and require
-  `commits_measured.effective_source.agree` to establish equivalent source:
-  the population hashes actual tracked paths, modes and bytes, excluding only
-  metadata verified against its exact sealed action. A shared original HEAD,
-  a stamp-shaped filename, or unknown provenance establishes no equivalence.
-  The merge run is still the coordinator's
-  to launch, the way the x86 one already is; nothing triggers it
-  automatically.
+  `tools/merge_suite.py` submits the scoped CPU arm through the qualified
+  native Flux profile. It starts from an empty environment with explicit
+  artifact roots, `PYTHONPATH=src`, and bounded math/build threads. GPU and
+  container intentions refuse until separately qualified. A CPU result cannot
+  establish their population. `--record` appends each arm to the ledger,
+  including arms not submitted. Read the mode, device, skip reasons and
+  uncollected modules beside every count.
+  Each arm saves its launch, native jobspec and job ID before waiting.
+  `--resume <receipt dir>` submits nothing and binds that ID's terminal status
+  to one population snapshot by command, actual source, path, digest and counts.
+  Missing query or cleanup evidence cannot prove green. A native nonzero ending
+  or published failure stays red even with missing sibling evidence or a late
+  teardown exception. Unknown submission must be reconciled, never retried
+  blindly. Historical PB evidence keeps its original meaning.
+  The detached source is measured over actual tracked paths, modes and bytes,
+  with no declared verifier or executor-generated tracked metadata. Entry,
+  publication and xdist-worker source agreement remain required. The named
+  native interpreter, standard library and installed dependency contents are
+  sealed at submission, entry and exit. A Git HEAD label alone proves none of
+  those facts. Only the coordinator launches a full merge population.
 - The pre-fix failure line for every test added.
 - `docs/ARCHITECTURE.md` updated in the same commit if a normative claim moved.
 - Every side-finding fixed in its own commit, or filed with the reason it

@@ -20,7 +20,7 @@ needs and a single arm does not:
   uncollected.
 
 Without those three, a population could be green over a file nobody ran, over
-a tree the selector never read, or after a shard the pool had already failed
+a tree the selector never read, or after a shard Flux had already failed
 (tessera#1069).
 
 Usage::
@@ -29,7 +29,7 @@ Usage::
     python3 tools/selected_population.py --resume <receipt dir>
 
 ``--resume`` submits nothing.  It rebuilds the receipt from the selection and
-the populations the pool published, for a run whose submitting process died.
+the populations the native jobs published, for a run whose submitting process died.
 """
 from __future__ import annotations
 
@@ -50,10 +50,10 @@ from tessera.dev_mode import NOT_COMPUTED, dev_mode_enabled, seal_check  # noqa:
 
 #: The selection, saved beside the shard populations so ``--resume`` knows
 #: which files each shard was given.  It is data this tool wrote, and every
-#: claim it supports is re-checked against the pool's sealed commands.
+#: claim it supports is re-checked against the native jobs' sealed commands.
 SELECTION = "selection.json"
 RECEIPT = "receipt.json"
-#: What each Flux client client reported when it exited, written then, so a resume
+#: What each Flux client reported when it exited, written then, so a resume
 #: after the submitter dies reads the client's own result and not only the
 #: pool's.  The pool's record of an action can be clean while Flux client returned 1.
 CLIENT = "client.{name}.json"
@@ -91,7 +91,7 @@ def balanced_shards(sizes: dict[str, int], count: int) -> list[list[str]]:
     return [sorted(files) for _, files in bins]
 
 
-def choose(checkout: Path, base: str, count: int) -> dict:
+def choose(checkout: Path, base: str, count: int, *, targets: list[str] | None = None) -> dict:
     """The selector's answer for ``base...HEAD``, split into shards.
 
     Refuses, by name, an answer it cannot run: no JSON (the selector prints
@@ -116,6 +116,11 @@ def choose(checkout: Path, base: str, count: int) -> dict:
     missing = [path for path in tests if not (checkout / path).is_file()]
     if missing:
         raise ValueError(f"the selector named test files the tree does not hold: {missing}")
+    selector_tests = tests
+    if targets:
+        if len(set(targets)) != len(targets) or not set(targets) <= set(tests):
+            raise ValueError("explicit targets must be unique files selected by this change")
+        tests = sorted(targets)
     shards = balanced_shards({path: (checkout / path).stat().st_size for path in tests}, count)
     return {
         "base": base,
@@ -123,6 +128,8 @@ def choose(checkout: Path, base: str, count: int) -> dict:
         "head_commit": head,
         "source_identity": identity,
         "verdict": result["verdict"],
+        "selector_tests": selector_tests,
+        "scope": "explicit subset of selector population" if targets else "selector population",
         "forces_full": result.get("forces_full"),
         "excluded_tests": result.get("excluded_tests"),
         "tests": tests,
@@ -296,9 +303,8 @@ def assemble(selection: dict, receipt_dir: Path, checkout: Path, *,
              assembled_by: str = "resume") -> dict:
     """The one receipt for this population.
 
-    Each shard's record is merge_suite's resumed reading of its published
-    population: the pool's own outcome record supplies the exit status, bound
-    to the population by its producer stamp.  Flux client's return code is not that
+    Each shard uses merge_suite's saved native ID, terminal status and bound
+    publication snapshot.  Flux client's return code is not that
     record, so each client's own result is read back from the file it wrote
     when it exited.  A run this process watched and a resume read the same
     files; a shard with none says ``not recorded``.
@@ -368,6 +374,8 @@ def main(argv: list[str] | None = None) -> int:
                     help="the tree to test; it must be clean and under /mnt/shared")
     ap.add_argument("--base", default="origin/master", help="the left endpoint of base...HEAD")
     ap.add_argument("--shards", type=int, default=12)
+    ap.add_argument("--target", action="append", default=[],
+                    help="run an explicit subset of selector files; retain the selector verdict")
     ap.add_argument("--python", default="",
                     help="interpreter every shard runs under; the x86 arm's own when omitted")
     ap.add_argument("--cpus", type=int, default=2, help="cores per shard, also pytest's -n")
@@ -395,7 +403,8 @@ def main(argv: list[str] | None = None) -> int:
                   file=sys.stderr)
             return 2
         try:
-            selection = choose(args.checkout, args.base, args.shards)
+            selection = (choose(args.checkout, args.base, args.shards, targets=args.target)
+                         if args.target else choose(args.checkout, args.base, args.shards))
         except ValueError as error:
             print(f"selected_population: {error}", file=sys.stderr)
             return 2
