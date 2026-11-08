@@ -38,6 +38,26 @@ ts_py_library(
 )
 
 ts_py_library(
+    name = "_suite_flux",
+    srcs = [
+        "_suite_flux.py",
+    ],
+    deps = [
+        "//src/tessera:__init___cycle",
+        "//src/tessera:_dev/__init__",
+        "//src/tessera:_dev/suite_source",
+        ":_suite_container",
+    ],
+)
+
+ts_py_library(
+    name = "_suite_runtime",
+    srcs = [
+        "_suite_runtime.py",
+    ],
+)
+
+ts_py_library(
     name = "a4_measure",
     srcs = [
         "a4_measure.py",
@@ -388,9 +408,9 @@ ts_py_library(
         "//src/tessera:__init___cycle",
         "//src/tessera:_dev/__init__",
         "//src/tessera:_dev/suite_deadline",
-        "//src/tessera:_dev/suite_source",
         "//src/tessera:_dev/surface_publication",
         ":_suite_container",
+        ":_suite_flux",
     ],
 )
 

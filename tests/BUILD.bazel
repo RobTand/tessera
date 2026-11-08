@@ -458,6 +458,25 @@ ts_py_library(
     ],
 )
 
+ts_py_library(
+    name = "suite_flux_fixtures",
+    srcs = [
+        "suite_flux_fixtures.py",
+    ],
+    deps = [
+        "//src/tessera:__init___cycle",
+        "//src/tessera:_dev/__init__",
+        "//src/tessera:_dev/surface_publication",
+    ],
+)
+
+ts_py_library(
+    name = "suite_late_failure",
+    srcs = [
+        "suite_late_failure.py",
+    ],
+)
+
 ts_py_test(
     name = "test_1146_routed_880_912_admission",
     path = "tests/test_1146_routed_880_912_admission.py",
@@ -1717,6 +1736,8 @@ ts_py_library(
         "serving_moe_selected_support.py",
         "shared_fold_data.py",
         "standalone_boundary_allowlist.txt",
+        "suite_flux_fixtures.py",
+        "suite_late_failure.py",
         "test_1146_routed_880_912_admission.py",
         "test_accounting_source.py",
         "test_activation_attestation.py",
@@ -2183,6 +2204,10 @@ ts_py_library(
         "test_stock_interface.py",
         "test_stock_shard_scheduling.py",
         "test_suite_deadline.py",
+        "test_suite_flux.py",
+        "test_suite_flux_review.py",
+        "test_suite_payload.py",
+        "test_suite_runtime.py",
         "test_suite_source.py",
         "test_summarize_arms.py",
         "test_t4_fused_qualify.py",
@@ -4008,6 +4033,8 @@ ts_py_library(
         "//tools:__init__",
         "//tools:_accounting_source",
         "//tools:_suite_container",
+        "//tools:_suite_flux",
+        "//tools:_suite_runtime",
         "//tools:a4_measure",
         "//tools:build_serving_image",
         "//tools:check_wheel",
@@ -5365,6 +5392,8 @@ ts_py_library(
         "//tools:__init__.py",
         "//tools:_accounting_source.py",
         "//tools:_suite_container.py",
+        "//tools:_suite_flux.py",
+        "//tools:_suite_runtime.py",
         "//tools:a4_measure.py",
         "//tools:build_serving_image.py",
         "//tools:check_wheel.py",
@@ -8468,6 +8497,7 @@ ts_py_test(
     library = ":test_gate_selection_lib",
     deps = [
         "//src/tessera:identity",
+        "//tools:_suite_runtime",
         "//tools:suite_container",
         ":test_packaging_lib",
         ":test_provenance_lib",
@@ -8485,6 +8515,7 @@ ts_py_test(
     library = ":test_gate_selection_lib",
     deps = [
         "//src/tessera:identity",
+        "//tools:_suite_runtime",
         "//tools:suite_container",
         ":test_packaging_lib",
         ":test_provenance_lib",
@@ -11046,6 +11077,8 @@ ts_py_library(
         "serving_moe_selected_support.py",
         "shared_fold_data.py",
         "standalone_boundary_allowlist.txt",
+        "suite_flux_fixtures.py",
+        "suite_late_failure.py",
         "test_1146_routed_880_912_admission.py",
         "test_accounting_source.py",
         "test_activation_attestation.py",
@@ -11512,6 +11545,10 @@ ts_py_library(
         "test_stock_interface.py",
         "test_stock_shard_scheduling.py",
         "test_suite_deadline.py",
+        "test_suite_flux.py",
+        "test_suite_flux_review.py",
+        "test_suite_payload.py",
+        "test_suite_runtime.py",
         "test_suite_source.py",
         "test_summarize_arms.py",
         "test_t4_fused_qualify.py",
@@ -11810,6 +11847,8 @@ ts_py_library(
         "serving_moe_selected_support.py",
         "shared_fold_data.py",
         "standalone_boundary_allowlist.txt",
+        "suite_flux_fixtures.py",
+        "suite_late_failure.py",
         "test_1146_routed_880_912_admission.py",
         "test_accounting_source.py",
         "test_activation_attestation.py",
@@ -12274,6 +12313,10 @@ ts_py_library(
         "test_stock_interface.py",
         "test_stock_shard_scheduling.py",
         "test_suite_deadline.py",
+        "test_suite_flux.py",
+        "test_suite_flux_review.py",
+        "test_suite_payload.py",
+        "test_suite_runtime.py",
         "test_suite_source.py",
         "test_summarize_arms.py",
         "test_t4_fused_qualify.py",
@@ -14132,6 +14175,7 @@ ts_py_test(
     library = ":test_merge_suite_lib",
     deps = [
         "//src/tessera:identity",
+        "//tools:_suite_runtime",
         "//tools:suite_container",
     ],
     lane = "torch",
@@ -14147,6 +14191,7 @@ ts_py_test(
     library = ":test_merge_suite_lib",
     deps = [
         "//src/tessera:identity",
+        "//tools:_suite_runtime",
         "//tools:suite_container",
     ],
     lane = "bytes",
@@ -14161,6 +14206,7 @@ ts_py_test(
     path = "tests/test_merge_suite_container.py",
     library = ":test_merge_suite_container_lib",
     deps = [
+        "//tools:_suite_runtime",
         "//tools:suite_deadline",
     ],
     lane = "torch",
@@ -14175,6 +14221,7 @@ ts_py_test(
     path = "tests/test_merge_suite_container.py",
     library = ":test_merge_suite_container_lib",
     deps = [
+        "//tools:_suite_runtime",
         "//tools:suite_deadline",
     ],
     lane = "bytes",
@@ -14207,7 +14254,6 @@ ts_py_library(
     ],
     data = [
         "//:.github/workflows/ci.yml",
-        "//:docs/status/suite-populations.md",
     ],
     deps = [
         "//src/tessera:__init___cycle",
@@ -14215,6 +14261,7 @@ ts_py_library(
         "//src/tessera:_dev/surface_publication",
         "//tools:merge_suite",
         "//tools:suite_deadline",
+        ":suite_flux_fixtures",
         ":test_collection_probe_lib",
     ],
 )
@@ -14225,6 +14272,7 @@ ts_py_test(
     library = ":test_merge_suite_producer_lookup_lib",
     deps = [
         "//src/tessera:identity",
+        "//tools:_suite_runtime",
         "//tools:suite_container",
     ],
     lane = "torch",
@@ -14240,6 +14288,7 @@ ts_py_test(
     library = ":test_merge_suite_producer_lookup_lib",
     deps = [
         "//src/tessera:identity",
+        "//tools:_suite_runtime",
         "//tools:suite_container",
     ],
     lane = "bytes",
@@ -14264,6 +14313,7 @@ ts_py_test(
     path = "tests/test_merge_suite_submission.py",
     library = ":test_merge_suite_submission_lib",
     deps = [
+        "//tools:_suite_runtime",
         "//tools:suite_container",
         "//tools:suite_deadline",
     ],
@@ -14279,6 +14329,7 @@ ts_py_test(
     path = "tests/test_merge_suite_submission.py",
     library = ":test_merge_suite_submission_lib",
     deps = [
+        "//tools:_suite_runtime",
         "//tools:suite_container",
         "//tools:suite_deadline",
     ],
@@ -22737,6 +22788,7 @@ ts_py_test(
     library = ":test_selected_population_lib",
     deps = [
         "//src/tessera:identity",
+        "//tools:_suite_runtime",
         "//tools:impacted_tests",
         "//tools:suite_container",
     ],
@@ -22753,6 +22805,7 @@ ts_py_test(
     library = ":test_selected_population_lib",
     deps = [
         "//src/tessera:identity",
+        "//tools:_suite_runtime",
         "//tools:impacted_tests",
         "//tools:suite_container",
     ],
@@ -28425,6 +28478,8 @@ ts_py_library(
         "serving_moe_selected_support.py",
         "shared_fold_data.py",
         "standalone_boundary_allowlist.txt",
+        "suite_flux_fixtures.py",
+        "suite_late_failure.py",
         "test_1146_routed_880_912_admission.py",
         "test_accounting_source.py",
         "test_activation_attestation.py",
@@ -28891,6 +28946,10 @@ ts_py_library(
         "test_stock_interface.py",
         "test_stock_shard_scheduling.py",
         "test_suite_deadline.py",
+        "test_suite_flux.py",
+        "test_suite_flux_review.py",
+        "test_suite_payload.py",
+        "test_suite_runtime.py",
         "test_suite_source.py",
         "test_summarize_arms.py",
         "test_t4_fused_qualify.py",
@@ -30100,6 +30159,165 @@ ts_py_library(
         "//src/tessera:__init___cycle",
         "//src/tessera:_dev/__init__",
         "//src/tessera:_dev/suite_deadline",
+    ],
+)
+
+ts_py_test(
+    name = "test_suite_flux",
+    path = "tests/test_suite_flux.py",
+    library = ":test_suite_flux_lib",
+    deps = [
+        "//tools:_suite_runtime",
+        "//tools:suite_container",
+        "//tools:suite_deadline",
+    ],
+    lane = "torch",
+    args = [
+        "--budget='{\"enforce\":true,\"seconds\":80,\"slow\":{}}'",
+    ],
+    timeout = "moderate",
+)
+
+ts_py_test(
+    name = "test_suite_flux.bytes",
+    path = "tests/test_suite_flux.py",
+    library = ":test_suite_flux_lib",
+    deps = [
+        "//tools:_suite_runtime",
+        "//tools:suite_container",
+        "//tools:suite_deadline",
+    ],
+    lane = "bytes",
+    args = [
+        "--budget='{\"enforce\":true,\"seconds\":80,\"slow\":{}}'",
+    ],
+    timeout = "moderate",
+)
+
+ts_py_library(
+    name = "test_suite_flux_lib",
+    srcs = [
+        "test_suite_flux.py",
+    ],
+    deps = [
+        "//src/tessera:__init___cycle",
+        "//src/tessera:_dev/__init__",
+        "//src/tessera:_dev/surface_publication",
+        "//tools:merge_suite",
+    ],
+)
+
+ts_py_test(
+    name = "test_suite_flux_review",
+    path = "tests/test_suite_flux_review.py",
+    library = ":test_suite_flux_review_lib",
+    deps = [
+        "//tools:_suite_runtime",
+        "//tools:suite_container",
+        "//tools:suite_deadline",
+    ],
+    lane = "torch",
+    args = [
+        "--budget='{\"enforce\":true,\"seconds\":80,\"slow\":{}}'",
+    ],
+    timeout = "moderate",
+)
+
+ts_py_test(
+    name = "test_suite_flux_review.bytes",
+    path = "tests/test_suite_flux_review.py",
+    library = ":test_suite_flux_review_lib",
+    deps = [
+        "//tools:_suite_runtime",
+        "//tools:suite_container",
+        "//tools:suite_deadline",
+    ],
+    lane = "bytes",
+    args = [
+        "--budget='{\"enforce\":true,\"seconds\":80,\"slow\":{}}'",
+    ],
+    timeout = "moderate",
+)
+
+ts_py_library(
+    name = "test_suite_flux_review_lib",
+    srcs = [
+        "test_suite_flux_review.py",
+    ],
+    deps = [
+        "//tools:merge_suite",
+    ],
+)
+
+ts_py_test(
+    name = "test_suite_payload",
+    path = "tests/test_suite_payload.py",
+    library = ":test_suite_payload_lib",
+    deps = [
+        "//tools:_suite_runtime",
+        "//tools:suite_container",
+    ],
+    lane = "torch",
+    args = [
+        "--budget='{\"enforce\":true,\"seconds\":80,\"slow\":{}}'",
+    ],
+    timeout = "moderate",
+)
+
+ts_py_test(
+    name = "test_suite_payload.bytes",
+    path = "tests/test_suite_payload.py",
+    library = ":test_suite_payload_lib",
+    deps = [
+        "//tools:_suite_runtime",
+        "//tools:suite_container",
+    ],
+    lane = "bytes",
+    args = [
+        "--budget='{\"enforce\":true,\"seconds\":80,\"slow\":{}}'",
+    ],
+    timeout = "moderate",
+)
+
+ts_py_library(
+    name = "test_suite_payload_lib",
+    srcs = [
+        "test_suite_payload.py",
+    ],
+    deps = [
+        "//tools:_suite_flux",
+    ],
+)
+
+ts_py_test(
+    name = "test_suite_runtime",
+    path = "tests/test_suite_runtime.py",
+    library = ":test_suite_runtime_lib",
+    lane = "torch",
+    args = [
+        "--budget='{\"enforce\":true,\"seconds\":80,\"slow\":{}}'",
+    ],
+    timeout = "moderate",
+)
+
+ts_py_test(
+    name = "test_suite_runtime.bytes",
+    path = "tests/test_suite_runtime.py",
+    library = ":test_suite_runtime_lib",
+    lane = "bytes",
+    args = [
+        "--budget='{\"enforce\":true,\"seconds\":80,\"slow\":{}}'",
+    ],
+    timeout = "moderate",
+)
+
+ts_py_library(
+    name = "test_suite_runtime_lib",
+    srcs = [
+        "test_suite_runtime.py",
+    ],
+    deps = [
+        "//tools:_suite_runtime",
     ],
 )
 
