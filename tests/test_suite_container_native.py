@@ -345,3 +345,48 @@ def test_direct_container_entry_authenticates_actual_native_context(tmp_path, mo
         state['cgroup'] = state['cgroup'].replace('shell-f123:', 'shell-f124:')
     with pytest.raises(ValueError):
         container.admitted_context(directory, digest, {'FLUX_JOB_ID': 'f123'})
+# R2 regression cases
+@pytest.mark.parametrize('handle', ['present', 'missing', 'conflicting'])
+def test_captured_cid_remains_the_only_cleanup_authority(tmp_path, monkeypatch, handle):
+    owned, foreign = '1' * 64, '2' * 64
+    path = tmp_path / 'container.cid'
+    path.write_text(owned)
+    live = {owned, foreign}
+    calls = []
+    def run(argv, **kwargs):
+        calls.append(argv)
+        assert argv[-1] == owned, 'cleanup touched a foreign container'
+        if argv[1] == 'rm':
+            live.discard(owned)
+        code = (0 if owned in live else 1) if argv[1:3] == ['container', 'exists'] else 0
+        return SimpleNamespace(returncode=code, stderr='')
+    monkeypatch.setattr(container.subprocess, 'run', run)
+    positive = {'cidfile': str(path), 'cid': owned, 'removed': False, 'cleanup_errors': []}
+    container.cleanup_cid(positive)
+    assert positive['removed'] and live == {foreign} and len(calls) == 3
+    live.add(owned); calls.clear()
+    if handle == 'missing':
+        path.unlink()
+    elif handle == 'conflicting':
+        path.write_text(foreign)
+    record = {'cidfile': str(path), 'cid': owned, 'removed': False, 'cleanup_errors': []}
+    container.cleanup_cid(record)
+    if handle == 'conflicting':
+        assert calls == [] and live == {owned, foreign}
+        assert not record['removed'] and 'replaced' in record['cleanup_errors'][-1]
+    else:
+        assert record['removed'] and live == {foreign} and len(calls) == 3
+
+
+@pytest.mark.parametrize('creation_code', [None, 125])
+def test_uncaptured_partial_creation_stays_unknown(tmp_path, monkeypatch, creation_code):
+    calls = []
+    monkeypatch.setattr(container.subprocess, 'run', lambda argv, **kwargs: calls.append(argv))
+    record = {'cidfile': str(tmp_path / 'missing.cid'), 'cid': None,
+              'removed': False, 'cleanup_errors': [], 'creation_returncode': creation_code}
+    container.cleanup_cid(record)
+    assert calls == [] and record['removed'] is False
+    assert record['cleanup_errors'] and 'unknown' in record['cleanup_errors'][-1]
+
+
+# R3 regression cases

@@ -3991,6 +3991,10 @@ allocator sees is `docs/tessera-one-format.md` §5.
 
 ### 1.1 Integration suite placement
 
+Re-stamped 2026-11-08 for G01 parent CID ownership correction. Cleanup retains
+the captured CID when its file disappears, refuses conflicting replacement,
+and reports uncaptured partial creation as unknown scope, never removal.
+
 Re-stamped 2026-11-08 from the G01 composed command regression. The finite
 container grammar shares canonical target validation with merge_suite, accepts
 only tool-owned `-o addopts=` config clearing and binds distinct JUnit/surface

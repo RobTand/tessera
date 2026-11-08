@@ -316,13 +316,12 @@ def driver_identity(gpus):
 def cleanup_cid(record):
     """Reap the captured handle only, preserving errors even on failed remove."""
     path = Path(record["cidfile"])
+    record["removed"] = False
     try:
         if path.is_symlink():
             raise ValueError("owned cidfile replaced by symlink")
-        cid = path.read_text().strip() if path.exists() else None
-        if cid is None:
-            record["removed"] = record.get("creation_returncode") not in (None, 0)
-            return
+        cid = path.read_text().strip() if path.exists() else record.get("cid")
+        _require(cid is not None, "container creation scope unknown: no captured CID")
         _require(re.fullmatch(r"[0-9a-f]{64}", cid), "invalid captured CID")
         _require(record.get("cid") in (None, cid), "owned cidfile replaced")
         record["cid"] = cid
