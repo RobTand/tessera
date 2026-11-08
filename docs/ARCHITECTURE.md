@@ -3999,6 +3999,8 @@ scratch cleanup; process and scratch cleanup errors remain in the payload record
 Interrupted payloads publish cleanup without waiting for exit content seals.
 They retain an unverified runtime state and a conclusive native failure, so
 cancellation cannot become green or consume Flux's cleanup window hashing dependencies.
+Signals arriving during exit seals unwind those seals into cleanup as well.
+Repeated interruption signals are ignored until cleanup evidence is published.
 
 Each arm saves immutable launch intent, the native jobspec and the exact
 returned ID before waiting. ASCII `f` and Unicode `ƒ` f58 spellings are

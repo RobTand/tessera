@@ -265,10 +265,15 @@ def payload(directory, digest):
               "affinity": sorted(os.sched_getaffinity(0))}
     child = None
     interrupted = []
+    class Interrupted(BaseException):
+        pass
     def forward(signum, frame):
         interrupted.append(signum)
-        if child is not None and child.poll() is None:
-            child.send_signal(signum)
+        if child is not None:
+            if child.poll() is None:
+                child.send_signal(signum)
+            else:
+                raise Interrupted
     previous = {sig: signal.getsignal(sig) for sig in (signal.SIGTERM, signal.SIGINT, signal.SIGCHLD)}
     try:
         for sig in (signal.SIGTERM, signal.SIGINT):
@@ -291,25 +296,32 @@ def payload(directory, digest):
             raise ValueError("interpreter/dependencies changed during payload")
         record["runtime_verified"] = True
         return code
+    except Interrupted:
+        record["interrupted_signal"] = interrupted[0]
+        return 128 + interrupted[0]
     finally:
-        # Keep the leader unreaped throughout grace so its PID anchors the
-        # group. TERM lets the deadline supervisor stop its own inner group.
-        if child is not None and child.returncode is None:
-            try:
-                os.killpg(child.pid, signal.SIGTERM)
-                time.sleep(5)
-                os.killpg(child.pid, signal.SIGKILL)
-                child.wait(timeout=5)
-            except (OSError, subprocess.SubprocessError) as exc:
-                record["process_cleanup_error"] = str(exc)
-        for sig, handler in previous.items():
-            signal.signal(sig, handler)
+        for sig in (signal.SIGTERM, signal.SIGINT):
+            signal.signal(sig, signal.SIG_IGN)
         try:
-            shutil.rmtree(scratch)
-            record["scratch_removed"] = not scratch.exists()
-        except OSError as exc:
-            record["cleanup_error"] = str(exc)
-        save(directory / "payload.json", record)
+            # Keep the leader unreaped throughout grace so its PID anchors the
+            # group. TERM lets the deadline supervisor stop its own inner group.
+            if child is not None and child.returncode is None:
+                try:
+                    os.killpg(child.pid, signal.SIGTERM)
+                    time.sleep(5)
+                    os.killpg(child.pid, signal.SIGKILL)
+                    child.wait(timeout=5)
+                except (OSError, subprocess.SubprocessError) as exc:
+                    record["process_cleanup_error"] = str(exc)
+            try:
+                shutil.rmtree(scratch)
+                record["scratch_removed"] = not scratch.exists()
+            except OSError as exc:
+                record["cleanup_error"] = str(exc)
+            save(directory / "payload.json", record)
+        finally:
+            for sig, handler in previous.items():
+                signal.signal(sig, handler)
 
 
 def require_selection(binding, identity):

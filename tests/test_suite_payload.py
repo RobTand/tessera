@@ -56,7 +56,8 @@ def test_payload_exception_stops_owned_group_and_preserves_cleanup_error(tmp_pat
     assert "owned scratch cleanup failed" in record["cleanup_error"]
 
 
-def test_interrupt_publishes_cleanup_without_waiting_for_an_exit_seal(tmp_path, monkeypatch):
+@pytest.mark.parametrize("interrupt_at", ["wait", "source", "runtime"])
+def test_interrupt_publishes_cleanup_without_waiting_for_an_exit_seal(tmp_path, monkeypatch, interrupt_at):
     spec = importlib.util.spec_from_file_location("interrupt_flux", ROOT / "tools/_suite_flux.py")
     flux = importlib.util.module_from_spec(spec); spec.loader.exec_module(flux)
     directory = tmp_path / "record"; directory.mkdir()
@@ -74,10 +75,15 @@ def test_interrupt_publishes_cleanup_without_waiting_for_an_exit_seal(tmp_path, 
     flux.save(directory / "launch.json", intent)
     observations = []
     def source(path):
-        assert "source" not in observations, "cancellation must not delay cleanup with an exit source seal"
+        if "source" in observations:
+            if interrupt_at == "source":
+                handlers[signal.SIGTERM](signal.SIGTERM, None)
+            assert interrupt_at == "runtime", "cancellation must not delay cleanup with an exit source seal"
         observations.append("source")
         return identity
     def runtime(*args, **kwargs):
+        if "runtime" in observations and interrupt_at == "runtime":
+            handlers[signal.SIGTERM](signal.SIGTERM, None)
         assert "runtime" not in observations, "cancellation must not delay cleanup with an exit runtime seal"
         observations.append("runtime")
         return intent["runtime"]
@@ -89,16 +95,17 @@ def test_interrupt_publishes_cleanup_without_waiting_for_an_exit_seal(tmp_path, 
     signals = []
     child = SimpleNamespace(pid=777, returncode=None)
     def wait():
-        handlers[signal.SIGTERM](signal.SIGTERM, None)
-        child.returncode = 143
-        return 143
+        if interrupt_at == "wait":
+            handlers[signal.SIGTERM](signal.SIGTERM, None)
+        child.returncode = 0
+        return 0
     child.wait = wait
     child.poll = lambda: child.returncode
     child.send_signal = signals.append
     monkeypatch.setattr(flux.subprocess, "Popen", lambda *args, **kwargs: child)
     assert flux.payload(str(directory), flux.hashlib.sha256((directory / "launch.json").read_bytes()).hexdigest()) == 143
     record = json.loads((directory / "payload.json").read_bytes())
-    assert signals == [signal.SIGTERM]
+    assert signals == ([signal.SIGTERM] if interrupt_at == "wait" else [])
     assert record["interrupted_signal"] == signal.SIGTERM
     assert record["scratch_removed"] and not (scratch_root / "123").exists()
     assert record["runtime_verified"] is False
