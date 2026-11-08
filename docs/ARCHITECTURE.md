@@ -10308,9 +10308,10 @@ process, the empty-denylist refusal (build item 11), and the wheel and sdist che
 above. It proves the parser's dependency boundary and what both
 distributions contain.
 It does not run a CUDA kernel, a decoder against a served artifact, or the
-merged suite: those are the two-population suite of §1.1, dispatched through
-PrismaBuild and read in `docs/status/suite-populations.md`, and a serving
-claim also needs a served receipt (§3).
+merged suite. The scoped CPU suite in §1.1 uses native Flux; its GPU and
+container transport still require qualification. Historical population records
+remain in `docs/status/suite-populations.md`, and a serving claim also needs
+a served receipt (§3).
 
 **`publish`** runs only on a `v*` tag and only after `pure` is green. It
 refuses a tag that does not name the version in `pyproject.toml`, builds the
