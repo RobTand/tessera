@@ -410,6 +410,7 @@ def test_default_paired_cli_applies_gpu_options_only_to_gpu_arm(tmp_path, monkey
     assert merge.main() == 0
     paired = json.loads(capsys.readouterr().out)
     assert {arm['arm'] for arm in paired['arms']} == {'gpu', 'x86'}
+    assert all('command' in arm for arm in paired['arms']), paired
     for arm in paired['arms']:
         command, refusal = merge._pytest_argv(arm['command'])
         assert refusal is None
