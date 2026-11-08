@@ -10,6 +10,7 @@ import shutil
 import signal
 import subprocess
 import sys
+import time
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 from tessera._dev.suite_source import measured_source
@@ -211,7 +212,8 @@ def collect(directory):
             payload = json.loads((directory / "payload.json").read_bytes())
             if (payload["job_id"] != job_id or payload["launch_sha256"] != digest
                     or payload["source"] != intent["source"] or not payload["scratch_removed"]
-                    or payload["runtime"] != intent["runtime"] or not payload["runtime_verified"]):
+                    or payload["runtime"] != intent["runtime"] or not payload["runtime_verified"]
+                    or payload.get("process_cleanup_error") or payload.get("cleanup_error")):
                 raise ValueError("payload source or scratch binding missing")
     except (OSError, ValueError, KeyError, TypeError, subprocess.SubprocessError) as exc:
         if terminal_confirmed:
@@ -261,11 +263,14 @@ def payload(directory, digest):
         interrupted.append(signum)
         if child is not None and child.poll() is None:
             child.send_signal(signum)
-    previous = {sig: signal.signal(sig, forward) for sig in (signal.SIGTERM, signal.SIGINT)}
+    previous = {sig: signal.getsignal(sig) for sig in (signal.SIGTERM, signal.SIGINT, signal.SIGCHLD)}
     try:
+        for sig in (signal.SIGTERM, signal.SIGINT):
+            signal.signal(sig, forward)
+        signal.signal(signal.SIGCHLD, signal.SIG_DFL)
         save(directory / "payload.json", record)
         env = {**os.environ, "TMPDIR": str(scratch), "TMP": str(scratch), "TEMP": str(scratch)}
-        child = subprocess.Popen(intent["command"], env=env)
+        child = subprocess.Popen(intent["command"], env=env, start_new_session=True)
         for sig in interrupted:
             child.send_signal(sig)
         code = child.wait()
@@ -276,6 +281,16 @@ def payload(directory, digest):
         record["runtime_verified"] = True
         return 128 + interrupted[0] if interrupted else code
     finally:
+        # Keep the leader unreaped throughout grace so its PID anchors the
+        # group. TERM lets the deadline supervisor stop its own inner group.
+        if child is not None and child.returncode is None:
+            try:
+                os.killpg(child.pid, signal.SIGTERM)
+                time.sleep(5)
+                os.killpg(child.pid, signal.SIGKILL)
+                child.wait(timeout=5)
+            except (OSError, subprocess.SubprocessError) as exc:
+                record["process_cleanup_error"] = str(exc)
         for sig, handler in previous.items():
             signal.signal(sig, handler)
         try:
