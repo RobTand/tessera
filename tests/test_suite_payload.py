@@ -10,7 +10,8 @@ import pytest
 ROOT = Path(__file__).resolve().parents[1]
 
 
-def test_payload_exception_stops_owned_group_and_preserves_cleanup_error(tmp_path, monkeypatch):
+@pytest.mark.parametrize("container_evidence", ["none", "malformed"])
+def test_payload_exception_stops_owned_group_and_preserves_cleanup_error(tmp_path, monkeypatch, container_evidence):
     spec = importlib.util.spec_from_file_location("payload_flux", ROOT / "tools/_suite_flux.py")
     flux = importlib.util.module_from_spec(spec); spec.loader.exec_module(flux)
     directory = tmp_path / "record"; directory.mkdir()
@@ -25,6 +26,9 @@ def test_payload_exception_stops_owned_group_and_preserves_cleanup_error(tmp_pat
     identity = {"snapshot_commit": "a" * 40, "sha256": "b" * 64}
     intent = {"directory": str(directory), "checkout": str(tmp_path), "source": identity, "application": None,
               "command": ["python", "payload"], "timeout_s": 60, "runtime": {"sha256": "c" * 64}}
+    if container_evidence == "malformed":
+        intent["container"] = {"schema": "tessera.suite_container.v1"}
+        (directory / "container.json").write_text("invalid container evidence")
     flux.save(directory / "launch.json", intent)
     digest = flux.hashlib.sha256((directory / "launch.json").read_bytes()).hexdigest()
     flux.save(directory / "submission.json", {"state": "submitted", "job_id": "123", "launch_sha256": digest})

@@ -224,3 +224,61 @@ def test_actual_podman_image_id_forms_bind_same_immutable_content(monkeypatch, r
     assert container.image_identity("sha256:" + "a" * 64) == {"Id": "sha256:" + "a" * 64, "Architecture": "amd64", "Os": "linux"}
     with pytest.raises(ValueError, match="content"):
         container.image_identity("sha256:" + "b" * 64)
+
+
+@pytest.mark.parametrize("boundary", ["interrupted-create", "failed-start", "cleanup-fails"])
+def test_cid_registration_precedes_creation_and_errors_survive(tmp_path, monkeypatch, boundary):
+    import signal
+    import _suite_flux as flux
+    command = composed(tmp_path, cpus=1)
+    spec = container.command_spec(command)
+    spec["strict_cuda"] = False
+    spec["inner"].remove("--strict-cuda")
+    directory = tmp_path / "output/native"
+    directory.mkdir(parents=True)
+    scratch = tmp_path / "cache/f123"
+    scratch.mkdir(parents=True)
+    intent = {"container": spec, "source": {"sha256": "d" * 64},
+              "resources": {"cores": 1, "gpus": 0, "architecture": "x86_64"}}
+    monkeypatch.setattr(container, "validate_mounts", lambda *args: [])
+    monkeypatch.setattr(container, "dependency_manifest", lambda *args: ({}, "b" * 64))
+    monkeypatch.setattr(container, "image_identity", lambda *args: {"Id": "sha256:" + "a" * 64, "Architecture": "amd64", "Os": "linux"})
+    monkeypatch.setattr(container, "podman_command", lambda *args, **kwargs: ["/usr/bin/podman", "create"])
+    cid = "1" * 64
+    launches = []
+    def popen(argv, **kwargs):
+        launches.append(argv)
+        if len(launches) == 1:
+            registered = json.loads((directory / "container.json").read_bytes())
+            assert registered["cidfile"] == str(directory / "container.cid")
+            assert registered["cid"] is None
+            Path(registered["cidfile"]).write_text(cid)
+            if boundary != "failed-start":
+                signal.getsignal(signal.SIGTERM)(signal.SIGTERM, None)
+            return SimpleNamespace(communicate=lambda: (cid, ""), returncode=0, poll=lambda: 0)
+        assert argv == ["/usr/bin/podman", "start", "--attach", cid]
+        return SimpleNamespace(wait=lambda: 125, poll=lambda: 125)
+    monkeypatch.setattr(container.subprocess, "Popen", popen)
+    inspection = [{"Id": cid, "Image": "a" * 64, "HostConfig": {"CpusetCpus": ",".join(map(str, sorted(os.sched_getaffinity(0))))}}]
+    monkeypatch.setattr(container.subprocess, "run", lambda *args, **kwargs: SimpleNamespace(returncode=0, stdout=json.dumps(inspection)))
+    touched = []
+    def cleanup(record):
+        assert Path(record["cidfile"]).read_text() == cid
+        touched.append(cid)
+        record["cid"] = cid
+        if boundary == "cleanup-fails":
+            raise PermissionError("owned CID remove failed")
+        record["removed"] = True
+    monkeypatch.setattr(container, "cleanup_cid", cleanup)
+    if boundary == "failed-start":
+        with pytest.raises(FileNotFoundError):
+            container.run(spec, tmp_path, {"FLUX_JOB_ID": "f123", "TMPDIR": str(scratch)}, directory, intent, "e" * 64)
+    else:
+        assert container.run(spec, tmp_path, {"FLUX_JOB_ID": "f123", "TMPDIR": str(scratch)}, directory, intent, "e" * 64) == 143
+    record = json.loads((directory / "container.json").read_bytes())
+    assert touched == [cid]
+    assert record["cid"] == cid
+    if boundary == "cleanup-fails":
+        assert record["removed"] is False and "owned CID remove failed" in record["cleanup_errors"][-1]
+    else:
+        assert record["removed"] is True
