@@ -1427,3 +1427,124 @@ def test_an_arm_the_run_did_not_submit_is_named_in_the_ledger(tmp_path):
     appended = ledger.read_text()[len(before):]
     assert "not submitted in this run" not in appended, appended
     assert appended.count("no population published") == 2, appended
+
+
+@pytest.mark.parametrize("master_ref", ["master", "origin/master"])
+@pytest.mark.parametrize("lifecycle,failed", [("submit", False), ("resume", True)])
+def test_submit_time_master_survives_a_ref_advance(
+        tmp_path, monkeypatch, master_ref, lifecycle, failed):
+    """#1227: master moves after dispatch, not the measured source.
+
+    The resume case stops the submitter before it can assemble anything and
+    resumes with a fresh module, so an in-memory snapshot or one saved only
+    after clients return cannot satisfy the submit-time claim.
+
+    Pre-fix: AssertionError: master_head_at_submit must retain the
+    pre-dispatch observation, not assembly-time master (all four cases).
+    """
+
+    merge = _module()
+    checkout = tmp_path / "checkout"
+    git, ref, submitted, advanced = _master_history(checkout, master_ref)
+    arm = _population("x86", commit=submitted)
+    if failed:
+        arm["returncode"] = 1
+        arm["surface"]["counts"]["failed"] = 1
+    expected = merge._assemble_receipt([arm], checkout, assembled_by="submit")
+    monkeypatch.setattr(merge, "SHARED_ROOT", tmp_path)
+    monkeypatch.setattr(merge, "DEFAULT_RECEIPT_ROOT", tmp_path / "runs")
+    monkeypatch.setattr(merge.suite_flux, "source", lambda path: merge.suite_flux.measured_source(path, verifier=None))
+    observed = []
+
+    def client(name, config, args, receipt_dir):
+        observed.append(receipt_dir)
+        git("update-ref", ref, advanced)
+        if lifecycle == "resume":
+            raise RuntimeError("submitter stopped before receipt assembly")
+        return arm
+
+    monkeypatch.setattr(merge, "_submit", client)
+    argv = ["merge_suite", "--arm", "x86", "--checkout", str(checkout)]
+    monkeypatch.setattr(sys, "argv", argv)
+    if lifecycle == "resume":
+        with pytest.raises(RuntimeError, match="submitter stopped"):
+            merge.main()
+        merge = _module()  # discard all in-memory state of the submitter
+        monkeypatch.setattr(merge, "_resume", lambda *args: arm)
+        monkeypatch.setattr(merge, "_submit", lambda *args: pytest.fail("resume submitted an arm"))
+        monkeypatch.setattr(sys, "argv", [*argv, "--resume", str(observed[0])])
+    status = merge.main()
+    receipt = json.loads((observed[0] / "receipt.json").read_text())
+
+    assert git("rev-parse", "HEAD") == submitted
+    assert git("rev-parse", ref) == advanced
+    assert status == (1 if failed else 0)
+    for key in ("commits_measured", "verdict", "arm_results", "arms"):
+        assert receipt[key] == expected[key], key
+    population = receipt["population"]
+    assert population["master_head_at_submit"] == submitted, (
+        "master_head_at_submit must retain the pre-dispatch observation, not assembly-time master")
+    assert population["master_ref_used"] == master_ref
+    assert population["is_master_head"] is True
+    assert population["commit"] == submitted
+    ledger = tmp_path / "ledger.md"
+    merge._record_markdown(ledger, receipt)
+    row = next(line for line in ledger.read_text().splitlines() if "| x86 |" in line)
+    assert "| yes | x86 |" in row
+
+
+@pytest.mark.parametrize("old_receipt", [False, True])
+def test_submit_time_master_is_unknown_for_a_legacy_resume(tmp_path, monkeypatch, old_receipt):
+    """A prior submit-labelled receipt is not evidence of a genuine snapshot.
+
+    Pre-fix (both cases): AssertionError: legacy runs have no submit-time
+    evidence; do not backfill from current master or an old receipt.
+    """
+
+    merge = _module()
+    checkout = tmp_path / "checkout"
+    _, _, submitted, _ = _master_history(checkout, "master")
+    arm = _population("x86", commit=submitted)
+    receipt_dir = tmp_path / "legacy"
+    receipt_dir.mkdir()
+    if old_receipt:
+        prior = merge._assemble_receipt([arm], checkout, assembled_by="submit")
+        prior["population"].update(master_head_at_submit=submitted,
+                                   master_ref_used="master", is_master_head=True)
+        (receipt_dir / "receipt.json").write_text(json.dumps(prior))
+    monkeypatch.setattr(merge, "_resume", lambda *args: arm)
+    monkeypatch.setattr(merge, "_submit", lambda *args: pytest.fail("resume submitted an arm"))
+    monkeypatch.setattr(sys, "argv", ["merge_suite", "--arm", "x86", "--checkout", str(checkout),
+                                     "--resume", str(receipt_dir)])
+    assert merge.main() == 0
+    receipt = json.loads((receipt_dir / "receipt.json").read_text())
+    assert receipt["population"]["master_head_at_submit"] is None, (
+        "legacy runs have no submit-time evidence; do not backfill from current master or an old receipt")
+    assert receipt["population"]["is_master_head"] is None
+    ledger = tmp_path / "ledger.md"
+    merge._record_markdown(ledger, receipt)
+    row = next(line for line in ledger.read_text().splitlines() if "| x86 |" in line)
+    assert "| unknown | x86 |" in row
+
+
+@pytest.mark.parametrize("mode", ["python", "deadline", "console"])
+def test_native_saved_command_keeps_the_existing_pytest_grammar(tmp_path, monkeypatch, mode):
+    merge = _module(); jobs = _native_jobs(merge, monkeypatch)
+    path = tmp_path / "surface.x86.json"
+    command = ["/named/python", "-m", "pytest", "tests/test_a.py", "-n", "2", "--surface-json", str(path)]
+    if mode == "deadline": command = merge._timed_command(command, 60)
+    if mode == "console": command = ["/named/pytest", *command[3:]]
+    jobs.add(tmp_path, "x86", _population("x86")["surface"], command=command)
+    record = merge._resume("x86", merge.ARMS["x86"], tmp_path)
+    assert record["exit_status_observed"] and record["returncode"] == 0
+    assert record["cpus_used"] == 2
+    assert merge._targets_of(record["pytest_command"]) == ["tests/test_a.py"]
+
+
+def test_native_binding_keeps_subtest_summary_coverage(tmp_path, monkeypatch):
+    merge = _module(); jobs = _native_jobs(merge, monkeypatch)
+    world = jobs.add(tmp_path, "x86", _population("x86")["surface"])
+    path = world.directory / "stdout"
+    path.write_text(path.read_text().replace(" in 0.10s", ", 28 subtests passed in 0.10s"))
+    record = merge._resume("x86", merge.ARMS["x86"], tmp_path)
+    assert record["exit_status_observed"] and record["returncode"] == 0
