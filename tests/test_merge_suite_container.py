@@ -375,7 +375,7 @@ def test_container_cache_refuses_before_creating_or_launching(tmp_path, monkeypa
     argv = command(spec["surface"], spec["--cache-dir"], spec["--deps-site"])
     cut = argv.index("--")
     argv[cut:cut] = ["--data-root", str(tmp_path / "data")]
-    assert owner.main(argv[2:]) == 2
+    assert owner.main(argv[argv.index(owner.RUNNER) + 1:]) == 2
     assert "filesystem type nfs4" in capsys.readouterr().err
     assert launches == []
     assert not Path(spec["--cache-dir"]).exists()

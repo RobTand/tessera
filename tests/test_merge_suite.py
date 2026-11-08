@@ -1084,14 +1084,15 @@ def test_native_resume_authenticates_one_read_snapshot(tmp_path, monkeypatch, mu
     merge = _module(); jobs = _native_jobs(merge, monkeypatch)
     world = jobs.add(tmp_path, "x86", _population("x86")["surface"], code=7)
     held = world.surface.read_bytes()
-    original = merge.suite_flux.collect
-    def collect(directory):
+    original = merge._read_publication
+    def publication(path):
+        snapshot = original(path)
         if mutation == "unlink":
             world.surface.unlink()
         else:
             world.surface.write_text('{"counts":{"passed":100}}')
-        return original(directory)
-    monkeypatch.setattr(merge.suite_flux, "collect", collect)
+        return snapshot
+    monkeypatch.setattr(merge, "_read_publication", publication)
     record = merge._resume("x86", merge.ARMS["x86"], tmp_path)
     assert record["surface"] == json.loads(held)
     assert record["surface_sha256"] == hashlib.sha256(held).hexdigest()

@@ -271,7 +271,7 @@ def test_every_shard_runs_under_the_interpreter_the_run_names(tmp_path, monkeypa
                       "--out", str(tmp_path / "never"), "--python", "/opt/venv/bin/python"])
     lines = [line for line in capsys.readouterr().out.splitlines() if "-m pytest" in line]
     assert status == 0 and len(lines) == 2
-    assert all("/opt/venv/bin/python -m pytest" in line for line in lines)
+    assert all("/opt/venv/bin/python -s -m pytest" in line for line in lines)
 
 
 def test_no_more_than_eight_native_clients_run_at_once(tmp_path, monkeypatch):

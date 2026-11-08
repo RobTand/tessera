@@ -1280,7 +1280,7 @@ def main() -> int:
     args.checkout = Path(args.checkout).resolve()
     wanted = args.arm or sorted(ARMS)
     if args.gpu_image and "gpu" not in wanted:
-        ap.error("GPU image options require the GPU arm")
+        ap.error("GPU/container image options require the GPU arm")
     configured = {name: {**ARMS[name], **({"targets": args.target} if args.target else {}),
                           **({"python": args.python} if args.python and name == "x86" else {})}
                   for name in wanted}
