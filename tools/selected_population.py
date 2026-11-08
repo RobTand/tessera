@@ -98,14 +98,20 @@ def choose(checkout: Path, base: str, count: int) -> dict:
     nothing for an empty change), or a selected file the tree does not hold.
     """
 
+    identity = merge_suite.suite_flux.source(checkout)
+    resolved_base = subprocess.check_output(
+        ["git", "-C", str(checkout), "rev-parse", "--verify", f"{base}^{{commit}}"], text=True).strip()
+    head = identity["snapshot_commit"]
     done = subprocess.run(
-        [sys.executable, str(SELECTOR), "--ref", f"{base}...HEAD", "--json", "--root", "."],
+        [sys.executable, str(SELECTOR), "--ref", f"{resolved_base}...{head}", "--json", "--root", "."],
         cwd=checkout, capture_output=True, text=True)
     if done.returncode != 0 or not done.stdout.strip():
         raise ValueError(
             f"the selector gave no selection for {base}...HEAD (exit {done.returncode}): "
             + (done.stderr.strip()[-300:] or "no output; the change may be empty"))
     result = json.loads(done.stdout)
+    if merge_suite.suite_flux.source(checkout) != identity:
+        raise ValueError("checkout source changed while selecting tests")
     tests = sorted(result["tests"])
     missing = [path for path in tests if not (checkout / path).is_file()]
     if missing:
@@ -113,12 +119,22 @@ def choose(checkout: Path, base: str, count: int) -> dict:
     shards = balanced_shards({path: (checkout / path).stat().st_size for path in tests}, count)
     return {
         "base": base,
+        "base_commit": resolved_base,
+        "head_commit": head,
+        "source_identity": identity,
         "verdict": result["verdict"],
         "forces_full": result.get("forces_full"),
         "excluded_tests": result.get("excluded_tests"),
         "tests": tests,
         "shards": {shard_name(i): files for i, files in enumerate(shards)},
     }
+
+
+def selection_binding(selection, receipt_dir):
+    raw = merge_suite.suite_flux.encoded(selection)
+    return {"selection_path": str((receipt_dir / SELECTION).resolve()),
+            "selection_sha256": merge_suite.suite_flux.hashlib.sha256(raw).hexdigest(),
+            "source": selection["source_identity"]}
 
 
 def shard_arm(name: str, files: list[str], python: str | None = None) -> dict:
@@ -165,14 +181,20 @@ def submit_all(selection: dict, args, receipt_dir: Path) -> dict[str, dict]:
     submission = SimpleNamespace(
         cpus=args.cpus, mem_gb=args.mem_gb, pytest_arg=[*PYTEST_ARGS, *args.pytest_arg],
         timeout_s=args.timeout_s, wait_s=args.wait_s, checkout=args.checkout,
-        dry_run=args.dry_run, artifact_root=args.artifact_root)
+        dry_run=args.dry_run, artifact_root=args.artifact_root,
+        selection_binding=selection_binding(selection, receipt_dir))
     shards = selection["shards"]
     for name, files in shards.items():
         merge_suite._preflight(shard_arm(name, files, selection.get("python")), submission)
 
     def client(name: str, files: list[str]) -> dict:
-        sent = merge_suite._submit(name, shard_arm(name, files, selection.get("python")),
-                                   submission, receipt_dir)
+        try:
+            sent = merge_suite._submit(name, shard_arm(name, files, selection.get("python")),
+                                       submission, receipt_dir)
+        except (ValueError, OSError, subprocess.SubprocessError) as exc:
+            # Keep all siblings and every saved ID collectable after one error.
+            sent = merge_suite._resume(name, shard_arm(name, files, selection.get("python")), receipt_dir)
+            sent["client_error"] = str(exc)
         if not args.dry_run:
             write_client_result(receipt_dir, name, sent)
         return sent
@@ -236,6 +258,9 @@ def population_problems(selection: dict, records: list[dict]) -> list[str]:
         if not action:
             problems.append(f"{name}: no sealed command is bound to this shard, so what it ran is unknown")
             continue
+        if action.get("application") != selection_binding(selection, Path(
+                record["selection_path"]).parent):
+            problems.append(f"{name}: native launch is not bound to this immutable selection")
         argv, why = merge_suite._pytest_argv(action.get("command") or [])
         if argv is None:
             problems.append(f"{name}: the sealed command is not read as pytest ({why})")
@@ -283,6 +308,7 @@ def assemble(selection: dict, receipt_dir: Path, checkout: Path, *,
     for name, files in selection["shards"].items():
         record = merge_suite._resume(
             name, shard_arm(name, files, selection.get("python")), receipt_dir)
+        record["selection_path"] = str(receipt_dir / SELECTION)
         sent = read_client_result(receipt_dir, name)
         record["client_result"] = "recorded" if sent is not None else "not recorded"
         if sent is not None:
@@ -361,6 +387,8 @@ def main(argv: list[str] | None = None) -> int:
     if args.resume:
         receipt_dir = Path(args.resume).resolve()
         selection = json.loads((receipt_dir / SELECTION).read_text())
+        if (receipt_dir / SELECTION).read_bytes() != merge_suite.suite_flux.encoded(selection):
+            ap.error("selection file is not the immutable canonical publication")
     else:
         if not str(args.checkout).startswith(str(merge_suite.SHARED_ROOT)) and not args.dry_run:
             print(f"selected_population: the checkout must be under {merge_suite.SHARED_ROOT}",
@@ -380,8 +408,9 @@ def main(argv: list[str] | None = None) -> int:
                        else DEFAULT_RECEIPT_ROOT / time.strftime("%Y%m%dT%H%M%S")).resolve()
         # A dry run composes paths and creates nothing, as merge_suite's does.
         if not args.dry_run:
-            receipt_dir.mkdir(parents=True, exist_ok=True)
-            (receipt_dir / SELECTION).write_text(json.dumps(selection, indent=1) + "\n")
+            receipt_dir.mkdir(parents=True, exist_ok=False)
+            with (receipt_dir / SELECTION).open("xb") as handle:
+                handle.write(merge_suite.suite_flux.encoded(selection))
             merge_suite._write_submission_master(args.checkout, receipt_dir)
         submitted = submit_all(selection, args, receipt_dir)
         if args.dry_run:

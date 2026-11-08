@@ -25,7 +25,7 @@ def suite():
 def publication(suite, tmp_path):
     from tessera._dev.surface_publication import publication_line, POPULATION
     path = tmp_path / "surface.x86.json"
-    identity = {"verification": "verified", "snapshot_commit": "a" * 40,
+    identity = {"schema": "tessera.suite_source.v1", "verification": "verified", "snapshot_commit": "a" * 40,
                 "sha256": "b" * 64}
     payload = {"schema": "tessera.test_surface.v3", "role": "population",
                "commit": "a" * 40, "source_identity": identity,

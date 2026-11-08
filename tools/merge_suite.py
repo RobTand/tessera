@@ -19,6 +19,7 @@ import sys
 import time
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
+from pathlib import PurePosixPath
 from typing import NamedTuple
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
@@ -208,9 +209,18 @@ def _command(arm: dict, surface_json: Path, extra: list[str],
     same run.  Before that, ``--cpus 8`` composed ``-n 8`` for both.
     """
 
+    _validate_pytest_extra(extra)
+    targets = arm.get("targets", ["tests"])
+    if (not targets or len(targets) > 1024 or len(set(targets)) != len(targets)
+            or any(not isinstance(target, str) or not target or "\0" in target
+                   or target.startswith("-") or PurePosixPath(target.split("::")[0]).is_absolute()
+                   or ".." in PurePosixPath(target.split("::")[0]).parts
+                   or not (target == "tests" or target.startswith("tests/"))
+                   for target in targets)):
+        raise ValueError("suite targets require unique canonical paths under tests/")
     cpus = _arm_cpus(arm, cpus)
-    command = [arm["python"], "-m", "pytest", *arm.get("targets", ["tests"]), "-q",
-               "-p", "no:cacheprovider",
+    command = [arm["python"], "-m", "pytest", *targets, "-q",
+               "-o", "addopts=", "-p", "no:cacheprovider",
                "--surface-json", str(surface_json)]
     if cpus > 1:
         # The retained native mode is loadfile. The explicit container arm
@@ -221,6 +231,27 @@ def _command(arm: dict, surface_json: Path, extra: list[str],
     if arm["strict_cuda"]:
         command.append("--strict-cuda")
     return command + extra
+
+
+def _validate_pytest_extra(extra):
+    """Own targets, config, process count, plugins and output destinations."""
+    flags = {"-q", "-v", "-s", "-x", "--disable-warnings", "--no-header",
+             "--full-trace", "--showlocals"}
+    valued = {"-k", "-m", "--maxfail", "--durations", "--tb"}
+    index = 0
+    while index < len(extra):
+        token = extra[index]
+        key, equal, value = token.partition("=")
+        if token in flags:
+            index += 1
+        elif key in valued:
+            if not equal:
+                index += 1
+                if index == len(extra):
+                    raise ValueError("pytest option requires a value: " + key)
+            index += 1
+        else:
+            raise ValueError("pytest targets and execution controls are tool-owned: " + token)
 
 
 def _timed_command(command: list[str], timeout_s: float) -> list[str]:
@@ -242,7 +273,10 @@ def _preflight(arm: dict, args) -> dict:
             raise ValueError("artifact roots require unique ENV=PATH declarations")
         roots[key] = value
     suite_flux.validate(_arm_cpus(arm, args.cpus), args.mem_gb, args.timeout_s, roots)
+    _validate_pytest_extra(getattr(args, "pytest_arg", []))
     _positive_seconds(args.wait_s)
+    _command(arm, Path("/preflight/population.json"), getattr(args, "pytest_arg", []),
+             _arm_cpus(arm, args.cpus))
     return roots
 
 
@@ -264,7 +298,8 @@ def _submit(name: str, arm: dict, args, receipt_dir: Path) -> dict:
                 "flux": shlex.join(command)}
     directory = receipt_dir / f"flux.{name}"
     suite_flux.submit(directory, args.checkout, command, cpus, args.mem_gb,
-                      args.timeout_s, roots)
+                      args.timeout_s, roots,
+                      application=getattr(args, "selection_binding", None))
     try:
         suite_flux.wait(directory, args.wait_s)
     except subprocess.TimeoutExpired:
@@ -573,8 +608,9 @@ def _cpus_of_command(command: list) -> int | None:
 def _native_binding_refusal(native: dict, published: "_Publication | None", stdout: str):
     if published is None:
         return "no population publication was read"
-    if native.get("query_errors") or not native.get("exit_status_observed"):
-        return "native terminal status is unknown: " + "; ".join(native.get("query_errors", []))
+    if native.get("query_errors") or native.get("evidence_errors") or not native.get("exit_status_observed"):
+        return "native evidence is incomplete: " + "; ".join(
+            native.get("query_errors", []) + native.get("evidence_errors", []))
     command = native.get("command", [])
     destination, refusal = _effective_surface_json(command)
     if refusal or destination != str(published.path):
@@ -755,14 +791,14 @@ def _arm_results(arms: list[dict]) -> dict:
         counts = (record.get("surface") or {}).get("counts") or {}
         if record.get("status"):
             results[record["arm"]] = record["status"]
-        elif record.get("surface") is None:
-            results[record["arm"]] = "no population published"
         elif counts.get("failed") or counts.get("error"):
             results[record["arm"]] = (
                 f"red: {counts.get('failed', 0)} failed, "
                 f"{counts.get('error', 0)} error")
         elif record.get("returncode") not in (0, None):
             results[record["arm"]] = f"red: exit {record['returncode']}"
+        elif record.get("surface") is None:
+            results[record["arm"]] = "no population published"
         elif _evidence_problem(record) or _coverage_problem(record):
             results[record["arm"]] = "incomplete: " + (
                 _evidence_problem(record) or _coverage_problem(record))
@@ -784,10 +820,6 @@ def _verdict(arms: list[dict], commits: dict | None = None) -> str:
     """
 
     names = ", ".join(record["arm"] for record in arms) or "no arms"
-    if any(record.get("status") for record in arms):
-        return "not run"
-    if any(record.get("surface") is None for record in arms):
-        return "incomplete: an arm published no population"
     # Evidence for red and evidence for green are not symmetric, and a resumed
     # receipt is where that stops being pedantry.  A failure the run itself
     # published is conclusive whether or not anybody watched the exit status; a
@@ -801,6 +833,10 @@ def _verdict(arms: list[dict], commits: dict | None = None) -> str:
             return f"red on one of: {names}"
         if record.get("returncode") not in (0, None):
             return f"red on one of: {names}"
+    if any(record.get("status") for record in arms):
+        return "not run"
+    if any(record.get("surface") is None for record in arms):
+        return "incomplete: an arm published no population"
     # A population in which nothing ran is not a green population, and neither
     # is a file that never said what it was.  Every check above is satisfied by
     # an arm that collected the suite and skipped all of it -- no failures,
@@ -936,7 +972,7 @@ different source, and is unknown for legacy or unverifiable populations.
 `source <hash>` beside a row's snapshot commit names that verified source.
 Pass counts alone do not establish a same-source merge check.
 
-`exit` is the status the submitting process observed. `0 (Flux)` is a status
+`exit` is the status the submitting process observed. Historical `0 (pool)` is a status
 this program did not watch and did not guess: the run was resumed, and the
 number is the one PrismaBuild's own worker recorded for the action the
 population names as its producer, for the attempt whose own output says it
@@ -1171,6 +1207,9 @@ def main() -> int:
                          f"{DEFAULT_RECEIPT_ROOT}")
     ap.add_argument("--pytest-arg", action="append", default=[],
                     help="repeatable, passed through to pytest")
+    ap.add_argument("--target", action="append", default=[],
+                    help="explicit test path or node; repeatable, default tests")
+    ap.add_argument("--python", default="", help="explicit CPU suite interpreter")
     ap.add_argument("--record", default="",
                     help="also append one row per arm to this markdown ledger; "
                          "docs/status/suite-populations.md is the one a reader "
@@ -1201,18 +1240,21 @@ def main() -> int:
 
     args.checkout = Path(args.checkout).resolve()
     wanted = args.arm or sorted(ARMS)
+    configured = {name: {**ARMS[name], **({"targets": args.target} if args.target else {}),
+                          **({"python": args.python} if args.python and name == "x86" else {})}
+                  for name in wanted}
     if not args.resume:
         try:
             for name in wanted:
-                _preflight(ARMS[name], args)
+                _preflight(configured[name], args)
             if not args.dry_run:
                 suite_flux.source(args.checkout)
         except (ValueError, OSError) as exc:
             ap.error(str(exc))
 
     stamp = time.strftime("%Y%m%dT%H%M%S")
-    receipt_dir = Path(args.resume).resolve() if args.resume \
-        else DEFAULT_RECEIPT_ROOT / stamp
+    receipt_dir = (Path(args.resume).resolve() if args.resume else
+                   Path(args.out).resolve().parent if args.out else DEFAULT_RECEIPT_ROOT / stamp)
     if args.resume and not receipt_dir.is_dir():
         print(f"merge_suite: --resume {receipt_dir} is not a directory",
               file=sys.stderr)
@@ -1221,7 +1263,7 @@ def main() -> int:
     # with an empty directory per invocation is how a receipt root stops being
     # readable.
     if not args.dry_run and not args.resume:
-        receipt_dir.mkdir(parents=True, exist_ok=True)
+        receipt_dir.mkdir(parents=True, exist_ok=False)
     out = Path(args.out) if args.out else receipt_dir / "receipt.json"
 
     if args.dry_run and not args.resume:
@@ -1232,17 +1274,27 @@ def main() -> int:
         submission_master = _read_submission_master(receipt_dir)
 
     if args.resume:
-        arms = [_resume(name, ARMS[name], receipt_dir) for name in wanted]
+        arms = [_resume(name, configured[name], receipt_dir) for name in wanted]
     else:
         with ThreadPoolExecutor(max_workers=len(wanted)) as pool:
-            futures = {name: pool.submit(_submit, name, ARMS[name], args,
+            futures = {name: pool.submit(_submit, name, configured[name], args,
                                          receipt_dir)
                        for name in wanted}
-            arms = [futures[name].result() for name in wanted]
+            arms = []
+            for name in wanted:
+                try:
+                    record = futures[name].result()
+                except (ValueError, OSError, subprocess.SubprocessError) as exc:
+                    record = _resume(name, configured[name], receipt_dir)
+                    record["client_error"] = str(exc)
+                arms.append(record)
 
     receipt = _assemble_receipt(arms, args.checkout,
                                 assembled_by="resume" if args.resume else "submit",
                                 submission_master=submission_master)
+    if args.dry_run:
+        print(json.dumps(receipt, indent=2))
+        return 0
     out.parent.mkdir(parents=True, exist_ok=True)
     kept = _keep_any_previous(out)
     out.write_text(json.dumps(receipt, indent=2) + "\n")

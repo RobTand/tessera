@@ -3995,6 +3995,14 @@ Each arm saves immutable launch intent, the native jobspec and the exact
 returned ID before waiting. An unknown acknowledgement is never retried
 implicitly. Resume uses that ID only, checks the broker generation and original
 jobspec, and retains status, eventlog, allocation, stdout/stderr and JUnit.
+The native runtime seal hashes the named interpreter, standard library and
+installed package bytes at submission, entry and exit. This extends the existing
+scoped container dependency seal to host runtimes without importing the suite
+dependencies. Admission verifies the qualified config and live resource graph,
+as well as recording the broker generation. Selection records resolved base/head
+and measured source, and each shard binds the immutable selection digest.
+Resource-controlled pytest options, config overrides and appended targets refuse.
+
 It reads one population snapshot and binds its exact path, digest, verified
 source and summary counts to that same job. Query failure is unknown; a
 nonzero native ending remains red after an early clean publication. Historical

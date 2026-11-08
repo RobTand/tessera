@@ -7,6 +7,7 @@ import os
 from pathlib import Path
 import re
 import shutil
+import signal
 import subprocess
 import sys
 
@@ -16,6 +17,10 @@ from tessera._dev.suite_source import measured_source
 PREFIX = "/home/rob/flux-vanilla/0.91.0-0.56.0"
 URI = f"local://{PREFIX}/runs/fv1-model/run/local-0"
 PROFILE = "fv1-explicit-perf-memory.v1"
+CONFIG = Path(PREFIX) / "runs/fv1-model/config.json"
+MODEL = Path(PREFIX) / "config/R-model.json"
+CONFIG_SHA = "2b5618a591bbf545336ed9dfae6645b5dfca7516325ccbf9e0b2dbf4181607e1"
+MODEL_SHA = "261a084b72cb3a0c5055816f642f51ccbf473d3373876f34e67be55d5b5221a8"
 THREADS = dict.fromkeys(("OMP_NUM_THREADS", "MKL_NUM_THREADS", "OPENBLAS_NUM_THREADS",
                          "TORCH_NUM_THREADS", "MAX_JOBS"), "1")
 
@@ -46,6 +51,26 @@ def checked(argv):
     return result.stdout
 
 
+def profile_identity():
+    """Require the qualified installed and live baseline, not just a URI."""
+    config_raw, model_raw = CONFIG.read_bytes(), MODEL.read_bytes()
+    if (hashlib.sha256(config_raw).hexdigest() != CONFIG_SHA
+            or hashlib.sha256(model_raw).hexdigest() != MODEL_SHA):
+        raise ValueError("unqualified Flux config/resource model; profile revision required")
+    config, model = json.loads(config_raw), json.loads(model_raw)
+    for section in ("resource", "exec", "sched-fluxion-resource", "sched-fluxion-qmanager"):
+        if json.loads(checked(["config", "get", section])) != config[section]:
+            raise ValueError("loaded Flux config differs from the qualified profile")
+    if json.loads(checked(["kvs", "get", "resource.R"]))["scheduling"] != model["scheduling"]:
+        raise ValueError("loaded Flux resource graph differs from the qualified profile")
+    if checked(["resource", "status", "-s", "online", "-n", "-o", "{ranks}"]).strip() != "0-2":
+        raise ValueError("all three Flux hosts must be online")
+    if sum(line.endswith(": full") for line in checked(["overlay", "status"]).splitlines()) != 3:
+        raise ValueError("all three Flux brokers must be healthy")
+    return {"profile": PROFILE, "config_sha256": CONFIG_SHA, "model_sha256": MODEL_SHA,
+            "broker_starttime": checked(["getattr", "broker.starttime"]).strip()}
+
+
 def validate(cores, memory, timeout, environment):
     if (type(cores) is not int or not 1 <= cores <= 4
             or type(memory) is not int or not 1 <= memory <= 16
@@ -53,9 +78,10 @@ def validate(cores, memory, timeout, environment):
         raise ValueError("native suite profile requires 1..4 cores, 1..16 GiB, 0 < timeout <= 1790s")
     if len(environment) > 32:
         raise ValueError("too many artifact roots")
+    from _suite_container import artifact_variables
+    allowed = artifact_variables()
     for key, value in environment.items():
-        if (not re.fullmatch(r"TESSERA_[A-Z0-9_]+", key)
-                or key in {"TESSERA_SOURCE_VERIFIER", "TESSERA_STRICT_CUDA"}
+        if (key not in allowed
                 or not Path(value).is_absolute() or not Path(value).is_dir()
                 or "\0" in value):
             raise ValueError(f"invalid artifact root: {key}")
@@ -75,15 +101,19 @@ def source(checkout):
     return identity
 
 
-def submit(directory, checkout, command, cores, memory, timeout, environment):
+def submit(directory, checkout, command, cores, memory, timeout, environment, *, application=None):
     validate(cores, memory, timeout, environment)
     directory, checkout = Path(directory).resolve(), Path(checkout).resolve()
     identity = source(checkout)
+    qualified = profile_identity()
+    if application is not None:
+        require_selection(application, identity)
+    runtime = runtime_identity(command[0], checkout)
     intent = {"schema": "tessera.flux.launch.v1", "profile": PROFILE, "uri": URI,
-              "broker_starttime": checked(["getattr", "broker.starttime"]).strip(),
+              "qualification": qualified, "broker_starttime": qualified["broker_starttime"],
               "directory": str(directory), "checkout": str(checkout), "source": identity,
               "command": command, "cores": cores, "memory_gib": memory,
-              "timeout_s": timeout}
+              "timeout_s": timeout, "runtime": runtime, "application": application}
     digest = hashlib.sha256(encoded(intent)).hexdigest()
     directory.mkdir(parents=True, exist_ok=False)
     save(directory / "launch.json", intent)
@@ -115,7 +145,9 @@ def submit(directory, checkout, command, cores, memory, timeout, environment):
 def collect(directory):
     """Reconnect to the saved ID. A query error never becomes a payload exit."""
     directory = Path(directory).resolve()
-    record = {"returncode": None, "exit_status_observed": False, "query_errors": []}
+    record = {"returncode": None, "exit_status_observed": False, "query_errors": [],
+              "evidence_errors": []}
+    terminal_confirmed = False
     errors = record["query_errors"]
     try:
         intent = json.loads((directory / "launch.json").read_bytes())
@@ -123,13 +155,15 @@ def collect(directory):
         digest = hashlib.sha256(encoded(intent)).hexdigest()
         if (sent.get("state") != "submitted" or sent.get("launch_sha256") != digest
                 or intent["directory"] != str(directory) or intent["uri"] != URI
-                or intent["broker_starttime"] != checked(["getattr", "broker.starttime"]).strip()):
+                or intent["qualification"] != profile_identity()):
             raise ValueError("unknown or changed submission identity")
         job_id = sent["job_id"]
         if not re.fullmatch(r"(?:ƒ[1-9A-HJ-NP-Za-km-z]+|[0-9]+)", job_id):
             raise ValueError("invalid saved native ID")
         record.update(job_id=job_id, command=intent["command"], source=intent["source"],
-                      checkout=intent["checkout"], launch_sha256=digest)
+                      checkout=intent["checkout"], launch_sha256=digest,
+                      application=intent["application"], runtime=intent["runtime"],
+                      qualification=intent["qualification"])
         original = json.loads(checked(["job", "info", "--original", job_id, "jobspec"]))
         expected = json.loads((directory / "jobspec.json").read_bytes())
         if original != expected:
@@ -152,8 +186,20 @@ def collect(directory):
                 or status_value.get("result") not in (1, 2, 4, 8)
                 or type(status_value.get("exception_occurred")) is not bool
                 or (finishes and status_value.get("waitstatus") != finishes[-1])
-                or (status_value["result"] == 1) != (status.returncode == 0)):
+                or (status_value["result"] != 1 and status.returncode == 0)
+                or (status_value["result"] == 1 and status.returncode != 0
+                    and not status_value["exception_occurred"])):
             raise ValueError("invalid or inconsistent native status")
+        record["native_result"] = status_value
+        record["state"] = "terminal"
+        if status_value["exception_occurred"] or status_value["result"] != 1:
+            record["returncode"] = status.returncode
+        elif finishes:
+            record["returncode"] = os.waitstatus_to_exitcode(finishes[-1])
+        else:
+            raise ValueError("successful native status has no finish event")
+        record["exit_status_observed"] = True
+        terminal_confirmed = True
         allocation = native(["job", "info", job_id, "R"])
         (directory / "R.json").write_text(allocation.stdout)
         (directory / "R.stderr").write_text(allocation.stderr)
@@ -161,22 +207,18 @@ def collect(directory):
             value = json.loads(allocation.stdout)
             if allocation.returncode or value.get("version") != 1 or not value["execution"]["R_lite"]:
                 raise ValueError("native allocation missing")
-        record["native_result"] = status_value
-        record["state"] = "terminal"
-        if finishes:
-            record["returncode"] = os.waitstatus_to_exitcode(finishes[-1])
-            record["exit_status_observed"] = True
-        elif status_value["result"] != 1:
-            record["returncode"] = status.returncode
-            record["exit_status_observed"] = True
         if "start" in names:
             payload = json.loads((directory / "payload.json").read_bytes())
             if (payload["job_id"] != job_id or payload["launch_sha256"] != digest
-                    or payload["source"] != intent["source"] or not payload["scratch_removed"]):
+                    or payload["source"] != intent["source"] or not payload["scratch_removed"]
+                    or payload["runtime"] != intent["runtime"] or not payload["runtime_verified"]):
                 raise ValueError("payload source or scratch binding missing")
     except (OSError, ValueError, KeyError, TypeError, subprocess.SubprocessError) as exc:
-        errors.append(str(exc))
-        record.update(returncode=None, exit_status_observed=False, state="unknown")
+        if terminal_confirmed:
+            record["evidence_errors"].append(str(exc))
+        else:
+            errors.append(str(exc))
+            record.update(returncode=None, exit_status_observed=False, state="unknown")
     return record
 
 
@@ -197,24 +239,70 @@ def payload(directory, digest):
     intent = json.loads(raw)
     if Path.cwd() != Path(intent["checkout"]) or source(Path.cwd()) != intent["source"]:
         raise ValueError("source changed before payload")
+    if intent["application"] is not None:
+        require_selection(intent["application"], intent["source"])
+    if runtime_identity(intent["command"][0], Path.cwd()) != intent["runtime"]:
+        raise ValueError("interpreter/dependencies changed before payload")
     job_id = os.environ["FLUX_JOB_ID"]
     scratch_root = (Path("/home/rob/tl-gates/flux-validation") if os.uname().machine == "x86_64"
                     else Path("/tmp/flux-vanilla"))
     scratch = scratch_root / job_id
+    filesystem = subprocess.check_output(["findmnt", "-n", "-o", "FSTYPE", "-T", str(scratch_root)], text=True).strip()
+    if filesystem != ("xfs" if os.uname().machine == "x86_64" else "ext4"):
+        raise ValueError("unqualified local scratch filesystem")
     scratch.mkdir(exist_ok=False)
     record = {"job_id": job_id, "launch_sha256": digest, "source": intent["source"],
+              "runtime": intent["runtime"], "runtime_verified": False,
               "scratch": str(scratch), "scratch_removed": False,
               "affinity": sorted(os.sched_getaffinity(0))}
+    child = None
+    interrupted = []
+    def forward(signum, frame):
+        interrupted.append(signum)
+        if child is not None and child.poll() is None:
+            child.send_signal(signum)
+    previous = {sig: signal.signal(sig, forward) for sig in (signal.SIGTERM, signal.SIGINT)}
     try:
+        save(directory / "payload.json", record)
         env = {**os.environ, "TMPDIR": str(scratch), "TMP": str(scratch), "TEMP": str(scratch)}
-        result = subprocess.run(intent["command"], env=env)
+        child = subprocess.Popen(intent["command"], env=env)
+        for sig in interrupted:
+            child.send_signal(sig)
+        code = child.wait()
         if source(Path.cwd()) != intent["source"]:
             raise ValueError("source changed during payload")
-        return result.returncode
+        if runtime_identity(intent["command"][0], Path.cwd()) != intent["runtime"]:
+            raise ValueError("interpreter/dependencies changed during payload")
+        record["runtime_verified"] = True
+        return 128 + interrupted[0] if interrupted else code
     finally:
-        shutil.rmtree(scratch)
-        record["scratch_removed"] = not scratch.exists()
+        for sig, handler in previous.items():
+            signal.signal(sig, handler)
+        try:
+            shutil.rmtree(scratch)
+            record["scratch_removed"] = not scratch.exists()
+        except OSError as exc:
+            record["cleanup_error"] = str(exc)
         save(directory / "payload.json", record)
+
+
+def require_selection(binding, identity):
+    raw = Path(binding["selection_path"]).read_bytes()
+    if (hashlib.sha256(raw).hexdigest() != binding["selection_sha256"]
+            or binding["source"] != identity):
+        raise ValueError("selection bytes or selection-time source changed")
+
+
+def runtime_identity(python, checkout):
+    result = subprocess.run([python, "-I", "-B", str(Path(checkout) / "tools/_suite_runtime.py")],
+                            capture_output=True, text=True, timeout=300,
+                            env={"PATH": "/usr/bin:/bin", "HOME": "/home/rob"})
+    if result.returncode:
+        raise ValueError("native interpreter/dependency seal refused: " + result.stderr[-300:])
+    identity = json.loads(result.stdout)
+    if identity.get("schema") != "tessera.suite_runtime.v1":
+        raise ValueError("unrecognized native runtime identity")
+    return identity
 
 
 if __name__ == "__main__":
