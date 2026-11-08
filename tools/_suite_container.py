@@ -1,8 +1,4 @@
-"""The one finite command contract for a PB-contained pytest population.
-
-This is an argv owner, not a scheduler. The launcher uses PB's PATH Docker
-shim; the receipt reader parses this exact source-sealed launcher contract.
-"""
+"""Finite suite command, rootless container lifetime and execution evidence."""
 from __future__ import annotations
 
 import hashlib
@@ -11,18 +7,18 @@ import os
 from pathlib import Path
 import re
 import runpy
-import shlex
+import signal
 import subprocess
 import sys
-import tempfile
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 RUNNER = "tools/suite_container.py"
 OWNER = "tools/_suite_container.py"
 SOURCE_FILES = (RUNNER, OWNER)
-PB_VERIFIER = Path("/mnt/shared/prismabuild-fleet/repo/tools/pbsnapshot.py")
-_IMAGE = re.compile(r"(?:[^\s]+@)?sha256:[0-9a-f]{64}")
+PODMAN = "/usr/bin/podman"
+_IMAGE = re.compile(r"sha256:[0-9a-f]{64}")
+_INTERPRETERS = {"/usr/bin/python3", "/usr/local/bin/python3", "/opt/tl3/bin/python3"}
 _SHA = re.compile(r"[0-9a-f]{64}")
 _SINGLE = {"--image", "--deps-site", "--deps-sha256", "--surface-dir", "--cache-dir"}
 _REPEAT = {"--data-root", "--artifact-root"}
@@ -81,6 +77,22 @@ def artifact_variables():
     return {spec.env for spec in artifact_specs().values()}
 
 
+def validate_targets(targets):
+    """One canonical, nonoverlapping target roster at composition and parse."""
+    _require(targets and len(targets) <= 1024 and len(set(targets)) == len(targets),
+             "suite targets require unique canonical paths under tests/")
+    for target in targets:
+        path = target.split("::", 1)[0]
+        _require(isinstance(target, str) and "\0" not in target
+                 and (path == "tests" or path.startswith("tests/"))
+                 and str(Path(path)) == path and ".." not in Path(path).parts,
+                 "suite targets require unique canonical paths under tests/")
+    ordered = sorted(targets)
+    _require(not any(right.startswith(left + separator)
+                     for index, left in enumerate(ordered) for right in ordered[index + 1:]
+                     for separator in ("/", "::", "[")), "suite targets must not overlap")
+
+
 def parse(argv):
     """Reject option shadows instead of applying last-option-wins semantics."""
     _require("--" in argv, "runner has no command separator")
@@ -109,19 +121,24 @@ def parse(argv):
         _require(separator and key in artifact_variables(), "unknown artifact environment")
         _require(key not in artifacts, "duplicate artifact environment")
         artifacts[key] = str(absolute(value))
-    _require(inner[:3] == ["/usr/bin/python3", "-m", "pytest"], "runner only executes /usr/bin/python3 -m pytest")
-    _require("--strict-cuda" in inner[3:], "container population requires strict CUDA")
-    outputs, seen, workers = [], set(), 1
-    flags = {"-q", "-v", "-s", "--quiet", "--verbose", "--strict-cuda", "--no-header", "--disable-warnings"}
-    valued = {"-n", "--dist", "--durations", "--tb", "--maxfail", "-k", "-m", "--surface-json", "-p"}
+    _require(len(inner) >= 4 and inner[0] in _INTERPRETERS and inner[1:3] == ["-m", "pytest"],
+             "runner only executes a declared interpreter -m pytest")
+    outputs, junits, seen, plugins, workers, targets = [], [], set(), set(), 1, []
+    flags = {"-q", "-v", "-s", "-x", "--quiet", "--verbose", "--strict-cuda", "--no-header", "--disable-warnings", "--full-trace", "--showlocals"}
+    valued = {"-n", "--dist", "--durations", "--tb", "--maxfail", "-k", "-m", "--surface-json", "--junitxml", "-p", "-o"}
+    options_started = False
     index = 3
     while index < len(inner):
         option = inner[index]
         if option in flags:
+            _require(option not in seen, "duplicate pytest option " + option)
+            seen.add(option)
+            options_started = True
             index += 1
             continue
         key, equal, attached = option.partition("=")
         if key in valued:
+            options_started = True
             _require(key == "-p" or key not in seen, "duplicate pytest option " + key)
             seen.add(key)
             if equal:
@@ -132,29 +149,45 @@ def parse(argv):
                 value = inner[index]
             if key == "--surface-json":
                 outputs.append(value)
+            elif key == "--junitxml":
+                junits.append(value)
+            elif key == "-o":
+                _require(value == "addopts=", "pytest config shadow")
             elif key == "-p":
-                _require(value in ("no:cacheprovider", "xdist.plugin"), "pytest plugin shadow")
+                _require(value in ("no:cacheprovider", "xdist.plugin") and value not in plugins, "pytest plugin shadow")
+                plugins.add(value)
             elif key == "-n":
                 _require(value.isdigit() and int(value) > 0, "worker count must be an explicit positive integer")
                 workers = int(value)
             elif key == "--dist":
                 _require(value == "worksteal", "container distribution must be worksteal")
+            elif key in ("--durations", "--maxfail"):
+                _require(value.isdigit(), "pytest count must be finite")
+            elif key == "--tb":
+                _require(value in ("auto", "long", "short", "line", "native", "no"), "unknown traceback mode")
         else:
-            test_path = option.split("::", 1)[0]
-            _require((test_path == "tests" or test_path.startswith("tests/"))
-                     and str(Path(test_path)) == test_path and ".." not in Path(test_path).parts,
-                     "unknown pytest option or foreign test source: " + option)
+            _require(not options_started, "pytest target or control appended after owned options: " + option)
+            targets.append(option)
         index += 1
     _require(len(outputs) == 1, "population must name exactly one surface output")
+    validate_targets(targets)
+    _require("-o" in seen and "no:cacheprovider" in plugins, "tool-owned config clearing is absent")
+    _require((workers > 1) == ("xdist.plugin" in plugins) and (workers > 1) == ("--dist" in seen),
+             "worker/plugin/distribution controls differ")
     output = absolute(outputs[0])
     _require(output.parent == absolute(values["--surface-dir"]), "surface output escapes its mount")
+    _require(len(junits) == 1, "population must name exactly one JUnit output")
+    junit = absolute(junits[0])
+    _require(junit.parent == output.parent and junit != output, "JUnit output escapes or shadows population")
     _require(not _overlap(absolute(values["--surface-dir"]), absolute(values["--cache-dir"])), "surface/cache mount overlap")
     _require(not _overlap(absolute(values["--deps-site"]), absolute(values["--cache-dir"]))
              and not _overlap(absolute(values["--deps-site"]), absolute(values["--surface-dir"])), "dependency writable mount shadow")
     scratch_env = artifact_specs()["scratch"].env
     _require(scratch_env not in artifacts or artifacts[scratch_env] == values["--cache-dir"] + "/tmp",
              "scratch must use the action-owned cache")
-    return {**values, **repeated, "artifacts": artifacts, "inner": inner, "surface": str(output), "workers": workers}
+    return {"schema": "tessera.suite_container.v1", **values, **repeated,
+            "artifacts": artifacts, "inner": inner, "surface": str(output),
+            "junit": str(junit), "workers": workers, "strict_cuda": "--strict-cuda" in seen}
 
 
 def command_spec(command):

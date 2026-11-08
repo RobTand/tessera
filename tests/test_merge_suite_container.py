@@ -24,25 +24,19 @@ def merge_module():
 
 
 def test_known_container_runner_names_its_effective_population():
-    command = ["/usr/bin/python3", "tools/suite_container.py",
-               "--image", "example/suite@sha256:" + "a" * 64,
-               "--deps-site", "/scoped/site-packages",
-               "--deps-sha256", "b" * 64,
-               "--surface-dir", "/receipts/run",
-               "--cache-dir", "/cache/run",
-               "--", "/usr/bin/python3", "-m", "pytest", "tests",
-               "--strict-cuda", "--surface-json", "/receipts/run/surface.gpu.json"]
-    output, refusal = merge_module()._effective_surface_json(command)
+    argv = command()
+    output, refusal = merge_module()._effective_surface_json(argv)
     assert refusal is None, refusal
     assert output == "/receipts/run/surface.gpu.json"
 
 
 def command(surface="/receipts/run/surface.gpu.json", cache="/cache/run", site="/scoped/site-packages"):
-    return ["/usr/bin/python3", owner.RUNNER, "--image", "example/suite@sha256:" + "a" * 64,
+    return ["/usr/bin/python3", owner.RUNNER, "--image", "sha256:" + "a" * 64,
             "--deps-site", site, "--deps-sha256", "b" * 64,
             "--surface-dir", str(Path(surface).parent), "--cache-dir", cache,
-            "--", "/usr/bin/python3", "-m", "pytest", "tests", "--strict-cuda",
-            "--surface-json", surface]
+            "--", "/usr/bin/python3", "-m", "pytest", "tests", "-o", "addopts=",
+            "-p", "no:cacheprovider", "--strict-cuda",
+            "--junitxml", str(Path(surface).parent / "junit.gpu.xml"), "--surface-json", surface]
 
 
 @pytest.mark.parametrize("mutation", ["entrypoint", "environment", "duplicate", "escape", "overlap", "second-output", "foreign-command", "rootdir", "plugin", "short-shadow", "foreign-test", "workers"])
@@ -54,7 +48,7 @@ def test_container_command_shadows_are_refused(mutation):
     elif mutation == "environment":
         argv[cut:cut] = ["--env", "PYTHONPATH=/foreign"]
     elif mutation == "duplicate":
-        argv[cut:cut] = ["--image", "example/suite@sha256:" + "c" * 64]
+        argv[cut:cut] = ["--image", "sha256:" + "c" * 64]
     elif mutation == "escape":
         argv[-1] = "/receipts/run/../foreign.json"
     elif mutation == "overlap":

@@ -196,19 +196,7 @@ def _command(arm: dict, surface_json: Path, extra: list[str],
 
     _validate_pytest_extra(extra)
     targets = arm.get("targets", ["tests"])
-    if (not targets or len(targets) > 1024 or len(set(targets)) != len(targets)
-            or any(not isinstance(target, str) or not target or "\0" in target
-                   or target.startswith("-") or PurePosixPath(target.split("::")[0]).is_absolute()
-                   or ".." in PurePosixPath(target.split("::")[0]).parts
-                   or str(PurePosixPath(target.split("::")[0])) != target.split("::")[0]
-                   or not (target == "tests" or target.startswith("tests/"))
-                   for target in targets)):
-        raise ValueError("suite targets require unique canonical paths under tests/")
-    ordered = sorted(targets)
-    if any(right.startswith(left + separator)
-           for index, left in enumerate(ordered) for right in ordered[index + 1:]
-           for separator in ("/", "::", "[")):
-        raise ValueError("suite targets must not overlap directories, nodes or parameters")
+    suite_container.validate_targets(targets)
     cpus = _arm_cpus(arm, cpus)
     command = [arm["python"], "-m", "pytest", *targets, "-q",
                "-o", "addopts=", "-p", "no:cacheprovider",

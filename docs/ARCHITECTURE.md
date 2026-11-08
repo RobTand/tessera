@@ -3973,6 +3973,12 @@ allocator sees is `docs/tessera-one-format.md` §5.
 
 ### 1.1 Integration suite placement
 
+Re-stamped 2026-11-08 from the G01 composed command regression. The finite
+container grammar shares canonical target validation with merge_suite, accepts
+only tool-owned `-o addopts=` config clearing and binds distinct JUnit/surface
+outputs inside the declared writable root. Worker, plugin and target shadows
+refuse at the composed command boundary, including nonadjacent overlaps.
+
 Re-stamped 2026-11-08 from `tools/merge_suite.py`, `tools/selected_population.py`,
 `tools/_suite_flux.py` and `tools/_suite_runtime.py`. CPU transport qualification
 is unit3 only; GPU, container, full-suite and production qualification remain separate.
