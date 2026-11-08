@@ -163,17 +163,17 @@ def test_attempt_timeout_refuses_disabled_or_nonfinite_deadlines(tmp_path, durat
 @pytest.mark.parametrize("status", [0, 7])
 def test_attempt_timeout_preserves_ordinary_command_status(status):
     merge_suite = _module()
-    command = merge_suite._timed_command([sys.executable, "-c", f"raise SystemExit({status})"], 2.0)
+    command = merge_suite._timed_command([sys.executable, "-s", "-c", f"raise SystemExit({status})"], 2.0)
     result = subprocess.run(command, capture_output=True, text=True, timeout=10)
     assert result.returncode == status
 
 
 def test_attempt_timeout_owns_child_reaping_despite_inherited_sigchld_ignore():
     merge_suite = _module()
-    command = merge_suite._timed_command([sys.executable, "-c", "raise SystemExit(7)"], 2.0)
+    command = merge_suite._timed_command([sys.executable, "-s", "-c", "raise SystemExit(7)"], 2.0)
     script = ("import os,signal; signal.signal(signal.SIGCHLD,signal.SIG_IGN); "
               f"os.execv({command[0]!r}, {command!r})")
-    result = subprocess.run([sys.executable, "-c", script], capture_output=True,
+    result = subprocess.run([sys.executable, "-s", "-c", script], capture_output=True,
                             text=True, timeout=10)
     assert result.returncode == 7, "auto-reaping must not convert a failed command to status0"
 
@@ -183,7 +183,7 @@ def test_attempt_timeout_term_handler_cannot_turn_deadline_into_success():
     script = ("import signal,time,sys; "
               "signal.signal(signal.SIGTERM, lambda *args: sys.exit(0)); "
               "print('ready', flush=True); time.sleep(60)")
-    result = subprocess.run(merge_suite._timed_command([sys.executable, "-c", script], 2.0),
+    result = subprocess.run(merge_suite._timed_command([sys.executable, "-s", "-c", script], 2.0),
                             capture_output=True, text=True, timeout=10)
     assert "ready" in result.stdout
     assert result.returncode == 124, "timeout must remain non-green even if TERM cleanup exits0"
@@ -199,11 +199,11 @@ def test_attempt_timeout_kills_a_term_resistant_process_group(monkeypatch, leade
                       if leader_exits else "")
     script = ("import json,os,signal,subprocess,sys,time; "
               "signal.signal(signal.SIGTERM, signal.SIG_IGN); "
-              "child=subprocess.Popen([sys.executable,'-c','import time; time.sleep(60)'], "
+              "child=subprocess.Popen([sys.executable,'-s','-c','import time; time.sleep(60)'], "
               "stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL); "
               + leader_handler +
               "print(json.dumps([os.getpid(),child.pid]), flush=True); time.sleep(60)")
-    command = merge_suite._timed_command([sys.executable, "-c", script], 2.0)
+    command = merge_suite._timed_command([sys.executable, "-s", "-c", script], 2.0)
     process = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                                text=True, start_new_session=True)
     pids = []
@@ -243,10 +243,10 @@ def test_attempt_timeout_supervisor_interrupt_cleans_its_owned_group():
     merge_suite = _module()
     script = ("import json,os,signal,subprocess,sys,time; "
               "signal.signal(signal.SIGTERM, signal.SIG_IGN); "
-              "child=subprocess.Popen([sys.executable,'-c','import time; time.sleep(60)'], "
+              "child=subprocess.Popen([sys.executable,'-s','-c','import time; time.sleep(60)'], "
               "stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL); "
               "print(json.dumps([os.getpid(),child.pid]), flush=True); time.sleep(60)")
-    process = subprocess.Popen(merge_suite._timed_command([sys.executable, "-c", script], 60.0),
+    process = subprocess.Popen(merge_suite._timed_command([sys.executable, "-s", "-c", script], 60.0),
                                stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                                text=True, start_new_session=True)
     pids = []
@@ -954,7 +954,7 @@ def real_publication(tmp_path_factory):
     env["PYTEST_ADDOPTS"] = ""
     env["TMPDIR"] = str(root)
     result = subprocess.run(
-        [sys.executable, "-m", "pytest", "-p", "no:cacheprovider", "-q",
+        [sys.executable, "-s", "-m", "pytest", "-p", "no:cacheprovider", "-q",
          CHILD_SUITE, "--surface-json", str(surface)],
         cwd=str(ROOT), env=env, capture_output=True, text=True, timeout=600,
     )
@@ -1103,7 +1103,7 @@ def test_native_resume_authenticates_one_read_snapshot(tmp_path, monkeypatch, mu
 def test_real_producer_publication_binds_without_rewriting_its_output(real_publication):
     merge = _module()
     published = merge._read_publication(real_publication["surface"])
-    native = {"command": [sys.executable, "-m", "pytest", CHILD_SUITE, "--surface-json", str(published.path)],
+    native = {"command": [sys.executable, "-s", "-m", "pytest", CHILD_SUITE, "--surface-json", str(published.path)],
               "source": real_publication["population"]["source_identity"],
               "exit_status_observed": True, "returncode": real_publication["returncode"]}
     assert surface_publication.published_digests(real_publication["stdout"], published.path) == [published.digest]

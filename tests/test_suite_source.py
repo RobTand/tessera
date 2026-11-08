@@ -61,7 +61,7 @@ def _verifier(tmp_path, *, generated=None, exit_code=0, stdout=None):
         f"sys.stdout.write({text!r})\n"
         f"sys.stderr.write('verifier says no')\n"
         f"sys.exit({exit_code})\n")
-    return [sys.executable, str(script)], asked
+    return [sys.executable, "-s", str(script)], asked
 
 
 def _measure(root, verifier, **kwargs):
