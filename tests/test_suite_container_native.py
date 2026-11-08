@@ -146,6 +146,7 @@ def test_native_source_authentication_and_mutation_replace_bundle_fixture(tmp_pa
     directory = tmp_path / "record"
     directory.mkdir()
     intent = {"directory": str(directory), "checkout": str(checkout), "source": identity,
+              "qualification": {"profile": "fixture"},
               "command": ["/usr/bin/python3", container.RUNNER],
               "resources": {"architecture": "x86_64", "cores": 1, "memory_gib": 1, "gpus": 0}}
     flux.save(directory / "launch.json", intent)
@@ -296,6 +297,7 @@ def _mock_native_admission(monkeypatch, directory, intent, digest):
         core, {'type': 'perf'}, {'type': 'memory'},
         {'type': 'node', 'name': 'dl380g10', 'properties': {'arch': 'x86_64'}}]]}}}
     state = {'original': original, 'allocation': allocation, 'events': [{'name': 'start'}],
+             'qualification': {'profile': 'fixture'},
              'cgroup': '0::/user.slice/user-1000.slice/user@1000.service/flux.slice/flux-jobs.slice/shell-f123:sys.service\n'}
     def checked(argv):
         if argv == ['job', 'info', '--original', 'f123', 'jobspec']:
@@ -305,13 +307,14 @@ def _mock_native_admission(monkeypatch, directory, intent, digest):
         assert argv == ['job', 'eventlog', '--format=json', 'f123']
         return '\n'.join(json.dumps(event) for event in state['events'])
     original_read = Path.read_text
+    monkeypatch.setattr(flux, 'profile_identity', lambda: state['qualification'])
     monkeypatch.setattr(flux, 'checked', checked)
     monkeypatch.setattr(container.os, 'sched_getaffinity', lambda pid: {2, 42})
     monkeypatch.setattr(Path, 'read_text', lambda path, *args, **kwargs: state['cgroup'] if str(path) == '/proc/self/cgroup' else original_read(path, *args, **kwargs))
     return state
 
 
-@pytest.mark.parametrize('fact', ['original', 'allocation', 'terminal', 'process-scope'])
+@pytest.mark.parametrize('fact', ['original', 'allocation', 'terminal', 'process-scope', 'profile'])
 def test_direct_container_entry_authenticates_actual_native_context(tmp_path, monkeypatch, fact):
     import _suite_flux as flux
     checkout = tmp_path / 'source'
@@ -321,6 +324,7 @@ def test_direct_container_entry_authenticates_actual_native_context(tmp_path, mo
     monkeypatch.chdir(checkout)
     identity = {'schema': 'tessera.suite_source.v1', 'verification': 'verified', 'snapshot_commit': 'a' * 40, 'sha256': 'b' * 64}
     intent = {'directory': str(directory), 'checkout': str(checkout), 'source': identity,
+              'qualification': {'profile': 'fixture'},
               'command': ['/usr/bin/python3', 'tools/suite_container.py'],
               'resources': {'architecture': 'x86_64', 'cores': 1, 'memory_gib': 1, 'gpus': 0}}
     flux.save(directory / 'launch.json', intent)
@@ -335,6 +339,8 @@ def test_direct_container_entry_authenticates_actual_native_context(tmp_path, mo
         state['allocation']['scheduling']['graph']['nodes'][0]['metadata']['properties']['os-pus'] = '3,43'
     elif fact == 'terminal':
         state['events'].append({'name': 'clean'})
+    elif fact == 'profile':
+        state['qualification'] = {'profile': 'different'}
     else:
         state['cgroup'] = state['cgroup'].replace('shell-f123:', 'shell-f124:')
     with pytest.raises(ValueError):

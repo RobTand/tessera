@@ -348,6 +348,7 @@ def admitted_context(directory, digest, environment):
              and flux.job_id(sent["job_id"]) == flux.job_id(environment["FLUX_JOB_ID"]), "native job ID differs")
     _require(intent["directory"] == str(directory) and Path(intent["checkout"]) == Path.cwd(), "native source/root differs")
     _require(flux.source(Path.cwd()) == intent["source"], "native source authentication failed")
+    _require(intent["qualification"] == flux.profile_identity(), "native qualification differs")
     native_id = flux.job_id(environment["FLUX_JOB_ID"])
     original = json.loads(flux.checked(["job", "info", "--original", native_id, "jobspec"]))
     flux.require_original_launch(intent, digest, original)
