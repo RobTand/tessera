@@ -199,7 +199,7 @@ def submit(directory, checkout, command, cores, memory, timeout, environment, *,
     wrapper = [command[0], "tools/_suite_flux.py", "payload", str(directory), digest]
     args = ["submit", "--env=-*", *[f"--env={k}={v}" for k, v in sorted(env.items())],
             f"--resources-shape=node/slot/[core={cores}/perf=1;memory={memory}" + (";gpu=1]" if gpus else "]"),
-            "--requires=" + architecture + (",host:" + host if host is not None else ""),
+            "--requires=" + architecture + (" and host:" + host if host is not None else ""),
             "-t", f"{timeout + 10}s", "--cwd", str(checkout),
             "--input=/dev/null", f"--output={directory}/stdout", f"--error={directory}/stderr",
             "--job-name=tessera-" + digest[:16], *wrapper]

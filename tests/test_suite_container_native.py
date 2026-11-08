@@ -201,18 +201,19 @@ def test_original_native_wrapper_authenticates_launch_bytes():
         flux.require_original_launch({**intent, "command": ["/other/python"]}, "a" * 64, original)
 
 
-@pytest.mark.parametrize("fact", ["cores", "memory_gib", "gpus", "architecture", "affinity", "performance"])
+@pytest.mark.parametrize("fact", ["cores", "memory_gib", "gpus", "architecture", "affinity", "performance", "host"])
 def test_actual_allocation_refuses_different_resource_ownership(fact):
     import _suite_flux as flux
-    demand = {"architecture": "x86_64", "cores": 1, "memory_gib": 1, "gpus": 0}
+    demand = {"architecture": "x86_64", "cores": 1, "memory_gib": 1, "gpus": 0, "host": "dl380g10"}
     core = {"type": "core", "properties": {"os-pus": "2,42", "core-type": "perf"}}
     allocation = {"scheduling": {"graph": {"nodes": [{"metadata": item} for item in [
-        core, {"type": "perf"}, {"type": "memory"}, {"type": "node", "properties": {"arch": "x86_64"}}]]}}}
+        core, {"type": "perf"}, {"type": "memory"}, {"type": "node", "name": "dl380g10", "properties": {"arch": "x86_64"}}]]}}}
     flux.require_allocation(allocation, demand, [2, 42], [2, 42])
     if fact in ("cores", "memory_gib", "gpus"):
         demand[fact] += 1
     elif fact == "architecture": demand[fact] = "aarch64"
     elif fact == "performance": core["properties"]["core-type"] = "efficiency"
+    elif fact == "host": demand["host"] = "sparky"
     with pytest.raises(ValueError, match="allocation"):
         flux.require_allocation(allocation, demand, [3, 43] if fact == "affinity" else [2, 42], [2, 42])
 
