@@ -25,8 +25,8 @@ a tree the selector never read, or after a shard Flux had already failed
 
 Usage::
 
-    python3 tools/selected_population.py --base origin/master --shards 12
-    python3 tools/selected_population.py --resume <receipt dir>
+    python3 -s tools/selected_population.py --base origin/master --shards 12
+    python3 -s tools/selected_population.py --resume <receipt dir>
 
 ``--resume`` submits nothing.  It rebuilds the receipt from the selection and
 the populations the native jobs published, for a run whose submitting process died.
@@ -103,7 +103,7 @@ def choose(checkout: Path, base: str, count: int, *, targets: list[str] | None =
         ["git", "-C", str(checkout), "rev-parse", "--verify", f"{base}^{{commit}}"], text=True).strip()
     head = identity["snapshot_commit"]
     done = subprocess.run(
-        [sys.executable, str(SELECTOR), "--ref", f"{resolved_base}...{head}", "--json", "--root", "."],
+        [sys.executable, "-s", str(SELECTOR), "--ref", f"{resolved_base}...{head}", "--json", "--root", "."],
         cwd=checkout, capture_output=True, text=True)
     if done.returncode != 0 or not done.stdout.strip():
         raise ValueError(

@@ -488,6 +488,32 @@ def test_all_known_native_ids_are_collected_after_a_sibling_submit_error(tmp_pat
     assert not any("submit" in call for call in world.jobs.calls)
 
 
+def test_selector_subprocess_disables_user_site(tmp_path, monkeypatch):
+    import shlex
+
+    checkout = _checkout(tmp_path)
+    (checkout / "tests").mkdir()
+    (checkout / "tests/test_a.py").write_text("def test_one(): pass\n")
+    _git(checkout, "add", ".")
+    _git(checkout, "commit", "-qm", "selected tests")
+    selector = tmp_path / "selector.py"
+    selector.write_text('import json,sys\nassert sys.flags.no_user_site == 1\n'
+        'print(json.dumps({"verdict":"narrowed","tests":["tests/test_a.py"]}))\n')
+    interpreter = tmp_path / "python"
+    interpreter.write_text('#!/bin/sh\ncase "$1" in -s|-I) ;; *) '
+        'echo "explicit isolated Python flag required" >&2; exit 91;; esac\n'
+        'exec ' + shlex.quote(sp.sys.executable) + ' "$@"\n')
+    interpreter.chmod(0o755)
+    monkeypatch.setattr(sp.sys, "executable", str(interpreter))
+    monkeypatch.setattr(sp, "SELECTOR", selector)
+    monkeypatch.setattr(sp.merge_suite.suite_flux, "source",
+        lambda path: measured_source(path, verifier=None))
+    result = sp.choose(checkout, "HEAD~1", 1)
+    assert result["tests"] == ["tests/test_a.py"]
+    assert result["shards"] == {"shard-00": ["tests/test_a.py"]}
+    assert result["source_identity"]["verification"] == "verified"
+
+
 def test_replaced_selection_cannot_borrow_saved_native_jobs(tmp_path, monkeypatch):
     world = _world(tmp_path, monkeypatch)
     assert _receipt(world)["verdict"].startswith("green")

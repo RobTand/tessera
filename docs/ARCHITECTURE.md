@@ -3991,6 +3991,10 @@ allocator sees is `docs/tessera-one-format.md` §5.
 
 ### 1.1 Integration suite placement
 
+Re-stamped 2026-11-08 for the selector subprocess startup boundary.
+`selected_population.choose` also passes explicit `-s` to the selector child;
+the parent interpreter's startup flag is not inherited by a new Python process.
+
 Re-stamped 2026-11-08 for parent startup-isolation review. Native wrapper,
 deadline, container host/inside launcher and pytest invocations all use Python
 `-s`. The original native argv authenticates that flag. Runtime measurement
