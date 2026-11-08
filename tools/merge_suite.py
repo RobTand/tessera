@@ -371,16 +371,17 @@ class _Publication(NamedTuple):
 def _read_publication(surface_json: Path) -> "_Publication | None":
     """The publication at this path as one snapshot, or ``None`` if absent.
 
-    The only place a surface file is read.  A malformed one still raises, as
-    it always has: a receipt assembled around an unreadable population would
-    be a worse answer than a traceback.
+    The only place a surface file is read. Malformed or unreadable publication
+    raises here; resume retains that error separately from native status.
     """
 
     if not surface_json.exists():
         return None
     raw = surface_json.read_bytes()
-    return _Publication(Path(surface_json), raw, digest_bytes(raw),
-                        json.loads(raw))
+    payload = json.loads(raw)
+    if not isinstance(payload, dict):
+        raise ValueError("population publication must be a JSON object")
+    return _Publication(Path(surface_json), raw, digest_bytes(raw), payload)
 
 
 def _attach_surface(record: dict, surface_json: Path) -> "_Publication | None":
@@ -655,15 +656,27 @@ def _resume(name: str, arm: dict, receipt_dir: Path) -> dict:
               "exit_status_observed": False, "returncode": None,
               "exit_status_source": "Flux", "exit_status_note": "native evidence is incomplete"}
     surface_json = receipt_dir / f"surface.{name}.json"
-    published = _attach_surface(record, surface_json)
     directory = receipt_dir / f"flux.{name}"
     native = suite_flux.collect(directory)
     record["native_job"] = native
-    stdout = (directory / "stdout").read_text() if (directory / "stdout").exists() else ""
-    refusal = _native_binding_refusal(native, published, stdout)
+    record["publication_errors"] = []
+    try:
+        published = _attach_surface(record, surface_json)
+    except (OSError, ValueError, KeyError, TypeError) as exc:
+        published = None
+        record["surface"] = None
+        record["publication_errors"].append("population: " + str(exc))
+    try:
+        stdout = (directory / "stdout").read_text() if (directory / "stdout").exists() else ""
+    except (OSError, ValueError) as exc:
+        stdout = ""
+        record["publication_errors"].append("stdout: " + str(exc))
+    refusal = ("; ".join(record["publication_errors"])
+               or _native_binding_refusal(native, published, stdout))
     # A native nonzero ending remains conclusive even if publication failed.
     if native.get("exit_status_observed") and native.get("returncode") != 0:
         record["returncode"] = native["returncode"]
+        record["exit_status_observed"] = True
     if refusal:
         record["binding_refusal"] = refusal
         record["exit_status_note"] = refusal

@@ -1,5 +1,6 @@
 """Native container authority, starting with independently known commands."""
 import copy
+import importlib.util
 import json
 import os
 from pathlib import Path
@@ -418,3 +419,40 @@ def test_default_paired_cli_applies_gpu_options_only_to_gpu_arm(tmp_path, monkey
 
 
 # R5 regression cases
+# R4 regression cases
+@pytest.mark.parametrize('code', [0, 7])
+@pytest.mark.parametrize('broken', ['absent', 'truncated', 'wrong-type', 'unreadable', 'stdout'])
+def test_saved_native_failure_survives_unusable_publication(tmp_path, monkeypatch, code, broken):
+    spec = importlib.util.spec_from_file_location('review_merge_helpers', Path(merge.__file__).resolve().parents[1] / 'tests/test_merge_suite.py')
+    helpers = importlib.util.module_from_spec(spec); spec.loader.exec_module(helpers)
+    jobs = helpers._native_jobs(merge, monkeypatch)
+    world = jobs.add(tmp_path, 'x86', helpers._population('x86')['surface'])
+    positive = merge._resume('x86', merge.ARMS['x86'], tmp_path)
+    assert merge._verdict([positive]).startswith('green on')
+    world.code = code
+    if broken == 'absent':
+        world.surface.unlink()
+    elif broken == 'truncated':
+        world.surface.write_text('{')
+    elif broken == 'wrong-type':
+        world.surface.write_text('[]')
+    else:
+        method = 'read_text' if broken == 'stdout' else 'read_bytes'
+        target = world.directory / 'stdout' if broken == 'stdout' else world.surface
+        original = getattr(Path, method)
+        def refused(path, *args, **kwargs):
+            if path == target:
+                raise PermissionError('owned publication read denied')
+            return original(path, *args, **kwargs)
+        monkeypatch.setattr(Path, method, refused)
+    record = merge._resume('x86', merge.ARMS['x86'], tmp_path)
+    assert record['native_job']['exit_status_observed']
+    assert record['native_job']['returncode'] == code
+    if code:
+        assert record['returncode'] == code
+        assert merge._verdict([record]).startswith('red')
+    else:
+        assert merge._verdict([record]).startswith('incomplete')
+    if broken != 'absent':
+        assert record['publication_errors']
+    assert all('submit' not in call for call in jobs.calls)
