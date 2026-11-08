@@ -3991,6 +3991,10 @@ allocator sees is `docs/tessera-one-format.md` §5.
 
 ### 1.1 Integration suite placement
 
+Presentation defaults are resolved before preflight: quiet appears once and
+durations defaults to ten unless explicitly supplied. Repeated valued options
+refuse. Preflight and submission parse the same final presentation controls.
+
 Resume collects the saved native ID before reading optional population bytes.
 Malformed, wrong-type or unreadable population/stdout errors remain separate;
 a conclusive native failure stays red, and unusable success stays incomplete.

@@ -193,7 +193,7 @@ def _command(arm: dict, surface_json: Path, extra: list[str],
     admission before that transport is separately qualified.
     """
 
-    _validate_pytest_extra(extra)
+    extra = _validate_pytest_extra(extra)
     targets = arm.get("targets", ["tests"])
     suite_container.validate_targets(targets)
     cpus = _arm_cpus(arm, cpus)
@@ -212,24 +212,37 @@ def _command(arm: dict, surface_json: Path, extra: list[str],
 
 
 def _validate_pytest_extra(extra):
-    """Own targets, config, process count, plugins and output destinations."""
+    """Resolve presentation defaults; refuse foreign execution controls."""
     flags = {"-q", "-v", "-s", "-x", "--disable-warnings", "--no-header",
              "--full-trace", "--showlocals"}
     valued = {"-k", "-m", "--maxfail", "--durations", "--tb"}
-    index = 0
+    index, seen, resolved = 0, set(), []
     while index < len(extra):
         token = extra[index]
         key, equal, value = token.partition("=")
         if token in flags:
+            if token != "-q":
+                if token in seen:
+                    raise ValueError("duplicate pytest option: " + token)
+                resolved.append(token)
+            seen.add(token)
             index += 1
         elif key in valued:
+            if key in seen:
+                raise ValueError("duplicate pytest option: " + key)
+            seen.add(key)
+            resolved.append(token)
             if not equal:
                 index += 1
                 if index == len(extra):
                     raise ValueError("pytest option requires a value: " + key)
+                resolved.append(extra[index])
             index += 1
         else:
             raise ValueError("pytest targets and execution controls are tool-owned: " + token)
+    if "--durations" not in seen:
+        resolved.append("--durations=10")
+    return resolved
 
 
 def _timed_command(command: list[str], timeout_s: float) -> list[str]:
@@ -296,7 +309,7 @@ def _submit(name: str, arm: dict, args, receipt_dir: Path) -> dict:
     surface_json = receipt_dir / f"surface.{name}.json"
     cpus = _arm_cpus(arm, args.cpus)
     command = _command(arm, surface_json, args.pytest_arg, cpus)
-    command += ["--junitxml", str(receipt_dir / f"junit.{name}.xml"), "--durations=10"]
+    command += ["--junitxml", str(receipt_dir / f"junit.{name}.xml")]
     if arm.get("container"):
         command = _container_command(arm, command, surface_json, roots)
     destination, refusal = _effective_surface_json(command)

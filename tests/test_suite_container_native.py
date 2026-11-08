@@ -19,7 +19,7 @@ def composed(tmp_path, targets=None, cpus=2):
            "fans_out": True, "targets": targets or ["tests/test_grammar.py"]}
     surface = tmp_path / "output/surface.gpu.json"
     inner = merge._command(arm, surface, [], cpus)
-    inner += ["--junitxml", str(surface.parent / "junit.gpu.xml"), "--durations=10"]
+    inner += ["--junitxml", str(surface.parent / "junit.gpu.xml")]
     return ["/usr/bin/python3", container.RUNNER,
             "--image", "sha256:" + "a" * 64,
             "--deps-site", str(tmp_path / "dependencies"), "--deps-sha256", "b" * 64,
@@ -456,3 +456,24 @@ def test_saved_native_failure_survives_unusable_publication(tmp_path, monkeypatc
     if broken != 'absent':
         assert record['publication_errors']
     assert all('submit' not in call for call in jobs.calls)
+# R5 regression cases
+@pytest.mark.parametrize('extra,expected', [([], '10'), (['--durations=5'], '5'), (['-q'], '10')])
+def test_final_submit_composition_owns_presentation_defaults(tmp_path, extra, expected):
+    arm = {**merge.ARMS['gpu'], 'python': '/usr/bin/python3', 'fans_out': True,
+           'targets': ['tests/test_grammar.py'], 'container': {
+               'image': 'sha256:' + 'a' * 64, 'deps_site': str(tmp_path / 'deps'),
+               'deps_sha256': 'b' * 64, 'cache_dir': str(tmp_path / 'cache')}}
+    args = SimpleNamespace(cpus=1, mem_gb=1, timeout_s=60, wait_s=90,
+                           artifact_root=[], gpu_image='sha256:' + 'a' * 64,
+                           pytest_arg=extra, dry_run=True)
+    result = merge._submit('gpu', arm, args, tmp_path / 'output')
+    command, refusal = merge._pytest_argv(result['command'])
+    assert refusal is None
+    assert command.count('-q') == 1
+    durations = [token.partition('=')[2] if '=' in token else command[i + 1]
+                 for i, token in enumerate(command) if token.partition('=')[0] == '--durations']
+    assert durations == [expected]
+    assert merge._targets_of(command) == ['tests/test_grammar.py']
+
+
+# R4 regression cases
