@@ -17,10 +17,10 @@ from tessera._dev.suite_source import measured_source
 
 PREFIX = "/home/rob/flux-vanilla/0.91.0-0.56.0"
 URI = f"local://{PREFIX}/runs/fv1-model/run/local-0"
-PROFILE = "fv1-explicit-perf-memory.v1"
+PROFILE = "fv1-explicit-perf-memory.v2"
 CONFIG = Path(PREFIX) / "runs/fv1-model/config.json"
 MODEL = Path(PREFIX) / "config/R-model.json"
-CONFIG_SHA = "2b5618a591bbf545336ed9dfae6645b5dfca7516325ccbf9e0b2dbf4181607e1"
+CONFIG_SHA = "ff9384f0aaede8d07499e43da400123a4e6afbcce05f52042244a3c78995fa08"
 MODEL_SHA = "261a084b72cb3a0c5055816f642f51ccbf473d3373876f34e67be55d5b5221a8"
 THREADS = dict.fromkeys(("OMP_NUM_THREADS", "MKL_NUM_THREADS", "OPENBLAS_NUM_THREADS",
                          "TORCH_NUM_THREADS", "NUMEXPR_NUM_THREADS", "MAX_JOBS",

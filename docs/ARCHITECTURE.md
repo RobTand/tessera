@@ -1,5 +1,14 @@
 # Tessera plan-to-serve architecture
 
+Re-stamped 2026-11-08 for native Flux profile v2. The migration lead qualified
+the exact config revision making `exec.sdexec-constrain-resources` explicitly
+false, with config SHA256 `ff9384f0...`. The resource model, broker generation,
+CPU/performance-core/memory shape and every execution/publication gate remain
+pinned. Unknown config/model bytes refuse. The archived single-key comparison
+and both old-profile refusals are retained in migration Job69; a separate real
+CPU native proof checks the updated profile. No additional GPU or scientific
+qualification follows from this settings fingerprint update.
+
 The hosted `branch rule` check enforces branch rule 12 for pull requests.
 `pure` retains the same step during the required-check transition.
 The branch must match `tessera-<issue>` or `tessera-<issue>-<word>` and link that issue in the body.
