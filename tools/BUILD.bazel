@@ -26,27 +26,17 @@ ts_py_library(
 )
 
 ts_py_library(
-    name = "_suite_container",
+    name = "_suite_container_cycle",
     srcs = [
         "_suite_container.py",
-    ],
-    deps = [
-        "//src/tessera:__init___cycle",
-        "//src/tessera:_dev/__init__",
-        "//src/tessera:_dev/native_identity",
-    ],
-)
-
-ts_py_library(
-    name = "_suite_flux",
-    srcs = [
         "_suite_flux.py",
     ],
     deps = [
         "//src/tessera:__init___cycle",
         "//src/tessera:_dev/__init__",
+        "//src/tessera:_dev/native_identity",
         "//src/tessera:_dev/suite_source",
-        ":_suite_container",
+        ":_suite_runtime",
     ],
 )
 
@@ -409,8 +399,7 @@ ts_py_library(
         "//src/tessera:_dev/__init__",
         "//src/tessera:_dev/suite_deadline",
         "//src/tessera:_dev/surface_publication",
-        ":_suite_container",
-        ":_suite_flux",
+        ":_suite_container_cycle",
     ],
 )
 
@@ -596,7 +585,7 @@ ts_py_library(
         "suite_container.py",
     ],
     deps = [
-        ":_suite_container",
+        ":_suite_container_cycle",
     ],
 )
 

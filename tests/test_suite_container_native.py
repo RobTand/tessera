@@ -83,6 +83,9 @@ def native_record(tmp_path):
               "driver": None, "cid": "1" * 64,
               "inspection": {"Id": "1" * 64, "Image": "sha256:" + "a" * 64, "CpusetCpus": "2,42"}}
     def publish():
+        for phase in ("entry", "exit"):
+            flux.save(directory / f"container.{phase}.json", record[phase])
+            record[phase + "_sha256"] = flux.hashlib.sha256((directory / f"container.{phase}.json").read_bytes()).hexdigest()
         flux.save(directory / "container.json", record)
         digest = flux.hashlib.sha256((directory / "container.json").read_bytes()).hexdigest()
         (directory / "stdout").write_text(f"Tessera container evidence {directory}/container.json sha256={digest}\n")
@@ -212,3 +215,12 @@ def test_actual_allocation_refuses_different_resource_ownership(fact):
     elif fact == "performance": core["properties"]["core-type"] = "efficiency"
     with pytest.raises(ValueError, match="allocation"):
         flux.require_allocation(allocation, demand, [3, 43] if fact == "affinity" else [2, 42], [2, 42])
+
+
+@pytest.mark.parametrize("reported", ["a" * 64, "sha256:" + "a" * 64])
+def test_actual_podman_image_id_forms_bind_same_immutable_content(monkeypatch, reported):
+    payload = [{"Id": reported, "Architecture": "amd64", "Os": "linux"}]
+    monkeypatch.setattr(container.subprocess, "run", lambda *args, **kwargs: SimpleNamespace(returncode=0, stdout=json.dumps(payload)))
+    assert container.image_identity("sha256:" + "a" * 64) == {"Id": "sha256:" + "a" * 64, "Architecture": "amd64", "Os": "linux"}
+    with pytest.raises(ValueError, match="content"):
+        container.image_identity("sha256:" + "b" * 64)

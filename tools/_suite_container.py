@@ -297,6 +297,7 @@ def image_identity(image):
     _require(result.returncode == 0, "immutable local image unavailable; pulling is forbidden")
     value, = json.loads(result.stdout)
     identity = {key: value[key] for key in ("Id", "Architecture", "Os")}
+    identity["Id"] = "sha256:" + identity["Id"].removeprefix("sha256:")
     _require(identity["Id"] == image and identity["Os"] == "linux", "local image content differs")
     return identity
 
@@ -402,7 +403,9 @@ def run(spec, checkout, environment, directory, intent, digest):
         process = subprocess.Popen([PODMAN, "start", "--attach", cid])
         record["returncode"] = process.wait()
         for phase in ("entry", "exit"):
-            record[phase] = json.loads((directory / f"container.{phase}.json").read_bytes())
+            raw = (directory / f"container.{phase}.json").read_bytes()
+            record[phase] = json.loads(raw)
+            record[phase + "_sha256"] = hashlib.sha256(raw).hexdigest()
         _require(record["entry"] == record["exit"], "container source/runtime/dependency identity changed")
         _require(dependency_manifest(spec["--deps-site"])[1] == deps, "dependency content changed during execution")
         _require(image_identity(spec["--image"]) == image, "image changed during execution")
@@ -469,11 +472,18 @@ def verify_record(directory, intent, digest, native_id, affinity):
              and flux.job_id(record["job_id"]) == flux.job_id(native_id)
              and record["launch_sha256"] == digest and record["source"] == intent["source"]
              and record["image"]["Id"] == spec["--image"]
+             and record["image"]["Os"] == "linux"
              and record["image"]["Architecture"] == {"x86_64": "amd64", "aarch64": "arm64"}[resources["architecture"]]
              and record["gpus"] == resources["gpus"] and record["affinity"] == affinity
              and record["dependencies"] == spec["--deps-sha256"]
              and record["removed"] and not record["cleanup_errors"], "container execution/cleanup binding differs")
     _require(record["entry"] is not None and record["entry"] == record["exit"], "container runtime span missing or changed")
+    for phase in ("entry", "exit"):
+        phase_path = Path(directory) / f"container.{phase}.json"
+        _require(not phase_path.is_symlink(), "container phase evidence symlink")
+        raw = phase_path.read_bytes()
+        _require(hashlib.sha256(raw).hexdigest() == record[phase + "_sha256"]
+                 and json.loads(raw) == record[phase], "container phase evidence replaced")
     entry = record["entry"]
     _require(entry["schema"] == "tessera.suite_container_runtime.v1"
              and entry["source"] == intent["source"] and entry["launch_sha256"] == digest

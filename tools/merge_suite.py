@@ -262,6 +262,18 @@ def _preflight(arm: dict, args) -> dict:
     return roots
 
 
+def _arm_arguments(arm, args):
+    """GPU overrides reserve what that arm's workers will actually spend."""
+    if not arm["strict_cuda"]:
+        return args
+    if getattr(args, "gpu_tag", "") not in ("", "aarch64"):
+        raise ValueError("GPU placement requires the installed aarch64 property")
+    values = vars(args).copy()
+    values["cpus"] = getattr(args, "gpu_cpus", None) or args.cpus
+    values["mem_gb"] = getattr(args, "gpu_mem_gb", None) or args.mem_gb
+    return argparse.Namespace(**values)
+
+
 def _container_command(arm, command, surface_json, roots):
     """Compose the same finite contract that readers and the payload parse."""
     config = arm["container"]
@@ -280,6 +292,7 @@ def _container_command(arm, command, surface_json, roots):
 
 
 def _submit(name: str, arm: dict, args, receipt_dir: Path) -> dict:
+    args = _arm_arguments(arm, args)
     roots = _preflight(arm, args)
     surface_json = receipt_dir / f"surface.{name}.json"
     cpus = _arm_cpus(arm, args.cpus)
@@ -1244,7 +1257,12 @@ def main() -> int:
     if not args.resume:
         try:
             for name in wanted:
-                _preflight(configured[name], args)
+                arm_args = _arm_arguments(configured[name], args)
+                roots = _preflight(configured[name], arm_args)
+                if configured[name].get("container"):
+                    surface = Path("/preflight/population.json")
+                    inner = _command(configured[name], surface, args.pytest_arg, arm_args.cpus)
+                    _container_command(configured[name], [*inner, "--junitxml", "/preflight/junit.xml"], surface, roots)
             if not args.dry_run:
                 suite_flux.source(args.checkout)
         except (ValueError, OSError) as exc:
