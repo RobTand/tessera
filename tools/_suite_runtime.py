@@ -2,7 +2,7 @@
 
 The container's scoped-site seal cannot identify a host interpreter and its
 standard library. This native seal includes both, without importing the test
-dependencies. Run with the named interpreter's isolated, no-bytecode mode.
+dependencies. Run with the named interpreter's no-user-site, no-bytecode mode.
 """
 import hashlib
 import importlib.metadata

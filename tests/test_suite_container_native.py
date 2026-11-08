@@ -348,7 +348,6 @@ def test_direct_container_entry_authenticates_actual_native_context(tmp_path, mo
         state['cgroup'] = state['cgroup'].replace('shell-f123:', 'shell-f124:')
     with pytest.raises(ValueError):
         container.admitted_context(directory, digest, {'FLUX_JOB_ID': 'f123'})
-# R2 regression cases
 @pytest.mark.parametrize('handle', ['present', 'missing', 'conflicting'])
 def test_captured_cid_remains_the_only_cleanup_authority(tmp_path, monkeypatch, handle):
     owned, foreign = '1' * 64, '2' * 64
@@ -392,8 +391,6 @@ def test_uncaptured_partial_creation_stays_unknown(tmp_path, monkeypatch, creati
     assert record['cleanup_errors'] and 'unknown' in record['cleanup_errors'][-1]
 
 
-# R3 regression cases
-# R3 regression cases
 def test_default_paired_cli_applies_gpu_options_only_to_gpu_arm(tmp_path, monkeypatch, capsys):
     monkeypatch.setattr(merge.suite_container, 'require_local_cache', lambda path: None)
     def forbidden(*args, **kwargs):
@@ -421,8 +418,6 @@ def test_default_paired_cli_applies_gpu_options_only_to_gpu_arm(tmp_path, monkey
     assert not (tmp_path / 'output/receipt.json').exists()
 
 
-# R5 regression cases
-# R4 regression cases
 @pytest.mark.parametrize('code', [0, 7])
 @pytest.mark.parametrize('broken', ['absent', 'truncated', 'wrong-type', 'unreadable', 'stdout'])
 def test_saved_native_failure_survives_unusable_publication(tmp_path, monkeypatch, code, broken):
@@ -459,7 +454,6 @@ def test_saved_native_failure_survives_unusable_publication(tmp_path, monkeypatc
     if broken != 'absent':
         assert record['publication_errors']
     assert all('submit' not in call for call in jobs.calls)
-# R5 regression cases
 @pytest.mark.parametrize('extra,expected', [([], '10'), (['--durations=5'], '5'), (['-q'], '10')])
 def test_final_submit_composition_owns_presentation_defaults(tmp_path, extra, expected):
     arm = {**merge.ARMS['gpu'], 'python': '/usr/bin/python3', 'fans_out': True,
@@ -479,7 +473,6 @@ def test_final_submit_composition_owns_presentation_defaults(tmp_path, extra, ex
     assert merge._targets_of(command) == ['tests/test_grammar.py']
 
 
-# R4 regression cases
 def test_generated_deadline_chain_excludes_private_user_startup(tmp_path):
     env = {'PATH': '/usr/bin:/bin', 'HOME': str(tmp_path / 'home'),
            'PYTHONUSERBASE': str(tmp_path / 'userbase'), 'PYTHONDONTWRITEBYTECODE': '1'}
