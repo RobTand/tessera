@@ -478,7 +478,8 @@ def _targets_of(argv: list) -> list[str]:
     """
 
     parts = [str(part) for part in argv]
-    start = parts.index("pytest") + 1 if "pytest" in parts else len(parts)
+    start = (1 if parts and Path(parts[0]).name in ("pytest", "py.test")
+             else parts.index("pytest") + 1 if "pytest" in parts else len(parts))
     targets = []
     for part in parts[start:]:
         if part.startswith("-"):
