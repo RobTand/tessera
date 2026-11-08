@@ -227,6 +227,13 @@ ts_py_library(
 )
 
 ts_py_library(
+    name = "fixtures/suite_container_population",
+    srcs = [
+        "fixtures/suite_container_population.py",
+    ],
+)
+
+ts_py_library(
     name = "fused_bound",
     srcs = [
         "fused_bound.py",
