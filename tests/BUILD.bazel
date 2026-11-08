@@ -30132,7 +30132,6 @@ ts_py_test(
     path = "tests/test_suite_container_native.py",
     library = ":test_suite_container_native_lib",
     deps = [
-        "//tools:suite_container",
         "//tools:suite_deadline",
     ],
     lane = "torch",
@@ -30147,7 +30146,6 @@ ts_py_test(
     path = "tests/test_suite_container_native.py",
     library = ":test_suite_container_native_lib",
     deps = [
-        "//tools:suite_container",
         "//tools:suite_deadline",
     ],
     lane = "bytes",
@@ -30168,6 +30166,7 @@ ts_py_library(
         "//src/tessera:_dev/suite_source",
         "//tools:_suite_container_cycle",
         "//tools:merge_suite",
+        "//tools:suite_container",
         ":test_grammar_lib",
     ],
 )
