@@ -4012,6 +4012,8 @@ dependencies. Admission verifies the qualified config and live resource graph,
 as well as recording the broker generation. Selection records resolved base/head
 and measured source, and each shard binds the immutable selection digest.
 Resource-controlled pytest options, config overrides and appended targets refuse.
+Explicit targets use canonical paths and cannot overlap directory, node or
+parameter selections, so aliases cannot repeat an effective target.
 
 It reads one population snapshot and binds its exact path, digest, verified
 source and summary counts to that same job. Query failure is unknown; a

@@ -27,6 +27,25 @@ def test_resource_and_target_controls_are_owned(suite, extra):
         suite._command(suite.ARMS["x86"], Path("/out/population.json"), extra, 2)
 
 
+@pytest.mark.parametrize("targets", [
+    ["tests/test_a.py", "tests/./test_a.py"],
+    ["tests/test_a.py", "tests//test_a.py"],
+    ["tests", "tests/test_a.py"],
+    ["tests/test_a.py", "tests/test_a.py::test_one"],
+    ["tests/test_a.py::test_one", "tests/test_a.py::test_one[value]"],
+])
+def test_repeated_effective_targets_refuse(suite, targets):
+    arm = {**suite.ARMS["x86"], "targets": targets}
+    with pytest.raises(ValueError, match="targets"):
+        suite._command(arm, Path("/out/population.json"), [], 1)
+
+
+def test_distinct_nodes_with_shared_name_prefix_remain_selectable(suite):
+    targets = ["tests/test_a.py::test_one", "tests/test_a.py::test_one_more"]
+    arm = {**suite.ARMS["x86"], "targets": targets}
+    assert suite._targets_of(suite._command(arm, Path("/out/population.json"), [], 1)) == targets
+
+
 @pytest.mark.parametrize("failed", [{"surface": None, "returncode": 9},
                                     {"surface": {"counts": {"failed": 1}}, "returncode": None}])
 def test_conclusive_failure_precedes_incomplete_sibling(suite, failed):
