@@ -286,6 +286,8 @@ def test_cid_registration_precedes_creation_and_errors_survive(tmp_path, monkeyp
         assert record["removed"] is False and "owned CID remove failed" in record["cleanup_errors"][-1]
     else:
         assert record["removed"] is True
+
+
 def _mock_native_admission(monkeypatch, directory, intent, digest):
     import _suite_flux as flux
     original = {'tasks': [{'command': ['/usr/bin/python3', 'tools/_suite_flux.py', 'payload', str(directory), digest]}]}
@@ -303,7 +305,7 @@ def _mock_native_admission(monkeypatch, directory, intent, digest):
         assert argv == ['job', 'eventlog', '--format=json', 'f123']
         return '\n'.join(json.dumps(event) for event in state['events'])
     original_read = Path.read_text
-    monkeypatch.setattr(f, 'checked', checked)
+    monkeypatch.setattr(flux, 'checked', checked)
     monkeypatch.setattr(container.os, 'sched_getaffinity', lambda pid: {2, 42})
     monkeypatch.setattr(Path, 'read_text', lambda path, *args, **kwargs: state['cgroup'] if str(path) == '/proc/self/cgroup' else original_read(path, *args, **kwargs))
     return state
@@ -324,7 +326,7 @@ def test_direct_container_entry_authenticates_actual_native_context(tmp_path, mo
     flux.save(directory / 'launch.json', intent)
     digest = flux.hashlib.sha256((directory / 'launch.json').read_bytes()).hexdigest()
     flux.save(directory / 'submission.json', {'state': 'submitted', 'job_id': 'f123', 'launch_sha256': digest})
-    monkeypatch.setattr(f, 'source', lambda root: identity)
+    monkeypatch.setattr(flux, 'source', lambda root: identity)
     state = _mock_native_admission(monkeypatch, directory, intent, digest)
     assert container.admitted_context(directory, digest, {'FLUX_JOB_ID': 'ƒ123'}) == intent
     if fact == 'original':
