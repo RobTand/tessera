@@ -102,6 +102,13 @@ def source(checkout):
     return identity
 
 
+def job_id(value):
+    """Flux emits ASCII f58 in the empty locale and Unicode in job metadata."""
+    if not isinstance(value, str) or not re.fullmatch(r"(?:[fƒ][1-9A-HJ-NP-Za-km-z]+|[0-9]+)", value):
+        raise ValueError("invalid saved native ID")
+    return "f" + value[1:] if value.startswith("ƒ") else value
+
+
 def submit(directory, checkout, command, cores, memory, timeout, environment, *, application=None):
     validate(cores, memory, timeout, environment)
     directory, checkout = Path(directory).resolve(), Path(checkout).resolve()
@@ -134,12 +141,13 @@ def submit(directory, checkout, command, cores, memory, timeout, environment, *,
     result = native(["job", "submit", str(directory / "jobspec.json")])
     (directory / "submit.stdout").write_text(result.stdout)
     (directory / "submit.stderr").write_text(result.stderr)
-    job_id = result.stdout.strip()
-    if result.returncode or not re.fullmatch(r"(?:ƒ[1-9A-HJ-NP-Za-km-z]+|[0-9]+)", job_id):
+    acknowledged = result.stdout.strip()
+    if result.returncode or not re.fullmatch(r"(?:[fƒ][1-9A-HJ-NP-Za-km-z]+|[0-9]+)", acknowledged):
         raise ValueError(f"native submission unknown in {directory}; reconcile, never resubmit")
+    canonical_id = job_id(acknowledged)
     save(directory / "submission.json", {"state": "submitted", "launch_sha256": digest,
-                                         "job_id": job_id})
-    (directory / "jobid").write_text(job_id + "\n")
+                                         "job_id": canonical_id})
+    (directory / "jobid").write_text(canonical_id + "\n")
     return collect(directory)
 
 
@@ -158,26 +166,24 @@ def collect(directory):
                 or intent["directory"] != str(directory) or intent["uri"] != URI
                 or intent["qualification"] != profile_identity()):
             raise ValueError("unknown or changed submission identity")
-        job_id = sent["job_id"]
-        if not re.fullmatch(r"(?:ƒ[1-9A-HJ-NP-Za-km-z]+|[0-9]+)", job_id):
-            raise ValueError("invalid saved native ID")
-        record.update(job_id=job_id, command=intent["command"], source=intent["source"],
+        saved_id = job_id(sent["job_id"])
+        record.update(job_id=saved_id, command=intent["command"], source=intent["source"],
                       checkout=intent["checkout"], launch_sha256=digest,
                       application=intent["application"], runtime=intent["runtime"],
                       qualification=intent["qualification"])
-        original = json.loads(checked(["job", "info", "--original", job_id, "jobspec"]))
+        original = json.loads(checked(["job", "info", "--original", saved_id, "jobspec"]))
         expected = json.loads((directory / "jobspec.json").read_bytes())
         if original != expected:
             raise ValueError("native jobspec differs from saved command/resources/environment")
         # No environments are copied into the public record.
-        events = checked(["job", "eventlog", "--format=json", job_id])
+        events = checked(["job", "eventlog", "--format=json", saved_id])
         (directory / "eventlog.jsonl").write_text(events)
         events = [json.loads(line) for line in events.splitlines()]
         names = {event["name"] for event in events}
         if "clean" not in names:
             record["state"] = "running"
             return record
-        status = native(["job", "status", "--json", "--exception-exit-code=125", job_id])
+        status = native(["job", "status", "--json", "--exception-exit-code=125", saved_id])
         (directory / "status.json").write_text(status.stdout)
         (directory / "status.stderr").write_text(status.stderr)
         (directory / "flux-exit-code.txt").write_text(str(status.returncode) + "\n")
@@ -201,7 +207,7 @@ def collect(directory):
             raise ValueError("successful native status has no finish event")
         record["exit_status_observed"] = True
         terminal_confirmed = True
-        allocation = native(["job", "info", job_id, "R"])
+        allocation = native(["job", "info", saved_id, "R"])
         (directory / "R.json").write_text(allocation.stdout)
         (directory / "R.stderr").write_text(allocation.stderr)
         if "alloc" in names:
@@ -210,7 +216,7 @@ def collect(directory):
                 raise ValueError("native allocation missing")
         if "start" in names:
             payload = json.loads((directory / "payload.json").read_bytes())
-            if (payload["job_id"] != job_id or payload["launch_sha256"] != digest
+            if (job_id(payload["job_id"]) != saved_id or payload["launch_sha256"] != digest
                     or payload["source"] != intent["source"] or not payload["scratch_removed"]
                     or payload["runtime"] != intent["runtime"] or not payload["runtime_verified"]
                     or payload.get("process_cleanup_error") or payload.get("cleanup_error")):

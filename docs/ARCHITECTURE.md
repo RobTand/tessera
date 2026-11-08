@@ -3998,7 +3998,9 @@ The payload owns its child process group. Exceptions stop that group before
 scratch cleanup; process and scratch cleanup errors remain in the payload record.
 
 Each arm saves immutable launch intent, the native jobspec and the exact
-returned ID before waiting. An unknown acknowledgement is never retried
+returned ID before waiting. ASCII `f` and Unicode `ƒ` f58 spellings are
+normalized for native record comparisons; scratch uses the payload's actual
+`FLUX_JOB_ID`. An unknown acknowledgement is never retried
 implicitly. Resume uses that ID only, checks the broker generation and original
 jobspec, and retains status, eventlog, allocation, stdout/stderr and JUnit.
 The native runtime seal hashes the named interpreter, standard library and

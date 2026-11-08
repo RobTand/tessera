@@ -113,3 +113,15 @@ def test_acknowledged_resume_never_submits(native_world):
     native_world.calls.clear()
     assert native_world.flux.collect(native_world.directory)["returncode"] == 0
     assert not any("submit" in call for call in native_world.calls)
+
+
+def test_ascii_native_ack_and_unicode_payload_name_one_saved_job(native_world):
+    world = native_world
+    sent_path = world.directory / "submission.json"
+    sent = json.loads(sent_path.read_bytes())
+    sent["job_id"] = "f123"
+    world.flux.save(sent_path, sent)
+    record = world.flux.collect(world.directory)
+    assert record["returncode"] == 0 and record["exit_status_observed"], record
+    assert record["job_id"] == "f123"
+    assert not any("submit" in call for call in world.calls)
