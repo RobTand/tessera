@@ -14,6 +14,9 @@ def test_resume_does_not_scan_unrelated_finished_actions(tmp_path, monkeypatch):
             raise AssertionError("resume scanned unrelated completed actions")
         return original(path, pattern)
     monkeypatch.setattr(Path, "glob", bounded)
-    module, record = helpers._resumed_with(tmp_path)
+    module = helpers._module()
+    jobs = helpers._native_jobs(module, monkeypatch)
+    jobs.add(tmp_path, "x86", helpers._population("x86")["surface"])
+    record = module._resume("x86", module.ARMS["x86"], tmp_path)
     assert record["exit_status_observed"] is True
     assert record["returncode"] == 0
