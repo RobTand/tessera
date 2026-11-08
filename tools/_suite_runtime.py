@@ -23,19 +23,33 @@ def identity():
     config = Path(sys.prefix) / "pyvenv.cfg"
     if config.is_file():
         files.add(config)
-    for root in [stdlib, *sites]:
-        if any(root.is_relative_to(path) for path in
-               (Path("/home/rob/.codex"), Path("/home/rob/.claude"))):
+    # Traverse resolved directories once, recording every alias before deduping.
+    # Installed environments legitimately share package/library directories.
+    directories = []
+    visited = set()
+    pending = [stdlib, *sites]
+    restricted = (Path("/home/rob/.codex"), Path("/home/rob/.claude"))
+    while pending:
+        directory = pending.pop()
+        resolved = directory.resolve(strict=True)
+        if any(resolved.is_relative_to(path) for path in restricted):
             raise ValueError("runtime root resolves outside allowed dependency roots")
-        for directory, dirs, names in os.walk(root, followlinks=False):
-            parent = Path(directory)
-            # Installed packages are traversed once, through their own roots.
-            dirs[:] = sorted(name for name in dirs if not (
-                root == stdlib and (parent / name).resolve() in sites))
-            if any((parent / name).is_symlink() for name in dirs):
-                raise ValueError("runtime contains an unsupported directory symlink")
-            files.update(parent / name for name in names)
+        directories.append([str(directory), str(resolved),
+                            os.readlink(directory) if directory.is_symlink() else None])
+        if resolved in visited:
+            continue
+        visited.add(resolved)
+        for path in sorted(directory.iterdir()):
+            target = path.resolve(strict=True)
+            if any(target.is_relative_to(root) for root in restricted):
+                raise ValueError("runtime file resolves outside allowed dependency roots")
+            if target.is_dir():
+                pending.append(path)
+            else:
+                files.add(path)
     digest = hashlib.sha256()
+    for entry in sorted(directories):
+        digest.update(json.dumps(entry, ensure_ascii=False, separators=(",", ":")).encode() + b"\n")
     for path in sorted(files):
         resolved = path.resolve(strict=True)
         for restricted in (Path("/home/rob/.codex"), Path("/home/rob/.claude")):
@@ -48,6 +62,11 @@ def identity():
         with resolved.open("rb") as handle:
             while chunk := handle.read(1024 * 1024):
                 content.update(chunk)
+        after = resolved.stat()
+        stable = ("st_dev", "st_ino", "st_mode", "st_size", "st_mtime_ns", "st_ctime_ns")
+        if (any(getattr(after, key) != getattr(metadata, key) for key in stable)
+                or path.resolve(strict=True) != resolved):
+            raise ValueError("runtime dependency changed while measuring")
         entry = [str(path), str(resolved), metadata.st_mode & 0o777, metadata.st_size,
                  content.hexdigest()]
         digest.update(json.dumps(entry, ensure_ascii=False, separators=(",", ":")).encode() + b"\n")
