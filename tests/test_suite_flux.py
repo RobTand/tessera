@@ -127,7 +127,7 @@ def test_submit_environment_and_runtime_budget_are_explicit(suite, tmp_path, mon
     monkeypatch.setattr(flux, "runtime_identity", runtime)
     def native(argv, **kwargs):
         calls.append(argv)
-        if argv[:2] == ["submit", "--dry-run"]:
+        if argv[:3] == ["submit", "--env=-*", "--dry-run"]:
             return SimpleNamespace(returncode=0, stdout='{"attributes":{"system":{"environment":{}}}}', stderr="")
         assert argv[:2] == ["job", "submit"]
         return SimpleNamespace(returncode=0, stdout="ƒ123\n", stderr="")
@@ -137,7 +137,7 @@ def test_submit_environment_and_runtime_budget_are_explicit(suite, tmp_path, mon
                 {"KL_TOOL_DIR": str(tmp_path)})
     assert budgets == [900], "full native seal must share the declared finite launch budget"
     render = calls[0]
-    assert render[:3] == ["submit", "--dry-run", "--env=-*"]
+    assert render[:3] == ["submit", "--env=-*", "--dry-run"]
     assert "--resources-shape=node/slot/[core=2/perf=1;memory=8]" in render
     assert "--requires=x86_64" in render
     environment = dict(token.removeprefix("--env=").split("=", 1) for token in render[3:] if token.startswith("--env="))
@@ -145,6 +145,58 @@ def test_submit_environment_and_runtime_budget_are_explicit(suite, tmp_path, mon
                                 "OMP_NUM_THREADS", "MKL_NUM_THREADS", "OPENBLAS_NUM_THREADS", "TORCH_NUM_THREADS", "MAX_JOBS", "KL_TOOL_DIR"}
     assert environment["PYTHONPATH"] == "src"
     assert all(environment[name] == "1" for name in flux.THREADS)
+
+
+def test_image_host_is_a_finite_architecture_bound_dependency(suite):
+    flux = suite.suite_flux
+    demand = flux.resources(2, 16, 600, gpus=1, architecture="aarch64", host="sparky")
+    assert demand == {"schema": "tessera.suite_resources.v1", "cores": 2, "memory_gib": 16,
+                      "timeout_s": 600, "gpus": 1, "architecture": "aarch64", "host": "sparky"}
+    for architecture, host in [("aarch64", "dl380g10"), ("x86_64", "sparky"), ("aarch64", "foreign")]:
+        with pytest.raises(ValueError, match="host"):
+            flux.resources(2, 16, 600, architecture=architecture, host=host)
+
+
+def test_portable_noncontainer_cannot_pin_a_host(suite, tmp_path):
+    with pytest.raises(ValueError, match="local container image dependency"):
+        suite.suite_flux.submit(tmp_path / "unused", tmp_path, ["python", "-m", "pytest"],
+                                1, 1, 60, {}, host="dl380g10")
+    assert not (tmp_path / "unused").exists()
+
+
+@pytest.mark.parametrize("rank", ["0", "1", "2"])
+def test_profile_generation_is_rank_zero_on_every_client(suite, monkeypatch, rank):
+    flux = suite.suite_flux
+    config = {name: {} for name in ("resource", "exec", "sched-fluxion-resource", "sched-fluxion-qmanager")}
+    model = {"scheduling": {"fixture": "loaded graph"}}
+    raw_config, raw_model = json.dumps(config).encode(), json.dumps(model).encode()
+    original = Path.read_bytes
+    monkeypatch.setattr(Path, "read_bytes", lambda path: raw_config if path == flux.CONFIG else
+                        raw_model if path == flux.MODEL else original(path))
+    monkeypatch.setattr(flux, "CONFIG_SHA", flux.hashlib.sha256(raw_config).hexdigest())
+    monkeypatch.setattr(flux, "MODEL_SHA", flux.hashlib.sha256(raw_model).hexdigest())
+    calls = []
+    def checked(argv):
+        calls.append(argv)
+        if argv[:2] == ["config", "get"]:
+            return json.dumps(config[argv[2]])
+        if argv == ["kvs", "get", "resource.R"]:
+            return json.dumps(model)
+        if argv[:2] == ["resource", "status"]:
+            return "0-2"
+        if argv == ["overlay", "status"]:
+            return "0: full\n1: full\n2: full\n"
+        if argv == ["getattr", "rank"]:
+            return rank
+        if argv == ["getattr", "broker.starttime"]:
+            return "root-generation" if rank == "0" else "different-local-generation"
+        assert argv == ["exec", "-r", "0", "/usr/bin/env", "FLUX_URI=" + flux.URI,
+                        f"{flux.PREFIX}/install/bin/flux", "getattr", "broker.starttime"]
+        return "root-generation"
+    monkeypatch.setattr(flux, "checked", checked)
+    assert flux.profile_identity()["broker_starttime"] == "root-generation"
+    if rank != "0":
+        assert ["getattr", "broker.starttime"] not in calls
 
 
 @pytest.mark.parametrize('targets', [

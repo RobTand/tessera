@@ -95,6 +95,20 @@ def build(spec, source, env):
     return owner.podman_command(spec, source, env, cidfile=Path(spec["--surface-dir"]) / "container.cid", affinity=[2, 42], gpus=1)
 
 
+@pytest.mark.parametrize("architecture,expected", [
+    ("aarch64", ["--userns=keep-id", "--user=1000:1000"]),
+    ("x86_64", ["--user=0:0"]),
+])
+def test_qualified_rootless_user_is_explicit(tmp_path, monkeypatch, architecture, expected):
+    from types import SimpleNamespace
+    source, spec, environment = mounts(tmp_path)
+    monkeypatch.setattr(owner.os, "uname", lambda: SimpleNamespace(machine=architecture))
+    argv = build(spec, source, environment)
+    assert all(flag in argv for flag in expected)
+    if architecture == "x86_64":
+        assert "--userns=keep-id" not in argv
+
+
 def test_podman_builder_preserves_scope_route_readonly_source_and_owned_cache(tmp_path, monkeypatch):
     source, spec, env = mounts(tmp_path)
     built = build(spec, source, env)
