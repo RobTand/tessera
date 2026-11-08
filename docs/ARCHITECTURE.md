@@ -4002,7 +4002,8 @@ returned ID before waiting. An unknown acknowledgement is never retried
 implicitly. Resume uses that ID only, checks the broker generation and original
 jobspec, and retains status, eventlog, allocation, stdout/stderr and JUnit.
 The native runtime seal hashes the named interpreter, standard library and
-installed package bytes at submission, entry and exit. It records directory
+installed package bytes at submission, entry and exit, bounded by the declared
+finite launch budget. It records directory
 aliases and measures their resolved contents once, including cyclic aliases. This extends the existing
 scoped container dependency seal to host runtimes without importing the suite
 dependencies. Admission verifies the qualified config and live resource graph,

@@ -24,10 +24,10 @@ def test_payload_exception_stops_owned_group_and_preserves_cleanup_error(tmp_pat
     monkeypatch.setenv("FLUX_JOB_ID", "123")
     identity = {"snapshot_commit": "a" * 40, "sha256": "b" * 64}
     intent = {"checkout": str(tmp_path), "source": identity, "application": None,
-              "command": ["python", "payload"], "runtime": {"sha256": "c" * 64}}
+              "command": ["python", "payload"], "timeout_s": 60, "runtime": {"sha256": "c" * 64}}
     flux.save(directory / "launch.json", intent)
     monkeypatch.setattr(flux, "source", lambda path: identity)
-    monkeypatch.setattr(flux, "runtime_identity", lambda *args: intent["runtime"])
+    monkeypatch.setattr(flux, "runtime_identity", lambda *args, **kwargs: intent["runtime"])
     monkeypatch.setattr(flux.subprocess, "check_output", lambda *args, **kwargs: "xfs")
     handlers = {}
     monkeypatch.setattr(flux.signal, "signal", lambda sig, handler: handlers.setdefault(sig, handler))

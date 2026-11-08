@@ -113,3 +113,35 @@ def test_late_nonzero_native_exit_stays_red(suite, tmp_path, monkeypatch):
     record = suite._resume("x86", suite.ARMS["x86"], tmp_path)
     assert record["returncode"] == 7
     assert suite._verdict([record]).startswith("red")
+
+
+def test_submit_environment_and_runtime_budget_are_explicit(suite, tmp_path, monkeypatch):
+    flux = suite.suite_flux
+    source = {"snapshot_commit": "a" * 40, "sha256": "b" * 64}
+    monkeypatch.setattr(flux, "source", lambda path: source)
+    monkeypatch.setattr(flux, "profile_identity", lambda: {"profile": "fixture", "broker_starttime": "A"})
+    budgets, calls = [], []
+    def runtime(python, checkout, *, timeout=None):
+        budgets.append(timeout)
+        return {"schema": "tessera.suite_runtime.v1", "sha256": "c" * 64}
+    monkeypatch.setattr(flux, "runtime_identity", runtime)
+    def native(argv, **kwargs):
+        calls.append(argv)
+        if argv[:2] == ["submit", "--dry-run"]:
+            return SimpleNamespace(returncode=0, stdout='{"attributes":{"system":{"environment":{}}}}', stderr="")
+        assert argv[:2] == ["job", "submit"]
+        return SimpleNamespace(returncode=0, stdout="ƒ123\n", stderr="")
+    monkeypatch.setattr(flux, "native", native)
+    monkeypatch.setattr(flux, "collect", lambda directory: {"state": "running"})
+    flux.submit(tmp_path / "new", tmp_path, ["/named/python", "-m", "pytest"], 2, 8, 900,
+                {"KL_TOOL_DIR": str(tmp_path)})
+    assert budgets == [900], "full native seal must share the declared finite launch budget"
+    render = calls[0]
+    assert render[:3] == ["submit", "--dry-run", "--env=-*"]
+    assert "--resources-shape=node/slot/[core=2/perf=1;memory=8]" in render
+    assert "--requires=x86_64" in render
+    environment = dict(token.removeprefix("--env=").split("=", 1) for token in render[3:] if token.startswith("--env="))
+    assert set(environment) == {"PATH", "HOME", "PYTHONPATH", "PYTHONDONTWRITEBYTECODE", "PRISMAQUANT_DEV_MODE",
+                                "OMP_NUM_THREADS", "MKL_NUM_THREADS", "OPENBLAS_NUM_THREADS", "TORCH_NUM_THREADS", "MAX_JOBS", "KL_TOOL_DIR"}
+    assert environment["PYTHONPATH"] == "src"
+    assert all(environment[name] == "1" for name in flux.THREADS)

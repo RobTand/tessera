@@ -109,7 +109,7 @@ def submit(directory, checkout, command, cores, memory, timeout, environment, *,
     qualified = profile_identity()
     if application is not None:
         require_selection(application, identity)
-    runtime = runtime_identity(command[0], checkout)
+    runtime = runtime_identity(command[0], checkout, timeout=timeout)
     intent = {"schema": "tessera.flux.launch.v1", "profile": PROFILE, "uri": URI,
               "qualification": qualified, "broker_starttime": qualified["broker_starttime"],
               "directory": str(directory), "checkout": str(checkout), "source": identity,
@@ -243,7 +243,7 @@ def payload(directory, digest):
         raise ValueError("source changed before payload")
     if intent["application"] is not None:
         require_selection(intent["application"], intent["source"])
-    if runtime_identity(intent["command"][0], Path.cwd()) != intent["runtime"]:
+    if runtime_identity(intent["command"][0], Path.cwd(), timeout=intent["timeout_s"]) != intent["runtime"]:
         raise ValueError("interpreter/dependencies changed before payload")
     job_id = os.environ["FLUX_JOB_ID"]
     scratch_root = (Path("/home/rob/tl-gates/flux-validation") if os.uname().machine == "x86_64"
@@ -276,7 +276,7 @@ def payload(directory, digest):
         code = child.wait()
         if source(Path.cwd()) != intent["source"]:
             raise ValueError("source changed during payload")
-        if runtime_identity(intent["command"][0], Path.cwd()) != intent["runtime"]:
+        if runtime_identity(intent["command"][0], Path.cwd(), timeout=intent["timeout_s"]) != intent["runtime"]:
             raise ValueError("interpreter/dependencies changed during payload")
         record["runtime_verified"] = True
         return 128 + interrupted[0] if interrupted else code
@@ -308,9 +308,9 @@ def require_selection(binding, identity):
         raise ValueError("selection bytes or selection-time source changed")
 
 
-def runtime_identity(python, checkout):
+def runtime_identity(python, checkout, *, timeout):
     result = subprocess.run([python, "-I", "-B", str(Path(checkout) / "tools/_suite_runtime.py")],
-                            capture_output=True, text=True, timeout=300,
+                            capture_output=True, text=True, timeout=timeout,
                             env={"PATH": "/usr/bin:/bin", "HOME": "/home/rob"})
     if result.returncode:
         raise ValueError("native interpreter/dependency seal refused: " + result.stderr[-300:])
