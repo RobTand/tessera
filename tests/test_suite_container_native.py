@@ -3,6 +3,7 @@ import copy
 import importlib.util
 import json
 import os
+import subprocess
 from pathlib import Path
 import sys
 from types import SimpleNamespace
@@ -12,6 +13,7 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "tools"))
 import _suite_container as container
 import merge_suite as merge
+import _suite_flux as flux
 
 
 def composed(tmp_path, targets=None, cpus=2):
@@ -20,7 +22,7 @@ def composed(tmp_path, targets=None, cpus=2):
     surface = tmp_path / "output/surface.gpu.json"
     inner = merge._command(arm, surface, [], cpus)
     inner += ["--junitxml", str(surface.parent / "junit.gpu.xml")]
-    return ["/usr/bin/python3", container.RUNNER,
+    return ["/usr/bin/python3", "-s", container.RUNNER,
             "--image", "sha256:" + "a" * 64,
             "--deps-site", str(tmp_path / "dependencies"), "--deps-sha256", "b" * 64,
             "--surface-dir", str(surface.parent), "--cache-dir", str(tmp_path / "cache"),
@@ -198,7 +200,7 @@ def test_original_native_wrapper_authenticates_launch_bytes():
     import _suite_flux as flux
     intent = {"directory": "/owned/native", "command": ["/named/python", "payload"],
               "resources": {"cores": 2}}
-    original = {"tasks": [{"command": ["/named/python", "tools/_suite_flux.py", "payload", "/owned/native", "a" * 64]}]}
+    original = {"tasks": [{"command": ["/named/python", "-s", "tools/_suite_flux.py", "payload", "/owned/native", "a" * 64]}]}
     flux.require_original_launch(intent, "a" * 64, original)
     with pytest.raises(ValueError, match="launch digest"):
         flux.require_original_launch(intent, "b" * 64, original)
@@ -292,7 +294,7 @@ def test_cid_registration_precedes_creation_and_errors_survive(tmp_path, monkeyp
 
 def _mock_native_admission(monkeypatch, directory, intent, digest):
     import _suite_flux as flux
-    original = {'tasks': [{'command': ['/usr/bin/python3', 'tools/_suite_flux.py', 'payload', str(directory), digest]}]}
+    original = {'tasks': [{'command': ['/usr/bin/python3', '-s', 'tools/_suite_flux.py', 'payload', str(directory), digest]}]}
     core = {'type': 'core', 'properties': {'os-pus': '2,42', 'core-type': 'perf'}}
     allocation = {'scheduling': {'graph': {'nodes': [{'metadata': item} for item in [
         core, {'type': 'perf'}, {'type': 'memory'},
@@ -478,3 +480,62 @@ def test_final_submit_composition_owns_presentation_defaults(tmp_path, extra, ex
 
 
 # R4 regression cases
+def test_generated_deadline_chain_excludes_private_user_startup(tmp_path):
+    env = {'PATH': '/usr/bin:/bin', 'HOME': str(tmp_path / 'home'),
+           'PYTHONUSERBASE': str(tmp_path / 'userbase'), 'PYTHONDONTWRITEBYTECODE': '1'}
+    site = subprocess.check_output([sys.executable, '-s', '-c',
+                                   'import site;print(site.getusersitepackages())'], env=env, text=True).strip()
+    directory = Path(site); directory.mkdir(parents=True)
+    marker = tmp_path / 'startup-marker'
+    (directory / 'g01_startup_shadow.py').write_text('VALUE = 42\n')
+    (directory / 'startup.pth').write_text('import pathlib;pathlib.Path(' + repr(str(marker)) + ').write_text("startup")\n')
+    control = subprocess.check_output([sys.executable, '-s', '-c',
+        'import site;site.addsitedir(' + repr(site) + ');import g01_startup_shadow;print(g01_startup_shadow.VALUE)'], env=env, text=True)
+    assert control.strip() == '42' and marker.read_text() == 'startup'
+    marker.unlink()
+    probe = ('import importlib.util,json,sys;from pathlib import Path;'
+             'print(json.dumps([sys.flags.no_user_site,importlib.util.find_spec("g01_startup_shadow") is None,'
+             'not Path(' + repr(str(marker)) + ').exists()]))')
+    command = merge._timed_command([sys.executable, '-s', '-c', probe], 30)
+    assert command[:3] == [sys.executable, '-s', 'tools/suite_deadline.py']
+    result = subprocess.run(command, env=env, capture_output=True, text=True, timeout=45)
+    assert result.returncode == 0, result.stderr
+    assert json.loads(result.stdout) == [1, True, True]
+
+
+def test_generated_native_wrapper_and_original_authentication_require_no_user_site(tmp_path, monkeypatch):
+    command = merge._command({**merge.ARMS['x86'], 'python': sys.executable}, tmp_path / 'surface.json', [], 1)
+    assert command[:4] == [sys.executable, '-s', '-m', 'pytest']
+    monkeypatch.setattr(flux, 'source', lambda checkout: {'sha256': 'a' * 64})
+    monkeypatch.setattr(flux, 'profile_identity', lambda: {'profile': 'fixture'})
+    monkeypatch.setattr(flux, 'runtime_identity', lambda *args, **kwargs: {'schema': 'tessera.suite_runtime.v1'})
+    monkeypatch.setattr(flux, 'collect', lambda directory: {'state': 'running'})
+    calls = []
+    def native(argv, **kwargs):
+        calls.append(argv)
+        return SimpleNamespace(returncode=0, stdout='{}' if argv[0] == 'submit' else 'f123', stderr='')
+    monkeypatch.setattr(flux, 'native', native)
+    directory = tmp_path / 'native'
+    flux.submit(directory, tmp_path, command, 1, 1, 30, {})
+    args = calls[0]
+    start = args.index('tools/_suite_flux.py')
+    assert args[start - 2:start] == [sys.executable, '-s']
+    intent = json.loads((directory / 'launch.json').read_bytes())
+    digest = json.loads((directory / 'submission.json').read_bytes())['launch_sha256']
+    original = {'tasks': [{'command': args[start - 2:]}]}
+    flux.require_original_launch(intent, digest, original)
+    original['tasks'][0]['command'].remove('-s')
+    with pytest.raises(ValueError, match='launch digest'):
+        flux.require_original_launch(intent, digest, original)
+
+
+def test_runtime_measurement_uses_the_same_isolated_startup(monkeypatch):
+    calls = []
+    def run(argv, **kwargs):
+        calls.append((argv, kwargs))
+        return SimpleNamespace(returncode=0, stdout='{"schema":"tessera.suite_runtime.v1"}', stderr='')
+    monkeypatch.setattr(flux.subprocess, 'run', run)
+    flux.runtime_identity('/usr/bin/python3', Path(merge.__file__).resolve().parents[1], timeout=30, wrapper=True)
+    argv, options = calls[0]
+    assert argv[1:3] == ['-s', '-B']
+    assert options['env']['PYTHONNOUSERSITE'] == '1'

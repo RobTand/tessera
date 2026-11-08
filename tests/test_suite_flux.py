@@ -133,7 +133,7 @@ def test_submit_environment_and_runtime_budget_are_explicit(suite, tmp_path, mon
         return SimpleNamespace(returncode=0, stdout="ƒ123\n", stderr="")
     monkeypatch.setattr(flux, "native", native)
     monkeypatch.setattr(flux, "collect", lambda directory: {"state": "running"})
-    flux.submit(tmp_path / "new", tmp_path, ["/named/python", "-m", "pytest"], 2, 8, 900,
+    flux.submit(tmp_path / "new", tmp_path, ["/named/python", "-s", "-m", "pytest"], 2, 8, 900,
                 {"KL_TOOL_DIR": str(tmp_path)})
     assert budgets == [900], "full native seal must share the declared finite launch budget"
     render = calls[0]
@@ -141,7 +141,7 @@ def test_submit_environment_and_runtime_budget_are_explicit(suite, tmp_path, mon
     assert "--resources-shape=node/slot/[core=2/perf=1;memory=8]" in render
     assert "--requires=x86_64" in render
     environment = dict(token.removeprefix("--env=").split("=", 1) for token in render[3:] if token.startswith("--env="))
-    assert set(environment) == {"PATH", "HOME", "PYTHONPATH", "PYTHONDONTWRITEBYTECODE", "PRISMAQUANT_DEV_MODE",
+    assert set(environment) == {"PATH", "HOME", "PYTHONPATH", "PYTHONDONTWRITEBYTECODE", "PYTHONNOUSERSITE", "PRISMAQUANT_DEV_MODE",
                                 "OMP_NUM_THREADS", "MKL_NUM_THREADS", "OPENBLAS_NUM_THREADS", "TORCH_NUM_THREADS",
                                 "NUMEXPR_NUM_THREADS", "MAX_JOBS", "CMAKE_BUILD_PARALLEL_LEVEL",
                                 "MAKEFLAGS", "NINJAFLAGS", "KL_TOOL_DIR"}

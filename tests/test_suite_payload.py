@@ -32,7 +32,7 @@ def test_payload_exception_stops_owned_group_and_preserves_cleanup_error(tmp_pat
     flux.save(directory / "launch.json", intent)
     digest = flux.hashlib.sha256((directory / "launch.json").read_bytes()).hexdigest()
     flux.save(directory / "submission.json", {"state": "submitted", "job_id": "123", "launch_sha256": digest})
-    original = {"tasks": [{"command": ["/usr/bin/python3", "tools/_suite_flux.py", "payload", str(directory), digest]}]}
+    original = {"tasks": [{"command": ["/usr/bin/python3", "-s", "tools/_suite_flux.py", "payload", str(directory), digest]}]}
     flux.save(directory / "jobspec.json", original)
     monkeypatch.setattr(flux, "checked", lambda args: json.dumps(original))
     monkeypatch.setattr(flux, "source", lambda path: identity)
@@ -84,7 +84,7 @@ def test_interrupt_publishes_cleanup_without_waiting_for_an_exit_seal(tmp_path, 
     flux.save(directory / "launch.json", intent)
     digest = flux.hashlib.sha256((directory / "launch.json").read_bytes()).hexdigest()
     flux.save(directory / "submission.json", {"state": "submitted", "job_id": "123", "launch_sha256": digest})
-    original = {"tasks": [{"command": ["/usr/bin/python3", "tools/_suite_flux.py", "payload", str(directory), digest]}]}
+    original = {"tasks": [{"command": ["/usr/bin/python3", "-s", "tools/_suite_flux.py", "payload", str(directory), digest]}]}
     flux.save(directory / "jobspec.json", original)
     monkeypatch.setattr(flux, "checked", lambda args: json.dumps(original))
     observations = []

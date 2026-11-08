@@ -31,10 +31,10 @@ def test_known_container_runner_names_its_effective_population():
 
 
 def command(surface="/receipts/run/surface.gpu.json", cache="/cache/run", site="/scoped/site-packages"):
-    return ["/usr/bin/python3", owner.RUNNER, "--image", "sha256:" + "a" * 64,
+    return ["/usr/bin/python3", "-s", owner.RUNNER, "--image", "sha256:" + "a" * 64,
             "--deps-site", site, "--deps-sha256", "b" * 64,
             "--surface-dir", str(Path(surface).parent), "--cache-dir", cache,
-            "--", "/usr/bin/python3", "-m", "pytest", "tests", "-o", "addopts=",
+            "--", "/usr/bin/python3", "-s", "-m", "pytest", "tests", "-o", "addopts=",
             "-p", "no:cacheprovider", "--strict-cuda",
             "--junitxml", str(Path(surface).parent / "junit.gpu.xml"), "--surface-json", surface]
 
@@ -74,7 +74,7 @@ def test_container_command_shadows_are_refused(mutation):
 @pytest.mark.parametrize("path", ["other/suite_container.py", "./tools/suite_container.py", "/foreign/tools/suite_container.py", "tools/../tools/suite_container.py"])
 def test_a_runner_basename_establishes_no_authority(path):
     argv = command()
-    argv[1] = path
+    argv[2] = path
     assert merge_module()._effective_surface_json(argv)[0] is None
 
 

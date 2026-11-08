@@ -3991,6 +3991,13 @@ allocator sees is `docs/tessera-one-format.md` §5.
 
 ### 1.1 Integration suite placement
 
+Re-stamped 2026-11-08 for parent startup-isolation review. Native wrapper,
+deadline, container host/inside launcher and pytest invocations all use Python
+`-s`. The original native argv authenticates that flag. Runtime measurement
+uses the same no-user-site mode and explicit source path; no-user-site and
+no-bytecode settings are also present in the allowlisted environment. Private
+startup regression fixtures never access or repair the user's site.
+
 Presentation defaults are resolved before preflight: quiet appears once and
 durations defaults to ten unless explicitly supplied. Repeated valued options
 refuse. Preflight and submission parse the same final presentation controls.

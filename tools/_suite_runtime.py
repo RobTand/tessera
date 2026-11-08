@@ -81,6 +81,8 @@ def identity(extra_sites=(), require_suite=True):
 
 
 if __name__ == "__main__":
+    if not sys.flags.no_user_site:
+        raise SystemExit("native runtime measurement requires no-user-site startup")
     if sys.argv[1:] not in ([], ["--wrapper"]):
         raise SystemExit("only the internal --wrapper mode is supported")
     print(json.dumps(identity(require_suite=sys.argv[1:] != ["--wrapper"]), sort_keys=True))

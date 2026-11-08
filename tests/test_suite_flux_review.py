@@ -66,7 +66,7 @@ def native_world(suite, tmp_path, monkeypatch):
     digest = flux.hashlib.sha256(flux.encoded(launch)).hexdigest()
     flux.save(tmp_path / "submission.json", {"state": "submitted", "job_id": "ƒ123",
                                             "launch_sha256": digest})
-    spec = {"tasks": [{"command": ["/usr/bin/python3", "tools/_suite_flux.py", "payload", str(tmp_path), digest]}]}
+    spec = {"tasks": [{"command": ["/usr/bin/python3", "-s", "tools/_suite_flux.py", "payload", str(tmp_path), digest]}]}
     flux.save(tmp_path / "jobspec.json", spec)
     flux.save(tmp_path / "payload.json", {"job_id": "ƒ123", "launch_sha256": digest,
                                          "source": launch["source"], "scratch_removed": True,

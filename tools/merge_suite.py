@@ -197,7 +197,7 @@ def _command(arm: dict, surface_json: Path, extra: list[str],
     targets = arm.get("targets", ["tests"])
     suite_container.validate_targets(targets)
     cpus = _arm_cpus(arm, cpus)
-    command = [arm["python"], "-m", "pytest", *targets, "-q",
+    command = [arm["python"], "-s", "-m", "pytest", *targets, "-q",
                "-o", "addopts=", "-p", "no:cacheprovider",
                "--surface-json", str(surface_json)]
     if cpus > 1:
@@ -250,7 +250,7 @@ def _timed_command(command: list[str], timeout_s: float) -> list[str]:
     deadline = _positive_seconds(timeout_s)
     grace = _positive_seconds(TIMEOUT_KILL_AFTER_S)
     # Use the arm's named interpreter, not a host's unverified timeout binary.
-    return [command[0], "tools/suite_deadline.py", "--timeout-s", str(deadline),
+    return [command[0], "-s", "tools/suite_deadline.py", "--timeout-s", str(deadline),
             "--kill-after-s", str(grace), "--", *command]
 
 
@@ -290,7 +290,7 @@ def _container_command(arm, command, surface_json, roots):
     """Compose the same finite contract that readers and the payload parse."""
     config = arm["container"]
     inner = [config.get("python", "/usr/bin/python3"), *command[1:]]
-    runner = [arm["python"], suite_container.RUNNER,
+    runner = [arm["python"], "-s", suite_container.RUNNER,
               "--image", config["image"], "--deps-site", config["deps_site"],
               "--deps-sha256", config["deps_sha256"],
               "--surface-dir", str(surface_json.parent), "--cache-dir", config["cache_dir"]]
@@ -497,7 +497,8 @@ def _pytest_argv(command: list) -> tuple[list[str] | None, str | None]:
         return parts, None
     if not _PYTHON_NAME.match(program):
         return None, f"`{program}` is not a pytest invocation this tool parses"
-    if len(parts) >= 3 and parts[1] == "-m" and parts[2] == "pytest":
+    offset = 2 if parts[1:2] == ["-s"] else 1
+    if parts[offset:offset + 2] == ["-m", "pytest"]:
         return parts, None
     try:
         container = suite_container.command_spec(parts)
@@ -505,11 +506,11 @@ def _pytest_argv(command: list) -> tuple[list[str] | None, str | None]:
             return container["inner"], None
     except (ValueError, OSError) as error:
         return None, str(error)
-    if len(parts) >= 2 and Path(parts[1]).name == _DEADLINE_WRAPPER:
-        if "--" not in parts[2:]:
+    if len(parts) > offset and Path(parts[offset]).name == _DEADLINE_WRAPPER:
+        if "--" not in parts[offset + 1:]:
             return None, (f"`{_DEADLINE_WRAPPER}` was sealed without the `--` "
                           "that separates the command it supervises")
-        return _pytest_argv(parts[parts.index("--", 2) + 1:])
+        return _pytest_argv(parts[parts.index("--", offset + 1) + 1:])
     ran = " ".join([program, *parts[1:3]])
     return None, f"`{ran}` is not a pytest invocation this tool parses"
 
@@ -563,9 +564,10 @@ def _effective_surface_json(command: list) -> tuple[str | None, str | None]:
 def _container_spec(command):
     """Unwrap only the existing deadline owner and exact container runner."""
     parts = [str(part) for part in command]
-    if (len(parts) >= 2 and _PYTHON_NAME.match(Path(parts[0]).name)
-            and Path(parts[1]).name == _DEADLINE_WRAPPER and "--" in parts[2:]):
-        return _container_spec(parts[parts.index("--", 2) + 1:])
+    offset = 2 if parts[1:2] == ["-s"] else 1
+    if (len(parts) > offset and _PYTHON_NAME.match(Path(parts[0]).name)
+            and Path(parts[offset]).name == _DEADLINE_WRAPPER and "--" in parts[offset + 1:]):
+        return _container_spec(parts[parts.index("--", offset + 1) + 1:])
     return suite_container.command_spec(parts)
 
 

@@ -43,7 +43,7 @@ def native(argv, timeout=30):
     env = {"PATH": f"{PREFIX}/install/bin:{PREFIX}/deps/bin:/usr/bin:/bin",
            "LD_LIBRARY_PATH": f"{PREFIX}/install/lib:{PREFIX}/deps/lib",
            "FLUX_URI": URI.replace("local-0", {"sparky": "local-1", "sparklina": "local-2"}.get(os.uname().nodename, "local-0")),
-           "HOME": "/home/rob"}
+           "HOME": "/home/rob", "PYTHONNOUSERSITE": "1"}
     return subprocess.run([f"{PREFIX}/install/bin/flux", *argv], env=env,
                           capture_output=True, text=True, timeout=timeout)
 
@@ -135,8 +135,8 @@ def resources(cores, memory, timeout, *, gpus=0, architecture="x86_64", host=Non
 def container_spec(command):
     from _suite_container import command_spec
     parts = command
-    if len(parts) > 2 and parts[1] == "tools/suite_deadline.py" and "--" in parts[2:]:
-        parts = parts[parts.index("--", 2) + 1:]
+    if len(parts) > 3 and parts[1:3] == ["-s", "tools/suite_deadline.py"] and "--" in parts[3:]:
+        parts = parts[parts.index("--", 3) + 1:]
     return command_spec(parts)
 
 
@@ -158,7 +158,7 @@ def require_allocation(allocation, demand, affinity, mapped):
 def require_original_launch(intent, digest, jobspec):
     """The original wrapper argv authenticates all saved launch bytes."""
     wrapper_python = intent["command"][0] if intent.get("resources") else "/usr/bin/python3"
-    if jobspec["tasks"][0]["command"] != [wrapper_python, "tools/_suite_flux.py", "payload", intent["directory"], digest]:
+    if jobspec["tasks"][0]["command"] != [wrapper_python, "-s", "tools/_suite_flux.py", "payload", intent["directory"], digest]:
         raise ValueError("original native command does not authenticate this launch digest")
 
 
@@ -171,6 +171,8 @@ def submit(directory, checkout, command, cores, memory, timeout, environment, *,
         raise ValueError("GPU suite requires the finite native container contract")
     if host is not None and container is None:
         raise ValueError("a native host constraint requires an explicit local container image dependency")
+    if command[1:2] != ["-s"]:
+        raise ValueError("native suite Python requires explicit -s startup isolation")
     if container is not None:
         from _suite_container import validate_mounts
         if container["workers"] != cores or container["strict_cuda"] != bool(gpus) or container["artifacts"] != environment:
@@ -194,11 +196,11 @@ def submit(directory, checkout, command, cores, memory, timeout, environment, *,
     save(directory / "launch.json", intent)
     save(directory / "submission.json", {"state": "unknown", "launch_sha256": digest})
     env = {"PATH": "/usr/local/bin:/usr/bin:/bin", "HOME": "/home/rob",
-           "PYTHONPATH": "src", "PYTHONDONTWRITEBYTECODE": "1",
+           "PYTHONPATH": "src", "PYTHONDONTWRITEBYTECODE": "1", "PYTHONNOUSERSITE": "1",
            "PRISMAQUANT_DEV_MODE": "0", **THREADS, **environment}
     if container is not None:
         env["XDG_RUNTIME_DIR"] = "/run/user/1000"
-    wrapper = [command[0], "tools/_suite_flux.py", "payload", str(directory), digest]
+    wrapper = [command[0], "-s", "tools/_suite_flux.py", "payload", str(directory), digest]
     args = ["submit", "--env=-*", *[f"--env={k}={v}" for k, v in sorted(env.items())],
             f"--resources-shape=node/slot/[core={cores}/perf=1;memory={memory}" + (";gpu=1]" if gpus else "]"),
             "--requires=" + architecture + (" and host:" + host if host is not None else ""),
@@ -439,10 +441,11 @@ def require_selection(binding, identity):
 
 
 def runtime_identity(python, checkout, *, timeout, wrapper=False):
-    result = subprocess.run([python, "-I", "-B", str(Path(checkout) / "tools/_suite_runtime.py"),
+    result = subprocess.run([python, "-s", "-B", str(Path(checkout) / "tools/_suite_runtime.py"),
                              *(["--wrapper"] if wrapper else [])],
                             capture_output=True, text=True, timeout=timeout,
-                            env={"PATH": "/usr/bin:/bin", "HOME": "/home/rob"})
+                            env={"PATH": "/usr/bin:/bin", "HOME": "/home/rob",
+                                 "PYTHONPATH": "src", "PYTHONNOUSERSITE": "1"})
     if result.returncode:
         raise ValueError("native interpreter/dependency seal refused: " + result.stderr[-300:])
     identity = json.loads(result.stdout)

@@ -35,7 +35,7 @@ class NativeJobs:
         self.flux.save(directory / "submission.json", {"state": "submitted", "job_id": job_id,
                                                        "launch_sha256": digest})
         (directory / "jobid").write_text(job_id + "\n")
-        spec = {"tasks": [{"command": ["/usr/bin/python3", "tools/_suite_flux.py", "payload", str(directory), digest]}], "attributes": {"system": {"environment": {}}}}
+        spec = {"tasks": [{"command": ["/usr/bin/python3", "-s", "tools/_suite_flux.py", "payload", str(directory), digest]}], "attributes": {"system": {"environment": {}}}}
         self.flux.save(directory / "jobspec.json", spec)
         self.flux.save(directory / "payload.json", {"job_id": job_id, "launch_sha256": digest,
             "source": identity, "runtime": intent["runtime"], "runtime_verified": True,

@@ -119,13 +119,13 @@ def parse(argv):
         _require(separator and key in artifact_variables(), "unknown artifact environment")
         _require(key not in artifacts, "duplicate artifact environment")
         artifacts[key] = str(absolute(value))
-    _require(len(inner) >= 4 and inner[0] in _INTERPRETERS and inner[1:3] == ["-m", "pytest"],
-             "runner only executes a declared interpreter -m pytest")
+    _require(len(inner) >= 5 and inner[0] in _INTERPRETERS and inner[1:4] == ["-s", "-m", "pytest"],
+             "runner only executes a declared interpreter -s -m pytest")
     outputs, junits, seen, plugins, workers, targets = [], [], set(), set(), 1, []
     flags = {"-q", "-v", "-s", "-x", "--quiet", "--verbose", "--strict-cuda", "--no-header", "--disable-warnings", "--full-trace", "--showlocals"}
     valued = {"-n", "--dist", "--durations", "--tb", "--maxfail", "-k", "-m", "--surface-json", "--junitxml", "-p", "-o"}
     options_started = False
-    index = 3
+    index = 4
     while index < len(inner):
         option = inner[index]
         if option in flags:
@@ -190,9 +190,9 @@ def parse(argv):
 
 def command_spec(command):
     """Only the canonical relative runner path can declare this contract."""
-    if (len(command) >= 2 and re.fullmatch(r"python(3(\.\d+)?)?", Path(command[0]).name)
-            and command[1] == RUNNER):
-        return parse(command[2:])
+    if (len(command) >= 3 and re.fullmatch(r"python(3(\.\d+)?)?", Path(command[0]).name)
+            and command[1:3] == ["-s", RUNNER]):
+        return parse(command[3:])
     return None
 
 
@@ -397,7 +397,7 @@ def run(spec, checkout, environment, directory, intent, digest):
         for name in ("tmp", "xdg", "torch", "triton"):
             (cache / name).mkdir()
         command = podman_command(spec, checkout, environment, cidfile=record["cidfile"], affinity=affinity, gpus=resources["gpus"])
-        command += [RUNNER, "inside", str(directory), digest]
+        command += ["-s", RUNNER, "inside", str(directory), digest]
         process = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
         stdout, stderr = process.communicate()
         record["creation_returncode"] = process.returncode
