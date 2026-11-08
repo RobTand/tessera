@@ -398,7 +398,7 @@ def test_default_paired_cli_applies_gpu_options_only_to_gpu_arm(tmp_path, monkey
         raise AssertionError('dry-run must never submit')
     monkeypatch.setattr(merge.suite_flux, 'submit', forbidden)
     options = ['merge_suite', '--dry-run', '--checkout', str(Path(merge.__file__).resolve().parents[1]),
-               '--out', str(tmp_path / 'receipt.json'), '--python', sys.executable,
+               '--out', str(tmp_path / 'output/receipt.json'), '--python', sys.executable,
                '--gpu-image', 'sha256:' + 'a' * 64, '--gpu-deps-site', str(tmp_path / 'deps'),
                '--gpu-deps-sha256', 'b' * 64, '--gpu-cache-dir', str(tmp_path / 'cache'),
                '--target', 'tests/test_grammar.py', '--timeout-s', '60', '--wait-s', '90']
@@ -416,7 +416,7 @@ def test_default_paired_cli_applies_gpu_options_only_to_gpu_arm(tmp_path, monkey
         assert refusal is None
         assert ('--strict-cuda' in command) == (arm['arm'] == 'gpu')
         assert merge._targets_of(command) == ['tests/test_grammar.py']
-    assert not (tmp_path / 'receipt.json').exists()
+    assert not (tmp_path / 'output/receipt.json').exists()
 
 
 # R5 regression cases
