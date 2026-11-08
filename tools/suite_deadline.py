@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Run the source-sealed suite deadline helper from a PB checkout."""
+"""Run the source-sealed suite deadline helper from its declared checkout."""
 import sys
 from pathlib import Path
 
