@@ -46,9 +46,8 @@ ARMS = {
         "strict_cuda": True,
         "fans_out": False,
         "serial_because": (
-            "this legacy wrapper selects serial GPU execution whatever "
-            "--cpus says; direct PrismaBuild submissions may use xdist "
-            "when the tests have independent process state"
+            "the host GPU interpreter selects serial execution; the native "
+            "container arm enables explicitly reserved independent workers"
         ),
     },
     "x86": {
@@ -243,8 +242,9 @@ def _timed_command(command: list[str], timeout_s: float) -> list[str]:
 
 
 def _preflight(arm: dict, args) -> dict:
-    if arm["strict_cuda"] or getattr(args, "gpu_image", "") or arm.get("container"):
-        raise ValueError("native GPU/container suite admission is not qualified; preserve the requested arm")
+    if ((arm["strict_cuda"] and not arm.get("container"))
+            or (not arm["strict_cuda"] and getattr(args, "gpu_image", ""))):
+        raise ValueError("native GPU/container suite requires explicit immutable image/dependencies and GPU arm")
     roots = {}
     for item in getattr(args, "artifact_root", []):
         key, separator, value = item.partition("=")
@@ -256,7 +256,27 @@ def _preflight(arm: dict, args) -> dict:
     _positive_seconds(args.wait_s)
     _command(arm, Path("/preflight/population.json"), getattr(args, "pytest_arg", []),
              _arm_cpus(arm, args.cpus))
+    if arm.get("container"):
+        suite_flux.resources(_arm_cpus(arm, args.cpus), args.mem_gb, args.timeout_s,
+                             gpus=1, architecture="aarch64")
     return roots
+
+
+def _container_command(arm, command, surface_json, roots):
+    """Compose the same finite contract that readers and the payload parse."""
+    config = arm["container"]
+    inner = [config.get("python", "/usr/bin/python3"), *command[1:]]
+    runner = [arm["python"], suite_container.RUNNER,
+              "--image", config["image"], "--deps-site", config["deps_site"],
+              "--deps-sha256", config["deps_sha256"],
+              "--surface-dir", str(surface_json.parent), "--cache-dir", config["cache_dir"]]
+    for path in config.get("data_roots", []):
+        runner += ["--data-root", path]
+    for key, path in sorted(roots.items()):
+        runner += ["--artifact-root", key + "=" + path]
+    runner += ["--", *inner]
+    suite_container.command_spec(runner)
+    return runner
 
 
 def _submit(name: str, arm: dict, args, receipt_dir: Path) -> dict:
@@ -265,6 +285,8 @@ def _submit(name: str, arm: dict, args, receipt_dir: Path) -> dict:
     cpus = _arm_cpus(arm, args.cpus)
     command = _command(arm, surface_json, args.pytest_arg, cpus)
     command += ["--junitxml", str(receipt_dir / f"junit.{name}.xml"), "--durations=10"]
+    if arm.get("container"):
+        command = _container_command(arm, command, surface_json, roots)
     destination, refusal = _effective_surface_json(command)
     if refusal or destination != str(surface_json):
         raise ValueError("pytest arguments change the declared population path")
@@ -278,7 +300,8 @@ def _submit(name: str, arm: dict, args, receipt_dir: Path) -> dict:
     directory = receipt_dir / f"flux.{name}"
     suite_flux.submit(directory, args.checkout, command, cpus, args.mem_gb,
                       args.timeout_s, roots,
-                      application=getattr(args, "selection_binding", None))
+                      application=getattr(args, "selection_binding", None),
+                      **({"gpus": 1, "architecture": "aarch64"} if arm.get("container") else {}))
     try:
         suite_flux.wait(directory, args.wait_s)
     except subprocess.TimeoutExpired:
@@ -1213,6 +1236,11 @@ def main() -> int:
     configured = {name: {**ARMS[name], **({"targets": args.target} if args.target else {}),
                           **({"python": args.python} if args.python and name == "x86" else {})}
                   for name in wanted}
+    if args.gpu_image and "gpu" in configured:
+        configured["gpu"].update(fans_out=True, container={
+            "image": args.gpu_image, "deps_site": args.gpu_deps_site,
+            "deps_sha256": args.gpu_deps_sha256, "cache_dir": args.gpu_cache_dir,
+            "data_roots": args.gpu_data_root})
     if not args.resume:
         try:
             for name in wanted:

@@ -40,7 +40,8 @@ def native(argv, timeout=30):
     # The client needs a broker connection; the payload gets its own allowlist.
     env = {"PATH": f"{PREFIX}/install/bin:{PREFIX}/deps/bin:/usr/bin:/bin",
            "LD_LIBRARY_PATH": f"{PREFIX}/install/lib:{PREFIX}/deps/lib",
-           "FLUX_URI": URI, "HOME": "/home/rob"}
+           "FLUX_URI": URI.replace("local-0", {"sparky": "local-1", "sparklina": "local-2"}.get(os.uname().nodename, "local-0")),
+           "HOME": "/home/rob"}
     return subprocess.run([f"{PREFIX}/install/bin/flux", *argv], env=env,
                           capture_output=True, text=True, timeout=timeout)
 
@@ -109,8 +110,50 @@ def job_id(value):
     return "f" + value[1:] if value.startswith("ƒ") else value
 
 
-def submit(directory, checkout, command, cores, memory, timeout, environment, *, application=None):
+def resources(cores, memory, timeout, *, gpus=0, architecture="x86_64"):
+    validate(cores, memory, timeout, {})
+    if type(gpus) is not int or gpus not in (0, 1) or architecture not in ("x86_64", "aarch64"):
+        raise ValueError("finite architecture/whole-GPU resource profile required")
+    if gpus and architecture != "aarch64":
+        raise ValueError("qualified GPU architecture is aarch64")
+    return {"schema": "tessera.suite_resources.v1", "architecture": architecture,
+            "cores": cores, "memory_gib": memory, "gpus": gpus, "timeout_s": timeout}
+
+
+def container_spec(command):
+    from _suite_container import command_spec
+    parts = command
+    if len(parts) > 2 and parts[1] == "tools/suite_deadline.py" and "--" in parts[2:]:
+        parts = parts[parts.index("--", 2) + 1:]
+    return command_spec(parts)
+
+
+def require_allocation(allocation, demand, affinity, mapped):
+    """R's assigned hardware, not requested annotations, binds execution."""
+    metadata = [node["metadata"] for node in allocation["scheduling"]["graph"]["nodes"]]
+    kinds = {kind: [item for item in metadata if item["type"] == kind]
+             for kind in ("core", "perf", "memory", "gpu", "node")}
+    pus = sorted({int(pu) for core in kinds["core"] for pu in core["properties"]["os-pus"].split(",")})
+    if (len(kinds["node"]) != 1 or kinds["node"][0]["properties"]["arch"] != demand["architecture"]
+            or len(kinds["core"]) != demand["cores"] or len(kinds["perf"]) != demand["cores"]
+            or len(kinds["memory"]) != demand["memory_gib"] or len(kinds["gpu"]) != demand["gpus"]
+            or any(core["properties"]["core-type"] != "perf" for core in kinds["core"])
+            or affinity != pus or mapped != pus):
+        raise ValueError("actual native allocation/resources/affinity differ")
+
+
+def submit(directory, checkout, command, cores, memory, timeout, environment, *, application=None,
+           gpus=0, architecture="x86_64"):
     validate(cores, memory, timeout, environment)
+    demand = resources(cores, memory, timeout, gpus=gpus, architecture=architecture)
+    container = container_spec(command)
+    if gpus and container is None:
+        raise ValueError("GPU suite requires the finite native container contract")
+    if container is not None:
+        from _suite_container import validate_mounts
+        if container["workers"] != cores or container["strict_cuda"] != bool(gpus) or container["artifacts"] != environment:
+            raise ValueError("container workers/GPU/artifact roots differ from native reservation")
+        validate_mounts(container, Path(checkout))
     directory, checkout = Path(directory).resolve(), Path(checkout).resolve()
     identity = source(checkout)
     qualified = profile_identity()
@@ -121,7 +164,8 @@ def submit(directory, checkout, command, cores, memory, timeout, environment, *,
               "qualification": qualified, "broker_starttime": qualified["broker_starttime"],
               "directory": str(directory), "checkout": str(checkout), "source": identity,
               "command": command, "cores": cores, "memory_gib": memory,
-              "timeout_s": timeout, "runtime": runtime, "application": application}
+              "timeout_s": timeout, "runtime": runtime, "application": application,
+              "resources": demand, "container": container}
     digest = hashlib.sha256(encoded(intent)).hexdigest()
     directory.mkdir(parents=True, exist_ok=False)
     save(directory / "launch.json", intent)
@@ -129,10 +173,12 @@ def submit(directory, checkout, command, cores, memory, timeout, environment, *,
     env = {"PATH": "/usr/local/bin:/usr/bin:/bin", "HOME": "/home/rob",
            "PYTHONPATH": "src", "PYTHONDONTWRITEBYTECODE": "1",
            "PRISMAQUANT_DEV_MODE": "0", **THREADS, **environment}
+    if container is not None:
+        env["XDG_RUNTIME_DIR"] = "/run/user/1000"
     wrapper = ["/usr/bin/python3", "tools/_suite_flux.py", "payload", str(directory), digest]
     args = ["submit", "--env=-*", *[f"--env={k}={v}" for k, v in sorted(env.items())],
-            f"--resources-shape=node/slot/[core={cores}/perf=1;memory={memory}]",
-            "--requires=x86_64", "-t", f"{timeout + 10}s", "--cwd", str(checkout),
+            f"--resources-shape=node/slot/[core={cores}/perf=1;memory={memory}" + (";gpu=1]" if gpus else "]"),
+            "--requires=" + architecture, "-t", f"{timeout + 10}s", "--cwd", str(checkout),
             "--input=/dev/null", f"--output={directory}/stdout", f"--error={directory}/stderr",
             "--job-name=tessera-" + digest[:16], *wrapper]
     # Dry-run is native rendering only. It emits no whole-node request.
@@ -221,6 +267,11 @@ def collect(directory):
                     or payload["runtime"] != intent["runtime"] or not payload["runtime_verified"]
                     or payload.get("process_cleanup_error") or payload.get("cleanup_error")):
                 raise ValueError("payload source or scratch binding missing")
+            if intent.get("resources") is not None:
+                require_allocation(value, intent["resources"], payload["affinity"], payload["allocated_affinity"])
+            if intent.get("container") is not None:
+                from _suite_container import verify_record
+                record["container"] = verify_record(directory, intent, digest, saved_id, payload["affinity"])
     except (OSError, ValueError, KeyError, TypeError, subprocess.SubprocessError) as exc:
         if terminal_confirmed:
             record["evidence_errors"].append(str(exc))
@@ -245,24 +296,39 @@ def payload(directory, digest):
     if hashlib.sha256(raw).hexdigest() != digest:
         raise ValueError("launch bytes changed")
     intent = json.loads(raw)
+    saved = json.loads((directory / "submission.json").read_bytes())
+    if (saved["state"] not in ("submitted", "unknown") or saved["launch_sha256"] != digest
+            or (saved["state"] == "submitted" and job_id(saved["job_id"]) != job_id(os.environ["FLUX_JOB_ID"]))
+            or json.loads(checked(["job", "info", "--original", os.environ["FLUX_JOB_ID"], "jobspec"]))
+            != json.loads((directory / "jobspec.json").read_bytes())):
+        raise ValueError("payload original native job/launch differs")
     if Path.cwd() != Path(intent["checkout"]) or source(Path.cwd()) != intent["source"]:
         raise ValueError("source changed before payload")
     if intent["application"] is not None:
         require_selection(intent["application"], intent["source"])
     if runtime_identity(intent["command"][0], Path.cwd(), timeout=intent["timeout_s"]) != intent["runtime"]:
         raise ValueError("interpreter/dependencies changed before payload")
-    job_id = os.environ["FLUX_JOB_ID"]
+    actual_job_id = os.environ["FLUX_JOB_ID"]
     scratch_root = (Path("/home/rob/tl-gates/flux-validation") if os.uname().machine == "x86_64"
                     else Path("/tmp/flux-vanilla"))
-    scratch = scratch_root / job_id
+    scratch = scratch_root / actual_job_id
     filesystem = subprocess.check_output(["findmnt", "-n", "-o", "FSTYPE", "-T", str(scratch_root)], text=True).strip()
     if filesystem != ("xfs" if os.uname().machine == "x86_64" else "ext4"):
         raise ValueError("unqualified local scratch filesystem")
-    scratch.mkdir(exist_ok=False)
-    record = {"job_id": job_id, "launch_sha256": digest, "source": intent["source"],
+    record = {"job_id": actual_job_id, "launch_sha256": digest, "source": intent["source"],
               "runtime": intent["runtime"], "runtime_verified": False,
               "scratch": str(scratch), "scratch_removed": False,
               "affinity": sorted(os.sched_getaffinity(0))}
+    if intent.get("resources") is not None:
+        allocation = json.loads(checked(["job", "info", os.environ["FLUX_JOB_ID"], "R"]))
+        cores = allocation["execution"]["R_lite"][0]["children"]["core"]
+        mapped = subprocess.check_output([f"{PREFIX}/deps/bin/hwloc-calc", "--physical-output", "--intersect", "PU", "--sep", ",", "core:" + cores],
+                                         env={"PATH": "/usr/bin:/bin", "LD_LIBRARY_PATH": f"{PREFIX}/deps/lib"}, text=True, timeout=30)
+        record["allocated_affinity"] = sorted(int(cpu) for cpu in mapped.strip().split(","))
+        require_allocation(allocation, intent["resources"], record["affinity"], record["allocated_affinity"])
+        if os.uname().machine != intent["resources"]["architecture"]:
+            raise ValueError("payload architecture differs from native intention")
+    scratch.mkdir(exist_ok=False)
     child = None
     interrupted = []
     class Interrupted(BaseException):
@@ -280,7 +346,8 @@ def payload(directory, digest):
             signal.signal(sig, forward)
         signal.signal(signal.SIGCHLD, signal.SIG_DFL)
         save(directory / "payload.json", record)
-        env = {**os.environ, "TMPDIR": str(scratch), "TMP": str(scratch), "TEMP": str(scratch)}
+        env = {**os.environ, "TMPDIR": str(scratch), "TMP": str(scratch), "TEMP": str(scratch),
+               "TESSERA_SUITE_DIRECTORY": str(directory), "TESSERA_SUITE_LAUNCH_SHA256": digest}
         child = subprocess.Popen(intent["command"], env=env, start_new_session=True)
         for sig in interrupted:
             child.send_signal(sig)
@@ -314,6 +381,17 @@ def payload(directory, digest):
                 except (OSError, subprocess.SubprocessError) as exc:
                     record["process_cleanup_error"] = str(exc)
             try:
+                if intent.get("container") is not None and (directory / "container.json").exists():
+                    from _suite_container import cleanup_cid
+                    container = json.loads((directory / "container.json").read_bytes())
+                    # A second cleanup is needed only when the child could not
+                    # finish its own CID cleanup. Never rewrite its announced
+                    # record after successful cleanup.
+                    if not container["removed"]:
+                        cleanup_cid(container)
+                        save(directory / "container.cleanup.json", container)
+                    if not container["removed"] or container["cleanup_errors"]:
+                        record["cleanup_error"] = "owned container cleanup incomplete"
                 shutil.rmtree(scratch)
                 record["scratch_removed"] = not scratch.exists()
             except OSError as exc:

@@ -13,8 +13,9 @@ import sys
 import sysconfig
 
 
-def identity():
-    sites = sorted({Path(sysconfig.get_path(key)).resolve() for key in ("purelib", "platlib")})
+def identity(extra_sites=()):
+    sites = sorted({*[Path(sysconfig.get_path(key)).resolve() for key in ("purelib", "platlib")],
+                    *[Path(site).resolve(strict=True) for site in extra_sites]})
     stdlib = Path(sysconfig.get_path("stdlib")).resolve()
     files = {Path(sys.executable).resolve()}
     library = Path(sysconfig.get_config_var("LIBDIR")) / sysconfig.get_config_var("LDLIBRARY")

@@ -1790,15 +1790,21 @@ a straddling group is unknown for this phase and is never interpolated into
 its power statistics. This repairs provenance, without claiming that the
 coarse sensor values or any historical energy comparison are qualified.
 
-Re-stamped 2026-10-02 for the optional container GPU merge-suite arm
-(tessera#818). A source-sealed runner uses PrismaBuild's Docker ownership and
-affinity shim, immutable image and scoped dependency content identities, and
-same-path readonly source/data mounts. The coordinator's existing receipt
-reader authenticates the runner and shared argv owner from the request's
-snapshot bundle before adopting a resumed exit. Container GPU xdist spends
-the declared CPUs with native threads one; all existing source, publication,
-device-allocation and missing-artifact gates remain in force. This changes no
-wire, serving route, runtime pin or artifact.
+Re-stamped 2026-11-08 for the G01 native container boundary, from
+`tools/_suite_container.py`, `_suite_flux.py` and `merge_suite.py`. The runner
+uses `/usr/bin/podman` directly, rootless with no pull, finite networking and
+mounts, explicit entrypoint/environment and the actual assigned cpuset.
+The original Flux jobspec, saved ID, exact source and allocation replace PB
+helper/claim/closure/CAS and PATH Docker-shim authority. Source plus its Git
+metadata, dependencies, data and application artifact roots mount readonly;
+distinct output and native job-ID cache roots are the only writable binds.
+CID registration precedes creation. Failed start and interruption cleanup reap
+only that captured CID, retain errors and independently check absence. Native
+clean is not physical cleanup evidence. Host runtime and actual in-container
+interpreter/stdlib/dependency/source entry/exit seals are separate facts.
+Container evidence binds inspected image content and CID, allocated affinity,
+publication and exact native terminal evidence. CPU proofs do not qualify CUDA.
+No wire, serving route, runtime pin or artifact changes.
 
 Re-stamped 2026-10-02 for explicit PrismaQuant accounting-source binding
 (tessera#825). The plan converter and accounting gate use one repo-tooling
@@ -3981,7 +3987,8 @@ refuse at the composed command boundary, including nonadjacent overlaps.
 
 Re-stamped 2026-11-08 from `tools/merge_suite.py`, `tools/selected_population.py`,
 `tools/_suite_flux.py` and `tools/_suite_runtime.py`. CPU transport qualification
-is unit3 only; GPU, container, full-suite and production qualification remain separate.
+is unit3; G01 adds native rootless container authority. Full-suite, CUDA and
+production qualification remain separate.
 
 `tools/merge_suite.py` submits its CPU population through native Flux. The
 versioned `fv1-explicit-perf-memory.v1` profile declares performance cores and
@@ -3989,9 +3996,12 @@ versioned `fv1-explicit-perf-memory.v1` profile declares performance cores and
 four cores, 16 GiB and thirty minutes. Every job starts with an empty
 environment and an explicit allowlist, with native math/build threads bounded
 to one. The x86 interpreter capability selects x86, without a host pin.
-GPU and container intentions remain explicit and refuse before any arm launches
-until their native admission contract is qualified. Strict-CUDA population,
-allocation, artifact and serving gates are unchanged.
+The native container intention now renders one whole GPU and the installed
+`aarch64` resource property, with the same bounded performance cores and memory.
+Public GPU execution requires an immutable local image and scoped dependency
+seal. This G01 slice qualifies only internal no-GPU container transport; the
+CUDA branch still requires a separately approved device canary. Strict-CUDA
+population, allocation, artifact and serving gates are unchanged.
 
 The source is a clean detached shared checkout. The launch records its actual
 tracked path/mode/byte identity through `suite_source.measured_source`, without

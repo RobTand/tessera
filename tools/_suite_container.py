@@ -198,67 +198,6 @@ def command_spec(command):
     return None
 
 
-def admission(spec, payload):
-    """The runner's image and process count must be PB's declared demand."""
-    params = payload.get("params") or {}
-    _require(spec["--image"] in params.get("container_images", []), "container image is not PB-declared")
-    demand = params.get("demand") or {}
-    _require(demand.get("cpu") == spec["workers"] and demand.get("gpu", 0) > 0,
-             "container workers/GPU differ from PB reservation")
-    variables = (payload.get("environment") or {}).get("variables") or {}
-    for key, value in spec["artifacts"].items():
-        _require(variables.get(key) == value, "artifact root is not sealed: " + key)
-
-
-def admitted_request(checkout, environment):
-    """Reuse PB's own closure verifier rather than inventing action ownership."""
-    commit = subprocess.check_output(["git", "-C", str(checkout), "rev-parse", "HEAD"], text=True, timeout=10).strip()
-    verified = runpy.run_path(str(PB_VERIFIER))["verify"](checkout, commit)
-    key = environment["PRISMABUILD_ACTION_KEY"]
-    stamps = [stamp for stamp in verified["generated"] if stamp.get("action_key") == key]
-    _require(len(stamps) == 1, "source verifier did not bind this executing action")
-    request = Path("/mnt/shared/prismabuild-fleet/cas/requests", key[:2], key + ".json").read_bytes()
-    _require(hashlib.sha256(request).hexdigest() == stamps[0]["request_sha256"], "executing request digest differs")
-    return json.loads(request)
-
-
-def source_bound(payload, cas_root, verified_bundles=None):
-    """Authenticate runner blobs from the request's sealed snapshot bundle."""
-    snapshot = payload["params"]["checkout_snapshot"]
-    entry = snapshot["input"]
-    _require(entry in payload["inputs"], "snapshot input is not sealed")
-    digest = entry["sha256"]
-    _require(_SHA.fullmatch(digest) and 0 < entry["bytes"] <= 256 * 1024 * 1024,
-             "snapshot bundle identity/size is invalid")
-    cache = {} if verified_bundles is None else verified_bundles
-    if digest not in cache:
-        blob = Path(cas_root, "blobs", digest[:2], digest)
-        _require(blob.stat().st_size == entry["bytes"], "snapshot bundle length differs")
-        raw = blob.read_bytes()
-        _require(hashlib.sha256(raw).hexdigest() == digest, "snapshot bundle digest differs")
-        cache[digest] = {"bytes": raw, "commits": set()}
-    raw = cache[digest]["bytes"]
-    _require(len(raw) == entry["bytes"], "snapshot bundle length differs")
-    if snapshot["commit"] in cache[digest]["commits"]:
-        return
-    parent = Path(os.environ.get("TMPDIR", "/home/rob/tmp"))
-    parent.mkdir(parents=True, exist_ok=True)
-    with tempfile.TemporaryDirectory(prefix="suite-runner-source-", dir=parent) as directory:
-        blob = Path(directory, "source.bundle")
-        blob.write_bytes(raw)
-        def git(*args):
-            return subprocess.check_output(["git", "-C", directory, *args], stderr=subprocess.DEVNULL, timeout=30)
-        git("init", "--bare", "--quiet")
-        git("fetch", "--quiet", "--no-tags", str(blob), snapshot["commit"])
-        repo = Path(__file__).resolve().parents[1]
-        for name in SOURCE_FILES:
-            mode = git("ls-tree", snapshot["commit"], "--", name).split()[0]
-            _require(mode in (b"100644", b"100755"), "runner source is not a regular blob")
-            _require(git("show", f"{snapshot['commit']}:{name}") == (repo / name).read_bytes(),
-                     "authenticated snapshot runner source differs: " + name)
-    cache[digest]["commits"].add(snapshot["commit"])
-
-
 def dependency_manifest(site):
     """Version declarations and all actual dependency bytes form one seal."""
     from importlib.metadata import distributions
@@ -278,86 +217,287 @@ def dependency_manifest(site):
     return body, seal
 
 
-def docker_command(spec, checkout, environment):
-    """Construct only this contract; PB's Docker shim owns scope and affinity."""
+
+def validate_mounts(spec, checkout):
+    """Readonly and writable ownership cannot shadow one another."""
     require_local_cache(spec["--cache-dir"])
     checkout = absolute(str(checkout))
-    paths = [checkout, absolute(spec["--deps-site"]), absolute(spec["--surface-dir"]), absolute(spec["--cache-dir"])]
+    deps, output, cache = [absolute(spec[key]) for key in ("--deps-site", "--surface-dir", "--cache-dir")]
+    paths = [checkout, deps, output, cache]
     _require(all(path.resolve() == path for path in paths), "source/dependency/output/cache symlink refused")
-    _require(all(not _overlap(checkout, path) for path in paths[1:]), "mount shadows source checkout")
-    readonly = [absolute(path) for path in spec["--data-root"]]
+    _require(all(not _overlap(left, right) for index, left in enumerate(paths)
+                 for right in paths[index + 1:]), "mount shadows source/dependency/output/cache")
     scratch_env = artifact_specs()["scratch"].env
-    readonly += [absolute(path) for key, path in spec["artifacts"].items() if key != scratch_env]
-    readonly += paths[:2]
+    readonly = [checkout, deps, *[absolute(path) for path in spec["--data-root"]],
+                *[absolute(path) for key, path in spec["artifacts"].items() if key != scratch_env]]
     for path in readonly:
-        _require(path.resolve() == path and path.exists(), "readonly mount missing or symlink: " + str(path))
-        _require(not any(path == writable or writable in path.parents for writable in paths[2:]), "data mount shadows writable output/cache")
-    readonly = sorted(set(readonly), key=lambda p: (len(p.parts), str(p)))
-    # A readonly parent already supplies its readonly descendants. Writable
-    # output/cache are the only intentional children, emitted last below.
-    readonly = [path for path in readonly if not any(parent in path.parents for parent in readonly)]
-    env = {**THREAD_LIMITS, "PYTHONNOUSERSITE": "1", "PYTHONDONTWRITEBYTECODE": "1",
-           "PYTEST_DISABLE_PLUGIN_AUTOLOAD": "1", "HOME": spec["--cache-dir"],
-           "TMPDIR": spec["--cache-dir"] + "/tmp", "XDG_CACHE_HOME": spec["--cache-dir"] + "/xdg",
-           "TORCH_EXTENSIONS_DIR": spec["--cache-dir"] + "/torch", "TRITON_CACHE_DIR": spec["--cache-dir"] + "/triton",
-           "CMAKE_BUILD_PARALLEL_LEVEL": "1", "NINJAFLAGS": "-j1", "MAKEFLAGS": "-j1",
-           "PYTHONPATH": str(checkout / "src") + ":" + spec["--deps-site"],
-           "GIT_CONFIG_COUNT": "1", "GIT_CONFIG_KEY_0": "safe.directory", "GIT_CONFIG_VALUE_0": str(checkout)}
-    for name in ("TESSERA_SOURCE_VERIFIER", "PRISMABUILD_CONTAINER_OWNER"):
-        _require(environment.get(name), "admitted action lacks " + name)
-        env[name] = environment[name]
-    if "CUDA_VISIBLE_DEVICES" in environment:
-        _require(environment["CUDA_VISIBLE_DEVICES"], "CUDA device visibility is empty")
-        env["CUDA_VISIBLE_DEVICES"] = environment["CUDA_VISIBLE_DEVICES"]
-    verifier = shlex.split(env["TESSERA_SOURCE_VERIFIER"])
-    _require(len(verifier) == 3 and verifier[0] == "/usr/bin/python3" and verifier[2] == "verify"
-             and Path(verifier[1]).name == "pbsnapshot.py", "source verifier shape refused")
-    _require(Path(verifier[1]).resolve(strict=True) == PB_VERIFIER.resolve(strict=True), "source verifier is not the published PB helper")
-    _require(any(absolute(verifier[1]).is_relative_to(path) for path in readonly), "source verifier is not mounted")
+        _require(path.resolve() == path and path.is_dir(), "readonly mount missing or symlink: " + str(path))
+        _require(not any(_overlap(path, writable) for writable in (output, cache)),
+                 "readonly root overlaps writable output/cache")
+        _require(path in (checkout, deps) or not any(_overlap(path, root) for root in (checkout, deps)),
+                 "data/artifact mount shadows source/dependencies")
+    # Linked worktrees need the existing Git metadata, never the interactive
+    # worktree files. Mount only the two explicit Git metadata directories.
+    for option in ("--absolute-git-dir", "--git-common-dir"):
+        result = subprocess.check_output(["git", "-C", str(checkout), "rev-parse", option], text=True, timeout=30).strip()
+        path = Path(result)
+        path = (checkout / path).resolve() if not path.is_absolute() else path.resolve()
+        _require(not any(_overlap(path, writable) for writable in (output, cache)), "Git metadata overlaps writable roots")
+        readonly.append(path)
+    return sorted(set(readonly))
+
+
+def podman_command(spec, checkout, environment, *, cidfile, affinity, gpus):
+    readonly = validate_mounts(spec, checkout)
+    _require(type(gpus) is int and gpus in (0, 1), "GPU count must be zero or one whole GPU")
+    _require(spec["strict_cuda"] == bool(gpus), "strict CUDA differs from native GPU intention")
+    _require(affinity and all(type(cpu) is int and cpu >= 0 for cpu in affinity), "assigned cpuset missing")
     for key in artifact_variables():
         if environment.get(key):
             _require(spec["artifacts"].get(key) == environment[key], "artifact environment shadow: " + key)
+    _require(not environment.get("TESSERA_SOURCE_VERIFIER"), "native source verifier shadow")
+    _require(environment.get("FLUX_JOB_ID") and environment.get("TMPDIR"), "native scratch/job ID absent")
+    scratch = Path(environment["TMPDIR"])
+    _require(scratch.parent == Path(spec["--cache-dir"])
+             and scratch.name == environment["FLUX_JOB_ID"], "cache is not native job-ID-owned scratch")
+    cache = scratch / "container-cache"
+    env = {**THREAD_LIMITS, "TORCH_NUM_THREADS": "1", "PYTHONNOUSERSITE": "1", "PYTHONDONTWRITEBYTECODE": "1",
+           "PYTEST_DISABLE_PLUGIN_AUTOLOAD": "1", "PRISMAQUANT_DEV_MODE": "0",
+           "PATH": "/usr/local/bin:/usr/bin:/bin", "HOME": str(cache),
+           "TMPDIR": str(cache / "tmp"), "XDG_CACHE_HOME": str(cache / "xdg"),
+           "TORCH_EXTENSIONS_DIR": str(cache / "torch"), "TRITON_CACHE_DIR": str(cache / "triton"),
+           "NINJAFLAGS": "-j1", "MAKEFLAGS": "-j1",
+           "PYTHONPATH": str(checkout / "src") + ":" + spec["--deps-site"],
+           "GIT_CONFIG_COUNT": "1", "GIT_CONFIG_KEY_0": "safe.directory", "GIT_CONFIG_VALUE_0": str(checkout),
+           "FLUX_JOB_ID": environment["FLUX_JOB_ID"]}
     env.update(spec["artifacts"])
-    env[scratch_env] = env["TMPDIR"]
-    for name in ("TESSERA_PRISMAQUANT_DIR", "TESSERA_PRISMAQUANT_WORKTREE"):
-        if name in spec["artifacts"]:
-            env["PYTHONPATH"] += ":" + spec["artifacts"][name]
-    command = ["docker", "run", "--rm", "--gpus", "all", "--user", f"{os.getuid()}:{os.getgid()}",
-               "--entrypoint", "/usr/bin/python3", "--workdir", str(checkout)]
+    env[artifact_specs()["scratch"].env] = env["TMPDIR"]
+    for key in ("TESSERA_PRISMAQUANT_DIR", "TESSERA_PRISMAQUANT_WORKTREE"):
+        if key in spec["artifacts"]:
+            env["PYTHONPATH"] += ":" + spec["artifacts"][key]
+    command = [PODMAN, "create", "--pull=never", "--cidfile", str(cidfile),
+               "--cgroups=disabled", "--network=none", "--env-host=false", "--unsetenv-all",
+               "--cpuset-cpus", ",".join(map(str, affinity)),
+               "--entrypoint", spec["inner"][0], "--workdir", str(checkout)]
+    if gpus:
+        command += ["--device", "nvidia.com/gpu=all"]
+    else:
+        command += ["--read-only"]
     for path in readonly:
         command += ["--mount", f"type=bind,src={path},dst={path},readonly"]
-    for path in paths[2:]:
+    for path in (Path(spec["--surface-dir"]), cache):
         command += ["--mount", f"type=bind,src={path},dst={path}"]
     for key, value in sorted(env.items()):
         command += ["--env", f"{key}={value}"]
-    return [*command, spec["--image"], *spec["inner"][1:], "--basetemp", spec["--cache-dir"] + "/pytest"]
+    return [*command, spec["--image"]]
+
+
+def image_identity(image):
+    result = subprocess.run([PODMAN, "image", "inspect", image], capture_output=True, text=True, timeout=30)
+    _require(result.returncode == 0, "immutable local image unavailable; pulling is forbidden")
+    value, = json.loads(result.stdout)
+    identity = {key: value[key] for key in ("Id", "Architecture", "Os")}
+    _require(identity["Id"] == image and identity["Os"] == "linux", "local image content differs")
+    return identity
+
+
+def driver_identity(gpus):
+    if not gpus:
+        return None
+    result = subprocess.run(["/usr/bin/nvidia-smi", "--query-gpu=uuid,driver_version", "--format=csv,noheader"],
+                            capture_output=True, text=True, timeout=30)
+    _require(result.returncode == 0 and result.stdout.strip(), "host/device driver identity unavailable")
+    return result.stdout.strip().splitlines()
+
+
+def cleanup_cid(record):
+    """Reap the captured handle only, preserving errors even on failed remove."""
+    path = Path(record["cidfile"])
+    try:
+        if path.is_symlink():
+            raise ValueError("owned cidfile replaced by symlink")
+        cid = path.read_text().strip() if path.exists() else None
+        if cid is None:
+            record["removed"] = record.get("creation_returncode") not in (None, 0)
+            return
+        _require(re.fullmatch(r"[0-9a-f]{64}", cid), "invalid captured CID")
+        _require(record.get("cid") in (None, cid), "owned cidfile replaced")
+        record["cid"] = cid
+        for args in (["stop", "--time", "2", cid], ["rm", "--force", cid]):
+            result = subprocess.run([PODMAN, *args], capture_output=True, text=True, timeout=15)
+            if result.returncode:
+                record["cleanup_errors"].append(" ".join(args[:1]) + ": " + result.stderr.strip())
+        result = subprocess.run([PODMAN, "container", "exists", cid], capture_output=True, timeout=15)
+        record["removed"] = result.returncode == 1
+        _require(result.returncode in (0, 1), "container absence query failed")
+    except (OSError, ValueError, subprocess.SubprocessError) as exc:
+        record["cleanup_errors"].append(str(exc))
+
+
+def admitted_context(directory, digest, environment):
+    import _suite_flux as flux
+    directory = Path(directory)
+    raw = (directory / "launch.json").read_bytes()
+    _require(hashlib.sha256(raw).hexdigest() == digest, "launch bytes changed")
+    intent = json.loads(raw)
+    sent = json.loads((directory / "submission.json").read_bytes())
+    _require(sent["launch_sha256"] == digest and sent["state"] == "submitted"
+             and flux.job_id(sent["job_id"]) == flux.job_id(environment["FLUX_JOB_ID"]), "native job ID differs")
+    _require(intent["directory"] == str(directory) and Path(intent["checkout"]) == Path.cwd(), "native source/root differs")
+    _require(flux.source(Path.cwd()) == intent["source"], "native source authentication failed")
+    return intent
+
+
+def run(spec, checkout, environment, directory, intent, digest):
+    import _suite_flux as flux
+    directory, checkout = Path(directory), Path(checkout)
+    resources = intent["resources"]
+    _require(intent["container"] == spec and spec["workers"] == resources["cores"], "container/native intent differs")
+    _require(spec["strict_cuda"] == bool(resources["gpus"]), "strict CUDA/GPU reservation differs")
+    validate_mounts(spec, checkout)
+    body, deps = dependency_manifest(spec["--deps-site"])
+    _require(deps == spec["--deps-sha256"], "dependency content identity differs")
+    image = image_identity(spec["--image"])
+    _require(image["Architecture"] == {"x86_64": "amd64", "aarch64": "arm64"}[resources["architecture"]], "image architecture differs")
+    affinity = sorted(os.sched_getaffinity(0))
+    record = {"schema": "tessera.suite_container_execution.v1", "job_id": environment["FLUX_JOB_ID"],
+              "launch_sha256": digest, "source": intent["source"], "image": image,
+              "cidfile": str(directory / "container.cid"), "cid": None, "affinity": affinity,
+              "gpus": resources["gpus"], "dependencies": deps, "entry": None, "exit": None,
+              "returncode": None, "cleanup_errors": [], "removed": False,
+              "driver": driver_identity(resources["gpus"])}
+    path = directory / "container.json"
+    _require(not path.exists() and not Path(record["cidfile"]).exists(), "container record already exists")
+    flux.save(path, record)  # Register the cidfile before the first create.
+    process = None
+    class Interrupted(BaseException):
+        pass
+    def interrupt(signum, frame):
+        record["interrupted_signal"] = signum
+        raise Interrupted
+    handlers = {sig: signal.signal(sig, interrupt) for sig in (signal.SIGTERM, signal.SIGINT)}
+    try:
+        cache = Path(environment["TMPDIR"]) / "container-cache"
+        cache.mkdir(exist_ok=False)
+        for name in ("tmp", "xdg", "torch", "triton"):
+            (cache / name).mkdir()
+        command = podman_command(spec, checkout, environment, cidfile=record["cidfile"], affinity=affinity, gpus=resources["gpus"])
+        command += [RUNNER, "inside", str(directory), digest]
+        process = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        stdout, stderr = process.communicate()
+        record["creation_returncode"] = process.returncode
+        (directory / "container.create.stdout").write_text(stdout)
+        (directory / "container.create.stderr").write_text(stderr)
+        _require(process.returncode == 0, "rootless container create failed: " + stderr.strip())
+        cid = Path(record["cidfile"]).read_text().strip()
+        _require(re.fullmatch(r"[0-9a-f]{64}", cid), "create returned no captured CID")
+        record["cid"] = cid
+        inspection = subprocess.run([PODMAN, "inspect", cid], capture_output=True, text=True, timeout=30)
+        _require(inspection.returncode == 0, "created container inspect failed")
+        actual, = json.loads(inspection.stdout)
+        record["inspection"] = {"Id": actual["Id"], "Image": actual["Image"],
+                                "CpusetCpus": actual["HostConfig"]["CpusetCpus"]}
+        _require(actual["Id"] == cid and actual["Image"].removeprefix("sha256:") == image["Id"].removeprefix("sha256:"), "actual container image differs")
+        flux.save(path, record)
+        process = subprocess.Popen([PODMAN, "start", "--attach", cid])
+        record["returncode"] = process.wait()
+        for phase in ("entry", "exit"):
+            record[phase] = json.loads((directory / f"container.{phase}.json").read_bytes())
+        _require(record["entry"] == record["exit"], "container source/runtime/dependency identity changed")
+        _require(dependency_manifest(spec["--deps-site"])[1] == deps, "dependency content changed during execution")
+        _require(image_identity(spec["--image"]) == image, "image changed during execution")
+        return record["returncode"]
+    except Interrupted:
+        return 128 + record["interrupted_signal"]
+    finally:
+        for sig in handlers:
+            signal.signal(sig, signal.SIG_IGN)
+        try:
+            if process is not None and process.poll() is None:
+                process.terminate()
+                try:
+                    process.wait(timeout=3)
+                except subprocess.TimeoutExpired:
+                    process.kill()
+                    process.wait(timeout=3)
+            cleanup_cid(record)
+        except (OSError, subprocess.SubprocessError) as exc:
+            record["cleanup_errors"].append(str(exc))
+        finally:
+            flux.save(path, record)
+            print("Tessera container evidence " + str(path) + " sha256=" + hashlib.sha256(path.read_bytes()).hexdigest(), flush=True)
+            for sig, handler in handlers.items():
+                signal.signal(sig, handler)
+
+
+def inside(directory, digest):
+    """Measure the numerical runtime inside the actual immutable container."""
+    import _suite_flux as flux
+    from _suite_runtime import identity
+    directory = Path(directory)
+    raw = (directory / "launch.json").read_bytes()
+    _require(hashlib.sha256(raw).hexdigest() == digest, "inside launch changed")
+    intent = json.loads(raw)
+    spec = intent["container"]
+    def snapshot():
+        return {"schema": "tessera.suite_container_runtime.v1", "job_id": os.environ["FLUX_JOB_ID"],
+                "launch_sha256": digest, "source": flux.source(Path.cwd()),
+                "runtime": identity(extra_sites=(spec["--deps-site"],)),
+                "dependencies": dependency_manifest(spec["--deps-site"])[1],
+                "affinity": sorted(os.sched_getaffinity(0)), "driver": driver_identity(intent["resources"]["gpus"])}
+    entry = snapshot()
+    _require(entry["source"] == intent["source"] and entry["dependencies"] == spec["--deps-sha256"], "inside source/dependencies differ")
+    flux.save(directory / "container.entry.json", entry)
+    command = [*spec["inner"], "--basetemp", str(Path(os.environ["TMPDIR"]) / "pytest")]
+    result = subprocess.call(command)
+    exit_record = snapshot()
+    flux.save(directory / "container.exit.json", exit_record)
+    _require(entry == exit_record, "inside source/runtime/dependencies changed")
+    return result
+
+
+def verify_record(directory, intent, digest, native_id, affinity):
+    import _suite_flux as flux
+    path = Path(directory) / "container.json"
+    _require(not path.is_symlink(), "container evidence symlink")
+    raw = path.read_bytes()
+    record = json.loads(raw)
+    announcement = "Tessera container evidence " + str(path) + " sha256=" + hashlib.sha256(raw).hexdigest()
+    _require(announcement in (Path(directory) / "stdout").read_text().splitlines(), "container evidence missing or replaced")
+    spec, resources = intent["container"], intent["resources"]
+    _require(record["schema"] == "tessera.suite_container_execution.v1"
+             and flux.job_id(record["job_id"]) == flux.job_id(native_id)
+             and record["launch_sha256"] == digest and record["source"] == intent["source"]
+             and record["image"]["Id"] == spec["--image"]
+             and record["image"]["Architecture"] == {"x86_64": "amd64", "aarch64": "arm64"}[resources["architecture"]]
+             and record["gpus"] == resources["gpus"] and record["affinity"] == affinity
+             and record["dependencies"] == spec["--deps-sha256"]
+             and record["removed"] and not record["cleanup_errors"], "container execution/cleanup binding differs")
+    _require(record["entry"] is not None and record["entry"] == record["exit"], "container runtime span missing or changed")
+    entry = record["entry"]
+    _require(entry["schema"] == "tessera.suite_container_runtime.v1"
+             and entry["source"] == intent["source"] and entry["launch_sha256"] == digest
+             and flux.job_id(entry["job_id"]) == flux.job_id(native_id)
+             and entry["dependencies"] == spec["--deps-sha256"] and entry["affinity"] == affinity
+             and entry["driver"] == record["driver"] and bool(entry["driver"]) == bool(resources["gpus"])
+             and entry["runtime"]["schema"] == "tessera.suite_runtime.v1", "inside runtime/source/allocation binding differs")
+    inspection = record["inspection"]
+    _require(re.fullmatch(r"[0-9a-f]{64}", record["cid"])
+             and inspection["Id"] == record["cid"]
+             and inspection["Image"].removeprefix("sha256:") == spec["--image"].removeprefix("sha256:")
+             and inspection["CpusetCpus"] == ",".join(map(str, affinity)), "actual CID/image/cpuset differs")
+    return record
 
 
 def main(argv=None):
     try:
-        spec = parse(sys.argv[1:] if argv is None else argv)
-        _require(os.environ.get("PRISMABUILD_ACTION_KEY") and os.environ.get("PRISMABUILD_ACTION_SCOPE"), "container launch requires an admitted PB action")
-        admission(spec, admitted_request(Path.cwd(), os.environ))
-        _, digest = dependency_manifest(spec["--deps-site"])
-        _require(digest == spec["--deps-sha256"], "dependency content identity differs")
-        command = docker_command(spec, Path.cwd(), os.environ)
-        cache = absolute(spec["--cache-dir"])
-        for name in ("", "tmp", "xdg", "torch", "triton"):
-            (cache / name).mkdir(parents=True, exist_ok=True)
-        owner = cache / ".suite-action"
-        key = os.environ["PRISMABUILD_ACTION_KEY"]
-        try:
-            with owner.open("x") as handle:
-                handle.write(key)
-        except FileExistsError:
-            _require(not owner.is_symlink() and owner.read_text() == key, "cache belongs to another action")
-        result = subprocess.call(command)
-        # Bind dependency bytes across execution, just as suite_source binds
-        # tracked source at entry and publication. A host-side mutation must
-        # not let a clean pytest summary establish a successful arm.
-        _require(dependency_manifest(spec["--deps-site"])[1] == digest,
-                 "dependency content changed during execution")
-        return result
+        argv = sys.argv[1:] if argv is None else argv
+        if len(argv) == 3 and argv[0] == "inside":
+            return inside(argv[1], argv[2])
+        spec = parse(argv)
+        directory, digest = os.environ["TESSERA_SUITE_DIRECTORY"], os.environ["TESSERA_SUITE_LAUNCH_SHA256"]
+        intent = admitted_context(directory, digest, os.environ)
+        return run(spec, Path.cwd(), os.environ, directory, intent, digest)
     except (ValueError, OSError, KeyError, subprocess.SubprocessError) as error:
         print(str(error), file=sys.stderr)
         return 2
