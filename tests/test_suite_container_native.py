@@ -507,7 +507,7 @@ def test_generated_native_wrapper_and_original_authentication_require_no_user_si
     command = merge._command({**merge.ARMS['x86'], 'python': sys.executable}, tmp_path / 'surface.json', [], 1)
     assert command[:4] == [sys.executable, '-s', '-m', 'pytest']
     monkeypatch.setattr(flux, 'source', lambda checkout: {'sha256': 'a' * 64})
-    monkeypatch.setattr(flux, 'profile_identity', lambda: {'profile': 'fixture'})
+    monkeypatch.setattr(flux, 'profile_identity', lambda: {'profile': 'fixture', 'broker_starttime': 'generation-A'})
     monkeypatch.setattr(flux, 'runtime_identity', lambda *args, **kwargs: {'schema': 'tessera.suite_runtime.v1'})
     monkeypatch.setattr(flux, 'collect', lambda directory: {'state': 'running'})
     calls = []
