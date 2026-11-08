@@ -255,7 +255,7 @@ def population_problems(selection: dict, records: list[dict]) -> list[str]:
     for record in records:
         name = record["arm"]
         action = record.get("native_job")
-        if not action:
+        if not action or not action.get("command"):
             problems.append(f"{name}: no sealed command is bound to this shard, so what it ran is unknown")
             continue
         if action.get("application") != selection_binding(selection, Path(

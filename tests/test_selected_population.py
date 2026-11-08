@@ -242,7 +242,12 @@ def test_a_dry_run_prints_each_shards_command_and_creates_nothing(tmp_path, monk
     assert len(lines) == 2
     for line, files in zip(lines, SHARDS.values()):
         assert all(path in line for path in files)
-        assert f"--surface-json {out_dir}/surface.shard-" in line
+        import shlex
+        argv, why = sp.merge_suite._pytest_argv(shlex.split(line))
+        assert why is None
+        assert sp.merge_suite._targets_of(argv) == files
+        destination, why = sp.merge_suite._effective_surface_json(argv)
+        assert why is None and Path(destination).parent == out_dir
         assert "-n 2 --dist worksteal" in line
         assert "--cpus" not in line
 
@@ -432,7 +437,7 @@ def _world(tmp_path, monkeypatch, *, shards=None, ran=None, state=None, source=N
         world = jobs.add(receipt_dir, name, surface, command=command,
             code=status[1] if status else 0, application=sp.selection_binding(selection, receipt_dir))
         if status is None:
-            world.events = []
+            (world.directory / "submission.json").unlink()
     (receipt_dir / sp.SELECTION).write_bytes(sp.merge_suite.suite_flux.encoded(selection))
     return SimpleNamespace(checkout=checkout, receipt_dir=receipt_dir, selection=selection, jobs=jobs)
 
