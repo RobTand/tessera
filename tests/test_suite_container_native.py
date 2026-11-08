@@ -109,8 +109,8 @@ def test_native_verifier_accepts_positive_before_mutation(native_record, fact):
     elif fact == "runtime": record["exit"]["runtime"]["sha256"] = "0" * 64
     elif fact.startswith("inside-") or fact == "driver":
         key = {"inside-source": "source", "inside-deps": "dependencies", "inside-cpus": "affinity", "driver": "driver"}[fact]
-        record["entry"][key] = None
-        record["exit"][key] = None
+        record["entry"][key] = ["unexpected driver"] if fact == "driver" else None
+        record["exit"][key] = ["unexpected driver"] if fact == "driver" else None
     elif fact == "cleanup": record["cleanup_errors"] = ["failed to delete owned container"]
     elif fact == "removed": record["removed"] = False
     publish()
