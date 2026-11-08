@@ -840,6 +840,8 @@ def _arm_results(arms: list[dict]) -> dict:
                 f"{counts.get('error', 0)} error")
         elif record.get("returncode") not in (0, None):
             results[record["arm"]] = f"red: exit {record['returncode']}"
+        elif record.get("publication_errors"):
+            results[record["arm"]] = "incomplete: " + "; ".join(record["publication_errors"])
         elif record.get("surface") is None:
             results[record["arm"]] = "no population published"
         elif _evidence_problem(record) or _coverage_problem(record):
@@ -878,6 +880,8 @@ def _verdict(arms: list[dict], commits: dict | None = None) -> str:
             return f"red on one of: {names}"
     if any(record.get("status") for record in arms):
         return "not run"
+    if any(record.get("publication_errors") for record in arms):
+        return "incomplete: population or stdout could not be read"
     if any(record.get("surface") is None for record in arms):
         return "incomplete: an arm published no population"
     # A population in which nothing ran is not a green population, and neither
