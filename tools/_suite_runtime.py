@@ -13,7 +13,7 @@ import sys
 import sysconfig
 
 
-def identity(extra_sites=()):
+def identity(extra_sites=(), require_suite=True):
     sites = sorted({*[Path(sysconfig.get_path(key)).resolve() for key in ("purelib", "platlib")],
                     *[Path(site).resolve(strict=True) for site in extra_sites]})
     stdlib = Path(sysconfig.get_path("stdlib")).resolve()
@@ -73,12 +73,14 @@ def identity(extra_sites=()):
         digest.update(json.dumps(entry, ensure_ascii=False, separators=(",", ":")).encode() + b"\n")
     versions = sorted((d.metadata["Name"], d.version)
                       for root in sites for d in importlib.metadata.distributions(path=[str(root)]))
-    if not {"pytest", "pytest-xdist"} <= {name.lower() for name, version in versions}:
+    if require_suite and not {"pytest", "pytest-xdist"} <= {name.lower() for name, version in versions}:
         raise ValueError("native suite runtime requires pytest and pytest-xdist")
     return {"schema": "tessera.suite_runtime.v1", "executable": str(Path(sys.executable).resolve()),
-            "version": sys.version, "files": len(files), "sha256": digest.hexdigest(),
+            "version": sys.version, "files": len(files), "sha256": digest.hexdigest(), "require_suite": require_suite,
             "versions": versions}
 
 
 if __name__ == "__main__":
-    print(json.dumps(identity(), sort_keys=True))
+    if sys.argv[1:] not in ([], ["--wrapper"]):
+        raise SystemExit("only the internal --wrapper mode is supported")
+    print(json.dumps(identity(require_suite=sys.argv[1:] != ["--wrapper"]), sort_keys=True))

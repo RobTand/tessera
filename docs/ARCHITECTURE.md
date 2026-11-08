@@ -1802,6 +1802,10 @@ CID registration precedes creation. Failed start and interruption cleanup reap
 only that captured CID, retain errors and independently check absence. Native
 clean is not physical cleanup evidence. Host runtime and actual in-container
 interpreter/stdlib/dependency/source entry/exit seals are separate facts.
+The host-only wrapper seal does not require pytest or xdist; native CPU suites
+and actual in-container runtime seals still require both. Malformed container
+cleanup evidence cannot mask the payload failure or prevent scratch cleanup
+evidence from being written.
 Container evidence binds inspected image content and CID, allocated affinity,
 publication and exact native terminal evidence. CPU proofs do not qualify CUDA.
 No wire, serving route, runtime pin or artifact changes.

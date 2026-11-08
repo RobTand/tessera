@@ -1250,7 +1250,7 @@ def main() -> int:
                           **({"python": args.python} if args.python and name == "x86" else {})}
                   for name in wanted}
     if args.gpu_image and "gpu" in configured:
-        configured["gpu"].update(fans_out=True, container={
+        configured["gpu"].update(python="/usr/bin/python3", fans_out=True, container={
             "image": args.gpu_image, "deps_site": args.gpu_deps_site,
             "deps_sha256": args.gpu_deps_sha256, "cache_dir": args.gpu_cache_dir,
             "data_roots": args.gpu_data_root})

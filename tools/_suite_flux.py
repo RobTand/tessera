@@ -166,7 +166,8 @@ def submit(directory, checkout, command, cores, memory, timeout, environment, *,
     qualified = profile_identity()
     if application is not None:
         require_selection(application, identity)
-    runtime = runtime_identity(command[0], checkout, timeout=timeout)
+    runtime = runtime_identity(command[0], checkout, timeout=timeout,
+                               **({"wrapper": True} if container is not None else {}))
     intent = {"schema": "tessera.flux.launch.v1", "profile": PROFILE, "uri": URI,
               "qualification": qualified, "broker_starttime": qualified["broker_starttime"],
               "directory": str(directory), "checkout": str(checkout), "source": identity,
@@ -273,7 +274,8 @@ def collect(directory):
             if (job_id(payload["job_id"]) != saved_id or payload["launch_sha256"] != digest
                     or payload["source"] != intent["source"] or not payload["scratch_removed"]
                     or payload["runtime"] != intent["runtime"] or not payload["runtime_verified"]
-                    or payload.get("process_cleanup_error") or payload.get("cleanup_error")):
+                    or payload.get("process_cleanup_error") or payload.get("cleanup_error")
+                    or payload.get("container_cleanup_error")):
                 raise ValueError("payload source or scratch binding missing")
             if intent.get("resources") is not None:
                 require_allocation(value, intent["resources"], payload["affinity"], payload["allocated_affinity"])
@@ -315,7 +317,8 @@ def payload(directory, digest):
         raise ValueError("source changed before payload")
     if intent["application"] is not None:
         require_selection(intent["application"], intent["source"])
-    if runtime_identity(intent["command"][0], Path.cwd(), timeout=intent["timeout_s"]) != intent["runtime"]:
+    runtime_options = {"wrapper": True} if intent.get("container") is not None else {}
+    if runtime_identity(intent["command"][0], Path.cwd(), timeout=intent["timeout_s"], **runtime_options) != intent["runtime"]:
         raise ValueError("interpreter/dependencies changed before payload")
     actual_job_id = os.environ["FLUX_JOB_ID"]
     scratch_root = (Path("/home/rob/tl-gates/flux-validation") if os.uname().machine == "x86_64"
@@ -366,7 +369,7 @@ def payload(directory, digest):
             return 128 + interrupted[0]
         if source(Path.cwd()) != intent["source"]:
             raise ValueError("source changed during payload")
-        if runtime_identity(intent["command"][0], Path.cwd(), timeout=intent["timeout_s"]) != intent["runtime"]:
+        if runtime_identity(intent["command"][0], Path.cwd(), timeout=intent["timeout_s"], **runtime_options) != intent["runtime"]:
             raise ValueError("interpreter/dependencies changed during payload")
         record["runtime_verified"] = True
         return code
@@ -387,8 +390,8 @@ def payload(directory, digest):
                     child.wait(timeout=5)
                 except (OSError, subprocess.SubprocessError) as exc:
                     record["process_cleanup_error"] = str(exc)
-            try:
-                if intent.get("container") is not None and (directory / "container.json").exists():
+            if intent.get("container") is not None:
+                try:
                     from _suite_container import cleanup_cid
                     container = json.loads((directory / "container.json").read_bytes())
                     # A second cleanup is needed only when the child could not
@@ -398,7 +401,10 @@ def payload(directory, digest):
                         cleanup_cid(container)
                         save(directory / "container.cleanup.json", container)
                     if not container["removed"] or container["cleanup_errors"]:
-                        record["cleanup_error"] = "owned container cleanup incomplete"
+                        record["container_cleanup_error"] = "owned container cleanup incomplete"
+                except (OSError, ValueError, KeyError, TypeError, subprocess.SubprocessError) as exc:
+                    record["container_cleanup_error"] = str(exc)
+            try:
                 shutil.rmtree(scratch)
                 record["scratch_removed"] = not scratch.exists()
             except OSError as exc:
@@ -416,8 +422,9 @@ def require_selection(binding, identity):
         raise ValueError("selection bytes or selection-time source changed")
 
 
-def runtime_identity(python, checkout, *, timeout):
-    result = subprocess.run([python, "-I", "-B", str(Path(checkout) / "tools/_suite_runtime.py")],
+def runtime_identity(python, checkout, *, timeout, wrapper=False):
+    result = subprocess.run([python, "-I", "-B", str(Path(checkout) / "tools/_suite_runtime.py"),
+                             *(["--wrapper"] if wrapper else [])],
                             capture_output=True, text=True, timeout=timeout,
                             env={"PATH": "/usr/bin:/bin", "HOME": "/home/rob"})
     if result.returncode:

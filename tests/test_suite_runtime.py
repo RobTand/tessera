@@ -50,3 +50,18 @@ def test_runtime_alias_cycle_terminates_and_alias_target_is_sealed(runtime, tmp_
     before = module.identity()
     (vendor / "cycle").unlink()
     assert module.identity()["sha256"] != before["sha256"]
+
+
+def test_wrapper_runtime_does_not_claim_a_pytest_population(runtime, tmp_path):
+    module, vendor, stdlib, executable = runtime
+    site = tmp_path / "site"
+    for path in site.glob("*.dist-info/METADATA"):
+        path.unlink()
+    with pytest.raises(ValueError, match="pytest"):
+        module.identity()
+    measured = module.identity(require_suite=False)
+    assert measured["require_suite"] is False
+    assert measured["executable"] == str(executable)
+    before = measured["sha256"]
+    executable.write_bytes(b"different actual wrapper bytes")
+    assert module.identity(require_suite=False)["sha256"] != before
