@@ -55,8 +55,9 @@ def test_runtime_alias_cycle_terminates_and_alias_target_is_sealed(runtime, tmp_
 def test_wrapper_runtime_does_not_claim_a_pytest_population(runtime, tmp_path):
     module, vendor, stdlib, executable = runtime
     site = tmp_path / "site"
-    for path in site.glob("*.dist-info/METADATA"):
-        path.unlink()
+    import shutil
+    for path in site.glob("*.dist-info"):
+        shutil.rmtree(path)
     with pytest.raises(ValueError, match="pytest"):
         module.identity()
     measured = module.identity(require_suite=False)
