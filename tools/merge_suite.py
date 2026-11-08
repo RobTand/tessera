@@ -379,6 +379,7 @@ class _Publication(NamedTuple):
     raw: bytes
     digest: str
     payload: dict
+    mtime: float
 
 
 def _read_publication(surface_json: Path) -> "_Publication | None":
@@ -394,7 +395,8 @@ def _read_publication(surface_json: Path) -> "_Publication | None":
     payload = json.loads(raw)
     if not isinstance(payload, dict):
         raise ValueError("population publication must be a JSON object")
-    return _Publication(Path(surface_json), raw, digest_bytes(raw), payload)
+    return _Publication(Path(surface_json), raw, digest_bytes(raw), payload,
+                        surface_json.stat().st_mtime)
 
 
 def _attach_surface(record: dict, surface_json: Path) -> "_Publication | None":
@@ -445,7 +447,7 @@ def _attach_surface(record: dict, surface_json: Path) -> "_Publication | None":
         # before anyone came back for it.  The ledger dates the measurement,
         # not the bookkeeping.
         record["measured_utc"] = time.strftime(
-            "%Y-%m-%dT%H:%M:%SZ", time.gmtime(surface_json.stat().st_mtime))
+            "%Y-%m-%dT%H:%M:%SZ", time.gmtime(published.mtime))
         return published
     # The distinction that matters: a suite that ran and failed published a
     # surface; one that was never placed, or was refused before collection,
