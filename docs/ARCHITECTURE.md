@@ -4003,7 +4003,9 @@ versioned `fv1-explicit-perf-memory.v1` profile declares performance cores and
 1-GiB memory leaves on the installed resource model. Each job is bounded to
 four cores, 16 GiB and thirty minutes. Every job starts with an empty
 environment and an explicit allowlist, with native math/build threads bounded
-to one. The x86 interpreter capability selects x86, without a host pin.
+to one. The native original jobspec explicitly limits CMake, Make and Ninja
+as well as OMP/MKL/OpenBLAS/Torch/NumExpr/MAX_JOBS; it relies on no inherited
+build limits. The x86 interpreter capability selects x86, without a host pin.
 The native container intention now renders one whole GPU and the installed
 `aarch64` resource property, with the same bounded performance cores and memory.
 Public GPU execution requires an immutable local image and scoped dependency

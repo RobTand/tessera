@@ -142,9 +142,14 @@ def test_submit_environment_and_runtime_budget_are_explicit(suite, tmp_path, mon
     assert "--requires=x86_64" in render
     environment = dict(token.removeprefix("--env=").split("=", 1) for token in render[3:] if token.startswith("--env="))
     assert set(environment) == {"PATH", "HOME", "PYTHONPATH", "PYTHONDONTWRITEBYTECODE", "PRISMAQUANT_DEV_MODE",
-                                "OMP_NUM_THREADS", "MKL_NUM_THREADS", "OPENBLAS_NUM_THREADS", "TORCH_NUM_THREADS", "MAX_JOBS", "KL_TOOL_DIR"}
+                                "OMP_NUM_THREADS", "MKL_NUM_THREADS", "OPENBLAS_NUM_THREADS", "TORCH_NUM_THREADS",
+                                "NUMEXPR_NUM_THREADS", "MAX_JOBS", "CMAKE_BUILD_PARALLEL_LEVEL",
+                                "MAKEFLAGS", "NINJAFLAGS", "KL_TOOL_DIR"}
     assert environment["PYTHONPATH"] == "src"
-    assert all(environment[name] == "1" for name in flux.THREADS)
+    assert all(environment[name] == "1" for name in ("OMP_NUM_THREADS", "MKL_NUM_THREADS",
+               "OPENBLAS_NUM_THREADS", "TORCH_NUM_THREADS", "NUMEXPR_NUM_THREADS",
+               "MAX_JOBS", "CMAKE_BUILD_PARALLEL_LEVEL"))
+    assert environment["MAKEFLAGS"] == environment["NINJAFLAGS"] == "-j1"
 
 
 def test_image_host_is_a_finite_architecture_bound_dependency(suite):

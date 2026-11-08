@@ -23,7 +23,9 @@ MODEL = Path(PREFIX) / "config/R-model.json"
 CONFIG_SHA = "2b5618a591bbf545336ed9dfae6645b5dfca7516325ccbf9e0b2dbf4181607e1"
 MODEL_SHA = "261a084b72cb3a0c5055816f642f51ccbf473d3373876f34e67be55d5b5221a8"
 THREADS = dict.fromkeys(("OMP_NUM_THREADS", "MKL_NUM_THREADS", "OPENBLAS_NUM_THREADS",
-                         "TORCH_NUM_THREADS", "MAX_JOBS"), "1")
+                         "TORCH_NUM_THREADS", "NUMEXPR_NUM_THREADS", "MAX_JOBS",
+                         "CMAKE_BUILD_PARALLEL_LEVEL"), "1")
+THREADS.update(MAKEFLAGS="-j1", NINJAFLAGS="-j1")
 
 
 def encoded(value):
