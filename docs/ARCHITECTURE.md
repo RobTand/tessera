@@ -3996,6 +3996,9 @@ on exit and retained in the payload evidence. A missing cleanup record is
 incomplete evidence, never proof that a native `clean` event fenced readers.
 The payload owns its child process group. Exceptions stop that group before
 scratch cleanup; process and scratch cleanup errors remain in the payload record.
+Interrupted payloads publish cleanup without waiting for exit content seals.
+They retain an unverified runtime state and a conclusive native failure, so
+cancellation cannot become green or consume Flux's cleanup window hashing dependencies.
 
 Each arm saves immutable launch intent, the native jobspec and the exact
 returned ID before waiting. ASCII `f` and Unicode `ƒ` f58 spellings are

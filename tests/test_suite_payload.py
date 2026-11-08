@@ -54,3 +54,51 @@ def test_payload_exception_stops_owned_group_and_preserves_cleanup_error(tmp_pat
     assert (777, signal.SIGTERM) in signals
     assert record["scratch_removed"] is False
     assert "owned scratch cleanup failed" in record["cleanup_error"]
+
+
+def test_interrupt_publishes_cleanup_without_waiting_for_an_exit_seal(tmp_path, monkeypatch):
+    spec = importlib.util.spec_from_file_location("interrupt_flux", ROOT / "tools/_suite_flux.py")
+    flux = importlib.util.module_from_spec(spec); spec.loader.exec_module(flux)
+    directory = tmp_path / "record"; directory.mkdir()
+    scratch_root = tmp_path / "scratch"; scratch_root.mkdir()
+    class Paths:
+        def __new__(cls, value):
+            return scratch_root if str(value) == "/home/rob/tl-gates/flux-validation" else Path(value)
+        cwd = Path.cwd
+    monkeypatch.setattr(flux, "Path", Paths)
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("FLUX_JOB_ID", "123")
+    identity = {"snapshot_commit": "a" * 40, "sha256": "b" * 64}
+    intent = {"checkout": str(tmp_path), "source": identity, "application": None,
+              "command": ["python", "payload"], "timeout_s": 60, "runtime": {"sha256": "c" * 64}}
+    flux.save(directory / "launch.json", intent)
+    observations = []
+    def source(path):
+        assert "source" not in observations, "cancellation must not delay cleanup with an exit source seal"
+        observations.append("source")
+        return identity
+    def runtime(*args, **kwargs):
+        assert "runtime" not in observations, "cancellation must not delay cleanup with an exit runtime seal"
+        observations.append("runtime")
+        return intent["runtime"]
+    monkeypatch.setattr(flux, "source", source)
+    monkeypatch.setattr(flux, "runtime_identity", runtime)
+    monkeypatch.setattr(flux.subprocess, "check_output", lambda *args, **kwargs: "xfs")
+    handlers = {}
+    monkeypatch.setattr(flux.signal, "signal", lambda sig, handler: handlers.__setitem__(sig, handler))
+    signals = []
+    child = SimpleNamespace(pid=777, returncode=None)
+    def wait():
+        handlers[signal.SIGTERM](signal.SIGTERM, None)
+        child.returncode = 143
+        return 143
+    child.wait = wait
+    child.poll = lambda: child.returncode
+    child.send_signal = signals.append
+    monkeypatch.setattr(flux.subprocess, "Popen", lambda *args, **kwargs: child)
+    assert flux.payload(str(directory), flux.hashlib.sha256((directory / "launch.json").read_bytes()).hexdigest()) == 143
+    record = json.loads((directory / "payload.json").read_bytes())
+    assert signals == [signal.SIGTERM]
+    assert record["interrupted_signal"] == signal.SIGTERM
+    assert record["scratch_removed"] and not (scratch_root / "123").exists()
+    assert record["runtime_verified"] is False

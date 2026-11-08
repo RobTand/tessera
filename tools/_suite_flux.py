@@ -280,12 +280,17 @@ def payload(directory, digest):
         for sig in interrupted:
             child.send_signal(sig)
         code = child.wait()
+        if interrupted:
+            # Flux bounds cancellation cleanup. A content seal cannot establish
+            # success for an interrupted run and must not delay owned cleanup.
+            record["interrupted_signal"] = interrupted[0]
+            return 128 + interrupted[0]
         if source(Path.cwd()) != intent["source"]:
             raise ValueError("source changed during payload")
         if runtime_identity(intent["command"][0], Path.cwd(), timeout=intent["timeout_s"]) != intent["runtime"]:
             raise ValueError("interpreter/dependencies changed during payload")
         record["runtime_verified"] = True
-        return 128 + interrupted[0] if interrupted else code
+        return code
     finally:
         # Keep the leader unreaped throughout grace so its PID anchors the
         # group. TERM lets the deadline supervisor stop its own inner group.
