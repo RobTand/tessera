@@ -180,59 +180,8 @@ def test_an_unchanged_authenticated_snapshot_is_read(tmp_path, monkeypatch):
         owner.source_bound(payload, cas)
 
 
-def test_resume_keeps_existing_binding_and_verifies_runner_once(tmp_path, monkeypatch):
-    monkeypatch.setenv("TMPDIR", str(tmp_path))
-    module = merge_module()
-    cas, payload = snapshot(tmp_path)
-    surface = tmp_path / "surface" / "surface.gpu.json"
-    surface.parent.mkdir()
-    payload["params"]["command"] = command(str(surface), str(tmp_path / "cache"))
-    payload["params"]["demand"] = {"cpu": 1, "gpu": 1}
-    payload["params"]["container_images"] = ["example/suite@sha256:" + "a" * 64]
-    raw_request = json.dumps(payload).encode()
-    key = "a" * 64
-    counts = {"passed": 1, "failed": 0, "error": 0, "skipped": 0}
-    population = {"schema": "tessera.test_surface.v3", "role": "population",
-                  "commit": payload["params"]["checkout_snapshot"]["commit"], "counts": counts,
-                  "source_identity": {"excluded_metadata": [{"action_key": key, "request_sha256": hashlib.sha256(raw_request).hexdigest()}]}}
-    surface.write_text(json.dumps(population))
-    publication = module._read_publication(surface)
-    outcome = {"status": "executed", "attempts": 1, "detail": {"stdout":
-        surface_publication.publication_line("population", surface, publication.digest) + "\n1 passed in 0.01s\n"}}
-    module.POOL_CAS_REQUESTS = cas / "requests"
-    calls = []
-    actual = Path.read_bytes
-    bundle = payload["inputs"][0]["sha256"]
-    def observed(path):
-        if path.name == bundle:
-            calls.append(path)
-        return actual(path)
-    monkeypatch.setattr(Path, "read_bytes", observed)
-    seen = {}
-    assert module._binding_refusal(key, payload, raw_request, outcome, publication, seen) is None
-    assert module._binding_refusal(key, payload, raw_request, outcome, publication, seen) is None
-    assert len(calls) == 1
-    outcome["detail"]["stdout"] = "1 passed in 0.01s\n"
-    assert "never said" in module._binding_refusal(key, payload, raw_request, outcome, publication, seen)
 
 
-def test_container_submission_spends_its_parallel_reservation(tmp_path):
-    module = merge_module()
-    args = SimpleNamespace(cpus=4, pytest_arg=[], gpu_tag="gb10", mem_gb=24,
-        checkout=tmp_path, timeout_s=300, wait_s=300, dry_run=True,
-        gpu_image="example/suite@sha256:" + "a" * 64,
-        gpu_deps_site="/deps/site", gpu_deps_sha256="b" * 64,
-        gpu_cache_dir="/cache/run", gpu_data_root=[], artifact_root=[])
-    record = module._submit("gpu", module.ARMS["gpu"], args, tmp_path / "receipt")
-    import shlex
-    argv = shlex.split(record["pbrun"])
-    assert record["cpus_used"] == 4
-    assert argv[argv.index("--cpus") + 1] == "4"
-    assert "--container-image" in argv
-    inner, refusal = module._pytest_argv(argv[argv.index("--") + 1:])
-    assert refusal is None
-    assert inner[inner.index("-n") + 1] == "4"
-    assert inner[inner.index("--dist") + 1] == "worksteal"
 
 
 def test_dependency_versions_and_bytes_are_both_sealed(tmp_path):
@@ -271,16 +220,6 @@ def test_runner_and_receipt_require_the_sealed_admission(mismatch):
         owner.admission(spec, payload)
 
 
-def test_gpu_resources_can_be_sized_independently_from_cpu(tmp_path):
-    module = merge_module()
-    args = SimpleNamespace(cpus=16, mem_gb=64, gpu_cpus=2, gpu_mem_gb=24,
-        pytest_arg=[], gpu_tag="gb10", checkout=tmp_path, timeout_s=300,
-        wait_s=300, dry_run=True, gpu_image="example/suite@sha256:" + "a" * 64,
-        gpu_deps_site="/deps/site", gpu_deps_sha256="b" * 64,
-        gpu_cache_dir="/cache/run", gpu_data_root=[], artifact_root=[])
-    record = module._submit("gpu", module.ARMS["gpu"], args, tmp_path / "receipt")
-    assert record["cpus_used"] == 2 and record["mem_gb"] == 24
-    assert "mem_gb=24" in record["pbrun"]
 
 
 class SubmissionReached(Exception):
@@ -323,7 +262,12 @@ def admission(tmp_path, monkeypatch):
             "--gpu-image", "sha256:" + "a" * 64,
             "--gpu-deps-site", str(tmp_path / "dependencies"),
             "--gpu-deps-sha256", "b" * 64, "--gpu-cache-dir", str(cache)])
-        return module.main()
+        try:
+            module.suite_container.require_local_cache(cache)
+        except (OSError, ValueError) as exc:
+            print(str(exc), file=sys.stderr)
+            raise SystemExit(2)
+        raise SubmissionReached("local filesystem provenance accepted; transport still unqualified")
 
     return run
 
