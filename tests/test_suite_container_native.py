@@ -145,12 +145,15 @@ def test_native_source_authentication_and_mutation_replace_bundle_fixture(tmp_pa
     assert identity["verification"] == "verified"
     directory = tmp_path / "record"
     directory.mkdir()
-    intent = {"directory": str(directory), "checkout": str(checkout), "source": identity}
+    intent = {"directory": str(directory), "checkout": str(checkout), "source": identity,
+              "command": ["/usr/bin/python3", container.RUNNER],
+              "resources": {"architecture": "x86_64", "cores": 1, "memory_gib": 1, "gpus": 0}}
     flux.save(directory / "launch.json", intent)
     digest = flux.hashlib.sha256((directory / "launch.json").read_bytes()).hexdigest()
     flux.save(directory / "submission.json", {"state": "submitted", "job_id": "f123", "launch_sha256": digest})
     monkeypatch.chdir(checkout)
     monkeypatch.setattr(flux, "source", lambda root: measured_source(root, verifier=None))
+    _mock_native_admission(monkeypatch, directory, intent, digest)
     assert container.admitted_context(directory, digest, {"FLUX_JOB_ID": "ƒ123"}) == intent
     (checkout / "runner.py").write_text("print('forged source')\n")
     with pytest.raises(ValueError, match="source authentication"):
@@ -283,3 +286,54 @@ def test_cid_registration_precedes_creation_and_errors_survive(tmp_path, monkeyp
         assert record["removed"] is False and "owned CID remove failed" in record["cleanup_errors"][-1]
     else:
         assert record["removed"] is True
+def _mock_native_admission(monkeypatch, directory, intent, digest):
+    import _suite_flux as flux
+    original = {'tasks': [{'command': ['/usr/bin/python3', 'tools/_suite_flux.py', 'payload', str(directory), digest]}]}
+    core = {'type': 'core', 'properties': {'os-pus': '2,42', 'core-type': 'perf'}}
+    allocation = {'scheduling': {'graph': {'nodes': [{'metadata': item} for item in [
+        core, {'type': 'perf'}, {'type': 'memory'},
+        {'type': 'node', 'name': 'dl380g10', 'properties': {'arch': 'x86_64'}}]]}}}
+    state = {'original': original, 'allocation': allocation, 'events': [{'name': 'start'}],
+             'cgroup': '0::/user.slice/user-1000.slice/user@1000.service/flux.slice/flux-jobs.slice/shell-f123:sys.service\n'}
+    def checked(argv):
+        if argv == ['job', 'info', '--original', 'f123', 'jobspec']:
+            return json.dumps(state['original'])
+        if argv == ['job', 'info', 'f123', 'R']:
+            return json.dumps(state['allocation'])
+        assert argv == ['job', 'eventlog', '--format=json', 'f123']
+        return '\n'.join(json.dumps(event) for event in state['events'])
+    original_read = Path.read_text
+    monkeypatch.setattr(f, 'checked', checked)
+    monkeypatch.setattr(container.os, 'sched_getaffinity', lambda pid: {2, 42})
+    monkeypatch.setattr(Path, 'read_text', lambda path, *args, **kwargs: state['cgroup'] if str(path) == '/proc/self/cgroup' else original_read(path, *args, **kwargs))
+    return state
+
+
+@pytest.mark.parametrize('fact', ['original', 'allocation', 'terminal', 'process-scope'])
+def test_direct_container_entry_authenticates_actual_native_context(tmp_path, monkeypatch, fact):
+    import _suite_flux as flux
+    checkout = tmp_path / 'source'
+    checkout.mkdir()
+    directory = tmp_path / 'receipt'
+    directory.mkdir()
+    monkeypatch.chdir(checkout)
+    identity = {'schema': 'tessera.suite_source.v1', 'verification': 'verified', 'snapshot_commit': 'a' * 40, 'sha256': 'b' * 64}
+    intent = {'directory': str(directory), 'checkout': str(checkout), 'source': identity,
+              'command': ['/usr/bin/python3', 'tools/suite_container.py'],
+              'resources': {'architecture': 'x86_64', 'cores': 1, 'memory_gib': 1, 'gpus': 0}}
+    flux.save(directory / 'launch.json', intent)
+    digest = flux.hashlib.sha256((directory / 'launch.json').read_bytes()).hexdigest()
+    flux.save(directory / 'submission.json', {'state': 'submitted', 'job_id': 'f123', 'launch_sha256': digest})
+    monkeypatch.setattr(f, 'source', lambda root: identity)
+    state = _mock_native_admission(monkeypatch, directory, intent, digest)
+    assert container.admitted_context(directory, digest, {'FLUX_JOB_ID': 'ƒ123'}) == intent
+    if fact == 'original':
+        state['original']['tasks'][0]['command'][-1] = '0' * 64
+    elif fact == 'allocation':
+        state['allocation']['scheduling']['graph']['nodes'][0]['metadata']['properties']['os-pus'] = '3,43'
+    elif fact == 'terminal':
+        state['events'].append({'name': 'clean'})
+    else:
+        state['cgroup'] = state['cgroup'].replace('shell-f123:', 'shell-f124:')
+    with pytest.raises(ValueError):
+        container.admitted_context(directory, digest, {'FLUX_JOB_ID': 'f123'})
