@@ -69,8 +69,15 @@ def profile_identity():
         raise ValueError("all three Flux hosts must be online")
     if sum(line.endswith(": full") for line in checked(["overlay", "status"]).splitlines()) != 3:
         raise ValueError("all three Flux brokers must be healthy")
+    # Broker starttime is rank-local. Always bind the instance's rank-zero
+    # broker, including when the named interpreter/image lives on a Spark.
+    if checked(["getattr", "rank"]).strip() == "0":
+        generation = checked(["getattr", "broker.starttime"]).strip()
+    else:
+        generation = checked(["exec", "-r", "0", "/usr/bin/env", "FLUX_URI=" + URI,
+                              f"{PREFIX}/install/bin/flux", "getattr", "broker.starttime"]).strip()
     return {"profile": PROFILE, "config_sha256": CONFIG_SHA, "model_sha256": MODEL_SHA,
-            "broker_starttime": checked(["getattr", "broker.starttime"]).strip()}
+            "broker_starttime": generation}
 
 
 def validate(cores, memory, timeout, environment):
@@ -110,14 +117,17 @@ def job_id(value):
     return "f" + value[1:] if value.startswith("ƒ") else value
 
 
-def resources(cores, memory, timeout, *, gpus=0, architecture="x86_64"):
+def resources(cores, memory, timeout, *, gpus=0, architecture="x86_64", host=None):
     validate(cores, memory, timeout, {})
     if type(gpus) is not int or gpus not in (0, 1) or architecture not in ("x86_64", "aarch64"):
         raise ValueError("finite architecture/whole-GPU resource profile required")
     if gpus and architecture != "aarch64":
         raise ValueError("qualified GPU architecture is aarch64")
+    if host is not None and {"dl380g10": "x86_64", "sparky": "aarch64", "sparklina": "aarch64"}.get(host) != architecture:
+        raise ValueError("local image host differs from its finite architecture")
     return {"schema": "tessera.suite_resources.v1", "architecture": architecture,
-            "cores": cores, "memory_gib": memory, "gpus": gpus, "timeout_s": timeout}
+            "cores": cores, "memory_gib": memory, "gpus": gpus, "timeout_s": timeout,
+            **({"host": host} if host is not None else {})}
 
 
 def container_spec(command):
@@ -138,6 +148,7 @@ def require_allocation(allocation, demand, affinity, mapped):
             or len(kinds["core"]) != demand["cores"] or len(kinds["perf"]) != demand["cores"]
             or len(kinds["memory"]) != demand["memory_gib"] or len(kinds["gpu"]) != demand["gpus"]
             or any(core["properties"]["core-type"] != "perf" for core in kinds["core"])
+            or (demand.get("host") is not None and kinds["node"][0]["name"] != demand["host"])
             or affinity != pus or mapped != pus):
         raise ValueError("actual native allocation/resources/affinity differ")
 
@@ -150,12 +161,14 @@ def require_original_launch(intent, digest, jobspec):
 
 
 def submit(directory, checkout, command, cores, memory, timeout, environment, *, application=None,
-           gpus=0, architecture="x86_64"):
+           gpus=0, architecture="x86_64", host=None):
     validate(cores, memory, timeout, environment)
-    demand = resources(cores, memory, timeout, gpus=gpus, architecture=architecture)
+    demand = resources(cores, memory, timeout, gpus=gpus, architecture=architecture, host=host)
     container = container_spec(command)
     if gpus and container is None:
         raise ValueError("GPU suite requires the finite native container contract")
+    if host is not None and container is None:
+        raise ValueError("a native host constraint requires an explicit local container image dependency")
     if container is not None:
         from _suite_container import validate_mounts
         if container["workers"] != cores or container["strict_cuda"] != bool(gpus) or container["artifacts"] != environment:
@@ -186,11 +199,12 @@ def submit(directory, checkout, command, cores, memory, timeout, environment, *,
     wrapper = [command[0], "tools/_suite_flux.py", "payload", str(directory), digest]
     args = ["submit", "--env=-*", *[f"--env={k}={v}" for k, v in sorted(env.items())],
             f"--resources-shape=node/slot/[core={cores}/perf=1;memory={memory}" + (";gpu=1]" if gpus else "]"),
-            "--requires=" + architecture, "-t", f"{timeout + 10}s", "--cwd", str(checkout),
+            "--requires=" + architecture + (",host:" + host if host is not None else ""),
+            "-t", f"{timeout + 10}s", "--cwd", str(checkout),
             "--input=/dev/null", f"--output={directory}/stdout", f"--error={directory}/stderr",
             "--job-name=tessera-" + digest[:16], *wrapper]
     # Dry-run is native rendering only. It emits no whole-node request.
-    jobspec = json.loads(checked([*args[:1], "--dry-run", *args[1:]]))
+    jobspec = json.loads(checked([*args[:2], "--dry-run", *args[2:]]))
     save(directory / "jobspec.json", jobspec)
     result = native(["job", "submit", str(directory / "jobspec.json")])
     (directory / "submit.stdout").write_text(result.stdout)

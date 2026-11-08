@@ -21,8 +21,9 @@ The Bazel build described in `docs/bazel.md` derives one target per test file an
 Final gate summaries report each CPU lane’s pass, failure, skip and uncollected counts, verbatim skip reasons, device details and zero CUDA allocation. CPU passes do not cover CUDA.
 
 
-Re-stamped 2026-11-08 for native suite transport and saved-ID authority.
-CPU scope only; GPU/container qualification remains required.
+Re-stamped 2026-11-08 from the G01 native container implementation and admitted
+CPU population/lifecycle proofs. GPU, full-suite and production qualification
+remain required. Rank-zero broker generation binds cross-host collection.
 
 Re-stamped 2026-10-09 for the migrated GB and D1 producer caller (tessera#944).
 Re-stamped 2026-10-09 for the canonical T4 performant menu (issue #1103).
@@ -1808,6 +1809,9 @@ cleanup evidence cannot mask the payload failure or prevent scratch cleanup
 evidence from being written.
 Container evidence binds inspected image content and CID, allocated affinity,
 publication and exact native terminal evidence. CPU proofs do not qualify CUDA.
+Rootless x86 explicitly uses user 0:0; ARM uses keep-id with user 1000:1000.
+Neither route inherits image USER defaults. The optional finite image-host
+dependency binds placement and actual R to that host's immutable local image.
 No wire, serving route, runtime pin or artifact changes.
 
 Re-stamped 2026-10-02 for explicit PrismaQuant accounting-source binding
@@ -4006,6 +4010,10 @@ Public GPU execution requires an immutable local image and scoped dependency
 seal. This G01 slice qualifies only internal no-GPU container transport; the
 CUDA branch still requires a separately approved device canary. Strict-CUDA
 population, allocation, artifact and serving gates are unchanged.
+`--gpu-tag sparky|sparklina` declares an explicit local-image host dependency;
+empty or `aarch64` allows eligible architecture-wide placement. Cross-host
+submission and saved-ID collection always bind rank zero's broker starttime,
+since individual brokers have distinct starttimes in the same instance.
 
 The source is a clean detached shared checkout. The launch records its actual
 tracked path/mode/byte identity through `suite_source.measured_source`, without
@@ -10330,8 +10338,9 @@ process, the empty-denylist refusal (build item 11), and the wheel and sdist che
 above. It proves the parser's dependency boundary and what both
 distributions contain.
 It does not run a CUDA kernel, a decoder against a served artifact, or the
-merged suite. The scoped CPU suite in §1.1 uses native Flux; its GPU and
-container transport still require qualification. Historical population records
+merged suite. The scoped CPU suite in §1.1 uses native Flux. G01 proves a
+no-GPU rootless container population; GPU transport still requires qualification.
+Historical population records
 remain in `docs/status/suite-populations.md`, and a serving claim also needs
 a served receipt (§3).
 

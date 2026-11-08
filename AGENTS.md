@@ -288,9 +288,11 @@ Treat as constraints. Violate slogans when judgment says so.
   controller writes the population, so a shard can never be read as a run.
   `tools/merge_suite.py` submits the scoped CPU arm through the qualified
   native Flux profile. It starts from an empty environment with explicit
-  artifact roots, `PYTHONPATH=src`, and bounded math/build threads. GPU and
-  container intentions refuse until separately qualified. A CPU result cannot
-  establish their population. `--record` appends each arm to the ledger,
+  artifact roots, `PYTHONPATH=src`, and bounded math/build threads. Containers
+  use native rootless Podman with immutable local images and scoped dependencies.
+  GPU intent reserves one whole GPU on aarch64; execution still needs separate
+  device qualification. A CPU result cannot establish a CUDA population.
+  `--record` appends each arm to the ledger,
   including arms not submitted. Read the mode, device, skip reasons and
   uncollected modules beside every count.
   Each arm saves its launch, native jobspec and job ID before waiting.

@@ -266,8 +266,8 @@ def _arm_arguments(arm, args):
     """GPU overrides reserve what that arm's workers will actually spend."""
     if not arm["strict_cuda"]:
         return args
-    if getattr(args, "gpu_tag", "") not in ("", "aarch64"):
-        raise ValueError("GPU placement requires the installed aarch64 property")
+    if getattr(args, "gpu_tag", "") not in ("", "aarch64", "sparky", "sparklina"):
+        raise ValueError("GPU placement requires aarch64 or its finite local-image host")
     values = vars(args).copy()
     values["cpus"] = getattr(args, "gpu_cpus", None) or args.cpus
     values["mem_gb"] = getattr(args, "gpu_mem_gb", None) or args.mem_gb
@@ -314,7 +314,9 @@ def _submit(name: str, arm: dict, args, receipt_dir: Path) -> dict:
     suite_flux.submit(directory, args.checkout, command, cpus, args.mem_gb,
                       args.timeout_s, roots,
                       application=getattr(args, "selection_binding", None),
-                      **({"gpus": 1, "architecture": "aarch64"} if arm.get("container") else {}))
+                      **({"gpus": 1, "architecture": "aarch64",
+                          "host": args.gpu_tag if getattr(args, "gpu_tag", "") in ("sparky", "sparklina") else None}
+                         if arm.get("container") else {}))
     try:
         suite_flux.wait(directory, args.wait_s)
     except subprocess.TimeoutExpired:
@@ -1190,7 +1192,7 @@ def main() -> int:
     ap.add_argument("--arm", action="append", choices=sorted(ARMS),
                     default=[], help="repeatable; default is both")
     ap.add_argument("--gpu-tag", default="",
-                    help="retained GPU placement intent; native GPU admission remains unqualified")
+                    help="aarch64, or sparky/sparklina for an explicit local image dependency")
     ap.add_argument("--cpus", type=int, default=1,
                     help="declared native cores and pytest workers, 1..4; default 1")
     ap.add_argument("--mem-gb", type=int, default=16)

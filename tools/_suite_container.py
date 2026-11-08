@@ -14,8 +14,6 @@ import sys
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 RUNNER = "tools/suite_container.py"
-OWNER = "tools/_suite_container.py"
-SOURCE_FILES = (RUNNER, OWNER)
 PODMAN = "/usr/bin/podman"
 _IMAGE = re.compile(r"sha256:[0-9a-f]{64}")
 _INTERPRETERS = {"/usr/bin/python3", "/usr/local/bin/python3", "/opt/tl3/bin/python3"}
@@ -279,6 +277,10 @@ def podman_command(spec, checkout, environment, *, cidfile, affinity, gpus):
                "--cgroups=disabled", "--network=none", "--env-host=false", "--unsetenv-all",
                "--cpuset-cpus", ",".join(map(str, affinity)),
                "--entrypoint", spec["inner"][0], "--workdir", str(checkout)]
+    if os.uname().machine == "aarch64":
+        command += ["--userns=keep-id", "--user=1000:1000"]
+    else:
+        command += ["--user=0:0"]
     if gpus:
         command += ["--device", "nvidia.com/gpu=all"]
     else:
