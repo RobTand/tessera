@@ -1553,6 +1553,10 @@ ts_py_library(
     srcs = [
         "kda/conv_progress.py",
     ],
+    deps = [
+        "//tools:__init__",
+        "//tools:_durable_progress",
+    ],
 )
 
 ts_py_library(
@@ -2864,44 +2868,9 @@ ts_py_library(
 )
 
 ts_py_library(
-    name = "run_full_model_original_wire_checkpoint",
-    srcs = [
-        "run_full_model_original_wire_checkpoint.py",
-    ],
-)
-
-ts_py_library(
-    name = "run_full_model_original_wire_generation",
-    srcs = [
-        "run_full_model_original_wire_generation.py",
-    ],
-)
-
-ts_py_library(
-    name = "run_full_model_research_selected_checkpoint",
-    srcs = [
-        "run_full_model_research_selected_checkpoint.py",
-    ],
-)
-
-ts_py_library(
     name = "run_glm_native_construction",
     srcs = [
         "run_glm_native_construction.py",
-    ],
-)
-
-ts_py_library(
-    name = "run_original_wire_checkpoint",
-    srcs = [
-        "run_original_wire_checkpoint.py",
-    ],
-)
-
-ts_py_library(
-    name = "run_original_wire_generation",
-    srcs = [
-        "run_original_wire_generation.py",
     ],
 )
 
@@ -3078,20 +3047,6 @@ ts_py_library(
     deps = [
         "//src/tessera:__init___cycle",
         "//src/tessera:kernel_a4",
-    ],
-)
-
-ts_py_library(
-    name = "t4_code/bench_e2m1",
-    srcs = [
-        "t4_code/bench_e2m1.py",
-    ],
-    deps = [
-        "//src/tessera:__init___cycle",
-        "//src/tessera:bf16_route_cycle",
-        "//src/tessera:kernel_a4",
-        "//src/tessera:serving/native_a4",
-        ":t8r_speed/bench_t8r",
     ],
 )
 
@@ -3726,18 +3681,6 @@ ts_py_library(
 )
 
 ts_py_library(
-    name = "t8r_speed/rung_chord",
-    srcs = [
-        "t8r_speed/rung_chord.py",
-    ],
-    deps = [
-        "//src/tessera:__init___cycle",
-        "//src/tessera:bf16_route_cycle",
-        "//src/tessera:decode",
-    ],
-)
-
-ts_py_library(
     name = "t8r_speed/rung_quality",
     srcs = [
         "t8r_speed/rung_quality.py",
@@ -3751,13 +3694,6 @@ ts_py_library(
         "//src/tessera:calculator",
         "//src/tessera:dev_mode",
         "//src/tessera:structure",
-    ],
-)
-
-ts_py_library(
-    name = "t8r_speed/scratch_bound",
-    srcs = [
-        "t8r_speed/scratch_bound.py",
     ],
 )
 

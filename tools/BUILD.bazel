@@ -33,6 +33,16 @@ ts_py_library(
 )
 
 ts_py_library(
+    name = "_flux_gpu_jobspec",
+    srcs = [
+        "_flux_gpu_jobspec.py",
+    ],
+    deps = [
+        ":_suite_container_cycle",
+    ],
+)
+
+ts_py_library(
     name = "_install_identity",
     srcs = [
         "_install_identity.py",
