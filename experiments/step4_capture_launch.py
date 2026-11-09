@@ -254,7 +254,7 @@ def docker_command(*, name: str, image_id: str, mounts, environment, entry, out_
         command += ["--cidfile", str(cidfile), "--label", f"org.prismaquant.pact-observer={name}"]
     if affinity is not None:
         # The CPU mask this launcher was granted, carried into the container.
-        # PrismaBuild's execution policy requires its reservation to be
+        # The fleet's execution policy requires the job's reservation to be
         # preserved "including inside containers", and a container started
         # without a mask is placed on every host CPU whatever the pool
         # reserved.  Here that is more than politeness: the whole output is a
@@ -265,7 +265,7 @@ def docker_command(*, name: str, image_id: str, mounts, environment, entry, out_
         # changes no CPU count a library can read, so a quota-limited container
         # still sizes its pools for the whole box (owned_container.sh, lines
         # two and three of that probe).  ``run_glm_native_construction.py`` is
-        # the existing docker-under-PrismaBuild launcher spelled the same way.
+        # the existing docker launcher spelled the same way.
         cpus = sorted(int(cpu) for cpu in affinity)
         if not cpus:
             raise ValueError("empty CPU affinity: a mask that read as nothing would pin the "
