@@ -138,7 +138,7 @@ def test_submit_environment_and_runtime_budget_are_explicit(suite, tmp_path, mon
     assert budgets == [900], "full native seal must share the declared finite launch budget"
     render = calls[0]
     assert render[:3] == ["submit", "--env=-*", "--dry-run"]
-    assert "--resources-shape=node/slot/[core=2/perf=1;memory=8]" in render
+    assert "--resources-shape=slot/[core=2;memory=8]" in render
     assert "--requires=x86_64" in render
     environment = dict(token.removeprefix("--env=").split("=", 1) for token in render[3:] if token.startswith("--env="))
     assert set(environment) == {"PATH", "HOME", "PYTHONPATH", "PYTHONDONTWRITEBYTECODE", "PYTHONNOUSERSITE", "PRISMAQUANT_DEV_MODE",
@@ -150,6 +150,21 @@ def test_submit_environment_and_runtime_budget_are_explicit(suite, tmp_path, mon
                "OPENBLAS_NUM_THREADS", "TORCH_NUM_THREADS", "NUMEXPR_NUM_THREADS",
                "MAX_JOBS", "CMAKE_BUILD_PARALLEL_LEVEL"))
     assert environment["MAKEFLAGS"] == environment["NINJAFLAGS"] == "-j1"
+
+
+def test_resource_shape_is_the_stock_slot_with_no_node_wrapper_or_core_class(suite):
+    flux = suite.suite_flux
+    assert flux.resource_shape(4, 16) == "slot/[core=4;memory=16]"
+    assert flux.resource_shape(2, 8, 1) == "slot/[core=2;memory=8;gpu=1]"
+    for shape in (flux.resource_shape(1, 1), flux.resource_shape(1, 1, 1)):
+        assert not shape.startswith("node/") and "perf" not in shape
+
+
+def test_profile_selector_names_one_qualified_row_and_derives_its_digests(suite):
+    flux = suite.suite_flux
+    row = flux.PROFILES[flux.PROFILE]
+    assert (flux.CONFIG_SHA, flux.MODEL_SHA) == (row["config_sha256"], row["model_sha256"])
+    assert all(len(value) == 64 for entry in flux.PROFILES.values() for value in entry.values())
 
 
 def test_image_host_is_a_finite_architecture_bound_dependency(suite):

@@ -4017,15 +4017,21 @@ is unit3; G01 adds native rootless container authority. Full-suite, CUDA and
 production qualification remain separate.
 
 `tools/merge_suite.py` submits its CPU population through native Flux. The
-versioned `fv1-explicit-perf-memory.v1` profile declares performance cores and
-1-GiB memory leaves on the installed resource model. Each job is bounded to
+versioned `fv1-explicit-memory.v3` profile (a `PROFILES` row of config and
+resource-model digests, selected by one `PROFILE` line) asks for the stock
+`slot/[core=N;memory=M]` shape, plus `gpu=1` inside the slot for a GPU job, with
+no node wrapper and no core-class marker; the allocation check counts cores,
+memory leaves, GPUs, node architecture, host and affinity and does not read the
+core class (Rob, 2026-11-08). Earlier launches saved under
+`fv1-explicit-perf-memory.v2` keep their recorded profile name and are not
+rewritten. A topology cutover adds one row and bumps `PROFILE`. Each job is bounded to
 four cores, 16 GiB and thirty minutes. Every job starts with an empty
 environment and an explicit allowlist, with native math/build threads bounded
 to one. The native original jobspec explicitly limits CMake, Make and Ninja
 as well as OMP/MKL/OpenBLAS/Torch/NumExpr/MAX_JOBS; it relies on no inherited
 build limits. The x86 interpreter capability selects x86, without a host pin.
 The native container intention now renders one whole GPU and the installed
-`aarch64` resource property, with the same bounded performance cores and memory.
+`aarch64` resource property, with the same bounded cores and memory.
 Public GPU execution requires an immutable local image and scoped dependency
 seal. This G01 slice qualifies only internal no-GPU container transport; the
 CUDA branch still requires a separately approved device canary. Strict-CUDA

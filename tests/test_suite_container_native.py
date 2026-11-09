@@ -208,21 +208,32 @@ def test_original_native_wrapper_authenticates_launch_bytes():
         flux.require_original_launch({**intent, "command": ["/other/python"]}, "a" * 64, original)
 
 
-@pytest.mark.parametrize("fact", ["cores", "memory_gib", "gpus", "architecture", "affinity", "performance", "host"])
+def _allocation(core_properties):
+    core = {"type": "core", "properties": {"os-pus": "2,42", **core_properties}}
+    return {"scheduling": {"graph": {"nodes": [{"metadata": item} for item in [
+        core, {"type": "memory"}, {"type": "node", "name": "dl380g10", "properties": {"arch": "x86_64"}}]]}}}
+
+
+@pytest.mark.parametrize("fact", ["cores", "memory_gib", "gpus", "architecture", "affinity", "host"])
 def test_actual_allocation_refuses_different_resource_ownership(fact):
     import _suite_flux as flux
     demand = {"architecture": "x86_64", "cores": 1, "memory_gib": 1, "gpus": 0, "host": "dl380g10"}
-    core = {"type": "core", "properties": {"os-pus": "2,42", "core-type": "perf"}}
-    allocation = {"scheduling": {"graph": {"nodes": [{"metadata": item} for item in [
-        core, {"type": "perf"}, {"type": "memory"}, {"type": "node", "name": "dl380g10", "properties": {"arch": "x86_64"}}]]}}}
+    allocation = _allocation({"core-type": "perf"})
     flux.require_allocation(allocation, demand, [2, 42], [2, 42])
     if fact in ("cores", "memory_gib", "gpus"):
         demand[fact] += 1
     elif fact == "architecture": demand[fact] = "aarch64"
-    elif fact == "performance": core["properties"]["core-type"] = "efficiency"
     elif fact == "host": demand["host"] = "sparky"
     with pytest.raises(ValueError, match="allocation"):
         flux.require_allocation(allocation, demand, [3, 43] if fact == "affinity" else [2, 42], [2, 42])
+
+
+@pytest.mark.parametrize("properties", [{"core-type": "perf"}, {"core-type": "efficiency"}, {}])
+def test_actual_allocation_is_class_agnostic(properties):
+    """Pre-fix: an efficiency core, or a core with no class, was refused."""
+    import _suite_flux as flux
+    demand = {"architecture": "x86_64", "cores": 1, "memory_gib": 1, "gpus": 0, "host": "dl380g10"}
+    flux.require_allocation(_allocation(properties), demand, [2, 42], [2, 42])
 
 
 @pytest.mark.parametrize("reported", ["a" * 64, "sha256:" + "a" * 64])
@@ -297,7 +308,7 @@ def _mock_native_admission(monkeypatch, directory, intent, digest):
     original = {'tasks': [{'command': ['/usr/bin/python3', '-s', 'tools/_suite_flux.py', 'payload', str(directory), digest]}]}
     core = {'type': 'core', 'properties': {'os-pus': '2,42', 'core-type': 'perf'}}
     allocation = {'scheduling': {'graph': {'nodes': [{'metadata': item} for item in [
-        core, {'type': 'perf'}, {'type': 'memory'},
+        core, {'type': 'memory'},
         {'type': 'node', 'name': 'dl380g10', 'properties': {'arch': 'x86_64'}}]]}}}
     state = {'original': original, 'allocation': allocation, 'events': [{'name': 'start'}],
              'qualification': {'profile': 'fixture'},

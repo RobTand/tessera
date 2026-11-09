@@ -17,11 +17,22 @@ from tessera._dev.suite_source import measured_source
 
 PREFIX = "/home/rob/flux-vanilla/0.91.0-0.56.0"
 URI = f"local://{PREFIX}/runs/fv1-model/run/local-0"
-PROFILE = "fv1-explicit-perf-memory.v2"
+#: Qualified Flux profiles by name. A topology cutover adds one row with its new
+#: config and resource-model digests, then bumps PROFILE. Rows already launched
+#: under stay as history; launches saved under them are never rewritten.
+PROFILES = {
+    "fv1-explicit-perf-memory.v2": {
+        "config_sha256": "ff9384f0aaede8d07499e43da400123a4e6afbcce05f52042244a3c78995fa08",
+        "model_sha256": "261a084b72cb3a0c5055816f642f51ccbf473d3373876f34e67be55d5b5221a8"},
+    "fv1-explicit-memory.v3": {
+        "config_sha256": "ff9384f0aaede8d07499e43da400123a4e6afbcce05f52042244a3c78995fa08",
+        "model_sha256": "261a084b72cb3a0c5055816f642f51ccbf473d3373876f34e67be55d5b5221a8"},
+}
+PROFILE = "fv1-explicit-memory.v3"
 CONFIG = Path(PREFIX) / "runs/fv1-model/config.json"
 MODEL = Path(PREFIX) / "config/R-model.json"
-CONFIG_SHA = "ff9384f0aaede8d07499e43da400123a4e6afbcce05f52042244a3c78995fa08"
-MODEL_SHA = "261a084b72cb3a0c5055816f642f51ccbf473d3373876f34e67be55d5b5221a8"
+CONFIG_SHA = PROFILES[PROFILE]["config_sha256"]
+MODEL_SHA = PROFILES[PROFILE]["model_sha256"]
 THREADS = dict.fromkeys(("OMP_NUM_THREADS", "MKL_NUM_THREADS", "OPENBLAS_NUM_THREADS",
                          "TORCH_NUM_THREADS", "NUMEXPR_NUM_THREADS", "MAX_JOBS",
                          "CMAKE_BUILD_PARALLEL_LEVEL"), "1")
@@ -140,16 +151,24 @@ def container_spec(command):
     return command_spec(parts)
 
 
+def resource_shape(cores, memory, gpus=0):
+    """The stock slot shape; any core class satisfies it, so none is named."""
+    return f"slot/[core={cores};memory={memory}" + (";gpu=1]" if gpus else "]")
+
+
 def require_allocation(allocation, demand, affinity, mapped):
-    """R's assigned hardware, not requested annotations, binds execution."""
+    """R's assigned hardware, not requested annotations, binds execution.
+
+    The core class is not read: the shape asks for cores, and which class R
+    assigned is the topology's decision (Rob, 2026-11-08).
+    """
     metadata = [node["metadata"] for node in allocation["scheduling"]["graph"]["nodes"]]
     kinds = {kind: [item for item in metadata if item["type"] == kind]
-             for kind in ("core", "perf", "memory", "gpu", "node")}
+             for kind in ("core", "memory", "gpu", "node")}
     pus = sorted({int(pu) for core in kinds["core"] for pu in core["properties"]["os-pus"].split(",")})
     if (len(kinds["node"]) != 1 or kinds["node"][0]["properties"]["arch"] != demand["architecture"]
-            or len(kinds["core"]) != demand["cores"] or len(kinds["perf"]) != demand["cores"]
+            or len(kinds["core"]) != demand["cores"]
             or len(kinds["memory"]) != demand["memory_gib"] or len(kinds["gpu"]) != demand["gpus"]
-            or any(core["properties"]["core-type"] != "perf" for core in kinds["core"])
             or (demand.get("host") is not None and kinds["node"][0]["name"] != demand["host"])
             or affinity != pus or mapped != pus):
         raise ValueError("actual native allocation/resources/affinity differ")
@@ -202,7 +221,7 @@ def submit(directory, checkout, command, cores, memory, timeout, environment, *,
         env["XDG_RUNTIME_DIR"] = "/run/user/1000"
     wrapper = [command[0], "-s", "tools/_suite_flux.py", "payload", str(directory), digest]
     args = ["submit", "--env=-*", *[f"--env={k}={v}" for k, v in sorted(env.items())],
-            f"--resources-shape=node/slot/[core={cores}/perf=1;memory={memory}" + (";gpu=1]" if gpus else "]"),
+            f"--resources-shape={resource_shape(cores, memory, gpus)}",
             "--requires=" + architecture + (" and host:" + host if host is not None else ""),
             "-t", f"{timeout + 10}s", "--cwd", str(checkout),
             "--input=/dev/null", f"--output={directory}/stdout", f"--error={directory}/stderr",
