@@ -25,7 +25,7 @@ and against the Triton window GEMM the module keeps as its other lane:
 * the predicate's refusals by name, and the split-K model's two regimes.
 
 The lane is a CUDA kernel JIT-built on first use; every GPU case here runs
-through PrismaBuild inside the pinned serving image
+as a Flux GPU job inside the pinned serving image (Flux GPU path rendered, not qualified)
 (``experiments/routed_fused_tests.sh``).
 """
 

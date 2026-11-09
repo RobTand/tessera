@@ -95,7 +95,7 @@ each fixture's own ``config_groups``.
 ``--preflight`` needs no device and no vLLM: it resolves the fixtures, checks
 each declaration with ``validate_tessera_scheme`` and builds every rank's plan,
 which is the plumbing a device run would otherwise fail on first.  That mode
-is CPU work and goes through PrismaBuild like every other CPU action.
+is CPU work and runs as a Flux CPU job like every other CPU action.
 
 BOUNDS.  The small fixtures are two dense modules (the widest is 4096x4096) and
 the GLM fixtures are layer 0 of the sharded canonical-census export, read

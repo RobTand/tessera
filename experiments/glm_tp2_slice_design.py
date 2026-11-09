@@ -1,6 +1,6 @@
 """CPU design controls for unchanged GLM wires and the existing TP slicer.
 
-This does not enable a MoE TP route. Invoke explicitly through PrismaBuild;
+This does not enable a MoE TP route. Invoke explicitly as a Flux CPU job;
 GLM_TP2_REQUEST binds the wire/oracle sources and a unique evidence directory.
 """
 from __future__ import annotations

@@ -17,7 +17,7 @@ parent BODY plane, no int64 scale expansion, no parent-sized tensor per rank
 The measurements are bounded and single-process; the wire bytes are read
 once, outside the timed sections, and every timed section is synchronized.
 
-Usage (through PrismaBuild; see the execution policy):
+Usage (as a Flux CPU job):
     python3 tools/compact_prep_probe.py --json-out receipt.json
 """
 from __future__ import annotations
