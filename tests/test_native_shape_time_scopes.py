@@ -514,8 +514,12 @@ def test_a_tampered_recorded_byte_is_refused(tmp_path, monkeypatch):
 
 
 def test_a_missing_recorded_file_is_refused(tmp_path, monkeypatch):
-    name, _, package, _ = _install(tmp_path, monkeypatch)
-    (package.parent / f"{name}-1.0.dist-info" / "METADATA").unlink()
+    name, site, package, info = _install(tmp_path, monkeypatch)
+    data = package / "data.bin"
+    data.write_bytes(b"\x01")
+    _record(info, site, [package / "__init__.py", data, info / "METADATA", info / "direct_url.json"])
+    assert _verify(name)["verified_files"] == 4
+    data.unlink()
     with pytest.raises(ValueError, match="recorded file is missing"):
         _verify(name)
 
