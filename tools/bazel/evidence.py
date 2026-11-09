@@ -348,7 +348,7 @@ class Evidence:
             if '/' in node.value:
                 self.note(facts, node.value, path, directories=False)
             # A manifest of the module's own files, relative to its directory:
-            # PRODUCER_FILES = ("tp2_recipe.py", "observer/usercustomize.py").
+            # FILES = ("helper.py", "sub/other.py").
             if MODULE_FILE.fullmatch(node.value.replace('/', '')) and '.' in node.value:
                 sibling = posixpath.normpath(posixpath.join(here, node.value))
                 if sibling in self.file_set:
