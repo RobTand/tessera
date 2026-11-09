@@ -5,6 +5,9 @@ import json
 from pathlib import Path
 import subprocess
 import sys
+from types import SimpleNamespace
+
+import pytest
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -20,8 +23,8 @@ def test_job_uses_the_repository_dockerfile_and_no_gpu(tmp_path):
     manifest = json.loads((ROOT / "images/serving/glm53-sm121.json").read_text())
     job = _builder().build_job(manifest, "example/serving:test", tmp_path / "image-output")
     assert job["gpu"] is False and job["submitted"] is False
-    assert "--gpu" not in job["command"]
-    assert job["command"][job["command"].index("--tag") + 1] == "aarch64"
+    assert "--gpu" not in job["payload"] and "gpu" not in job["request"]
+    assert job["request"] == {"architecture": "aarch64", "cores": 4, "memory_gib": 8, "timeout_s": 1790}
     assert "filename=images/serving/Dockerfile" in job["builder_command"]
     dockerfile = (ROOT / "images/serving/Dockerfile").read_text()
     assert "FROM ${BASE_IMAGE}" in dockerfile
@@ -45,16 +48,86 @@ def test_dry_run_does_not_start_a_build(tmp_path):
     assert job["submitted"] is False and job["gpu"] is False
 
 
+def _manifest():
+    return json.loads((ROOT / "images/serving/glm53-sm121.json").read_text())
+
+
 def test_payload_uses_an_owned_builder_without_a_host_socket(tmp_path):
-    manifest = json.loads((ROOT / "images/serving/glm53-sm121.json").read_text())
+    manifest = _manifest()
     job = _builder().build_job(manifest, "example/serving:test", tmp_path)
-    payload = job["command"][job["command"].index("--") + 1:]
-    assert payload[:2] == ["python3", "tools/build_serving_image.py"]
-    assert "--inside-action" in payload
+    assert job["payload"][:2] == ["tools/build_serving_image.py", "--run"]
+    assert "--inside-action" not in job["payload"]
     assert job["builder_command"][:2] == ["docker", "run"]
     assert not any("docker.sock" in value for value in job["builder_command"])
     assert manifest["builder_image"] in job["builder_command"]
     assert "type=docker,name=example/serving:test,dest=/out/serving-image.tar" in job["builder_command"]
+
+
+def test_the_job_names_no_prismabuild_runner(tmp_path):
+    builder = _builder()
+    job = builder.build_job(_manifest(), "example/serving:test", tmp_path)
+    text = json.dumps(job).lower()
+    assert "pbrun" not in text and "prismabuild" not in text and "--priority" not in text
+    assert not hasattr(builder, "PB_RUN")
+
+
+@pytest.mark.parametrize("architecture,expected", [("x86", "x86_64"), ("aarch64", "aarch64")])
+def test_the_request_is_the_suite_transports_stock_demand_and_refuses_more(tmp_path, architecture, expected):
+    builder = _builder()
+    job = builder.build_job({**_manifest(), "architecture": architecture}, "t:1", tmp_path, cpus=2, memory_gb=4)
+    assert job["request"] == {"architecture": expected, "cores": 2, "memory_gib": 4, "timeout_s": 1790}
+    for demand in ({"cpus": 5}, {"memory_gb": 17}, {"cpus": 0}):
+        with pytest.raises(ValueError, match="native suite profile"):
+            builder.build_job(_manifest(), "t:1", tmp_path, **demand)
+
+
+def test_submit_goes_through_the_suite_transport_with_that_demand(tmp_path, monkeypatch):
+    builder = _builder()
+    job = builder.build_job(_manifest(), "t:1", tmp_path)
+    seen = {}
+    import _suite_flux
+    monkeypatch.setattr(_suite_flux, "submit", lambda *a, **k: seen.update(args=a, kwargs=k) or {"state": "running"})
+    record = builder.submit(job, tmp_path / "launch", tmp_path / "checkout", "/named/python")
+    directory, checkout, command, cores, memory, timeout, environment = seen["args"]
+    assert record == {"state": "running"} and seen["kwargs"] == {"architecture": "aarch64"}
+    assert command[:3] == ["/named/python", "-s", "tools/build_serving_image.py"] and command[3] == "--run"
+    assert (cores, memory, timeout, environment) == (4, 8, 1790, {})
+
+
+class _Docker:
+    """Controlled process model: the builder container announces its id, then ends as told."""
+    def __init__(self, code, cid="a" * 12, remove_error=""):
+        self.code, self.cid, self.remove_error, self.calls = code, cid, remove_error, []
+
+    def __call__(self, command, **kwargs):
+        self.calls.append(command)
+        if command[:3] == ["docker", "run", "--rm"]:
+            Path(command[command.index("--cidfile") + 1]).write_text(self.cid)
+            return SimpleNamespace(returncode=self.code, stderr="")
+        assert command[:3] == ["docker", "rm", "-f"]
+        return SimpleNamespace(returncode=1 if self.remove_error else 0, stderr=self.remove_error)
+
+
+@pytest.mark.parametrize("code,remove_error,expected", [
+    (0, "", 0), (7, "", 7), (0, "Error: No such container: " + "a" * 12, 0), (7, "daemon refused", 7), (0, "daemon refused", 1)])
+def test_the_owned_container_is_removed_whatever_the_build_does(tmp_path, code, remove_error, expected):
+    docker = _Docker(code, remove_error=remove_error)
+    manifest = _manifest()
+    status = _builder().run_build(manifest, "t:1", str(tmp_path / "out"), "source:x", runner=docker,
+                                  environ={"TMPDIR": str(tmp_path), "FLUX_JOB_ID": "\u0192Abc123"})
+    assert status == expected
+    assert docker.calls[-1] == ["docker", "rm", "-f", "a" * 12]
+    run = docker.calls[0]
+    assert run[run.index("--name") + 1] == "tessera-image-build-Abc123"
+    assert (tmp_path / "out").is_dir()
+
+
+def test_a_build_that_never_announced_a_container_removes_nothing(tmp_path):
+    calls = []
+    runner = lambda command, **kwargs: calls.append(command) or SimpleNamespace(returncode=5, stderr="")
+    status = _builder().run_build(_manifest(), "t:1", str(tmp_path / "out"), "source:x", runner=runner,
+                                  environ={"TMPDIR": str(tmp_path)})
+    assert status == 5 and len(calls) == 1 and calls[0][:2] == ["docker", "run"]
 
 
 def test_imported_patch_licenses_reach_the_image():
