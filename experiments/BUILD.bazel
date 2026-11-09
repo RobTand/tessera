@@ -834,11 +834,6 @@ filegroup(
     srcs = glob(["results/**"], exclude = ["**/BUILD.bazel", "bazel-*/**", "*bazel-remote-grpc.log", "*execution_log.binpb.zst", ".pytest_cache/**", "**/__pycache__/**", "**/*.pyc"]),
 )
 
-filegroup(
-    name = "files/t8r_speed",
-    srcs = glob(["t8r_speed/**"], exclude = ["**/BUILD.bazel", "bazel-*/**", "*bazel-remote-grpc.log", "*execution_log.binpb.zst", ".pytest_cache/**", "**/__pycache__/**", "**/*.pyc"]),
-)
-
 ts_py_library(
     name = "fp8_band",
     srcs = [
@@ -1568,13 +1563,6 @@ ts_py_library(
         "//src/tessera:graph_equality",
         "//src/tessera:graph_receipt",
         "//src/tessera:serving/build_identity",
-    ],
-)
-
-ts_py_library(
-    name = "graph_attest_702/snapshot_script_hash",
-    srcs = [
-        "graph_attest_702/snapshot_script_hash.py",
     ],
 )
 
@@ -2759,24 +2747,6 @@ ts_py_library(
 )
 
 ts_py_library(
-    name = "regdirect_stage1/d41_table",
-    srcs = [
-        "regdirect_stage1/d41_table.py",
-    ],
-    data = [
-        "//src/tessera:serving/csrc/regdirect_routed.cu",
-    ],
-    deps = [
-        "//src/tessera:__init___cycle",
-        "//src/tessera:bf16_route_cycle",
-        "//src/tessera:dev_mode",
-        "//src/tessera:fragment_wire",
-        "//src/tessera:regdirect_routed",
-        "//src/tessera:rung_allowability",
-    ],
-)
-
-ts_py_library(
     name = "regdirect_stage1/fragment_synth",
     srcs = [
         "regdirect_stage1/fragment_synth.py",
@@ -3852,17 +3822,6 @@ ts_py_library(
 )
 
 ts_py_library(
-    name = "t8r_speed/routed_gate_seal",
-    srcs = [
-        "t8r_speed/routed_gate_seal.py",
-    ],
-    deps = [
-        ":t8r_speed/pb_staged_store",
-        ":t8r_speed/stageprev_probe",
-    ],
-)
-
-ts_py_library(
     name = "t8r_speed/rung_allowability_table",
     srcs = [
         "t8r_speed/rung_allowability_table.py",
@@ -3873,13 +3832,6 @@ ts_py_library(
         "//src/tessera:dev_mode",
         "//src/tessera:kernel_a4",
         "//src/tessera:rung_allowability",
-    ],
-)
-
-ts_py_library(
-    name = "t8r_speed/rung_campaign",
-    srcs = [
-        "t8r_speed/rung_campaign.py",
     ],
 )
 
@@ -3929,25 +3881,6 @@ ts_py_library(
         "//src/tessera:bf16_route_cycle",
         "//tests:shared_fold_data",
         ":t4_code/sass_dump",
-    ],
-)
-
-ts_py_library(
-    name = "t8r_speed/stageprev_793_claim_contract_cycle",
-    srcs = [
-        "t8r_speed/stageprev_793_claim_contract.py",
-        "t8r_speed/stageprev_793_prepare.py",
-        "t8r_speed/stageprev_793_prerequisites.py",
-    ],
-    data = [
-        "configs/stageprev_793_admission_revision_v3.json",
-        "configs/stageprev_793_expected.json",
-        "configs/stageprev_793_numeric_packet.json",
-        "configs/stageprev_793_numeric_packet_v2.json",
-        "t8r_speed/ab_arms.sh",
-    ],
-    deps = [
-        ":t8r_speed/ab_stageprev_accept",
     ],
 )
 
