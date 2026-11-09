@@ -246,7 +246,7 @@ def main():
         # records before meta_schema job_meta.v2 name their job in pb_action
         table = dict(schema="tessera.glm53_pinned_gemm.v1", cublaslt_version=meta["cublaslt_version"],
                      torch=meta["torch"], cuda=meta["cuda"], device_name=meta["device"],
-                     capability=meta["capability"], image=meta["image"], source_action=(meta["flux_job_id"] if meta.get("meta_schema") == "tessera.job_meta.v2" else meta["pb_action"]),,
+                     capability=meta["capability"], image=meta["image"], source_action=(meta["flux_job_id"] if meta.get("meta_schema") == "tessera.job_meta.v2" else meta["pb_action"]),
                      pinned_gemm_cpp_sha256=meta["pinned_gemm_cpp_sha256"],
                      complete=done, entries=entries)
         with open(table_path + ".part", "w") as fh:
