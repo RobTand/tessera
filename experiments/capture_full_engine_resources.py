@@ -1,6 +1,6 @@
 """Launch a bound stock-vLLM resource/timing observation, without admission.
 
-Run inside an admitted PrismaBuild action in the attested stock container.
+Run inside an admitted Flux job in the attested stock container.
 The first process verifies inputs and writes the observer plan. A fresh Python
 process enables the early bootstrap for itself and spawned engine workers.
 """

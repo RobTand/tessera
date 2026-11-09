@@ -2283,8 +2283,8 @@ def main(argv=None):
                     time_after_resource_collection(prepared, json.loads(args.panel.read_text()), phase_tensors,
                         result, collector=collector, warmup_iterations=args.warmup_iterations, iterations=args.iterations)
         args.out.write_text(json.dumps(result, sort_keys=True, indent=2, allow_nan=False) + "\n")
-        # pbrun's CAS result is stdout. Bind the separately retained artifact
-        # bytes to that result, rather than relying on an external path alone.
+        # The job's stdout is a separate retained stream. Bind the retained
+        # artifact bytes to that result, rather than relying on an external path alone.
         published = {"schema": "tessera.native_moe_publication.v1",
                      "status": result["status"], "receipt_path": str(args.out),
                      "receipt_sha256": hashlib.sha256(args.out.read_bytes()).hexdigest()}

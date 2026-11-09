@@ -342,7 +342,7 @@ def analyze_trace(trace, *, interval, torch_observation):
 
 
 def _qualify(library, output):
-    """Tiny real observer regression, invoked only inside an admitted PB GPU job."""
+    """Tiny real observer regression, invoked only inside an admitted Flux GPU job."""
     collector = NativeMemoryCollector(library)
     import torch
     torch.cuda.init()
