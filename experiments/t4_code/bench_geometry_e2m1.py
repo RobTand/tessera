@@ -15,7 +15,7 @@ This reader does not change serving admission.
 --cpu-preflight is the same entry point's D38 slice. --quality screens actual
 sample tiles on CPU with the recipe measured, not a Gaussian quality proxy.
 GPU timings use fully encoded seeded weights at the actual projection shape;
-all experts share those synthetic weights, as in bench_e2m1.py. No quality,
+all experts share those synthetic weights, as in archive/flux-migration/T-SLICE5/experiments/t4_code/bench_e2m1.py. No quality,
 served KL, serving admission, default or encoded-wire changes are implied.
 """
 from __future__ import annotations
