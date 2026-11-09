@@ -149,7 +149,7 @@ The five consumers previously excluded under [the fixture cost issue](https://gi
 are restored. Grouping alone passed ARM but still timed out on hosted x64;
 standard-sample reuse removes that repeated inverse-CDF work.
 The remaining tests in those modules stay active. The T4 prepare-inputs tests
-use the pinned public PrismaBuild SDK instead of being quarantined. Hosted failures must be investigated and assigned
+validate their declared inputs with Tessera's own reader instead of being quarantined. Hosted failures must be investigated and assigned
 an open issue before exclusion. No exclusion claims CUDA coverage.
 
 ## Branch protection transition
