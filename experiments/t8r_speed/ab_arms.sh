@@ -32,7 +32,7 @@ OUT=${1:?out_root}; shift
 ARMS=("$@")
 (( ${#ARMS[@]} >= 2 )) || { echo "need at least two arms" >&2; exit 2; }
 if [[ -z "${ORACLE_IMAGE:-}" ]]; then
-  echo "REFUSED: ORACLE_IMAGE is unset; pass the PB-declared measurement image (pbrun --env ORACLE_IMAGE=...)" >&2
+  echo "REFUSED: ORACLE_IMAGE is unset; pass the declared measurement image (flux submit --env=ORACLE_IMAGE=...)" >&2
   exit 2
 fi
 : "${AB_EXPECTED_CASES:?declare the expected case/rate/source population}"

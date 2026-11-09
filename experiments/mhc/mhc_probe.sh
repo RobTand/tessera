@@ -27,23 +27,17 @@ echo "host=$(hostname) cpus=$CPUS head=$HEAD state=[$STATE] image=$IMAGE_REF mod
 EXTRA_MOUNTS=()
 OBS_ENV=()
 declare -A OBS_MOUNTED=()
-for OBS_VAR in PRISMABUILD_PROFILE_TORCH_OUT PRISMABUILD_ACTION_PROGRESS_PATH PRISMABUILD_ACTION_PROGRESS_HELPER; do
+for OBS_VAR in TESSERA_PROFILE_TORCH_OUT; do
   OBS_VALUE=${!OBS_VAR:-}
   if [[ -n "$OBS_VALUE" ]]; then
     OBS_PARENT=$(dirname "$OBS_VALUE")
     mkdir -p "$OBS_PARENT"
     if [[ -z "${OBS_MOUNTED[$OBS_PARENT]:-}" ]]; then
-      OBS_READONLY=
-      [[ "$OBS_VAR" != PRISMABUILD_ACTION_PROGRESS_HELPER ]] || OBS_READONLY=,readonly
-      EXTRA_MOUNTS+=(--mount "type=bind,src=$OBS_PARENT,dst=$OBS_PARENT$OBS_READONLY")
+      EXTRA_MOUNTS+=(--mount "type=bind,src=$OBS_PARENT,dst=$OBS_PARENT")
       OBS_MOUNTED[$OBS_PARENT]=1
     fi
     OBS_ENV+=(-e "$OBS_VAR=$OBS_VALUE")
   fi
-done
-for OBS_VAR in PRISMABUILD_ACTION_PROGRESS_TOKEN PRISMABUILD_ACTION_PROGRESS_PHASES PRISMABUILD_ACTION_PROGRESS_ALLOWANCES; do
-  OBS_VALUE=${!OBS_VAR:-}
-  [[ -z "$OBS_VALUE" ]] || OBS_ENV+=(-e "$OBS_VAR=$OBS_VALUE")
 done
 PREFIX=(bash -c 'source /work/experiments/cuda_home_shadow.sh "$TMPDIR/.." && exec "$@"' bash)
 # MHC_PROBE_SCRIPT selects a sibling probe with the same contract (mhc_fused_probe.py, #783).
@@ -73,6 +67,6 @@ exec docker run --rm --gpus all --ipc=host --network=host --cpuset-cpus "$CPUS" 
   -e NUMEXPR_NUM_THREADS=1 -e PYTHONUNBUFFERED=1 \
   -e MAX_JOBS="${MAX_JOBS:-2}" \
   -e ORACLE_IMAGE="$IMAGE_REF" -e TESSERA_HEAD="$HEAD" -e TESSERA_STATE="$STATE" \
-  -e PB_ACTION_KEY="${PB_ACTION_KEY:-${PRISMABUILD_ACTION_KEY:-}}" \
+  -e FLUX_JOB_ID="${FLUX_JOB_ID:-}" \
   "${IMAGE_ENV[@]}" "${OBS_ENV[@]}" "${EXTRA_MOUNTS[@]}" --entrypoint "${PREFIX[0]}" -w /work "$IMAGE_REF" \
   "${PREFIX[@]:1}" "${COMMAND[@]}" --out "$OUT" --model "$MODEL" "$@"

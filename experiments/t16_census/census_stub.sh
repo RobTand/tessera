@@ -29,31 +29,10 @@ OUT=${CENSUS_OUT:-$R/census}/$NAME-$(date -u +%Y%m%dT%H%M%SZ)
 IMG=${IMG:-localhost/prismaquant/spark-vllm-nccl230@sha256:f8dbe1a02e33ccb7416ab40b72a83e8c725dcb6fed3e90bae4a658cce5e1b7f5}
 UTIL=${UTIL:-0.30}
 WINDOW=/home/rob/tmp/claude-campaign-20260926/tmp/u4-release/WINDOW_ACTIVE
-PBQ=/mnt/shared/prismabuild-fleet/pb-queue
-PBCAS=/mnt/shared/prismabuild-fleet/cas
-# The action keys of measurement rows claimed on this host (empty when none).
-measurement_claims() {
-    python3 - "$PBQ/claimed" "$PBCAS/requests" "$(hostname)" <<'PY'
-import glob, json, os, sys
-claimed, requests, host = sys.argv[1:]
-for f in glob.glob(os.path.join(claimed, '*.json')):
-    try:
-        rec = json.load(open(f))
-        if rec.get('claimed_host') != host:
-            continue
-        key = rec['action_key']
-        req = json.load(open(os.path.join(requests, key[:2], key + '.json')))
-    except (OSError, ValueError, KeyError):
-        continue
-    if (req.get('task') or {}).get('task_class') == 'measurement' or (req.get('params') or {}).get('gpu_exclusive'):
-        print(key[:8])
-PY
-}
 avail_gib() { awk '/^MemAvailable:/{printf "%d", $2/1048576}' /proc/meminfo; }
 NEED_GIB=$(python3 -c "import math; print(16 + math.ceil($UTIL * 121.6))")
 [ "$(hostname)" = sparky ] || { echo "census $NAME: sparky only"; exit 3; }
 [ -e "$WINDOW" ] && { echo "census $NAME: a TP2 window is active"; exit 3; }
-MC=$(measurement_claims); [ -z "$MC" ] || { echo "census $NAME: PB measurement row(s) claimed on this box: $MC"; exit 3; }
 [ -f "$MODEL/config.json" ] || { echo "census $NAME: no exported stub at $MODEL"; exit 3; }
 [ "$(avail_gib)" -ge "$NEED_GIB" ] || { echo "census $NAME: MemAvailable $(avail_gib) GiB < $NEED_GIB"; exit 3; }
 export SERVE_LOCK_OWNER="census-$NAME" SERVE_LOCK_TIMEOUT=${SERVE_LOCK_TIMEOUT:-900}

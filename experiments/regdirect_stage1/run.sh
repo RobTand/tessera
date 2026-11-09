@@ -51,7 +51,7 @@ docker run --rm --cidfile "$CID" --gpus all --ipc=host --network=host --cpuset-c
   -e HOME="$OUT/home" -e TMPDIR="$OUT/tmp" -e TORCH_EXTENSIONS_DIR="$OUT/home/torch_extensions" \
   -e PYTHONPATH=/work/src -e HOST_NAME="$(hostname)" -e TESSERA_HEAD="$HEAD" -e ORACLE_IMAGE="$IMAGE" \
   -e OMP_NUM_THREADS=1 -e MKL_NUM_THREADS=1 -e MAX_JOBS=2 -e PYTHONUNBUFFERED=1 -e TESSERA_SERVE_MODE=resident \
-  -e PB_ACTION_KEY="${PB_ACTION_KEY:-${PRISMABUILD_ACTION_KEY:-}}" \
+  -e FLUX_JOB_ID="${FLUX_JOB_ID:-}" \
   --entrypoint "${COMMAND[0]}" -w /work "$IMAGE" "${COMMAND[@]:1}" --out "$OUT" "$@" || rc=$?
 touch "$OUT/.done"; kill $WD 2>/dev/null || true
 echo "end=$(date -u +%FT%TZ) rc=$rc"

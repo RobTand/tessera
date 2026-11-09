@@ -40,7 +40,7 @@ docker run --rm --gpus all --ipc=host --network=host --cpuset-cpus "$CPUS" \
   -e PYTHONPATH=/work/src:/work/experiments/t4_code -e HOST_NAME="$(hostname)" \
   -e OMP_NUM_THREADS="$NCPU" -e MKL_NUM_THREADS=1 -e OPENBLAS_NUM_THREADS=1 \
   -e PYTHONUNBUFFERED=1 -e ORACLE_IMAGE="$IMAGE_REF" -e TESSERA_HEAD="$HEAD" \
-  -e PB_ACTION_KEY="${PB_ACTION_KEY:-${PRISMABUILD_ACTION_KEY:-}}" \
+  -e FLUX_JOB_ID="${FLUX_JOB_ID:-}" \
   "${IMAGE_ENV[@]}" "${EXTRA[@]}" --entrypoint bash -w /work "$IMAGE_REF" \
   -c 'source /work/experiments/cuda_home_shadow.sh "$TMPDIR"; exec python3 "$@"' -- \
   "/work/experiments/t4_code/$SCRIPT" --out "$OUT" "$@" || rc=$?

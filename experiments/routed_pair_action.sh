@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
-# PB-admitted entrypoint. Reports/traces return through PB's stdout CAS receipt;
-# this action does not publish or mutate a shared measurement directory.
+# Flux-job entrypoint. Reports/traces return on stdout;
+# this job does not publish or mutate a shared measurement directory.
 set -uo pipefail
-if [[ -z "${PRISMABUILD_ACTION_KEY:-${PB_ACTION_KEY:-}}" ]]; then
-  echo 'routed_pair_action.sh requires PrismaBuild admission' >&2
+if [[ -z "${FLUX_JOB_ID:-}" ]]; then
+  echo 'routed_pair_action.sh requires a Flux job' >&2
   exit 2
 fi
 OUT="$PWD/.routed-pair-output"

@@ -73,7 +73,6 @@ if [[ "$CONTAINER_SRC" != /work/src ]]; then
   [[ -f "$PROJECT_FILE" ]] || { echo "missing source version metadata: $PROJECT_FILE" >&2; exit 2; }
   EXTRA+=(-v "$PROJECT_FILE":"$(dirname "$CONTAINER_SRC")/pyproject.toml":ro)
 fi
-if [[ -n "${PB_CLIENT_ROOT:-}" ]]; then EXTRA+=(-v "$PB_CLIENT_ROOT":"$PB_CLIENT_ROOT":ro); fi
 for d in ${TEST_RO_MOUNTS:-}; do [[ -d "$d" ]] || { echo "missing $d" >&2; exit 2; }; EXTRA+=(-v "$d":"$d":ro); done
 BT="$OUT/tmp/pytest-tmp"; TD="$OUT/tmp"
 if [[ "${TEST_LOCAL_TMP:-0}" == 1 ]]; then EXTRA+=(--tmpfs /pbtmp:rw,exec,size=8g); BT=/pbtmp/pytest-tmp; TD=/pbtmp; fi
@@ -86,12 +85,12 @@ docker run --rm "${GPU_ARGS[@]}" --ipc=host --network=host --cpuset-cpus "$CPUS"
   -e TORCH_EXTENSIONS_DIR="$CONTAINER_EXT" -e PYTHONDONTWRITEBYTECODE=1 \
   -e NATIVE_CONTAINER_SRC="$CONTAINER_SRC" \
   -e TERMINAL_NATIVE_IDENTITY_DIR="$OUT/native-identities" \
-  -e PYTHONPATH="$CONTAINER_SRC":/work/tests:/work/experiments:"$OUT/runner-sp"${PB_CLIENT_ROOT:+:"$PB_CLIENT_ROOT/src"} \
+  -e PYTHONPATH="$CONTAINER_SRC":/work/tests:/work/experiments:"$OUT/runner-sp" \
   -e HOST_NAME="$(hostname)" -e OMP_NUM_THREADS=1 -e MKL_NUM_THREADS=1 \
   -e OPENBLAS_NUM_THREADS=1 -e NUMEXPR_NUM_THREADS=1 -e PYTHONUNBUFFERED=1 \
   -e ORACLE_IMAGE="$IMAGE_REF" -e TESSERA_HEAD="$HEAD" -e TESSERA_STATE="$STATE" \
   -e TESSERA_ROUTED_FUSED_VERBOSE="${TESSERA_ROUTED_FUSED_VERBOSE:-}" \
-  -e PB_ACTION_KEY="${PB_ACTION_KEY:-${PRISMABUILD_ACTION_KEY:-}}" \
+  -e FLUX_JOB_ID="${FLUX_JOB_ID:-}" \
   "${IMAGE_ENV[@]}" "${EXTRA[@]}" ${TESSERA_ROUTED_ENV:+-e "$TESSERA_ROUTED_ENV"} \
   --entrypoint python3 -w /work "$IMAGE_REF" \
   -m pytest -p no:cacheprovider "${SOURCE_PLUGIN[@]}" "${XDIST[@]}" -q -rA --junitxml="$OUT/junit.xml" \

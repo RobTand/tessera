@@ -75,33 +75,16 @@ fi
 KERNEL_SHA=$(sha256sum "$KSRC/tessera/serving/csrc/routed_fused_window.cu" | cut -d' ' -f1)
 echo "arm src=$KSRC kernel_sha=$KERNEL_SHA"
 EXTRA_MOUNTS=()
-# The strict replay uses PB's public SDK from this sealed published generation,
-# and reads only ranges opened through its leases. Preserve the injected attempt.
-PB_ENV=()
 DIRECT_OPTS=()
 RUN_PREFIX=()
 [[ -z "${BENCH_EXPECT_LIBRARY_SHA256:-}" ]] || IMAGE_ENV+=(-e "BENCH_EXPECT_LIBRARY_SHA256=$BENCH_EXPECT_LIBRARY_SHA256")
-if [[ -n "${BENCH_STRICT_STAGED:-}" ]]; then
-  for key in PRISMABUILD_ACTION_KEY PRISMABUILD_ACTION_NONCE PRISMABUILD_ACTION_SCOPE PRISMABUILD_QUEUE_ROOT PRISMABUILD_RESIDENCY_MAP PRISMABUILD_READER_HELPER_ROOT; do
-    [[ -n "${!key:-}" ]] || { echo "missing strict staged context: $key" >&2; exit 2; }
-    PB_ENV+=(-e "$key=${!key}")
-  done
-  [[ -d "${PB_CLIENT_ROOT:-}/src/prismabuild" ]] || { echo "missing published PB SDK" >&2; exit 2; }
-  STAGE_ROOT=$(PYTHONPATH="$PB_CLIENT_ROOT/src" python3 -c 'import os; from prismabuild.client import read_residency_map; print(read_residency_map(os.environ["PRISMABUILD_RESIDENCY_MAP"])["stage_root"])')
-  [[ -d "$STAGE_ROOT" ]] || { echo "missing admitted stage root" >&2; exit 2; }
-  # Public acquire/open/release owns coordination under this root; expose the
-  # exact admitted namespace, with all data reads still through pinned FDs.
-  EXTRA_MOUNTS+=(-v /mnt/shared/prismabuild-fleet:/mnt/shared/prismabuild-fleet
-                 -v "$STAGE_ROOT":"$STAGE_ROOT" --pid=host)
-  IMAGE_ENV+=(-e "PYTHONPATH=$CONTAINER_SRC:/work/tests:$PB_CLIENT_ROOT/src")
-fi
 # Reuse the qualified direct benchmark containment contract. Numeric phase
 # and separately reviewed finite timing/repeatability resource windows.
 if [[ "${BENCH_DIRECT_VLLM:-0}" == 1 ]]; then
   [[ -z "${BENCH_STRICT_STAGED:-}" ]] || { echo "held-original-FD mode cannot also use staged input transport" >&2; exit 2; }
   if [[ " $* " == *" --paired-k32-numerics "* && " $* " == *" --direct-vllm-inputs "* ]]; then
-    # Closed paired batch uses held FDs, but always stays inside PB execution.
-    [[ -n "${PRISMABUILD_ACTION_KEY:-}" ]] || { echo "paired custom-op batch requires an admitted PrismaBuild attempt" >&2; exit 2; }
+    # Closed paired batch uses held FDs, but always stays inside a Flux job.
+    [[ -n "${FLUX_JOB_ID:-}" ]] || { echo "paired custom-op batch requires an admitted Flux job" >&2; exit 2; }
     [[ " $* " != *" --comparison-protocol "* ]] || { echo "paired numeric mode excludes a PM comparison protocol" >&2; exit 2; }
     DIRECT_TIMEOUT=240
   else
@@ -111,21 +94,19 @@ if [[ "${BENCH_DIRECT_VLLM:-0}" == 1 ]]; then
     else echo "held-original-FD transport requires closed numeric, timing or repeatability phase" >&2; exit 2; fi
   fi
   [[ "${BENCH_OWNER_TOKEN:-}" =~ ^[0-9a-f]{32}$ ]] || { echo "missing owned-container token" >&2; exit 2; }
-  [[ -d "${PB_CLIENT_ROOT:-}/src/prismabuild" ]] || { echo "missing published manifest reader" >&2; exit 2; }
   [[ ! -e "$OUT/owned.cid" && ! -e "$OUT/owner-token.txt" ]] || { echo "owned container evidence already exists" >&2; exit 2; }
   printf '%s\n' "$BENCH_OWNER_TOKEN" > "$OUT/owner-token.txt"
   # The existing containment owner reads this same label key and a unique token.
   DIRECT_OPTS=(--cidfile "$OUT/owned.cid" --label "tessera.paired_numeric_owner=$BENCH_OWNER_TOKEN"
                --memory 16g --memory-swap 16g --pids-limit 512 --cpus 2)
   RUN_PREFIX=(timeout --signal=TERM --kill-after=15s "${DIRECT_TIMEOUT}s")
-  EXTRA_MOUNTS+=(-v "$PB_CLIENT_ROOT":"$PB_CLIENT_ROOT":ro)
   # Reuse the qualified pure-Python fixture runner; image torch/vLLM stay first.
   FIXTURE_SP=${BENCH_FIXTURE_RUNNER_SP:?closed numeric fixtures require the qualified pure-Python runner}
   for pkg in pytest _pytest pluggy iniconfig packaging py.py; do
     [[ -e "$FIXTURE_SP/$pkg" ]] || { echo "missing fixture dependency $FIXTURE_SP/$pkg" >&2; exit 2; }
   done
   EXTRA_MOUNTS+=(-v "$FIXTURE_SP":"$FIXTURE_SP":ro)
-  IMAGE_ENV+=(-e "PYTHONPATH=$CONTAINER_SRC:/work/tests:$PB_CLIENT_ROOT/src:$FIXTURE_SP")
+  IMAGE_ENV+=(-e "PYTHONPATH=$CONTAINER_SRC:/work/tests:$FIXTURE_SP")
 fi
 # BENCH_RO_MOUNTS: space-separated host directories a script reads (a source
 # model, recorded activations), mounted read-only at the same path.
@@ -196,8 +177,8 @@ rc=0
   -e OMP_NUM_THREADS=1 -e MKL_NUM_THREADS=1 -e OPENBLAS_NUM_THREADS=1 \
   -e NUMEXPR_NUM_THREADS=1 -e MAX_JOBS=1 -e PYTHONUNBUFFERED=1 -e TESSERA_SERVE_MODE=resident \
   -e ORACLE_IMAGE="$IMAGE_REF" -e TESSERA_HEAD="$HEAD" -e TESSERA_STATE="$STATE" \
-  -e PB_ACTION_KEY="${PB_ACTION_KEY:-${PRISMABUILD_ACTION_KEY:-}}" \
-  "${IMAGE_ENV[@]}" "${PB_ENV[@]}" "${EXTRA_MOUNTS[@]}" --entrypoint "${COMMAND[0]}" -w /work "$IMAGE_REF" \
+  -e FLUX_JOB_ID="${FLUX_JOB_ID:-}" \
+  "${IMAGE_ENV[@]}" "${EXTRA_MOUNTS[@]}" --entrypoint "${COMMAND[0]}" -w /work "$IMAGE_REF" \
   "${COMMAND[@]:1}" --out "$OUT" "$@" || rc=$?
 EXT_AFTER=$(ext_libs)
 if [[ -n "${BENCH_EXT_DIR:-}" && "$EXT_AFTER" != "$EXT_BEFORE" ]]; then

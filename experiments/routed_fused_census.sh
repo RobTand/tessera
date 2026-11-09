@@ -74,7 +74,7 @@ docker run --rm --gpus all --ipc=host --network=host --cpuset-cpus "$CPUS" \
   -e TESSERA_SERVE_MODE="${TESSERA_SERVE_MODE:-resident}" \
   -e TESSERA_RESEARCH_GLM53_NOPE="${TESSERA_RESEARCH_GLM53_NOPE:-1}" \
   -e TESSERA_ROUTED_FUSED_VERBOSE="${TESSERA_ROUTED_FUSED_VERBOSE:-}" \
-  -e PB_ACTION_KEY="${PB_ACTION_KEY:-${PRISMABUILD_ACTION_KEY:-}}" \
+  -e FLUX_JOB_ID="${FLUX_JOB_ID:-}" \
   "${IMAGE_ENV[@]}" ${TESSERA_ROUTED_ENV:+-e "$TESSERA_ROUTED_ENV"} \
   --entrypoint bash -w /work "$IMAGE_REF" \
   -c 'source /work/experiments/cuda_home_shadow.sh "$TMPDIR/.." && exec python3 \
