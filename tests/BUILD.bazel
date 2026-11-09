@@ -330,7 +330,6 @@ ts_py_library(
         "//src/tessera:fused_frame",
         "//src/tessera:serving/census_plan",
         "//src/tessera:serving/timing_panel",
-        ":box_artifacts",
     ],
 )
 
@@ -3997,6 +3996,7 @@ ts_py_library(
         "//tools:__init__",
         "//tools:_accounting_source",
         "//tools:_durable_progress",
+        "//tools:_install_identity",
         "//tools:_suite_container_cycle",
         "//tools:_suite_runtime",
         "//tools:a4_measure",
@@ -5356,6 +5356,7 @@ ts_py_library(
         "//tools:__init__.py",
         "//tools:_accounting_source.py",
         "//tools:_durable_progress.py",
+        "//tools:_install_identity.py",
         "//tools:_suite_container.py",
         "//tools:_suite_flux.py",
         "//tools:_suite_runtime.py",
@@ -15801,9 +15802,9 @@ ts_py_library(
         "//src/tessera:serving/census_plan",
         "//src/tessera:serving/timing_panel",
         "//tools:__init__",
+        "//tools:_install_identity",
         "//tools:tessera_shape_time_panel",
         "//tools:tessera_shape_time_worker",
-        ":box_artifacts",
         ":native_timing_panel_support",
     ],
 )

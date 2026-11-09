@@ -33,6 +33,13 @@ ts_py_library(
 )
 
 ts_py_library(
+    name = "_install_identity",
+    srcs = [
+        "_install_identity.py",
+    ],
+)
+
+ts_py_library(
     name = "_suite_container_cycle",
     srcs = [
         "_suite_container.py",
@@ -698,8 +705,8 @@ ts_py_library(
         "//src/tessera:serving/timing_panel",
         "//src/tessera:source_profiles",
         ":__init__",
+        ":_durable_progress",
         ":run_glm_cached_cpu_export",
-        ":tessera_shape_time_worker",
     ],
 )
 
@@ -716,6 +723,7 @@ ts_py_library(
         "//src/tessera:bf16_route_cycle",
         "//src/tessera:serving/source_identity",
         ":__init__",
+        ":_install_identity",
         ":run_glm_cached_cpu_export",
     ],
 )

@@ -353,16 +353,16 @@
           "//tests:test_wire_unpack_memory",
           "//tests:window_lut_reference",
           "//tools/bazel:runner",
-          "//tools:build_serving_image",
-          "//tools:ci/gate_actions",
-          "//tools:ci/gate_junit",
-          "//tools:ci/gate_select",
-          "//tools:comparison_arm_identity",
-          "//tools:impacted_tests",
-          "//tools:pq2459_fixture_workloads",
-          "//tools:render_glm_cpu_export_command",
-          "//tools:tessera_attest",
-          "//tools:tessera_shape_time_worker"
+          "//tools:a4_measure",
+          "//tools:ci/full_shards",
+          "//tools:ci/gate_flaky",
+          "//tools:ci/gate_run",
+          "//tools:compact_prep_probe",
+          "//tools:ig790_verify",
+          "//tools:pq2459_fixture_packet",
+          "//tools:refresh_issues",
+          "//tools:suite_deadline",
+          "//tools:tessera_shape_time_panel"
         ],
         "tests": [
           "//tests:test_accounting_source.bytes",
@@ -528,7 +528,7 @@
         "estimated_seconds": 1957.1000000000004,
         "index": 0,
         "file": "tools/bazel/full_targets/amd64-0.targets",
-        "sha256": "97585e77a2f8069068d3ff6aac577b094cfd6b9d4699525a853c9d6631964e9d"
+        "sha256": "a73e19b8a568756a37a43b6f33a0f2a2c42d0fe0a04d5f161a3e4b28622d702a"
       },
       {
         "rules": [
@@ -881,16 +881,16 @@
           "//tests:test_wire_device_unpack_lib",
           "//tests:window_pack_reference",
           "//tools:__init__",
-          "//tools:check_wheel",
-          "//tools:ci/gate_boundary",
-          "//tools:ci/gate_partition",
-          "//tools:ci/graph_impact",
-          "//tools:comparison_input_intake",
-          "//tools:merge_suite",
-          "//tools:pq2459_scorer_source",
-          "//tools:run_glm_cached_cpu_export",
-          "//tools:tessera_construction_census_cycle",
-          "//tools:tessera_update_construction_block"
+          "//tools:build_serving_image",
+          "//tools:ci/gate_actions",
+          "//tools:ci/gate_junit",
+          "//tools:ci/gate_select",
+          "//tools:comparison_arm_identity",
+          "//tools:impacted_tests",
+          "//tools:pq2459_fixture_workloads",
+          "//tools:render_glm_cpu_export_command",
+          "//tools:tessera_attest",
+          "//tools:tessera_shape_time_worker"
         ],
         "tests": [
           "//tests:test_audit_sec2.bytes",
@@ -1060,7 +1060,7 @@
         "estimated_seconds": 1957.1000000000006,
         "index": 1,
         "file": "tools/bazel/full_targets/amd64-1.targets",
-        "sha256": "9412214e2e9f205500d22a5d28512529cdc0bd5e8da100d4e070a5fd91f2dfd7"
+        "sha256": "bc25b6c5a5ff724b52193fadd2fee7e1a47c5d577594f7b3aac1950921cd2931"
       },
       {
         "rules": [
@@ -1413,16 +1413,16 @@
           "//tests:test_wire_lib",
           "//tests:withdrawn_cells",
           "//tools:_accounting_source",
-          "//tools:ci/bazel_gate",
-          "//tools:ci/gate_collect",
-          "//tools:ci/gate_policy",
-          "//tools:ci/graph_impact_tessera",
-          "//tools:files",
-          "//tools:plan_native_census",
-          "//tools:pq2459_source",
-          "//tools:selected_population",
-          "//tools:tessera_lane_preflight",
-          "//tools:verify_endpoint_witness"
+          "//tools:check_wheel",
+          "//tools:ci/gate_boundary",
+          "//tools:ci/gate_partition",
+          "//tools:ci/graph_impact",
+          "//tools:comparison_input_intake",
+          "//tools:merge_suite",
+          "//tools:pq2459_scorer_source",
+          "//tools:run_glm_cached_cpu_export",
+          "//tools:tessera_construction_census_cycle",
+          "//tools:tessera_update_construction_block"
         ],
         "tests": [
           "//tests:test_activation_attestation.bytes",
@@ -1593,7 +1593,7 @@
         "estimated_seconds": 1957.1999999999994,
         "index": 2,
         "file": "tools/bazel/full_targets/amd64-2.targets",
-        "sha256": "b8f2bf21aeee1ab18e148b799bf045a1e9a073fbeabcac13640532de9133d047"
+        "sha256": "d36f9c41fe74122a6497691bd214f72cd026bf1eb33e08a07f076a20c8e00804"
       },
       {
         "rules": [
@@ -1946,15 +1946,16 @@
           "//tests:test_wire_unpack_memory.bytes",
           "//tools/bazel:files",
           "//tools:_durable_progress",
-          "//tools:ci/bazel_parity",
-          "//tools:ci/gate_doc_readers",
-          "//tools:ci/gate_refresh",
-          "//tools:ci/remote_gate",
-          "//tools:glm_cpu_cached_pack_probe",
-          "//tools:pq2459_export_progress",
-          "//tools:probe_endpoint_witness",
-          "//tools:served_generation_client",
-          "//tools:tessera_panel_baseline"
+          "//tools:ci/bazel_gate",
+          "//tools:ci/gate_collect",
+          "//tools:ci/gate_policy",
+          "//tools:ci/graph_impact_tessera",
+          "//tools:files",
+          "//tools:plan_native_census",
+          "//tools:pq2459_source",
+          "//tools:selected_population",
+          "//tools:tessera_lane_preflight",
+          "//tools:verify_endpoint_witness"
         ],
         "tests": [
           "//tests:test_accounting_source",
@@ -2126,7 +2127,7 @@
         "estimated_seconds": 1957.1999999999994,
         "index": 3,
         "file": "tools/bazel/full_targets/amd64-3.targets",
-        "sha256": "154f3cfa339af166dcdede9981967803be1cd29a8afecc9831af8db03d0f7872"
+        "sha256": "ed04d28f4e4744d45879a2337531b920f728503bcaa4ad0733aad80708264e01"
       },
       {
         "rules": [
@@ -2478,16 +2479,16 @@
           "//tests:test_window_viterbi_cpu_lib",
           "//tests:test_wire_unpack_memory_lib",
           "//tools/bazel:linux_amd64",
-          "//tools:_suite_container",
-          "//tools:ci/check_no_secret_leak",
-          "//tools:ci/gate_evidence",
-          "//tools:ci/gate_replay",
-          "//tools:ci/seeded_breaks",
-          "//tools:glm_cpu_export_inventory",
-          "//tools:pq2459_fixture_export",
-          "//tools:provision_producer_env",
-          "//tools:suite_container",
-          "//tools:tessera_route_census"
+          "//tools:_install_identity",
+          "//tools:ci/bazel_parity",
+          "//tools:ci/gate_doc_readers",
+          "//tools:ci/gate_refresh",
+          "//tools:ci/remote_gate",
+          "//tools:glm_cpu_cached_pack_probe",
+          "//tools:pq2459_export_progress",
+          "//tools:probe_endpoint_witness",
+          "//tools:served_generation_client",
+          "//tools:tessera_panel_baseline"
         ],
         "tests": [
           "//tests:test_1146_routed_880_912_admission",
@@ -2659,7 +2660,7 @@
         "estimated_seconds": 1957.0999999999997,
         "index": 4,
         "file": "tools/bazel/full_targets/amd64-4.targets",
-        "sha256": "193733d889ce2e79d314a853b918ee8c6623510853e2b4da5dbb029f154a975e"
+        "sha256": "cba83bec5d83909c9c06aa9a2c95dd8f9ed844b96b656213bc803b31f9160f66"
       },
       {
         "rules": [
@@ -3011,16 +3012,16 @@
           "//tests:test_wire_packed_uniform.bytes",
           "//tests:window_gemm_grouped_support",
           "//tools/bazel:linux_arm64",
-          "//tools:a4_measure",
-          "//tools:ci/full_shards",
-          "//tools:ci/gate_flaky",
-          "//tools:ci/gate_run",
-          "//tools:compact_prep_probe",
-          "//tools:ig790_verify",
-          "//tools:pq2459_fixture_packet",
-          "//tools:refresh_issues",
-          "//tools:suite_deadline",
-          "//tools:tessera_shape_time_panel"
+          "//tools:_suite_container",
+          "//tools:ci/check_no_secret_leak",
+          "//tools:ci/gate_evidence",
+          "//tools:ci/gate_replay",
+          "//tools:ci/seeded_breaks",
+          "//tools:glm_cpu_export_inventory",
+          "//tools:pq2459_fixture_export",
+          "//tools:provision_producer_env",
+          "//tools:suite_container",
+          "//tools:tessera_route_census"
         ],
         "tests": [
           "//tests:test_1146_routed_880_912_admission.bytes",
@@ -3193,7 +3194,7 @@
         "estimated_seconds": 1959.2999999999995,
         "index": 5,
         "file": "tools/bazel/full_targets/amd64-5.targets",
-        "sha256": "dfd0a7d7a3a78a01f5f7982bcc4524f8e83a4eccb11bdc1226607de559d60d0b"
+        "sha256": "0865b7a1ef785b61c2316085dbd81b9be9c59f843b9a5ece968ac16a1b762aa4"
       }
     ],
     "arm64": [
@@ -3544,16 +3545,16 @@
           "//tests:test_wire_unpack_memory.bytes",
           "//tests:test_wire_unpack_memory_lib",
           "//tools/bazel:linux_amd64",
-          "//tools:_suite_container",
-          "//tools:ci/check_no_secret_leak",
-          "//tools:ci/gate_evidence",
-          "//tools:ci/gate_replay",
-          "//tools:ci/seeded_breaks",
-          "//tools:glm_cpu_export_inventory",
-          "//tools:pq2459_fixture_export",
-          "//tools:provision_producer_env",
-          "//tools:suite_container",
-          "//tools:tessera_route_census"
+          "//tools:_install_identity",
+          "//tools:ci/bazel_parity",
+          "//tools:ci/gate_doc_readers",
+          "//tools:ci/gate_refresh",
+          "//tools:ci/remote_gate",
+          "//tools:glm_cpu_cached_pack_probe",
+          "//tools:pq2459_export_progress",
+          "//tools:probe_endpoint_witness",
+          "//tools:served_generation_client",
+          "//tools:tessera_panel_baseline"
         ],
         "tests": [
           "//tests:test_1146_routed_880_912_admission",
@@ -3714,7 +3715,7 @@
         "estimated_seconds": 1860.9999999999998,
         "index": 0,
         "file": "tools/bazel/full_targets/arm64-0.targets",
-        "sha256": "89d99da4820802c4a1966f14161dca475b869fd2f11f62ad0e888918e44fb944"
+        "sha256": "7cebfb04896b004c87277541017de52a0ee9ba1827a117c79c79c47256bdd28f"
       },
       {
         "rules": [
@@ -4063,16 +4064,16 @@
           "//tests:test_wire_unpack_memory",
           "//tests:window_gemm_grouped_support",
           "//tools/bazel:linux_arm64",
-          "//tools:a4_measure",
-          "//tools:ci/full_shards",
-          "//tools:ci/gate_flaky",
-          "//tools:ci/gate_run",
-          "//tools:compact_prep_probe",
-          "//tools:ig790_verify",
-          "//tools:pq2459_fixture_packet",
-          "//tools:refresh_issues",
-          "//tools:suite_deadline",
-          "//tools:tessera_shape_time_panel"
+          "//tools:_suite_container",
+          "//tools:ci/check_no_secret_leak",
+          "//tools:ci/gate_evidence",
+          "//tools:ci/gate_replay",
+          "//tools:ci/seeded_breaks",
+          "//tools:glm_cpu_export_inventory",
+          "//tools:pq2459_fixture_export",
+          "//tools:provision_producer_env",
+          "//tools:suite_container",
+          "//tools:tessera_route_census"
         ],
         "tests": [
           "//tests:test_accounting_source.bytes",
@@ -4239,7 +4240,7 @@
         "estimated_seconds": 1863.1,
         "index": 1,
         "file": "tools/bazel/full_targets/arm64-1.targets",
-        "sha256": "9946479a3826252c10ebd37c1f49024454b8bbb170679e9d70820001d1a6dc2a"
+        "sha256": "f2251541a3462d603d4b46314e96a3b2cb412d56e7c7ad57d9403168f2fb2c65"
       },
       {
         "rules": [
@@ -4588,16 +4589,16 @@
           "//tests:test_wire",
           "//tests:window_lut_reference",
           "//tools/bazel:runner",
-          "//tools:build_serving_image",
-          "//tools:ci/gate_actions",
-          "//tools:ci/gate_junit",
-          "//tools:ci/gate_select",
-          "//tools:comparison_arm_identity",
-          "//tools:impacted_tests",
-          "//tools:pq2459_fixture_workloads",
-          "//tools:render_glm_cpu_export_command",
-          "//tools:tessera_attest",
-          "//tools:tessera_shape_time_worker"
+          "//tools:a4_measure",
+          "//tools:ci/full_shards",
+          "//tools:ci/gate_flaky",
+          "//tools:ci/gate_run",
+          "//tools:compact_prep_probe",
+          "//tools:ig790_verify",
+          "//tools:pq2459_fixture_packet",
+          "//tools:refresh_issues",
+          "//tools:suite_deadline",
+          "//tools:tessera_shape_time_panel"
         ],
         "tests": [
           "//tests:test_activation_attestation",
@@ -4765,7 +4766,7 @@
         "estimated_seconds": 1863.1,
         "index": 2,
         "file": "tools/bazel/full_targets/arm64-2.targets",
-        "sha256": "6d55318dca5fecec2069cb6780b9c2a7e42f90d3a15be09d16cf7f8aac6f4148"
+        "sha256": "fc949954ab62d14fe9b171c283c6bca9d1f2cfb58ec608e34a146aa9d162df25"
       },
       {
         "rules": [
@@ -5114,16 +5115,16 @@
           "//tests:test_wire_packed_uniform",
           "//tests:window_pack_reference",
           "//tools:__init__",
-          "//tools:check_wheel",
-          "//tools:ci/gate_boundary",
-          "//tools:ci/gate_partition",
-          "//tools:ci/graph_impact",
-          "//tools:comparison_input_intake",
-          "//tools:merge_suite",
-          "//tools:pq2459_scorer_source",
-          "//tools:run_glm_cached_cpu_export",
-          "//tools:tessera_construction_census_cycle",
-          "//tools:tessera_update_construction_block"
+          "//tools:build_serving_image",
+          "//tools:ci/gate_actions",
+          "//tools:ci/gate_junit",
+          "//tools:ci/gate_select",
+          "//tools:comparison_arm_identity",
+          "//tools:impacted_tests",
+          "//tools:pq2459_fixture_workloads",
+          "//tools:render_glm_cpu_export_command",
+          "//tools:tessera_attest",
+          "//tools:tessera_shape_time_worker"
         ],
         "tests": [
           "//tests:test_accounting_source",
@@ -5292,7 +5293,7 @@
         "estimated_seconds": 1863.1,
         "index": 3,
         "file": "tools/bazel/full_targets/arm64-3.targets",
-        "sha256": "33abcda488d78aa581e8d612b2c74ef45f2d540d2d97be7c407b89aba2454436"
+        "sha256": "03bbb2909c0e03f56d923e72a6a47391170fff0a8b319522729ce1157aa385e3"
       },
       {
         "rules": [
@@ -5641,16 +5642,16 @@
           "//tests:test_wire_packed_uniform.bytes",
           "//tests:withdrawn_cells",
           "//tools:_accounting_source",
-          "//tools:ci/bazel_gate",
-          "//tools:ci/gate_collect",
-          "//tools:ci/gate_policy",
-          "//tools:ci/graph_impact_tessera",
-          "//tools:files",
-          "//tools:plan_native_census",
-          "//tools:pq2459_source",
-          "//tools:selected_population",
-          "//tools:tessera_lane_preflight",
-          "//tools:verify_endpoint_witness"
+          "//tools:check_wheel",
+          "//tools:ci/gate_boundary",
+          "//tools:ci/gate_partition",
+          "//tools:ci/graph_impact",
+          "//tools:comparison_input_intake",
+          "//tools:merge_suite",
+          "//tools:pq2459_scorer_source",
+          "//tools:run_glm_cached_cpu_export",
+          "//tools:tessera_construction_census_cycle",
+          "//tools:tessera_update_construction_block"
         ],
         "tests": [
           "//tests:test_1146_routed_880_912_admission.bytes",
@@ -5819,7 +5820,7 @@
         "estimated_seconds": 1863.1,
         "index": 4,
         "file": "tools/bazel/full_targets/arm64-4.targets",
-        "sha256": "907d5492f7e4cee755c07e626377cc88272961cc4b70bffb6c8f0b35bfccff26"
+        "sha256": "e0be2f4f7538e0811fa3acffd6459eacb88dc8baf8ef4a4c224196cf7be32363"
       },
       {
         "rules": [
@@ -6168,15 +6169,16 @@
           "//tests:test_wire_packed_uniform_lib",
           "//tools/bazel:files",
           "//tools:_durable_progress",
-          "//tools:ci/bazel_parity",
-          "//tools:ci/gate_doc_readers",
-          "//tools:ci/gate_refresh",
-          "//tools:ci/remote_gate",
-          "//tools:glm_cpu_cached_pack_probe",
-          "//tools:pq2459_export_progress",
-          "//tools:probe_endpoint_witness",
-          "//tools:served_generation_client",
-          "//tools:tessera_panel_baseline"
+          "//tools:ci/bazel_gate",
+          "//tools:ci/gate_collect",
+          "//tools:ci/gate_policy",
+          "//tools:ci/graph_impact_tessera",
+          "//tools:files",
+          "//tools:plan_native_census",
+          "//tools:pq2459_source",
+          "//tools:selected_population",
+          "//tools:tessera_lane_preflight",
+          "//tools:verify_endpoint_witness"
         ],
         "tests": [
           "//tests:test_activation_attestation_empty.bytes",
@@ -6344,7 +6346,7 @@
         "estimated_seconds": 1860.9999999999993,
         "index": 5,
         "file": "tools/bazel/full_targets/arm64-5.targets",
-        "sha256": "07c34738a9c602a108786a76f937ab919734c3b1863d93415274d3b85f837a94"
+        "sha256": "e98327c70c1d4cc821f1d843c38b7f75482979672b77fd92d46672e7a59b5c57"
       }
     ]
   }
