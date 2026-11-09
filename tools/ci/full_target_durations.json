@@ -37,6 +37,14 @@
       "invocation": "0d031504-5257-46f9-bb53-7e4fedba4912",
       "log_sha256": "626b761debde01983a2b02dd64347127d1c97c7462354fa8177ebb2164b0bede",
       "targets": 229
+    },
+    {
+      "flux_job_ids": [
+        "\u0192Y1t4QFgUf",
+        "\u0192Y2Qiwk6dm"
+      ],
+      "method": "wall seconds of one pytest process per module, serial, three repeats, maximum rounded to 0.1; the same value is used for the target and its .bytes variant (upper bound); a pytest process, not a Bazel target summary",
+      "targets": 10
     }
   ],
   "seconds": {
@@ -932,8 +940,18 @@
     "//tests:test_stock_interface.bytes": 2.6,
     "//tests:test_stock_shard_scheduling": 18.2,
     "//tests:test_stock_shard_scheduling.bytes": 3.4,
+    "//tests:test_suite_container_native": 3.8,
+    "//tests:test_suite_container_native.bytes": 3.8,
     "//tests:test_suite_deadline": 13.5,
     "//tests:test_suite_deadline.bytes": 6.7,
+    "//tests:test_suite_flux": 3.5,
+    "//tests:test_suite_flux.bytes": 3.5,
+    "//tests:test_suite_flux_review": 3.0,
+    "//tests:test_suite_flux_review.bytes": 3.0,
+    "//tests:test_suite_payload": 2.9,
+    "//tests:test_suite_payload.bytes": 2.9,
+    "//tests:test_suite_runtime": 2.8,
+    "//tests:test_suite_runtime.bytes": 2.8,
     "//tests:test_suite_source": 11.1,
     "//tests:test_suite_source.bytes": 4.7,
     "//tests:test_summarize_arms": 9.9,
