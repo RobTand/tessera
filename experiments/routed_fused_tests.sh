@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Run the fused routed window lane's GPU tests (tests/test_routed_fused_window.py,
-# tessera#640) inside the pinned serving image.  Submitted through PrismaBuild
-# as the admitted action's command; same container discipline as
+# tessera#640) inside the pinned serving image.  Run as a Flux GPU job (see the
+# rendered tools/_flux_gpu_jobspec.py line; Flux GPU path rendered, not qualified)
+# as the job's command; same container discipline as
 # routed_census.sh (checkout read-only at /work, every write under <out_dir>).
 #
 # The image ships no pytest.  The runner is borrowed, pure Python, from a host
