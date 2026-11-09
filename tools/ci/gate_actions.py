@@ -77,7 +77,7 @@ def assess_attempts(plan, assignments, attempts):
     warnings = [dict(warning, lane=attempts[attempt][index]['lane'])
                 for index, attempt in effective.items()
                 for warning in attempts[attempt][index].get('budget_warnings', [])]
-    return {'schema': 'prismabuild.gate_aggregate.v1', 'budget_warnings': warnings,
+    return {'schema': 'tessera.gate_aggregate.v2', 'budget_warnings': warnings,
             'retry_indices': sorted(retry),
             'failed_indices': sorted(failed), 'missing_indices': sorted(missing),
             'effective_attempts': effective, 'exit_code': 1 if failed else 75 if missing else 0}

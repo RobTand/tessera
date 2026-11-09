@@ -159,7 +159,7 @@ def run_plan(plan: dict, *, root: Path, output: Path, junit: Path,
              files: list[str] | None = None, workers: int | None = None, lane: str = 'torch',
              execute=subprocess.run, affinity=None) -> int:
     print('GATE_PREFLIGHT_START', flush=True)
-    record = {'schema': 'prismabuild.gate_result.v1',
+    record = {'schema': 'tessera.gate_result.v2',
               'population_version': plan.get('population', {}).get('version'), 'lane': lane,
               'mode': plan.get('mode'), 'base_sha': plan.get('base_sha'), 'head_sha': plan.get('head_sha'), 'files': [], 'verdict': None, 'pytest_exit_code': None}
     try:
