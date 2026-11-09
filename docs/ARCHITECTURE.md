@@ -1000,29 +1000,7 @@ Only the numeric phase is admitted: no old numericV4 receipt, timing/profile,
 NCU or repeated720-event population can stand for changed-source proof. These
 CPU schema/refusal controls are not CUDA numerical/performance/energy authority.
 
-Re-stamped 2026-10-09 for the stageprev 793 operative gate (tessera#1078).
-The gate checks the public claim names and exact consumer calls the proof uses,
-not the SDK version number. `stageprev_793_claim_contract.required_api_problems`
-binds each `PoolQueue` or ledger call through a blank owner instance, so the
-descriptor protocol removes the receiver whatever name it uses. A static entry
-that keeps its receiver refuses, as do an extra required argument and a keyword
-collision. `observe_current_claim_contract` records that verdict beside the pool
-digest. `stageprev_793_prerequisites` refuses a contract with open API problems.
-The version number stays in the record as provenance only.
-CPU refusal controls remove `PoolQueue.offers` and supply an incompatible signature.
-They exercise the observer and collector without a claim or GPU submission.
-The S7 probe uses `submission.validate_request`, `submission.placement_contract`
-and the invalid-scope refusal in `submission.prepare`, not retired CLI helpers;
-class placement remains distinct from an explicit `--here` hostname pin.
-For S7's delegated claim path the observer also binds `_prepare_host_claim`,
-`candidate_policy.never_fits` and `CandidateDenial` to their manifest file digests.
-It inspects the reservation-demand versus total-capacity predicate, the
-`never_fits_capacity` reason/evidence, and the claim loop's denial recording and
-fail-closed continuation together. Preparation must start with the inspected
-field bindings followed by the refusal: earlier exits and unrecognized input
-transformations (including alias mutation) refuse attestation. An unrecognized
-delegation or missing helper digest also refuses; no scheduling helper is
-executed to obtain evidence.
+Re-stamped 2026-11-09 (Flux migration 4C-7): the stageprev 793 operative approval scenario (claim contract, prerequisites, preparation, its packets and dedicated tests) moved to `archive/flux-migration/4C-7/` and is not executed. The kept `stageprev_probe`, `ab_stageprev_accept` and `stageprev_793_expected.json` with their independent tests keep the numeric acceptance obligations; the PB claim-method introspection is not ported.
 
 Re-stamped 2026-10-04 (`v6/ts696-stock-runner-guard-20261004`, #696):
 the GLM53 NoPE runner-identity owner rejects the known stock V2 runner in
