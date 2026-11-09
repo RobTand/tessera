@@ -137,7 +137,7 @@
       "--format",
       "--out"
     ],
-    "admitted_acquire": "experiments/glm_native_moe_acquire.py",
+    "admitted_acquire": "archive/pq_experiments_2026-11-09/experiments/glm_native_moe_acquire.py (PrismaQuant repo, archived in PQ slice 6)",
     "acquire_sha256": "43f875e25a04fa0bf7560de70e0be1ce31e2de48ae3f715e209a653435103274",
     "output": "Existing same-action LocalHandoff produces inputs.json, weight-references.json, phase-tensors.safetensors, origin.json and owned source/render/wire bytes; no cross-action local bundle reuse.",
     "consumer": "Tessera experiments/bench_native_moe_operator.py.prepare_native_moe_operator and existing native serving owner; use its identity/geometry/route/source/reference gates. bench_t8r override stays fail-closed A8SE.",
