@@ -33,7 +33,7 @@ eq_member = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(eq_member)
 
 _COUNT = re.compile(r"^(?P<manager>\w+)\|FULL\|tokens=(?P<tokens>\d+)\|reqs=")
-#: <arm>.dispatch.<pid>.json (one box) or <arm>.rank<r>.dispatch.<pid>.json (arm_tp2.sh, per rank).
+#: <arm>.dispatch.<pid>.json (one box) or <arm>.rank<r>.dispatch.<pid>.json (archive/flux-migration/R-CONTESTED/experiments/graph_attest_702/arm_tp2.sh, per rank).
 _DISPATCH = r"{arm}(?:\.rank(?P<rank>\d+))?\.dispatch\.\d+\.json"
 
 
@@ -123,7 +123,7 @@ SHARED_SCOPE = tuple(f for f in graph_receipt.SCOPE_FIELDS if f != "compilation_
 #: (cause 1, judged by the plugin) and the Tessera env. The fabric is scope (v2).
 SHARED_SETUP = ("equal_script_sha256", "hooks_sha256", "serve_flags", "kernel_config",
                 "tessera_env")
-#: What NCCL's banner says per fabric (arm_tp2.sh records ``fabric_observed`` from both ranks).
+#: What NCCL's banner says per fabric (archive/flux-migration/R-CONTESTED/experiments/graph_attest_702/arm_tp2.sh records ``fabric_observed`` from both ranks).
 _BANNER = {"roce": "Using network IB", "socket": "Using network Socket"}
 #: The flags that are the execution mode under test, or compared on their own.
 _MODE_FLAGS = {"--enforce-eager": 0, "--compilation-config": 1, "--kernel-config": 1}
@@ -150,7 +150,7 @@ def arm_scope(arm_dir: pathlib.Path, arm: str, legacy_scripts: dict | None = Non
     """The scope and setup one arm MEASURED, read from what it recorded, never from a default.
 
     The serve values come from the argv the arm launched (``serve_args`` from arm.sh,
-    ``serve_rank0`` from arm_tp2.sh). The image is a whole digest reference: the one the
+    ``serve_rank0`` from archive/flux-migration/R-CONTESTED/experiments/graph_attest_702/arm_tp2.sh). The image is a whole digest reference: the one the
     runtime gate resolved (``image_resolved_reference``), else the digest-pinned reference the
     arm declared and PrismaBuild verified. A bare ``sha256:`` digest names no image and a
     box-local image id names one box's store, so neither is ever the scope. The equality

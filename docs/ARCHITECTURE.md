@@ -799,8 +799,8 @@ scope, the OOM floor and disk admission, the manifest resource/safety fields
 and every format gate. Dev mode adds no release gate: no recompute, archive,
 re-seal, re-pin or identity-proof packet is required or performed for
 identity drift, and no format pin or serving default moves. Regressions:
-`tests/test_graph_attest_producer_identity.py` and
-`tests/test_graph_attest_headroom_preflight.py`. See
+`archive/flux-migration/R-CONTESTED/tests/test_graph_attest_producer_identity.py` and
+`archive/flux-migration/R-CONTESTED/tests/test_graph_attest_headroom_preflight.py`. See
 `archive/flux-migration/R-CONTESTED/experiments/graph_attest_702/RUNPLAN-artifact.md`.
 
 The optional graph-control `BATCH_KL` recipe declaration is retained in window
@@ -813,14 +813,14 @@ collection currently refuses: no owner-supported live TP2/MTP1 target-model
 attachment handoff is available.
 It does not invoke an isolated scorer, launch another serve or disable MTP.
 Collector exceptions use the native coupled-abort and owned-cleanup lifecycle.
-After graph-receipt creation, `window_driver.py --bind-batch-kl ROOT
+After graph-receipt creation, `archive/flux-migration/R-CONTESTED/experiments/graph_attest_702/window_driver.py --bind-batch-kl ROOT
 --graph-receipt PATH` (with the existing plan argument) writes a separate
 `batch-kl-manifest.json`. The binder rehashes retained raw/result bytes, compares
 all three arms against prepared inputs and both native members, and requires
 replay managers for both native ranks before rerunning the existing
 equality/per-rank replay gate. A completely omitted rank cannot evade that gate
 at this binding boundary. Regressions reuse the normalized fixture in
-`tests/test_graph_attest_batch_kl_binding.py`. This is binding validity, not
+`archive/flux-migration/R-CONTESTED/tests/test_graph_attest_batch_kl_binding.py`. This is binding validity, not
 scientific KL qualification; the graph receipt and its exclusions remain unchanged.
 Production remains unqualified until the existing scorer owner supplies the
 missing capability. The reconciled handoff disposition, configuration and
@@ -830,7 +830,7 @@ Both live TP2 ranks must agree on image, source digest and config digest before
 either local launch, in dev and certified modes alike. This is execution
 comparability, not recorded-versus-running identity; mismatched gang halves
 fail both ranks without starting a server or emitting probes. Regression:
-`tests/test_graph_attest_window_scenarios.py::test_mismatched_rank_preflight_refuses_before_either_launch`.
+`archive/flux-migration/R-CONTESTED/tests/test_graph_attest_window_scenarios.py::test_mismatched_rank_preflight_refuses_before_either_launch`.
 
 Re-stamped 2026-10-05 for issue959 (D30 Window4 107 GiB admission and dual-rank
 memory abort). The Window4 per-host `MemAvailable` admission predicate moves
@@ -863,7 +863,7 @@ failed-rank exit cannot cause a native withdrawal that shortens the peer's
 10-second grace. A sampled guard is not continuous immunity.
 The acknowledgement loop rechecks the peer claim, exits on peer death and keeps
 a five-second broker-stop margin. Missing physical custody remains explicit.
-`window_driver.py --prepare` emits `rdv/memory-policy.json` once and binds its
+`archive/flux-migration/R-CONTESTED/experiments/graph_attest_702/window_driver.py --prepare` emits `rdv/memory-policy.json` once and binds its
 SHA into the submitted inputs; each rank emits
 `rdv/memory-samples-rank<N>.jsonl` and `rdv/memory-summary-rank<N>.json` —
 baseline, minimum, raw samples and counters kept so a future window can measure
@@ -915,7 +915,7 @@ admission predicate stay exactly as they were: this wait is a bounded
 predicate-satisfaction wait, not a new admission mechanism, and it mints no
 114 GiB admission, no performance or fit evidence, and no transfer of the
 historical frozen producer's source approval. Deterministic regressions live
-in `tests/test_graph_attest_headroom_preflight.py`; the below-to-ready
+in `archive/flux-migration/R-CONTESTED/tests/test_graph_attest_headroom_preflight.py`; the below-to-ready
 regression fails before the change, which refused below threshold instantly
 with no wait report. See `archive/flux-migration/R-CONTESTED/experiments/graph_attest_702/RUNPLAN-artifact.md`.
 
