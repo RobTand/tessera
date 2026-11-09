@@ -26,6 +26,13 @@ ts_py_library(
 )
 
 ts_py_library(
+    name = "_durable_progress",
+    srcs = [
+        "_durable_progress.py",
+    ],
+)
+
+ts_py_library(
     name = "_suite_container_cycle",
     srcs = [
         "_suite_container.py",
@@ -63,6 +70,9 @@ ts_py_library(
     name = "build_serving_image",
     srcs = [
         "build_serving_image.py",
+    ],
+    deps = [
+        ":_suite_container_cycle",
     ],
 )
 
@@ -423,6 +433,8 @@ ts_py_library(
     deps = [
         "//src/tessera:__init___cycle",
         "//src/tessera:export_serving",
+        ":__init__",
+        ":_durable_progress",
     ],
 )
 
@@ -542,6 +554,7 @@ ts_py_library(
         "render_glm_cpu_export_command.py",
     ],
     deps = [
+        ":_suite_container_cycle",
         ":run_glm_cached_cpu_export",
     ],
 )
@@ -555,6 +568,8 @@ ts_py_library(
         "//src/tessera:__init___cycle",
         "//src/tessera:export_serving",
         "//src/tessera:source_digest_cache",
+        ":__init__",
+        ":_durable_progress",
     ],
 )
 

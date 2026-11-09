@@ -2105,6 +2105,7 @@ ts_py_library(
         "test_routed_mma8_a_ring_config.py",
         "test_routed_mma8_bprefetch_config.py",
         "test_routed_pair_profile_exit.py",
+        "test_routed_pair_provenance.py",
         "test_routed_pair_reference.py",
         "test_routed_paired_k32.py",
         "test_routed_terminal_barrier.py",
@@ -3996,6 +3997,7 @@ ts_py_library(
     deps = [
         "//tools:__init__",
         "//tools:_accounting_source",
+        "//tools:_durable_progress",
         "//tools:_suite_container_cycle",
         "//tools:_suite_runtime",
         "//tools:a4_measure",
@@ -5354,6 +5356,7 @@ ts_py_library(
     data = [
         "//tools:__init__.py",
         "//tools:_accounting_source.py",
+        "//tools:_durable_progress.py",
         "//tools:_suite_container.py",
         "//tools:_suite_flux.py",
         "//tools:_suite_runtime.py",
@@ -8842,6 +8845,8 @@ ts_py_test(
     library = ":test_glm_cpu_export_progress_lib",
     deps = [
         "//src/tessera:identity",
+        "//tools:suite_container",
+        "//tools:suite_deadline",
     ],
     lane = "torch",
     args = [
@@ -8856,6 +8861,8 @@ ts_py_test(
     library = ":test_glm_cpu_export_progress_lib",
     deps = [
         "//src/tessera:identity",
+        "//tools:suite_container",
+        "//tools:suite_deadline",
     ],
     lane = "bytes",
     args = [
@@ -8870,8 +8877,12 @@ ts_py_library(
         "test_glm_cpu_export_progress.py",
     ],
     deps = [
+        "//experiments:glm_routed_owner_inputs",
         "//src/tessera:__init___cycle",
         "//src/tessera:source_digest_cache",
+        "//tools:__init__",
+        "//tools:_durable_progress",
+        "//tools:pq2459_export_progress",
         "//tools:render_glm_cpu_export_command",
         "//tools:run_glm_cached_cpu_export",
     ],
@@ -11370,6 +11381,7 @@ ts_py_library(
         "test_routed_mma8_a_ring_config.py",
         "test_routed_mma8_bprefetch_config.py",
         "test_routed_pair_profile_exit.py",
+        "test_routed_pair_provenance.py",
         "test_routed_pair_reference.py",
         "test_routed_paired_k32.py",
         "test_routed_terminal_barrier.py",
@@ -12135,6 +12147,7 @@ ts_py_library(
         "test_routed_mma8_a_ring_config.py",
         "test_routed_mma8_bprefetch_config.py",
         "test_routed_pair_profile_exit.py",
+        "test_routed_pair_provenance.py",
         "test_routed_pair_reference.py",
         "test_routed_paired_k32.py",
         "test_routed_terminal_barrier.py",
@@ -21119,6 +21132,44 @@ ts_py_library(
 )
 
 ts_py_test(
+    name = "test_routed_pair_provenance",
+    path = "tests/test_routed_pair_provenance.py",
+    library = ":test_routed_pair_provenance_lib",
+    deps = [
+        "//src/tessera:identity",
+    ],
+    lane = "torch",
+    args = [
+        "--budget='{\"enforce\":true,\"seconds\":80,\"slow\":{}}'",
+    ],
+    timeout = "moderate",
+)
+
+ts_py_test(
+    name = "test_routed_pair_provenance.bytes",
+    path = "tests/test_routed_pair_provenance.py",
+    library = ":test_routed_pair_provenance_lib",
+    deps = [
+        "//src/tessera:identity",
+    ],
+    lane = "bytes",
+    args = [
+        "--budget='{\"enforce\":true,\"seconds\":80,\"slow\":{}}'",
+    ],
+    timeout = "moderate",
+)
+
+ts_py_library(
+    name = "test_routed_pair_provenance_lib",
+    srcs = [
+        "test_routed_pair_provenance.py",
+    ],
+    deps = [
+        "//experiments:routed_pair_oracle",
+    ],
+)
+
+ts_py_test(
     name = "test_routed_pair_reference",
     path = "tests/test_routed_pair_reference.py",
     library = ":test_routed_pair_reference_lib",
@@ -25916,6 +25967,10 @@ ts_py_test(
         "//:files/images/serving/patches",
         "//src/tessera:files",
     ],
+    deps = [
+        "//tools:suite_container",
+        "//tools:suite_deadline",
+    ],
     lane = "torch",
     args = [
         "--budget='{\"enforce\":true,\"seconds\":80,\"slow\":{}}'",
@@ -25930,6 +25985,10 @@ ts_py_test(
     data = [
         "//:files/images/serving/patches",
         "//src/tessera:files",
+    ],
+    deps = [
+        "//tools:suite_container",
+        "//tools:suite_deadline",
     ],
     lane = "bytes",
     args = [
@@ -25949,6 +26008,7 @@ ts_py_library(
         "//:images/serving/glm53-sm121.json",
     ],
     deps = [
+        "//tools:_suite_container_cycle",
         "//tools:build_serving_image",
     ],
 )
