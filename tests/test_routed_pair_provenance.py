@@ -15,7 +15,7 @@ def _provenance(monkeypatch):
     function = next(node for node in tree.body if isinstance(node, ast.FunctionDef) and node.name == "provenance")
     device = SimpleNamespace(get_device_name=lambda index: "fixture-device", get_device_capability=lambda index: (12, 1))
     namespace = {
-        "Path": Path, "os": os, "sys": sys, "socket": SimpleNamespace(gethostname=lambda: "fixture-host"),
+        "__file__": str(SOURCE), "Path": Path, "os": os, "sys": sys, "socket": SimpleNamespace(gethostname=lambda: "fixture-host"),
         "time": SimpleNamespace(strftime=lambda *a: "T", gmtime=lambda: None),
         "torch": SimpleNamespace(cuda=device, __version__="0"), "src_tree_digest": lambda here: "d",
         "__builtins__": {"__import__": lambda name, *a, **k: SimpleNamespace(__version__="v"), "list": list},
