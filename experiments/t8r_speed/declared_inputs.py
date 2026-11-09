@@ -56,7 +56,7 @@ def validate_whole_phase_readset(path, phase_name):
     """Assert this consumer's whole-bank phase: one named phase spanning every declared byte.
 
     Return the record, its ordered reads (the entries) and the normalized
-    nonempty phase ranges.
+    nonempty phase ranges. An empty phase is valid only after every byte is covered.
     """
     record, _sha = read_declared_inputs(path)
     reads = record["entries"]
@@ -64,6 +64,8 @@ def validate_whole_phase_readset(path, phase_name):
     previous = 0
     for phase in record.get("annotations", {}).get("phases", []):
         frontier = phase["cumulative_bytes"]
+        if frontier == previous and previous != record["total_bytes"]:
+            raise ValueError("whole-bank staging phase has an empty phase before its bytes")
         if frontier > previous:
             ranges.append({"name": phase["name"], "start_bytes": previous,
                            "end_bytes": frontier})
