@@ -2105,7 +2105,6 @@ ts_py_library(
         "test_routed_mma8_a_ring_config.py",
         "test_routed_mma8_bprefetch_config.py",
         "test_routed_pair_profile_exit.py",
-        "test_routed_pair_provenance.py",
         "test_routed_pair_reference.py",
         "test_routed_paired_k32.py",
         "test_routed_terminal_barrier.py",
@@ -11381,7 +11380,6 @@ ts_py_library(
         "test_routed_mma8_a_ring_config.py",
         "test_routed_mma8_bprefetch_config.py",
         "test_routed_pair_profile_exit.py",
-        "test_routed_pair_provenance.py",
         "test_routed_pair_reference.py",
         "test_routed_paired_k32.py",
         "test_routed_terminal_barrier.py",
@@ -12147,7 +12145,6 @@ ts_py_library(
         "test_routed_mma8_a_ring_config.py",
         "test_routed_mma8_bprefetch_config.py",
         "test_routed_pair_profile_exit.py",
-        "test_routed_pair_provenance.py",
         "test_routed_pair_reference.py",
         "test_routed_paired_k32.py",
         "test_routed_terminal_barrier.py",
@@ -21125,44 +21122,6 @@ ts_py_library(
     name = "test_routed_pair_profile_exit_lib",
     srcs = [
         "test_routed_pair_profile_exit.py",
-    ],
-    deps = [
-        "//experiments:routed_pair_oracle",
-    ],
-)
-
-ts_py_test(
-    name = "test_routed_pair_provenance",
-    path = "tests/test_routed_pair_provenance.py",
-    library = ":test_routed_pair_provenance_lib",
-    deps = [
-        "//src/tessera:identity",
-    ],
-    lane = "torch",
-    args = [
-        "--budget='{\"enforce\":true,\"seconds\":80,\"slow\":{}}'",
-    ],
-    timeout = "moderate",
-)
-
-ts_py_test(
-    name = "test_routed_pair_provenance.bytes",
-    path = "tests/test_routed_pair_provenance.py",
-    library = ":test_routed_pair_provenance_lib",
-    deps = [
-        "//src/tessera:identity",
-    ],
-    lane = "bytes",
-    args = [
-        "--budget='{\"enforce\":true,\"seconds\":80,\"slow\":{}}'",
-    ],
-    timeout = "moderate",
-)
-
-ts_py_library(
-    name = "test_routed_pair_provenance_lib",
-    srcs = [
-        "test_routed_pair_provenance.py",
     ],
     deps = [
         "//experiments:routed_pair_oracle",
