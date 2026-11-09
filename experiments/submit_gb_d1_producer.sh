@@ -10,19 +10,19 @@
 #        TESSERA_PRODUCER_SOURCE=/abs/frozen/src/tessera \
 #        [SUBMIT=0] submit_gb_d1_producer.sh
 # Run with cwd = the Tessera checkout. Optional overrides: CENSUS_ROOT,
-# PRODUCER_AUTHORITY, PART_IMAGE, ROUTED_CACHE, INPUT_SCALES, PROFILE, PBRUN.
-# PBRUN selects the submission client; its default is the published PB client.
-# Run submission mode on a fleet box. The preflight imports torch and hashes
-# the installed package. Run SUBMIT=0 through PrismaBuild for CPU proof.
+# PRODUCER_AUTHORITY, PART_IMAGE, ROUTED_CACHE, INPUT_SCALES, PROFILE.
+# Any SUBMIT value other than 0 RENDERS the three Flux GPU submission lines (never runs them; GPU on
+# Flux needs the owner's per-run approval; Flux GPU path rendered, not qualified). The preflight imports
+# torch and hashes the installed package. Run SUBMIT=0 as a Flux CPU job for processor proof.
 #
 # The producer (#944): TESSERA_PRODUCER_PYTHON names the interpreter that
 # runs the exporter and TESSERA_PRODUCER_SOURCE names, explicitly and
 # immutably, the qualified genuine source checkout's src/tessera it must
 # authenticate against. Both are required by name and travel UNCHANGED --
-# never derived from $PWD (a PrismaBuild snapshot is not the qualified source
+# never derived from $PWD (a job snapshot is not the qualified source
 # reference), never overwritten, and a relative
-# reference refuses. The interpreter is authenticated BEFORE anything
-# submits through tessera.export_serving.authenticate_producer_python, the
+# reference refuses. The interpreter is authenticated BEFORE any line
+# is rendered through tessera.export_serving.authenticate_producer_python, the
 # same owner the wrappers call; the receipt's package digest is checked
 # before export. The same two variables reach each submission action
 # unchanged, and each action's exporter re-proves them in-process.
@@ -30,7 +30,7 @@
 # SUBMIT=0 is the explicit processor entry: it checks the inputs and runs
 # the actual authentication only, then prints the receipt identity and
 # stops. No submission, no graphics work, no encode. Use it for processor
-# proof. Any other value submits the three graphics actions.
+# proof. Any other value renders the three graphics submission lines.
 #
 # Every refusal here is a correctness refusal: it holds in development
 # mode and in certified mode alike (D32). No recorded-against-running
@@ -53,7 +53,7 @@ U=/mnt/shared/tessera-measurements/glm-canonical-census-20260908/activation-runt
 SCALES=${INPUT_SCALES:-$U/input_scales.safetensors}
 PROFILE=${PROFILE:-0}
 SUBMIT=${SUBMIT:-1}
-P=${PBRUN:-/mnt/shared/prismabuild-fleet/repo/tools/pbrun.py}
+RENDER="$(cd "$(dirname "$0")/.." && pwd)/tools/_flux_gpu_jobspec.py"
 TESSERA_HEAD_HISTORICAL=414e5a257a76887aea754041a9fe019707da9e1a
 
 refuse() { echo "[submit_gb_d1_producer] refuse: $*" >&2; exit 2; }
@@ -113,9 +113,11 @@ PY
 fi
 
 [ -f "$SCALES" ] || refuse "INPUT_SCALES=$SCALES is not a file"
+# GPU on Flux needs the owner's per-run approval: these are RENDERED lines (stock GPU shape, Spark
+# hosts, closed environment, explicit walltime) for review. This script never submits or runs them.
 for spec in "GB 3" "GB 4"; do
   set -- $spec
-  python3 "$P" --gpu --tag gb10 --cpus 8 --demand mem_gb=16 --timeout-s 2700 --detach --max-attempts 1 \
+  python3 "$RENDER" --cores 8 --memory-gib 16 --walltime 45m \
     --env CENSUS_ROOT="$R" \
     --env PRODUCER_AUTHORITY="$AUTH" \
     --env PART_IMAGE="$IMAGE" --env TESSERA_HEAD="$TESSERA_HEAD_HISTORICAL" --env PROFILE="$PROFILE" \
@@ -124,7 +126,7 @@ for spec in "GB 3" "GB 4"; do
     --env TESSERA_PRODUCER_SOURCE="$SOURCE" \
     -- bash experiments/t8_census/export_routed_part.sh "$1" "$2" 8
 done
-python3 "$P" --gpu --tag gb10 --cpus 4 --demand mem_gb=48 --timeout-s 2700 --detach --max-attempts 1 \
+python3 "$RENDER" --cores 4 --memory-gib 48 --walltime 45m \
   --env CENSUS_ROOT="$R" \
   --env PRODUCER_AUTHORITY="$AUTH" \
   --env ROUTED_CACHE="$ROUTED_CACHE" \

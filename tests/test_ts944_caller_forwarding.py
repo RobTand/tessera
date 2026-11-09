@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import os
 import json
+import shlex
 import subprocess
 import sys
 from pathlib import Path
@@ -34,7 +35,7 @@ def _caller_env(tmp_path, **over):
            if not k.startswith("TESSERA_PRODUCER")
            and k not in ("INPUT_SCALES", "PART_BOUND_S", "ENCODE_BATCH",
                          "BEST_FORM", "PROFILE", "PRODUCER_AUTHORITY",
-                         "PART_IMAGE", "CENSUS_ROOT", "SUBMIT", "PBRUN",
+                         "PART_IMAGE", "CENSUS_ROOT", "SUBMIT",
                          "TESSERA_ENV_DUMP", "PRISMAQUANT_DEV_MODE")}
     authority = tmp_path / "producer_authority.py"
     authority.write_text("authority-placeholder\n")
@@ -151,47 +152,44 @@ def test_caller_preserves_selectors_in_all_submissions(tmp_path):
         "exec(sys.argv[2])\n"
     )
     producer.chmod(0o755)
-    pbrun = tmp_path / "stub pbrun.py"
-    pbrun.write_text(
-        "import json, os, sys\n"
-        "with open(os.environ['CALLER_CAPTURE'], 'a') as stream:\n"
-        "    stream.write(json.dumps({'event': 'submit', 'argv': sys.argv[1:]}) + '\\n')\n"
-    )
-    # Refuse any real PB client, even when the caller ignores the override.
-    # Other python3 calls still execute their real receipt parser.
-    shim_dir = tmp_path / "bin"
-    shim_dir.mkdir()
-    python3 = shim_dir / "python3"
-    python3.write_text(
-        f"#!{sys.executable}\n"
-        "import os, sys\n"
-        "if sys.argv[1] not in ('-c', '-') and sys.argv[1] != os.environ['PBRUN']:\n"
-        "    raise SystemExit('unexpected submission client: ' + sys.argv[1])\n"
-        f"os.execv({sys.executable!r}, [{sys.executable!r}] + sys.argv[1:])\n"
-    )
-    python3.chmod(0o755)
     scales = tmp_path / "input scales.safetensors"
     scales.write_bytes(b"CPU control fixture")
     env = _caller_env(
         tmp_path, TESSERA_PRODUCER_PYTHON=producer,
-        TESSERA_PRODUCER_SOURCE=source, SUBMIT=1, PBRUN=pbrun,
-        INPUT_SCALES=scales, CALLER_CAPTURE=capture,
-        PATH=str(shim_dir) + os.pathsep + os.environ["PATH"])
+        TESSERA_PRODUCER_SOURCE=source, SUBMIT=1,
+        INPUT_SCALES=scales, CALLER_CAPTURE=capture)
     done = _run_caller(tmp_path, env)
     assert done.returncode == 0, done.stdout + done.stderr
     events = [json.loads(line) for line in capture.read_text().splitlines()]
-    assert events[0] == {
-        "event": "authenticate", "python": str(producer), "source": str(source)}
-    assert [event["event"] for event in events] == [
-        "authenticate", "submit", "submit", "submit"]
+    assert events == [{"event": "authenticate", "python": str(producer), "source": str(source)}]
+    lines = [shlex.split(line) for line in done.stdout.splitlines() if line.startswith("flux submit ")]
     expected_commands = [
         ["bash", "experiments/t8_census/export_routed_part.sh", "GB", "3", "8"],
         ["bash", "experiments/t8_census/export_routed_part.sh", "GB", "4", "8"],
         ["bash", "experiments/t16_census/export_census_stub.sh", "D1"],
     ]
-    for event, command in zip(events[1:], expected_commands):
-        argv = event["argv"]
+    assert len(lines) == 3, done.stdout
+    for argv, command in zip(lines, expected_commands):
         assert argv[argv.index("--") + 1:] == command
-        declared_env = [argv[index + 1] for index, arg in enumerate(argv) if arg == "--env"]
-        assert declared_env.count(f"TESSERA_PRODUCER_PYTHON={producer}") == 1
-        assert declared_env.count(f"TESSERA_PRODUCER_SOURCE={source}") == 1
+        assert "--env=-*" in argv and "--requires=host:sparky,sparklina" in argv
+        assert any(part.startswith("--resources-shape=slot/[core=") and ";gpu=1;" in part for part in argv)
+        assert argv[argv.index("-t") + 1] == "45m"
+        assert argv.count(f"--env=TESSERA_PRODUCER_PYTHON={producer}") == 1
+        assert argv.count(f"--env=TESSERA_PRODUCER_SOURCE={source}") == 1
+
+
+def test_ts91_chain_renders_a_stock_shape_flux_gpu_line_and_runs_nothing(tmp_path):
+    """The chain's former pbrun --gpu exec is a rendered, never-run flux submit line."""
+    env = {"PATH": os.environ["PATH"], "IMG": "inert-image", "RUNS": str(tmp_path / "runs")}
+    done = subprocess.run(["bash", str(CHECKOUT / "experiments/ts91_chain.sh"), "before"], env=env,
+                          cwd=CHECKOUT, capture_output=True, text=True, timeout=120)
+    assert done.returncode == 0, done.stdout + done.stderr
+    (line,) = [x for x in done.stdout.splitlines() if x.startswith("flux submit ")]
+    argv = shlex.split(line)
+    assert "--resources-shape=slot/[core=4;gpu=1;memory=32]" in argv
+    assert "--requires=host:sparky,sparklina" in argv and "--env=-*" in argv
+    assert argv[argv.index("-t") + 1] == "60m"
+    command = argv[argv.index("--") + 1:]
+    assert command[0] == "bash" and command[1].endswith("experiments/ts91_chain_body.sh")
+    assert command[-1] == "inert-image"
+    assert not (tmp_path / "runs").exists(), "rendering must not create run directories"

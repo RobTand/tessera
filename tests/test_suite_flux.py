@@ -229,3 +229,22 @@ def test_nonadjacent_target_overlap_refuses(suite, targets):
     assert suite._command(arm, Path('/out/surface.json'), [], 1)
     with pytest.raises(ValueError, match='overlap'):
         suite._command({**arm, 'targets': targets}, Path('/out/surface.json'), [], 1)
+
+
+def test_gpu_jobspec_is_rendered_in_the_stock_shape_and_never_run():
+    spec = load("flux_gpu_jobspec", ROOT / "tools/_flux_gpu_jobspec.py")
+    argv = spec.render(["bash", "x.sh", "a b"], cores=8, memory_gib=16, walltime="45m", env=["PROFILE=0"])
+    assert argv[:3] == ["flux", "submit", "--env=-*"]
+    assert "--env=PATH=/usr/bin:/bin" in argv and "--env=PROFILE=0" in argv
+    assert "--resources-shape=slot/[core=8;gpu=1;memory=16]" in argv
+    assert "--requires=host:sparky,sparklina" in argv
+    assert argv[argv.index("-t") + 1] == "45m"
+    assert argv[argv.index("--") + 1:] == ["bash", "x.sh", "a b"]
+    assert not any("perf" in part or "core-type" in part for part in argv)
+    for bad in ({"command": []}, {"walltime": ""}, {"cores": 0}, {"memory_gib": 0}, {"env": ["NOVALUE"]}):
+        kwargs = dict(command=["x"], cores=1, memory_gib=1, walltime="1m", env=[], **{})
+        kwargs.update(bad)
+        with pytest.raises(ValueError):
+            spec.render(kwargs.pop("command"), **kwargs)
+    source = (ROOT / "tools/_flux_gpu_jobspec.py").read_text()
+    assert "subprocess" not in source and "os.exec" not in source and "os.system" not in source

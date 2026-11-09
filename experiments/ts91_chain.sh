@@ -13,21 +13,24 @@
 set -uo pipefail
 WT=${WT:-$(cd "$(dirname "$0")/.." && pwd)}
 SUF=${1:-before}
-# GPU work is admitted by the PrismaBuild pool, not by a box-local lock: a
+# GPU work is admitted by the scheduler, not by a box-local lock: a
 # local lock cannot balance two boxes, and it starved this very experiment for
 # two hours.  Not --exclusive: this is a CORRECTNESS measurement (which key
 # does each arm compute), so it needs the arms honestly separated -- separate
 # cache roots and separate extension dirs -- and not a quiet box.
 #
-# The pool runs the recorded argv under a CLOSED environment, so everything
+# The job runs the recorded argv under a CLOSED environment, so everything
 # the chain needs travels as an argument.  Nothing here may be passed by
 # export: see the header of ts91_chain_body.sh for what that cost.
-PBRUN=${PBRUN:-/mnt/shared/prismabuild-fleet/repo/tools/pbrun.py}
+RENDER="$WT/tools/_flux_gpu_jobspec.py"
 RUNS=${RUNS:-/home/rob/tessera-runs/ts91}
 # The serve pin, resolved HERE and handed to the body, so a before-arm that
 # predates issue #100 runs the same bytes as the after-arm.
 source "$WT/experiments/runtime_image.sh"
 IMG=${IMG:-$(runtime_image_pin)}
-exec /usr/bin/python3 "$PBRUN" --gpu -- \
+# GPU on Flux needs the owner's per-run approval: this RENDERS the stock-shape Flux GPU line (Spark
+# hosts, closed environment, explicit walltime) and never submits or runs it.
+# Flux GPU path rendered, not qualified.
+exec /usr/bin/python3 "$RENDER" --cores 4 --memory-gib 32 --walltime 60m -- \
   bash "$WT/experiments/ts91_chain_body.sh" "$WT" "$SUF" \
        "$RUNS/ext-A-$SUF" "$RUNS/ext-B-readonly-$SUF" "$IMG"
