@@ -40,7 +40,7 @@ This preparation does not replace actual calibrated T16 release acceptance.
 The two-arm diagnostic holds every loaded native FD through experiment teardown
 to prevent `/proc/self/fd` pathname reuse in CPython/dlopen caches. Resolved
 prefetch distance, executable mapped inode and held-ELF digest are recorded per
-arm. `experiments/configs/value_prefetch_874_protocol.json` freezes staging,
+arm. `archive/flux-migration/4C-6/experiments/configs/value_prefetch_874_protocol.json` freezes staging,
 single-attempt admission, finite numeric/sanitizer deadlines and cleanup;
 it is an authorization proposal, not permission to execute GPU work.
 Readset publication validates the actual PB v1 schema and whole-bank staging

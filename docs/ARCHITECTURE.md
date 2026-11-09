@@ -1190,7 +1190,7 @@ and the original unapproved GPU numeric/sanitizer proposal are retained in
 `5aba4096` source48a6 identity remains historical; it does not authorize the
 corrected source. The same54-cell corrected-source successor, composing the
 parent-accepted4392 T4 prerequisite lineage and the actual #902 release proof,
-is `experiments/configs/value_prefetch_874_combined_safety_protocol_v3.json`.
+is `archive/flux-migration/4C-6/experiments/configs/value_prefetch_874_combined_safety_protocol_v3.json`.
 It preserves the exact bank/ELF/image/readset and numeric16/GPU8/600 plus
 memcheck32/GPU24/1800 bounds. Parent901/normal/all-used-filesystem/scientific
 authorization gates remain held; no old protocol or ELF is restamped.
@@ -1377,7 +1377,7 @@ their ABI, layout and accumulation order; dense/two-run and other families
 are controls. Source `849b039b` has accepted 54-pair synthetic-only exact
 numeric and full-matrix memcheck evidence, not calibrated original-model
 performance, serving, energy or PACT evidence. Frozen protocol/native/readset
-identities remain in `experiments/configs/value_prefetch_874_protocol.json`.
+identities remain in `archive/flux-migration/4C-6/experiments/configs/value_prefetch_874_protocol.json`.
 Current-base CPU owner controls `75e8d128`:43 passed, one explicit retained-bank
 skip, zero uncollected modules/CUDA allocations. The synthetic-readset fixture
 now uses its temporary root, not an undeclared box path. Issue874 remains open.
@@ -2034,7 +2034,7 @@ T4 activation-prefetch experiment (2026-10-02, #875):
   exactly24 FP4 one-run routed instantiations (modes0/1/2, rates1..8), leaves
   all53 FP4 dense/mixed/utility and345 other-family controls exact, and reports
   zero STACK/LOCAL allocation (FP4 maximum128 registers).
-* Current persisted actions are `pb_875_composed_cpu_prepare.json`,
+* Persisted actions (archived under `archive/flux-migration/4C-6/experiments/t4_code/`, 4C-6, 2026-11-09) are `pb_875_composed_cpu_prepare.json`,
   `pb_875_composed_cpu_stage.json` and the complete15-row
   `pb_875_composed_finite_campaign.json`. The source/image/cohort/readset,
   full numeric/native/sanitizer population and real local-scratch contract
