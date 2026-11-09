@@ -6,16 +6,13 @@ import hashlib
 import json
 import os
 from pathlib import Path
-import runpy
 import sys
 
 
 def main():
     import tessera.export_serving as exporter
-    helper = os.environ.get("PRISMABUILD_ACTION_PROGRESS_HELPER")
-    if helper is None:
-        raise RuntimeError("construction requires the admitted progress contract")
-    commit = runpy.run_path(helper)["commit"]
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+    from tools._durable_progress import emit as commit
     output = Path(sys.argv[2])
     checkpoint = output.with_name(output.name + "-unit-checkpoints")
     try:

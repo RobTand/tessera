@@ -10496,8 +10496,14 @@ The GLM CPU campaign launcher (`tools/run_glm_cached_cpu_export.py`) is a
 reuse-only wrapper around this same exporter. It requires digest-bound actual
 assignment, PACT result, export plan, selected-manifest receipt, H reference,
 priced scales and routed selection. It does not interpret or certify PACT:
-campaign review must accept that result's scope before submission. The command
-renderer only emits a reviewable PB argument list. It cannot submit a job.
+campaign review must accept that result's scope before submission. Durable
+progress is one `tessera.durable_progress.v1` JSON line per unit, printed by
+`tools/_durable_progress.emit` only after the unit's file and directory are
+fsynced; no external progress helper is read. The command renderer only emits a
+reviewable Flux jobspec (`prismaquant.reviewable_cpu_export_submission.v2`: stock
+`slot/[core=8;memory=48]` shape, host, environment allowlist and command). It
+cannot submit a job, and the 8-core / 48 GiB full export stays held until it is
+sized.
 The launcher forbids encoding, retains all exporter gates, requires fresh output
 and journals cumulative PB progress only after verified source digests or output
 shards are durable. Its 8-CPU/48-GiB proposal is a geometric admission ceiling,

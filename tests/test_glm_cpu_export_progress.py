@@ -42,9 +42,38 @@ def test_differing_source_or_failed_publish_cannot_advance(tmp_path):
     assert not progress.events.exists()
 
 
-def test_incomplete_input_bindings_cannot_enter_export(tmp_path,monkeypatch):
+def test_progress_line_follows_the_fsync_of_the_unit_it_reports(tmp_path,monkeypatch):
+    """Order is the obligation: the durable record is on disk before the progress line is printed."""
+    module=driver();order=[];real=module.fsync_path
+    monkeypatch.setattr(module,'fsync_path',lambda path:(order.append('fsync'),real(path))[1])
+    output=tmp_path/'output';output.mkdir()
+    progress=module.DurableExportProgress(tmp_path/'events',output,{},lambda n,p:order.append(('commit',n,p)))
+    progress.completed('export_shards','a',{'bytes':1})
+    assert order[-1]==('commit',1,'export_shards') and 'fsync' in order[:-1]
+    assert (tmp_path/'events'/'durable-events.jsonl').read_text().count('\n')==1
+
+
+def test_the_shared_progress_helper_prints_one_schema_line_per_report(capsys):
+    import sys
+    tools=Path(__file__).resolve().parents[1]
+    if str(tools) not in sys.path:sys.path.insert(0,str(tools))
+    from tools._durable_progress import emit
+    emit(3,'construct',unit='durable checkpoints');emit(4,'publish')
+    lines=capsys.readouterr().out.splitlines()
+    assert [json.loads(line) for line in lines]==[
+        {'schema':'tessera.durable_progress.v1','units_completed':3,'phase':'construct','unit':'durable checkpoints'},
+        {'schema':'tessera.durable_progress.v1','units_completed':4,'phase':'publish'}]
+
+
+def test_the_export_tools_name_no_prismabuild_progress_channel():
+    root=Path(__file__).resolve().parents[1]
+    for name in ('tools/run_glm_cached_cpu_export.py','tools/pq2459_export_progress.py','experiments/glm_routed_owner_inputs.py'):
+        text=(root/name).read_text()
+        assert 'PRISMABUILD_ACTION_PROGRESS' not in text and 'runpy.run_path' not in text,name
+
+
+def test_incomplete_input_bindings_cannot_enter_export(tmp_path):
     module=driver();path=tmp_path/'bindings.json';path.write_text(json.dumps({'schema':'prismaquant.glm_cached_cpu_export_bindings.v1','inputs':{}}))
-    monkeypatch.setenv('PRISMABUILD_ACTION_PROGRESS_HELPER','/unused')
     with pytest.raises(ValueError,match='incomplete'):
         module.main(['--bindings',str(path),'--bindings-sha256',hashlib.sha256(path.read_bytes()).hexdigest()])
 
@@ -81,16 +110,19 @@ def _repo(path):
     return run('rev-parse','HEAD').strip()
 
 
-def test_the_rendered_row_takes_the_agent_band_and_the_venv_of_its_commit(tmp_path):
+def test_the_rendered_row_is_a_stock_jobspec_on_the_venv_of_its_commit(tmp_path):
     module=renderer();binding=_bindings(tmp_path,module.INPUTS);commit=_repo(tmp_path/'checkout')
     result=module.render(binding['path'],binding['sha256'],tmp_path/'checkout')
-    argv=result['argv']
-    assert argv[argv.index('--priority')+1]=='-10'
+    spec=result['jobspec']
+    assert result['schema']=='prismaquant.reviewable_cpu_export_submission.v2' and 'argv' not in result
+    assert spec['resources_shape']=='slot/[core=8;memory=48]' and spec['requires']=='host:dl380g10'
     python=str(module.VENV_ROOT/f'pq-cpu312-tessera-{commit[:8]}'/'bin'/'python')
-    assert argv[argv.index('--')+1]==python
+    assert spec['command'][0]==python and spec['command'][1]=='tools/run_glm_cached_cpu_export.py'
     assert result['tessera_commit']==commit and result['interpreter']['path']==python
-    assert result['submitted'] is False
-    assert not [a for a in argv if '4c384e60' in a]
+    assert result['submitted'] is False and spec['walltime_s'] is None
+    assert spec['environment']['PYTHONPATH']=='src' and spec['environment']['OMP_NUM_THREADS']=='1'
+    text=json.dumps(result)
+    assert 'pbrun' not in text and 'prismabuild' not in text.lower() and '--priority' not in text
 
 
 def test_a_dirty_checkout_is_refused_rather_than_named_after_its_head(tmp_path):

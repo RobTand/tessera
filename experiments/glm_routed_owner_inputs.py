@@ -46,7 +46,6 @@ import json
 import os
 import struct
 import sys
-import time
 from pathlib import Path
 
 ROLE_ORDER = ("w1", "w3", "w2")
@@ -126,40 +125,16 @@ def fsync_directory(path: Path) -> str:
         os.close(handle)
 
 
-def commit_progress(units: int, phase: str, unit: str | None = None) -> bool:
-    """Say how much work is COMMITTED, through PrismaBuild's own channel.
+def commit_progress(units: int, phase: str, unit: str | None = None) -> None:
+    """Say how much work is COMMITTED, as one durable-progress line.
 
-    The worker names its helper in ``PRISMABUILD_ACTION_PROGRESS_HELPER``, and
-    that helper is the supported channel -- it knows the declared phase names
-    and refuses a typo where the report is made rather than quietly by the
-    watcher.  The ten-line file write below it is the documented fallback for
-    an action that cannot see the fleet mount (a pinned container), held byte
-    for byte against the worker's reader.
-
-    Both are no-ops when this action was not admitted under a phase policy, so
-    callers report unconditionally -- and only for work that is already
+    Callers report unconditionally -- and only for work that is already
     durable.  A report is a claim that the unit is on disk, not that a loop
     reached it.
     """
-    helper = os.environ.get("PRISMABUILD_ACTION_PROGRESS_HELPER")
-    if helper:
-        import runpy
+    from tools._durable_progress import emit
 
-        commit = runpy.run_path(helper)["commit"]
-        commit(units, phase)
-        return True
-    path = os.environ.get("PRISMABUILD_ACTION_PROGRESS_PATH")
-    token = os.environ.get("PRISMABUILD_ACTION_PROGRESS_TOKEN")
-    if not path or not token:
-        return False
-    record = {"schema": "prismabuild.action_progress.v1", "token": token,
-              "phase": phase, "units_completed": units, "unit": unit,
-              "reported_unix": time.time()}
-    temporary = f"{path}.{os.getpid()}.tmp"
-    with open(temporary, "w") as handle:
-        handle.write(json.dumps(record, sort_keys=True) + "\n")
-    os.replace(temporary, path)
-    return True
+    emit(units, phase, unit)
 
 
 # ---------------------------------------------------------------------------
