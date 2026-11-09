@@ -1,9 +1,9 @@
 #!/usr/bin/python3
-"""PB CPU interpreter adapter preserving the repository's xdist test mode.
+"""CPU interpreter adapter preserving the repository's xdist test mode.
 
-pbtest supplies the test partition and Python arguments. This versioned adapter
+The caller supplies the test partition and Python arguments. This versioned adapter
 only adds the required worksteal/duration options and selects the scoped CPU
-interpreter; it neither partitions tests nor executes outside PB admission.
+interpreter; it neither partitions tests nor executes outside a Flux job.
 """
 import os
 import sys

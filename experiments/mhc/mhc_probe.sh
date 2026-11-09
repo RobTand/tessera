@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # Run experiments/mhc/mhc_probe.py inside the serving image (the mHC and
-# elementwise before-measurements).  Submitted through PrismaBuild (pbrun --gpu
-# --measurement --container-image ...); this script is the admitted action's
-# command.  Usage:
+# elementwise before-measurements).  Run as a Flux GPU job (see the rendered
+# tools/_flux_gpu_jobspec.py line; Flux GPU path rendered, not qualified); this
+# script is the job's command.  Usage:
 #   mhc_probe.sh <checkout> <out_dir> <mhc_probe.py args...>
 # The container mounts the checkout and the served checkpoint read-only and
 # writes only under <out_dir>.  ORACLE_NCU=1 runs the NCU-gated mHC calls under

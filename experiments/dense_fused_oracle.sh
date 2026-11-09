@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
 # Run experiments/dense_fused_oracle.py inside the serving image (contract v43,
-# the fused window kernel's dense identity).  Submitted through PrismaBuild
-# (pbrun --gpu --container-image ...); this script is the admitted action's
-# command.  Usage:
+# the fused window kernel's dense identity).  Run as a Flux GPU job
+# (see the rendered tools/_flux_gpu_jobspec.py line; Flux GPU path rendered, not
+# qualified); this script is the job's command.  Usage:
 #   dense_fused_oracle.sh <checkout> <out_dir> <oracle.py args...>
-# PB's docker shim preserves the action's CPU mask; the container mounts the
+# The job's CPU mask is preserved; the container mounts the
 # checkout read-only at /work and the stub checkpoint read-only, and writes
 # only under <out_dir> (HOME/TMPDIR/Triton cache/JIT build included).
 # ORACLE_NCU=1 runs dense_fused_ncu.py under Nsight Compute instead, gated to

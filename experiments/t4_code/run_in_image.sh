@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Run one experiments/t4_code script inside the serving image on one GB10.
-# Submitted through PrismaBuild (pbrun --container-image ...); this script is
-# the admitted action's command.  Usage:
+# Run as a Flux GPU job (see the rendered tools/_flux_gpu_jobspec.py line; Flux
+# GPU path rendered, not qualified); this script is the job's command.  Usage:
 #   run_in_image.sh <checkout> <out_dir> <script.py under experiments/t4_code> [args...]
 # The container mounts the checkout, the GLM-5.3-Flash BF16 source and the
 # activation capture read-only, and writes only under <out_dir> (HOME, TMPDIR

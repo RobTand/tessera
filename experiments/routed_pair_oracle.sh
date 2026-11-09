@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 # Run experiments/routed_pair_oracle.py inside the serving image (tessera#604).
-# Submitted through PrismaBuild (pbrun --gpu --container-image ...); this script
-# is the admitted action's command.  Usage:
+# Run as a Flux GPU job (see the rendered tools/_flux_gpu_jobspec.py line; Flux
+# GPU path rendered, not qualified); this script is the job's command.  Usage:
 #   routed_pair_oracle.sh <checkout> <out_dir> <oracle.py args...>
-# PB's docker shim preserves the action's CPU mask; the container mounts the
+# The job's CPU mask is preserved; the container mounts the
 # checkout read-only at /work and the measurement tree read-only, and writes
 # only under <out_dir> (HOME/TMPDIR/Triton cache included).
 set -euo pipefail
