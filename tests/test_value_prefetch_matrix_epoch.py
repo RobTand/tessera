@@ -45,7 +45,7 @@ def test_matrix_epoch_loads_each_arm_once_and_releases_after_fences(tmp_path, mo
                 with pytest.raises(OSError):
                     os.fstat(owner.fd)
             events.append('release')
-    monkeypatch.setattr(numeric, 'StagedInputs', Reader)
+    monkeypatch.setattr(numeric, 'DeclaredInputs', Reader)
     class Owner:
         def __init__(self, reader, path, rf, directory, **kwargs):
             directory.mkdir(parents=True)

@@ -69,7 +69,7 @@ def validate(doc):
         raise ValueError("comparison requires its exact finite A8SE L10 population and budgets")
     require_digest(doc["kernel_sha256"])
     if set(doc["harness"]) != {"experiments/t8r_speed/bench_t8r.py", "experiments/t8r_speed/bench_t8r.sh",
-                                "experiments/t8r_speed/piece_major_protocol.py", "experiments/t8r_speed/pb_staged_store.py"}:
+                                "experiments/t8r_speed/piece_major_protocol.py", "experiments/t8r_speed/declared_inputs.py"}:
         raise ValueError("comparison requires the complete benchmark owner closure")
     for relative, digest in doc["harness"].items():
         if Path(relative).is_absolute() or ".." in Path(relative).parts:

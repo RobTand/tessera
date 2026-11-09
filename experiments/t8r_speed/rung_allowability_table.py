@@ -1,6 +1,6 @@
 """Harvest the existing geometry/quality harness into versioned D41 tables.
 
-Run through PrismaBuild on CPU. Unfinished jobs and missing quality stay pending.
+Run as an admitted Flux job on CPU. Unfinished jobs and missing quality stay pending.
 """
 from __future__ import annotations
 import argparse
@@ -227,8 +227,8 @@ def measurement(path,data,head,cell,key,build_id,cols,rows,grid):
         requested=geometry.get('shared_memory',{}).get('requested_bytes')
         available=geometry.get('shared_memory',{}).get('available_bytes')
     good=bool(not error and cell.get('ms',0)>0 and timer and name and res and requested is not None and available is not None)
-    evidence={'geometry_file':str(path),'action_key':meta.get('pb_action'),'host':meta.get('host'),
-              'comparison_id':meta.get('pb_action'),'paired_seed_contract':meta.get('paired_seed_contract'),
+    evidence={'geometry_file':str(path),'action_key':job_identity(meta),'host':meta.get('host'),
+              'comparison_id':job_identity(meta),'paired_seed_contract':meta.get('paired_seed_contract'),
               'timing_statistic':meta.get('statistic'),'timer':timer,'F':f,'R':r,'profile':cell.get('profile'),
               'power':cell.get('power'),'loaded_library_sha256':meta.get('library_sha256'),'kernel_source_sha256':meta.get('kernel_sha'),
               'quantum_window_unix':[meta.get('start_unix'),meta.get('end_unix')],
@@ -246,6 +246,19 @@ def measurement(path,data,head,cell,key,build_id,cols,rows,grid):
     return {**key,'measurement_status':'measured' if good else ('failed' if error else 'pending'),'kernel_time_us':cell['ms']*1000 if good else None,
             'kernel_path':name,'geometry':geometry,'evidence':evidence,'pass_times_us':[f['median_ms']*1000,r['median_ms']*1000] if good else [],'measurement_build_id':build_id}
 
+
+
+#: Geometry records written from 2026-11-09 carry ``meta_schema`` == META_V2 and name their job in
+#: ``flux_job_id``.  Records with no ``meta_schema`` predate that boundary and name it in ``pb_action``;
+#: they are read, never rewritten.  A record that declares any other schema is refused.
+META_V2='tessera.geometry_meta.v2'
+
+
+def job_identity(meta):
+    schema=meta.get('meta_schema')
+    if schema==META_V2:return meta.get('flux_job_id')
+    if schema is None:return meta.get('pb_action')
+    raise ValueError(f'unknown geometry meta schema: {schema}')
 
 
 def merge_index(index, format_name, build_id, version, relative, table, *, sha256=None):
@@ -356,7 +369,7 @@ def performance_increment(table, raw_inputs, version, findings=()):
         if meta.get("format", FORMAT) != table["format"]:
             ignored.append(str(input_path))
             continue
-        if not meta.get('end_unix') or not meta.get('pb_action'):
+        if not meta.get('end_unix') or not job_identity(meta):
             raise ValueError('Incomplete actual geometry input')
         signature = {key: meta.get(key) for key in ('kernel_sha', 'architecture', 'library', 'activation_contract', 'image', 'torch', 'decode_sources')}
         actual_build = meta['library'] + '-' + meta['architecture'] + '-' + hashlib.sha256(json.dumps(signature, sort_keys=True).encode()).hexdigest()[:16]
@@ -465,7 +478,7 @@ def publish_table(table, args):
             temporary=current_path.with_suffix('.tmp')
             temporary.write_text(json.dumps(current,indent=2,allow_nan=False))
             temporary.replace(current_path)
-    report={'status':'schema_and_semantic_validation_passed','table_path':relative,'table_status':table['table_status'],'kernel_build_id':build_id,'summary':dict(Counter(row['measurement_status'] for row in rows)),'excluded':[row['rung'] for row in rows if row['excluded']],'action_key':__import__('os').environ.get('PRISMABUILD_ACTION_KEY')}
+    report={'status':'schema_and_semantic_validation_passed','table_path':relative,'table_status':table['table_status'],'kernel_build_id':build_id,'summary':dict(Counter(row['measurement_status'] for row in rows)),'excluded':[row['rung'] for row in rows if row['excluded']],'flux_job_id':__import__('os').environ.get('FLUX_JOB_ID')}
     report['cell_summary']=dict(Counter(m['measurement_status'] for row in rows for m in row['measurements']))
     report['quality_rungs_measured']=sum(row['quality'].get('measurement_status')=='measured' for row in rows)
     report['table_sha256']=table_sha256

@@ -45,9 +45,9 @@ def test_numeric_mode_refuses_stubbed_vllm():
 
 @pytest.mark.parametrize('layer',[10,11,42])
 def test_explicit_module_roster_binds_without_foreign_layer_alias(layer):
-    spec=importlib.util.spec_from_file_location('pb_staged_store',ROOT/'experiments/t8r_speed/pb_staged_store.py')
+    spec=importlib.util.spec_from_file_location('declared_inputs',ROOT/'experiments/t8r_speed/declared_inputs.py')
     module=importlib.util.module_from_spec(spec);spec.loader.exec_module(module)
-    reader=module.StagedInputs.__new__(module.StagedInputs)
+    reader=module.DeclaredInputs.__new__(module.DeclaredInputs)
     name=f'model.language_model.layers.{layer}.mlp.experts'
     roles=[{'expert':e,'role':r,'tensor':f'{name}.{e}.{r}.weight'}
            for e in range(288) for r in ('gate_proj','up_proj','down_proj')]

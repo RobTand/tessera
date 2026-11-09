@@ -154,6 +154,15 @@ class GeometryHarvest(unittest.TestCase):
         import bench_rates, rung_allowability_table
         cls.rates,cls.harvest=bench_rates,rung_allowability_table
 
+    def test_job_identity_reads_pb_action_only_before_the_meta_schema_boundary(self):
+        meta_v2 = {'meta_schema': self.harvest.META_V2, 'flux_job_id': 'fJOB', 'pb_action': 'ignored'}
+        self.assertEqual(self.harvest.job_identity(meta_v2), 'fJOB')
+        self.assertIsNone(self.harvest.job_identity({'meta_schema': self.harvest.META_V2, 'pb_action': 'old'}))
+        self.assertEqual(self.harvest.job_identity({'pb_action': 'historical-action'}), 'historical-action')
+        self.assertIsNone(self.harvest.job_identity({'flux_job_id': 'fJOB'}))
+        with self.assertRaises(ValueError):
+            self.harvest.job_identity({'meta_schema': 'tessera.geometry_meta.v3', 'flux_job_id': 'fJOB'})
+
     def test_increment_reader_findings_preserve_correctness_holds(self):
         import importlib.util
         if importlib.util.find_spec("torch") is not None and importlib.util.find_spec("jsonschema") is None:

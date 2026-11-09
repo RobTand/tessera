@@ -16,13 +16,7 @@ def quality_binding(tmp_path, monkeypatch):
     quality = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(quality)
     cas = tmp_path / "requests"
-    real_path = quality.Path
-    monkeypatch.setattr(
-        quality, "Path",
-        # The one production call is the PrismaBuild CAS request directory.  Match it by
-        # its tail so the test never names a path on a box (tests/test_box_artifacts.py).
-        lambda path: cas if str(path).endswith("/cas/requests") else real_path(path),
-    )
+    monkeypatch.setattr(quality, "RECORDED_REQUESTS", cas)
     action = "a" * 64
     original = tmp_path / "recorded" / "quality.json"
     original.parent.mkdir()
@@ -32,9 +26,9 @@ def quality_binding(tmp_path, monkeypatch):
         "accounted_bits": {"numerator": bits.numerator, "denominator": bits.denominator},
     }]}}}
     original.write_text(json.dumps(document))
-    request = cas / action[:2] / f"{action}.json"
+    request = cas / f"{action}.json"
     request.parent.mkdir(parents=True)
-    request.write_text(json.dumps({"action_key": action, "params": {
+    request.write_text(json.dumps({"action_key": action, "provenance": {"source": "recorded-source-path", "sha256": "b" * 64}, "params": {
         "command": ["python", "experiments/t8r_speed/rung_quality.py", "--grid", "E4M3",
                     "--cases", "1024", "--out", str(original)],
         "checkout_snapshot": {"commit": "recorded-source"},
@@ -77,4 +71,22 @@ def test_corrupt_encoder_byte_accounting_refuses_in_every_mode(quality_binding, 
     document["rungs"]["1024"]["samples"][0]["exact_bytes"] += 1
     original.write_text(json.dumps(document))
     with pytest.raises(ValueError):
+        quality.bind_existing_quality(original, action, output)
+
+
+@pytest.mark.parametrize("fault", ["absent", "no-provenance"])
+def test_recorded_request_must_exist_and_carry_its_provenance(quality_binding, fault):
+    quality, action, original, output = quality_binding
+    request = Path(quality.RECORDED_REQUESTS) / f"{action}.json"
+    quality.bind_existing_quality(original, action, output)  # the accepted control
+    output.unlink()
+    if fault == "absent":
+        request.unlink()
+        error = FileNotFoundError
+    else:
+        value = json.loads(request.read_text())
+        del value["provenance"]
+        request.write_text(json.dumps(value))
+        error = ValueError
+    with pytest.raises(error):
         quality.bind_existing_quality(original, action, output)

@@ -5,7 +5,7 @@ from types import SimpleNamespace
 import pytest
 
 from experiments.t4_code.prefetch_qualification import finish_banks
-from _whole_phase_sdk import whole_phase_sdk, manifest_value, write_manifest
+from declared_inputs_support import manifest_value, write_manifest
 
 
 def _native_entries(qualified, tools=False):
@@ -20,28 +20,24 @@ def _native_entries(qualified, tools=False):
 
 @pytest.mark.parametrize("schema,variant", [
     ("v1", "whole"), ("v1", "trailing-zero"), ("v1", "v1-advisory-bytes"),
-    ("v2", "whole"), ("v2", "trailing-zero"), ("v2", "resident"),
 ])
 @pytest.mark.parametrize("tools", [False, True])
-def test_whole_phase_public_schema_controls(tmp_path, whole_phase_sdk, schema, variant, tools):
+def test_whole_phase_declared_schema_controls(tmp_path, schema, variant, tools):
     """No artifact reads: members are declarations, including nonexistent tools."""
     from experiments.t4_code import prefetch_qualification as qualified
 
     entries = _native_entries(qualified, tools)
     value = manifest_value(entries, qualified.PHASE, schema, variant)
     path = write_manifest(tmp_path / "declared.json", value)
-    validated, encoding = whole_phase_sdk.read_data_manifest(path)
-    assert encoding == "identity"
-    assert whole_phase_sdk.manifest_read_entries(validated) == entries
     normalized, phases = qualified.validate_readset(path)
-    assert normalized == validated
+    assert normalized["entries"] == entries
     assert phases == [{"name": qualified.PHASE, "start_bytes": 0,
                        "end_bytes": sum(row["bytes"] for row in entries)}]
 
 
-@pytest.mark.parametrize("schema", ["v1", "v2"])
+@pytest.mark.parametrize("schema", ["v1"])
 @pytest.mark.parametrize("variant", ["missing", "wrong", "split", "multiple", "incomplete", "leading-zero"])
-def test_whole_phase_public_phase_refusals(tmp_path, whole_phase_sdk, schema, variant):
+def test_whole_phase_declared_phase_refusals(tmp_path, schema, variant):
     from experiments.t4_code import prefetch_qualification as qualified
 
     entries = _native_entries(qualified)
@@ -53,13 +49,13 @@ def test_whole_phase_public_phase_refusals(tmp_path, whole_phase_sdk, schema, va
 
 
 @pytest.mark.parametrize("fault", ["native-size", "native-digest", "tool-digest", "tool-order",
-                                   "partial-tools", "extra-member", "v2-wrong-read-order", "gzip"])
-def test_whole_phase_retains_exact_member_bindings(tmp_path, whole_phase_sdk, fault):
+                                   "partial-tools", "extra-member", "gzip"])
+def test_whole_phase_retains_exact_member_bindings(tmp_path, fault):
     import gzip
     from experiments.t4_code import prefetch_qualification as qualified
 
     entries = _native_entries(qualified, tools=True)
-    schema = "v2" if fault == "v2-wrong-read-order" else "v1"
+    schema = "v1"
     path = write_manifest(tmp_path / "declared.json", manifest_value(entries, qualified.PHASE, schema))
     qualified.validate_readset(path)
     if fault == "native-size":
@@ -75,8 +71,6 @@ def test_whole_phase_retains_exact_member_bindings(tmp_path, whole_phase_sdk, fa
     elif fault == "extra-member":
         entries.append(dict(path=str(qualified.NATIVE_ROOT / "foreign.so"), offset=0, bytes=1, sha256="0" * 64))
     value = manifest_value(entries, qualified.PHASE, schema)
-    if fault == "v2-wrong-read-order":
-        value["read_plan"]["phases"][0]["entry_indices"].reverse()
     write_manifest(path, value)
     if fault == "gzip":
         path.write_bytes(gzip.compress(path.read_bytes()))
@@ -152,12 +146,12 @@ def test_no_primary_failure_reports_cleanup_error_after_both_fds_close(tmp_path)
 @pytest.mark.parametrize("mode", ["native", "tool"])
 def test_post_acquire_directory_failure_releases_reader(tmp_path, monkeypatch, mode):
     from experiments.t4_code import prefetch_qualification as qualified
-    import pb_staged_store
+    import declared_inputs
 
     released = []
     reader = SimpleNamespace(close=lambda: released.append(True))
     monkeypatch.setattr(qualified, "validate_readset", lambda path: None)
-    monkeypatch.setattr(pb_staged_store, "StagedInputs", lambda path: reader)
+    monkeypatch.setattr(declared_inputs, "DeclaredInputs", lambda path: reader)
     if mode == "native":
         pytest.importorskip("torch", reason="native FD owner control requires Torch; pure metadata tests do not")
         import torch
@@ -180,7 +174,7 @@ def test_post_acquire_directory_failure_releases_reader(tmp_path, monkeypatch, m
 
 
 @pytest.mark.parametrize("fault", [None, "offset", "duplicate-path", "order"])
-def test_public_manifest_validator_enforces_exact_whole_file_members(tmp_path, fault, whole_phase_sdk):
+def test_declared_manifest_validator_enforces_exact_whole_file_members(tmp_path, fault):
     import json
     from experiments.t4_code import prefetch_qualification as qualified
 
@@ -193,7 +187,7 @@ def test_public_manifest_validator_enforces_exact_whole_file_members(tmp_path, f
     elif fault == "order":
         entries.reverse()
     total = sum(row["bytes"] for row in entries)
-    value = {"schema": "prismaquant.prismabuild.data_manifest.v1", "produced_by": {"test": "public API"},
+    value = {"schema": "tessera.declared_inputs.v1", "produced_by": {"test": "declared record"},
              "mount_prefix": "/mnt/shared", "entries": entries, "entry_count": len(entries),
              "total_bytes": total, "annotations": {"phases": [
                  {"name": qualified.PHASE, "bytes": total, "cumulative_bytes": total}]}}

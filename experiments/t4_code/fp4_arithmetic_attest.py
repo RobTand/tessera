@@ -380,7 +380,7 @@ def main(args):
     compiler = shutil.which("nvcc") or "/usr/local/cuda/bin/nvcc"
     binary = out / "probe"
     build = [compiler, "-O3", "-std=c++17", "-gencode", "arch=compute_121a,code=sm_121a", "--ftz=false", "--fmad=false", "-o", str(binary), str(source)]
-    context = {"build": build, "compiler": subprocess.check_output([compiler, "--version"], text=True), "source_sha256": hashlib.sha256(source.read_bytes()).hexdigest(), "action_key": os.environ.get("PRISMABUILD_ACTION_KEY", os.environ.get("PB_ACTION_KEY")), "image": os.environ.get("ORACLE_IMAGE"), "python": sys.version, "platform": sys.platform}
+    context = {"build": build, "compiler": subprocess.check_output([compiler, "--version"], text=True), "source_sha256": hashlib.sha256(source.read_bytes()).hexdigest(), "flux_job_id": os.environ.get("FLUX_JOB_ID"), "image": os.environ.get("ORACLE_IMAGE"), "python": sys.version, "platform": sys.platform}
     save(out / "context.json", context)
     build_result = subprocess.run(build, capture_output=True, text=True)
     (out / "compile.stdout").write_text(build_result.stdout)

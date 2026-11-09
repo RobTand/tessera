@@ -26,11 +26,17 @@ def quality_scope(grid,q,recipe):
             'rung':q,'recipe':config,'kernel_kinds':kinds,'owner':'tessera.export.encode_linear'}
 
 
-def bind_existing_quality(path,action_key,out):
-    """Recover scope from executed arguments and stored scores; paths stamp in dev."""
+#: Committed history: the executed command and source commit of each historical quality run, one
+#: ``<action_key>.json`` per run, each carrying ``provenance`` {source: the original request's path,
+#: sha256: its bytes}.  Nothing here is read from a scheduler or a published store.
+RECORDED_REQUESTS=Path(__file__).resolve().parent/'history'/'quality_requests'
+
+
+def bind_existing_quality(path,action_key,out,*,requests=None):
+    """Recover scope from the recorded executed arguments and stored scores; paths stamp in dev."""
     from tessera.export import wire_recipe
-    request=Path('/mnt/shared/prismabuild-fleet/cas/requests')/action_key[:2]/(action_key+'.json')
-    sealed=json.loads(request.read_text())
+    sealed=json.loads((Path(requests or RECORDED_REQUESTS)/(action_key+'.json')).read_text())
+    if set(sealed.get('provenance',{}))!={'source','sha256'}:raise ValueError('recorded quality request lacks its provenance')
     if sealed['action_key']!=action_key:raise ValueError('quality action key differs')
     command=sealed['params']['command']
     is_t4='experiments/t4_code/bench_geometry_e2m1.py' in command and '--quality' in command
@@ -66,7 +72,7 @@ def bind_existing_quality(path,action_key,out):
         row['scope']=quality_scope(grid,q,recipe)
     document['format']=f"TESSERA_{grid.name.split('x',1)[0]}_K{grid.arity}"
     document['grid']=grid.name;document['arity']=grid.arity
-    document['scope_provenance']={'action_key':action_key,'snapshot':sealed['params']['checkout_snapshot']['commit'],
+    document['scope_provenance']={'action_key':action_key,'recorded_request_sha256':sealed['provenance']['sha256'],'snapshot':sealed['params']['checkout_snapshot']['commit'],
         'original_file_sha256':hashlib.sha256(raw).hexdigest(),'binding':'executed explicit grid arguments plus exact encode_linear/unit_wire_bits identity'}
     target=Path(out);target.parent.mkdir(parents=True,exist_ok=True)
     with target.open('x') as stream:json.dump(document,stream,indent=1,allow_nan=False)

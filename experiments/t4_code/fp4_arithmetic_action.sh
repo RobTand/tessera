@@ -31,6 +31,6 @@ exec docker run --rm --gpus all --ipc=host --network=none --cpuset-cpus "$CPUS" 
     -e HOME="$OUT/home" -e TMPDIR="$OUT/tmp" -e PYTHONDONTWRITEBYTECODE=1 \
     -e PYTHONUNBUFFERED=1 -e PYTHONPATH=/work/src -e MAX_JOBS=1 \
     -e OMP_NUM_THREADS=1 -e MKL_NUM_THREADS=1 -e OPENBLAS_NUM_THREADS=1 \
-    -e PRISMABUILD_ACTION_KEY="${PRISMABUILD_ACTION_KEY:?}" -e ORACLE_IMAGE="$IMAGE" -e HOST_NAME="$(hostname)" \
+    -e FLUX_JOB_ID="${FLUX_JOB_ID:?}" -e ORACLE_IMAGE="$IMAGE" -e HOST_NAME="$(hostname)" \
     "${INPUT_MOUNTS[@]}" "${IMAGE_ENV[@]}" --entrypoint bash -w /work "$IMAGE" \
     -c 'source experiments/cuda_home_shadow.sh "$TMPDIR"; exec python3 experiments/t4_code/fp4_arithmetic_attest.py "$@"' -- --out "$OUT" "$@"

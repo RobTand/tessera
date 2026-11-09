@@ -7,8 +7,8 @@ from tessera.fused import pack_fused
 ROOT = Path(__file__).resolve().parents[1]
 
 def frame_checker():
-    path = ROOT / 'experiments/t8r_speed/pb_staged_store.py'
-    spec = importlib.util.spec_from_file_location('pb_staged_store', path)
+    path = ROOT / 'experiments/t8r_speed/declared_inputs.py'
+    spec = importlib.util.spec_from_file_location('declared_inputs', path)
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module.verify_cached_frame

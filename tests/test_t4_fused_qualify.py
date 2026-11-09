@@ -251,13 +251,13 @@ def test_prepare_inputs_declares_exact_ranges(tmp_path):
     args = qual.build_parser().parse_args(["--mode", "prepare-inputs", "--out", str(tmp_path / "prepared"),
                                          "--model-root", str(model), "--source-keys", key])
     result = qual.prepare_inputs(args)
-    from prismabuild.client import manifest_read_entries, read_data_manifest
+    from declared_inputs import read_declared_inputs
 
-    manifest, _encoding = read_data_manifest(result["data_manifest"])
-    entries = manifest_read_entries(manifest)
-    # This producer uses a v1 list-order timeline starting at zero. Public
-    # parsing alone does not validate its annotation phase coverage.
-    assert manifest["schema"] == "prismaquant.prismabuild.data_manifest.v1"
+    manifest, _sha = read_declared_inputs(result["data_manifest"])
+    entries = manifest["entries"]
+    # This producer uses a list-order timeline starting at zero. Parsing alone
+    # does not validate its annotation phase coverage.
+    assert manifest["schema"] == "tessera.declared_inputs.v1"
     assert entries == manifest["entries"]
     end_bytes = sum(entry["bytes"] for entry in entries)
     assert end_bytes == manifest["total_bytes"]

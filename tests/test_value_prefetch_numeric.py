@@ -5,7 +5,7 @@ import subprocess
 import pytest
 import torch
 from experiments.t8r_speed import value_prefetch_numeric as numeric
-from _whole_phase_sdk import whole_phase_sdk, manifest_value, write_manifest
+from declared_inputs_support import manifest_value, write_manifest
 
 
 def _numeric_entries(tmp_path):
@@ -16,23 +16,19 @@ def _numeric_entries(tmp_path):
 
 @pytest.mark.parametrize("schema,variant", [
     ("v1", "whole"), ("v1", "trailing-zero"), ("v1", "v1-advisory-bytes"),
-    ("v2", "whole"), ("v2", "trailing-zero"), ("v2", "read-order"), ("v2", "resident"),
 ])
-def test_whole_phase_public_schema_and_read_order(tmp_path, whole_phase_sdk, schema, variant):
+def test_whole_phase_declared_schema_and_read_order(tmp_path, schema, variant):
     entries = _numeric_entries(tmp_path)
     path = write_manifest(tmp_path / "declared.json",
                           manifest_value(entries, "whole-synthetic-bank", schema, variant))
-    validated, encoding = whole_phase_sdk.read_data_manifest(path)
-    assert encoding == "identity"
-    assert whole_phase_sdk.manifest_read_entries(validated) == entries
     manifest, ranges = numeric.validate_readset(path)
-    assert manifest == validated
+    assert manifest["entries"] == entries
     assert ranges == [{"name": "whole-synthetic-bank", "start_bytes": 0, "end_bytes": 48}]
 
 
-@pytest.mark.parametrize("schema", ["v1", "v2"])
+@pytest.mark.parametrize("schema", ["v1"])
 @pytest.mark.parametrize("variant", ["missing", "wrong", "split", "multiple", "incomplete", "leading-zero"])
-def test_whole_phase_public_phase_refusals(tmp_path, whole_phase_sdk, schema, variant):
+def test_whole_phase_declared_phase_refusals(tmp_path, schema, variant):
     entries = _numeric_entries(tmp_path)
     path = write_manifest(tmp_path / "declared.json",
                           manifest_value(entries, "whole-synthetic-bank", schema))
@@ -42,7 +38,7 @@ def test_whole_phase_public_phase_refusals(tmp_path, whole_phase_sdk, schema, va
         numeric.validate_readset(path)
 
 
-def test_whole_phase_requires_identity_encoding(tmp_path, whole_phase_sdk):
+def test_whole_phase_requires_plain_json(tmp_path):
     import gzip
     path = write_manifest(tmp_path / "declared.json",
                           manifest_value(_numeric_entries(tmp_path), "whole-synthetic-bank", "v1"))
@@ -52,7 +48,7 @@ def test_whole_phase_requires_identity_encoding(tmp_path, whole_phase_sdk):
         numeric.validate_readset(path)
 
 
-def test_repair_and_validator_preserve_phase_ranges(tmp_path, whole_phase_sdk, monkeypatch, capsys):
+def test_repair_and_validator_preserve_phase_ranges(tmp_path, monkeypatch, capsys):
     """Synthetic metadata probe only; do not bypass the real frozen-bank gate."""
     import json
 
@@ -70,8 +66,7 @@ def test_repair_and_validator_preserve_phase_ranges(tmp_path, whole_phase_sdk, m
                         if Path(path) == original else real_digest(path))
     numeric.repair_readset(original, output)
     report = json.loads(capsys.readouterr().out.splitlines()[-1])
-    checked, encoding = whole_phase_sdk.read_data_manifest(output)
-    assert encoding == "identity"
+    checked = json.loads(output.read_text())
     assert checked["entries"] == entries == original_value["entries"]
     assert report == {"scope": numeric.SCOPE, "readset": str(output),
                       "sha256": real_digest(output), "entry_count": 2,
@@ -97,7 +92,7 @@ def test_native_preflight_rejects_input_before_native_load_and_releases_reader(t
         def close(self):
             self.closed = True
     reader = Reader()
-    monkeypatch.setattr(numeric, "StagedInputs", lambda manifest: reader)
+    monkeypatch.setattr(numeric, "DeclaredInputs", lambda manifest: reader)
     with pytest.raises(ValueError, match="retained source" if bad_source else "byte total"):
         numeric.native_preflight(tmp_path / "bank", tmp_path / "readset", tmp_path / "out")
     assert reader.closed
@@ -127,7 +122,7 @@ def test_sanitizer_output_initialization_failure_releases_reader(tmp_path, monke
         def close(self):
             self.closed = True
     reader = Reader()
-    monkeypatch.setattr(numeric, "StagedInputs", lambda manifest: reader)
+    monkeypatch.setattr(numeric, "DeclaredInputs", lambda manifest: reader)
     out = tmp_path / "out"
     if failure == "existing-directory":
         (out / "sanitizer").mkdir(parents=True)
@@ -153,7 +148,7 @@ def test_sanitizer_uses_only_pinned_bytes_and_propagates_failure(tmp_path, monke
         def close(self):
             self.closed = True
     reader = Reader()
-    monkeypatch.setattr(numeric, 'StagedInputs', lambda manifest: reader)
+    monkeypatch.setattr(numeric, 'DeclaredInputs', lambda manifest: reader)
     calls = []
     def run(command, check):
         calls.append(command)
@@ -176,9 +171,9 @@ def test_synthetic_matrix_covers_every_routed_run_pair():
 
 
 @pytest.mark.parametrize("complete_phase", [False, True])
-def test_public_pb_readset_and_whole_bank_phase_contract(tmp_path, complete_phase, whole_phase_sdk):
+def test_declared_readset_and_whole_bank_phase_contract(tmp_path, complete_phase):
     import json
-    manifest = {"schema": "prismaquant.prismabuild.data_manifest.v1",
+    manifest = {"schema": "tessera.declared_inputs.v1",
                 "produced_by": {"tool": "test"}, "mount_prefix": str(tmp_path),
                 "annotations": {"phases": [{"name": "whole-synthetic-bank", "bytes": 32, "cumulative_bytes": 32 if complete_phase else 31}]},
                 "entries": [{"path": str(tmp_path / "synthetic.pt"), "offset": 0, "bytes": 32, "sha256": "0" * 64}],
@@ -231,14 +226,14 @@ def test_fixture_transfer_preserves_native_history_precedence_and_prefix(history
         assert items.device == transferred.rep.words.device
 
 
-def test_actual_retained_fixture_histories_through_public_pinned_reader():
+def test_actual_retained_fixture_histories_through_declared_reader():
     import io, json, os
     from window_gemm_grouped_support import _states
     from tessera.window_gemm import _resolve_initial_state
     manifest = os.environ.get("T16_SYNTHETIC_READSET")
     if manifest is None:
         pytest.skip("explicit admitted synthetic bank proof only")
-    reader = numeric.StagedInputs(manifest)
+    reader = numeric.DeclaredInputs(manifest)
     units, histories = 0, 0
     try:
         packet_path = next(path for path, offset in reader.entries if Path(path).name == "packet.json")

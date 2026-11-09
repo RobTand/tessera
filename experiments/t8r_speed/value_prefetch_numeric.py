@@ -21,8 +21,8 @@ sys.path.insert(0, str(ROOT / 'tests'))
 sys.path.insert(0, str(ROOT / 'src'))
 Q256_CASES = [256, 384, 512, 640, 768, 832, 928, 960, 1024, 1088, 1152, 1280, 1408, 1536, 1600, 1792, 1920, 2048]
 from tessera import routed_fused as rf
-from experiments.t8r_speed.pb_staged_store import (
-    NativeCallback, StagedInputs, validate_whole_phase_readset,
+from experiments.t8r_speed.declared_inputs import (
+    DeclaredInputs, NativeCallback, validate_whole_phase_readset,
 )
 
 SCOPE = 'syntheticgeometry/nonshipping'
@@ -119,8 +119,8 @@ def prepare(bank, native_root, sanitizer, runner):
     packet_path.write_text(json.dumps(packet, indent=2) + '\n')
     records.append(entry(packet_path))
     total = sum(e["bytes"] for e in records)
-    manifest = {"schema": "prismaquant.prismabuild.data_manifest.v1",
-                "produced_by": {"tool": "T16 synthetic fixture sealer", "action_key": os.environ.get("PRISMABUILD_ACTION_KEY")},
+    manifest = {"schema": "tessera.declared_inputs.v1",
+                "produced_by": {"tool": "T16 synthetic fixture sealer", "flux_job_id": os.environ.get("FLUX_JOB_ID")},
                 "annotations": {"scope": SCOPE, "phases": [{"name": "whole-synthetic-bank", "bytes": total, "cumulative_bytes": total}]},
                 "mount_prefix": "/mnt/shared", "entries": records,
                 "entry_count": len(records), "total_bytes": total}
@@ -172,7 +172,7 @@ def consume(bank, manifest, out):
     if not torch.cuda.is_available():
         raise ValueError('synthetic numeric consumer requires admitted CUDA')
     out.mkdir(parents=True, exist_ok=False)
-    reader = StagedInputs(manifest)
+    reader = DeclaredInputs(manifest)
     reports, owners, live_load_fds = [], [], []
     try:
         import zipfile
@@ -256,7 +256,7 @@ def consume(bank, manifest, out):
 
 def sanitize(bank, manifest, out):
     import subprocess
-    reader = StagedInputs(manifest)
+    reader = DeclaredInputs(manifest)
     try:
         tool_dir = out / "sanitizer"
         tool_dir.mkdir(parents=True, exist_ok=False)
@@ -278,7 +278,7 @@ def sanitize(bank, manifest, out):
 
 
 def staged_read(manifest):
-    reader = StagedInputs(manifest)
+    reader = DeclaredInputs(manifest)
     total = 0
     try:
         for path, offset in reader.entries:
@@ -287,8 +287,7 @@ def staged_read(manifest):
             raise ValueError("whole-bank staged read byte total differs")
         print(json.dumps({"scope": SCOPE + " CPU staged-read only",
                           "readset_sha256": reader.manifest_sha256,
-                          "read_count": len(reader.reads), "total_bytes": total,
-                          "pin_id": reader.held["pin_id"]}))
+                          "read_count": len(reader.reads), "total_bytes": total}))
     finally:
         reader.close()
 
@@ -298,7 +297,7 @@ def state_proof(bank, manifest, out, *, loader=False):
         raise ValueError("state-history proof is CPU-only")
     import zipfile
     out.mkdir(parents=True, exist_ok=False)
-    reader = StagedInputs(manifest)
+    reader = DeclaredInputs(manifest)
     runner = out / "runner"
     try:
         with zipfile.ZipFile(io.BytesIO(reader.read(bank / "runner.zip"))) as archive:
@@ -321,7 +320,7 @@ def native_preflight(bank, manifest, out):
     if torch.cuda.is_available():
         raise ValueError("native-FD preflight is CPU-only")
     out.mkdir(parents=True, exist_ok=False)
-    reader = StagedInputs(manifest)
+    reader = DeclaredInputs(manifest)
     owners, results = [], []
     original_builder = rf.build_library
 

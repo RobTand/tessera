@@ -35,7 +35,7 @@ SEEDS = [
      ['//tests:test_native_operator_resources']),
     ('schema document', 'docs/schema/allowable-rung-table.v2.schema.json', ('replace', '{"seeded": break'),
      ['//tests:test_rung_allowability_structure_spec']),
-    ('test helper', 'tests/_whole_phase_sdk.py', ('append', RAISE), ['//tests:test_value_prefetch_numeric']),
+    ('test helper', 'tests/declared_inputs_support.py', ('append', RAISE), ['//tests:test_value_prefetch_numeric']),
     ('gate tooling', 'tools/ci/gate_select.py', ('append', RAISE), ['//tests:test_gate_contract']),
 ]
 

@@ -485,9 +485,9 @@ both-Spark Netdata power collection; missing profiles, power or effective
 path evidence cannot establish a performance/default-on claim.
 Native member rows declare their complete actual input manifest and the
 existing stage/RAM-auto/shared-residency options. The local rank reuses
-`StagedInputs` and the public reader lease to hold complete-file descriptors;
+`DeclaredInputs` (digest-checked reads of a declared `tessera.declared_inputs.v1` record on the shared mount) to hold complete-file descriptors;
 Docker mounts those descriptors read-only over the original artifact paths.
-There is no bulk origin fallback or new cache. Reader refs are released only
+There is no bulk origin fallback or new cache. Held descriptors are closed only
 after exact owned containers and GPU descendants are physically empty. Both
 diagnostic scopes enable the existing eager route-trace counters.
 The existing graph observer is extended only in these diagnostic scopes to
@@ -1315,7 +1315,7 @@ Native piece-major dispatch remains limited to routed E4M3 MMA, one-run R4, mode
 CPU checks and compilation alone do not qualify GPU numerics, graph behavior or serving.
 No qualified cell, precision menu, runtime pin or measurement source changes.
 
-The finite PM experiment extends the existing benchmark, StagedInputs and
+The finite PM experiment extends the existing benchmark, DeclaredInputs and
 NativeCallback owners. A versioned protocol binds the authenticated A8SE L10
 ranges, the captured M2048 expert IDs (M1 uses only their first row), frozen
 source, harness bytes and one matched MMA ELF. Actual mode0/1/2 intermediates
@@ -1985,18 +1985,17 @@ T4 activation-prefetch experiment (2026-10-02, #875):
   its distance and benefit remain hypotheses requiring a T4 baseline measurement.
 * First numeric gate is the staged driver
   experiments/t4_code/prefetch_qualification.py consume, which reuses the exact
-  native1 0/4 ELFs through the existing StagedInputs/NativeCallback owners.
-  V1 whole-bank consumers require SDK reads in declared registry order; v2
-  consumption order may differ from that registry.
-  The shared pb_staged_store.validate_whole_phase_readset assertion uses public
-  client.read_data_manifest and client.manifest_read_entries to validate coverage,
-  alignment and consumption order before inspecting v1 annotations.phases or v2
-  read_plan.phases. It requires identity encoding and one nonempty native1-whole
-  range using cumulative frontiers, accepting PB-valid trailing empty phases
-  and ignoring advisory v1 bytes. T4 additionally binds exactly three native files
+  native1 0/4 ELFs through the existing DeclaredInputs/NativeCallback owners.
+  Whole-bank consumers require reads in declared entry order. The shared
+  declared_inputs.validate_whole_phase_readset assertion validates the
+  `tessera.declared_inputs.v1` record (every entry's path, offset, bytes and
+  sha256, unique ranges, entry_count and total_bytes) before inspecting
+  annotations.phases. It requires plain JSON and one nonempty native1-whole
+  range using cumulative frontiers, accepting trailing empty phases
+  and ignoring advisory phase bytes. T4 additionally binds exactly three native files
   (or those files plus the nine qualified sanitizer files), offset zero,
   unique ordered whole-file members and registry/read-order agreement. Both validators return
-  normalized phase ranges while the shared assertion validates public read order.
+  normalized phase ranges while the shared assertion validates read order.
   Numeric repair reports retain those ranges under JSON phases. These metadata checks open no declared native files;
   snapshot SDK tests are not deployed-SDK or GPU numerical qualification.
   Both libraries load ONCE in one process from distinct held SDK FDs, not

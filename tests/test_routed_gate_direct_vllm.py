@@ -13,13 +13,11 @@ from routed_gate_staged_store_support import reader_class
 def direct_fixture(tmp_path, *, digest=None, offset=7, length=10):
     original=tmp_path/'original.so'
     original.write_bytes(b'prefix!owned-wireignored-tail')
-    manifest={'entries':[{'path':str(original),'offset':offset,'bytes':length,
+    manifest={'schema':'tessera.declared_inputs.v1','entries':[{'path':str(original),'offset':offset,'bytes':length,
         'sha256':digest or hashlib.sha256(b'owned-wire').hexdigest()}],
         'entry_count':1,'total_bytes':length}
     path=tmp_path/'manifest.json';path.write_text(json.dumps(manifest))
-    sdk=SimpleNamespace(read_data_manifest=lambda p:(json.loads(Path(p).read_bytes()),'identity'),
-        injected_context=lambda:pytest.fail('direct mode must not acquire a PB context'))
-    return reader_class()(path,sdk=sdk,direct_vllm=True),original
+    return reader_class()(path),original
 
 
 def test_direct_reads_only_the_declared_range_and_holds_its_descriptor(tmp_path):
@@ -81,3 +79,25 @@ def test_direct_symlink_refuses(tmp_path):
     target=tmp_path/'target';target.write_bytes(b'prefix!owned-wireignored-tail')
     original=tmp_path/'original.so';original.symlink_to(target)
     with pytest.raises(OSError):direct_fixture(tmp_path)
+
+
+@pytest.mark.parametrize('fault',['schema','pb-schema','digest-missing','digest-short','duplicate','count','total','empty','not-plain-json'])
+def test_declared_record_refuses_every_malformed_declaration(tmp_path,fault):
+    original=tmp_path/'original.so';original.write_bytes(b'prefix!owned-wireignored-tail')
+    entry={'path':str(original),'offset':7,'bytes':10,'sha256':hashlib.sha256(b'owned-wire').hexdigest()}
+    record={'schema':'tessera.declared_inputs.v1','entries':[entry],'entry_count':1,'total_bytes':10}
+    path=tmp_path/'declared.json'
+    path.write_text(json.dumps(record))
+    reader_class()(path).close()  # the accepted control beside every refusal
+    if fault=='schema':del record['schema']
+    elif fault=='pb-schema':record['schema']='prismaquant.prismabuild.data_manifest.v1'
+    elif fault=='digest-missing':entry['sha256']=None
+    elif fault=='digest-short':entry['sha256']='ab'
+    elif fault=='duplicate':record['entries']=[entry,dict(entry)];record['entry_count']=2;record['total_bytes']=20
+    elif fault=='count':record['entry_count']=2
+    elif fault=='total':record['total_bytes']=11
+    elif fault=='empty':record.update(entries=[],entry_count=0,total_bytes=0)
+    path.write_text(json.dumps(record))
+    if fault=='not-plain-json':
+        import gzip;path.write_bytes(gzip.compress(path.read_bytes()))
+    with pytest.raises(ValueError):reader_class()(path)
