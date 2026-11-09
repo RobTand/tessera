@@ -82,7 +82,8 @@ def test_publish_progress_waits_for_complete_durable_result(probe, monkeypatch, 
         assert events == ["file", "replace", "directory"]
         events.append("progress")
 
-    monkeypatch.setattr(probe.runpy, "run_path", lambda _: {"commit": commit})
+    import tools._durable_progress as durable
+    monkeypatch.setattr(durable, "emit", commit)
     assert probe.main() == 0
     assert events[-1] == "progress"
 

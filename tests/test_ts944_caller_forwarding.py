@@ -172,7 +172,7 @@ def test_caller_preserves_selectors_in_all_submissions(tmp_path):
     for argv, command in zip(lines, expected_commands):
         assert argv[argv.index("--") + 1:] == command
         assert "--env=-*" in argv and "--requires=host:sparky,sparklina" in argv
-        assert any(part.startswith("--resources-shape=slot/[core=") and ";gpu=1;" in part for part in argv)
+        assert any(part.startswith("--resources-shape=slot/[core=") and part.endswith(";gpu=1]") for part in argv)
         assert argv[argv.index("-t") + 1] == "45m"
         assert argv.count(f"--env=TESSERA_PRODUCER_PYTHON={producer}") == 1
         assert argv.count(f"--env=TESSERA_PRODUCER_SOURCE={source}") == 1
@@ -186,7 +186,7 @@ def test_ts91_chain_renders_a_stock_shape_flux_gpu_line_and_runs_nothing(tmp_pat
     assert done.returncode == 0, done.stdout + done.stderr
     (line,) = [x for x in done.stdout.splitlines() if x.startswith("flux submit ")]
     argv = shlex.split(line)
-    assert "--resources-shape=slot/[core=4;gpu=1;memory=32]" in argv
+    assert "--resources-shape=slot/[core=4;memory=32;gpu=1]" in argv
     assert "--requires=host:sparky,sparklina" in argv and "--env=-*" in argv
     assert argv[argv.index("-t") + 1] == "60m"
     command = argv[argv.index("--") + 1:]

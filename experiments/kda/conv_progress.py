@@ -17,5 +17,7 @@ def kda_commit(out: dict, path: Path, units: int, phase: str = "measure"):
         os.fsync(directory)
     finally:
         os.close(directory)
+    import sys
+    sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
     from tools._durable_progress import emit
     emit(units, phase)
