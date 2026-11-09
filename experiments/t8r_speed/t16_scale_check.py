@@ -45,7 +45,7 @@ def main():
         assert float(old) == 0.75 and float(new) == 0.75390625
         collector = Collection()
         result = pytest.main(["--collect-only", "-q", *cache_args, *targets], plugins=[collector])
-        record = {'phase': 'CPU preflight', 'action': os.environ.get('PRISMABUILD_ACTION_KEY'),
+        record = {'phase': 'CPU preflight', 'meta_schema': 'tessera.job_meta.v2', 'flux_job_id': os.environ.get('FLUX_JOB_ID'),
                   'returncode': int(result), 'targets': targets, 'nodeids': collector.nodeids,
                   'old_witness': float(old), 'new_witness': float(new),
                   'scope': 'CPU imports, parser, test collection and scale witness. No CUDA arithmetic ran.'}

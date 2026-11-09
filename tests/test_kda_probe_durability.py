@@ -32,7 +32,6 @@ def observe_publication(probe, monkeypatch):
 
     monkeypatch.setattr(probe.os, "fsync", synced)
     monkeypatch.setattr(probe.os, "replace", renamed)
-    monkeypatch.setenv("PRISMABUILD_ACTION_PROGRESS_HELPER", "CPU-ordering-fixture")
     return events
 
 
@@ -47,7 +46,8 @@ def test_partial_progress_waits_for_durable_published_name(probe, monkeypatch, t
         assert events == ["file", "replace", "directory"]
         events.append("progress")
 
-    monkeypatch.setattr(probe.runpy, "run_path", lambda _: {"commit": commit})
+    import tools._durable_progress as durable
+    monkeypatch.setattr(durable, "emit", commit)
     probe.kda_commit(payload, path, 1)
     assert events[-1] == "progress"
 
@@ -64,8 +64,8 @@ def test_directory_sync_failure_refuses_progress(probe, monkeypatch, tmp_path):
         return fsync(fd)
 
     monkeypatch.setattr(probe.os, "fsync", sync_or_fail)
-    monkeypatch.setenv("PRISMABUILD_ACTION_PROGRESS_HELPER", "CPU-ordering-fixture")
-    monkeypatch.setattr(probe.runpy, "run_path", lambda _: {"commit": lambda *a: published.append(a)})
+    import tools._durable_progress as durable
+    monkeypatch.setattr(durable, "emit", lambda *a: published.append(a))
     with pytest.raises(OSError, match="directory persistence failed"):
         probe.kda_commit({"cells": [{}]}, tmp_path / "kdafwd_partial.json", 1)
     assert not published

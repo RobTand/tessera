@@ -2,7 +2,6 @@
 from __future__ import annotations
 import json
 import os
-import runpy
 from pathlib import Path
 
 def kda_commit(out: dict, path: Path, units: int, phase: str = "measure"):
@@ -18,6 +17,5 @@ def kda_commit(out: dict, path: Path, units: int, phase: str = "measure"):
         os.fsync(directory)
     finally:
         os.close(directory)
-    helper = os.environ.get("PRISMABUILD_ACTION_PROGRESS_HELPER")
-    if helper:
-        runpy.run_path(helper)["commit"](units, phase)
+    from tools._durable_progress import emit
+    emit(units, phase)

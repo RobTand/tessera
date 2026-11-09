@@ -81,7 +81,7 @@ def main():
     inputs=json.loads((root/'inputs.json').read_text());refs=json.loads((root/'weight-references.json').read_text())
     ref_by_name={r['unit']:r for r in refs}
     from experiments.native_local_inputs import LocalNativeInputs
-    local_inputs=LocalNativeInputs(origin['local_bundle'],os.environ.get('PRISMABUILD_ACTION_KEY'))
+    local_inputs=LocalNativeInputs(origin['local_bundle'],os.environ.get('FLUX_JOB_ID'))
     read_local=local_inputs.read
     serving=origin['local_serving_config']
     if sha(serving['path'])!=serving['sha256']:raise ValueError('serving configuration changed')

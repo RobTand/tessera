@@ -296,8 +296,8 @@ def main() -> int:
                  "preflight": {"producer_plan_help_rc": help_run.returncode,
                                "first_line": (help_run.stdout.splitlines() or [""])[0]}},
         "installed": probe,
-        "creator": os.environ.get("PB_WORKER", "ProducerBatchProbeEnvironment"),
-        "provision": "PB CPU action; no GPU; no pre-existing environment touched",
+        "creator": os.environ.get("FLUX_JOB_ID", "ProducerBatchProbeEnvironment"),
+        "provision": "Flux CPU job; no GPU; no pre-existing environment touched",
     }
 
     record = venv_root / ("qualification.json" if args.phase == "qualify" else "acquisition.json")

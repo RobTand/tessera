@@ -24,7 +24,7 @@ def encode(args, request, control):
     from tessera.fused import pack_fused
     from tessera.stock import materialize_stock
 
-    assert os.environ.get('PRISMABUILD_CONTAINER_OWNER'), 'Producer requires PB admission'
+    assert os.environ.get('FLUX_JOB_ID'), 'Producer requires an admitted Flux job'
     row = control['source_tensors'][args.role]
     payload = row['payload']
     assert digest(payload['path']) == payload['sha256']

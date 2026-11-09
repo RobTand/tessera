@@ -53,7 +53,7 @@ def main():
         assert args.stage == 'control'
         env['VLLM_DISABLE_SHARED_EXPERTS_STREAM'] = '1'
     if args.stage == 'encode':
-        env['PRISMABUILD_CONTAINER_OWNER'] = os.environ['PRISMABUILD_CONTAINER_OWNER']
+        env['FLUX_JOB_ID'] = os.environ['FLUX_JOB_ID']
     packed = json.loads(args.packed_request.read_text()) if args.packed_request else {}
     network = 'host' if packed.get('tp_size',1) == 2 else 'none'
     if network == 'host':

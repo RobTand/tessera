@@ -21,21 +21,21 @@ def action(monkeypatch):
 def test_paired_batch_requires_admitted_pb_without_mixing_input_transports(monkeypatch, admitted, staged):
     module = action(monkeypatch)
     if admitted:
-        monkeypatch.setenv("PRISMABUILD_ACTION_KEY", "a" * 64)
+        monkeypatch.setenv("FLUX_JOB_ID", "fAAAAAAAAAAA")
     else:
-        monkeypatch.delenv("PRISMABUILD_ACTION_KEY", raising=False)
+        monkeypatch.delenv("FLUX_JOB_ID", raising=False)
     if staged:
         monkeypatch.setenv("BENCH_STRICT_STAGED", "1")
     else:
         monkeypatch.delenv("BENCH_STRICT_STAGED", raising=False)
     if not admitted:
-        with pytest.raises(ValueError, match="admitted PrismaBuild"):
-            module.require_pb_execution()
+        with pytest.raises(ValueError, match="admitted Flux job"):
+            module.require_flux_execution()
     elif staged:
         with pytest.raises(ValueError, match="cannot also use staged"):
-            module.require_pb_execution()
+            module.require_flux_execution()
     else:
-        module.require_pb_execution()
+        module.require_flux_execution()
 
 
 

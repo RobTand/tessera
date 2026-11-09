@@ -1,20 +1,15 @@
-"""Export a torch profile where PrismaBuild asked for one.
+"""Export a torch profile where the caller asked for one.
 
-``pbrun --profile torch`` cannot start ``torch.profiler`` from outside: it is
-an in-process profiler, and this fleet will not monkeypatch an action's
-interpreter to pretend otherwise.  The mode is a contract instead.  PrismaBuild
-names a path in ``PRISMABUILD_PROFILE_TORCH_OUT``; the action exports its Chrome
-trace there; PrismaBuild validates it, sizes it, ingests it as a CAS blob and
-names the digest on the ending.
+An in-process profiler cannot be started from outside the interpreter, so the
+mode is a contract: the caller names a path in ``TESSERA_PROFILE_TORCH_OUT`` and
+the job exports its Chrome trace there.
 
 This file is that contract, written once so nobody has to get it right twice.
-It has no PrismaBuild import and no dependency beyond torch, so **copy it into
-your own repository** -- the action runs from a snapshot of your checkout, and
-a file that lives only here is not in it.
+It has no dependency beyond torch.
 
-    from profile_torch import prismabuild_torch_profile
+    from profile_torch import torch_profile
 
-    with prismabuild_torch_profile():
+    with torch_profile():
         train_one_epoch()
 
 Unprofiled runs cost nothing: with the variable unset the context manager does
@@ -43,13 +38,13 @@ import contextlib
 import os
 import signal
 
-#: Where PrismaBuild wants the trace.  Absent for an unprofiled run.
-OUT_ENV = "PRISMABUILD_PROFILE_TORCH_OUT"
+#: Where the caller wants the trace.  Absent for an unprofiled run.
+OUT_ENV = "TESSERA_PROFILE_TORCH_OUT"
 
 
 @contextlib.contextmanager
-def prismabuild_torch_profile(**kwargs):
-    """Profile this block if PrismaBuild asked, and do nothing if it did not.
+def torch_profile(**kwargs):
+    """Profile this block if the caller asked, and do nothing if it did not.
 
     Yields the ``torch.profiler.profile`` object, or ``None`` when the run is
     unprofiled, so the same code path serves both.
