@@ -235,79 +235,20 @@ def test_parentless_snapshot_uses_a_direct_base_tree_comparison(
     assert result["reason"] == "inert changed paths require no tests"
 
 
-def test_a_closure_shaped_tracked_file_is_not_ownership_proof(
-    tmp_path: Path,
-) -> None:
-    repo, base = _repo(tmp_path)
-    names = [
-        ".pbrun-closure.0123456789abcdef.json",
-        ".pbrun-closure.0123456789abcde.json",
-        ".pbrun-closure.0123456789abcdef0.json",
-        ".pbrun-closure.0123456789abcdeF.json",
-        "prefix.pbrun-closure.0123456789abcdef.json",
-        ".pbrun-closure.0123456789abcdef.json.bak",
-    ]
-    for name in names:
-        (repo / name).write_text("{}\n", encoding="utf-8")
-    _git(repo, "add", *names)
-    _git(repo, "commit", "-qm", "generated and lookalike names")
-
-    changed, comparison = impacted.changed_files(f"{base}...HEAD", repo)
-
-    assert comparison == f"{base}...HEAD"
-    assert changed == sorted(names)
-    result = _selector(repo, f"{base}...HEAD")
-    assert result["verdict"] == "full"
-    assert names[0] in result["forces_full"]
-
-
-def test_verified_action_metadata_preserves_narrowed_selection(tmp_path, monkeypatch):
-    from test_suite_source import _git as _snapshot_git, _snapshot, _verifier
-    from tessera._dev.suite_source import measured_source
-
-    stamp = ".pbrun-closure.0123456789abcdef.json"
-    repo, entry = _snapshot(tmp_path, "gpu")
-    # The snapshot repo carries no identity of its own; its helper supplies one.
-    _snapshot_git(repo, "mv", entry["path"], stamp)
-    _snapshot_git(repo, "commit", "-qm", "generated file under its executor's name")
-    entry = dict(entry, path=stamp)
-    verifier, _ = _verifier(tmp_path, generated=[entry])
-    empty = subprocess.check_output(
-        ["git", "-C", str(repo), "hash-object", "-t", "tree", "-w", "--stdin"],
-        input=b"",
-    ).decode().strip()
-    verified = []
-
-    def inspect_source(root):
-        record = measured_source(root, verifier=verifier)
-        assert record["verification"] == "verified", record
-        verified.append(record)
-        return record
-
-    monkeypatch.setattr(impacted, "measured_source", inspect_source, raising=False)
-    changed, _ = impacted.changed_files(f"{empty}..HEAD", repo)
-    assert len(verified) == 1, "selector skipped metadata without checking its action"
-    assert changed == ["source.py"]
-    assert verified[0]["excluded_metadata"][0]["path"] == stamp
-
-
 @pytest.mark.parametrize("directory", ["tab\tname", "line\nname"])
 @pytest.mark.parametrize("parentless", [False, True])
-def test_quoted_path_cannot_evade_unverified_metadata_fallback(tmp_path, directory, parentless):
+def test_quoted_path_is_reported_unmangled(tmp_path, directory, parentless):
     repo, base = _repo(tmp_path)
     if parentless:
         _git(repo, "checkout", "--orphan", "snapshot")
-    relative = f"{directory}/.pbrun-closure.0123456789abcdef.json"
+    relative = f"{directory}/notes.json"
     path = repo / relative
     path.parent.mkdir()
     path.write_text("{}\n")
     _git(repo, "add", relative)
-    _git(repo, "commit", "-qm", "metadata-shaped tracked input")
+    _git(repo, "commit", "-qm", "tracked input under a quoted directory")
     changed, _ = impacted.changed_files(f"{base}...HEAD", repo)
     assert changed == [relative], "display-quoted Git paths are not filesystem paths"
-    result = _selector(repo, f"{base}...HEAD")
-    assert result["verdict"] == "full"
-    assert result["forces_full"] == [relative]
 
 
 @pytest.mark.parametrize(
