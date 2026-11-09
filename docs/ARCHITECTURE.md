@@ -169,7 +169,9 @@ The 5400-second bound, caps, guards, image and numerical rules stay unchanged.
 
 Re-stamped 2026-10-08 for the explicit A8S graph MNBT matrix (issue #1057).
 
-The opt-in mode `WINDOW_MODE=ship-graph-mnbt-matrix` selects `experiments/graph_attest_702/plan-graph-mnbt-matrix.txt`.
+**Archived driver.** The PrismaBuild-admitted graph-attest window driver (rank, window, queue-watcher, submit and recipe modules, their plans and gate tests) moved to `archive/flux-migration/R-CONTESTED/`; the passages below describe that archived driver as history. Only `experiments/graph_attest_702/managed_window.py` (the process-group `Envelope` and the D30 memory policy) and `receipt.py` stay live. A Flux GPU window path belongs to the GPU-qualification work (4E).
+
+The opt-in mode `WINDOW_MODE=ship-graph-mnbt-matrix` selects `archive/flux-migration/R-CONTESTED/experiments/graph_attest_702/plan-graph-mnbt-matrix.txt`.
 The arms compare maximum batched tokens 2048 and 4096.
 Both arms use the accepted A8S artifact, resident service, socket transport and tensor parallel size two.
 They use graph decode without speculative tokens and retain the existing graph compilation flags.
@@ -506,7 +508,7 @@ subset caps, strict one-Hertz below-two-GiB guard, exact owned cleanup, byte
 integrity and paired-rank comparability remain unchanged. The same entry
 point must pass a fresh CPU PrismaBuild preflight after source/argument
 changes. The existing full 33-output ship gate, quality gates, defaults and
-serving pin do not change. See `experiments/graph_attest_702/RUNPLAN-artifact.md`.
+serving pin do not change. See `archive/flux-migration/R-CONTESTED/experiments/graph_attest_702/RUNPLAN-artifact.md`.
 
 Historical v1/v2 policy, re-stamped 2026-10-06 for issue #989: `tessera.rung_allowability` is the
 pure-standard-library, non-serving owner of measured-rung table and index
@@ -629,11 +631,11 @@ nor a KL/quality/ship gate. Frozen 2db flag-reader CPU controls establish
 selector reachability, not executed CUDA kernels or served activation;
 actual ON profiles must still demonstrate the selected paths.
 Parent Sol and D5 exact-head review precede any served gang.
-See `experiments/graph_attest_702/RUNPLAN-artifact.md`.
+See `archive/flux-migration/R-CONTESTED/experiments/graph_attest_702/RUNPLAN-artifact.md`.
 
 
 Re-stamped 2026-10-05 for issue980: opt-in `WINDOW_MODE=ship-graph-2048`
-selects `experiments/graph_attest_702/plan-graph-ship.txt`: graph2048_off
+selects `archive/flux-migration/R-CONTESTED/experiments/graph_attest_702/plan-graph-ship.txt`: graph2048_off
 then graph2048_on at the SAME MNBT2048, A8S/socket/TP2/resident/c1 and the
 unchanged release graph compilation flags. Each row explicitly declares
 decode-once, KDA-split and piece-major env; the first disables all three,
@@ -649,11 +651,11 @@ equality/replay receipt. Graph-control, Window4, ship-eager and all D30
 Exact producer parent/D5 and runtime reviews still precede any gang.
 CPU selector qualification grants no graph compatibility, lever publication,
 performance, quality, ship or serving-pin claim; runtime route refusals remain.
-See `experiments/graph_attest_702/RUNPLAN-artifact.md`.
+See `archive/flux-migration/R-CONTESTED/experiments/graph_attest_702/RUNPLAN-artifact.md`.
 
 Re-stamped 2026-10-05 for issue968: the separate opt-in
 `WINDOW_MODE=ship-eager-4096-8192` selects only
-`experiments/graph_attest_702/plan-eager-ship-8192.txt`, eager4096 then eager8192.
+`archive/flux-migration/R-CONTESTED/experiments/graph_attest_702/plan-eager-ship-8192.txt`, eager4096 then eager8192.
 It reuses the existing A8S/socket/TP2/resident/c1 timing/profile lifecycle,
 rank1 client, artifact/client controls and exact executing-code parent/D5 reviews.
 The graph-control default and Window4's eager2048/4096 pair remain unchanged.
@@ -662,7 +664,7 @@ dual-rank abort, 10-second kill grace, 104 GiB host and 102 GiB GPU-subset caps
 are unchanged. CPU selector/protocol qualification is not 8192 fit, throughput,
 quality, ship admission or a serving-pin claim; only a later admitted leg can
 measure those. The independent merged-code 4096 leg need not wait for this selector.
-See `experiments/graph_attest_702/RUNPLAN-artifact.md`.
+See `archive/flux-migration/R-CONTESTED/experiments/graph_attest_702/RUNPLAN-artifact.md`.
 
 ## Routed expert-class storage and execution
 
@@ -799,7 +801,7 @@ re-seal, re-pin or identity-proof packet is required or performed for
 identity drift, and no format pin or serving default moves. Regressions:
 `tests/test_graph_attest_producer_identity.py` and
 `tests/test_graph_attest_headroom_preflight.py`. See
-`experiments/graph_attest_702/RUNPLAN-artifact.md`.
+`archive/flux-migration/R-CONTESTED/experiments/graph_attest_702/RUNPLAN-artifact.md`.
 
 The optional graph-control `BATCH_KL` recipe declaration is retained in window
 inputs and forwarded to both native action environments for rank startup's
@@ -822,7 +824,7 @@ at this binding boundary. Regressions reuse the normalized fixture in
 scientific KL qualification; the graph receipt and its exclusions remain unchanged.
 Production remains unqualified until the existing scorer owner supplies the
 missing capability. The reconciled handoff disposition, configuration and
-normal workflow are in `experiments/graph_attest_702/RUNPLAN-artifact.md`.
+normal workflow are in `archive/flux-migration/R-CONTESTED/experiments/graph_attest_702/RUNPLAN-artifact.md`.
 
 Both live TP2 ranks must agree on image, source digest and config digest before
 either local launch, in dev and certified modes alike. This is execution
@@ -883,7 +885,7 @@ Protected sysctl, ARC, cache and service settings are untouched. This mints no
 performance, fit or pin claim; old producer approvals do not transfer, and pool
 review must check both the derivation and the guard against the exact new
 producer head before one fresh native gang. See
-`experiments/graph_attest_702/RUNPLAN-artifact.md`.
+`archive/flux-migration/R-CONTESTED/experiments/graph_attest_702/RUNPLAN-artifact.md`.
 
 Re-stamped 2026-10-05 for worker surface-share publication before completion.
 The ordinary session-finish hook writes the named worker share after finalizing
@@ -915,7 +917,7 @@ predicate-satisfaction wait, not a new admission mechanism, and it mints no
 historical frozen producer's source approval. Deterministic regressions live
 in `tests/test_graph_attest_headroom_preflight.py`; the below-to-ready
 regression fails before the change, which refused below threshold instantly
-with no wait report. See `experiments/graph_attest_702/RUNPLAN-artifact.md`.
+with no wait report. See `archive/flux-migration/R-CONTESTED/experiments/graph_attest_702/RUNPLAN-artifact.md`.
 
 Re-stamped 2026-10-05 for issue946: the merged PR943 finite local-rank recipe
 adds only the distinct `window4-eager-2048-4096` A8S/socket/TP2/c1 benchmark mode.
@@ -932,7 +934,7 @@ verification precede actual fit/speed evidence. Those require served requests,
 per-rank memory, matching
 profiles and both-Spark Netdata coverage. No default, serving pin, format,
 scientific gate, graph receipt, ship artifact or performance claim is promoted
-by this source change. See `experiments/graph_attest_702/RUNPLAN-artifact.md`.
+by this source change. See `archive/flux-migration/R-CONTESTED/experiments/graph_attest_702/RUNPLAN-artifact.md`.
 
 Re-stamped 2026-10-05 for local disk admission of the container suite cache.
 The shared container owner refuses known network filesystem types before
@@ -9654,7 +9656,7 @@ capture outcomes; dirty evidence is retried by the publisher.
 
 Owner keys and generations are local joins, not identity seals. Rank association
 continues through the configured rank-specific `GA_DISPATCH_LOG` prefixes in
-`experiments/graph_attest_702/tp2_recipe.py` and existing rank/PID filename handling
+`archive/flux-migration/R-CONTESTED/experiments/graph_attest_702/tp2_recipe.py` and existing rank/PID filename handling
 in `receipt.py`; no rank count or deployment identity is introduced here.
 Main's producer still aggregates legacy diagnostics unchanged. Strict admission
 of every rank/process/owner's successful descriptor coverage belongs to W3;
