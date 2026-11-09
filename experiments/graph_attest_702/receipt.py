@@ -273,8 +273,7 @@ def main() -> int:
                     help="what this receipt does not cover, one per flag (default: the stub-B list)")
     ap.add_argument("--legacy-script-provenance", type=pathlib.Path, default=None,
                     help="JSON {arm: {sha256, source}} for arms that predate the recorded "
-                         "equal_script_sha256 (snapshot_script_hash.py reads it out of each "
-                         "arm's own PrismaBuild snapshot)")
+                         "equal_script_sha256; supply the existing historical script provenance")
     ap.add_argument("--image", default=None,
                     help="optional cross-check: refuse unless the arms measured this image")
     a = ap.parse_args()
