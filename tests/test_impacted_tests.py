@@ -218,7 +218,7 @@ def test_parentless_snapshot_uses_a_direct_base_tree_comparison(
     """A fetched base object is enough; synthetic snapshots have no ancestry."""
 
     repo, base = _repo(tmp_path)
-    _git(repo, "checkout", "--orphan", "pbrun-snapshot")
+    _git(repo, "checkout", "--orphan", "orphan-snapshot")
     (repo / "seed.txt").write_text("branch\n", encoding="utf-8")
     _git(repo, "add", "seed.txt")
     _git(repo, "commit", "-qm", "parentless snapshot")

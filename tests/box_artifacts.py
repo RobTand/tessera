@@ -120,12 +120,6 @@ ROOTS: dict[str, Root] = {
             "receipts beside them",
         ),
         Root(
-            "prismabuild_tools",
-            "TESSERA_PRISMABUILD_TOOLS_DIR",
-            "/mnt/shared/prismabuild-fleet/repo/tools",
-            "the published PrismaBuild installation verifier used by native preflight",
-        ),
-        Root(
             "piece_major_execution",
             "TESSERA_PIECE_MAJOR_EXECUTION_DIR",
             "/mnt/shared/astra-resume-20261002/t8_performance/"
