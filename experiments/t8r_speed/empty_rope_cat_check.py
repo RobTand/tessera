@@ -187,7 +187,7 @@ def main():
                torch=torch.__version__, vllm=vllm.__version__, flashinfer=flashinfer.__version__,
                device=torch.cuda.get_device_name(), capability=list(torch.cuda.get_device_capability()),
                image=os.environ.get("ORACLE_IMAGE"), tessera_head=os.environ.get("TESSERA_HEAD"),
-               tessera_state=os.environ.get("TESSERA_STATE"), pb_action=os.environ.get("PB_ACTION_KEY"))
+               tessera_state=os.environ.get("TESSERA_STATE"), meta_schema="tessera.job_meta.v2", flux_job_id=os.environ.get("FLUX_JOB_ID"))
     cache = build_cache(dev, log)
     workspace = _get_workspace_buffer(dev)
     cases = [

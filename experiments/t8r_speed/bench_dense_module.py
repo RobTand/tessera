@@ -433,7 +433,7 @@ def main():
             "library": rf.library_for("e4m3"), "read_gbps": READ_GBPS, "mma_tflops": MMA_E4M3_TFLOPS,
             "kernel_sha": os.environ.get("KERNEL_SHA"), "tessera_head": os.environ.get("TESSERA_HEAD"),
             "image": os.environ.get("ORACLE_IMAGE"), "host": os.environ.get("HOST_NAME"),
-            "pb_action": os.environ.get("PB_ACTION_KEY"), "power_source": power.source,
+            "meta_schema": "tessera.job_meta.v2", "flux_job_id": os.environ.get("FLUX_JOB_ID"), "power_source": power.source,
             "envelope_w": ENVELOPE_W, "start_unix": time.time(), "torch": torch.__version__,
             "dense_row_quantum": getattr(rf, "DENSE_ROW_QUANTUM", None),
             "weights": ({"model": args.model, "layer": args.layer, "mla_layer": args.mla_layer,

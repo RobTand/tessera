@@ -245,7 +245,7 @@ def arm_record(receipts, manifest, flat, arm, pool, legacy_scripts=None) -> dict
     spec = json.loads(args["spec_json"]) if args.get("spec_json") else None
     comp = json.loads(args["compilation_json"]) if args.get("compilation_json") else None
     return {
-        "name": arm, "pb_action": manifest.get(arm, {}).get("action_key"), "host": args.get("host"),
+        "name": arm, "arm_schema": "tessera.graph_arm.v2", "flux_job_id": manifest.get(arm, {}).get("flux_job_id"), "host": args.get("host"),
         "execution": "eager" if args.get("eager") == "1" else "graph",
         "compilation_config": comp,
         "kernel_config": json.loads(args["kernel_json"]) if args.get("kernel_json") else None,

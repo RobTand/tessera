@@ -385,7 +385,7 @@ def main():
     os.makedirs(args.out, exist_ok=True)
     meta = {"device": torch.cuda.get_device_name(), "capability": list(torch.cuda.get_device_capability()),
             "torch": torch.__version__, "cuda": torch.version.cuda, "tessera_head": os.environ.get("TESSERA_HEAD"),
-            "image": os.environ.get("ORACLE_IMAGE"), "pb_action": os.environ.get("PB_ACTION_KEY"),
+            "image": os.environ.get("ORACLE_IMAGE"), "meta_schema": "tessera.job_meta.v2", "flux_job_id": os.environ.get("FLUX_JOB_ID"),
             "host": os.environ.get("HOST_NAME"), "start_unix": time.time()}
     lib = build()
     result = {"meta": meta}

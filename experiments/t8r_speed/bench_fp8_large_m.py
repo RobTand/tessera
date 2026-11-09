@@ -120,7 +120,7 @@ def main():
         rows.append(row)
         print(json.dumps({k: (round(v, 4) if isinstance(v, float) else v) for k, v in row.items()}), flush=True)
     meta = {"host": os.environ.get("HOST_NAME"), "head": os.environ.get("TESSERA_HEAD"),
-            "image": os.environ.get("ORACLE_IMAGE"), "pb_action": os.environ.get("PB_ACTION_KEY"),
+            "image": os.environ.get("ORACLE_IMAGE"), "meta_schema": "tessera.job_meta.v2", "flux_job_id": os.environ.get("FLUX_JOB_ID"),
             "torch": torch.__version__, "end_unix": time.time()}
     with open(os.path.join(args.out, "fp8_large_m.json"), "w") as f:
         json.dump({"meta": meta, "rows": rows}, f, indent=1)

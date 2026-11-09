@@ -388,7 +388,7 @@ def main():
     profiles = args.profiles.split(",")
     ms = [int(v) for v in args.ms.split(",")]
     result = {"meta": {"device": torch.cuda.get_device_name(), "sms": sms, "torch": torch.__version__,
-                       "host": os.environ.get("HOST_NAME"), "pb_action": os.environ.get("PB_ACTION_KEY"),
+                       "host": os.environ.get("HOST_NAME"), "meta_schema": "tessera.job_meta.v2", "flux_job_id": os.environ.get("FLUX_JOB_ID"),
                        "head": os.environ.get("TESSERA_HEAD"), "start_unix": time.time(),
                        "statistic": "mean of forward and reverse pass medians; cold = L2 flushed before each sample"}}
     path = os.path.join(args.out, "ncu-run.json" if args.ncu else "stage1.json")

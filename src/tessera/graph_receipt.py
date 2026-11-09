@@ -53,7 +53,8 @@ Schema ``tessera.graph_equals_eager.v2`` (JSON object):
 - ``model``: ``path``, ``config_sha256``, ``index_topk``;
 - ``equality_set``: ``name``, ``script_sha256``, ``choices_per_pass``;
 - ``eager_pool``: list of arm records;
-- ``arms``: list of graph arm records, each ``{name, pb_action, host,
+- ``arms``: list of graph arm records (``arm_schema`` ``tessera.graph_arm.v2`` names the job in
+  ``flux_job_id``; an arm with no ``arm_schema`` predates it and names it ``pb_action``), each ``{name, arm_schema, flux_job_id, host,
   compilation_config, speculative_tokens, max_model_len, max_num_seqs,
   tensor_parallel_size, resolved: {custom_ops, ir_op_priority},
   graph: {managers: {<manager class>: {captured_sizes, replayed_sizes}},

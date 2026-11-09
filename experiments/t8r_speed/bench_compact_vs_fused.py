@@ -130,7 +130,7 @@ def main():
                     "cases": cases, "ms": ms, "torch": torch.__version__,
                     "kernel_sha": os.environ.get("KERNEL_SHA"), "tessera_head": os.environ.get("TESSERA_HEAD"),
                     "image": os.environ.get("ORACLE_IMAGE"), "host": os.environ.get("HOST_NAME"),
-                    "pb_action": os.environ.get("PB_ACTION_KEY"), "power_source": power.source,
+                    "meta_schema": "tessera.job_meta.v2", "flux_job_id": os.environ.get("FLUX_JOB_ID"), "power_source": power.source,
                     "envelope_w": ENVELOPE_W, "start_unix": time.time(),
                     "statistic": "mean of the forward and reverse passes' medians (graph replay); "
                                  "spread = |F - R| / mean"},

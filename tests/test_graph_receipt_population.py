@@ -111,7 +111,7 @@ def inputs(tmp_path):
     for name in ("e1", "e2", "g"):
         _arm(receipts, model, name, name != "g")
     manifest = tmp_path / "manifest.json"
-    _write(manifest, {n: {"action_key": "fixture-" + n} for n in ("e1", "e2", "g")})
+    _write(manifest, {n: {"flux_job_id": "fixture-" + n} for n in ("e1", "e2", "g")})
     return receipts, manifest, tmp_path / "receipt.json", model
 
 

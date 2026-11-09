@@ -687,7 +687,7 @@ def main():
     report = {"schema": "tessera.routed_census.v1", "issue": "RobTand/tessera#640",
               "host": os.environ.get("HOST_NAME") or os.uname().nodename,
               "device": torch.cuda.get_device_name(0), "torch": torch.__version__,
-              "image": args.image, "pb_action": os.environ.get("PB_ACTION_KEY"),
+              "image": args.image, "meta_schema": "tessera.job_meta.v2", "flux_job_id": os.environ.get("FLUX_JOB_ID"),
               "utc": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
               "power_sampler": sampler.source, "argv": sys.argv}
     try:

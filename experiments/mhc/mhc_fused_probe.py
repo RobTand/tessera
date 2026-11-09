@@ -259,7 +259,7 @@ def main() -> int:
 
     meta = {"host": os.environ.get("HOST_NAME", socket.gethostname()), "image": os.environ.get("ORACLE_IMAGE"),
             "tessera_head": os.environ.get("TESSERA_HEAD"), "tessera_state": os.environ.get("TESSERA_STATE"),
-            "pb_action": os.environ.get("PB_ACTION_KEY"), "torch": torch.__version__, "vllm": vllm.__version__,
+            "meta_schema": "tessera.job_meta.v2", "flux_job_id": os.environ.get("FLUX_JOB_ID"), "torch": torch.__version__, "vllm": vllm.__version__,
             "device": torch.cuda.get_device_name(0), "model": args.model, "argv": sys.argv,
             "peak_dram_gbs": mp.PEAK_DRAM_GBS, "utc_start": time.time()}
     t0 = time.time()

@@ -44,7 +44,7 @@ def test_module_binding_and_exact_mode_roster(probe, monkeypatch, tmp_path, faul
     bank = tmp_path / "bank.json"
     control = tmp_path / "control.json"
     bank.write_text(json.dumps({"meta": {"pb_action": "CPU fixture bank"}, "kdaptx": s}))
-    control.write_text(json.dumps({"meta": {"pb_action": "CPU fixture control"}, "kdaex2": s["ex2_equivalence"]}))
+    control.write_text(json.dumps({"meta": {"meta_schema": "tessera.job_meta.v2", "flux_job_id": "fCPUFIXTURE"}, "kdaex2": s["ex2_equivalence"]}))
     monkeypatch.setattr(sys, "argv", ["verify_conv_bank.py", str(out), str(bank), str(control),
                                       hashlib.sha256(bank.read_bytes()).hexdigest(),
                                       hashlib.sha256(control.read_bytes()).hexdigest(), old_sha])
