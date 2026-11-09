@@ -2034,11 +2034,11 @@ T4 activation-prefetch experiment (2026-10-02, #875):
   exactly24 FP4 one-run routed instantiations (modes0/1/2, rates1..8), leaves
   all53 FP4 dense/mixed/utility and345 other-family controls exact, and reports
   zero STACK/LOCAL allocation (FP4 maximum128 registers).
-* Persisted actions (archived under `archive/flux-migration/4C-6/experiments/t4_code/`, 4C-6, 2026-11-09) are `pb_875_composed_cpu_prepare.json`,
-  `pb_875_composed_cpu_stage.json` and the complete15-row
-  `pb_875_composed_finite_campaign.json`. The source/image/cohort/readset,
+* Persisted actions (archived 2026-11-09, 4C-6) are `archive/flux-migration/4C-6/experiments/t4_code/pb_875_composed_cpu_prepare.json`,
+  `archive/flux-migration/4C-6/experiments/t4_code/pb_875_composed_cpu_stage.json` and the complete15-row
+  `archive/flux-migration/4C-6/experiments/t4_code/pb_875_composed_finite_campaign.json`. The source/image/cohort/readset,
   full numeric/native/sanitizer population and real local-scratch contract
-  is `pb_875_composed_qualification_contract.json`. The GPU packet stays
+  is `archive/flux-migration/4C-6/experiments/t4_code/pb_875_composed_qualification_contract.json`. The GPU packet stays
   unpublished until the exact current source/SDK-stage/parent/admission
   tuple is accepted; no old source4e/image61 allowance or CPU pass transfers.
   Old packet bytes remain available in commit `5bbd050e` and the old NAS
