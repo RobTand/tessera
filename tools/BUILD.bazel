@@ -402,7 +402,6 @@ ts_py_library(
         "//src/tessera:__init___cycle",
         "//src/tessera:_dev/__init__",
         "//src/tessera:_dev/source_dependencies",
-        "//src/tessera:_dev/suite_source",
     ],
 )
 

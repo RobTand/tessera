@@ -1173,7 +1173,6 @@ ts_py_library(
     ],
     deps = [
         ":glm53_508_graph_qual/digest/usercustomize",
-        ":graph_attest_702/observer/usercustomize",
     ],
 )
 
@@ -1478,48 +1477,6 @@ ts_py_library(
 )
 
 ts_py_library(
-    name = "graph_attest_702/batch_kl",
-    srcs = [
-        "graph_attest_702/batch_kl.py",
-    ],
-    deps = [
-        "//src/tessera:__init___cycle",
-        "//src/tessera:graph_receipt",
-        ":graph_attest_702/eager_benchmark_cycle",
-        ":graph_attest_702/managed_window",
-    ],
-)
-
-ts_py_library(
-    name = "graph_attest_702/eager_benchmark_cycle",
-    srcs = [
-        "graph_attest_702/eager_benchmark.py",
-        "graph_attest_702/eager_determinism.py",
-        "graph_attest_702/seeded_control_client.py",
-        "graph_attest_702/tp2_recipe.py",
-    ],
-    data = [
-        "//src/tessera:serving/runtime_contract.json",
-        "graph_attest_702/arm_tp2.sh",
-        "graph_attest_702/drive_tp2.sh",
-        "graph_attest_702/plan-artifact.txt",
-        "graph_attest_702/plan-eager-determinism-2048.txt",
-        "graph_attest_702/plan-eager-levers-4096.txt",
-        "graph_attest_702/plan-eager-piece-major-2048.txt",
-        "graph_attest_702/plan-eager-ship-8192.txt",
-        "graph_attest_702/plan-eager-window4.txt",
-        "graph_attest_702/plan-graph-mnbt-matrix.txt",
-        "graph_attest_702/plan-graph-ship.txt",
-    ],
-    deps = [
-        "//src/tessera:__init___cycle",
-        "//src/tessera:dev_mode",
-        ":graph_attest_702/managed_window",
-        ":graph_attest_702/submit",
-    ],
-)
-
-ts_py_library(
     name = "graph_attest_702/managed_window",
     srcs = [
         "graph_attest_702/managed_window.py",
@@ -1527,30 +1484,6 @@ ts_py_library(
     deps = [
         "//src/tessera:__init___cycle",
         "//src/tessera:dev_mode",
-    ],
-)
-
-ts_py_library(
-    name = "graph_attest_702/observer/usercustomize",
-    srcs = [
-        "graph_attest_702/observer/usercustomize.py",
-    ],
-    deps = [
-        "//src/tessera:__init___cycle",
-        "//src/tessera:bf16_route_cycle",
-    ],
-)
-
-ts_py_library(
-    name = "graph_attest_702/rank_window",
-    srcs = [
-        "graph_attest_702/rank_window.py",
-    ],
-    deps = [
-        "//src/tessera:__init___cycle",
-        "//src/tessera:bf16_route_cycle",
-        ":graph_attest_702/eager_benchmark_cycle",
-        ":graph_attest_702/managed_window",
     ],
 )
 
@@ -1565,36 +1498,6 @@ ts_py_library(
         "//src/tessera:graph_equality",
         "//src/tessera:graph_receipt",
         "//src/tessera:serving/build_identity",
-    ],
-)
-
-ts_py_library(
-    name = "graph_attest_702/submit",
-    srcs = [
-        "graph_attest_702/submit.py",
-    ],
-    data = [
-        "graph_attest_702/arm.sh",
-    ],
-)
-
-ts_py_library(
-    name = "graph_attest_702/watch_window_queue",
-    srcs = [
-        "graph_attest_702/watch_window_queue.py",
-    ],
-)
-
-ts_py_library(
-    name = "graph_attest_702/window_driver",
-    srcs = [
-        "graph_attest_702/window_driver.py",
-    ],
-    deps = [
-        ":graph_attest_702/batch_kl",
-        ":graph_attest_702/eager_benchmark_cycle",
-        ":graph_attest_702/managed_window",
-        ":graph_attest_702/watch_window_queue",
     ],
 )
 
@@ -2600,21 +2503,6 @@ ts_py_library(
 )
 
 ts_py_library(
-    name = "reach_boundary_ab",
-    srcs = [
-        "reach_boundary_ab.py",
-    ],
-    deps = [
-        "//src/tessera:__init___cycle",
-        "//src/tessera:bf16_route_cycle",
-        "//src/tessera:container",
-        "//src/tessera:encode_cycle",
-        "//src/tessera:scale_channel",
-        ":bf16_route_weight_space",
-    ],
-)
-
-ts_py_library(
     name = "reach_land_census",
     srcs = [
         "reach_land_census.py",
@@ -3224,7 +3112,7 @@ ts_py_library(
         ":t8r_speed/bench_geometry",
         ":t8r_speed/bench_rates",
         ":t8r_speed/bench_t8r",
-        ":t8r_speed/pb_staged_store",
+        ":t8r_speed/declared_inputs",
         ":t8r_speed/rung_quality",
     ],
 )
@@ -3375,7 +3263,7 @@ ts_py_library(
         "//src/tessera:__init___cycle",
         "//src/tessera:bf16_route_cycle",
         ":t4_code/fused_e2m1_check",
-        ":t8r_speed/pb_staged_store",
+        ":t8r_speed/declared_inputs",
     ],
 )
 
@@ -3395,7 +3283,7 @@ ts_py_library(
         "//src/tessera:__init___cycle",
         "//src/tessera:bf16_route_cycle",
         "//src/tessera:kernel_a4",
-        ":t8r_speed/pb_staged_store",
+        ":t8r_speed/declared_inputs",
     ],
 )
 
@@ -3438,7 +3326,7 @@ ts_py_library(
         ":bench_native_moe_operator_cycle",
         ":graph_attest_702/managed_window",
         ":t4_code/fused_e2m1_check",
-        ":t8r_speed/pb_staged_store",
+        ":t8r_speed/declared_inputs",
     ],
 )
 
@@ -3588,7 +3476,7 @@ ts_py_library(
         ":t8r_speed/bench_dense_module",
         ":t8r_speed/bench_rates",
         ":t8r_speed/bench_t8r",
-        ":t8r_speed/pb_staged_store",
+        ":t8r_speed/declared_inputs",
     ],
 )
 
@@ -3624,8 +3512,8 @@ ts_py_library(
     deps = [
         "//src/tessera:__init___cycle",
         "//src/tessera:bf16_route_cycle",
+        ":t8r_speed/declared_inputs",
         ":t8r_speed/paired_k32_qualification",
-        ":t8r_speed/pb_staged_store",
         ":t8r_speed/piece_major_protocol",
         ":t8r_speed/stageprev_probe",
     ],
@@ -3668,6 +3556,19 @@ ts_py_library(
         "//src/tessera:__init___cycle",
         "//src/tessera:bf16_route_cycle",
         ":t8r_speed/bench_rates",
+    ],
+)
+
+ts_py_library(
+    name = "t8r_speed/declared_inputs",
+    srcs = [
+        "t8r_speed/declared_inputs.py",
+    ],
+    deps = [
+        "//src/tessera:__init___cycle",
+        "//src/tessera:_dev/__init__",
+        "//src/tessera:_dev/native_identity",
+        "//src/tessera:fused_frame",
     ],
 )
 
@@ -3780,19 +3681,6 @@ ts_py_library(
 )
 
 ts_py_library(
-    name = "t8r_speed/pb_staged_store",
-    srcs = [
-        "t8r_speed/pb_staged_store.py",
-    ],
-    deps = [
-        "//src/tessera:__init___cycle",
-        "//src/tessera:_dev/__init__",
-        "//src/tessera:_dev/native_identity",
-        "//src/tessera:fused_frame",
-    ],
-)
-
-ts_py_library(
     name = "t8r_speed/piece_major_pb_action",
     srcs = [
         "t8r_speed/piece_major_pb_action.py",
@@ -3812,7 +3700,7 @@ ts_py_library(
         "//src/tessera:serving/csrc/routed_fused_window.cu",
         "t8r_speed/bench_t8r.py",
         "t8r_speed/bench_t8r.sh",
-        "t8r_speed/pb_staged_store.py",
+        "t8r_speed/declared_inputs.py",
     ],
 )
 
@@ -3934,7 +3822,7 @@ ts_py_library(
         "//src/tessera:bf16_route_cycle",
         "//tests:routed_fused_window_support",
         "//tests:window_gemm_grouped_support",
-        ":t8r_speed/pb_staged_store",
+        ":t8r_speed/declared_inputs",
     ],
 )
 
@@ -4798,25 +4686,6 @@ ts_py_library(
 )
 
 ts_py_library(
-    name = "ts113_r6_compare",
-    srcs = [
-        "ts113_r6_compare.py",
-    ],
-    deps = [
-        "//src/tessera:__init___cycle",
-        "//src/tessera:bf16_route_cycle",
-        "//src/tessera:serving/build_identity",
-    ],
-)
-
-ts_py_library(
-    name = "ts113_r6_memory",
-    srcs = [
-        "ts113_r6_memory.py",
-    ],
-)
-
-ts_py_library(
     name = "ts5_census_check",
     srcs = [
         "ts5_census_check.py",
@@ -5020,31 +4889,6 @@ ts_py_library(
     deps = [
         "//src/tessera:__init___cycle",
         "//src/tessera:encode_cycle",
-    ],
-)
-
-ts_py_library(
-    name = "window_viterbi_best_form_ab",
-    srcs = [
-        "window_viterbi_best_form_ab.py",
-    ],
-    deps = [
-        "//src/tessera:__init___cycle",
-        "//src/tessera:encode_cycle",
-        "//src/tessera:window_viterbi",
-    ],
-)
-
-ts_py_library(
-    name = "window_viterbi_best_tile_screen",
-    srcs = [
-        "window_viterbi_best_tile_screen.py",
-    ],
-    deps = [
-        "//src/tessera:__init___cycle",
-        "//src/tessera:encode_cycle",
-        "//src/tessera:window_viterbi",
-        ":window_viterbi_best_form_ab",
     ],
 )
 
