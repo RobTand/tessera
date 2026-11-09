@@ -263,7 +263,7 @@ def _routed_row_view(panel: Mapping[str, Any], scope: Mapping[str, Any],
 
 
 def panel_row_views(panel: Mapping[str, Any]) -> list[dict[str, Any]]:
-    """Project a validated ``tessera.shape_time_panel.v1`` receipt into row views.
+    """Project a validated ``tessera.shape_time_panel.v2`` receipt into row views.
 
     The caller owns validation (``timing_panel.validate_panel``); this reads
     the validated shape only.  Dense rows project as before; routed rows
@@ -300,7 +300,7 @@ def panel_row_views(panel: Mapping[str, Any]) -> list[dict[str, Any]]:
             continue
         raise ValueError(
             f"panel row {index}: structure {structure!r} has no panel projection in "
-            "the tessera.shape_time_panel.v1 schema yet; extend panel_row_views when "
+            "the tessera.shape_time_panel.v2 schema yet; extend panel_row_views when "
             "the schema grows, do not compare a routed stack by dense projection")
     return views
 

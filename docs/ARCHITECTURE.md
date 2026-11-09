@@ -1483,6 +1483,15 @@ reports committed progress only after durable artifact publication. The
 application has one qualified execution/replay at q896/M512/N=K256/TP1 under
 b40/raw0869/f8; no full-menu, quality, compiled, serving or cell qualification
 follows. See `measurements/2026-10-02-native-dense-first-receipt.md`.
+Re-stamped 2026-11-09 (Flux migration 4C-11b): the installed-distribution proof is
+`tools/_install_identity.verify_install`, stdlib-only repository code in the producer
+source-tree and tool identities (one owning distribution, non-editable Git install at the
+reviewed commit, RECORD byte equality, imported module owned by the RECORD, no unrecorded
+file); the PB-published verifier and the `record_verifier` request binding are gone. The
+panel is `tessera.shape_time_panel.v2`, the request `...dense_shape_time_request.v2`, the
+worker job `...native_shape_worker_job.v2` and the preflight
+`...installed_contract_preflight.v2`; earlier documents are history. Committed progress is
+the `tessera.durable_progress.v1` line.
 The installed runtime first runs a CPU-only, CUDA-disabled contract preflight.
 Its own unchanged strict validator checks the same owned contract bytes after
 RECORD, imported-root, commit and software/source checks. The successful phase

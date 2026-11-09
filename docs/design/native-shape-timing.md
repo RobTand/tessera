@@ -1,6 +1,6 @@
 # Native shape-time receipt, first slice
 
-Tessera #688's producer schema is `tessera.shape_time_panel.v1`. The first
+Tessera #688's producer schema is `tessera.shape_time_panel.v2`. The first
 implemented slice is exactly one E4M3 FP8 dense operator, with a uniform
 rung, explicit TP1 rank0 native layer geometry, eager execution and resident
 weights. Routed, TP2, multiple-row and alternate-family panels refuse.
@@ -73,16 +73,18 @@ prepared-weight fingerprints and both source identities are checked again
 before publishing the final receipt. These controls do not establish numerical
 quality or end-to-end serving correctness.
 
-The request schema is `tessera.dense_shape_time_request.v1`, with exactly
+The request schema is `tessera.dense_shape_time_request.v2`, with exactly
 `schema`, `expected_runtime`, `scope`, `prefix`, `scheme`, `wire`, `sampling`,
 `netdata_hosts`, `contract`, `runtime_python`, `worker_timeout_s` and
-`record_verifier` and `producer_identity`. The latter binds an independently
+`producer_identity`. The latter binds an independently
 host-attested clean Git checkout plus the existing source-tree and tool-closure
 identities. `seal-producer --output FILE` runs on the host before submission;
 the container recomputes the exact source hashes and records
 `commit_source=sealed_checkout`, without claiming an in-container Git observation.
-`record_verifier` binds the published PB stdlib installation
-checker; it is repository tooling, not a package dependency. The
+The installed-distribution proof is `tools/_install_identity.verify_install`, stdlib-only
+repository code covered by the producer source-tree and tool identities: one owning
+distribution, a non-editable Git install at the reviewed commit, RECORD byte equality, the
+imported module owned by the RECORD, and no unrecorded package file. The
 contract and runtime interpreter are absolute bound files; the contract is
 the pinned runtime's raw bytes. The timeout is an explicit positive integer. `scope` uses the existing native census request fields;
 `scheme` is the existing dense wire declaration and `wire` is a bound file.
@@ -184,12 +186,10 @@ and actual CPU invocation separately. If
 the original replay does not succeed against that closure, `check` refuses
 rather than resealing history.
 
-The original request may name an immutable PB verifier from an older fleet
-generation. Replay requires its read-only regular file bytes to equal the
-current published PB verifier under bounded stable reads. It executes the
-held source bytes and rechecks both owners after use; location equality alone
-does not decide code identity. Changed helper bytes, a mutable helper or a
-symlink outside that immutable path refuse.
+Requests, worker jobs and CPU preflights written before 2026-11-09 (`...request.v1`,
+`native_shape_worker_job.v1`, `installed_contract_preflight.v1`) named a published PB
+verifier in `record_verifier`; they and `tessera.shape_time_panel.v1` panels are history
+and are not accepted by the v2 validators.
 
 The #685 acceptance consumer is a separate stdlib module,
 `tessera.serving.panel_baseline` (schema
@@ -204,7 +204,7 @@ IQR on the same samples. Numbers are compared only after a row's
 (structure, module, family, grid, rate) key matches a documented group and
 its rank-local geometry agrees; a median outside the band is a named gap,
 never a silent pass. Dense rows project from a validated
-`tessera.shape_time_panel.v1` receipt; a routed row has no projection until
+`tessera.shape_time_panel.v2` receipt; a routed row has no projection until
 the panel schema grows one, and the refusal says so rather than comparing a
 routed stack by dense projection.
 
