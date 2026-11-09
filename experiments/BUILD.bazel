@@ -1934,8 +1934,6 @@ ts_py_library(
     ],
     deps = [
         ":bench_native_moe_operator_cycle",
-        ":native_local_inputs",
-        ":native_operator_resources",
     ],
 )
 
@@ -2196,13 +2194,6 @@ ts_py_library(
         "//src/tessera:errors",
         "//src/tessera:fused",
         "//src/tessera:kernel_a4",
-    ],
-)
-
-ts_py_library(
-    name = "native_local_inputs",
-    srcs = [
-        "native_local_inputs.py",
     ],
 )
 

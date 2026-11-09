@@ -1941,7 +1941,6 @@ ts_py_library(
         "test_native_dense_tp.py",
         "test_native_fd_loader_lifetime.py",
         "test_native_fp8_quant.py",
-        "test_native_local_inputs.py",
         "test_native_manifest_footprint.py",
         "test_native_measurement_acceptance.py",
         "test_native_moe_glm_owner.py",
@@ -10164,7 +10163,6 @@ ts_py_library(
         "test_native_dense_tp.py",
         "test_native_fd_loader_lifetime.py",
         "test_native_fp8_quant.py",
-        "test_native_local_inputs.py",
         "test_native_manifest_footprint.py",
         "test_native_measurement_acceptance.py",
         "test_native_moe_glm_owner.py",
@@ -10910,7 +10908,6 @@ ts_py_library(
         "test_native_dense_tp.py",
         "test_native_fd_loader_lifetime.py",
         "test_native_fp8_quant.py",
-        "test_native_local_inputs.py",
         "test_native_manifest_footprint.py",
         "test_native_measurement_acceptance.py",
         "test_native_moe_glm_owner.py",
@@ -14040,38 +14037,6 @@ ts_py_library(
         "//src/tessera:__init___cycle",
         "//src/tessera:bf16_route_cycle",
         ":serving_fp8_route_support",
-    ],
-)
-
-ts_py_test(
-    name = "test_native_local_inputs",
-    path = "tests/test_native_local_inputs.py",
-    library = ":test_native_local_inputs_lib",
-    lane = "torch",
-    args = [
-        "--budget='{\"enforce\":true,\"seconds\":80,\"slow\":{}}'",
-    ],
-    timeout = "moderate",
-)
-
-ts_py_test(
-    name = "test_native_local_inputs.bytes",
-    path = "tests/test_native_local_inputs.py",
-    library = ":test_native_local_inputs_lib",
-    lane = "bytes",
-    args = [
-        "--budget='{\"enforce\":true,\"seconds\":80,\"slow\":{}}'",
-    ],
-    timeout = "moderate",
-)
-
-ts_py_library(
-    name = "test_native_local_inputs_lib",
-    srcs = [
-        "test_native_local_inputs.py",
-    ],
-    deps = [
-        "//experiments:native_local_inputs",
     ],
 )
 
@@ -18437,7 +18402,6 @@ ts_py_library(
         "//experiments:moe_wire_weight_error.py",
         "//experiments:moe_write_readback_check.py",
         "//experiments:native_a4_serve_probe.py",
-        "//experiments:native_local_inputs.py",
         "//experiments:native_operator_resources.py",
         "//experiments:native_test_source.py",
         "//experiments:ncu_blockc.py",
@@ -22068,7 +22032,6 @@ ts_py_library(
         "//experiments:moe_wire_weight_error.py",
         "//experiments:moe_write_readback_check.py",
         "//experiments:native_a4_serve_probe.py",
-        "//experiments:native_local_inputs.py",
         "//experiments:native_operator_resources.py",
         "//experiments:native_test_source.py",
         "//experiments:ncu_blockc.py",
@@ -22863,7 +22826,6 @@ ts_py_library(
         "//experiments:moe_wire_weight_error.py",
         "//experiments:moe_write_readback_check.py",
         "//experiments:native_a4_serve_probe.py",
-        "//experiments:native_local_inputs.py",
         "//experiments:native_operator_resources.py",
         "//experiments:native_test_source.py",
         "//experiments:ncu_blockc.py",
@@ -23942,7 +23904,10 @@ ts_py_test(
     deps = [
         "//src/tessera:identity",
         "//tools:__init__",
+        "//tools:_flux_gpu_jobspec",
         "//tools:impacted_tests",
+        "//tools:suite_container",
+        "//tools:suite_deadline",
         "//tools:tessera_lane_preflight",
         "//tools:tessera_route_census",
         ":test_census_engagement_lib",
@@ -23971,7 +23936,10 @@ ts_py_test(
     deps = [
         "//src/tessera:identity",
         "//tools:__init__",
+        "//tools:_flux_gpu_jobspec",
         "//tools:impacted_tests",
+        "//tools:suite_container",
+        "//tools:suite_deadline",
         "//tools:tessera_lane_preflight",
         "//tools:tessera_route_census",
         ":test_census_engagement_lib",
@@ -27405,6 +27373,9 @@ ts_py_test(
         "//experiments:t8r_speed/finalize_native_build",
         "//src/tessera:bf16_route_cycle",
         "//src/tessera:identity",
+        "//tools:_flux_gpu_jobspec",
+        "//tools:suite_container",
+        "//tools:suite_deadline",
         ":test_routed_fused_window_lib",
     ],
     lane = "torch",
@@ -27438,6 +27409,9 @@ ts_py_test(
         "//experiments:t8r_speed/finalize_native_build",
         "//src/tessera:bf16_route_cycle",
         "//src/tessera:identity",
+        "//tools:_flux_gpu_jobspec",
+        "//tools:suite_container",
+        "//tools:suite_deadline",
         ":test_routed_fused_window_lib",
     ],
     lane = "bytes",
@@ -28429,7 +28403,6 @@ ts_py_library(
         "//experiments:moe_wire_weight_error.py",
         "//experiments:moe_write_readback_check.py",
         "//experiments:native_a4_serve_probe.py",
-        "//experiments:native_local_inputs.py",
         "//experiments:native_operator_resources.py",
         "//experiments:native_test_source.py",
         "//experiments:ncu_blockc.py",
@@ -29352,7 +29325,6 @@ ts_py_library(
         "//experiments:moe_wire_weight_error.py",
         "//experiments:moe_write_readback_check.py",
         "//experiments:native_a4_serve_probe.py",
-        "//experiments:native_local_inputs.py",
         "//experiments:native_operator_resources.py",
         "//experiments:native_test_source.py",
         "//experiments:ncu_blockc.py",
