@@ -90,7 +90,7 @@ the previous 20-second default failed otherwise passing qualification attempts.
 The retained observations name each consumer, architecture, run, and attempt.
 Exceptions for cases above the default use twice the largest
 observed case duration, rounded up. The default and exception list cannot
-grow against the event's base commit. Enforcement uses PB's 1.5 tolerance.
+grow against the event's base commit. Enforcement uses the runner's 1.5 tolerance.
 An unavailable base commit gives no verdict. These are hang limits, not a
 fine-grained cost ratchet. The tolerance is a runner constant. The default pytest timeout is 300 seconds;
 when a measured slow-node budget times 1.5 exceeds that cap, the collector
@@ -138,8 +138,10 @@ the consumer tests remain active. One shape accounting node depends on a host-lo
 PrismaQuant checkout, owned by [the portable accounting test issue](https://github.com/RobTand/tessera/issues/1567).
 Six A4 CPU wire nodes depend on unpublished archived artifacts, owned by
 [the portable A4 fixtures issue](https://github.com/RobTand/tessera/issues/1568).
-One Stageprev receiver-name proof also requires the published PB source tree,
-owned by [the observer contract issue](https://github.com/RobTand/tessera/issues/1562).
+The historical Stageprev receiver-name proof required the published PB source
+tree, recorded under [the observer contract issue](https://github.com/RobTand/tessera/issues/1562).
+That operative scenario and its dedicated tests are now archived under
+`archive/flux-migration/4C-7/`.
 All matched-reach tests remain active. A worker group derived from fixture scopes builds
 their shared grid fixture once. The fixture also reuses standard-normal inverse-CDF
 samples across sigma searches, then applies the original scalar multiplication.
@@ -169,8 +171,10 @@ head and batch checks. This PR does not change repository protection or queue ru
 ## Qualification
 
 The fixed-master inventory, hosted canaries, measured durations, budget
-exceptions, and quarantine owners are recorded with their source SHAs and
-PrismaBuild action keys during rollout. Initial hosted measurements enable
+exceptions, and quarantine owners retain their source SHAs and historical
+PrismaBuild action keys from rollout. New evidence identifies its Flux job,
+BuildBuddy invocation or GitHub-hosted run and includes the terminal verdict
+and logs. Initial hosted measurements enable
 budget enforcement; three passing full canaries are still required before
 qualification is complete.
 
@@ -189,7 +193,8 @@ the per-lane median file times. `--budget-default-seconds` sets the measured
 bootstrap default; `--budget-output` builds a bootstrap exception
 list from hosted observations, using twice each measured maximum rounded up.
 Every source JUnit digest is retained. The manifest records lane, repeat,
-JUnit path, surface path, and the PB action key or hosted run and artifact.
+JUnit path, surface path, and the job or hosted run and artifact. Historical
+manifests retain their PB action keys.
 
 Each xdist worker publishes a collection receipt. Every assigned file must
 appear in that receipt or in the population's explicit missing-dependency
