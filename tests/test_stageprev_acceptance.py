@@ -200,6 +200,14 @@ def test_native_acceptor_consumes_real_callback_record(tmp_path, monkeypatch):
             damaged[key] = False
             with pytest.raises(ValueError):
                 validate_native_record(damaged, native)
+        for field in ('input_transport', 'serving_tier'):
+            damaged = deepcopy(owner.record)
+            if field == 'serving_tier':
+                damaged[field]['transport'] = 'unqualified'
+            else:
+                damaged[field] = 'unqualified'
+            with pytest.raises(ValueError, match='declared-file boundary evidence'):
+                validate_native_record(damaged, native)
     finally:
         owner.finish(lambda: None)
         reader.close()

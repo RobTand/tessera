@@ -853,7 +853,10 @@ def test_certified_worker_verifies_the_named_package_at_the_expected_commit(pane
 def test_runtime_origins_bind_the_installation_verifier(installed_origins):
     root, *_ = installed_origins
     proof = worker.runtime_origins(str(root))
-    assert proof['install_verifier'] == worker.file_binding(worker.ROOT / 'tools/_install_identity.py')
+    path = worker.ROOT / 'tools/_install_identity.py'
+    raw = path.read_bytes()
+    assert proof['install_verifier'] == {'path': str(path), 'bytes': len(raw),
+                                         'sha256': hashlib.sha256(raw).hexdigest()}
 
 
 def test_panel_refuses_changed_installation_verifier(panel, tmp_path):
