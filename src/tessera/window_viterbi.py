@@ -143,7 +143,7 @@ _WINDOW_PLAN_CACHE = 8
 #: Plans are **per thread**, and that is a correctness requirement rather than
 #: a tuning choice: a plan owns the fronts and the traceback its Viterbi
 #: writes, so two threads sharing one would overwrite each other's states, and
-#: PrismaBuild's workers encode units concurrently in one process.  The kernel
+#: Encoder workers process units concurrently in one process.  The kernel
 #: cache above is shared because it is read-only; these are not.
 _WINDOW_LOCAL = threading.local()
 
@@ -1043,8 +1043,8 @@ class _WindowPlan:
         allocator call from a second worker encoding its own unit is enough),
         and even ``thread_local`` mode leaves the two captures' begin/end
         bookkeeping -- ``torch.cuda.graph`` synchronises the device and empties
-        the cache on entry -- to invalidate each other.  PrismaBuild's workers
-        encode units concurrently in one process, so the capture takes the lock
+        the cache on entry -- to invalidate each other.  Encoder workers
+        process units concurrently in one process, so the capture takes the lock
         and stays thread-local; replays, eager launches, allocations and
         stream-level syncs (``.item()``, ``.cpu()``) on the other threads
         proceed.  The lock is shared with ``encode``'s coset-trellis capture so
