@@ -2,7 +2,7 @@
 # Serve a Tessera-wire checkpoint through Gridbook's Tessera lane (both
 # families: TESSERA_NVFP4 W4A4 and TESSERA_FP8 W8A8, selected per module by the
 # checkpoint) on the vanilla vLLM 0.28 image (Gridbook as an out-of-tree plugin,
-# pip -e at container start), dump its logprobs on the same corpus as the stock
+# installed from a read-only source copy), dump its logprobs on the stock
 # arms, compare to the image-matched teacher, and grep the route.  The
 # acceptance is the stock arm's own number: the decoded tiles are byte-identical
 # to the compressed-tensors tensors the stock lane served (NVFP4 KL 0.640, FP8

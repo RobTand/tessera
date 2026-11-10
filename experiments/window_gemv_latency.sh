@@ -104,8 +104,8 @@ if curl -s "http://127.0.0.1:${PORT}/metrics" | grep -q 'vllm:spec_decode'; then
   echo "REFUSED: spec-decode active"; flux_serve_stop; exit 2
 fi
 
-# THE BOX'S LOAD, EITHER SIDE OF THE TIMED WINDOWS.  The GPU lock serialises GPU
-# jobs; it does not serialise the CPU-bound ones, and several agents run encodes
+# THE BOX'S LOAD, EITHER SIDE OF THE TIMED WINDOWS. Flux reserves the GPU;
+# it does not exclude CPU-bound jobs, and several agents run encodes
 # on this box at once.  A host-driven latency number taken at load 49 is noise,
 # so the load is recorded rather than assumed -- and reported WITH the numbers,
 # because a contended measurement that says so is useful and one that does not

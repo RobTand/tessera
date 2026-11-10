@@ -26,10 +26,6 @@ source "$(dirname "$0")/runtime_image.sh"
 IMAGE=${IMAGE:-$(runtime_image_pin)}
 KLDIR=/mnt/shared/tessera-kl
 PORT=${PORT:-${TESSERA_KL_PORT:-8000}}
-# Per-arm container name (overridable, like serve_and_dump_kl.sh's TESSERA_KL_NAME):
-# two workers on one box must never contend for a container name, and a stale
-# container of MINE must never be a name another worker's `docker rm -f` matches.
-NAME=${TESSERA_KL_NAME:-tessera-plugin-serve-$ARM}
 CORPUS=${TESSERA_KL_CORPUS:-$KLDIR/corpus_qwen_n8_s512.json}
 # The three paths a NON-Qwen arm has to move, defaulted to what every arm
 # before them used so an existing command line records the same files.  The
@@ -62,9 +58,8 @@ source "$(dirname "$0")/build_identity.sh"
 mkdir -p "$EXT" "$VLLM_CACHE" "$RUNS"
 MODEL_MOUNT="$(cd "$(dirname "$MODEL")" && pwd)"
 echo "serving $MODEL via the tessera plugin ($IMAGE, mode=$MODE, port=$PORT)"
-# Refuse a floating image BEFORE the serve lock (issue #100): a wrapper that
-# is going to refuse must not first take the box's one serve lock.  The
-# resolved digest reaches this arm's build sidecar through build_identity.sh.
+# Resolve the immutable image for this arm's build sidecar. The supervisor
+# checks the same digest and assigns the container's decimal job name.
 runtime_image_require "$IMAGE" || exit 2
 # Flux owns the GPU reservation and container cleanup.
 # ONE compile cache across every arm, deliberately: resident-after-streamed in
