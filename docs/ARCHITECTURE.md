@@ -4033,7 +4033,10 @@ and run. `/mnt/shared/flux-migration/flux-uri.sh` resolves the URI at runtime;
 an explicit caller `FLUX_URI` overrides it. Client PATH and library paths come
 from the current manifest prefix, with an explicit client argument or
 `FLUX_CLIENT` override. Manifest and resolver failures refuse by name,
-including resolver stderr. No local rank table reconstructs a socket.
+including resolver stderr. INSTANCE-derived PATH and LD_LIBRARY_PATH belong
+only to the Flux client process. Jobs keep `/usr/local/bin:/usr/bin:/bin`
+and receive no LD_LIBRARY_PATH, so C-extension and Torch Inductor builds
+use system compilers rather than the client install's dependency toolchain. No local rank table reconstructs a socket.
 No run name, socket, deployment config path, client version path or digest
 constant selects or qualifies the instance. Before submission, the live
 `resource.R` graph, execution rank resources and architecture properties,

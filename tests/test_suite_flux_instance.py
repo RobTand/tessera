@@ -151,3 +151,56 @@ def test_gpu_renderer_has_no_implicit_host_roster(suite):
     assert not any(token.startswith('--requires=') for token in argv)
     explicit = spec.render(['payload'], cores=1, memory_gib=1, walltime='30s', hosts='image-owner', directory='/mnt/shared/render-fixture')
     assert '--requires=host:image-owner' in explicit
+
+
+def test_submit_keeps_instance_client_paths_out_of_job_environment(suite, monkeypatch, tmp_path):
+    flux = suite.suite_flux
+    prefix = tmp_path / 'INSTANCE-client'
+    manifest_read = Path.read_text
+    monkeypatch.setattr(Path, 'read_text', lambda path, *a, **kw:
+        f'{prefix} operator-run\n' if str(path) == '/mnt/shared/flux-migration/INSTANCE'
+        else manifest_read(path, *a, **kw))
+    monkeypatch.setenv('FLUX_URI', 'local:///selected-instance')
+    monkeypatch.setenv('FLUX_CLIENT', sys.executable)
+    monkeypatch.setenv('PATH', f'{prefix}/deps/bin:/usr/bin:/bin')
+    monkeypatch.setenv('LD_LIBRARY_PATH', f'{prefix}/deps/lib')
+    monkeypatch.setattr(flux, 'source', lambda path: {'sha256': 'a' * 64})
+    monkeypatch.setattr(flux, 'runtime_identity', lambda *a, **kw: {'schema': 'tessera.suite_runtime.v1'})
+    monkeypatch.setattr(flux, 'collect', lambda directory: {'state': 'running'})
+    client_environments, submitted = [], []
+    def client(command, **options):
+        client_environments.append(options['env'])
+        argv = command[1:]
+        if argv == ['kvs', 'get', 'resource.R']:
+            value = json.dumps(resource_set())
+        elif argv[:2] == ['resource', 'status']:
+            value = '4,9'
+        elif argv[:1] == ['python']:
+            value = 'generation-A'
+        elif argv == ['config', 'get']:
+            value = '{}'
+        elif argv == ['getattr', 'version']:
+            value = 'fake-client'
+        elif argv[:3] == ['submit', '--env=-*', '--dry-run']:
+            # The fake CLI renders the actual submitted allow-list, not an
+            # independently configured successful environment.
+            environment = dict(token.removeprefix('--env=').split('=', 1)
+                               for token in argv[3:] if token.startswith('--env='))
+            value = json.dumps({'attributes': {'system': {'environment': environment}}})
+        elif argv[:2] == ['job', 'submit']:
+            submitted.append(json.loads(Path(argv[2]).read_bytes()))
+            value = 'f123'
+        else:
+            raise AssertionError(argv)
+        return SimpleNamespace(returncode=0, stdout=value, stderr='')
+    monkeypatch.setattr(flux.subprocess, 'run', client)
+    directory = tmp_path / 'isolated-launch-fixture'
+    flux.submit(directory, tmp_path, [sys.executable, '-s', '-c', 'pass'], 1, 1, 30, {})
+    assert submitted, 'submit must reach the fake client with a real saved jobspec'
+    assert all(env['PATH'].startswith(f'{prefix}/install/bin:{prefix}/deps/bin:')
+               and env['LD_LIBRARY_PATH'] == f'{prefix}/install/lib:{prefix}/deps/lib'
+               for env in client_environments)
+    environment = submitted[0]['attributes']['system']['environment']
+    assert environment['PATH'] == '/usr/local/bin:/usr/bin:/bin', 'job PATH must use system compilers'
+    assert str(prefix) not in environment['PATH'], 'INSTANCE prefix leaked into job PATH'
+    assert 'LD_LIBRARY_PATH' not in environment, 'INSTANCE client libraries leaked into job LD_LIBRARY_PATH'
