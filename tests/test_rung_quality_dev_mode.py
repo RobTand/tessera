@@ -3,6 +3,8 @@ import importlib.util
 import json
 from pathlib import Path
 import shutil
+import hashlib
+import subprocess
 
 import pytest
 
@@ -28,12 +30,24 @@ def quality_binding(tmp_path, monkeypatch):
     original.write_text(json.dumps(document))
     request = cas / f"{action}.json"
     request.parent.mkdir(parents=True)
-    request.write_text(json.dumps({"action_key": action, "provenance": {"source": "recorded-source-path", "sha256": "b" * 64}, "params": {
+    params = {
         "command": ["python", "experiments/t8r_speed/rung_quality.py", "--grid", "E4M3",
                     "--cases", "1024", "--out", str(original)],
         "checkout_snapshot": {"commit": "recorded-source"},
-    }}))
+    }
+    source = tmp_path / 'source-request.json'
+    source.write_text(json.dumps({'params': params}))
+    request.write_text(json.dumps({'action_key': action, 'provenance': {
+        'source': source.name, 'sha256': hashlib.sha256(source.read_bytes()).hexdigest()}, 'params': params}))
+    _commit_requests(tmp_path)
     return quality, action, original, tmp_path / "scoped.json"
+
+
+def _commit_requests(root):
+    subprocess.run(['git', 'init', str(root)], check=True, capture_output=True)
+    subprocess.run(['git', '-C', str(root), 'add', 'requests', 'source-request.json'], check=True)
+    subprocess.run(['git', '-C', str(root), '-c', 'user.name=Test', '-c', 'user.email=test@example.invalid',
+                    'commit', '-m', 'record requests'], check=True, capture_output=True)
 
 
 def test_relocated_stored_quality_continues_in_default_dev_mode(quality_binding, monkeypatch, capsys):
@@ -90,3 +104,29 @@ def test_recorded_request_must_exist_and_carry_its_provenance(quality_binding, f
         error = ValueError
     with pytest.raises(error):
         quality.bind_existing_quality(original, action, output)
+
+
+@pytest.mark.parametrize('action', ['../escape', 'A' * 64, 'a' * 63, 'g' * 64])
+def test_quality_action_key_has_no_path_grammar(quality_binding, action):
+    quality, _, original, output = quality_binding
+    with pytest.raises(ValueError, match='action_key.*64 lowercase hex'):
+        quality.bind_existing_quality(original, action, output)
+
+
+def test_committed_claimed_hash_is_compared_to_original_bytes(quality_binding):
+    quality, action, original, output = quality_binding
+    quality.bind_existing_quality(original, action, output)
+    output.unlink()
+    request = quality.RECORDED_REQUESTS / (action + '.json')
+    record = json.loads(request.read_text())
+    record['provenance']['sha256'] = '0' * 64
+    request.write_text(json.dumps(record))
+    _commit_requests(request.parent.parent)
+    with pytest.raises(ValueError, match='sha256 differs'):
+        quality.bind_existing_quality(original, action, output)
+
+
+def test_missing_recorded_requests_still_fail_closed(quality_binding, tmp_path):
+    quality, action, original, output = quality_binding
+    with pytest.raises(FileNotFoundError):
+        quality.bind_existing_quality(original, action, output, requests=tmp_path / 'absent')
