@@ -480,12 +480,16 @@ def unreviewed_docker_paths(root):
     return failures
 
 
-def render_serving(command, spec, *, out, cores=4, walltime='10m', image_host=None, spec_path):
+def render_serving(command, spec, *, out, cores=4, walltime='10m', image_host=None, spec_path,
+                   duration_approval=None):
     require(1 <= cores <= 10, 'SERVE_CORE_BOUND')
     require(command and Path(command[0]).resolve() in {ROOT / 'experiments' / name for name in WRAPPERS},
             'REVIEWED_SERVING_WRAPPER_REQUIRED')
     sys.path.insert(0, str(ROOT / 'tools'))
     from _flux_gpu_jobspec import render
+    from _flux_shape import duration_seconds
+    require(duration_seconds(walltime) <= 600 or (duration_approval or '').strip(),
+            'SERVE_DURATION_APPROVAL_REQUIRED: GPU runs over 10 minutes need the fleet master')
     _, total = bounds(spec['gpu_memory_utilization'])
     return render(command, cores=cores, memory_gib=total, walltime=walltime,
                   env=[*[key + '=' + os.environ[key] for key in SERVE_ENV if key in os.environ],
@@ -569,7 +573,7 @@ def dispatch(command):
     command = [str(ROOT / 'experiments' / Path(command[0]).name), *command[1:]]
     argv = render_serving(command, spec, out=plan['out'], spec_path=plan['spec'],
                           cores=plan.get('cores', 4), walltime=plan['walltime'],
-                          image_host=plan.get('image_host'))
+                          image_host=plan.get('image_host'), duration_approval=plan.get('duration_approval'))
     return submit_and_collect(argv, plan['out'])
 
 
@@ -590,6 +594,7 @@ def main(argv=None):
     p.add_argument('--cores', type=int, default=4)
     p.add_argument('--walltime', default='10m')
     p.add_argument('--image-host', choices=['sparky', 'sparklina'])
+    p.add_argument('--duration-approval', help='fleet-master decision for a GPU run over 10 minutes')
     p.add_argument('command', nargs=argparse.REMAINDER)
     a = p.parse_args(args)
     spec = json.loads(Path(a.spec).read_text())
@@ -606,7 +611,7 @@ def main(argv=None):
             (Path(a.out) / 'job-memory.json').write_bytes(canonical({'memory_peak_bytes': peak}) + b'\n')
     require(action == 'render', 'SERVE_ACTION')
     rendered = render_serving(command, spec, out=a.out, spec_path=a.spec, cores=a.cores,
-                              walltime=a.walltime, image_host=a.image_host)
+                              walltime=a.walltime, image_host=a.image_host, duration_approval=a.duration_approval)
     print(shlex.join(rendered))
     print('RENDERED, NOT SUBMITTED; unqualified until F-6 housekeeping', file=sys.stderr)
     return 0

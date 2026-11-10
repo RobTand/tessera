@@ -296,6 +296,15 @@ def test_render_declares_whole_serve_and_client(setup, capsys):
     assert '--env=FLUX_MEMORY_GIB=59' in command
 
 
+def test_long_gpu_run_requires_duration_approval(setup):
+    m, s, d, request, root = setup
+    arguments = dict(out='/mnt/shared/owned-serving-run', walltime='11m', spec_path=root / 'spec.json')
+    command = [str(ROOT / 'experiments/serve_smoke_graph.sh'), request['model']]
+    with pytest.raises(m.Refused, match='SERVE_DURATION_APPROVAL_REQUIRED'):
+        m.render_serving(command, s.spec, **arguments)
+    assert m.render_serving(command, s.spec, duration_approval='fleet-master test decision', **arguments)
+
+
 def test_model_mount_cannot_be_writable_or_duplicated(setup):
     m, s, d, request, root = setup
     s.start(request)

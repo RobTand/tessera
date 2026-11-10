@@ -10780,6 +10780,8 @@ The six serve owners are `serve_and_dump_kl.sh`, `tessera_plugin_served.sh`,
 to submit and collect each scored run separately. `TESSERA_SERVE_PLANS` names
 a JSON list of reviewed plans, each with `wrapper`, exact `arguments`, `spec`,
 a unique shared `out`, `walltime`, and optional `cores` and `image_host`.
+GPU walltimes over 10 minutes also require `duration_approval` naming the fleet
+master's decision, or `--duration-approval` when rendering a single run.
 A missing or ambiguous plan refuses. A campaign cannot nest inside a Flux job.
 Direct serving wrappers refuse outside Flux.
 
