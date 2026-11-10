@@ -33,6 +33,7 @@ class Docker:
         self.running = True
         self.image = 'sha256:' + 'c' * 64
         self.digests = [IMAGE]
+        self.running_digests = None
         self.absent = False
         self.remove_fails = False
 
@@ -41,7 +42,8 @@ class Docker:
         if args[:2] == ('image', 'inspect'):
             if self.absent:
                 raise RuntimeError('not found')
-            return json.dumps([{'Id': self.image, 'RepoDigests': self.digests}])
+            digests = self.digests if args[2] == IMAGE or self.running_digests is None else self.running_digests
+            return json.dumps([{'Id': self.image, 'RepoDigests': digests}])
         if args[0] == 'run':
             self.exists = True
             return CID
@@ -121,7 +123,7 @@ def test_named_refusals(setup, monkeypatch, case, reason):
     if case == 'gpu': monkeypatch.delenv('CUDA_VISIBLE_DEVICES')
     if case == 'absent': d.absent = True
     if case == 'floating': request['image'] = 'serve:latest'
-    if case == 'digest': d.digests = ['other@sha256:' + 'd' * 64]
+    if case == 'digest': d.running_digests = ['other@sha256:' + 'd' * 64]
     if case == 'spec': request['command'].append('--enforce-eager')
     if case == 'health': s.models = lambda *a: (_ for _ in ()).throw(OSError('unhealthy'))
     if case == 'dead': d.running = False
@@ -136,6 +138,9 @@ def test_named_refusals(setup, monkeypatch, case, reason):
         finally:
             if case != 'cleanup': s.stop()
     assert not d.exists or case == 'cleanup'
+    if case == 'digest':
+        assert any(call[0] == 'run' for call in d.calls), 'running digest must be checked after launch'
+        assert ['image', 'inspect', d.image] in d.calls
 
 
 def test_container_dies_during_scoring(setup):
