@@ -252,6 +252,13 @@ ts_py_library(
 )
 
 ts_py_library(
+    name = "merge_suite_support",
+    srcs = [
+        "merge_suite_support.py",
+    ],
+)
+
+ts_py_library(
     name = "native_dense_prefill_cross_check",
     srcs = [
         "native_dense_prefill_cross_check.py",
@@ -1853,6 +1860,7 @@ ts_py_library(
         "hessian_reference_support.py",
         "managed_window_support.py",
         "mapper_probes.py",
+        "merge_suite_support.py",
         "native_dense_prefill_cross_check.py",
         "native_moe_protocol_probe.py",
         "native_timing_panel_support.py",
@@ -10285,6 +10293,7 @@ ts_py_library(
         "hessian_reference_support.py",
         "managed_window_support.py",
         "mapper_probes.py",
+        "merge_suite_support.py",
         "native_dense_prefill_cross_check.py",
         "native_moe_protocol_probe.py",
         "native_timing_panel_support.py",
@@ -11044,6 +11053,7 @@ ts_py_library(
         "hessian_reference_support.py",
         "managed_window_support.py",
         "mapper_probes.py",
+        "merge_suite_support.py",
         "native_dense_prefill_cross_check.py",
         "native_moe_protocol_probe.py",
         "native_timing_panel_support.py",
@@ -13523,6 +13533,7 @@ ts_py_library(
         "//src/tessera:_dev/surface_publication",
         "//tools:merge_suite",
         "//tools:suite_deadline",
+        ":merge_suite_support",
         ":suite_flux_fixtures",
         ":test_collection_probe_lib",
     ],
@@ -13566,6 +13577,7 @@ ts_py_library(
         "test_merge_suite_producer_lookup.py",
     ],
     deps = [
+        ":merge_suite_support",
         ":test_merge_suite_lib",
     ],
 )
@@ -21395,6 +21407,7 @@ ts_py_library(
         "//src/tessera:_dev/__init__",
         "//src/tessera:_dev/suite_source",
         "//tools:selected_population",
+        ":merge_suite_support",
         ":test_merge_suite_lib",
     ],
 )
