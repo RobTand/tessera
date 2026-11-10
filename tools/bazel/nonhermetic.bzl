@@ -16,7 +16,7 @@ are keyed by the test file's target; its `.bytes` lane shares them.
 - `gpu`: every node in the file needs a CUDA device and skips on a CPU
   executor. The target is `manual`, so the cloud gate's `//...` leaves it
   out; a GPU lane selects it by the tag. Its CUDA run stays where it is today
-  (tools/merge_suite.py through PrismaBuild, --strict-cuda).
+  (tools/merge_suite.py through Flux, --strict-cuda); that lane is not yet qualified.
 """
 
 _GPU = "every node needs a CUDA device; on a CPU executor the whole file skips."
