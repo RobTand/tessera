@@ -10745,8 +10745,9 @@ supervisor does not import or name an LFM producer. The renderer validates the
 resolved entry's parent and approved basename without constructing producer paths.
 The shell campaign adapter resolves the wrapper in its own checkout before
 calling the dispatcher; historical caller working directories do not choose code.
-Model hashing and suite dependency sealing share `_directory_entries`'s
-recursive listing; both retain file symlinks and leave directory links untraversed.
+Model hashing shares `_directory_content`'s existing runtime-attestation inventory.
+Both retain file symlinks and leave directory links untraversed. Runtime inventories
+exclude bytecode caches; model specs include them, preserving their full-content hash.
 
 Root Docker in a Flux job is allowed only through this reviewed wrapper pattern,
 with an image by digest and `--pull=never`. Anything else that wants Docker in

@@ -35,23 +35,12 @@ import os
 from pathlib import Path
 import sys
 
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'tools'))
+from _directory_content import digest, files
+
 BASE = 'vllm/vllm-openai@sha256:4e31c581716a5cb9ef31eddb0a425842b75cab07d5cd63fb9572e69ae8794c33'
 CORE_SHA = 'd4aa04edf388da29679585f4688a2b62d879bcc65349866ba37ed96b7b1e467e'
 DISTRIBUTION = 'tessera-quant'
-
-
-def digest(path):
-    h = hashlib.sha256()
-    with Path(path).open('rb') as handle:
-        for block in iter(lambda: handle.read(1024 * 1024), b''):
-            h.update(block)
-    return h.hexdigest()
-
-
-def files(root):
-    root = Path(root)
-    return {str(p.relative_to(root)): {'sha256': digest(p), 'bytes': p.stat().st_size}
-            for p in sorted(root.rglob('*')) if p.is_file() and '__pycache__' not in p.parts}
 
 
 def main():

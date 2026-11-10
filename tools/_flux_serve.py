@@ -49,7 +49,7 @@ SERVE_ENV = (
 )
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / 'tools'))
-from _directory_entries import directory_entries
+from _directory_content import files
 
 
 class Refused(RuntimeError):
@@ -77,12 +77,8 @@ def content_sha256(directory):
     """Hash relative names and file bytes, following checkpoint shard symlinks."""
     root = Path(directory).resolve(strict=True)
     require(root.is_dir(), 'MODEL_DIRECTORY_REQUIRED')
-    entries = []
-    for path in directory_entries(root):
-        if path.is_file():
-            with path.open('rb') as stream:
-                digest = hashlib.file_digest(stream, 'sha256').hexdigest()
-            entries.append([path.relative_to(root).as_posix(), path.stat().st_size, digest])
+    entries = [[name, record['bytes'], record['sha256']]
+               for name, record in files(root, include_cache=True).items()]
     require(entries, 'MODEL_DIRECTORY_EMPTY')
     return hashlib.sha256(canonical(entries)).hexdigest()
 
