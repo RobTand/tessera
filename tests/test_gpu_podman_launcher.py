@@ -33,7 +33,7 @@ elif a[0]=='start':
  (p/'ready').touch()
  if os.environ.get('HOLD')=='1': threading.Event().wait()
  # The fake drives a known observable container affinity, not a verdict.
- mount=next(json.loads(l) for l in (p/'calls').read_text().splitlines() if json.loads(l)[0]=='create')
+ mount=next(json.loads(l) for l in reversed((p/'calls').read_text().splitlines()) if json.loads(l)[0]=='create')
  scratch=mount[mount.index('--volume')+1].split(':')[0]
  pathlib.Path(scratch,'container-status').write_text('Cpus_allowed_list:\\t'+','.join(map(str,sorted(os.sched_getaffinity(0))))+'\\n')
 elif a[0]=='rm': (p/'created').unlink(missing_ok=True)
@@ -132,3 +132,31 @@ def test_oracle_wrapper_runs_owned_podman_policy(tmp_path, wrapper):
     assert 'nvidia.com/gpu=all' in create
     if wrapper == 'routed_fused_tests.sh':
         assert (out / 'runner-sp/pygments').is_dir()
+
+
+@pytest.mark.parametrize('wrapper,expected_containers', [
+    ('t4_code/run_in_image.sh', 1), ('mla_prefill/mask_row.sh', 1),
+    ('mla_prefill/d1_row.sh', 3), ('glm53_508_graph_qual/mhc_split_run.sh', 1),
+])
+def test_kernel_wrapper_runs_owned_podman_policy(tmp_path, wrapper, expected_containers):
+    _, env, out = controlled_runtime(tmp_path)
+    inputs = tmp_path / 'inputs'
+    inputs.mkdir()
+    profiler = tmp_path / 'profiler'
+    profiler.mkdir()
+    (profiler / 'ncu').write_text('#!/bin/sh\nexit 0\n')
+    (profiler / 'ncu').chmod(0o755)
+    env.update(ORACLE_IMAGE=IMAGE, MLA_IMAGE=IMAGE, FLUX_SCRATCH=str(tmp_path / 'scratch'),
+               T4_SOURCE_ROOT=str(inputs), T4_ACTIVATION_ROOT=str(inputs), NCU_ROOT=str(profiler))
+    if wrapper.startswith('t4_code/'):
+        args = [str(ROOT), str(out), 'fp4_arithmetic_attest.py', '--probe-marker']
+    elif wrapper.startswith('glm53_'):
+        args = [IMAGE, str(out)]
+    else:
+        args = [str(out)]
+    result = subprocess.run(['bash', str(ROOT / 'experiments' / wrapper), *args],
+                            env=env, capture_output=True, text=True, timeout=30)
+    assert result.returncode == 0, result.stdout + result.stderr
+    records = [json.loads(p.read_text()) for p in out.glob('container-*.json')]
+    assert len(records) == expected_containers
+    assert all(r['removed'] and r['scratch_removed'] for r in records)

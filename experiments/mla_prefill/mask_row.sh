@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # One admitted kernel quantum; independent invocations share no mutable build/output state.
 set -euo pipefail
+export TESSERA_CONTAINER_ENGINE=podman
 SCRIPT=${MLA_SCRIPT:-mask_gate.py}
 [[ "$SCRIPT" = mask_gate.py || "$SCRIPT" = mask_abba.py ]] || exit 2
 OUT=$(realpath -m "${1:?output_dir}");shift
@@ -15,7 +16,7 @@ if [[ -n "${MLA_BUILD_ROOT:-}" ]]; then
   BUILD_ROOT=$(realpath -e "$MLA_BUILD_ROOT")
   BUILD_MOUNT=(-v "$BUILD_ROOT":"$BUILD_ROOT":ro)
 fi
-docker run --rm --gpus all --ipc=host --network=host --cpuset-cpus "$CPUS" --user "$(id -u):$(id -g)" \
+python3 "$CHECKOUT/tools/_flux_gpu_jobspec.py" run --out "$OUT" --scratch-root "${FLUX_SCRATCH:-/tmp/flux-vanilla}" -- --user "$(id -u):$(id -g)" \
  -v "$CHECKOUT":/work:ro -v "$OUT":"$OUT" "${BUILD_MOUNT[@]}" -e HOME="$OUT/home" -e TMPDIR="$OUT/tmp" \
  -e TORCH_EXTENSIONS_DIR="$OUT/home/torch_extensions" -e PYTHONPATH=/work/src:/work/experiments/mla_prefill:/work/experiments \
  -e MAX_JOBS=1 -e OMP_NUM_THREADS=1 -e MKL_NUM_THREADS=1 -e OPENBLAS_NUM_THREADS=1 \

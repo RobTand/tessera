@@ -5,10 +5,12 @@
 # the same way srv-508.sh makes them.
 #   mhc_split_run.sh IMAGE_REF OUT_DIR
 set -euo pipefail
+export TESSERA_CONTAINER_ENGINE=podman
 IMG=$1; OUT=$(realpath -m "$2")
 here=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 # Gated like every wrapper that starts a container (issue #100): the digest in
 # IMG is checked against the daemon's RepoDigests and what ran is stamped.
+CHECKOUT=$(realpath "$here/../..")
 source "$here/../runtime_image.sh"
 runtime_image_require "$IMG" || exit 2
 # What a process inside may check its own image against (issue #132): the
@@ -20,7 +22,7 @@ done <<<"${RUNTIME_IMAGE_CONTAINER_ENV:-}"
 mkdir -p "$OUT/home" "$OUT/tmp"
 CPUS=$(python3 -c 'import os; print(",".join(map(str, sorted(os.sched_getaffinity(0)))))')
 echo "host=$(hostname) cpus=$CPUS image=$IMG"
-docker run --rm --gpus all --ipc=host --network=host --cpuset-cpus "$CPUS" \
+python3 "$CHECKOUT/tools/_flux_gpu_jobspec.py" run --out "$OUT" --scratch-root "${FLUX_SCRATCH:-/tmp/flux-vanilla}" -- \
   -v "$here":/exp:ro -v /mnt/shared:/mnt/shared:ro -v "$OUT":/out \
   -e HOME=/out/home -e TMPDIR=/out/tmp -e PYTHONDONTWRITEBYTECODE=1 -e PYTHONUNBUFFERED=1 \
   -e OMP_NUM_THREADS=1 "${imgenv[@]}" --entrypoint bash "$IMG" -c '
