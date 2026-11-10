@@ -14,7 +14,7 @@ import time
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 from tessera._dev.suite_source import measured_source
-from _flux_shape import THREADS, duration_seconds, resource_shape
+from _flux_shape import THREADS, duration_seconds, resource_shape, memory_peak_receipt
 
 
 def encoded(value):
@@ -544,13 +544,7 @@ def payload(directory, digest):
                 record["scratch_removed"] = not scratch.exists()
             except OSError as exc:
                 record["cleanup_error"] = str(exc)
-            record['declared_memory_gib'] = intent.get('memory_gib')
-            peak = Path('/sys/fs/cgroup' + Path('/proc/self/cgroup').read_text().strip().split(':', 2)[2]) / 'memory.peak'
-            record['memory_peak_bytes'] = None
-            try:
-                record['memory_peak_bytes'] = int(peak.read_text())
-            except OSError as exc:
-                record['memory_peak_read_error'] = str(exc)
+            record.update(memory_peak_receipt(intent.get('memory_gib')))
             save(directory / "payload.json", record)
         finally:
             for sig, handler in previous.items():

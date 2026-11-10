@@ -122,6 +122,7 @@ def test_submit_environment_and_runtime_budget_are_explicit(suite, tmp_path, mon
                                 "NUMEXPR_NUM_THREADS", "MAX_JOBS", "CMAKE_BUILD_PARALLEL_LEVEL",
                                 "MAKEFLAGS", "NINJAFLAGS", "KL_TOOL_DIR"}
     assert environment["PYTHONPATH"] == "src"
+    assert environment["FLUX_F58_FORCE_ASCII"] == "1"
     assert all(environment[name] == "1" for name in ("OMP_NUM_THREADS", "MKL_NUM_THREADS",
                "OPENBLAS_NUM_THREADS", "TORCH_NUM_THREADS", "NUMEXPR_NUM_THREADS",
                "MAX_JOBS", "CMAKE_BUILD_PARALLEL_LEVEL"))
@@ -244,3 +245,32 @@ def test_gpu_renderer_cli_marks_no_submission_and_bounds_threads(capsys, tmp_pat
 
 def suite_flux_threads():
     return load("suite_flux_thread_table", ROOT / "tools/_suite_flux.py").THREADS
+
+
+@pytest.mark.parametrize("state", ["present", "missing_peak", "missing_proc", "malformed", "invalid_peak"])
+def test_memory_peak_receipt_is_observational(suite, tmp_path, state):
+    from _flux_shape import memory_peak_receipt
+
+    proc = tmp_path / "cgroup"
+    root = tmp_path / "sys"
+    peak = root / "user.slice/job:scope/memory.peak"
+    peak.parent.mkdir(parents=True)
+    proc.write_text("0::/user.slice/job:scope\n")
+    peak.write_text("123456789\n")
+    assert memory_peak_receipt(8, proc=proc, root=root) == {
+        "declared_memory_gib": 8, "memory_peak_bytes": 123456789}
+    if state == "missing_peak":
+        peak.unlink()
+    elif state == "missing_proc":
+        proc.unlink()
+    elif state == "malformed":
+        proc.write_text("not a cgroup entry\n")
+    elif state == "invalid_peak":
+        peak.write_text("invalid\n")
+    receipt = memory_peak_receipt(8, proc=proc, root=root)
+    assert receipt["declared_memory_gib"] == 8
+    if state == "present":
+        assert receipt["memory_peak_bytes"] == 123456789
+    else:
+        assert receipt["memory_peak_bytes"] is None
+        assert receipt["memory_peak_read_error"]

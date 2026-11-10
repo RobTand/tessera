@@ -18,7 +18,7 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from _flux_shape import THREADS, duration_seconds, resource_shape  # noqa: E402
+from _flux_shape import THREADS, duration_seconds, resource_shape, memory_peak_receipt  # noqa: E402
 
 BASE_ENV = {"PATH": "/usr/bin:/bin", "HOME": "/home/rob", "FLUX_F58_FORCE_ASCII": "1", **THREADS}
 
@@ -332,13 +332,7 @@ def run_container(arguments, directory, scratch_root, *, gpu=True):
         except (OSError, ValueError, subprocess.SubprocessError) as exc:
             record['cleanup_errors'].append(str(exc))
         finally:
-            memory_path = Path('/sys/fs/cgroup' + Path('/proc/self/cgroup').read_text().strip().split(':', 2)[2]) / 'memory.peak'
-            record['declared_memory_gib'] = os.environ.get('FLUX_MEMORY_GIB')
-            record['memory_peak_bytes'] = None
-            try:
-                record['memory_peak_bytes'] = int(memory_path.read_text())
-            except OSError as exc:
-                record['memory_peak_read_error'] = str(exc)
+            record.update(memory_peak_receipt(os.environ.get('FLUX_MEMORY_GIB')))
             save()
             for sig, handler in handlers.items():
                 signal.signal(sig, handler)

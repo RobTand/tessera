@@ -1,8 +1,21 @@
-"""Pure resource and environment grammar shared by Flux command renderers."""
+"""Shared Flux resource grammar and observational resource receipts."""
 from __future__ import annotations
 
 import math
 import re
+from pathlib import Path
+
+
+def memory_peak_receipt(memory_gib, *, proc=Path('/proc/self/cgroup'), root=Path('/sys/fs/cgroup')):
+    """Read the current unified cgroup's peak without changing the job verdict."""
+    record = {'declared_memory_gib': memory_gib, 'memory_peak_bytes': None}
+    try:
+        entry = next(line for line in proc.read_text().splitlines() if line.startswith('0::'))
+        peak = Path(str(root) + entry.split(':', 2)[2]) / 'memory.peak'
+        record['memory_peak_bytes'] = int(peak.read_text())
+    except (OSError, ValueError, StopIteration) as exc:
+        record['memory_peak_read_error'] = f'{proc}: {type(exc).__name__}: {exc}'
+    return record
 
 THREADS = dict.fromkeys(("OMP_NUM_THREADS", "MKL_NUM_THREADS", "OPENBLAS_NUM_THREADS",
                          "TORCH_NUM_THREADS", "NUMEXPR_NUM_THREADS", "MAX_JOBS",

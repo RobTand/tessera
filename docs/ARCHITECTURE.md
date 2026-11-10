@@ -16,7 +16,10 @@ and use that exact scratch leaf. Native submission receipts retain the returned
 ID spelling; container receipts use the normalized ID. Suite and wrapper
 payloads sample their own cgroup `memory.peak`
 after cleanup and record `memory_peak_bytes` beside declared memory. Read
-failures are recorded and do not change the numerical verdict. The receipt records host and container affinity, status and cleanup.
+failures are recorded as a null peak with a reason and do not change the numerical verdict.
+The shared reader preserves colons in the unified cgroup path (field 3 onward);
+missing membership files and malformed peak values are observational failures too.
+The receipt records host and container affinity, status and cleanup.
 The foreground vLLM plugin runner uses this route, with an offline install from a scratch copy of the read-only source. Long-lived serving launchers remain pending size, duration and network qualification.
 The regdirect benchmark and pytest entry also use the shared launcher. Their D30 host watchdog still signals the owned CID, through Podman. The pytest entry reuses the fused-test wrapper's offline runner staging.
 The routed and dense oracles, mHC probe, routed census, fused census and
