@@ -841,3 +841,23 @@ def test_certified_worker_verifies_the_named_package_at_the_expected_commit(pane
     got, origins, raw = worker.observe_software_runtime(expected)
     assert calls == [('tessera', expected['tessera_commit'])]
     assert origins['installation']['expected_commit'] == expected['tessera_commit']
+
+
+def test_runtime_origins_bind_the_installation_verifier(installed_origins):
+    root, *_ = installed_origins
+    proof = worker.runtime_origins(str(root))
+    assert proof['install_verifier'] == worker.file_binding(worker.ROOT / 'tools/_install_identity.py')
+
+
+def test_panel_refuses_changed_installation_verifier(panel, tmp_path):
+    origins_path = Path(panel['evidence']['runtime_origins']['path'])
+    origins = json.loads(origins_path.read_bytes())
+    assert app.tp.validate_panel(panel, expected_runtime=copy.deepcopy(panel['runtime']))
+    verifier = tmp_path / '_install_identity.py'
+    verifier.write_text('# retained verifier\n')
+    origins['install_verifier'] = app.tp.file_binding(verifier)
+    panel['evidence']['runtime_origins'] = app.publish_json(origins, origins_path)
+    assert app.tp.validate_panel(panel, expected_runtime=copy.deepcopy(panel['runtime']))
+    verifier.write_text('# changed verifier\n')
+    with pytest.raises(ValueError):
+        app.tp.validate_panel(panel, expected_runtime=copy.deepcopy(panel['runtime']))

@@ -239,6 +239,7 @@ def _routed_panel(tmp_path, monkeypatch):
     evidence = {
         "runtime": tp.file_binding(_save(tmp_path, "runtime.json", runtime)),
         "runtime_origins": tp.file_binding(_save(tmp_path, "origins.json", {
+            "install_verifier": tp.file_binding(ROOT / "tools/_install_identity.py"),
             "package_root": runtime["package_root"],
             "installation": {"module": "tessera", "distribution": "tessera-quant",
                              "expected_commit": runtime["tessera_commit"],
