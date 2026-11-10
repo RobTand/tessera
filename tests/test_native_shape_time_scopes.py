@@ -535,10 +535,10 @@ def test_a_checkout_shadow_ahead_of_the_install_is_refused(tmp_path, monkeypatch
         _verify(name)
 
 
-def test_an_unrecorded_package_file_is_refused_and_bytecode_is_not(tmp_path, monkeypatch):
+def test_an_unrecorded_package_file_is_refused_and_checked_bytecode_is_allowed(tmp_path, monkeypatch):
     name, _, package, _ = _install(tmp_path, monkeypatch)
-    (package / "__pycache__").mkdir()
-    (package / "__pycache__" / "x.pyc").write_bytes(b"\0")
+    import py_compile
+    py_compile.compile(str(package / "__init__.py"), doraise=True)
     assert _verify(name)["verified_files"] == 3
     (package / "extra.py").write_text("X = 1\n")
     with pytest.raises(ValueError, match="unrecorded package file"):
@@ -560,3 +560,27 @@ def test_the_worker_calls_the_repository_verifier_and_names_no_published_pb_one(
     assert "prismabuild" not in text.lower() and "record_verifier" not in text
     import inspect
     assert list(inspect.signature(worker.observe_software_runtime).parameters) == ["expected"]
+
+
+@pytest.mark.parametrize('kind', ['sourceless', 'unchecked', 'malformed'])
+def test_unrecorded_bytecode_cannot_bypass_record(tmp_path, monkeypatch, kind):
+    import py_compile
+    name, _, package, _ = _install(tmp_path, monkeypatch)
+    assert _verify(name)['verified_files'] == 3
+    if kind == 'sourceless':
+        py_compile.compile(str(package / '__init__.py'), cfile=str(package / 'extra.pyc'), doraise=True)
+    else:
+        mode = py_compile.PycInvalidationMode.UNCHECKED_HASH
+        cache = Path(py_compile.compile(str(package / '__init__.py'), invalidation_mode=mode, doraise=True))
+        if kind == 'malformed':
+            cache.write_bytes(b'bad')
+    with pytest.raises(ValueError, match='unrecorded package file'):
+        _verify(name)
+
+
+def test_checked_hash_cache_is_allowed(tmp_path, monkeypatch):
+    import py_compile
+    name, _, package, _ = _install(tmp_path, monkeypatch)
+    py_compile.compile(str(package / '__init__.py'),
+                       invalidation_mode=py_compile.PycInvalidationMode.CHECKED_HASH, doraise=True)
+    assert _verify(name)['verified_files'] == 3
