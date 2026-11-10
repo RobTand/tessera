@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+python3 "$(dirname "${BASH_SOURCE[0]}")/../../tools/_flux_docker_guard.py" || exit $?
 # CPU-only admitted artifact check. No CUDA workload or recompilation.
 set -euo pipefail
 CHECKOUT=$(realpath "$1"); OUT=$(realpath -m "$2"); OLD=$(realpath "$3"); NEW=$(realpath "$4")

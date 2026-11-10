@@ -17,6 +17,8 @@ import sys
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "tools"))
+from _flux_docker_guard import refuse_unreviewed_docker
+refuse_unreviewed_docker()
 import _suite_flux  # noqa: E402
 #: Image manifest architecture to the Flux resource architecture.
 ARCHITECTURES = {"x86": "x86_64", "aarch64": "aarch64"}

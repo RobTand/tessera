@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+python3 "$(dirname "${BASH_SOURCE[0]}")/../tools/_flux_docker_guard.py" || exit $?
 # Run experiments/nvfp4_moe_oracle_probe.py inside the pinned serving build.
 #
 # This is NOT a serve: no model is loaded and no port is bound.  It still takes

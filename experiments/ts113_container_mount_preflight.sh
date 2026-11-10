@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+python3 "$(dirname "${BASH_SOURCE[0]}")/../tools/_flux_docker_guard.py" || exit $?
 # Prove the #113 container can atomically publish into its trace/profile binds.
 set -euo pipefail
 

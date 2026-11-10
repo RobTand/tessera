@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+python3 "$(dirname "${BASH_SOURCE[0]}")/../../tools/_flux_docker_guard.py" || exit $?
 # Build the fused window libraries of one A/B arm's source into a torch-extension
 # directory, on a CPU and without a GPU, so the timed action (bench_t8r.sh with
 # BENCH_EXT_DIR) only loads them.  Submit it as its own Flux job on any

@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+python3 "$(dirname "${BASH_SOURCE[0]}")/../../../tools/_flux_docker_guard.py" || exit $?
 # One box's half of the two-box NCCL sweep: one container, hard-bounded.
 # usage: nccl_sweep_box.sh RANK OUT_DIR [extra nccl_sweep.py box args...]
 #   RANK 0 runs on sparklina (head, 10.100.96.2, hosts the rendezvous), RANK 1 on sparky.

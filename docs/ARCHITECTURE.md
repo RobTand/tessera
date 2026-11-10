@@ -7174,8 +7174,9 @@ that reference and the record itself into the container it starts, under the
 two variable names the module owns -- so a tag on the command line becomes a
 digest inside the run rather than travelling as a name that identifies nothing.
 
-`experiments/serve_lock.sh` is the one lock protocol for every serve and every
-GPU-only probe.  Acquisition publishes one symlink at the host-local
+`experiments/serve_lock.sh` remains the legacy host lock for unported serves
+and GPU-only probes. Flux serving wrappers use the admitted GPU instead and
+do not acquire this lock; unrelated host containers cannot block admission.  Acquisition publishes one symlink at the host-local
 `serve.lock` pathname; its target binds PID, `/proc` start ticks and a random
 nonce, so publication has no directory-to-owner gap and PID reuse is not
 ownership.  All new-protocol observe/reap/publish transitions run under a
@@ -7213,10 +7214,11 @@ export does not cross into a container, a `--cpus` quota changes no CPU count a
 library can read, and `_NPROCESSORS_ONLN` still reports all 20 host CPUs inside
 a cpuset (`experiments/container_limits_probe.sh`, sparky, PB action `00869be43ebc`).
 
-`serve_and_dump_kl.sh` reaps its named container on every exit, including an
-unexpected shell failure. Successful removal is remembered so normal exit
-preserves the collected log. The wrapper releases its serve lock only after
-removal succeeds; failed cleanup retains ownership and refuses certification.
+`tools/_flux_docker_guard.py` owns the refusal for legacy root Docker entry
+points inside a Flux job. Shell and Python launchers call this helper before
+any work. Outside a Flux job their behavior is unchanged. Root Docker inside
+a job is allowed only through the reviewed serving wrapper pattern; anything
+else goes to the lead. The Podman launcher and suite transport remain separate.
 
 `experiments/serve_metrics.sh` owns the speculative-decoding refusal for every
 wrapper that dumps logprobs (`serve_and_dump_kl.sh`, `decode_regime_kl.sh`,
