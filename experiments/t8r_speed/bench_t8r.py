@@ -876,7 +876,7 @@ def main():
             return run_piece_major_comparison(args, comparison, comparison_sha, inputs, store, native_owner)
         power = PowerSampler()
         import tessera
-        meta = {"device": torch.cuda.get_device_name(), "torch": torch.__version__, "tp": [TP_RANK, TP_SIZE],
+        meta = {"meta_schema": "tessera.job_meta.v2", "device": torch.cuda.get_device_name(), "torch": torch.__version__, "tp": [TP_RANK, TP_SIZE],
                 "top_k": TOP_K, "experts": EXPERTS, "ms": ms, "warmup": args.warmup, "iters": args.iters,
                 "power_source": power.source, "tessera_file": tessera.__file__, "artifact": args.artifact,
                 "tessera_head": os.environ.get("TESSERA_HEAD"), "tessera_state": os.environ.get("TESSERA_STATE"),

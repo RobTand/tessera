@@ -255,10 +255,8 @@ META_V2='tessera.geometry_meta.v2'
 
 
 def job_identity(meta):
-    schema=meta.get('meta_schema')
-    if schema in (META_V2,'tessera.job_meta.v2'):return meta.get('flux_job_id')
-    if schema is None:return meta.get('pb_action')
-    raise ValueError(f'unknown geometry meta schema: {schema}')
+    from tessera.job_metadata import job_identity as read_identity
+    return read_identity(meta)
 
 
 def merge_index(index, format_name, build_id, version, relative, table, *, sha256=None):
