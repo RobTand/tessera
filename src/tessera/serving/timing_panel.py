@@ -29,7 +29,7 @@ from .contract import (PAYLOAD_FAMILY_BY_ROUTE, cell_covers_rung, cell_executes,
                        validate_serving_contract, require_runtime_image)
 from .census import cell_launch_agreement
 
-SCHEMA = "tessera.shape_time_panel.v1"
+SCHEMA = "tessera.shape_time_panel.v2"
 #: The versioned, input-bound handoff a validated panel is published through.
 #: It binds the exact panel/request/runtime/contract bytes, the sealed original
 #: measurement producer and a distinct replay-validator identity, every
@@ -430,8 +430,16 @@ class _RuntimeContractValidation:
     def phase(self):return json_bytes(self.phase_bytes)
 
 
+def _validate_install_verifier(bound):
+    _object(bound, {'path', 'bytes', 'sha256'}, 'install verifier')
+    if Path(bound['path']).name != '_install_identity.py':
+        raise ValueError('install verifier path differs')
+    read_bound(bound)
+
+
 def _preflight_origins(origins, expected):
-    _object(origins, {"package_root","modules","installation","record_verifier"}, "preflight origins")
+    _object(origins, {"package_root","modules","installation","install_verifier"}, "preflight origins")
+    _validate_install_verifier(origins['install_verifier'])
     if origins["package_root"]!=expected["package_root"]:raise ValueError("preflight runtime root differs")
     _object(origins["modules"], RUNTIME_MODULES, "preflight modules")
     for name,bound in origins["modules"].items():
@@ -477,7 +485,7 @@ def _verify_runtime_preflight(result, *, raw_contract, expected_runtime, job_sou
             or worker_source["path"] not in command):
         raise ValueError("preflight source invocation differs from its owned worker/job")
     expected=runtime_context(expected_runtime)
-    if result["schema"]!="tessera.installed_contract_preflight.v1" or result["gpu_executed"] is not False:
+    if result["schema"]!="tessera.installed_contract_preflight.v2" or result["gpu_executed"] is not False:
         raise ValueError("requires actual installed CPU contract validation")
     # The observed software context AND the raw contract bytes against the
     # frozen expected pin are cross-pin run identity: they seal in dev mode
@@ -501,16 +509,9 @@ def _verify_runtime_preflight(result, *, raw_contract, expected_runtime, job_sou
     if validator!={"module":"tessera.serving.contract","function":"validate_serving_contract",
                    "source":result["runtime_origins"]["modules"]["tessera.serving.contract"]}:
         raise ValueError("preflight validator owner differs")
-    verifier=result["runtime_origins"]["record_verifier"]
     job=json_bytes(read_bound(job_source))
-    if verifier is None:
-        # D32: a dev run may omit the sealed verifier entirely; there is
-        # then nothing to bind and the request binding stays unused.
-        if not dev_mode_enabled():raise ValueError("preflight request/verifier binding differs")
-    else:
-        if verifier!=job["request"]["record_verifier"] or json_bytes(read_bound(request_source))!=job["request"]:
-            raise ValueError("preflight request/verifier binding differs")
-        read_bound(verifier)
+    if json_bytes(read_bound(request_source))!=job["request"]:
+        raise ValueError("preflight request binding differs")
     return _RuntimeContractValidation(raw_contract,canonical(result),canonical(phase),_VALIDATION_ISSUER)
 
 
@@ -574,7 +575,8 @@ def _validate_panel(panel, *, expected_runtime, runtime_validation=None):
         raise ValueError("raw contract differs from runtime")
     if json_bytes(raw["runtime"]) != runtime:
         raise ValueError("runtime identity evidence differs")
-    origins = _object(json_bytes(raw["runtime_origins"]), {"package_root", "modules", "installation", "record_verifier"}, "runtime origins")
+    origins = _object(json_bytes(raw["runtime_origins"]), {"package_root", "modules", "installation", "install_verifier"}, "runtime origins")
+    _validate_install_verifier(origins['install_verifier'])
     if origins["package_root"] != runtime["package_root"]:
         raise ValueError("runtime origin root differs")
     installed = _object(origins["installation"], {"module", "distribution", "expected_commit", "installed_commit", "origin", "verified_files"}, "installed RECORD proof")
@@ -597,13 +599,6 @@ def _validate_panel(panel, *, expected_runtime, runtime_validation=None):
         if installed["module"] != "tessera" or installed["expected_commit"] != runtime["tessera_commit"] or installed["installed_commit"] != runtime["tessera_commit"] or installed["origin"] != str(Path(runtime["package_root"]) / "__init__.py") or not isinstance(installed["distribution"], str) or not installed["distribution"]:
             raise ValueError("installed RECORD proof differs from independent runtime")
         _integer(installed["verified_files"], "installed verified files")
-    if origins["record_verifier"] is not None:
-        verifier = _object(origins["record_verifier"], {"path", "bytes", "sha256"}, "RECORD verifier source")
-        _integer(verifier["bytes"], "RECORD verifier source bytes");_sha(verifier["sha256"], "RECORD verifier source sha256")
-        if not isinstance(verifier["path"], str) or not Path(verifier["path"]).is_absolute():
-            raise ValueError("installation verifier source requires an absolute path")
-    elif not dev_mode_enabled():
-        raise ValueError("installation verifier source requires an absolute path")
     _object(origins["modules"], RUNTIME_MODULES, "runtime module origins")
     for name, bound in origins["modules"].items():
         _object(bound, {"path", "bytes", "sha256"}, "runtime module origin")

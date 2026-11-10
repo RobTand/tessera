@@ -520,8 +520,6 @@ def require_single_replay_options(args, *, stubbed=False):
         raise ValueError("hash-only requires the closed stageprev numeric mode")
     if getattr(args,'paired_k32_timing',False) and not getattr(args,'paired_k32_numerics',False):
         raise ValueError('paired timing requires the closed qualified mode')
-    if getattr(args,'direct_vllm_inputs',False) and not getattr(args,'paired_k32_numerics',False):
-        raise ValueError('direct-vLLM input transport requires the closed paired numeric mode')
     if getattr(args, 'paired_k32_numerics', False):
         from paired_k32_qualification import require_options
         require_options(args, stubbed=stubbed)
@@ -803,14 +801,12 @@ def main():
     ap.add_argument("--single-routing-file", default=None,
                     help="one sealed historical real-ID replay; no balanced/menu cases")
     ap.add_argument("--input-manifest", default=None,
-                    help="exact PB-staged readset for the single replay")
+                    help="declared-input record (tessera.declared_inputs.v1) for the single replay")
     ap.add_argument("--profile-native-file", default=None,
                     help="one declared retained native-code artifact for counter-only recovery")
     ap.add_argument('--paired-k32-numerics', action='store_true',
                     help='closed-world pinned A8SE L10 TP2rank0 M1,512,2048 raw-bit qualification')
     ap.add_argument('--paired-k32-source-sha256', default=None)
-    ap.add_argument('--direct-vllm-inputs', action='store_true',
-                    help='same sealed ranges through held original FDs; vLLM execution exemption')
     ap.add_argument('--paired-k32-timing',action='store_true',
                     help='reuse accepted numeric receipt; fixed10 warmup/30 events plus separate profile/power')
     args = ap.parse_args()
@@ -837,9 +833,8 @@ def main():
     inputs = None
     native_owner = None
     if args.single_routing_file or comparison or args.paired_k32_numerics or args.stageprev_numerics:
-        from pb_staged_store import StagedInputs
-        inputs = (StagedInputs(args.input_manifest, direct_vllm=True)
-                  if (comparison or args.direct_vllm_inputs) else StagedInputs(args.input_manifest))
+        from declared_inputs import DeclaredInputs
+        inputs = DeclaredInputs(args.input_manifest)
     try:
         store = Store(args.artifact, inputs)
         if inputs:
@@ -849,7 +844,7 @@ def main():
                 inputs.bind_roles(store.root, published["modules"][P + "10.mlp.experts"]["roles"],
                                   module=P + "10.mlp.experts")
             if args.profile_native_file:
-                from pb_staged_store import NativeCallback
+                from declared_inputs import NativeCallback
                 from tessera import routed_fused as rf
                 native_owner = NativeCallback(inputs,args.profile_native_file,rf,
                     os.path.join(args.out,"native-artifact"),
@@ -868,7 +863,7 @@ def main():
             if timing_certificate['input_manifest_sha256']!=inputs.manifest_sha256:
                 raise ValueError('timing inputs differ from qualified numerics')
         if comparison:
-            from pb_staged_store import NativeCallback
+            from declared_inputs import NativeCallback
             from tessera import routed_fused as rf
             native_owner = NativeCallback(inputs, comparison["native"]["origin_path"], rf,
                 os.path.join(args.out, "native-artifact"),
@@ -877,11 +872,11 @@ def main():
             return run_piece_major_comparison(args, comparison, comparison_sha, inputs, store, native_owner)
         power = PowerSampler()
         import tessera
-        meta = {"device": torch.cuda.get_device_name(), "torch": torch.__version__, "tp": [TP_RANK, TP_SIZE],
+        meta = {"meta_schema": "tessera.job_meta.v2", "device": torch.cuda.get_device_name(), "torch": torch.__version__, "tp": [TP_RANK, TP_SIZE],
                 "top_k": TOP_K, "experts": EXPERTS, "ms": ms, "warmup": args.warmup, "iters": args.iters,
                 "power_source": power.source, "tessera_file": tessera.__file__, "artifact": args.artifact,
                 "tessera_head": os.environ.get("TESSERA_HEAD"), "tessera_state": os.environ.get("TESSERA_STATE"),
-                "image": os.environ.get("ORACLE_IMAGE"), "pb_action": os.environ.get("PB_ACTION_KEY"),
+                "image": os.environ.get("ORACLE_IMAGE"), "flux_job_id": os.environ.get("FLUX_JOB_ID"),
                 "host": os.environ.get("HOST_NAME"), "kernel_sha": os.environ.get("KERNEL_SHA"),
                 "e4m3_mma": os.environ.get("TESSERA_FUSED_E4M3_MMA"),
                 "start_unix": time.time()}
@@ -919,18 +914,16 @@ def main():
                 'source_sha256': args.paired_k32_source_sha256,
                 'scope': ('balanced seeded real A8SE TP2rank0; accepted numeric reuse and operator timing only'
                           if args.paired_k32_timing else
-                          'balanced seeded inputs, real A8SE wire TP2rank0; no full-model quality/timing'),
-                'sdk_version': inputs.sdk.SDK_VERSION}
+                          'balanced seeded inputs, real A8SE wire TP2rank0; no full-model quality/timing')}
         elif args.stageprev_numerics:
             meta["stageprev_numerics"] = {
                 "scope": "original three-group operator words; seeded x and uniform weights, not a served capture",
                 "reference_baseline_source": "b770727c50eef822132518bdc4fd6efe84359c9e",
-                "manifest_sha256": inputs.manifest_sha256, "sdk_version": inputs.sdk.SDK_VERSION}
+                "manifest_sha256": inputs.manifest_sha256}
         elif inputs:
             meta["single_replay"] = {"scope": "historical IDs, seeded random x and uniform weights; not VB capture",
                                       "reference_baseline_source": "608bbdf0d6909548ff7c6919e5cdb834c1fcef7c",
-                                      "manifest_sha256": inputs.manifest_sha256,
-                                      "sdk_version": inputs.sdk.SDK_VERSION}
+                                      "manifest_sha256": inputs.manifest_sha256}
         results = []
         plan = [(g, k, mod) for g, k, mod in TESSERA_GROUPS] + [(g, "bf16", (o, i)) for g, o, i in BF16_GROUPS]
         for gid, kind, module in plan:
@@ -1143,7 +1136,7 @@ def main():
         if inputs:
             meta["staged_reads"] = inputs.reads
             inputs.close()
-            if inputs.direct_vllm:meta['direct_input_bindings'] = inputs.direct_record
+            meta['direct_input_bindings'] = inputs.direct_record
         meta["end_unix"] = time.time()
         json.dump({"meta": meta, "results": results}, open(os.path.join(args.out, "bench_t8r.json"), "w"),
                   indent=1, default=repr)

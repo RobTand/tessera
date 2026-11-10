@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # One dependent numeric-then-paired qualification of the three retained builds.
-# The caller supplies exact manifest digests in the sealed PB environment.
+# The caller supplies exact manifest digests in the explicit Flux job environment.
 set -euo pipefail
 OUT=$(realpath -m "${1:?output directory}")
 export MLA_BUILD_ROOT=$(realpath -e "${2:?retained build root}")

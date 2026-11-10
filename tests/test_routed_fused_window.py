@@ -13,7 +13,7 @@ bitwise equality of the deterministic reduction; the support predicate's
 refusals by name. The loader uses one native class dispatcher.
 
 The lane is a CUDA kernel JIT-built on first use; every GPU case here runs
-through PrismaBuild inside the pinned serving image
+as a Flux GPU job inside the pinned serving image (Flux GPU path rendered, not qualified)
 (``experiments/routed_fused_tests.sh``).
 """
 

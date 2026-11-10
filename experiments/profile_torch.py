@@ -1,20 +1,15 @@
-"""Export a torch profile where PrismaBuild asked for one.
+"""Export a torch profile where the caller asked for one.
 
-``pbrun --profile torch`` cannot start ``torch.profiler`` from outside: it is
-an in-process profiler, and this fleet will not monkeypatch an action's
-interpreter to pretend otherwise.  The mode is a contract instead.  PrismaBuild
-names a path in ``PRISMABUILD_PROFILE_TORCH_OUT``; the action exports its Chrome
-trace there; PrismaBuild validates it, sizes it, ingests it as a CAS blob and
-names the digest on the ending.
+An in-process profiler cannot be started from outside the interpreter, so the
+mode is a contract: the caller names a path in ``TESSERA_PROFILE_TORCH_OUT`` and
+the job exports its Chrome trace there.
 
 This file is that contract, written once so nobody has to get it right twice.
-It has no PrismaBuild import and no dependency beyond torch, so **copy it into
-your own repository** -- the action runs from a snapshot of your checkout, and
-a file that lives only here is not in it.
+It has no dependency beyond torch.
 
-    from profile_torch import prismabuild_torch_profile
+    from profile_torch import torch_profile
 
-    with prismabuild_torch_profile():
+    with torch_profile():
         train_one_epoch()
 
 Unprofiled runs cost nothing: with the variable unset the context manager does
@@ -23,12 +18,12 @@ not import ``torch.profiler`` at all.
 Three things it handles that hand-rolled versions tend not to:
 
 *   **The trace is written atomically.**  A SIGKILL landing mid-export would
-    otherwise leave a truncated file where PrismaBuild expects a trace, and
+    otherwise leave a truncated file where the caller expects a trace, and
     "truncated" and "absent" are different failures with different fixes.
 *   **It exports on SIGTERM**, so an action stopped by its deadline still files
     the profile it reached -- which is the run somebody profiled *because* it
     was slow.  Measured on sparky: 20 s of traced matmuls took 4.5 s to write
-    9.0 MB gzipped, and PrismaBuild's reap allows 6 s for it.
+    9.0 MB gzipped. The launcher must reserve enough TERM grace for export.
 *   **The path ends in ``.json.gz`` and torch gzips by suffix**, which is worth
     19x on a real trace (773 kB against 14.7 MB, same run).  Do not rename it.
 
@@ -43,13 +38,13 @@ import contextlib
 import os
 import signal
 
-#: Where PrismaBuild wants the trace.  Absent for an unprofiled run.
-OUT_ENV = "PRISMABUILD_PROFILE_TORCH_OUT"
+#: Where the caller wants the trace.  Absent for an unprofiled run.
+OUT_ENV = "TESSERA_PROFILE_TORCH_OUT"
 
 
 @contextlib.contextmanager
-def prismabuild_torch_profile(**kwargs):
-    """Profile this block if PrismaBuild asked, and do nothing if it did not.
+def torch_profile(**kwargs):
+    """Profile this block if the caller asked, and do nothing if it did not.
 
     Yields the ``torch.profiler.profile`` object, or ``None`` when the run is
     unprofiled, so the same code path serves both.

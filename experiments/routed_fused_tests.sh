@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Run the fused routed window lane's GPU tests (tests/test_routed_fused_window.py,
-# tessera#640) inside the pinned serving image.  Submitted through PrismaBuild
-# as the admitted action's command; same container discipline as
+# tessera#640) inside the pinned serving image.  Run as a Flux GPU job (see the
+# rendered tools/_flux_gpu_jobspec.py line; Flux GPU path rendered, not qualified)
+# as the job's command; same container discipline as
 # routed_census.sh (checkout read-only at /work, every write under <out_dir>).
 #
 # The image ships no pytest.  The runner is borrowed, pure Python, from a host
@@ -13,13 +14,12 @@
 #   ORACLE_IMAGE      the immutable image reference (required)
 #   TEST_RUNNER_SP    site-packages holding the pure-Python runner (required)
 #   TEST_RO_MOUNTS    host directories mounted read-only at the same path
-#   PB_CLIENT_ROOT    optional frozen published SDK root for owner controls
 #   TEST_CPU_ONLY    1: admitted CPU controls, no GPU request inside the container
 #   TEST_LOCAL_TMP    1: TMPDIR and pytest's basetemp on a container tmpfs
 #   NATIVE_CONTAINER_SRC / NATIVE_CONTAINER_EXT: match retained build paths
 set -euo pipefail
 CHECKOUT=$(realpath "$1"); OUT=$(realpath -m "$2"); shift 2
-IMAGE_REF=${ORACLE_IMAGE:?set ORACLE_IMAGE to the immutable PB-declared measurement image}
+IMAGE_REF=${ORACLE_IMAGE:?set ORACLE_IMAGE to the immutable digest-pinned measurement image}
 SP=${TEST_RUNNER_SP:?set TEST_RUNNER_SP to a python3.12 site-packages holding the test runner}
 source "$CHECKOUT/experiments/runtime_image.sh"
 runtime_image_require "$IMAGE_REF"
@@ -73,7 +73,6 @@ if [[ "$CONTAINER_SRC" != /work/src ]]; then
   [[ -f "$PROJECT_FILE" ]] || { echo "missing source version metadata: $PROJECT_FILE" >&2; exit 2; }
   EXTRA+=(-v "$PROJECT_FILE":"$(dirname "$CONTAINER_SRC")/pyproject.toml":ro)
 fi
-if [[ -n "${PB_CLIENT_ROOT:-}" ]]; then EXTRA+=(-v "$PB_CLIENT_ROOT":"$PB_CLIENT_ROOT":ro); fi
 for d in ${TEST_RO_MOUNTS:-}; do [[ -d "$d" ]] || { echo "missing $d" >&2; exit 2; }; EXTRA+=(-v "$d":"$d":ro); done
 BT="$OUT/tmp/pytest-tmp"; TD="$OUT/tmp"
 if [[ "${TEST_LOCAL_TMP:-0}" == 1 ]]; then EXTRA+=(--tmpfs /pbtmp:rw,exec,size=8g); BT=/pbtmp/pytest-tmp; TD=/pbtmp; fi
@@ -86,12 +85,12 @@ docker run --rm "${GPU_ARGS[@]}" --ipc=host --network=host --cpuset-cpus "$CPUS"
   -e TORCH_EXTENSIONS_DIR="$CONTAINER_EXT" -e PYTHONDONTWRITEBYTECODE=1 \
   -e NATIVE_CONTAINER_SRC="$CONTAINER_SRC" \
   -e TERMINAL_NATIVE_IDENTITY_DIR="$OUT/native-identities" \
-  -e PYTHONPATH="$CONTAINER_SRC":/work/tests:/work/experiments:"$OUT/runner-sp"${PB_CLIENT_ROOT:+:"$PB_CLIENT_ROOT/src"} \
+  -e PYTHONPATH="$CONTAINER_SRC":/work/tests:/work/experiments:"$OUT/runner-sp" \
   -e HOST_NAME="$(hostname)" -e OMP_NUM_THREADS=1 -e MKL_NUM_THREADS=1 \
   -e OPENBLAS_NUM_THREADS=1 -e NUMEXPR_NUM_THREADS=1 -e PYTHONUNBUFFERED=1 \
   -e ORACLE_IMAGE="$IMAGE_REF" -e TESSERA_HEAD="$HEAD" -e TESSERA_STATE="$STATE" \
   -e TESSERA_ROUTED_FUSED_VERBOSE="${TESSERA_ROUTED_FUSED_VERBOSE:-}" \
-  -e PB_ACTION_KEY="${PB_ACTION_KEY:-${PRISMABUILD_ACTION_KEY:-}}" \
+  -e FLUX_JOB_ID="${FLUX_JOB_ID:-}" \
   "${IMAGE_ENV[@]}" "${EXTRA[@]}" ${TESSERA_ROUTED_ENV:+-e "$TESSERA_ROUTED_ENV"} \
   --entrypoint python3 -w /work "$IMAGE_REF" \
   -m pytest -p no:cacheprovider "${SOURCE_PLUGIN[@]}" "${XDIST[@]}" -q -rA --junitxml="$OUT/junit.xml" \

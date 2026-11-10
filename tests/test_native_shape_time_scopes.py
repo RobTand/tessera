@@ -4,12 +4,12 @@ from __future__ import annotations
 import copy
 import gzip
 import hashlib
+import json
 import sys
 import types
 from pathlib import Path
 from types import SimpleNamespace
 
-import box_artifacts
 import pytest
 import torch
 
@@ -18,6 +18,8 @@ from tools import tessera_shape_time_panel as app
 from tools import tessera_shape_time_worker as worker
 from tessera.serving import census_plan, contract, scheme
 from tessera.serving import timing_panel as tp
+
+ROOT = Path(__file__).resolve().parents[1]
 
 
 def _save(root, name, value, raw=False):
@@ -33,7 +35,6 @@ def _request_value(panel, monkeypatch, *, scope, runtime, scheme_decl, wire_bind
     value = {"schema": app.REQUEST_SCHEMA, "expected_runtime": runtime, "scope": scope,
              "prefix": prefix, "scheme": scheme_decl, "wire": wire_binding,
              "contract": contract_binding or panel["evidence"]["contract"],
-             "record_verifier": app.tp.file_binding(box_artifacts.skip_now("prismabuild_tools", "pbtest_pins.py")),
              "runtime_python": app.tp.file_binding(sys.executable), "worker_timeout_s": 120,
              "sampling": {"samples": 4, "warmup_iterations": 1, "steady_s": 20.0, "seed": 688},
              "netdata_hosts": {"sparky": "sparky", "sparklina": "sparklina"}}
@@ -240,13 +241,12 @@ def _routed_panel(tmp_path, monkeypatch):
     evidence = {
         "runtime": tp.file_binding(_save(tmp_path, "runtime.json", runtime)),
         "runtime_origins": tp.file_binding(_save(tmp_path, "origins.json", {
+            "install_verifier": tp.file_binding(ROOT / "tools/_install_identity.py"),
             "package_root": runtime["package_root"],
             "installation": {"module": "tessera", "distribution": "tessera-quant",
                              "expected_commit": runtime["tessera_commit"],
                              "installed_commit": runtime["tessera_commit"],
                              "origin": runtime["package_root"] + "/__init__.py", "verified_files": 43},
-            "record_verifier": {"path": str(box_artifacts.path("prismabuild_tools", "pbtest_pins.py")),
-                                "bytes": 1, "sha256": "a" * 64},
             "modules": {name: {"path": str(Path(runtime["package_root"]) / ("__init__.py" if name == "tessera" else name.removeprefix("tessera.").replace(".", "/") + ".py")),
                                "bytes": 1, "sha256": "a" * 64} for name in tp.RUNTIME_MODULES}})),
         "producer": tp.file_binding(_save(tmp_path, "producer.json", {
@@ -432,3 +432,178 @@ def test_worker_refuses_routed_tp1(panel, monkeypatch, tmp_path):
     wire = app.tp.read_bound(request["wire"])
     with pytest.raises(ValueError, match="TP2 only"):
         worker.prepare_routed(dict(request, _wire_roles=[]), wire)
+
+
+# --- installed-distribution proof: the real policy on temporary wheel-style installs -------------------------
+import base64
+import importlib
+import itertools
+
+COMMIT = "c" * 40
+_UNIQUE = itertools.count()
+
+
+def _row(site, path):
+    raw = path.read_bytes()
+    digest = base64.urlsafe_b64encode(hashlib.sha256(raw).digest()).rstrip(b"=").decode()
+    return f"{path.relative_to(site).as_posix()},sha256={digest},{len(raw)}"
+
+
+def _record(info, site, files):
+    rows = [_row(site, path) for path in files] + [f"{info.relative_to(site).as_posix()}/RECORD,,"]
+    (info / "RECORD").write_text("\n".join(rows) + "\n")
+
+
+def _install(tmp_path, monkeypatch, *, direct=None, record=True):
+    """A clean wheel-style install of a fresh module name; returns (name, site, package, info)."""
+    name = f"fakeinstalled{next(_UNIQUE)}"
+    site = tmp_path / "site"
+    site.mkdir(exist_ok=True)
+    package = site / name
+    package.mkdir()
+    (package / "__init__.py").write_text("VALUE = 1\n")
+    info = site / f"{name}-1.0.dist-info"
+    info.mkdir()
+    (info / "METADATA").write_text(f"Metadata-Version: 2.1\nName: {name}\nVersion: 1.0\n")
+    (info / "top_level.txt").write_text(name + "\n")
+    (info / "direct_url.json").write_text(json.dumps(
+        direct if direct is not None else {"url": "file:///src", "vcs_info": {"vcs": "git", "commit_id": COMMIT}}))
+    if record:
+        _record(info, site, [package / "__init__.py", info / "METADATA", info / "direct_url.json"])
+    monkeypatch.syspath_prepend(str(site))
+    importlib.invalidate_caches()
+    return name, site, package, info
+
+
+def _verify(name, commit=COMMIT):
+    from tools._install_identity import verify_install
+    return verify_install(name, commit)
+
+
+def test_a_clean_wheel_style_install_at_the_pinned_commit_is_accepted(tmp_path, monkeypatch):
+    name, site, package, _ = _install(tmp_path, monkeypatch)
+    evidence = _verify(name)
+    assert evidence == {"module": name, "distribution": name, "installed_commit": COMMIT,
+                        "expected_commit": COMMIT, "origin": str(package / "__init__.py"), "verified_files": 3}
+
+
+def test_two_distributions_owning_the_module_are_refused(tmp_path, monkeypatch):
+    name, site, package, _ = _install(tmp_path, monkeypatch)
+    other = site / f"{name}-2.0.dist-info"
+    other.mkdir()
+    (other / "METADATA").write_text(f"Metadata-Version: 2.1\nName: {name}-fork\nVersion: 2.0\n")
+    _record(other, site, [package / "__init__.py", other / "METADATA"])
+    with pytest.raises(ValueError, match="expected one distribution"):
+        _verify(name)
+
+
+@pytest.mark.parametrize("direct,message", [
+    ({"url": "file:///src", "dir_info": {"editable": True}}, "non-editable Git install"),
+    ({"url": "file:///src", "vcs_info": {"vcs": "git", "commit_id": "d" * 40}}, "non-editable Git install"),
+    ({"url": "file:///src", "vcs_info": {"vcs": "git"}}, "non-editable Git install"),
+    ({"url": "file:///src", "vcs_info": {"vcs": "hg", "commit_id": COMMIT}}, "non-editable Git install"),
+    ({"url": "file:///src"}, "non-editable Git install")])
+def test_an_editable_unversioned_or_wrong_commit_install_is_refused(tmp_path, monkeypatch, direct, message):
+    name, *_ = _install(tmp_path, monkeypatch, direct=direct)
+    with pytest.raises(ValueError, match=message):
+        _verify(name)
+
+
+def test_a_tampered_recorded_byte_is_refused(tmp_path, monkeypatch):
+    name, _, package, _ = _install(tmp_path, monkeypatch)
+    (package / "__init__.py").write_text("VALUE = 2\n")
+    with pytest.raises(ValueError, match="installed bytes differ from RECORD"):
+        _verify(name)
+
+
+def test_a_missing_recorded_file_is_refused(tmp_path, monkeypatch):
+    name, site, package, info = _install(tmp_path, monkeypatch)
+    data = package / "data.bin"
+    data.write_bytes(b"\x01")
+    _record(info, site, [package / "__init__.py", data, info / "METADATA", info / "direct_url.json"])
+    assert _verify(name)["verified_files"] == 4
+    data.unlink()
+    with pytest.raises(ValueError, match="recorded file is missing"):
+        _verify(name)
+
+
+def test_a_checkout_shadow_ahead_of_the_install_is_refused(tmp_path, monkeypatch):
+    name, *_ = _install(tmp_path, monkeypatch)
+    shadow = tmp_path / "checkout" / name
+    shadow.mkdir(parents=True)
+    (shadow / "__init__.py").write_text("VALUE = 1\n")
+    monkeypatch.syspath_prepend(str(tmp_path / "checkout"))
+    importlib.invalidate_caches()
+    with pytest.raises(ValueError, match="not owned by its RECORD"):
+        _verify(name)
+
+
+def test_an_unrecorded_package_file_is_refused_and_checked_bytecode_is_allowed(tmp_path, monkeypatch):
+    name, _, package, _ = _install(tmp_path, monkeypatch)
+    import py_compile
+    py_compile.compile(str(package / "__init__.py"), doraise=True)
+    assert _verify(name)["verified_files"] == 3
+    (package / "extra.py").write_text("X = 1\n")
+    with pytest.raises(ValueError, match="unrecorded package file"):
+        _verify(name)
+
+
+def test_a_missing_record_is_refused(tmp_path, monkeypatch):
+    name, *_ = _install(tmp_path, monkeypatch, record=False)
+    with pytest.raises(ValueError, match="RECORD is missing"):
+        _verify(name)
+
+
+def test_the_worker_calls_the_repository_verifier_and_names_no_published_pb_one():
+    from tools import tessera_shape_time_worker as worker
+    from tools import _install_identity
+    assert worker.verify_install is _install_identity.verify_install
+    assert not hasattr(worker, "PB_RECORD_VERIFIER") and not hasattr(worker, "record_verifier_bytes")
+    text = Path(worker.__file__).read_text()
+    assert "prismabuild" not in text.lower() and "record_verifier" not in text
+    import inspect
+    assert list(inspect.signature(worker.observe_software_runtime).parameters) == ["expected"]
+
+
+@pytest.mark.parametrize('kind', ['sourceless', 'unchecked', 'malformed'])
+def test_unrecorded_bytecode_cannot_bypass_record(tmp_path, monkeypatch, kind):
+    import py_compile
+    name, _, package, _ = _install(tmp_path, monkeypatch)
+    assert _verify(name)['verified_files'] == 3
+    if kind == 'sourceless':
+        py_compile.compile(str(package / '__init__.py'), cfile=str(package / 'extra.pyc'), doraise=True)
+    else:
+        mode = py_compile.PycInvalidationMode.UNCHECKED_HASH
+        cache = Path(py_compile.compile(str(package / '__init__.py'), invalidation_mode=mode, doraise=True))
+        if kind == 'malformed':
+            cache.write_bytes(b'bad')
+    with pytest.raises(ValueError, match='unrecorded package file'):
+        _verify(name)
+
+
+def test_checked_hash_cache_is_allowed(tmp_path, monkeypatch):
+    import py_compile
+    name, _, package, _ = _install(tmp_path, monkeypatch)
+    py_compile.compile(str(package / '__init__.py'),
+                       invalidation_mode=py_compile.PycInvalidationMode.CHECKED_HASH, doraise=True)
+    assert _verify(name)['verified_files'] == 3
+
+
+def test_real_install_verifier_result_satisfies_panel_installation_schema(panel, tmp_path, monkeypatch):
+    monkeypatch.setenv('PRISMAQUANT_DEV_MODE', '1')
+    name, _, _, _ = _install(tmp_path, monkeypatch)
+    installation = _verify(name)
+    assert tp.validate_panel(panel, expected_runtime=copy.deepcopy(panel['runtime']))
+    path = Path(panel['evidence']['runtime_origins']['path'])
+    origins = tp.json_bytes(tp.read_bound(panel['evidence']['runtime_origins']))
+    # Dev mode stamps this fixture's different module/commit identity; the real
+    # panel still enforces the exact installation result schema in every mode.
+    origins['installation'] = installation
+    path.write_bytes(tp.canonical(origins))
+    panel['evidence']['runtime_origins'] = tp.file_binding(path)
+    assert tp.validate_panel(panel, expected_runtime=copy.deepcopy(panel['runtime']))
+    origins['installation']['unexpected'] = True
+    path.write_bytes(tp.canonical(origins))
+    panel['evidence']['runtime_origins'] = tp.file_binding(path)
+    with pytest.raises(ValueError, match='installed RECORD proof'):
+        tp.validate_panel(panel, expected_runtime=copy.deepcopy(panel['runtime']))

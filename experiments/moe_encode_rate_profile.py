@@ -35,8 +35,9 @@ Power is read against the box's envelope, never utilisation: on GB10
 on the box is the instrument that can see whether anything else was loaded, and
 the receipt quotes it.
 
-usage (through the pool, one GPU slot):
-    pbrun.py --gpu --cwd <checkout> -- <venv>/bin/python experiments/moe_encode_rate_profile.py OUT.json
+usage (as a Flux GPU job, one GPU slot; render the line with tools/_flux_gpu_jobspec.py,
+Flux GPU path rendered, not qualified):
+    <venv>/bin/python experiments/moe_encode_rate_profile.py OUT.json
 """
 from __future__ import annotations
 

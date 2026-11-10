@@ -1,19 +1,9 @@
 #!/usr/bin/env bash
 # The four censuses of the #91 reproduction, in one process.
 #
-# A file rather than a ``bash -c`` string because the pool's action contract
-# refuses an argv element containing a control character, and a newline is
-# one: a multi-line command is not something a ledger can record as an argv.
-#
-# EVERY parameter arrives POSITIONALLY, and every environment variable the
-# censuses need is set here.  The pool does not forward the submitter's
-# environment -- it execs the recorded argv under ``env={}``
-# (``prismabuild/core.py:3951``, built from the action's
-# ``environment.variables``, which ``pbrun`` seals empty at ``pbrun.py:181``).
-# An earlier version read ``WT``/``SUF`` from the environment and both queued
-# chains died in 0.14 s with ``/experiments/ts91_cache_key_repro.sh: No such
-# file or directory`` -- ``$WT`` empty -- after waiting an hour for a GPU slot
-# (pool keys ae7b06d9c893, 0a090ffa1b67).
+# Every parameter arrives positionally. The Flux launcher starts from an empty
+# environment with an explicit allow-list, so these censuses set the values
+# they need rather than relying on submitter environment inheritance.
 #
 # usage: ts91_chain_body.sh <worktree> <suffix> [ext-a] [ext-b-readonly] [image]
 #

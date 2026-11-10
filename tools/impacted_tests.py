@@ -68,11 +68,7 @@ Other kinds of coupling do not have ordinary import edges:
 * *The wire and the packaging* are un-analysable by either route and are named
   in ``OPAQUE``.
 
-PrismaBuild snapshots add one generated source-closure member. Only a member
-the declared source verifier vouched for, and ``tessera._dev.suite_source``
-then checked against the commit, is removed before classification. A matching basename is not ownership
-proof; unverified closure-shaped changes force a full selection. A snapshot
-commit is intentionally parentless. When
+A snapshot commit is intentionally parentless. When
 both endpoints of ``BASE...HEAD`` exist but have no merge base, the selector
 records and uses the equivalent direct ``BASE..HEAD`` tree comparison.
 
@@ -97,7 +93,6 @@ import argparse
 import ast
 import copy
 import json
-import re
 import subprocess
 import sys
 from collections import defaultdict, deque
@@ -112,7 +107,6 @@ from tessera._dev.source_dependencies import (  # noqa: E402
     module_import_requests,
     source_execution_modules,
 )
-from tessera._dev.suite_source import measured_source  # noqa: E402
 
 # Coupling no import statement expresses.  A change at or below any of these
 # forces the full suite rather than a narrowed list.
@@ -134,13 +128,6 @@ INERT = {".md", ".txt", ".rst"}
 # excluded modules in the graph so their pytest consumers are still selected.
 # The A4 gate now has a pytest entry point and is not a manual-only interface.
 MANUAL_GATES: dict[str, str] = {}
-
-# This grammar only identifies metadata that needs verification. It never
-# proves ownership or grants an exclusion: the sealed action does that.
-PBRUN_CLOSURE_CANDIDATE = re.compile(
-    r"\.pbrun-closure\.[0-9a-f]{16}\.json\Z"
-)
-
 
 def _module_name(path: Path, root: Path) -> str | None:
     """Dotted name for a file, using the layout this repo actually has."""
@@ -696,14 +683,9 @@ def changed_files(ref: str, root: Path) -> tuple[list[str], str]:
         lines, comparison = fallback
     else:
         lines, comparison = out.stdout.split("\0"), ref
-    # Display-quoted names are not paths: tabs/newlines must not hide a
-    # closure candidate (or split any other path) from classification.
+    # Display-quoted names are not paths: tabs/newlines must not split a
+    # path from classification.
     changed = [line for line in lines if line]
-    if any(PBRUN_CLOSURE_CANDIDATE.fullmatch(Path(line).name) for line in changed):
-        source = measured_source(root)
-        verified = ({member["path"] for member in source["excluded_metadata"]}
-                    if source["verification"] == "verified" else set())
-        changed = [line for line in changed if line not in verified]
     return sorted(changed), comparison
 
 
@@ -770,9 +752,6 @@ def select(root: Path, changed: list[str], *, comparison: str = "") -> dict:
     forced = [f for f in changed if any(f.startswith(o) for o in OPAQUE)]
     # The root conftest is imported by pytest for the whole tree.
     forced += [f for f in changed if f == "conftest.py"]
-    # An unowned metadata-shaped file remains a real change. We cannot infer
-    # that it is harmless scaffolding from its spelling, so fail open.
-    forced += [f for f in changed if PBRUN_CLOSURE_CANDIDATE.fullmatch(Path(f).name)]
 
     guarded_edges = {}
     unnamed_reads: dict[str, list[int]] = {}

@@ -24,25 +24,19 @@ def merge_module():
 
 
 def test_known_container_runner_names_its_effective_population():
-    command = ["/usr/bin/python3", "tools/suite_container.py",
-               "--image", "example/suite@sha256:" + "a" * 64,
-               "--deps-site", "/scoped/site-packages",
-               "--deps-sha256", "b" * 64,
-               "--surface-dir", "/receipts/run",
-               "--cache-dir", "/cache/run",
-               "--", "/usr/bin/python3", "-m", "pytest", "tests",
-               "--strict-cuda", "--surface-json", "/receipts/run/surface.gpu.json"]
-    output, refusal = merge_module()._effective_surface_json(command)
+    argv = command()
+    output, refusal = merge_module()._effective_surface_json(argv)
     assert refusal is None, refusal
     assert output == "/receipts/run/surface.gpu.json"
 
 
 def command(surface="/receipts/run/surface.gpu.json", cache="/cache/run", site="/scoped/site-packages"):
-    return ["/usr/bin/python3", owner.RUNNER, "--image", "example/suite@sha256:" + "a" * 64,
+    return ["/usr/bin/python3", "-s", owner.RUNNER, "--image", "sha256:" + "a" * 64,
             "--deps-site", site, "--deps-sha256", "b" * 64,
             "--surface-dir", str(Path(surface).parent), "--cache-dir", cache,
-            "--", "/usr/bin/python3", "-m", "pytest", "tests", "--strict-cuda",
-            "--surface-json", surface]
+            "--", "/usr/bin/python3", "-s", "-m", "pytest", "tests", "-o", "addopts=",
+            "-p", "no:cacheprovider", "--strict-cuda",
+            "--junitxml", str(Path(surface).parent / "junit.gpu.xml"), "--surface-json", surface]
 
 
 @pytest.mark.parametrize("mutation", ["entrypoint", "environment", "duplicate", "escape", "overlap", "second-output", "foreign-command", "rootdir", "plugin", "short-shadow", "foreign-test", "workers"])
@@ -54,7 +48,7 @@ def test_container_command_shadows_are_refused(mutation):
     elif mutation == "environment":
         argv[cut:cut] = ["--env", "PYTHONPATH=/foreign"]
     elif mutation == "duplicate":
-        argv[cut:cut] = ["--image", "example/suite@sha256:" + "c" * 64]
+        argv[cut:cut] = ["--image", "sha256:" + "c" * 64]
     elif mutation == "escape":
         argv[-1] = "/receipts/run/../foreign.json"
     elif mutation == "overlap":
@@ -80,7 +74,7 @@ def test_container_command_shadows_are_refused(mutation):
 @pytest.mark.parametrize("path", ["other/suite_container.py", "./tools/suite_container.py", "/foreign/tools/suite_container.py", "tools/../tools/suite_container.py"])
 def test_a_runner_basename_establishes_no_authority(path):
     argv = command()
-    argv[1] = path
+    argv[2] = path
     assert merge_module()._effective_surface_json(argv)[0] is None
 
 
@@ -88,38 +82,53 @@ def mounts(tmp_path):
     source, site, surface, cache, data = [tmp_path / p for p in ("source", "site", "surface", "cache", "data")]
     for path in (source, site, surface, data):
         path.mkdir()
-    (data / "pbsnapshot.py").write_text("# verifier fixture")
+    subprocess.run(["git", "init", "--quiet", str(source)], check=True)
     argv = command(str(surface / "surface.gpu.json"), str(cache), str(site))
     cut = argv.index("--")
     argv[cut:cut] = ["--data-root", str(data)]
     spec = owner.command_spec(argv)
-    env = {"TESSERA_SOURCE_VERIFIER": f"/usr/bin/python3 {data}/pbsnapshot.py verify",
-           "PRISMABUILD_CONTAINER_OWNER": "sealed-owner", "CUDA_VISIBLE_DEVICES": "0"}
+    env = {"FLUX_JOB_ID": "f123", "TMPDIR": str(cache / "f123")}
     return source, spec, env
 
 
-def test_docker_builder_preserves_scope_route_readonly_source_and_owned_cache(tmp_path, monkeypatch):
+def build(spec, source, env):
+    return owner.podman_command(spec, source, env, cidfile=Path(spec["--surface-dir"]) / "container.cid", affinity=[2, 42], gpus=1)
+
+
+@pytest.mark.parametrize("architecture,expected", [
+    ("aarch64", ["--userns=keep-id", "--user=1000:1000"]),
+    ("x86_64", ["--user=0:0"]),
+])
+def test_qualified_rootless_user_is_explicit(tmp_path, monkeypatch, architecture, expected):
+    from types import SimpleNamespace
+    source, spec, environment = mounts(tmp_path)
+    monkeypatch.setattr(owner.os, "uname", lambda: SimpleNamespace(machine=architecture))
+    argv = build(spec, source, environment)
+    assert all(flag in argv for flag in expected)
+    if architecture == "x86_64":
+        assert "--userns=keep-id" not in argv
+
+
+def test_podman_builder_preserves_scope_route_readonly_source_and_owned_cache(tmp_path, monkeypatch):
     source, spec, env = mounts(tmp_path)
-    monkeypatch.setattr(owner, "PB_VERIFIER", tmp_path / "data/pbsnapshot.py")
-    built = owner.docker_command(spec, source, env)
-    assert built[:2] == ["docker", "run"]  # PATH shim, never the host binary
-    assert "--cpuset-cpus" not in built  # PB's ownership shim preserves affinity
+    built = build(spec, source, env)
+    assert built[:2] == ["/usr/bin/podman", "create"]
+    assert built[built.index("--cpuset-cpus") + 1] == "2,42"
     assert built[built.index("--entrypoint") + 1] == "/usr/bin/python3"
     assert built[built.index("--workdir") + 1] == str(source)
     assert f"type=bind,src={source},dst={source},readonly" in built
     assert "PYTHONNOUSERSITE=1" in built
     assert "PYTHONDONTWRITEBYTECODE=1" in built
     assert "PYTEST_DISABLE_PLUGIN_AUTOLOAD=1" in built
-    assert f"{owner.artifact_specs()['scratch'].env}={spec['--cache-dir']}/tmp" in built
-    assert built[-2:] == ["--basetemp", spec["--cache-dir"] + "/pytest"]
+    assert f"{owner.artifact_specs()['scratch'].env}={spec['--cache-dir']}/f123/container-cache/tmp" in built
+    assert "--pull=never" in built and "--network=none" in built
     for name in owner.THREAD_LIMITS:
         assert f"{name}=1" in built
 
 
-@pytest.mark.parametrize("problem", ["source-cache", "symlink-source", "artifact-environment", "missing-verifier"])
+@pytest.mark.parametrize("problem", ["source-cache", "symlink-source", "artifact-environment", "missing-native-id"])
 def test_mount_and_environment_controls_fail_closed(tmp_path, problem, monkeypatch):
     source, spec, env = mounts(tmp_path)
-    monkeypatch.setattr(owner, "PB_VERIFIER", tmp_path / "data/pbsnapshot.py")
     if problem == "source-cache":
         spec["--cache-dir"] = str(source / "cache")
     elif problem == "symlink-source":
@@ -129,110 +138,9 @@ def test_mount_and_environment_controls_fail_closed(tmp_path, problem, monkeypat
     elif problem == "artifact-environment":
         env["TESSERA_RUNS_DIR"] = "/unsealed-runs"
     else:
-        env.pop("TESSERA_SOURCE_VERIFIER")
+        env.pop("FLUX_JOB_ID")
     with pytest.raises(ValueError):
-        owner.docker_command(spec, source, env)
-
-
-def snapshot(tmp_path, altered=False):
-    repo = tmp_path / "repo"
-    repo.mkdir()
-    original = Path(__file__).resolve().parents[1]
-    for name in owner.SOURCE_FILES:
-        target = repo / name
-        target.parent.mkdir(parents=True, exist_ok=True)
-        target.write_bytes((original / name).read_bytes())
-    if altered:
-        (repo / owner.RUNNER).write_text("print('forged runner')\n")
-    def git(*args):
-        return subprocess.check_output(["git", "-C", str(repo), *args], stderr=subprocess.DEVNULL).strip()
-    git("init", "--quiet")
-    git("add", ".")
-    git("-c", "user.name=Fixture", "-c", "user.email=fixture@local", "commit", "--quiet", "-m", "source")
-    commit = git("rev-parse", "HEAD").decode()
-    bundle = tmp_path / "source.bundle"
-    git("bundle", "create", str(bundle), "HEAD")
-    raw = bundle.read_bytes()
-    digest = hashlib.sha256(raw).hexdigest()
-    cas = tmp_path / "cas"
-    blob = cas / "blobs" / digest[:2] / digest
-    blob.parent.mkdir(parents=True)
-    blob.write_bytes(raw)
-    entry = {"id": "pbrun.checkout-snapshot", "bytes": len(raw), "sha256": digest}
-    return cas, {"inputs": [entry], "params": {"checkout_snapshot": {"commit": commit, "input": entry}}}
-
-
-def test_authenticated_runner_snapshot_is_required(tmp_path, monkeypatch):
-    monkeypatch.setenv("TMPDIR", str(tmp_path))
-    cas, payload = snapshot(tmp_path, altered=True)
-    with pytest.raises(ValueError, match="runner source differs"):
-        owner.source_bound(payload, cas)
-
-
-def test_an_unchanged_authenticated_snapshot_is_read(tmp_path, monkeypatch):
-    monkeypatch.setenv("TMPDIR", str(tmp_path))
-    cas, payload = snapshot(tmp_path)
-    owner.source_bound(payload, cas)
-    entry = payload["inputs"][0]
-    blob = cas / "blobs" / entry["sha256"][:2] / entry["sha256"]
-    blob.write_bytes(blob.read_bytes()[:-1])
-    with pytest.raises(ValueError, match="length differs"):
-        owner.source_bound(payload, cas)
-
-
-def test_resume_keeps_existing_binding_and_verifies_runner_once(tmp_path, monkeypatch):
-    monkeypatch.setenv("TMPDIR", str(tmp_path))
-    module = merge_module()
-    cas, payload = snapshot(tmp_path)
-    surface = tmp_path / "surface" / "surface.gpu.json"
-    surface.parent.mkdir()
-    payload["params"]["command"] = command(str(surface), str(tmp_path / "cache"))
-    payload["params"]["demand"] = {"cpu": 1, "gpu": 1}
-    payload["params"]["container_images"] = ["example/suite@sha256:" + "a" * 64]
-    raw_request = json.dumps(payload).encode()
-    key = "a" * 64
-    counts = {"passed": 1, "failed": 0, "error": 0, "skipped": 0}
-    population = {"schema": "tessera.test_surface.v3", "role": "population",
-                  "commit": payload["params"]["checkout_snapshot"]["commit"], "counts": counts,
-                  "source_identity": {"excluded_metadata": [{"action_key": key, "request_sha256": hashlib.sha256(raw_request).hexdigest()}]}}
-    surface.write_text(json.dumps(population))
-    publication = module._read_publication(surface)
-    outcome = {"status": "executed", "attempts": 1, "detail": {"stdout":
-        surface_publication.publication_line("population", surface, publication.digest) + "\n1 passed in 0.01s\n"}}
-    module.POOL_CAS_REQUESTS = cas / "requests"
-    calls = []
-    actual = Path.read_bytes
-    bundle = payload["inputs"][0]["sha256"]
-    def observed(path):
-        if path.name == bundle:
-            calls.append(path)
-        return actual(path)
-    monkeypatch.setattr(Path, "read_bytes", observed)
-    seen = {}
-    assert module._binding_refusal(key, payload, raw_request, outcome, publication, seen) is None
-    assert module._binding_refusal(key, payload, raw_request, outcome, publication, seen) is None
-    assert len(calls) == 1
-    outcome["detail"]["stdout"] = "1 passed in 0.01s\n"
-    assert "never said" in module._binding_refusal(key, payload, raw_request, outcome, publication, seen)
-
-
-def test_container_submission_spends_its_parallel_reservation(tmp_path):
-    module = merge_module()
-    args = SimpleNamespace(cpus=4, pytest_arg=[], gpu_tag="gb10", mem_gb=24,
-        checkout=tmp_path, timeout_s=300, wait_s=300, dry_run=True,
-        gpu_image="example/suite@sha256:" + "a" * 64,
-        gpu_deps_site="/deps/site", gpu_deps_sha256="b" * 64,
-        gpu_cache_dir="/cache/run", gpu_data_root=[], artifact_root=[])
-    record = module._submit("gpu", module.ARMS["gpu"], args, tmp_path / "receipt")
-    import shlex
-    argv = shlex.split(record["pbrun"])
-    assert record["cpus_used"] == 4
-    assert argv[argv.index("--cpus") + 1] == "4"
-    assert "--container-image" in argv
-    inner, refusal = module._pytest_argv(argv[argv.index("--") + 1:])
-    assert refusal is None
-    assert inner[inner.index("-n") + 1] == "4"
-    assert inner[inner.index("--dist") + 1] == "worksteal"
+        build(spec, source, env)
 
 
 def test_dependency_versions_and_bytes_are_both_sealed(tmp_path):
@@ -252,35 +160,6 @@ def test_dependency_versions_and_bytes_are_both_sealed(tmp_path):
     code.symlink_to(site / "pytest.dist-info/METADATA")
     with pytest.raises(ValueError, match="symlink"):
         owner.dependency_manifest(site)
-
-
-@pytest.mark.parametrize("mismatch", ["image", "cpu", "gpu", "artifact"])
-def test_runner_and_receipt_require_the_sealed_admission(mismatch):
-    spec = owner.command_spec(command())
-    payload = {"params": {"container_images": [spec["--image"]], "demand": {"cpu": 1, "gpu": 1}},
-               "environment": {"variables": {}}}
-    if mismatch == "image":
-        payload["params"]["container_images"] = []
-    elif mismatch == "cpu":
-        payload["params"]["demand"]["cpu"] = 2
-    elif mismatch == "gpu":
-        payload["params"]["demand"]["gpu"] = 0
-    else:
-        spec["artifacts"]["TESSERA_RUNS_DIR"] = "/runs"
-    with pytest.raises(ValueError):
-        owner.admission(spec, payload)
-
-
-def test_gpu_resources_can_be_sized_independently_from_cpu(tmp_path):
-    module = merge_module()
-    args = SimpleNamespace(cpus=16, mem_gb=64, gpu_cpus=2, gpu_mem_gb=24,
-        pytest_arg=[], gpu_tag="gb10", checkout=tmp_path, timeout_s=300,
-        wait_s=300, dry_run=True, gpu_image="example/suite@sha256:" + "a" * 64,
-        gpu_deps_site="/deps/site", gpu_deps_sha256="b" * 64,
-        gpu_cache_dir="/cache/run", gpu_data_root=[], artifact_root=[])
-    record = module._submit("gpu", module.ARMS["gpu"], args, tmp_path / "receipt")
-    assert record["cpus_used"] == 2 and record["mem_gb"] == 24
-    assert "mem_gb=24" in record["pbrun"]
 
 
 class SubmissionReached(Exception):
@@ -323,7 +202,12 @@ def admission(tmp_path, monkeypatch):
             "--gpu-image", "sha256:" + "a" * 64,
             "--gpu-deps-site", str(tmp_path / "dependencies"),
             "--gpu-deps-sha256", "b" * 64, "--gpu-cache-dir", str(cache)])
-        return module.main()
+        try:
+            module.suite_container.require_local_cache(cache)
+        except (OSError, ValueError) as exc:
+            print(str(exc), file=sys.stderr)
+            raise SystemExit(2)
+        raise SubmissionReached("local filesystem provenance accepted; transport still unqualified")
 
     return run
 
@@ -437,11 +321,10 @@ def cache_mount_table(monkeypatch):
 @pytest.mark.parametrize("filesystem", ["nfs", "nfs4", "cifs", "smb3", "fuse.sshfs"])
 def test_container_network_cache_refuses_before_command(tmp_path, monkeypatch, cache_mount_table, filesystem):
     source, spec, env = mounts(tmp_path)
-    monkeypatch.setattr(owner, "PB_VERIFIER", tmp_path / "data/pbsnapshot.py")
     cache_mount_table[:] = [_mount(1, "/", "ext4"), _mount(2, tmp_path, filesystem)]
     cache_mount_table.reported[0] = "2"
     with pytest.raises(ValueError) as error:
-        owner.docker_command(spec, source, env)
+        build(spec, source, env)
     message = str(error.value)
     assert "--cache-dir" in message
     assert spec["--cache-dir"] in message
@@ -454,48 +337,47 @@ def test_container_network_cache_refuses_before_command(tmp_path, monkeypatch, c
 @pytest.mark.parametrize("filesystem", ["ext4", "xfs", "btrfs", "tmpfs"])
 def test_container_local_cache_is_admitted(tmp_path, monkeypatch, cache_mount_table, filesystem):
     source, spec, env = mounts(tmp_path)
-    monkeypatch.setattr(owner, "PB_VERIFIER", tmp_path / "data/pbsnapshot.py")
     cache_mount_table[:] = [_mount(1, "/", filesystem)]
-    assert owner.docker_command(spec, source, env)[:2] == ["docker", "run"]
+    assert build(spec, source, env)[:2] == ["/usr/bin/podman", "create"]
     assert not Path(spec["--cache-dir"]).exists()
 
 
 @pytest.mark.parametrize("filesystem,refused", [("nfs", True), ("ext4", False)])
 def test_container_missing_cache_uses_existing_mount(tmp_path, monkeypatch, cache_mount_table, filesystem, refused):
     source, spec, env = mounts(tmp_path)
-    monkeypatch.setattr(owner, "PB_VERIFIER", tmp_path / "data/pbsnapshot.py")
     cache = tmp_path / "missing" / "cache"
     spec["--cache-dir"] = str(cache)
+    env["TMPDIR"] = str(cache / "f123")
     cache_mount_table[:] = [_mount(1, "/", "ext4"), _mount(2, tmp_path, filesystem),
                            _mount(3, cache.parent, "ext4" if refused else "nfs")]
     cache_mount_table.reported[0] = "2"
     if refused:
         with pytest.raises(ValueError, match=f"mount point {tmp_path}"):
-            owner.docker_command(spec, source, env)
+            build(spec, source, env)
     else:
-        assert owner.docker_command(spec, source, env)[:2] == ["docker", "run"]
+        assert build(spec, source, env)[:2] == ["/usr/bin/podman", "create"]
     assert not cache.parent.exists()
 
 
 def test_container_cache_refuses_before_creating_or_launching(tmp_path, monkeypatch, cache_mount_table, capsys):
     source, spec, env = mounts(tmp_path)
-    monkeypatch.setattr(owner, "PB_VERIFIER", tmp_path / "data/pbsnapshot.py")
     cache_mount_table[:] = [_mount(1, "/", "ext4"), _mount(2, tmp_path, "nfs4")]
     cache_mount_table.reported[0] = "2"
     monkeypatch.chdir(source)
-    monkeypatch.setenv("PRISMABUILD_ACTION_KEY", "fake-action")
-    monkeypatch.setenv("PRISMABUILD_ACTION_SCOPE", "fake-scope")
     for name, value in env.items():
         monkeypatch.setenv(name, value)
-    monkeypatch.setattr(owner, "admitted_request", lambda *args: {})
-    monkeypatch.setattr(owner, "admission", lambda *args: None)
+    monkeypatch.setenv("TESSERA_SUITE_DIRECTORY", str(tmp_path))
+    monkeypatch.setenv("TESSERA_SUITE_LAUNCH_SHA256", "a" * 64)
+    monkeypatch.setattr(owner, "admitted_context", lambda *args, **kwargs: {"resources": {"cores": 1, "gpus": 1}, "container": spec})
     monkeypatch.setattr(owner, "dependency_manifest", lambda *args: ({}, "b" * 64))
     launches = []
     monkeypatch.setattr(owner.subprocess, "call", lambda argv: launches.append(argv) or 0)
     argv = command(spec["surface"], spec["--cache-dir"], spec["--deps-site"])
     cut = argv.index("--")
     argv[cut:cut] = ["--data-root", str(tmp_path / "data")]
-    assert owner.main(argv[2:]) == 2
+    from _suite_runtime import identity
+    assert owner.main(argv[argv.index(owner.RUNNER) + 1:],
+                      transport=merge_module().suite_flux, runtime_identity=identity) == 2
     assert "filesystem type nfs4" in capsys.readouterr().err
     assert launches == []
     assert not Path(spec["--cache-dir"]).exists()

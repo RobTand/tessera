@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Run one experiments/t4_code script inside the serving image on one GB10.
-# Submitted through PrismaBuild (pbrun --container-image ...); this script is
-# the admitted action's command.  Usage:
+# Run as a Flux GPU job (see the rendered tools/_flux_gpu_jobspec.py line; Flux
+# GPU path rendered, not qualified); this script is the job's command.  Usage:
 #   run_in_image.sh <checkout> <out_dir> <script.py under experiments/t4_code> [args...]
 # The container mounts the checkout, the GLM-5.3-Flash BF16 source and the
 # activation capture read-only, and writes only under <out_dir> (HOME, TMPDIR
@@ -10,7 +10,7 @@
 # container starts unless docker resolves it to that digest.
 set -euo pipefail
 CHECKOUT=$(realpath "$1"); OUT=$(realpath -m "$2"); SCRIPT=$3; shift 3
-IMAGE_REF=${ORACLE_IMAGE:?set ORACLE_IMAGE to the immutable PB-declared measurement image}
+IMAGE_REF=${ORACLE_IMAGE:?set ORACLE_IMAGE to the immutable digest-pinned measurement image}
 source "$CHECKOUT/experiments/runtime_image.sh"
 runtime_image_require "$IMAGE_REF"
 IMAGE_ENV=()
@@ -40,7 +40,7 @@ docker run --rm --gpus all --ipc=host --network=host --cpuset-cpus "$CPUS" \
   -e PYTHONPATH=/work/src:/work/experiments/t4_code -e HOST_NAME="$(hostname)" \
   -e OMP_NUM_THREADS="$NCPU" -e MKL_NUM_THREADS=1 -e OPENBLAS_NUM_THREADS=1 \
   -e PYTHONUNBUFFERED=1 -e ORACLE_IMAGE="$IMAGE_REF" -e TESSERA_HEAD="$HEAD" \
-  -e PB_ACTION_KEY="${PB_ACTION_KEY:-${PRISMABUILD_ACTION_KEY:-}}" \
+  -e FLUX_JOB_ID="${FLUX_JOB_ID:-}" \
   "${IMAGE_ENV[@]}" "${EXTRA[@]}" --entrypoint bash -w /work "$IMAGE_REF" \
   -c 'source /work/experiments/cuda_home_shadow.sh "$TMPDIR"; exec python3 "$@"' -- \
   "/work/experiments/t4_code/$SCRIPT" --out "$OUT" "$@" || rc=$?

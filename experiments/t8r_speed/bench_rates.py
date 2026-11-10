@@ -557,7 +557,7 @@ def main():
                  "inter": INTER, "top_k": TOP_K, "part": args.part, "cases": args.cases, "ms": args.ms,
                  "kernel_sha": os.environ.get("KERNEL_SHA"), "tessera_head": os.environ.get("TESSERA_HEAD"),
                  "image": os.environ.get("ORACLE_IMAGE"), "host": os.environ.get("HOST_NAME"),
-                 "pb_action": os.environ.get("PB_ACTION_KEY"), "power_source": power.source,
+                 "meta_schema": "tessera.job_meta.v2", "flux_job_id": os.environ.get("FLUX_JOB_ID"), "power_source": power.source,
                  "library": library, "bm": args.bm, "read_gbps": READ_GBPS, "mma_tflops": MMA_E4M3_TFLOPS,
                  "envelope_w": ENVELOPE_W, "start_unix": time.time(), "torch": torch.__version__})
     results = []

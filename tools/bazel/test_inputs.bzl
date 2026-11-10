@@ -28,6 +28,8 @@ TEST_INPUTS = {
         reason = "scan() reads every module under src/tessera through the root its caller passes (default the repository root).",
     ),
     "//tests:test_native_moe_glm_owner": struct(data = [], packages = ["prismaquant"], reason = _PRISMAQUANT),
+    "//tests:test_plan_from_layer_config": struct(data = [], packages = ["prismaquant"], reason = _PRISMAQUANT),
+    "//tests:test_ig790_verify": struct(data = [], packages = ["prismaquant"], reason = _PRISMAQUANT),
     "//tests:test_uniform_control": struct(data = [], packages = ["prismaquant"], reason = _PRISMAQUANT),
     "//tests:test_bench_kda_geometry": struct(data = [_CONSTRUCTION_T8], reason = _CONSTRUCTION_REASON),
     "//tests:test_bench_kda_timing_scope": struct(data = [_CONSTRUCTION_T8], reason = _CONSTRUCTION_REASON),

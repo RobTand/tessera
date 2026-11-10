@@ -1,9 +1,18 @@
 """A fresh extension directory is a valid pre-build measurement state."""
 from pathlib import Path
+import json
 import os
 import subprocess
 
 import pytest
+
+
+def test_reviewed_launch_has_no_staged_transport_mode():
+    root = Path(__file__).resolve().parents[1]
+    expected = json.loads((root / 'experiments/configs/stageprev_793_expected.json').read_text())
+    assert 'BENCH_STRICT_STAGED' not in expected['launch']
+    wrapper = (root / 'experiments/t8r_speed/bench_t8r.sh').read_text()
+    assert 'BENCH_STRICT_STAGED' not in wrapper
 
 
 def extension_listing(directory):
@@ -55,7 +64,7 @@ def wrapper_environment(tmp_path):
     env.update(PATH=str(binaries) + os.pathsep + os.environ['PATH'],
                ORACLE_IMAGE='inert-image', TEST_RUNNER_SP=str(packages),
                BENCH_SRC=str(source), BENCH_EXT_DIR=str(extensions), TEST_XDIST='1',
-               DOCKER_ARGV_PATH=str(argv_path), PRISMABUILD_ACTION_KEY="0" * 64)
+               DOCKER_ARGV_PATH=str(argv_path), FLUX_JOB_ID="fTESTJOBID")
     return checkout, source, extensions, argv_path, env
 
 
@@ -141,13 +150,12 @@ def test_direct_pm_numeric_reuses_owned_container_and_canonical_namespace(tmp_pa
     artifact = tmp_path / 'artifact'; artifact.mkdir()
     (artifact / 'config.json').write_text('{}')
     extensions.mkdir()
-    sdk = tmp_path / 'published'; (sdk / 'src/prismabuild').mkdir(parents=True)
     timeout = Path(env['PATH'].split(os.pathsep)[0]) / 'timeout'
     timeout.write_text('#!/bin/bash\nprintf "%s\\0" "$@" > "$TIMEOUT_ARGV_PATH"\nshift 3\nexec "$@"\n')
     timeout.chmod(0o755)
     env['TIMEOUT_ARGV_PATH'] = str(tmp_path / 'timeout-argv')
     env.update(BENCH_DIRECT_VLLM='1', BENCH_OWNER_TOKEN='e' * 32,
-               PB_CLIENT_ROOT=str(sdk), BENCH_FIXTURE_RUNNER_SP=env['TEST_RUNNER_SP'],
+               BENCH_FIXTURE_RUNNER_SP=env['TEST_RUNNER_SP'],
                NATIVE_CONTAINER_SRC='/tessera/src',
                NATIVE_CONTAINER_EXT='/ext')
     subprocess.run(['bash', str(wrapper), str(checkout), str(tmp_path / 'out'),
@@ -160,8 +168,7 @@ def test_direct_pm_numeric_reuses_owned_container_and_canonical_namespace(tmp_pa
     assert args[args.index('--label') + 1] == 'tessera.paired_numeric_owner=' + 'e' * 32
     assert args[args.index('--memory') + 1] == args[args.index('--memory-swap') + 1] == '16g'
     assert args[args.index('--cpus') + 1] == '2'
-    assert str(sdk) + ':' + str(sdk) + ':ro' in args
-    assert 'PYTHONPATH=/tessera/src:/work/tests:' + str(sdk) + '/src:' + env['TEST_RUNNER_SP'] in args
+    assert 'PYTHONPATH=/tessera/src:/work/tests:' + env['TEST_RUNNER_SP'] in args
     assert env['TEST_RUNNER_SP'] + ':' + env['TEST_RUNNER_SP'] + ':ro' in args
     assert (tmp_path / 'out/owner-token.txt').read_text().strip() == 'e' * 32
 
@@ -205,8 +212,8 @@ def test_native_build_choice_wrapper_preserves_declared_value(tmp_path, kind, se
 
 
 @pytest.mark.parametrize('extra,expected_rc,message', [
-    (['--paired-k32-numerics', '--direct-vllm-inputs'], 0, None),
-    (['--paired-k32-numerics', '--direct-vllm-inputs', '--comparison-protocol', '/owned/protocol.json'],
+    (['--paired-k32-numerics'], 0, None),
+    (['--paired-k32-numerics', '--comparison-protocol', '/owned/protocol.json'],
      2, 'paired numeric mode excludes a PM comparison protocol'),
     ([], 2, 'direct transport requires a closed PM protocol or the closed paired numeric mode'),
 ])
@@ -217,7 +224,6 @@ def test_direct_paired_numeric_reuses_owned_container_and_deadline(tmp_path, ext
     artifact = tmp_path / 'artifact'; artifact.mkdir()
     (artifact / 'config.json').write_text('{}')
     extensions.mkdir()
-    sdk = tmp_path / 'published'; (sdk / 'src/prismabuild').mkdir(parents=True)
     fixture_sp = tmp_path / 'qualified-fixture-runner'; fixture_sp.mkdir()
     for package in ('pytest', '_pytest', 'pluggy', 'iniconfig', 'packaging'):
         (fixture_sp / package).mkdir()
@@ -227,8 +233,7 @@ def test_direct_paired_numeric_reuses_owned_container_and_deadline(tmp_path, ext
     timeout.chmod(0o755)
     env['TIMEOUT_ARGV_PATH'] = str(tmp_path / 'timeout-argv')
     env.update(BENCH_DIRECT_VLLM='1', BENCH_OWNER_TOKEN='a' * 32,
-               PB_CLIENT_ROOT=str(sdk), BENCH_FIXTURE_RUNNER_SP=str(fixture_sp))
-    env.pop('BENCH_STRICT_STAGED', None)
+               BENCH_FIXTURE_RUNNER_SP=str(fixture_sp))
     result = subprocess.run(['bash', str(wrapper), str(checkout), str(tmp_path / 'out'),
                              '--artifact', str(artifact), *extra],
                             env=env, capture_output=True, text=True)
@@ -243,8 +248,7 @@ def test_direct_paired_numeric_reuses_owned_container_and_deadline(tmp_path, ext
     assert args[args.index('--memory') + 1] == args[args.index('--memory-swap') + 1] == '16g'
     assert args[args.index('--pids-limit') + 1] == '512' and args[args.index('--cpus') + 1] == '2'
     assert args[args.index('--cidfile') + 1] == str(tmp_path / 'out/owned.cid')
-    assert str(sdk) + ':' + str(sdk) + ':ro' in args
     assert str(fixture_sp) + ':' + str(fixture_sp) + ':ro' in args
-    assert 'PYTHONPATH=/work/src:/work/tests:' + str(sdk) + '/src:' + str(fixture_sp) in args
+    assert 'PYTHONPATH=/work/src:/work/tests:' + str(fixture_sp) in args
     assert (tmp_path / 'out/owner-token.txt').read_text().strip() == 'a' * 32
     assert not any(x.startswith('PRISMABUILD_') for x in args)

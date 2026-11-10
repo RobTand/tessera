@@ -52,7 +52,7 @@ def _inert_controller(tmp_path, monkeypatch):
         'window':str(window), 'window_sha256':window_sha, 'evidence_root':str(evidence)})
     go = tmp_path/'unit-go.json'
     go_sha = emit(go, {'gpu_go':True, 'packet_sha256':packet_sha})
-    monkeypatch.setenv('PRISMABUILD_ACTION_KEY','unit-context-not-a-GPU-claim')
+    monkeypatch.setenv('FLUX_JOB_ID','unit-context-not-a-GPU-claim')
     monkeypatch.setattr(sys,'argv',['controller','--packet',str(packet),'--packet-sha256',packet_sha,
                                   '--go-record',str(go),'--go-sha256',go_sha])
     calls = SimpleNamespace(run_direct_arm=lambda *a, **k: 1,

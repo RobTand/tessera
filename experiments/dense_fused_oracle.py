@@ -552,7 +552,7 @@ def provenance(args):
             "tessera_head": args.tessera_head,
             "tessera_worktree_state": args.tessera_state,
             "src_tree_sha256": rpo.src_tree_digest(here),
-            "pb_action": os.environ.get("PRISMABUILD_ACTION_KEY") or os.environ.get("PB_ACTION_KEY"),
+            "meta_schema": "tessera.job_meta.v2", "flux_job_id": os.environ.get("FLUX_JOB_ID"),
             "argv": sys.argv, "utc": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())}
 
 

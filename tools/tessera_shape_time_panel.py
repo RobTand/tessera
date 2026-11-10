@@ -2,7 +2,7 @@
 """Measure one explicitly frozen native dense operator (#688).
 
 Repository application only: no scheduler, encoding, serving or cell publication.
-Agents submit the command through PB; the library validator does not know PB.
+Agents submit the command through admitted Flux jobs.
 The first slice is E4M3 dense, TP1, eager/resident, with one owned output.
 """
 from __future__ import annotations
@@ -11,7 +11,6 @@ import hashlib
 import json
 import os
 from pathlib import Path
-import runpy
 import subprocess
 import sys
 
@@ -20,6 +19,7 @@ sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(ROOT / "src"))  # Producer-only process, never shared with native worker.
 
 from tessera.serving import census_plan, timing_panel as tp
+from tessera._dev.durable_progress import emit
 from tools.run_glm_cached_cpu_export import fsync_path
 if Path(tp.__file__).resolve() != ROOT / "src/tessera/serving/timing_panel.py":
     raise RuntimeError("producer schema origin differs from owned source")
@@ -31,7 +31,7 @@ def require_producer_origins():
             raise ValueError("foreign producer schema owner: " + name)
 
 
-REQUEST_SCHEMA = "tessera.dense_shape_time_request.v1"
+REQUEST_SCHEMA = "tessera.dense_shape_time_request.v2"
 
 
 def publish_json(value, path):
@@ -65,8 +65,9 @@ def producer_source_identity(root=ROOT):
               root / "tools/tessera_shape_time_worker.py",
               root / "experiments/bench_native_operator.py", root / "experiments/step4_capture_launch.py",
               root / "experiments/full_engine_plugin_install.py", root / "tools/run_glm_cached_cpu_export.py",
-              root / "experiments/box_power_window.py", root / "experiments/routed_pair_oracle.py"]
-    profile = "tessera.shape_panel.tools.v1"
+              root / "experiments/box_power_window.py", root / "experiments/routed_pair_oracle.py",
+              root / "tools/_install_identity.py", root / "src/tessera/_dev/durable_progress.py"]
+    profile = "tessera.shape_panel.tools.v2"
     value = source_profiles(((str(Path(p).relative_to(root)), Path(p).read_bytes()) for p in owners),
                             legacy_profile=profile, legacy_prefix=profile.encode() + b"\0")
     return {"source_tree_sha256": tree_sha, "source_tree_members": members,
@@ -113,16 +114,13 @@ def read_request(path, *, expected_sha256=None, producer_root=ROOT):
             raise ValueError("owned request bytes differ from the sealed SHA-256")
     request = tp.json_bytes(raw)
     tp._object(request, {"schema", "expected_runtime", "scope", "prefix", "scheme", "wire",
-                         "sampling", "netdata_hosts", "contract", "runtime_python", "worker_timeout_s", "record_verifier", "producer_identity"}, "dense request")
+                         "sampling", "netdata_hosts", "contract", "runtime_python", "worker_timeout_s", "producer_identity"}, "dense request")
     if request["schema"] != REQUEST_SCHEMA:
         raise ValueError("unknown dense request schema")
     producer_identity(request["producer_identity"], producer_root)
     runtime = tp.runtime_context(request["expected_runtime"])
     raw_contract = tp.read_bound(request["contract"])
     tp.read_bound(request["runtime_python"])
-    tp.read_bound(request["record_verifier"])
-    from tools.tessera_shape_time_worker import record_verifier_bytes
-    record_verifier_bytes(request["record_verifier"])
     tp._integer(request["worker_timeout_s"], "native worker timeout")
     if hashlib.sha256(raw_contract).hexdigest() != runtime["contract_sha256"]:
         raise ValueError("request requires a different immutable runtime contract")
@@ -192,7 +190,7 @@ def owned_job(request_path, request, wire, output, *, producer_root=ROOT, worker
     worker=(producer_root if worker_root is None else worker_root)/"tools/tessera_shape_time_worker.py";worker_source=tp.file_binding(worker)
     request_source=tp.file_binding(request_path)
     if tp.json_bytes(tp.read_bound(request_source))!=request:raise ValueError("original request changed after entry")
-    job={"schema":"tessera.native_shape_worker_job.v1","request":request,"request_source":request_source,
+    job={"schema":"tessera.native_shape_worker_job.v2","request":request,"request_source":request_source,
          "wire_roles":roles,"producer":producer,"worker_source":worker_source}
     job_source=publish_json(job,Path(output)/"worker-job.json")
     return producer,roles,worker_source,job_source
@@ -240,8 +238,7 @@ def measure(request_path, output, *, expected_request_sha256):
     tp.validate_external_panel(panel,expected_runtime=request["expected_runtime"],runtime_validation=validation)
     require_producer_origins()
     bound=publish_json(panel,output/"panel.json")
-    helper=os.environ.get("PRISMABUILD_ACTION_PROGRESS_HELPER")
-    if helper:runpy.run_path(helper)["commit"](1,"publish")
+    emit(1,"publish")
     return bound
 
 

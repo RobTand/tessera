@@ -111,11 +111,13 @@ def test_no_target_timeout_cuts_off_its_slowest_recorded_node():
     assert mismatches == []
 
 
-def test_both_lanes_install_the_prismabuild_sdk():
-    """The SDK is stdlib-only, so the no-torch lane runs its consumers too
-    instead of skipping them (Rob, 2026-11-02: install the library a test needs)."""
-    text = (ROOT / 'tools/ci/gate_requirements.txt').read_text()
-    assert any(line.startswith('prismabuild @ ') for line in text.splitlines())
+def test_no_lane_installs_the_prismabuild_sdk():
+    """No test imports prismabuild: neither gate requirements source pins it and
+    the generated lane packages and hash-locked export do not name it."""
+    for source in ('tools/ci/gate_requirements.txt', 'tools/ci/gate_torch_requirements.txt',
+                   'tools/bazel/requirements.txt', 'tools/bazel/lanes.bzl'):
+        text = (ROOT / source).read_text().lower()
+        assert 'prismabuild' not in text, source
 
 
 def test_prismaquant_is_pinned_and_hash_locked_for_the_tests_that_read_it():

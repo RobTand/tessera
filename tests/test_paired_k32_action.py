@@ -1,4 +1,4 @@
-"""Finite admitted-PB batch bounds and exact owned cleanup, no real Docker."""
+"""Finite Flux batch bounds and exact owned cleanup, no real Docker."""
 import importlib.util
 import json
 import copy
@@ -17,25 +17,18 @@ def action(monkeypatch):
     return module
 
 
-@pytest.mark.parametrize("admitted,staged", [(False, False), (True, False), (True, True)])
-def test_paired_batch_requires_admitted_pb_without_mixing_input_transports(monkeypatch, admitted, staged):
+@pytest.mark.parametrize("admitted", [False, True])
+def test_paired_batch_requires_flux_context_without_claiming_gpu_approval(monkeypatch, admitted):
     module = action(monkeypatch)
     if admitted:
-        monkeypatch.setenv("PRISMABUILD_ACTION_KEY", "a" * 64)
+        monkeypatch.setenv("FLUX_JOB_ID", "fAAAAAAAAAAA")
     else:
-        monkeypatch.delenv("PRISMABUILD_ACTION_KEY", raising=False)
-    if staged:
-        monkeypatch.setenv("BENCH_STRICT_STAGED", "1")
-    else:
-        monkeypatch.delenv("BENCH_STRICT_STAGED", raising=False)
+        monkeypatch.delenv("FLUX_JOB_ID", raising=False)
     if not admitted:
-        with pytest.raises(ValueError, match="admitted PrismaBuild"):
-            module.require_pb_execution()
-    elif staged:
-        with pytest.raises(ValueError, match="cannot also use staged"):
-            module.require_pb_execution()
+        with pytest.raises(ValueError, match="FLUX_JOB_ID.*context only, not GPU approval or an admission token"):
+            module.require_flux_execution()
     else:
-        module.require_pb_execution()
+        module.require_flux_execution()
 
 
 
@@ -102,18 +95,20 @@ def test_active_bound_stops_only_its_owned_process_group_and_cleans_up(tmp_path,
 
 
 @pytest.mark.parametrize('fault',[None,'population','event_count','dispatch','native','owner','output',
-    'advertised_median','sample_nan','sample_inf','sample_zero','sample_negative','sample_bool','median_bool'])
+    'advertised_median','sample_nan','sample_inf','sample_zero','sample_negative','sample_bool','median_bool','transport'])
 def test_abba_summary_checks_qualified_population(monkeypatch,fault):
+    from experiments.t8r_speed.declared_inputs import DIRECT_TRANSPORT
     module=action(monkeypatch);reports={}
     cert={'compared':[{'M':int(m),'role':'out','sha256':m} for m in ('1','512','2048')]}
     for arm in ('A1','B1','B2','A2'):
-        reports[arm]={'meta':{'direct_input_bindings':{'before':{'owned':1},'after':{'owned':1}},
+        reports[arm]={'meta':{'direct_input_bindings':{'transport':DIRECT_TRANSPORT,'before':{'owned':1},'after':{'owned':1}},
             'native_code_artifact':{k:'sha' for k in ('before_load_sha256','after_load_sha256','after_profile_sha256')}},
             'results':[{'ok':True,'cells':{m:{'raw_events_ms':([0.5,1.5] if arm.startswith('B') else [1,3])*15,'out_sha256':m,
                 'numeric_receipt_sha256':module.NUMERIC_RECEIPT_SHA,'native_paired_build':arm.startswith('B'),
                 'wall':{'median_ms':1 if arm.startswith('B') else 2},
                 'geometry':{mode:{'paired':arm.startswith('B') and m!='1'} for mode in ('0','2')}}
                 for m in ('1','512','2048')}}]}
+    assert module.timing_summary(reports,cert)['cells']['512']['operator_speedup']==2
     r=reports['B1'];cell=r['results'][0]['cells']['512']
     if fault=='population':reports.pop('A2')
     elif fault=='event_count':cell['raw_events_ms'].pop()
@@ -123,11 +118,17 @@ def test_abba_summary_checks_qualified_population(monkeypatch,fault):
     elif fault=='output':cell['out_sha256']='wrong'
     elif fault=='advertised_median':cell['wall']['median_ms']=0.25
     elif fault=='median_bool':cell['wall']['median_ms']=True
+    elif fault=='transport':r['meta']['direct_input_bindings']['transport']='unqualified'
     elif fault in ('sample_nan','sample_inf','sample_zero','sample_negative','sample_bool'):
         cell['raw_events_ms'][0]={'sample_nan':float('nan'),'sample_inf':float('inf'),
             'sample_zero':0,'sample_negative':-1,'sample_bool':True}[fault]
     if fault:
-        with pytest.raises(ValueError):module.timing_summary(reports,cert)
+        messages = {'population':'ABBA population', 'event_count':'exact events/numeric binding',
+            'dispatch':'dispatch differs', 'native':'native owner changed', 'owner':'input ownership changed',
+            'output':'exact events/numeric binding', 'advertised_median':'median differs',
+            'median_bool':'median differs', 'transport':'input transport differs'}
+        message = messages.get(fault, 'finite positive')
+        with pytest.raises(ValueError, match=message):module.timing_summary(reports,cert)
     else:assert module.timing_summary(reports,cert)['cells']['512']['operator_speedup']==2
 
 
@@ -146,7 +147,7 @@ def test_paired_netdata_uses_the_same_stable_box_endpoints(monkeypatch):
 
 
 @pytest.mark.parametrize("memory_gib,kill_required", [(3, False), (1, True)])
-def test_explicit_d30_policy_uses_two_gib_floor_and_pb_cleanup(tmp_path, monkeypatch, memory_gib, kill_required):
+def test_explicit_d30_policy_uses_two_gib_floor_and_owned_cleanup(tmp_path, monkeypatch, memory_gib, kill_required):
     module = action(monkeypatch)
     policy = {"measured_cpu_peak_bytes": 2557706240,
               "unmeasured_gpu_overhead_bytes": 1 << 30, "deadline_s": 600}
@@ -156,7 +157,9 @@ def test_explicit_d30_policy_uses_two_gib_floor_and_pb_cleanup(tmp_path, monkeyp
     monkeypatch.setattr(module.time, "sleep", lambda _: None)
     signals = []
     monkeypatch.setattr(module.os, "killpg", lambda pid, sig: signals.append((pid, sig)))
-    monkeypatch.setattr(module, "owned_cleanup", lambda _: pytest.fail("PB owns container cleanup"))
+    cleanup_calls = []
+    monkeypatch.setenv('FLUX_JOB_ID', 'controlled-job')
+    monkeypatch.setattr(module, "owned_cleanup", lambda path: cleanup_calls.append(path) or {'state': 'removed'})
     class Child:
         pid = 424242
         returncode = 0
@@ -181,5 +184,9 @@ def test_explicit_d30_policy_uses_two_gib_floor_and_pb_cleanup(tmp_path, monkeyp
     assert record["floor_bytes"] == 2 << 30
     assert record["start_bytes"] == 2557706240 + (4 << 30)
     assert record["gpu_overhead_measured"] is False
-    assert json.loads((tmp_path / "arm-cleanup.json").read_text())["state"].startswith("PrismaBuild")
+    cleanup = json.loads((tmp_path / "arm-cleanup.json").read_text())
+    assert cleanup_calls == [tmp_path / 'arm']
+    assert cleanup['state'] == 'removed'
+    assert cleanup['owner'] == {'flux_job_id_env': 'controlled-job',
+                               'authority': 'environment value, not an admission token'}
 

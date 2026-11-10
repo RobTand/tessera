@@ -82,9 +82,10 @@ def test_publish_progress_waits_for_complete_durable_result(probe, monkeypatch, 
         assert events == ["file", "replace", "directory"]
         events.append("progress")
 
-    monkeypatch.setattr(probe.runpy, "run_path", lambda _: {"commit": commit})
+    import tessera._dev.durable_progress as durable
+    monkeypatch.setattr(durable, "emit", commit)
     assert probe.main() == 0
-    assert events[-1] == "progress"
+    assert events == ["file", "replace", "directory", "progress"]
 
 
 @pytest.mark.parametrize("mode", ["ncu", "normal", "numerics"])

@@ -56,7 +56,7 @@ def prepare(out):
         entries.append({"path": str(path), "offset": 0, "bytes": len(unit.blob),
                         "sha256": hashlib.sha256(unit.blob).hexdigest()})
     total = sum(e["bytes"] for e in entries)
-    save(out / "data-manifest.json", {"schema": "prismaquant.prismabuild.data_manifest.v1",
+    save(out / "data-manifest.json", {"schema": "tessera.declared_inputs.v1",
          "mount_prefix": "/mnt/shared", "produced_by": {"tool": "span2_boundary_check", "unix": time.time()},
          "annotations": {"row_id": "native-span2-boundary", "phases": [{"name": "serialized-test-wires", "bytes": total, "cumulative_bytes": total}]},
          "entries": entries, "entry_count": len(entries), "total_bytes": total})
@@ -159,12 +159,12 @@ def main():
         os.execv(binary, argv)
     inputs = None
     if args.data_manifest:
-        from prismabuild.client import read_data_manifest
-        manifest, _encoding = read_data_manifest(args.data_manifest)
+        from declared_inputs import read_declared_inputs
+        manifest, _sha = read_declared_inputs(args.data_manifest)
         if not args.cpu_preflight:
-            from pb_staged_store import StagedInputs
-            inputs = StagedInputs(args.data_manifest)
-    result = {"source_commit": os.environ.get("TESSERA_HEAD"), "action_key": os.environ.get("PRISMABUILD_ACTION_KEY"),
+            from declared_inputs import DeclaredInputs
+            inputs = DeclaredInputs(args.data_manifest)
+    result = {"source_commit": os.environ.get("TESSERA_HEAD"), "flux_job_id": os.environ.get("FLUX_JOB_ID"),
               "source_sha256": hashlib.sha256((Path(__file__).parents[2] / "src/tessera/kernel_a4.py").read_bytes()).hexdigest(),
               "cpu_preflight": args.cpu_preflight, "sanitizer": args.under_sanitizer,
               "allocator_caching_disabled": os.environ.get("PYTORCH_NO_CUDA_MEMORY_CACHING") == "1", "checks": []}

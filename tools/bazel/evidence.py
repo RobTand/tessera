@@ -111,8 +111,8 @@ def module_aliases(path):
     src/tessera/a/b.py is tessera.a.b. A tests/, tools/ or experiments/ module
     is also every dotted suffix of its path: tests/conftest.py puts tests/ on
     sys.path, the repository root is on it under `python -m pytest`, and tests
-    put experiment directories on it, so experiments/graph_attest_702/
-    rank_window.py is also rank_window.
+    put experiment directories on it, so experiments/t8r_speed/
+    bench_t8r.py is also bench_t8r.
     """
     parts = path.removesuffix('.py').split('/')
     if parts[-1] == '__init__':
@@ -348,7 +348,7 @@ class Evidence:
             if '/' in node.value:
                 self.note(facts, node.value, path, directories=False)
             # A manifest of the module's own files, relative to its directory:
-            # PRODUCER_FILES = ("tp2_recipe.py", "observer/usercustomize.py").
+            # FILES = ("helper.py", "sub/other.py").
             if MODULE_FILE.fullmatch(node.value.replace('/', '')) and '.' in node.value:
                 sibling = posixpath.normpath(posixpath.join(here, node.value))
                 if sibling in self.file_set:

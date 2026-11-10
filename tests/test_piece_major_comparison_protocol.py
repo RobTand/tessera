@@ -21,7 +21,7 @@ def protocol(tmp_path):
     return {"schema": pp.SCHEMA, "artifact": pp.ARTIFACT, "group": pp.GROUP,
             "ms": [1, 2048], "order": pp.ORDER.copy(), "warmup": 10, "iters": 30, "power_s": 30,
             "kernel_sha256": "a" * 64, "harness": {"experiments/t8r_speed/" + name: "a" * 64
-                for name in ("bench_t8r.py", "bench_t8r.sh", "piece_major_protocol.py", "pb_staged_store.py")}, "input_manifest": item,
+                for name in ("bench_t8r.py", "bench_t8r.sh", "piece_major_protocol.py", "declared_inputs.py")}, "input_manifest": item,
             "source_manifest": item.copy(), "native": {**item, "origin_path": str(manifest),
                 "files": {"fixture.so": {"sha256": "a" * 64, "bytes": 1, "mtime_ns": 0}}}, "routing": item.copy()}
 

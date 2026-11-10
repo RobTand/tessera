@@ -4,7 +4,7 @@ The whole-model question this answers: GLM's routed experts are 311.65e9
 parameters (288 experts x 43 MoE layers x 3 projections).  If the k=2 Viterbi
 runs at X GB/hour on one box, the encode campaign is 156 GB / X hours -- and
 whether that is an afternoon or a fortnight decides whether the encode stage
-needs prismabuild's cross-box fan-out or can run inline.
+needs parallel Flux jobs or can fit in one admitted job.
 
 Ranked by power against the envelope, not utilisation: on GB10
 ``gpu_utilization`` reads ~96% for a stalled kernel and a saturated one alike.

@@ -42,6 +42,13 @@ from pathlib import Path
 #: knows was written here, so a new gate cannot silently fall outside the set.
 ABSENT = "box artifact absent"
 
+# Render-only fixtures never read or write this tree. These tools require paths
+# below the shared mount, so tmp_path cannot represent their accepted requests.
+FLUX_RENDER_ROOT = Path("/mnt/shared/tessera-flux-render-fixtures")
+# Controlled transport tests recognize these operator-owned resolver boundaries.
+FLUX_INSTANCE_MANIFEST = Path("/mnt/shared/flux-migration/INSTANCE")
+FLUX_URI_RESOLVER = Path("/mnt/shared/flux-migration/flux-uri.sh")
+
 
 @dataclass(frozen=True)
 class Root:
@@ -118,12 +125,6 @@ ROOTS: dict[str, Root] = {
             "the shared measurement tree both boxes mount: the canonical-census "
             "export bundles (the a4/a8/a16 merged artifacts) and the dated "
             "receipts beside them",
-        ),
-        Root(
-            "prismabuild_tools",
-            "TESSERA_PRISMABUILD_TOOLS_DIR",
-            "/mnt/shared/prismabuild-fleet/repo/tools",
-            "the published PrismaBuild installation verifier used by native preflight",
         ),
         Root(
             "piece_major_execution",

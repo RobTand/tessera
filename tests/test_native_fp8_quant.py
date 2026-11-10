@@ -45,8 +45,8 @@ counts):
   smaller in magnitude (up to 125 code steps); an all-zero row agrees on its
   codes and differs only in its scale.
 
-All cases are CUDA; they run through PrismaBuild inside the pinned serving
-image (``experiments/routed_fused_tests.sh``).
+All cases are CUDA; they run as a Flux GPU job inside the pinned serving
+image (Flux GPU path rendered, not qualified) (``experiments/routed_fused_tests.sh``).
 """
 
 import sys

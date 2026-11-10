@@ -1,7 +1,8 @@
-"""One-shot PB-only LFM teacher measurement with source-bound receipts.
+"""One-shot LFM teacher measurement with source-bound receipts.
 
 The fixed campaign paths are deliberate measurement identities, not defaults.
-Dispatch through pbrun under an outer 1500s timeout with 120s cleanup grace.
+Run as a Flux GPU job (rendered line: tools/_flux_gpu_jobspec.py; Flux GPU path rendered,
+not qualified) under an outer 1500s timeout with 120s cleanup grace.
 """
 import datetime
 import json

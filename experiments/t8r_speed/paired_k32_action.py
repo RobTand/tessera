@@ -1,8 +1,7 @@
 """One finite baseline/candidate run through existing bench/native/input owners.
 
-The historical direct launcher is not a qualified PrismaBuild controller.
-Batch custom-op work is not covered by the vLLM service exemption; the
-paired acceptance packet governs any future PB-bound controller.
+The paired acceptance packet governs each run. FLUX_JOB_ID is an environment
+context hint; GPU approval remains the lead's per-run decision.
 """
 import argparse
 import hashlib
@@ -59,7 +58,6 @@ def run_direct_arm(argv,env,log,arm_out,guard_path,*,pressure=None,popen=subproc
     start=floor+16*(1<<30)
     deadline=240.0
     term_grace=20.0
-    cleanup_container=True
     if policy is not None:
         measured=policy["measured_cpu_peak_bytes"]
         overhead=policy["unmeasured_gpu_overhead_bytes"]
@@ -71,7 +69,6 @@ def run_direct_arm(argv,env,log,arm_out,guard_path,*,pressure=None,popen=subproc
         floor=2*(1<<30)
         start=measured+overhead+3*(1<<30)
         term_grace=10.0
-        cleanup_container=False
     available,psi=pressure()
     if available < start or psi>=20:
         if policy is None:
@@ -102,10 +99,9 @@ def run_direct_arm(argv,env,log,arm_out,guard_path,*,pressure=None,popen=subproc
                     except ProcessLookupError:pass
                     child.wait(timeout=5)
         finally:
-            if cleanup_container:
-                cleanup=owned_cleanup(arm_out)
-            else:
-                cleanup={"state":"PrismaBuild owns scope and container cleanup"}
+            cleanup=owned_cleanup(arm_out)
+            cleanup['owner'] = {'flux_job_id_env': os.environ.get('FLUX_JOB_ID'),
+                                'authority': 'environment value, not an admission token'}
             (arm_out.parent/(arm_out.name+"-cleanup.json")).write_text(json.dumps(cleanup,indent=2)+"\n")
 
 
@@ -125,6 +121,12 @@ def timing_summary(reports,certificate):
     for arm in ('A1','B1','B2','A2'):
         r=reports[arm]
         if len(r['results'])!=1 or not r['results'][0]['ok']:raise ValueError('timing arm failed')
+        if __package__:
+            from .declared_inputs import DIRECT_TRANSPORT
+        else:
+            from declared_inputs import DIRECT_TRANSPORT
+        if r['meta']['direct_input_bindings'].get('transport') != DIRECT_TRANSPORT:
+            raise ValueError('timing input transport differs from declared reader')
         owners.append(r['meta']['direct_input_bindings']['before'])
         if owners[-1]!=r['meta']['direct_input_bindings']['after']:raise ValueError('timing input ownership changed')
         native=r['meta']['native_code_artifact']
@@ -161,12 +163,10 @@ def netdata_window(after,before):
             for host,addr in BOX_ENDPOINTS}
 
 
-def require_pb_execution():
-    """Held-original-FD transport does not exempt a batch from PB admission."""
-    if not os.environ.get("PRISMABUILD_ACTION_KEY"):
-        raise ValueError("paired custom-op batch requires an admitted PrismaBuild attempt")
-    if os.environ.get("BENCH_STRICT_STAGED"):
-        raise ValueError("held-original-FD paired transport cannot also use staged input transport")
+def require_flux_execution():
+    """Require a Flux context hint. GPU approval remains the lead's per-run decision."""
+    if not os.environ.get("FLUX_JOB_ID"):
+        raise ValueError("paired batch requires FLUX_JOB_ID environment value; this checks context only, not GPU approval or an admission token")
 
 
 def main():
@@ -180,7 +180,7 @@ def main():
     parser.add_argument('--candidate-sha256',required=True)
     parser.add_argument('--timing',action='store_true')
     args=parser.parse_args()
-    require_pb_execution()
+    require_flux_execution()
     def interrupted(signum,frame):raise KeyboardInterrupt('numeric run interrupted: '+str(signum))
     signal.signal(signal.SIGTERM,interrupted)
     out=Path(args.out);out.mkdir(parents=True,exist_ok=False)
@@ -218,7 +218,7 @@ def main():
                  BENCH_OWNER_TOKEN=secrets.token_hex(16),
                  BENCH_RO_MOUNTS=' '.join([*(str(p.parent) for p in natives),str(Path(NUMERIC_RECEIPT).parent)]))
         argv=['bash','experiments/t8r_speed/bench_t8r.sh','.',str(out/arm),
-            '--paired-k32-numerics','--direct-vllm-inputs','--paired-k32-source-sha256',bindings['src/tessera/serving/csrc/routed_fused_window.cu'],
+            '--paired-k32-numerics','--paired-k32-source-sha256',bindings['src/tessera/serving/csrc/routed_fused_window.cu'],
             '--artifact','/mnt/shared/tessera-runs/moe/glm53-a8-bf16menu-20260930/release/exported',
             '--groups','experts.R1024.L10','--ms','1,512,2048','--no-graph',
             '--power-s','3' if args.timing else '0','--warmup','10' if args.timing else '0',

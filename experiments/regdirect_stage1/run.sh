@@ -9,7 +9,7 @@ set -euo pipefail
 CHECKOUT=$(realpath "$1"); OUT=$(realpath -m "$2"); shift 2
 mkdir -p "$OUT/home" "$OUT/tmp"
 if [[ " $* " == *" --cpu-preflight "* ]]; then
-  PYTHONPATH="$CHECKOUT/src:${PYTHONPATH:-}" exec "${CPU_PY:-/home/rob/venvs/pb-cpu/bin/python}" \
+  PYTHONPATH="$CHECKOUT/src:${PYTHONPATH:-}" exec "${CPU_PY:?set CPU_PY to the scoped CPU interpreter}" \
     "$CHECKOUT/experiments/regdirect_stage1/bench_stage1.py" --out "$OUT" "$@"
 fi
 IMAGE=${ORACLE_IMAGE:?set ORACLE_IMAGE}
@@ -51,7 +51,7 @@ docker run --rm --cidfile "$CID" --gpus all --ipc=host --network=host --cpuset-c
   -e HOME="$OUT/home" -e TMPDIR="$OUT/tmp" -e TORCH_EXTENSIONS_DIR="$OUT/home/torch_extensions" \
   -e PYTHONPATH=/work/src -e HOST_NAME="$(hostname)" -e TESSERA_HEAD="$HEAD" -e ORACLE_IMAGE="$IMAGE" \
   -e OMP_NUM_THREADS=1 -e MKL_NUM_THREADS=1 -e MAX_JOBS=2 -e PYTHONUNBUFFERED=1 -e TESSERA_SERVE_MODE=resident \
-  -e PB_ACTION_KEY="${PB_ACTION_KEY:-${PRISMABUILD_ACTION_KEY:-}}" \
+  -e FLUX_JOB_ID="${FLUX_JOB_ID:-}" \
   --entrypoint "${COMMAND[0]}" -w /work "$IMAGE" "${COMMAND[@]:1}" --out "$OUT" "$@" || rc=$?
 touch "$OUT/.done"; kill $WD 2>/dev/null || true
 echo "end=$(date -u +%FT%TZ) rc=$rc"

@@ -56,7 +56,7 @@ def test_driver_module_graph_resolves_from_the_checkout(name):
     # of its own, so the prepend there resolves to src alone -- and this drops
     # any inherited one for the same reason a runner's environment must not be
     # what satisfies the import.  The test harness exports PYTHONPATH=src:
-    # experiments (``pbtest.py:450``); inheriting it would let the harness, not
+    # experiments; inheriting it would let the harness, not
     # the checkout, answer the question this file asks.
     env = dict(os.environ)
     env["PYTHONPATH"] = str(ROOT / "src")

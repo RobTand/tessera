@@ -42,9 +42,37 @@ def test_differing_source_or_failed_publish_cannot_advance(tmp_path):
     assert not progress.events.exists()
 
 
-def test_incomplete_input_bindings_cannot_enter_export(tmp_path,monkeypatch):
+def test_progress_line_follows_the_fsync_of_the_unit_it_reports(tmp_path,monkeypatch):
+    """Order is the obligation: the durable record is on disk before the progress line is printed."""
+    import os
+    import stat
+    module=driver();order=[];real=module.os.fsync
+    def fsync(fd):
+        order.append('directory-fsync' if stat.S_ISDIR(os.fstat(fd).st_mode) else 'file-fsync')
+        return real(fd)
+    monkeypatch.setattr(module.os, 'fsync', fsync)
+    output=tmp_path/'output';output.mkdir()
+    progress=module.DurableExportProgress(tmp_path/'events',output,{},lambda n,p:order.append(('commit',n,p)))
+    progress.completed('export_shards','a',{'bytes':1})
+    assert order[-1]==('commit',1,'export_shards')
+    assert order.index('file-fsync') < order.index('directory-fsync') < len(order) - 1
+    assert (tmp_path/'events'/'durable-events.jsonl').read_text().count('\n')==1
+
+
+def test_the_shared_progress_helper_prints_one_schema_line_per_report(capsys):
+    import sys
+    tools=Path(__file__).resolve().parents[1]
+    if str(tools) not in sys.path:sys.path.insert(0,str(tools))
+    from tessera._dev.durable_progress import emit
+    emit(3,'construct',unit='durable checkpoints');emit(4,'publish')
+    lines=capsys.readouterr().out.splitlines()
+    assert [json.loads(line) for line in lines]==[
+        {'schema':'tessera.durable_progress.v1','units_completed':3,'phase':'construct','unit':'durable checkpoints'},
+        {'schema':'tessera.durable_progress.v1','units_completed':4,'phase':'publish'}]
+
+
+def test_incomplete_input_bindings_cannot_enter_export(tmp_path):
     module=driver();path=tmp_path/'bindings.json';path.write_text(json.dumps({'schema':'prismaquant.glm_cached_cpu_export_bindings.v1','inputs':{}}))
-    monkeypatch.setenv('PRISMABUILD_ACTION_PROGRESS_HELPER','/unused')
     with pytest.raises(ValueError,match='incomplete'):
         module.main(['--bindings',str(path),'--bindings-sha256',hashlib.sha256(path.read_bytes()).hexdigest()])
 
@@ -81,29 +109,59 @@ def _repo(path):
     return run('rev-parse','HEAD').strip()
 
 
-def test_the_rendered_row_takes_the_agent_band_and_the_venv_of_its_commit(tmp_path):
+def test_the_rendered_row_is_a_stock_jobspec_on_the_venv_of_its_commit(tmp_path):
     module=renderer();binding=_bindings(tmp_path,module.INPUTS);commit=_repo(tmp_path/'checkout')
-    result=module.render(binding['path'],binding['sha256'],tmp_path/'checkout')
-    argv=result['argv']
-    assert argv[argv.index('--priority')+1]=='-10'
+    result=module.render(binding['path'],binding['sha256'],tmp_path/'checkout', walltime='20m', fleet_master_approved='fleet-master fixture decision')
+    spec=result['jobspec']
+    assert result['schema']=='prismaquant.reviewable_cpu_export_submission.v2' and 'argv' not in result
+    assert spec['resources_shape']=='slot/[core=8;memory=48]' and spec['requires']=='host:dl380g10'
     python=str(module.VENV_ROOT/f'pq-cpu312-tessera-{commit[:8]}'/'bin'/'python')
-    assert argv[argv.index('--')+1]==python
+    assert spec['command'][0]==python and spec['command'][1]=='tools/run_glm_cached_cpu_export.py'
     assert result['tessera_commit']==commit and result['interpreter']['path']==python
-    assert result['submitted'] is False
-    assert not [a for a in argv if '4c384e60' in a]
+    assert result['submitted'] is False and spec['walltime_s'] == 1200
+    assert spec['environment']['PYTHONPATH']=='src' and spec['environment']['OMP_NUM_THREADS']=='1'
+    text=json.dumps(result)
+    assert 'pbrun' not in text and 'prismabuild' not in text.lower() and '--priority' not in text
 
 
 def test_a_dirty_checkout_is_refused_rather_than_named_after_its_head(tmp_path):
     module=renderer();binding=_bindings(tmp_path,module.INPUTS);_repo(tmp_path/'checkout')
     (tmp_path/'checkout'/'f').write_text('changed')
     with pytest.raises(ValueError,match='uncommitted'):
-        module.render(binding['path'],binding['sha256'],tmp_path/'checkout')
+        module.render(binding['path'],binding['sha256'],tmp_path/'checkout', walltime='20m', fleet_master_approved='fleet-master fixture decision')
 
 
 def test_a_producer_authority_binding_is_optional_and_nothing_else_is(tmp_path):
     module=renderer();_repo(tmp_path/'checkout')
     binding=_bindings(tmp_path,(*module.INPUTS,'producer_authority'))
-    assert module.render(binding['path'],binding['sha256'],tmp_path/'checkout')['submitted'] is False
+    assert module.render(binding['path'],binding['sha256'],tmp_path/'checkout', walltime='20m', fleet_master_approved='fleet-master fixture decision')['submitted'] is False
     other=tmp_path/'other';other.mkdir();binding=_bindings(other,(*module.INPUTS,'unreviewed'))
     with pytest.raises(ValueError,match='incomplete'):
-        module.render(binding['path'],binding['sha256'],tmp_path/'checkout')
+        module.render(binding['path'],binding['sha256'],tmp_path/'checkout', walltime='20m', fleet_master_approved='fleet-master fixture decision')
+
+
+@pytest.mark.parametrize('walltime', ['0', '0s', '12', '-1m', 'nanm'])
+def test_cpu_export_renderer_requires_positive_explicit_walltime(walltime):
+    with pytest.raises(ValueError, match='positive|walltime'):
+        renderer().render('unused', 'unused', 'unused', walltime=walltime,
+                          fleet_master_approved='fleet-master fixture decision')
+
+
+def test_cpu_export_oversize_requires_named_approval(tmp_path):
+    module=renderer();binding=_bindings(tmp_path,module.INPUTS);_repo(tmp_path/'checkout')
+    args=(binding['path'],binding['sha256'],tmp_path/'checkout')
+    with pytest.raises(ValueError, match='--fleet-master-approved'):
+        module.render(*args, walltime='20m')
+    result=module.render(*args, walltime='20m', fleet_master_approved='fleet-master fixture decision')
+    assert result['jobspec']['fleet_master_approved']=='fleet-master fixture decision'
+    assert result['jobspec']['walltime_s']==1200
+
+
+@pytest.mark.parametrize('cores,memory,placement', [(11, 8, 'sparky'), (8, 25, 'dl380g10')])
+def test_cpu_export_plain_limits_are_checked_before_bindings(monkeypatch, cores, memory, placement):
+    module=renderer()
+    monkeypatch.setattr(module, 'CORES', cores)
+    monkeypatch.setattr(module, 'MEMORY_GIB', memory)
+    monkeypatch.setattr(module, 'PLACEMENT_TAG', placement)
+    with pytest.raises(ValueError, match='--fleet-master-approved'):
+        module.render('unused', 'unused', 'unused', walltime='20m')

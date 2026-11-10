@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# One PB action: the T8R per-module baseline and the two-run column-map A/B
+# One Flux job: the T8R per-module baseline and the two-run column-map A/B
 # on one GB10, timing arms interleaved (base, new, base, new) with the host
 # load recorded at each step's start and end.  Usage:
 #   ab_two_path.sh <out_root> <base_src>

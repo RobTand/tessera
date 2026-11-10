@@ -26,6 +26,30 @@ ts_py_library(
 )
 
 ts_py_library(
+    name = "_flux_gpu_jobspec",
+    srcs = [
+        "_flux_gpu_jobspec.py",
+    ],
+    deps = [
+        ":_flux_shape",
+    ],
+)
+
+ts_py_library(
+    name = "_flux_shape",
+    srcs = [
+        "_flux_shape.py",
+    ],
+)
+
+ts_py_library(
+    name = "_install_identity",
+    srcs = [
+        "_install_identity.py",
+    ],
+)
+
+ts_py_library(
     name = "_suite_container",
     srcs = [
         "_suite_container.py",
@@ -34,6 +58,27 @@ ts_py_library(
         "//src/tessera:__init___cycle",
         "//src/tessera:_dev/__init__",
         "//src/tessera:_dev/native_identity",
+    ],
+)
+
+ts_py_library(
+    name = "_suite_flux",
+    srcs = [
+        "_suite_flux.py",
+    ],
+    deps = [
+        "//src/tessera:__init___cycle",
+        "//src/tessera:_dev/__init__",
+        "//src/tessera:_dev/suite_source",
+        ":_flux_shape",
+        ":_suite_container",
+    ],
+)
+
+ts_py_library(
+    name = "_suite_runtime",
+    srcs = [
+        "_suite_runtime.py",
     ],
 )
 
@@ -53,6 +98,9 @@ ts_py_library(
     name = "build_serving_image",
     srcs = [
         "build_serving_image.py",
+    ],
+    deps = [
+        ":_suite_flux",
     ],
 )
 
@@ -375,7 +423,6 @@ ts_py_library(
         "//src/tessera:__init___cycle",
         "//src/tessera:_dev/__init__",
         "//src/tessera:_dev/source_dependencies",
-        "//src/tessera:_dev/suite_source",
     ],
 )
 
@@ -388,9 +435,9 @@ ts_py_library(
         "//src/tessera:__init___cycle",
         "//src/tessera:_dev/__init__",
         "//src/tessera:_dev/suite_deadline",
-        "//src/tessera:_dev/suite_source",
         "//src/tessera:_dev/surface_publication",
         ":_suite_container",
+        ":_suite_flux",
     ],
 )
 
@@ -413,6 +460,8 @@ ts_py_library(
     ],
     deps = [
         "//src/tessera:__init___cycle",
+        "//src/tessera:_dev/__init__",
+        "//src/tessera:_dev/durable_progress",
         "//src/tessera:export_serving",
     ],
 )
@@ -533,6 +582,7 @@ ts_py_library(
         "render_glm_cpu_export_command.py",
     ],
     deps = [
+        ":_flux_shape",
         ":run_glm_cached_cpu_export",
     ],
 )
@@ -544,6 +594,8 @@ ts_py_library(
     ],
     deps = [
         "//src/tessera:__init___cycle",
+        "//src/tessera:_dev/__init__",
+        "//src/tessera:_dev/durable_progress",
         "//src/tessera:export_serving",
         "//src/tessera:source_digest_cache",
     ],
@@ -577,6 +629,8 @@ ts_py_library(
     ],
     deps = [
         ":_suite_container",
+        ":_suite_flux",
+        ":_suite_runtime",
     ],
 )
 
@@ -669,13 +723,14 @@ ts_py_library(
         "//experiments:full_engine_plugin_install",
         "//experiments:step4_capture_launch",
         "//src/tessera:__init___cycle",
+        "//src/tessera:_dev/__init__",
+        "//src/tessera:_dev/durable_progress",
         "//src/tessera:bf16_route_cycle",
         "//src/tessera:serving/census_plan",
         "//src/tessera:serving/timing_panel",
         "//src/tessera:source_profiles",
         ":__init__",
         ":run_glm_cached_cpu_export",
-        ":tessera_shape_time_worker",
     ],
 )
 
@@ -692,6 +747,7 @@ ts_py_library(
         "//src/tessera:bf16_route_cycle",
         "//src/tessera:serving/source_identity",
         ":__init__",
+        ":_install_identity",
         ":run_glm_cached_cpu_export",
     ],
 )

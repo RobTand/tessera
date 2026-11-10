@@ -2,8 +2,7 @@
 
 ``tools/selected_population.py`` submits the files a change selects as shards
 through ``tools/merge_suite.py`` and judges them from merge_suite's receipt.
-These tests give it a pool of its own (the fleet's layout, built in
-``tmp_path``) and a real git checkout, then change one fact at a time.  A
+These tests give it saved native records, a controlled CLI and a real git checkout, then change one fact at a time.  A
 population that skipped a file, measured another tree, or hid a failed shard
 is the defect tessera#1069 records, so each of those is a case.
 """
@@ -20,6 +19,7 @@ from types import SimpleNamespace
 import pytest
 
 from tessera._dev.suite_source import measured_source
+from tests.merge_suite_support import _master_history, _population
 
 TESTS = Path(__file__).resolve().parent
 ROOT = TESTS.parent
@@ -38,12 +38,6 @@ helpers = _load("_merge_test_helpers_for_population", TESTS / "test_merge_suite.
 SHARDS = {"shard-00": ["tests/test_a.py", "tests/test_b.py"], "shard-01": ["tests/test_c.py"]}
 
 
-@pytest.fixture(autouse=True)
-def _restore_pool_paths(monkeypatch):
-    """``main`` points merge_suite at a pool; every test puts it back."""
-
-    monkeypatch.setattr(sp.merge_suite, "POOL_QUEUE", sp.merge_suite.POOL_QUEUE)
-    monkeypatch.setattr(sp.merge_suite, "POOL_CAS_REQUESTS", sp.merge_suite.POOL_CAS_REQUESTS)
 
 
 def _git(root, *args):
@@ -62,63 +56,10 @@ def _checkout(tmp_path):
     return root
 
 
-def _key(index):
-    return f"{index:02x}" + "0" * 62
 
 
-def _publish(path, producer, source, skip_reasons, not_collected):
-    """A shard's population with the producer stamp a real run carries."""
-
-    surface = helpers._population("x86", source=source)["surface"]
-    surface["skip_reasons"] = skip_reasons
-    surface["not_collected"] = not_collected
-    surface["source_identity"]["excluded_metadata"] = [{
-        "path": f".pbrun-closure.{producer.stem[:16]}.json", "bytes": 153,
-        "sha256": "d" * 64, "action_key": producer.stem,
-        "request_sha256": hashlib.sha256(producer.read_bytes()).hexdigest()}]
-    path.write_text(json.dumps(surface))
 
 
-def _world(tmp_path, monkeypatch, *, shards=None, ran=None, state=None, source=None,
-           skip_reasons=None, not_collected=None, selected=None, sources=None):
-    """A checkout, a pool and a receipt directory holding exactly this population.
-
-    ``ran`` is what each sealed command ran (default: the files it was given),
-    ``state`` each action's queue ending (default: done, exit 0), and ``source``
-    the effective source every shard published (default: the checkout's own).
-    A shard named in ``shards`` and left out of ``state`` has no pool record.
-    """
-
-    shards = SHARDS if shards is None else shards
-    checkout = _checkout(tmp_path)
-    receipt_dir = tmp_path / "receipt"
-    receipt_dir.mkdir()
-    own = measured_source(checkout, verifier=None)["sha256"]
-    for index, (name, files) in enumerate(shards.items()):
-        surface = receipt_dir / f"surface.{name}.json"
-        arm = sp.shard_arm(name, ran.get(name, files) if ran else files)
-        command = sp.merge_suite._timed_command(
-            sp.merge_suite._command(arm, surface, sp.PYTEST_ARGS, 2), 2400.0)
-        queue = (state or {}).get(name, ("done", 0))
-        actions = [(_key(index), queue[0], queue[1], "dl380g10")] if queue else []
-        pool_queue, pool_requests = helpers._fake_pool(
-            tmp_path / "pool", surface, actions, command=command)
-        request = helpers._request_of(pool_requests, _key(index))
-        if not request.exists():
-            helpers._fake_pool(tmp_path / "pool", surface, [(_key(index), "done", 0, "x")],
-                               command=command)
-        _publish(surface, request, (sources or {}).get(name, source or own),
-                 (skip_reasons or {}).get(name, {}), (not_collected or {}).get(name, []))
-        if not queue:
-            for folder in ("done", "failed"):
-                (pool_queue / folder / f"{_key(index)}.json").unlink(missing_ok=True)
-    selection = {"base": "origin/master", "verdict": "narrowed", "forces_full": [],
-                 "excluded_tests": [], "shards": shards,
-                 "tests": sorted(selected or {path for files in shards.values() for path in files})}
-    (receipt_dir / sp.SELECTION).write_text(json.dumps(selection))
-    sp.merge_suite.POOL_QUEUE, sp.merge_suite.POOL_CAS_REQUESTS = pool_queue, pool_requests
-    return SimpleNamespace(checkout=checkout, receipt_dir=receipt_dir, selection=selection,
-                           pool=tmp_path / "pool")
 
 
 def _receipt(world, **kwargs):
@@ -172,22 +113,22 @@ def test_two_shards_that_measured_different_source_are_not_green(tmp_path, monke
     assert not _receipt(world)["verdict"].startswith("green on")
 
 
-def test_a_nonzero_pbrun_code_is_not_hidden_by_a_clean_pool_record(tmp_path, monkeypatch):
+def test_a_nonzero_client_code_is_not_hidden_by_a_clean_pool_record(tmp_path, monkeypatch):
     world = _world(tmp_path, monkeypatch)
     sp.write_client_result(world.receipt_dir, "shard-00", {"returncode": 0})
     sp.write_client_result(world.receipt_dir, "shard-01", {"returncode": 1})
     receipt = _receipt(world)
     assert receipt["verdict"].startswith("incomplete:"), receipt["verdict"]
-    assert "shard-01: pbrun returned 1" in receipt["population_problems"]
+    assert "shard-01: Flux client returned 1" in receipt["population_problems"]
 
 
-def test_a_shard_the_pool_failed_is_red(tmp_path, monkeypatch):
+def test_a_shard_native_execution_failed_is_red(tmp_path, monkeypatch):
     world = _world(tmp_path, monkeypatch, state={"shard-01": ("failed", 1)})
     verdict = _receipt(world)["verdict"]
     assert verdict.startswith("red"), verdict
 
 
-def test_a_shard_with_no_pool_record_is_not_green(tmp_path, monkeypatch):
+def test_a_shard_with_no_native_record_is_not_green(tmp_path, monkeypatch):
     world = _world(tmp_path, monkeypatch, state={"shard-01": None})
     receipt = _receipt(world)
     assert not receipt["verdict"].startswith("green on"), receipt["verdict"]
@@ -233,99 +174,12 @@ def test_a_selection_smaller_than_the_shard_count_gets_fewer_shards():
         sp.balanced_shards({"a.py": 1}, 0)
 
 
-def _selector(monkeypatch, stdout="", returncode=0, stderr=""):
-    asked = []
-
-    def fake(command, **kwargs):
-        asked.append((command, kwargs))
-        return SimpleNamespace(returncode=returncode, stdout=stdout, stderr=stderr)
-
-    monkeypatch.setattr(sp.subprocess, "run", fake)
-    return asked
 
 
-def test_the_selection_is_the_selectors_answer_split_into_shards(tmp_path, monkeypatch):
-    for name, size in (("test_a.py", 30), ("test_b.py", 20), ("test_c.py", 10)):
-        (tmp_path / name).write_text("x" * size)
-    answer = {"verdict": "narrowed", "forces_full": [], "excluded_tests": [],
-              "tests": ["test_c.py", "test_a.py", "test_b.py"]}
-    asked = _selector(monkeypatch, json.dumps(answer))
-    selection = sp.choose(tmp_path, "origin/master", 2)
-    assert selection["tests"] == ["test_a.py", "test_b.py", "test_c.py"]
-    assert sorted(path for files in selection["shards"].values() for path in files) == selection["tests"]
-    assert list(selection["shards"]) == ["shard-00", "shard-01"]
-    assert "origin/master...HEAD" in asked[0][0]
-    assert asked[0][1]["cwd"] == tmp_path
 
 
-@pytest.mark.parametrize("stdout, returncode, phrase", [
-    pytest.param("", 0, "no selection", id="an-empty-change-prints-nothing"),
-    pytest.param("", 2, "no selection", id="a-selector-that-failed"),
-    pytest.param(json.dumps({"verdict": "narrowed", "tests": ["gone.py"]}), 0,
-                 "does not hold: ['gone.py']", id="a-file-the-tree-lacks"),
-])
-def test_a_selection_that_cannot_be_run_is_refused_by_name(tmp_path, monkeypatch, stdout, returncode, phrase):
-    _selector(monkeypatch, stdout, returncode)
-    with pytest.raises(ValueError, match="no selection|does not hold") as error:
-        sp.choose(tmp_path, "origin/master", 2)
-    assert phrase in str(error.value)
 
 
-@pytest.mark.parametrize("master_ref", ["master", "origin/master"])
-@pytest.mark.parametrize("lifecycle,failed", [("submit", False), ("resume", True)])
-def test_submit_time_master_survives_a_ref_advance(
-        tmp_path, monkeypatch, master_ref, lifecycle, failed):
-    """#1227: shard assembly and a restarted submitter reuse submission evidence.
-
-    Pre-fix: AssertionError: master_head_at_submit must retain the
-    pre-dispatch observation, not assembly-time master (all four cases).
-    """
-
-    _dev_mode(monkeypatch)
-    world = _world(tmp_path, monkeypatch,
-                   state={"shard-01": ("failed", 1)} if failed else None)
-    git, ref, submitted, advanced = helpers._master_history(world.checkout, master_ref)
-    expected = _receipt(world)
-    monkeypatch.setattr(sp.merge_suite, "SHARED_ROOT", tmp_path)
-    monkeypatch.setattr(sp, "choose", lambda *args: dict(world.selection))
-
-    def dispatch(selection, args, receipt_dir):
-        assert receipt_dir == world.receipt_dir
-        git("update-ref", ref, advanced)
-        if lifecycle == "resume":
-            raise RuntimeError("submitter stopped before receipt assembly")
-        # The pool populations already exist; these are the clients' results.
-        for name in selection["shards"]:
-            sp.write_client_result(receipt_dir, name, {"returncode": 0})
-        return {}
-
-    monkeypatch.setattr(sp, "submit_all", dispatch)
-    argv = ["--checkout", str(world.checkout), "--out", str(world.receipt_dir),
-            "--pool-root", str(world.pool)]
-    runner = sp
-    if lifecycle == "resume":
-        with pytest.raises(RuntimeError, match="submitter stopped"):
-            sp.main(argv)
-        runner = _load("_selected_population_restarted", ROOT / "tools" / "selected_population.py")
-        # Neither module may retain in-memory state from the original submitter.
-        monkeypatch.setattr(runner, "merge_suite", helpers._module())
-        monkeypatch.setattr(runner, "submit_all", lambda *args: pytest.fail("resume submitted shards"))
-        argv += ["--resume", str(world.receipt_dir)]
-    status = runner.main(argv)
-    receipt = json.loads((world.receipt_dir / sp.RECEIPT).read_text())
-
-    assert git("rev-parse", "HEAD") == submitted
-    assert git("rev-parse", ref) == advanced
-    assert status == (1 if failed else 0)
-    for key in ("commits_measured", "verdict", "arm_results", "checkout_source", "population_problems"):
-        assert receipt[key] == expected[key], key
-    assert [arm["surface"] for arm in receipt["arms"]] == [arm["surface"] for arm in expected["arms"]]
-    population = receipt["population"]
-    assert population["master_head_at_submit"] == submitted, (
-        "master_head_at_submit must retain the pre-dispatch observation, not assembly-time master")
-    assert population["master_ref_used"] == master_ref
-    assert population["is_master_head"] is True
-    assert population["commit"] == submitted
 
 
 @pytest.mark.parametrize("old_receipt", [False, True])
@@ -338,15 +192,14 @@ def test_submit_time_master_is_unknown_for_a_legacy_resume(tmp_path, monkeypatch
 
     _dev_mode(monkeypatch)
     world = _world(tmp_path, monkeypatch)
-    _, _, submitted, _ = helpers._master_history(world.checkout, "master")
+    _, _, submitted, _ = _master_history(world.checkout, "master")
     expected = _receipt(world)
     if old_receipt:
         prior = {**expected, "population": {**expected["population"],
                  "master_head_at_submit": submitted, "master_ref_used": "master", "is_master_head": True}}
         (world.receipt_dir / sp.RECEIPT).write_text(json.dumps(prior))
     monkeypatch.setattr(sp, "submit_all", lambda *args: pytest.fail("resume submitted shards"))
-    assert sp.main(["--checkout", str(world.checkout), "--resume", str(world.receipt_dir),
-                    "--pool-root", str(world.pool)]) == 0
+    assert sp.main(["--checkout", str(world.checkout), "--resume", str(world.receipt_dir)]) == 0
     receipt = json.loads((world.receipt_dir / sp.RECEIPT).read_text())
     assert receipt["verdict"] == expected["verdict"]
     assert receipt["commits_measured"] == expected["commits_measured"]
@@ -362,73 +215,66 @@ def test_resume_rebuilds_the_receipt_and_submits_nothing(tmp_path, monkeypatch, 
         raise AssertionError("--resume submitted a shard")
 
     monkeypatch.setattr(sp.merge_suite, "_submit", refuse)
-    status = sp.main(["--resume", str(world.receipt_dir), "--checkout", str(world.checkout),
-                      "--pool-root", str(world.pool)])
+    status = sp.main(["--resume", str(world.receipt_dir), "--checkout", str(world.checkout)])
     out = capsys.readouterr().out
     receipt = json.loads((world.receipt_dir / sp.RECEIPT).read_text())
     assert status == 0, out
-    assert receipt["schema"] == "tessera.selected_population.v1"
+    assert receipt["schema"] == "tessera.selected_population.flux.v2"
     assert receipt["assembled_by"] == "resume"
     assert "selected_population: green on 2 population(s)" in out
 
 
 def test_resume_exits_nonzero_for_a_population_that_is_not_green(tmp_path, monkeypatch, capsys):
     world = _world(tmp_path, monkeypatch, ran={"shard-00": ["tests/test_a.py"]})
-    status = sp.main(["--resume", str(world.receipt_dir), "--checkout", str(world.checkout),
-                      "--pool-root", str(world.pool)])
+    status = sp.main(["--resume", str(world.receipt_dir), "--checkout", str(world.checkout)])
     assert status == 1
     assert "PROBLEM: " in capsys.readouterr().out
 
 
 def test_a_dry_run_prints_each_shards_command_and_creates_nothing(tmp_path, monkeypatch, capsys):
-    selection = {"base": "origin/master", "verdict": "narrowed", "forces_full": [],
+    selection = {"source_identity": {"sha256": "a" * 64}, "base": "origin/master", "verdict": "narrowed", "forces_full": [],
                  "excluded_tests": [], "tests": sorted(sum(SHARDS.values(), [])), "shards": SHARDS}
     monkeypatch.setattr(sp, "choose", lambda checkout, base, count: selection)
     out_dir = tmp_path / "never-created"
-    status = sp.main(["--dry-run", "--checkout", str(_checkout(tmp_path)), "--out", str(out_dir)])
-    lines = [line for line in capsys.readouterr().out.splitlines() if "pbrun.py" in line]
+    status = sp.main(["--dry-run", "--python", "/opt/venv/bin/python", "--checkout", str(_checkout(tmp_path)), "--out", str(out_dir)])
+    lines = [line for line in capsys.readouterr().out.splitlines() if "-m pytest" in line]
     assert status == 0
     assert not out_dir.exists()
     assert len(lines) == 2
     for line, files in zip(lines, SHARDS.values()):
         assert all(path in line for path in files)
-        assert f"--surface-json {out_dir}/surface.shard-" in line
+        import shlex
+        argv, why = sp.merge_suite._pytest_argv(shlex.split(line))
+        assert why is None
+        assert sp.merge_suite._targets_of(argv) == files
+        destination, why = sp.merge_suite._effective_surface_json(argv)
+        assert why is None and Path(destination).parent == out_dir
         assert "-n 2 --dist worksteal" in line
-        assert "--cpus 2" in line
+        assert "--cpus" not in line
 
 
 def test_every_shard_runs_under_the_interpreter_the_run_names(tmp_path, monkeypatch, capsys):
-    """The arm's default interpreter may lack what the suite imports.
-
-    merge_suite's x86 arm names ``pb-cpu``, which has no ``jsonschema``, so a
-    test that needs it fails there for want of the package and not for any
-    defect.  The run names its interpreter, and the selection records it so
-    ``--resume`` reads the same one.
-    """
+    """The explicit interpreter is saved for resume, with no machine default."""
 
     arm = sp.shard_arm("shard-00", ["tests/test_a.py"], python="/opt/venv/bin/python")
     assert arm["python"] == "/opt/venv/bin/python"
-    assert sp.shard_arm("shard-00", ["tests/test_a.py"])["python"] == sp.merge_suite.ARMS["x86"]["python"]
-    selection = {"base": "origin/master", "verdict": "narrowed", "forces_full": [],
+    assert sp.shard_arm("shard-00", ["tests/test_a.py"])["python"] is None
+    selection = {"source_identity": {"sha256": "a" * 64}, "base": "origin/master", "verdict": "narrowed", "forces_full": [],
                  "excluded_tests": [], "tests": sorted(sum(SHARDS.values(), [])), "shards": SHARDS}
     monkeypatch.setattr(sp, "choose", lambda checkout, base, count: dict(selection))
-    status = sp.main(["--dry-run", "--checkout", str(_checkout(tmp_path)),
-                      "--out", str(tmp_path / "never"), "--python", "/opt/venv/bin/python"])
-    lines = [line for line in capsys.readouterr().out.splitlines() if "pbrun.py" in line]
+    status = sp.main(["--dry-run", "--python", "/opt/venv/bin/python", "--checkout", str(_checkout(tmp_path)),
+                      "--out", str(tmp_path / "never")])
+    lines = [line for line in capsys.readouterr().out.splitlines() if "-m pytest" in line]
     assert status == 0 and len(lines) == 2
-    assert all("/opt/venv/bin/python -m pytest" in line for line in lines)
+    assert all("/opt/venv/bin/python -s -m pytest" in line for line in lines)
 
 
-def test_no_more_than_eight_pbrun_clients_run_at_once(tmp_path, monkeypatch):
-    """D21 caps one agent at eight PrismaBuild clients; the shard count is a separate number.
-
-    Twelve shards queue behind eight clients.  The fake client holds until
-    eight are in flight, so a runner that starts all twelve at once shows a
-    peak of twelve and one that starts eight shows exactly eight.
-    """
+def test_no_more_than_two_native_clients_run_at_once(tmp_path, monkeypatch):
+    """Twelve shards queue behind the two reserved Flux job slots."""
 
     shards = {f"shard-{i:02d}": [f"tests/test_{i}.py"] for i in range(12)}
-    selection = {"shards": shards}
+    selection = {"shards": shards, "source_identity": {"sha256": "a" * 64},
+                 "python": "/opt/test-cpu/bin/python"}
     lock, release = threading.Lock(), threading.Event()
     state = {"now": 0, "peak": 0}
 
@@ -436,10 +282,9 @@ def test_no_more_than_eight_pbrun_clients_run_at_once(tmp_path, monkeypatch):
         with lock:
             state["now"] += 1
             state["peak"] = max(state["peak"], state["now"])
-            if state["now"] >= 8:
+            if state["now"] >= 2:
                 release.set()
-        release.wait(5)
-        time.sleep(0.02)
+        assert release.wait(20), "second client never arrived"
         with lock:
             state["now"] -= 1
         return {"arm": name, "returncode": 0}
@@ -449,24 +294,23 @@ def test_no_more_than_eight_pbrun_clients_run_at_once(tmp_path, monkeypatch):
                            checkout=tmp_path, dry_run=True, artifact_root=[])
     results = sp.submit_all(selection, args, tmp_path)
     assert sorted(results) == sorted(shards)
-    assert sp.MAX_CLIENTS == 8
-    assert state["peak"] == 8
+    assert sp.MAX_CLIENTS == 2
+    assert state["peak"] == 2
 
 
 def test_a_nonzero_client_result_survives_a_resume(tmp_path, monkeypatch, capsys):
     """A population rejected for a pbrun code must stay rejected after the submitter dies.
 
-    The pool's record of the action can be clean while pbrun returned 1, and a
+    The pool's record of the action can be clean while Flux client returned 1, and a
     resume that read only the pool would turn that rejected run green.
     """
 
     world = _world(tmp_path, monkeypatch)
     sp.write_client_result(world.receipt_dir, "shard-01", {"returncode": 1, "elapsed_s": 3.0})
-    status = sp.main(["--resume", str(world.receipt_dir), "--checkout", str(world.checkout),
-                      "--pool-root", str(world.pool)])
+    status = sp.main(["--resume", str(world.receipt_dir), "--checkout", str(world.checkout)])
     receipt = json.loads((world.receipt_dir / sp.RECEIPT).read_text())
     assert status == 1, capsys.readouterr().out
-    assert "shard-01: pbrun returned 1" in receipt["population_problems"]
+    assert "shard-01: Flux client returned 1" in receipt["population_problems"]
     assert receipt["verdict"].startswith("incomplete:"), receipt["verdict"]
 
 
@@ -475,8 +319,7 @@ def test_a_resume_names_the_shards_whose_client_result_was_never_recorded(tmp_pa
 
     world = _world(tmp_path, monkeypatch)
     sp.write_client_result(world.receipt_dir, "shard-00", {"returncode": 0})
-    status = sp.main(["--resume", str(world.receipt_dir), "--checkout", str(world.checkout),
-                      "--pool-root", str(world.pool)])
+    status = sp.main(["--resume", str(world.receipt_dir), "--checkout", str(world.checkout)])
     out = capsys.readouterr().out
     receipt = json.loads((world.receipt_dir / sp.RECEIPT).read_text())
     assert status == 0, out
@@ -487,15 +330,16 @@ def test_a_resume_names_the_shards_whose_client_result_was_never_recorded(tmp_pa
 
 
 def test_each_clients_result_is_written_when_that_client_exits(tmp_path, monkeypatch):
-    selection = {"shards": SHARDS}
-    answers = {"shard-00": {"returncode": 0, "elapsed_s": 1.5, "stderr_tail": ["ok"], "pbrun": "pbrun a"},
-               "shard-01": {"returncode": 1, "elapsed_s": 2.5, "stderr_tail": ["boom"], "pbrun": "pbrun b"}}
+    selection = {"shards": SHARDS, "source_identity": {"sha256": "a" * 64},
+                 "python": "/opt/test-cpu/bin/python"}
+    answers = {"shard-00": {"returncode": 0, "elapsed_s": 1.5, "stderr_tail": ["ok"], "flux": "native a"},
+               "shard-01": {"returncode": 1, "elapsed_s": 2.5, "stderr_tail": ["boom"], "flux": "native b"}}
     monkeypatch.setattr(sp.merge_suite, "_submit", lambda name, arm, args, receipt_dir: answers[name])
     args = SimpleNamespace(cpus=2, mem_gb=4, pytest_arg=[], timeout_s=1.0, wait_s=1.0,
                            checkout=tmp_path, dry_run=False, artifact_root=[])
     sp.submit_all(selection, args, tmp_path)
     for name, answer in answers.items():
-        assert sp.read_client_result(tmp_path, name) == answer
+        assert sp.read_client_result(tmp_path, name) == {key: answer.get(key) for key in sp._CLIENT_FIELDS}
     assert sp.read_client_result(tmp_path, "shard-02") is None
 
 
@@ -560,3 +404,144 @@ def test_file_coverage_stays_strict_in_both_modes(tmp_path, monkeypatch, certifi
     receipt = _receipt(world)
     assert receipt["verdict"].startswith("incomplete:"), receipt["verdict"]
     assert any("never run" in problem for problem in receipt["population_problems"])
+
+
+def _world(tmp_path, monkeypatch, *, shards=None, ran=None, state=None, source=None,
+           skip_reasons=None, not_collected=None, selected=None, sources=None):
+    shards = SHARDS if shards is None else shards
+    checkout = _checkout(tmp_path)
+    receipt_dir = tmp_path / "receipt"; receipt_dir.mkdir()
+    identity = measured_source(checkout, verifier=None)
+    selection = {"base": "HEAD", "base_commit": identity["snapshot_commit"],
+        "python": "/opt/test-cpu/bin/python",
+        "head_commit": identity["snapshot_commit"], "source_identity": identity,
+        "verdict": "narrowed", "forces_full": [], "excluded_tests": [], "shards": shards,
+        "tests": sorted(selected or {path for files in shards.values() for path in files})}
+    jobs = helpers._native_jobs(sp.merge_suite, monkeypatch)
+    for name, files in shards.items():
+        surface = _population("x86", source=(sources or {}).get(name, source or identity["sha256"]),
+                                     commit=identity["snapshot_commit"])["surface"]
+        surface["skip_reasons"] = (skip_reasons or {}).get(name, {})
+        surface["not_collected"] = (not_collected or {}).get(name, [])
+        arm = sp.shard_arm(name, ran.get(name, files) if ran else files, python="/opt/test-cpu/bin/python")
+        command = sp.merge_suite._timed_command(sp.merge_suite._command(
+            arm, receipt_dir / f"surface.{name}.json", sp.PYTEST_ARGS, 2), 60)
+        status = (state or {}).get(name, ("done", 0))
+        world = jobs.add(receipt_dir, name, surface, command=command,
+            code=status[1] if status else 0, application=sp.selection_binding(selection, receipt_dir))
+        if status is None:
+            (world.directory / "submission.json").unlink()
+    (receipt_dir / sp.SELECTION).write_bytes(sp.merge_suite.suite_flux.encoded(selection))
+    return SimpleNamespace(checkout=checkout, receipt_dir=receipt_dir, selection=selection, jobs=jobs)
+
+
+@pytest.mark.parametrize("answer,code", [({"verdict": "narrowed", "tests": ["tests/test_b.py", "tests/test_a.py"]}, 0),
+    ({"verdict": "narrowed", "tests": ["tests/gone.py"]}, 0), ({}, 2)])
+def test_selection_binds_resolved_refs_and_actual_source(tmp_path, monkeypatch, answer, code):
+    checkout = _checkout(tmp_path)
+    (checkout / "tests").mkdir()
+    for name in ("test_a.py", "test_b.py"):
+        (checkout / "tests" / name).write_text("def test_one(): pass\n")
+    _git(checkout, "add", "."); _git(checkout, "commit", "-qm", "tests")
+    selector = tmp_path / "selector.py"
+    selector.write_text(f"import json,sys; print({json.dumps(json.dumps(answer))}); sys.exit({code})\n")
+    monkeypatch.setattr(sp, "SELECTOR", selector)
+    monkeypatch.setattr(sp.merge_suite.suite_flux, "source", lambda path: measured_source(path, verifier=None))
+    if code or "tests/gone.py" in answer.get("tests", []):
+        with pytest.raises(ValueError, match="no selection|does not hold"):
+            sp.choose(checkout, "HEAD~1", 2)
+    else:
+        result = sp.choose(checkout, "HEAD~1", 2)
+        assert result["tests"] == ["tests/test_a.py", "tests/test_b.py"]
+        assert result["head_commit"] == measured_source(checkout, verifier=None)["snapshot_commit"]
+        assert result["base_commit"] == subprocess.check_output(["git", "-C", str(checkout), "rev-parse", "HEAD~1"], text=True).strip()
+        assert result["source_identity"] == measured_source(checkout, verifier=None)
+        assert sorted(path for files in result["shards"].values() for path in files) == result["tests"]
+
+
+def test_all_known_native_ids_are_collected_after_a_sibling_submit_error(tmp_path, monkeypatch):
+    world = _world(tmp_path, monkeypatch)
+    visited = []
+    def submit(name, arm, args, directory):
+        if name == "shard-00":
+            raise ValueError("submission response lost, never retry")
+        return sp.merge_suite._resume(name, arm, directory)
+    original = sp.merge_suite.suite_flux.collect
+    def collect(directory):
+        visited.append(directory.name)
+        return original(directory)
+    monkeypatch.setattr(sp.merge_suite, "_submit", submit)
+    monkeypatch.setattr(sp.merge_suite.suite_flux, "collect", collect)
+    args = SimpleNamespace(cpus=2, mem_gb=4, pytest_arg=[], timeout_s=60, wait_s=60,
+        checkout=world.checkout, dry_run=False, artifact_root=[])
+    results = sp.submit_all(world.selection, args, world.receipt_dir)
+    assert set(visited) == {"flux.shard-00", "flux.shard-01"}
+    assert "submission response lost" in results["shard-00"]["client_error"]
+    assert all(record["exit_status_observed"] for record in results.values())
+    assert not any("submit" in call for call in world.jobs.calls)
+
+
+def test_selector_subprocess_disables_user_site(tmp_path, monkeypatch):
+    import shlex
+
+    checkout = _checkout(tmp_path)
+    (checkout / "tests").mkdir()
+    (checkout / "tests/test_a.py").write_text("def test_one(): pass\n")
+    _git(checkout, "add", ".")
+    _git(checkout, "commit", "-qm", "selected tests")
+    selector = tmp_path / "selector.py"
+    selector.write_text('import json,sys\nassert sys.flags.no_user_site == 1\n'
+        'print(json.dumps({"verdict":"narrowed","tests":["tests/test_a.py"]}))\n')
+    interpreter = tmp_path / "python"
+    interpreter.write_text('#!/bin/sh\ncase "$1" in -s|-I) ;; *) '
+        'echo "explicit isolated Python flag required" >&2; exit 91;; esac\n'
+        'exec ' + shlex.quote(sp.sys.executable) + ' "$@"\n')
+    interpreter.chmod(0o755)
+    monkeypatch.setattr(sp.sys, "executable", str(interpreter))
+    monkeypatch.setattr(sp, "SELECTOR", selector)
+    monkeypatch.setattr(sp.merge_suite.suite_flux, "source",
+        lambda path: measured_source(path, verifier=None))
+    result = sp.choose(checkout, "HEAD~1", 1)
+    assert result["tests"] == ["tests/test_a.py"]
+    assert result["shards"] == {"shard-00": ["tests/test_a.py"]}
+    assert result["source_identity"]["verification"] == "verified"
+
+
+def test_replaced_selection_cannot_borrow_saved_native_jobs(tmp_path, monkeypatch):
+    world = _world(tmp_path, monkeypatch)
+    assert _receipt(world)["verdict"].startswith("green")
+    world.selection["base_commit"] = "e" * 40
+    receipt = _receipt(world)
+    assert not receipt["verdict"].startswith("green")
+    assert any("immutable selection" in problem for problem in receipt["population_problems"])
+
+
+def test_explicit_scope_preserves_full_selector_verdict_and_source(tmp_path, monkeypatch):
+    checkout = _checkout(tmp_path)
+    (checkout / "tests").mkdir()
+    for name in ("test_a.py", "test_b.py"):
+        (checkout / "tests" / name).write_text("def test_one(): pass\n")
+    _git(checkout, "add", "."); _git(checkout, "commit", "-qm", "tests")
+    selector = tmp_path / "selector.py"
+    selector.write_text('print(\'{"verdict":"full","tests":["tests/test_a.py","tests/test_b.py"]}\')\n')
+    monkeypatch.setattr(sp, "SELECTOR", selector)
+    monkeypatch.setattr(sp.merge_suite.suite_flux, "source", lambda path: measured_source(path, verifier=None))
+    result = sp.choose(checkout, "HEAD~1", 2, targets=["tests/test_a.py"])
+    assert result["verdict"] == "full"
+    assert result["selector_tests"] == ["tests/test_a.py", "tests/test_b.py"]
+    assert result["tests"] == ["tests/test_a.py"]
+    assert result["scope"] == "explicit subset of selector population"
+    assert result["shards"] == {"shard-00": ["tests/test_a.py"]}
+    with pytest.raises(ValueError, match="selected"):
+        sp.choose(checkout, "HEAD~1", 2, targets=["tests/not_selected.py"])
+
+
+def test_new_selection_requires_explicit_python_before_source_probe(tmp_path, capsys):
+    with pytest.raises(SystemExit) as error:
+        sp.main(['--dry-run', '--checkout', str(tmp_path/'absent')])
+    assert error.value.code == 2
+    assert '--python' in capsys.readouterr().err
+def test_concurrency_above_tessera_cap_is_refused(tmp_path):
+    args = SimpleNamespace(max_jobs=3)
+    with pytest.raises(ValueError, match='max-jobs.*2'):
+        sp.submit_all({'shards': {}}, args, tmp_path)

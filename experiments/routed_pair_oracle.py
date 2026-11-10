@@ -1336,6 +1336,9 @@ def profile_leg(name, fn, args, sampler, iters_wall, iters_prof, out_dir):
 # ---------------------------------------------------------------------------
 
 def provenance(args):
+    """Run provenance. ``tessera.routed_pair_oracle.v2`` / ``routed_pair_profiles.v2`` receipts
+    name the run by ``flux_job_id`` (the ``FLUX_JOB_ID`` Flux gives the job); v1 receipts, written
+    before 2026-11-09, name it by ``pb_action`` and keep that meaning. No verifier reads either."""
     here = Path(__file__).resolve().parents[1]
     return {"host": os.environ.get("HOST_NAME") or socket.gethostname(),
             "device": torch.cuda.get_device_name(0),
@@ -1347,7 +1350,7 @@ def provenance(args):
             "tessera_head": args.tessera_head,
             "tessera_worktree_state": args.tessera_state,
             "src_tree_sha256": src_tree_digest(here),
-            "pb_action": os.environ.get("PRISMABUILD_ACTION_KEY") or os.environ.get("PB_ACTION_KEY"),
+            "flux_job_id": os.environ.get("FLUX_JOB_ID"),
             "argv": sys.argv, "utc": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())}
 
 
@@ -1357,7 +1360,7 @@ def run_oracle(args):
     experts = [int(e) for e in args.oracle_experts.split(",")] if "," in args.oracle_experts \
         else [i * (288 // int(args.oracle_experts)) for i in range(int(args.oracle_experts))]
     E = len(experts)
-    report = {"schema": "tessera.routed_pair_oracle.v1", "issue": "RobTand/tessera#604",
+    report = {"schema": "tessera.routed_pair_oracle.v2", "issue": "RobTand/tessera#604",
               "provenance": provenance(args), "layer": args.layer, "experts": experts,
               "shapes": {"hidden": HIDDEN, "moe_intermediate": INTER, "top_k": TOP_K,
                          "experts_loaded": E, "served_experts": 288},
@@ -1488,7 +1491,7 @@ def run_profile(args):
     E = len(experts)
     sampler = PowerSampler(hz=10.0)
     sampler.start()
-    report = {"schema": "tessera.routed_pair_profiles.v1", "issue": "RobTand/tessera#604",
+    report = {"schema": "tessera.routed_pair_profiles.v2", "issue": "RobTand/tessera#604",
               "provenance": provenance(args), "layer": args.layer, "experts_loaded": E,
               "experts": "all 288" if E == 288 else experts,
               "regime": "eager (no CUDA graph), resident, TP1, one routed layer",

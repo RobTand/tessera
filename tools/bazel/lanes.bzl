@@ -6,7 +6,6 @@ TORCH_PACKAGES = [
     "build",
     "jsonschema",
     "numpy",
-    "prismabuild",
     "pytest",
     "pytest-timeout",
     "pytest-xdist",
@@ -18,7 +17,6 @@ TORCH_PACKAGES = [
 BYTES_PACKAGES = [
     "build",
     "jsonschema",
-    "prismabuild",
     "pytest",
     "pytest-timeout",
     "pytest-xdist",

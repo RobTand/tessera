@@ -179,15 +179,15 @@ def pick_recorded(root, ms):
 
 
 def stage_geometry_inputs(args):
-    """Copy admitted whole-file inputs through the existing pinned reader."""
+    """Copy declared whole-file inputs through the digest-checked declared-input reader."""
     if not args.data_manifest:
         if args.routing and not args.cpu_preflight:
             raise ValueError('GPU recorded routing needs its admitted data manifest')
         return
     from pathlib import Path
     import tempfile
-    from pb_staged_store import StagedInputs
-    inputs=StagedInputs(args.data_manifest)
+    from declared_inputs import DeclaredInputs
+    inputs=DeclaredInputs(args.data_manifest)
     args._staged_input_owner=tempfile.TemporaryDirectory(prefix='d41-geometry-inputs-',dir='/tmp')
     local_root=Path(args._staged_input_owner.name)
     try:
@@ -745,7 +745,7 @@ def main():
     ap.add_argument("--config", default="", help="actual GLM config for shape provenance")
     ap.add_argument("--ncu", action="store_true",
                     help="profile one call per (group, M) under bench_t8r.sh's BENCH_NCU=1; no timing")
-    ap.add_argument('--data-manifest',default='',help='admitted PB whole-file routing readset')
+    ap.add_argument('--data-manifest',default='',help='declared whole-file routing readset')
     args = ap.parse_args()
     if ":" in args.shapes:
         shapes = {}
@@ -815,7 +815,7 @@ def main():
             "dense_seed_without_routing_suffix": True,
             "kernel_sha": os.environ.get("KERNEL_SHA"), "tessera_head": os.environ.get("TESSERA_HEAD"),
             "image": os.environ.get("ORACLE_IMAGE"), "host": os.environ.get("HOST_NAME"),
-            "pb_action": os.environ.get("PB_ACTION_KEY"), "power_source": sw.power.source,
+            "meta_schema": "tessera.geometry_meta.v2", "flux_job_id": os.environ.get("FLUX_JOB_ID"), "power_source": sw.power.source,
             "envelope_w": ENVELOPE_W, "start_unix": time.time(), "torch": torch.__version__,
             "statistic": "mean of the forward and reverse passes' medians (graph replay); spread = |F - R| / mean",
             "resource_usage": usage}

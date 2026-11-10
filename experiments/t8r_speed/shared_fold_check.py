@@ -320,7 +320,7 @@ def main():
                torch=torch.__version__, device=None, capability=None,
                image=os.environ.get("ORACLE_IMAGE"), tessera_head=os.environ.get("TESSERA_HEAD"),
                tessera_state=os.environ.get("TESSERA_STATE"), kernel_sha=os.environ.get("KERNEL_SHA"),
-               pb_action=os.environ.get("PB_ACTION_KEY"), cases=[],
+               meta_schema="tessera.job_meta.v2", flux_job_id=os.environ.get("FLUX_JOB_ID"), cases=[],
                screen_label="[S] torch.profiler and CUDA events, non-measurement row",
                screen_limits="Timing screens establish no served saving or energy benefit.")
     try:

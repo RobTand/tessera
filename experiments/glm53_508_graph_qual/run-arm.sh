@@ -32,7 +32,7 @@ trap 'docker rm -f t508-stub >/dev/null 2>&1; [ -n "${MEM_STOP:-}" ] && touch "$
 { echo "== $(date -u +%FT%TZ) pre-launch"; nvidia-smi --query-gpu=power.draw,memory.used --format=csv,noheader
   echo "-- gpu processes"; nvidia-smi --query-compute-apps=pid,process_name,used_memory --format=csv,noheader
   echo "-- containers"; docker ps --format '{{.Names}} {{.Status}}'
-  echo "-- prismabuild"; timeout 60 python3 /mnt/shared/prismabuild-fleet/repo/tools/pbstatus.py 2>&1 | head -20; } > "$OUT/$ARM.prelaunch.txt" 2>&1
+  echo "-- flux"; timeout 60 flux resource list 2>&1 | head -20; } > "$OUT/$ARM.prelaunch.txt" 2>&1
 docker ps -q | grep -q . && { echo "arm $ARM: another container is resident"; cat "$OUT/$ARM.prelaunch.txt"; exit 3; }
 nvidia-smi --query-compute-apps=pid --format=csv,noheader | grep -q . && { echo "arm $ARM: a GPU process is resident; not launching beside it"; cat "$OUT/$ARM.prelaunch.txt"; exit 3; }
 # A DIGEST=1 arm first runs the instrument's own self-test in the arm's image

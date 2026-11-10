@@ -11,7 +11,7 @@
 #   eq2   the same suite again in the same serve, as <ARM>-r2
 #   lat   TTFT / ITL probe (lat-508.py) under a 1 Hz nvidia-smi power series
 #   prof  a PROF=1 serve's torch.profiler window over batch-1 decode steps
-# A vLLM serve: exempt from PrismaBuild. The arm refuses to launch beside another
+# A vLLM serve inside a separately approved Flux GPU job. The arm refuses to launch beside another
 # container, a GPU process, an active TP2 window or under MIN_AVAIL_GIB, and it
 # samples `docker ps` through the run so a co-tenant is on the record.
 set -uo pipefail

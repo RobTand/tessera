@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Build the fused window libraries of one A/B arm's source into a torch-extension
 # directory, on a CPU and without a GPU, so the timed action (bench_t8r.sh with
-# BENCH_EXT_DIR) only loads them.  Submit it as its own PrismaBuild row on any
+# BENCH_EXT_DIR) only loads them.  Submit it as its own Flux job on any
 # host holding the image; the timing row runs after it on the measurement host.
 #   build_ext.sh <checkout> <ext_dir> [library ...]   (default: value e4m3 e4m3mma)
 # BENCH_SRC: the arm's Tessera source tree, mounted over the checkout's src at
@@ -16,7 +16,7 @@
 set -euo pipefail
 CHECKOUT=$(realpath "$1"); EXT=$(realpath -m "$2"); shift 2
 LIBS=("$@"); (( ${#LIBS[@]} )) || LIBS=(value e4m3 e4m3mma)
-IMAGE_REF=${ORACLE_IMAGE:?set ORACLE_IMAGE to the immutable PB-declared measurement image}
+IMAGE_REF=${ORACLE_IMAGE:?set ORACLE_IMAGE to the immutable digest-pinned measurement image}
 source "$CHECKOUT/experiments/runtime_image.sh"
 runtime_image_require "$IMAGE_REF"
 IMAGE_ENV=()
@@ -49,7 +49,7 @@ docker run --rm -i --network=none --cpuset-cpus "$CPUS" --user "$(id -u):$(id -g
   -e TORCH_EXTENSIONS_DIR="$CONTAINER_EXT" \
   -e TESSERA_PLATFORM_TOKEN="${BUILD_TOKEN:-sm_121}" -e MAX_JOBS="$NCPU" \
   -e PYTHONPATH="$CONTAINER_SRC" -e PYTHONUNBUFFERED=1 -e PYTHONDONTWRITEBYTECODE=1 -e TESSERA_SERVE_MODE=resident \
-  -e PRISMABUILD_ACTION_KEY="${PRISMABUILD_ACTION_KEY:?PB admission required}" \
+  -e FLUX_JOB_ID="${FLUX_JOB_ID:?Flux job required}" \
   -e NATIVE_BUILD_IMAGE_RECORD="$RUNTIME_IMAGE_JSON" \
   -e TESSERA_ROUTED_FUSED_VALUE_A_PREFETCH="${TESSERA_ROUTED_FUSED_VALUE_A_PREFETCH-0}" \
   -e TESSERA_ROUTED_FUSED_FP4_A_PREFETCH="${TESSERA_ROUTED_FUSED_FP4_A_PREFETCH-0}" \
@@ -93,7 +93,7 @@ for lib in sys.argv[1:]:
                         finalization_sha256=hashlib.sha256(finalization.read_bytes()).hexdigest(), status=how)
         libraries.append(identity)
         print(f"{lib}: {so} sha256={identity['sha256']} {time.time() - t0:.1f}s {how}", flush=True)
-record = dict(schema="tessera.native_build_cohort.v1", action_key=os.environ["PRISMABUILD_ACTION_KEY"],
+record = dict(schema="tessera.native_build_cohort.v2", flux_job_id=os.environ["FLUX_JOB_ID"],
               scope="CPU native compile gate; not CUDA numeric, performance or serving qualification",
               image=json.loads(os.environ["NATIVE_BUILD_IMAGE_RECORD"]),
               source_path=str(source), source_sha256=hashlib.sha256(source.read_bytes()).hexdigest(),

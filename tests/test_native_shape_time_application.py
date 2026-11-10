@@ -21,7 +21,7 @@ def request_file(panel, monkeypatch):
     value = {'schema': app.REQUEST_SCHEMA, 'expected_runtime': copy.deepcopy(panel['runtime']),
              'scope': copy.deepcopy(panel['plan']['rows'][0]['scope']), 'prefix': 'test.dense',
              'scheme': copy.deepcopy(panel['rows'][0]['scheme']), 'wire': panel['evidence']['wire'],
-             'contract': panel['evidence']['contract'], 'record_verifier': app.tp.file_binding(box_artifacts.skip_now('prismabuild_tools','pbtest_pins.py')), 'runtime_python': app.tp.file_binding(__import__('sys').executable), 'worker_timeout_s': 120,
+             'contract': panel['evidence']['contract'], 'runtime_python': app.tp.file_binding(__import__('sys').executable), 'worker_timeout_s': 120,
              'sampling': {'samples': 4, 'warmup_iterations': 1, 'steady_s': 20.0, 'seed': 688},
              'netdata_hosts': {'sparky': 'sparky', 'sparklina': 'sparklina'}}
     source = {'schema': app.PRODUCER_SCHEMA, 'commit': 'a'*40, 'commit_source': 'sealed_checkout', **app.producer_source_identity()}
@@ -289,9 +289,8 @@ def test_software_observation_does_not_query_device(panel, monkeypatch):
     monkeypatch.setattr(runtime_image, 'declared_reference', lambda _: {'image': expected['image']})
     monkeypatch.setattr(contract, 'contract_path', lambda: Path(panel['evidence']['contract']['path']))
     monkeypatch.setattr(backend, 'platform_of_this_process', lambda *_: pytest.fail('CPU preflight queried CUDA'))
-    verifier = app.tp.file_binding(box_artifacts.skip_now('prismabuild_tools','pbtest_pins.py'))
-    monkeypatch.setattr(worker, 'record_verifier_bytes', lambda _: b'def verify_install(*args): return {"verified_files": 1}')
-    got, _, raw = worker.observe_software_runtime(expected, verifier)
+    monkeypatch.setattr(worker, 'verify_install', lambda module, commit: {"verified_files": 1})
+    got, _, raw = worker.observe_software_runtime(expected)
     assert 'platform' not in got
     assert got == {k: v for k, v in expected.items() if k != 'platform'}
     assert raw == app.tp.read_bound(panel['evidence']['contract'])
@@ -309,9 +308,7 @@ def preflight_inputs(tmp_path, panel):
         path=root/suffix;path.parent.mkdir(parents=True,exist_ok=True);path.write_text('# CPU owner fixture\n')
         origins['modules'][name]=app.tp.file_binding(path)
     origins['installation']['origin']=str(root/'__init__.py')
-    verifier=app.tp.file_binding(box_artifacts.skip_now('prismabuild_tools','pbtest_pins.py'))
-    origins['record_verifier']=verifier
-    request={'record_verifier':verifier}
+    request={}
     request_source=app.publish_json(request,tmp_path/'request-source.json')
     job_source=app.publish_json({'request':request, 'request_source':request_source,
                                 'worker_source':worker_source, 'wire_roles':[],
@@ -320,7 +317,7 @@ def preflight_inputs(tmp_path, panel):
     command=['env','-u','PYTHONPATH','CUDA_VISIBLE_DEVICES=',str(worker.__file__),'--job',job_source['path'],
              '--job-sha256',job_source['sha256'],'--preflight']
     phase={'phase':'runtime-preflight','returncode':0,'command':command}
-    result={'schema':'tessera.installed_contract_preflight.v1','software':{k:v for k,v in runtime.items() if k!='platform'},
+    result={'schema':'tessera.installed_contract_preflight.v2','software':{k:v for k,v in runtime.items() if k!='platform'},
             'runtime_origins':origins,'validator':{'module':'tessera.serving.contract','function':'validate_serving_contract',
                                                   'source':origins['modules']['tessera.serving.contract']},
             'contract_sha256':runtime['contract_sha256'],'gpu_executed':False,
@@ -416,38 +413,6 @@ def test_repeated_runtime_observation_inserts_overlay_once(installed_origins):
     assert sys.path.count(str(root.parent))==1, 'duplicate overlay roots make RECORD owner discovery ambiguous'
 
 
-@pytest.mark.parametrize('fault', ['none', 'bytes', 'writable', 'symlink', 'read_drift'])
-def test_historical_verifier_requires_the_same_immutable_published_bytes(tmp_path, monkeypatch, fault):
-    generations = tmp_path / 'generations'
-    old = generations / 'old' / 'tools' / 'pbtest_pins.py'
-    current = generations / 'current' / 'tools' / 'pbtest_pins.py'
-    old.parent.mkdir(parents=True); current.parent.mkdir(parents=True)
-    old.write_bytes(b'published helper bytes'); current.write_bytes(old.read_bytes())
-    if fault == 'bytes': old.write_bytes(b'other helper bytes')
-    old.chmod(0o444); current.chmod(0o444)
-    if fault == 'writable': old.chmod(0o644)
-    if fault == 'symlink':
-        old.unlink(); old.symlink_to(current)
-    binding = worker.file_binding(old)
-    if fault == 'symlink': binding['path'] = str(old)
-    monkeypatch.setattr(worker, 'PB_RECORD_VERIFIER', current)
-    monkeypatch.setattr(worker, 'PB_IMMUTABLE_GENERATIONS', generations)
-    if fault == 'read_drift':
-        real_fstat = worker.os.fstat
-        calls = []
-        def drifting(fd):
-            value = real_fstat(fd); calls.append(fd)
-            if len(calls) == 2:
-                return SimpleNamespace(**{name: getattr(value, name) + (1 if name == 'st_mtime_ns' else 0)
-                                          for name in ('st_dev', 'st_ino', 'st_size', 'st_mtime_ns', 'st_ctime_ns')})
-            return value
-        monkeypatch.setattr(worker.os, 'fstat', drifting)
-    if fault == 'none':
-        assert worker.record_verifier_bytes(binding) == current.read_bytes()
-    else:
-        with pytest.raises(ValueError): worker.record_verifier_bytes(binding)
-
-
 def external_observation_case(tmp_path, panel, monkeypatch):
     """A genuinely verified external context for the bound-observation path.
 
@@ -470,10 +435,8 @@ def external_observation_case(tmp_path, panel, monkeypatch):
         target.write_text('# CPU owner fixture\n')
         origins['modules'][name] = app.tp.file_binding(target)
     origins['installation']['origin'] = str(root / '__init__.py')
-    verifier = app.tp.file_binding(box_artifacts.skip_now('prismabuild_tools', 'pbtest_pins.py'))
-    origins['record_verifier'] = verifier
     worker_source = app.tp.file_binding(app.ROOT / 'tools/tessera_shape_time_worker.py')
-    job = {'schema': 'tessera.native_shape_worker_job.v1', 'request': request,
+    job = {'schema': 'tessera.native_shape_worker_job.v2', 'request': request,
            'request_source': request_source,
            'wire_roles': app.tp.wire_facts(app.tp.read_bound(request['wire']), request['scheme'])[1],
            'producer': app.producer_identity(request['producer_identity']),
@@ -483,7 +446,7 @@ def external_observation_case(tmp_path, panel, monkeypatch):
     phase_dir = unit / 'preflight'
     command = app.phase_command(request, job_source, phase_dir, preflight=True)
     phase = {'phase': 'runtime-preflight', 'returncode': 0, 'command': command}
-    result = {'schema': 'tessera.installed_contract_preflight.v1',
+    result = {'schema': 'tessera.installed_contract_preflight.v2',
               'software': {k: v for k, v in runtime.items() if k != 'platform'},
               'runtime_origins': origins,
               'validator': {'module': 'tessera.serving.contract', 'function': 'validate_serving_contract',
@@ -677,8 +640,8 @@ def _observe_with_source(panel, monkeypatch, source_digest):
     monkeypatch.setattr(runtime_image, 'declared_reference', lambda _: {'image': expected['image']})
     monkeypatch.setattr(contract, 'contract_path', lambda: Path(panel['evidence']['contract']['path']))
     monkeypatch.setattr(backend, 'platform_of_this_process', lambda *_: pytest.fail('CPU observation queried CUDA'))
-    monkeypatch.setattr(worker, 'record_verifier_bytes', lambda _: b'def verify_install(*args): return {"verified_files": 1}')
-    return expected, app.tp.file_binding(box_artifacts.skip_now('prismabuild_tools', 'pbtest_pins.py'))
+    monkeypatch.setattr(worker, 'verify_install', lambda module, commit: {"verified_files": 1})
+    return expected, None
 
 
 def test_source_pin_difference_stamps_and_continues(panel, monkeypatch, capsys):
@@ -697,7 +660,7 @@ def test_source_pin_difference_stamps_and_continues(panel, monkeypatch, capsys):
     monkeypatch.setattr(worker, 'observed_commit',
                         lambda package, strict=True:
                         (staged, ['imported Tessera runtime checkout is dirty']))
-    got, origins, raw = worker.observe_software_runtime(expected, verifier)
+    got, origins, raw = worker.observe_software_runtime(expected)
     assert got['serving_source_sha256'] == expected['serving_source_sha256']
     assert got['tessera_commit'] == staged
     out = capsys.readouterr().out
@@ -710,17 +673,17 @@ def test_certified_zero_keeps_before_device_refusal(panel, monkeypatch):
     monkeypatch.setenv('PRISMAQUANT_DEV_MODE', '0')
     expected, verifier = _observe_with_source(panel, monkeypatch, 'e' * 64)
     with pytest.raises(ValueError, match='runtime source/contract/version differs before device setup'):
-        worker.observe_software_runtime(expected, verifier)
+        worker.observe_software_runtime(expected)
 
 
 def test_dev_run_requires_no_installation_proof(panel, monkeypatch):
-    """D32: a dev run continues with no verifier, no Git identity and no
+    """D32: a dev run continues with no installation proof, no Git identity and no
     source digest call -- the stored identities are what the record carries."""
     monkeypatch.delenv('PRISMAQUANT_DEV_MODE', raising=False)
     expected, _ = _observe_with_source(panel, monkeypatch,
                                        panel['runtime']['serving_source_sha256'])
-    monkeypatch.setattr(worker, 'record_verifier_bytes',
-                        lambda _: pytest.fail('dev run must not read an installation verifier'))
+    monkeypatch.setattr(worker, 'verify_install',
+                        lambda *args: pytest.fail('dev run must not verify an installation'))
     monkeypatch.setattr(source_identity, 'serving_source_sha256',
                         lambda: pytest.fail('dev run must not compute the source digest'))
     import sys
@@ -729,10 +692,9 @@ def test_dev_run_requires_no_installation_proof(panel, monkeypatch):
     monkeypatch.delattr(sys.modules['tessera'], 'dev_mode', raising=False)
     monkeypatch.setattr(sys.modules['tessera'], '__file__',
                         expected['package_root'] + '/__init__.py')
-    got, origins, raw = worker.observe_software_runtime(expected, None)
+    got, origins, raw = worker.observe_software_runtime(expected)
     assert origins['installation']['distribution'] == 'unverified (D32 dev mode)'
     assert origins['installation']['expected_commit'] == expected['tessera_commit']
-    assert origins['record_verifier'] is None
     assert got['tessera_commit'] == expected['tessera_commit']
     assert got['serving_source_sha256'] == expected['serving_source_sha256']
 
@@ -765,7 +727,7 @@ def test_dirty_unversioned_candidate_stamps_and_continues(panel, monkeypatch, tm
     # staged tree; the worker must never read tessera.dev_mode from it.
     monkeypatch.delattr(sys.modules['tessera'], 'dev_mode', raising=False)
     monkeypatch.setattr(sys.modules['tessera'], '__file__', str(staged / '__init__.py'))
-    got, origins, _ = worker.observe_software_runtime(expected, None)
+    got, origins, _ = worker.observe_software_runtime(expected)
     out = capsys.readouterr().out
     assert 'checkout is dirty' in out and 'not tracked' in out
     assert got['tessera_commit'] != expected['tessera_commit']  # the real staged HEAD
@@ -780,7 +742,7 @@ def test_changed_runtime_contract_stamps_in_dev_mode(panel, monkeypatch, capsys)
     expected, verifier = _observe_with_source(
         panel, monkeypatch, panel['runtime']['serving_source_sha256'])
     expected = {**expected, 'contract_sha256': '0' * 64}  # the old pin's contract
-    got, origins, raw = worker.observe_software_runtime(expected, verifier)
+    got, origins, raw = worker.observe_software_runtime(expected)
     assert got['contract_sha256'] == app.tp.file_binding(
         Path(panel['evidence']['contract']['path']))['sha256']
     out = capsys.readouterr().out
@@ -793,7 +755,7 @@ def test_certified_zero_keeps_changed_contract_refusal(panel, monkeypatch):
         panel, monkeypatch, panel['runtime']['serving_source_sha256'])
     expected = {**expected, 'contract_sha256': '0' * 64}
     with pytest.raises(ValueError, match='runtime source/contract/version differs before device setup'):
-        worker.observe_software_runtime(expected, verifier)
+        worker.observe_software_runtime(expected)
 
 
 def test_preflight_software_difference_stamps_and_continues(tmp_path, panel, monkeypatch, capsys):
@@ -850,7 +812,7 @@ def test_execution_semantics_refuse_in_dev_mode(panel, monkeypatch):
         panel, monkeypatch, panel['runtime']['serving_source_sha256'])
     expected = {**expected, 'tp_degree': 2}
     with pytest.raises(ValueError, match='actually imported software differs'):
-        worker.observe_software_runtime(expected, verifier)
+        worker.observe_software_runtime(expected)
 
 
 def test_preflight_execution_semantics_refuse_in_dev_mode(tmp_path, panel, monkeypatch):
@@ -861,3 +823,51 @@ def test_preflight_execution_semantics_refuse_in_dev_mode(tmp_path, panel, monke
     kwargs['expected_runtime'] = runtime
     with pytest.raises(ValueError, match='preflight software/contract differs'):
         app.tp._verify_runtime_preflight(result, **kwargs)
+
+
+def test_certified_worker_verifies_the_named_package_at_the_expected_commit(panel, monkeypatch):
+    monkeypatch.setenv('PRISMAQUANT_DEV_MODE', '0')
+    expected, _ = _observe_with_source(panel, monkeypatch, panel['runtime']['serving_source_sha256'])
+    origin_checks = []
+    def strict_origins(root, facts=None):
+        origin_checks.append((root, facts))
+        assert facts is None, 'certified mode must retain strict origin checking'
+        return {'package_root': root, 'modules': {}}
+    monkeypatch.setattr(worker, 'runtime_origins', strict_origins)
+    monkeypatch.setattr(worker, 'observed_commit', lambda package: expected['tessera_commit'])
+    calls = []
+    def verify(module, commit):
+        calls.append((module, commit))
+        assert module == 'tessera'
+        assert commit == expected['tessera_commit']
+        return {'module': module, 'distribution': 'controlled-install', 'expected_commit': commit,
+                'installed_commit': commit, 'origin': str(Path(expected['package_root']) / '__init__.py'),
+                'verified_files': 1}
+    monkeypatch.setattr(worker, 'verify_install', verify)
+    got, origins, raw = worker.observe_software_runtime(expected)
+    assert calls == [('tessera', expected['tessera_commit'])]
+    assert origin_checks == [(expected['package_root'], None)]
+    assert origins['installation']['expected_commit'] == expected['tessera_commit']
+
+
+def test_runtime_origins_bind_the_installation_verifier(installed_origins):
+    root, *_ = installed_origins
+    proof = worker.runtime_origins(str(root))
+    path = worker.ROOT / 'tools/_install_identity.py'
+    raw = path.read_bytes()
+    assert proof['install_verifier'] == {'path': str(path), 'bytes': len(raw),
+                                         'sha256': hashlib.sha256(raw).hexdigest()}
+
+
+def test_panel_refuses_changed_installation_verifier(panel, tmp_path):
+    origins_path = Path(panel['evidence']['runtime_origins']['path'])
+    origins = json.loads(origins_path.read_bytes())
+    assert app.tp.validate_panel(panel, expected_runtime=copy.deepcopy(panel['runtime']))
+    verifier = tmp_path / '_install_identity.py'
+    verifier.write_text('# retained verifier\n')
+    origins['install_verifier'] = app.tp.file_binding(verifier)
+    panel['evidence']['runtime_origins'] = app.publish_json(origins, origins_path)
+    assert app.tp.validate_panel(panel, expected_runtime=copy.deepcopy(panel['runtime']))
+    verifier.write_text('# changed verifier\n')
+    with pytest.raises(ValueError):
+        app.tp.validate_panel(panel, expected_runtime=copy.deepcopy(panel['runtime']))

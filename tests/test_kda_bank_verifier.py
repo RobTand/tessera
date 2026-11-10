@@ -44,8 +44,27 @@ def test_module_binding_and_exact_mode_roster(probe, monkeypatch, tmp_path, faul
     bank = tmp_path / "bank.json"
     control = tmp_path / "control.json"
     bank.write_text(json.dumps({"meta": {"pb_action": "CPU fixture bank"}, "kdaptx": s}))
-    control.write_text(json.dumps({"meta": {"pb_action": "CPU fixture control"}, "kdaex2": s["ex2_equivalence"]}))
+    control.write_text(json.dumps({"meta": {"meta_schema": "tessera.job_meta.v2", "flux_job_id": "fCPUFIXTURE"}, "kdaex2": s["ex2_equivalence"]}))
     monkeypatch.setattr(sys, "argv", ["verify_conv_bank.py", str(out), str(bank), str(control),
                                       hashlib.sha256(bank.read_bytes()).hexdigest(),
                                       hashlib.sha256(control.read_bytes()).hexdigest(), old_sha])
     assert (verifier.main() == 0) is (fault is None)
+
+
+@pytest.mark.parametrize('schema', ['tessera.job_meta.v2', 'tessera.geometry_meta.v2', None, 'unknown'])
+def test_bank_reader_uses_the_shared_schema_boundary(probe, monkeypatch, schema):
+    from tessera.job_metadata import job_identity
+    root = Path(__file__).resolve().parents[1]
+    monkeypatch.syspath_prepend(str(root / 'experiments/kda'))
+    spec = importlib.util.spec_from_file_location('bank_schema_reader', root / 'experiments/kda/verify_conv_bank.py')
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    assert module.job_identity is job_identity
+    meta = {'flux_job_id': 'job', 'pb_action': 'legacy'}
+    if schema is not None:
+        meta['meta_schema'] = schema
+    if schema == 'unknown':
+        with pytest.raises(ValueError, match='unknown job meta schema'):
+            module.job_identity(meta)
+    else:
+        assert module.job_identity(meta) == ('legacy' if schema is None else 'job')

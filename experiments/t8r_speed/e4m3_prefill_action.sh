@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# One PB action (one GB10, exclusive): the decode-once E4M3 prefill lane
+# One Flux job (one GB10, exclusive): the decode-once E4M3 prefill lane
 # (tessera#931) -- its GPU tests, then its operator timings.
 #   e4m3_prefill_action.sh <out_root>
 # Step test: tests/test_e4m3_prefill.py through routed_fused_tests.sh (pinned image).

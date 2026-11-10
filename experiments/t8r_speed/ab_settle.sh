@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# One PB action: the chunk loop's load-settle A/B on one GB10.  Three arms,
+# One Flux job: the chunk loop's load-settle A/B on one GB10.  Three arms,
 # each from an immutable source snapshot under <out_root>/src-<arm>/src (the
 # checkout is read only for these scripts), timed interleaved in forward then
 # reverse order so neither arm always runs first on a cold GPU:

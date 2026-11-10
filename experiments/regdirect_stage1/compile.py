@@ -33,7 +33,7 @@ def main():
     src = Path(__file__).resolve().parents[2] / "src/tessera/serving/csrc/regdirect_routed.cu"
     inc = Path(torch.__file__).parent / "include"
     cuda_inc = nvcc.parent.parent / "include"
-    work = Path("/tmp") / f"regdirect-routed-compile-{os.environ.get('PRISMABUILD_ACTION_KEY', os.getpid())}"
+    work = Path("/tmp") / f"regdirect-routed-compile-{os.environ.get('FLUX_JOB_ID', os.getpid())}"
     work.mkdir(exist_ok=True)
     cmd = [str(nvcc), "-c", str(src), "-o", str(work / "regdirect_routed.o"),
            "-DTORCH_EXTENSION_NAME=tessera_regdirect_routed",
@@ -67,7 +67,7 @@ def main():
                     "stack_bytes": int(sp.group(1)) if sp else None,
                     "spill_store_bytes": int(sp.group(2)) if sp else None,
                     "spill_load_bytes": int(sp.group(3)) if sp else None})
-    receipt = {"host": os.uname().nodename, "action": os.environ.get("PRISMABUILD_ACTION_KEY"),
+    receipt = {"host": os.uname().nodename, "meta_schema": "tessera.job_meta.v2", "flux_job_id": os.environ.get("FLUX_JOB_ID"),
                "source_sha256": hashlib.sha256(src.read_bytes()).hexdigest(), "compiler": version,
                "command": cmd, "container_image": args.container_image, "returncode": r.returncode,
                "kernels": res, "population": "x86 compile-only, sm_121 target, no device execution"}

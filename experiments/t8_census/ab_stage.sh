@@ -33,7 +33,7 @@ while [ $# -gt 0 ] && [ "$1" != "--" ]; do PYTEST_ARGS+=("$1"); shift; done
 PY="${PYTHON:-python3}"
 
 # The source reference is EXTERNALLY QUALIFIED (an immutable checkout path the
-# launcher vouches for), never derived from this action's parentless PB
+# launcher vouches for), never derived from this action's parentless source
 # snapshot, and it is forwarded to the real process UNCHANGED -- this wrapper
 # neither rewrites nor defaults it.  Refusing names the variable.
 for var in TESSERA_PRODUCER_PYTHON TESSERA_PRODUCER_SOURCE; do

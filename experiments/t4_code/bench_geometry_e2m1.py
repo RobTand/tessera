@@ -15,7 +15,7 @@ This reader does not change serving admission.
 --cpu-preflight is the same entry point's D38 slice. --quality screens actual
 sample tiles on CPU with the recipe measured, not a Gaussian quality proxy.
 GPU timings use fully encoded seeded weights at the actual projection shape;
-all experts share those synthetic weights, as in bench_e2m1.py. No quality,
+all experts share those synthetic weights, as in archive/flux-migration/T-SLICE5/experiments/t4_code/bench_e2m1.py. No quality,
 served KL, serving admission, default or encoded-wire changes are implied.
 """
 from __future__ import annotations
@@ -393,7 +393,7 @@ def run_gpu(args, grid):
             "image": os.environ.get(CENSUS_IMAGE_ENV, os.environ.get("ORACLE_IMAGE")),
             "requested_image": os.environ.get("ORACLE_IMAGE"),
             "torch": torch.__version__, "host": os.environ.get("HOST_NAME"),
-            "pb_action": os.environ.get("PB_ACTION_KEY", os.environ.get("PRISMABUILD_ACTION_KEY")),
+            "meta_schema": "tessera.geometry_meta.v2", "flux_job_id": os.environ.get("FLUX_JOB_ID"),
             "paired_seed_contract": "fixed full-shape weight and activation seeds independent of rung; identical routing IDs and uniform weights1/8",
             "statistic": "mean of forward and reverse pass medians; graph replay with event fallback recorded",
             "cases": ",".join(f"q{q}" for q in args.qs), "ms": args.ms, "part": args.part,
@@ -743,7 +743,7 @@ def main():
     ap.add_argument("--samples", default="")
     ap.add_argument("--config", default="")
     ap.add_argument("--model", default="")
-    ap.add_argument("--data-manifest", default="", help="PB staged whole-file readset")
+    ap.add_argument("--data-manifest", default="", help="declared whole-file readset")
     ap.add_argument("--prepare-inputs", action="store_true")
     ap.add_argument("--cpu-preflight", action="store_true")
     ap.add_argument("--quality", action="store_true")
@@ -761,10 +761,10 @@ def main():
         prepare_inputs(args.model, args.out)
         return 0
     if args.data_manifest and not args.cpu_preflight and not args.quality:
-        # Consume the supported PB lease reader before any CUDA work.
+        # Read the declared inputs (digest-checked) before any CUDA work.
         # Original shared inputs are never reopened by the GPU path.
-        from pb_staged_store import StagedInputs
-        inputs = StagedInputs(args.data_manifest)
+        from declared_inputs import DeclaredInputs
+        inputs = DeclaredInputs(args.data_manifest)
         local_root = Path(args.out) / "staged-inputs"
         try:
             for path, offset in inputs.entries:
@@ -798,8 +798,8 @@ def main():
         raise ValueError("actual GLM config does not match the representative TP2 shapes")
     if args.cpu_preflight:
         if args.data_manifest:
-            from prismabuild.client import read_data_manifest
-            manifest, _encoding = read_data_manifest(args.data_manifest)
+            from declared_inputs import read_declared_inputs
+            manifest, _sha = read_declared_inputs(args.data_manifest)
             for entry in manifest["entries"]:
                 with open(entry["path"], "rb") as stream:
                     stream.seek(entry["offset"])

@@ -249,6 +249,7 @@ def test_gate_builds_a_module_fixture_once_across_workers(tmp_path, monkeypatch,
     code = runner.run_plan(plan, root=tmp_path, output=output / 'result.json',
                            junit=output / 'junit.xml', workers=2, affinity={0, 1})
     assert code == 0
+    assert json.loads((output / 'result.json').read_text())['schema'] == 'tessera.gate_result.v2'
     assert marker.read_text().splitlines() == ['build']
     assert len(set(marker.with_name('independent-workers.txt').read_text().splitlines())) == 2
 
@@ -365,6 +366,7 @@ def test_hosted_aggregate_reports_budget_warnings_without_retry(tmp_path):
     records = {i: dict(verdict(plan, row['lane'], 'pass', 0), budget_warnings=[warning])
                for i, row in enumerate(assignments)}
     result = actions.assess_attempts(plan, assignments, {1: records})
+    assert result['schema'] == 'tessera.gate_aggregate.v2'
     assert result['exit_code'] == 0
     assert result['retry_indices'] == []
     assert result['budget_warnings'] == [dict(warning, lane=row['lane']) for row in assignments]

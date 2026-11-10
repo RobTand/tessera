@@ -4,6 +4,7 @@ import argparse
 import hashlib
 import json
 import os
+import re
 from pathlib import Path
 import time
 
@@ -13,6 +14,7 @@ from tessera.control import grid_for_name, unit_wire_bits
 from tessera.export import encode_linear
 from tessera.unit_artifact import read_unit_artifact
 from tessera.dev_mode import seal_check
+from tessera._dev.suite_source import committed_file
 
 
 def quality_scope(grid,q,recipe):
@@ -26,11 +28,33 @@ def quality_scope(grid,q,recipe):
             'rung':q,'recipe':config,'kernel_kinds':kinds,'owner':'tessera.export.encode_linear'}
 
 
-def bind_existing_quality(path,action_key,out):
-    """Recover scope from executed arguments and stored scores; paths stamp in dev."""
+#: Committed history: the executed command and source commit of each historical quality run, one
+#: ``<action_key>.json`` per run, each carrying ``provenance`` {source: the original request's path,
+#: sha256: its bytes}.  Nothing here is read from a scheduler or a published store.
+RECORDED_REQUESTS=Path(__file__).resolve().parent/'history'/'quality_requests'
+
+
+def bind_existing_quality(path,action_key,out,*,requests=None):
+    """Recover scope from the recorded executed arguments and stored scores; paths stamp in dev."""
     from tessera.export import wire_recipe
-    request=Path('/mnt/shared/prismabuild-fleet/cas/requests')/action_key[:2]/(action_key+'.json')
-    sealed=json.loads(request.read_text())
+    if not isinstance(action_key, str) or re.fullmatch('[0-9a-f]{64}', action_key) is None:
+        raise ValueError('quality action_key must be 64 lowercase hex characters')
+    request = Path(requests or RECORDED_REQUESTS)/(action_key+'.json')
+    root, raw = committed_file(request, field='quality request')
+    sealed=json.loads(raw)
+    if set(sealed.get('provenance',{}))!={'source','sha256'}:raise ValueError('recorded quality request lacks its provenance')
+    source = sealed['provenance']['source']
+    if not isinstance(source, str) or Path(source).is_absolute():
+        raise ValueError('quality provenance source must be a repository-relative path')
+    try:
+        _, raw_request = committed_file(root / source, root=root, field='quality request')
+    except ValueError as exc:
+        raise ValueError('quality provenance source is outside the repository or uncommitted') from exc
+    request_sha256 = hashlib.sha256(raw_request).hexdigest()
+    if request_sha256 != sealed['provenance']['sha256']:
+        raise ValueError('quality provenance sha256 differs from committed request bytes')
+    if json.loads(raw_request).get('params') != sealed.get('params'):
+        raise ValueError('quality parameters differ from committed request')
     if sealed['action_key']!=action_key:raise ValueError('quality action key differs')
     command=sealed['params']['command']
     is_t4='experiments/t4_code/bench_geometry_e2m1.py' in command and '--quality' in command
@@ -66,7 +90,7 @@ def bind_existing_quality(path,action_key,out):
         row['scope']=quality_scope(grid,q,recipe)
     document['format']=f"TESSERA_{grid.name.split('x',1)[0]}_K{grid.arity}"
     document['grid']=grid.name;document['arity']=grid.arity
-    document['scope_provenance']={'action_key':action_key,'snapshot':sealed['params']['checkout_snapshot']['commit'],
+    document['scope_provenance']={'action_key':action_key,'recorded_request_sha256':request_sha256,'snapshot':sealed['params']['checkout_snapshot']['commit'],
         'original_file_sha256':hashlib.sha256(raw).hexdigest(),'binding':'executed explicit grid arguments plus exact encode_linear/unit_wire_bits identity'}
     target=Path(out);target.parent.mkdir(parents=True,exist_ok=True)
     with target.open('x') as stream:json.dump(document,stream,indent=1,allow_nan=False)

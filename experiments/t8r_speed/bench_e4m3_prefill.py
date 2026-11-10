@@ -58,7 +58,7 @@ def main():
     os.makedirs(args.out, exist_ok=True)
     meta = {"host": os.environ.get("HOST_NAME"), "head": os.environ.get("TESSERA_HEAD"),
             "state": os.environ.get("TESSERA_STATE"), "image": os.environ.get("ORACLE_IMAGE"),
-            "pb_action": os.environ.get("PB_ACTION_KEY"), "torch": torch.__version__,
+            "meta_schema": "tessera.job_meta.v2", "flux_job_id": os.environ.get("FLUX_JOB_ID"), "torch": torch.__version__,
             "device": torch.cuda.get_device_name(), "weights": "seeded Gaussian",
             "statistic": "median CUDA-graph replay", "start_unix": time.time()}
     print(json.dumps({"meta": meta}), flush=True)

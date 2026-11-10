@@ -14,7 +14,7 @@
 # --require-lane makes a phase with zero modules on the lane a REFUSAL, which
 # is the check the four #91 censuses did not have.
 #
-# usage: ts104_gemv_census.sh   (run under pbrun --gpu; it holds one GPU slot
+# usage: ts104_gemv_census.sh   (run as a Flux GPU job, see the rendered tools/_flux_gpu_jobspec.py line; it holds one GPU slot
 #                                for both censuses, as ts91_chain.sh does)
 set -uo pipefail
 WT=${WT:-$(cd "$(dirname "$0")/.." && pwd)}

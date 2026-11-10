@@ -10,7 +10,7 @@ thin entry point a reviewer runs.  CPU-only; it executes no measurement.
     tools/tessera_panel_baseline.py verify-table --baseline TABLE.json \
         --sha256 9071f514...
 
-    # Compare a validated tessera.shape_time_panel.v1 receipt against the
+    # Compare a validated tessera.shape_time_panel.v2 receipt against the
     # preserved after-table (the #685 comparison basis):
     tools/tessera_panel_baseline.py compare --baseline TABLE.json \
         --sha256 4d51fbe9... --panel panel.json --expected-runtime runtime.json

@@ -1,6 +1,6 @@
-"""Run the existing cached CPU exporter with bound inputs and durable PB progress."""
+"""Run the existing cached CPU exporter with bound inputs and durable progress lines."""
 from __future__ import annotations
-import argparse, contextlib, hashlib, importlib.util, json, os, runpy, shutil, sys, threading
+import argparse, contextlib, hashlib, importlib.util, json, os, shutil, sys, threading
 from pathlib import Path
 
 INPUTS = ('assignment', 'pact_result', 'plan', 'selected_manifest', 'selected_manifest_receipt',
@@ -87,8 +87,6 @@ def main(argv=None):
     parser=argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--bindings',required=True);parser.add_argument('--bindings-sha256',required=True)
     args=parser.parse_args(argv)
-    if not os.environ.get('PRISMABUILD_ACTION_PROGRESS_HELPER'):
-        raise RuntimeError('full export requires an admitted PB semantic-progress action')
     doc=json.loads(read_bound({'path':args.bindings,'sha256':args.bindings_sha256}))
     if doc.get('schema')!='prismaquant.glm_cached_cpu_export_bindings.v1':raise ValueError('unknown export bindings')
     if not complete_inputs(doc['inputs']):raise ValueError('actual allocation/PACT/export bindings are incomplete')
@@ -112,8 +110,9 @@ def main(argv=None):
     exporter=importlib.util.module_from_spec(spec);spec.loader.exec_module(exporter)
     def forbidden(*a,**k):raise RuntimeError('reuse-only export attempted encoding')
     exporter.encode_linear_planes=forbidden
-    commit=runpy.run_path(os.environ['PRISMABUILD_ACTION_PROGRESS_HELPER'])['commit']
-    progress=DurableExportProgress(doc['progress_directory'],output,expected_source,commit)
+    sys.path.insert(0,str(root))
+    from tessera._dev.durable_progress import emit
+    progress=DurableExportProgress(doc['progress_directory'],output,expected_source,emit)
     sys.argv=['export',str(source),str(output),'--device','cpu','--cached-units',inputs['selected_manifest']['path'],
         '--plan-json',inputs['plan']['path'],'--hessian',inputs['hessian']['path'],
         '--input-scales',inputs['input_scales']['path'],'--priced-inputs',inputs['priced_inputs']['path'],

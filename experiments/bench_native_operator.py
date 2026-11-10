@@ -1005,8 +1005,8 @@ def main(argv=None):
         if result["status"] == "timing_admissible":
             accept_measurement(result)
         args.out.write_text(json.dumps(result, sort_keys=True, indent=2, allow_nan=False) + "\n")
-        # pbrun's CAS result is stdout. Bind the separately retained artifact
-        # bytes to that result, rather than relying on an external path alone.
+        # The job's stdout is a separate retained stream. Bind the retained
+        # artifact bytes to that result, rather than relying on an external path alone.
         published = {"schema": "tessera.native_dense_publication.v1",
                      "status": result["status"], "receipt_path": str(args.out),
                      "receipt_sha256": hashlib.sha256(args.out.read_bytes()).hexdigest()}

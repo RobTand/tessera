@@ -31,11 +31,8 @@ fp32 reduction error of 1.7e-07.
 THIS IS A SCREEN, NOT A SERVED RESULT.  The lane's own served number is the
 decode-regime A/B (`experiments/decode_regime_campaign.sh`).
 
-CPU-only, but still dispatched through the PrismaBuild pool.  A box-local
-checkout pins the action to that box; if no live worker there can satisfy the
-declared CPU and memory demand, the action waits rather than running outside
-the pool.  In particular, do not repeat the direct local execution used while
-diagnosing this control on 2026-09-04.
+CPU-only; run through Flux admission with declared CPU and memory demand.
+Do not execute it directly on a fleet host.
 """
 
 from __future__ import annotations

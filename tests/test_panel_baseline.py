@@ -1,7 +1,7 @@
 """The #688 acceptance consumer: #685 baseline bands vs new panel rows.
 
-Rule 8 record (2026-10-04).  First PrismaBuild run of this file, BEFORE the
-compare() fix, through pbrun on dl380g10 (x86, 2 cpus, mem_gb=4, native
+Rule 8 record (2026-10-04).  First run of this file (historical, under the retired PrismaBuild runner), BEFORE the
+compare() fix, on dl380g10 (x86, 2 cpus, mem_gb=4, native
 threads 1)::
 
     4 failed, 5 passed in 9.78s

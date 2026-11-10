@@ -6,7 +6,7 @@ native adapter's decoded weights. The component result is rank-local.
 
 The reports use a four-ULP screen, not a composed error bound. The canonical
 fixture covers the clamp, non-unit routing, TP1 and both TP2 rank cuts.
-Run these batch checks through PrismaBuild in the pinned vLLM image.
+Run these batch checks as a Flux GPU job in the pinned vLLM image (Flux GPU path rendered, not qualified).
 """
 import json
 import os

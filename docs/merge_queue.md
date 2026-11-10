@@ -3,7 +3,9 @@
 Every change reaches `master` through Mergify's merge queue. The configuration
 is [`.mergify.yml`](../.mergify.yml). The gate workflow supplies `pr-gate` on
 ordinary PRs and `gate` on temporary batch drafts. Development tests run
-through PrismaBuild; cite their action keys and results in the PR body.
+through admitted Flux jobs, BuildBuddy or GitHub-hosted CI; cite their job or
+run IDs, terminal verdicts and logs in the PR body. New Tessera work must not
+start using PrismaBuild again under the recorded Flux migration exception.
 
 ## Before you queue
 
@@ -34,7 +36,8 @@ branch rule 12 on an authenticated Mergify draft, so the draft is judged by
 
 TL3 uses branches named `tessera-<issue>-tl3-<node>` and starts each
 pull request body with `Refs #<issue>.`, so `branch rule` passes as it
-does for every pull request. TL3 tests each change through PrismaBuild and
+does for every pull request. TL3 tests each change through admitted Flux jobs,
+BuildBuddy or GitHub-hosted CI and
 reviews it, then posts its `TL3 approval` check on the reviewed head and adds
 the `tl3-queue` label. That pair queues the pull request in the default queue
 in place of `queue` and `pr-gate`; `branch rule` stays required. TL3

@@ -53,7 +53,7 @@ def main():
         assert args.stage == 'control'
         env['VLLM_DISABLE_SHARED_EXPERTS_STREAM'] = '1'
     if args.stage == 'encode':
-        env['PRISMABUILD_CONTAINER_OWNER'] = os.environ['PRISMABUILD_CONTAINER_OWNER']
+        env['FLUX_JOB_ID'] = os.environ['FLUX_JOB_ID']
     packed = json.loads(args.packed_request.read_text()) if args.packed_request else {}
     network = 'host' if packed.get('tp_size',1) == 2 else 'none'
     if network == 'host':
@@ -107,7 +107,7 @@ def main():
     (root / 'launch.json').write_text(json.dumps({'command': command, 'environment': env,
         'request_sha256': digest(args.request), 'control_sha256': before,
         'affinity': affinity, 'memory_limit_gib': args.memory_gib,
-        'execution_authority': ('PrismaBuild admitted producer' if args.stage == 'encode'
+        'execution_authority': ('Flux job ' + os.environ['FLUX_JOB_ID'] + ' (environment value, not an admission token)' if args.stage == 'encode'
                                 else 'explicit user vLLM exemption 2026-09-07'),
         'timeout_seconds':args.timeout_seconds,'started_epoch': start}, indent=2) + '\n')
     timed_out = False

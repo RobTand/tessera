@@ -11,6 +11,9 @@ from pathlib import Path
 from cubin_cmp import sections
 
 
+
+from tessera.job_metadata import job_identity
+
 def main() -> int:
     out = Path(sys.argv[1])
     import conv_gate as probe
@@ -75,10 +78,10 @@ def main() -> int:
     result.update({"gate_contract": probe.KDA_GATE_CONTRACT, "gate_passed": not errors, "errors": errors,
                    "stock_binding_ok": stock_binding_ok, "numerical_bank": {
                        "path": str(bank_path), "sha256": hashlib.sha256(bank_path.read_bytes()).hexdigest(),
-                       "action_key": bank_record["meta"]["pb_action"], "cases": len(bank["cases"])},
+                       "action_key": job_identity(bank_record["meta"]), "cases": len(bank["cases"])},
                    "intermediate_control": {"path": str(control_path),
                        "sha256": hashlib.sha256(control_path.read_bytes()).hexdigest(),
-                       "action_key": control_record["meta"]["pb_action"]}})
+                       "action_key": job_identity(control_record["meta"])}})
     result["expected_old_module_sha256"] = expected_old_module_sha
     result["validator_source_identity"] = validator_source_identity
     probe.require_harness_source_identity(validator_source_identity, source_root, origins=origins)

@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
-# PrismaBuild admits this entry point on both processor and device actions.
+# Flux runs this entry point in CPU or GPU jobs.
 set -euo pipefail
 OUT=$(realpath -m "$1"); shift
 mkdir -p "$OUT/home" "$OUT/tmp"
 export OMP_NUM_THREADS=1 MKL_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 MAX_JOBS=1
 if [[ " $* " == *" --cpu-preflight "* ]]; then
     export PYTHONPATH="$PWD/src" PYTHONDONTWRITEBYTECODE=1
-    exec /home/rob/venvs/pb-cpu/bin/python experiments/t4_code/fp4_arithmetic_attest.py --out "$OUT" "$@"
+    exec "${TESSERA_CPU_PYTHON:?set TESSERA_CPU_PYTHON to the scoped CPU interpreter}" experiments/t4_code/fp4_arithmetic_attest.py --out "$OUT" "$@"
 fi
 IMAGE=${ORACLE_IMAGE:?the admitted native runtime image is required}
 source experiments/runtime_image.sh
@@ -31,6 +31,6 @@ exec docker run --rm --gpus all --ipc=host --network=none --cpuset-cpus "$CPUS" 
     -e HOME="$OUT/home" -e TMPDIR="$OUT/tmp" -e PYTHONDONTWRITEBYTECODE=1 \
     -e PYTHONUNBUFFERED=1 -e PYTHONPATH=/work/src -e MAX_JOBS=1 \
     -e OMP_NUM_THREADS=1 -e MKL_NUM_THREADS=1 -e OPENBLAS_NUM_THREADS=1 \
-    -e PRISMABUILD_ACTION_KEY="${PRISMABUILD_ACTION_KEY:?}" -e ORACLE_IMAGE="$IMAGE" -e HOST_NAME="$(hostname)" \
+    -e FLUX_JOB_ID="${FLUX_JOB_ID:?}" -e ORACLE_IMAGE="$IMAGE" -e HOST_NAME="$(hostname)" \
     "${INPUT_MOUNTS[@]}" "${IMAGE_ENV[@]}" --entrypoint bash -w /work "$IMAGE" \
     -c 'source experiments/cuda_home_shadow.sh "$TMPDIR"; exec python3 experiments/t4_code/fp4_arithmetic_attest.py "$@"' -- --out "$OUT" "$@"

@@ -1,17 +1,16 @@
 #!/usr/bin/env python3
 """One native phase: installed runtime only; repository schema lives in parent."""
 from __future__ import annotations
-import argparse,gzip,hashlib,importlib.metadata,json,os,stat,subprocess,sys,time
+import argparse,gzip,hashlib,importlib.metadata,json,os,subprocess,sys,time
 from pathlib import Path
 from concurrent.futures import ThreadPoolExecutor
 ROOT=Path(__file__).resolve().parents[1]
 # Repository tools are allowed; repository src never enters runtime search paths.
 sys.path.insert(0,str(ROOT))
 from tools.run_glm_cached_cpu_export import fsync_path,read_bound
+from tools._install_identity import verify_install
 SCHEMA="tessera.native_shape_worker_result.v1"
 MODULES=("tessera", "tessera.serving.backend", "tessera.serving.ext", "tessera.serving.contract", "tessera.serving.source_identity", "tessera.serving.runtime_image", "tessera.serving.scheme", "tessera.serving.lane", "tessera.serving.telemetry")
-PB_RECORD_VERIFIER = Path('/mnt/shared/prismabuild-fleet/repo/tools/pbtest_pins.py')
-PB_IMMUTABLE_GENERATIONS = Path('/mnt/shared/prismabuild-fleet/runtime-generations')
 
 
 def _producer_dev_mode():
@@ -32,38 +31,6 @@ def _producer_dev_mode():
 
 _DEV_MODE = _producer_dev_mode()
 
-
-def record_verifier_bytes(binding):
-    """Hold immutable helper bytes equal to the published PB owner's bytes."""
-    path = Path(binding['path'])
-    published = PB_RECORD_VERIFIER.resolve(strict=True)
-    if (not path.is_absolute() or path.resolve(strict=True) != path
-            or not path.is_relative_to(PB_IMMUTABLE_GENERATIONS)
-            or len(path.relative_to(PB_IMMUTABLE_GENERATIONS).parts) != 3
-            or path.parts[-2:] != ('tools', 'pbtest_pins.py')):
-        raise ValueError('installation verifier must name an immutable PB generation')
-
-    def held(member):
-        fd = os.open(member, os.O_RDONLY | os.O_NOFOLLOW)
-        try:
-            before = os.fstat(fd)
-            if not stat.S_ISREG(before.st_mode) or before.st_mode & 0o222 or before.st_size > 64 * 1024:
-                raise ValueError('installation verifier must be a bounded read-only regular file')
-            with os.fdopen(fd, 'rb', closefd=False) as handle:
-                raw = handle.read(64 * 1024 + 1)
-            after = os.fstat(fd)
-            names = ('st_dev', 'st_ino', 'st_size', 'st_mtime_ns', 'st_ctime_ns')
-            if len(raw) != before.st_size or any(getattr(before, name) != getattr(after, name) for name in names):
-                raise ValueError('installation verifier changed during its owned read')
-            return raw
-        finally:
-            os.close(fd)
-
-    raw = held(path)
-    if (len(raw) != binding['bytes'] or hashlib.sha256(raw).hexdigest() != binding['sha256']
-            or raw != held(published) or PB_RECORD_VERIFIER.resolve(strict=True) != published):
-        raise ValueError('installation verifier differs from the published PB owner')
-    return raw
 
 def canonical(value):return json.dumps(value,sort_keys=True,separators=(",",":"),allow_nan=False).encode()
 def file_binding(path):
@@ -172,10 +139,11 @@ def runtime_origins(expected_root, facts=None):
    if path is None or not Path(path).resolve().is_relative_to(root):
     if facts is None:raise ValueError("foreign loaded runtime owner: "+name)
     facts.append("foreign loaded runtime owner: "+name)
- return {"package_root":str(root),"modules":files}
+ return {"package_root":str(root),"modules":files,
+         "install_verifier":file_binding(ROOT/"tools/_install_identity.py")}
 
 
-def observe_software_runtime(expected, record_verifier=None):
+def observe_software_runtime(expected):
  def seal(kind,exp,act,refusal,**kw):
   return _DEV_MODE.seal_check(kind,exp,act,where="native shape worker before device setup",
                               refusal=refusal,**kw)
@@ -214,23 +182,14 @@ def observe_software_runtime(expected, record_verifier=None):
  # certified mode, before anything queries a device.
  seal("runtime source/contract/version",declared,observed,
       ValueError("runtime source/contract/version differs before device setup"))
- for fact in provenance:
+ for fact in provenance or ():
   seal("runtime provenance",expected["tessera_commit"],fact,
        ValueError("runtime provenance differs before device setup"))
  if not dev:
-  if record_verifier is None:raise ValueError("missing sealed installation verifier")
-  verifier_bytes=record_verifier_bytes(record_verifier)
-  verifier_namespace={"__file__":record_verifier["path"],"__name__":"tessera_owned_record_verifier"}
-  exec(compile(verifier_bytes,record_verifier["path"],"exec"),verifier_namespace)
-  origins["installation"]=verifier_namespace["verify_install"]("tessera",expected["tessera_commit"])
-  if record_verifier_bytes(record_verifier)!=verifier_bytes:raise ValueError("installation verifier changed during execution")
-  origins["record_verifier"]=file_binding(record_verifier["path"])
-  if origins["record_verifier"]!=record_verifier:raise ValueError("installation verifier source differs")
+  origins["installation"]=verify_install("tessera",expected["tessera_commit"])
  else:
-  # A dev run requires no installation proof and no clean tree: the
-  # PB-published verifier binding is retained when provided, and the stored
+  # A dev run requires no installation proof and no clean tree: the stored
   # installation identity is what the record carries.
-  origins["record_verifier"]=file_binding(record_verifier["path"]) if record_verifier is not None else None
   origins["installation"]={"module":"tessera","distribution":"unverified (D32 dev mode)",
    "expected_commit":expected["tessera_commit"],"installed_commit":actual_commit,
    "origin":str(Path(expected["package_root"])/"__init__.py"),"verified_files":0}
@@ -258,8 +217,8 @@ def observe_software_runtime(expected, record_verifier=None):
  return value,origins,raw_contract
 
 
-def observe_runtime(expected, record_verifier=None):
- value,origins,_=observe_software_runtime(expected,record_verifier)
+def observe_runtime(expected):
+ value,origins,_=observe_software_runtime(expected)
  import torch
  from tessera.serving import backend
  value["platform"]=backend.platform_of_this_process(torch)
@@ -495,7 +454,7 @@ def profile_call(call, path):
 
 
 def _native_measure(job, output, job_source):
-    if set(job) != JOB_FIELDS or job["schema"] != "tessera.native_shape_worker_job.v1":
+    if set(job) != JOB_FIELDS or job["schema"] != "tessera.native_shape_worker_job.v2":
         raise ValueError("unknown native phase job")
     request=dict(job["request"]);request["_wire_roles"]=job["wire_roles"]
     wire=read_bound(request["wire"])
@@ -505,7 +464,7 @@ def _native_measure(job, output, job_source):
     from experiments.bench_native_operator import time_apply
     from experiments.routed_pair_oracle import PowerSampler
 
-    runtime, origins = observe_runtime(request["expected_runtime"],request["record_verifier"])
+    runtime, origins = observe_runtime(request["expected_runtime"])
     producer=job["producer"]
     worker_source=file_binding(__file__)
     if not torch.cuda.is_available():
@@ -582,7 +541,7 @@ def _native_measure(job, output, job_source):
         fsync_path(path.parent);evidence[name] = file_binding(path)
     if _native_fingerprints(structure, layer, method) != fingerprints:
         raise ValueError("prepared native weights changed during measurement")
-    after,after_origins=observe_runtime(request["expected_runtime"],request["record_verifier"])
+    after,after_origins=observe_runtime(request["expected_runtime"])
     if after!=runtime or after_origins!=origins or file_binding(__file__)!=worker_source:
         raise ValueError("runtime, contract, module origin or worker source changed during measurement")
     if file_binding(job_source["path"])!=job_source:raise ValueError("native job changed during measurement")
@@ -598,10 +557,10 @@ def read_job(job_path, expected_sha256):
     hex_identity(expected_sha256,64)
     if hashlib.sha256(raw).hexdigest()!=expected_sha256:raise ValueError("owned native job bytes differ")
     job=json_bytes(raw)
-    if set(job)!=JOB_FIELDS or job["schema"]!="tessera.native_shape_worker_job.v1":raise ValueError("unknown native phase job")
+    if set(job)!=JOB_FIELDS or job["schema"]!="tessera.native_shape_worker_job.v2":raise ValueError("unknown native phase job")
     if file_binding(__file__)!=job["worker_source"]:raise ValueError("native worker source differs")
     if json_bytes(read_bound(job["request_source"]))!=job["request"]:raise ValueError("native request differs from owned original bytes")
-    for key in ("wire","contract","runtime_python","record_verifier"):
+    for key in ("wire","contract","runtime_python"):
         bound=job["request"][key];data=read_bound(bound)
         if len(data)!=bound["bytes"]:raise ValueError("native input bytes differ")
     source={"path":str(Path(job_path).resolve()),"bytes":len(raw),"sha256":hashlib.sha256(raw).hexdigest()}
@@ -611,17 +570,17 @@ def read_job(job_path, expected_sha256):
 def runtime_preflight(job_path, output, expected_job_sha256):
     if os.environ.get("CUDA_VISIBLE_DEVICES")!="":raise ValueError("CPU preflight requires disabled CUDA visibility")
     job,job_source=read_job(job_path,expected_job_sha256)
-    software,origins,raw=observe_software_runtime(job["request"]["expected_runtime"],job["request"]["record_verifier"])
+    software,origins,raw=observe_software_runtime(job["request"]["expected_runtime"])
     import torch
     from tessera.serving import contract
     if torch.cuda.is_initialized():raise ValueError("CPU contract preflight initialized CUDA")
     if raw!=read_bound(job["request"]["contract"]):raise ValueError("installed contract differs from owned request bytes")
-    result={"schema":"tessera.installed_contract_preflight.v1", "software":software,"runtime_origins":origins,
+    result={"schema":"tessera.installed_contract_preflight.v2", "software":software,"runtime_origins":origins,
             "validator":{"module":"tessera.serving.contract","function":"validate_serving_contract",
                          "source":file_binding(contract.__file__)},
             "contract_sha256":hashlib.sha256(raw).hexdigest(),"gpu_executed":False,
             "worker_source":job["worker_source"],"job_source":job_source,"request_source":job["request_source"]}
-    after,after_origins,after_raw=observe_software_runtime(job["request"]["expected_runtime"],job["request"]["record_verifier"])
+    after,after_origins,after_raw=observe_software_runtime(job["request"]["expected_runtime"])
     if after!=software or after_origins!=origins or after_raw!=raw:raise ValueError("installed runtime changed during CPU preflight")
     if torch.cuda.is_initialized():raise ValueError("CPU contract preflight initialized CUDA")
     if file_binding(job_path)!=job_source or file_binding(__file__)!=job["worker_source"]:raise ValueError("preflight source changed")
@@ -631,7 +590,7 @@ def runtime_preflight(job_path, output, expected_job_sha256):
 def native_measure(job_path, output, expected_job_sha256):
     job,job_source=read_job(job_path,expected_job_sha256)
     # Strict installed-runtime validation precedes any distributed/device setup.
-    observe_runtime(job["request"]["expected_runtime"],job["request"]["record_verifier"])
+    observe_runtime(job["request"]["expected_runtime"])
     import torch
     torch.set_num_threads(1);torch.set_num_interop_threads(1)
     from experiments import bench_native_operator as instrument

@@ -26,8 +26,8 @@ SEEDS = [
     ('byte-layer provenance', 'src/tessera/provenance.py', ('append', RAISE), ['//tests:test_provenance']),
     ('repository tool', 'tools/tessera_attest.py', ('append', RAISE), ['//tests:test_attest_receipt']),
     ('packaging tool', 'tools/check_wheel.py', ('append', RAISE), ['//tests:test_packaging']),
-    ('experiment module', 'experiments/t8r_speed/stageprev_793_claim_contract.py', ('append', RAISE),
-     ['//tests:test_stageprev_793_operative']),
+    ('experiment module', 'experiments/t8r_speed/stageprev_probe.py', ('append', RAISE),
+     ['//tests:test_stageprev_probe']),
     ('shell script a test runs', 'experiments/t8_census/profile_unit_encode.sh', ('replace', 'exit 3\n'),
      ['//tests:test_b770_producer_review']),
     ('test file', 'tests/test_alphabet.py', ('append', FAILING_TEST), ['//tests:test_alphabet']),
@@ -35,7 +35,7 @@ SEEDS = [
      ['//tests:test_native_operator_resources']),
     ('schema document', 'docs/schema/allowable-rung-table.v2.schema.json', ('replace', '{"seeded": break'),
      ['//tests:test_rung_allowability_structure_spec']),
-    ('test helper', 'tests/_whole_phase_sdk.py', ('append', RAISE), ['//tests:test_value_prefetch_numeric']),
+    ('test helper', 'tests/declared_inputs_support.py', ('append', RAISE), ['//tests:test_value_prefetch_numeric']),
     ('gate tooling', 'tools/ci/gate_select.py', ('append', RAISE), ['//tests:test_gate_contract']),
 ]
 

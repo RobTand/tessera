@@ -208,7 +208,7 @@ class CanonicalHistoryPrefix:
                 "unique_frame_values": len(self.frames.entries),
                 "row_cache_shallow_container_bytes": sys.getsizeof(rows) + sys.getsizeof(lengths) + sys.getsizeof(self._previous)
                     + sum(sys.getsizeof(parts) for parts in rows),
-                "memory_scope": "logical row bytes share frame chunks; shallow containers exclude scalar byte objects, frame objects and allocator overhead; process/PB peak is separate"}
+                "memory_scope": "logical row bytes share frame chunks; shallow containers exclude scalar byte objects, frame objects and allocator overhead; process peak is separate"}
 
     def retained_memory(self):
         chunks = {id(part): part for row in self._rows for part in row}
@@ -217,7 +217,7 @@ class CanonicalHistoryPrefix:
                 "row_cache_container_python_bytes": sum(map(sys.getsizeof, (self._rows, self._lengths, self._previous)))
                     + sum(sys.getsizeof(row) for row in self._rows),
                 "logical_row_payload_bytes": sum(self._lengths),
-                "scope": "retained chunk objects and cache containers only; excludes frame values, interning keys and allocator overhead; process/PB peak is required"}
+                "scope": "retained chunk objects and cache containers only; excludes frame values, interning keys and allocator overhead; process peak is required"}
 
 
 def compact_capture(raw, frames=None):

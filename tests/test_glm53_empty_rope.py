@@ -559,7 +559,7 @@ def test_qualification_main_reports_all_five_cases_and_fails_on_mismatch(monkeyp
     monkeypatch.setenv("ORACLE_IMAGE", "cpu-control-image")
     monkeypatch.setenv("TESSERA_HEAD", "cpu-control-source")
     monkeypatch.setenv("TESSERA_STATE", "cpu-control-state")
-    monkeypatch.setenv("PB_ACTION_KEY", "cpu-control-action")
+    monkeypatch.setenv("FLUX_JOB_ID", "cpu-control-action")
     arange, full = torch.arange, torch.full
 
     def cpu_positions(factory):
@@ -612,7 +612,7 @@ def test_qualification_main_reports_all_five_cases_and_fails_on_mismatch(monkeyp
     assert receipt["cache_sha256"] == "cpu-control-cache"
     assert receipt["vllm"] == "cpu-control-vllm" and receipt["flashinfer"] == "cpu-control-flashinfer"
     assert receipt["image"] == "cpu-control-image" and receipt["tessera_head"] == "cpu-control-source"
-    assert receipt["tessera_state"] == "cpu-control-state" and receipt["pb_action"] == "cpu-control-action"
+    assert receipt["tessera_state"] == "cpu-control-state" and receipt["flux_job_id"] == "cpu-control-action" and receipt["meta_schema"] == "tessera.job_meta.v2"
     assert receipt["device"] == "CPU control" and receipt["capability"] == [0, 0]
     output = capsys.readouterr().out.splitlines()
     assert [json.loads(line) for line in output[:5]] == results

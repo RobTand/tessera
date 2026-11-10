@@ -4,7 +4,7 @@ CUDA API gate: the fused identity (``routed_fused_kernel`` +
 ``dense_reduce_kernel``) and the Triton window GEMM (``_window_gemm_kernel``)
 over the same resident bundles of the same stub-B modules.
 
-Run via dense_fused_oracle.sh under PrismaBuild with ORACLE_NCU=1.  The
+Run via dense_fused_oracle.sh inside a Flux job with ORACLE_NCU=1.  The
 numerical oracle remains dense_fused_oracle.py; this instrument makes no
 accuracy claim.
 """

@@ -1,14 +1,13 @@
 #!/usr/bin/env bash
 # CPU-only compile gate for the MLA pass-buffer schedule, run INSIDE the pinned
-# serving image with no GPU. One PB campaign action selects baseline,
+# serving image with no GPU. One Flux CPU job selects baseline,
 # candidate or mutant and retains its final DSO plus resource/SASS evidence.
-# PrismaBuild places the independent selections; this is not a dispatcher.
+# The scheduler places the independent selections; this is not a dispatcher.
 #
-# --container-image on pbrun DECLARES placement only; it does NOT run the
-# command in the image. This wrapper actually starts the
-# pinned CUDA container (experiments/runtime_image.sh resolves the digest and
-# passes its declared identity in), the same way experiments/t8r_speed/
-# build_ext.sh does for its libraries.
+# The job does not run its command in the image by itself. This wrapper actually
+# starts the pinned CUDA container (experiments/runtime_image.sh resolves the
+# digest and passes its declared identity in), the same way
+# experiments/t8r_speed/build_ext.sh does for its libraries.
 #
 #   MLA_IMAGE=<digest ref> p0_compile_row.sh <out_dir> <baseline|candidate|mutant>
 #
@@ -25,7 +24,7 @@ esac
 mkdir -p "$OUT/home" "$OUT/tmp"
 HERE=$(dirname "$(realpath "$0")")
 CHECKOUT=$(realpath "$HERE/../..")
-IMAGE=${MLA_IMAGE:?set MLA_IMAGE to the immutable PB-declared serving image}
+IMAGE=${MLA_IMAGE:?set MLA_IMAGE to the immutable digest-pinned serving image}
 source "$CHECKOUT/experiments/runtime_image.sh"
 runtime_image_require "$IMAGE" || exit 2
 IMAGE_ENV=()

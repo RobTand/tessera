@@ -1,17 +1,17 @@
 #!/usr/bin/env bash
 # Run experiments/dense_fused_oracle.py inside the serving image (contract v43,
-# the fused window kernel's dense identity).  Submitted through PrismaBuild
-# (pbrun --gpu --container-image ...); this script is the admitted action's
-# command.  Usage:
+# the fused window kernel's dense identity).  Run as a Flux GPU job
+# (see the rendered tools/_flux_gpu_jobspec.py line; Flux GPU path rendered, not
+# qualified); this script is the job's command.  Usage:
 #   dense_fused_oracle.sh <checkout> <out_dir> <oracle.py args...>
-# PB's docker shim preserves the action's CPU mask; the container mounts the
+# The job's CPU mask is preserved; the container mounts the
 # checkout read-only at /work and the stub checkpoint read-only, and writes
 # only under <out_dir> (HOME/TMPDIR/Triton cache/JIT build included).
 # ORACLE_NCU=1 runs dense_fused_ncu.py under Nsight Compute instead, gated to
 # the dense window launches of both lanes.
 set -euo pipefail
 CHECKOUT=$(realpath "$1"); OUT=$(realpath -m "$2"); shift 2
-IMAGE_REF=${ORACLE_IMAGE:?set ORACLE_IMAGE to the immutable PB-declared measurement image}
+IMAGE_REF=${ORACLE_IMAGE:?set ORACLE_IMAGE to the immutable digest-pinned measurement image}
 source "$CHECKOUT/experiments/runtime_image.sh"
 runtime_image_require "$IMAGE_REF"
 IMAGE_ENV=()
@@ -61,6 +61,6 @@ exec docker run --rm --gpus all --ipc=host --network=host --cpuset-cpus "$CPUS" 
   -e OMP_NUM_THREADS=1 -e MKL_NUM_THREADS=1 -e OPENBLAS_NUM_THREADS=1 \
   -e NUMEXPR_NUM_THREADS=1 -e PYTHONUNBUFFERED=1 \
   -e ORACLE_IMAGE="$IMAGE_REF" -e TESSERA_HEAD="$HEAD" -e TESSERA_STATE="$STATE" \
-  -e PB_ACTION_KEY="${PB_ACTION_KEY:-${PRISMABUILD_ACTION_KEY:-}}" \
+  -e FLUX_JOB_ID="${FLUX_JOB_ID:-}" \
   "${IMAGE_ENV[@]}" "${EXTRA_MOUNTS[@]}" --entrypoint "${PREFIX[0]}" -w /work "$IMAGE_REF" \
   "${PREFIX[@]:1}" "${COMMAND[@]}" --out "$OUT" --stub "$STUB" "$@"

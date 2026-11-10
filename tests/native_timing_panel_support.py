@@ -6,7 +6,6 @@ import hashlib
 from pathlib import Path
 
 import pytest
-import box_artifacts
 
 from tessera.serving import timing_panel as tp, census_plan, contract, scheme
 
@@ -69,9 +68,11 @@ def build_dense_fixture_panel(tmp_path, blob, declaration):
                  "netdata": {box: {context: {"query": "CPU fixture", "raw_response": {"view": {}, "result": {"labels": ["time", "fixture"], "data": [[10, [0, 0, 0]]] }},
                                             "returned_view": {}} for context in tp.NETDATA_CONTEXTS}
                              for box in ("sparky", "sparklina")}}
+    verifier = tmp_path / "_install_identity.py"
+    verifier.write_text("# CPU fixture verifier identity; never executed.\n")
     evidence = {
         "runtime": save(tmp_path, "runtime.json", runtime),
-        "runtime_origins": save(tmp_path, "origins.json", {"package_root": runtime["package_root"], "installation": {"module": "tessera", "distribution": "tessera-quant", "expected_commit": runtime["tessera_commit"], "installed_commit": runtime["tessera_commit"], "origin": runtime["package_root"]+"/__init__.py", "verified_files": 43}, "record_verifier": {"path": str(box_artifacts.path("prismabuild_tools","pbtest_pins.py")), "bytes": 1, "sha256": "a"*64}, "modules": {name: {"path": str(Path(runtime["package_root"]) / ("__init__.py" if name == "tessera" else name.removeprefix("tessera.").replace(".", "/") + ".py")), "bytes": 1, "sha256": "a"*64} for name in tp.RUNTIME_MODULES}}),
+        "runtime_origins": save(tmp_path, "origins.json", {"install_verifier": tp.file_binding(verifier), "package_root": runtime["package_root"], "installation": {"module": "tessera", "distribution": "tessera-quant", "expected_commit": runtime["tessera_commit"], "installed_commit": runtime["tessera_commit"], "origin": runtime["package_root"]+"/__init__.py", "verified_files": 43}, "modules": {name: {"path": str(Path(runtime["package_root"]) / ("__init__.py" if name == "tessera" else name.removeprefix("tessera.").replace(".", "/") + ".py")), "bytes": 1, "sha256": "a"*64} for name in tp.RUNTIME_MODULES}}),
         "producer": save(tmp_path, "producer.json", {"schema": "tessera.native_panel_producer_identity.v1", "commit": "3" * 40, "commit_source": "sealed_checkout", "source_tree_sha256": "6"*64, "source_tree_members": 1, "tool_source_sha256": "4" * 64}),
         "contract": save(tmp_path, "contract.json", packed_contract, True),
         "wire": save(tmp_path, "wire.bin", blob, True),

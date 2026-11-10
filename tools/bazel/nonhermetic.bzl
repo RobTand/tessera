@@ -16,7 +16,7 @@ are keyed by the test file's target; its `.bytes` lane shares them.
 - `gpu`: every node in the file needs a CUDA device and skips on a CPU
   executor. The target is `manual`, so the cloud gate's `//...` leaves it
   out; a GPU lane selects it by the tag. Its CUDA run stays where it is today
-  (tools/merge_suite.py through PrismaBuild, --strict-cuda).
+  (tools/merge_suite.py through Flux, --strict-cuda); that lane is not yet qualified.
 """
 
 _GPU = "every node needs a CUDA device; on a CPU executor the whole file skips."
@@ -54,6 +54,7 @@ NONHERMETIC = {
     "//tests:test_window_viterbi_fast": struct(tags = ["gpu"], reason = _GPU),
     "//tests:test_wire_device_unpack": struct(tags = ["gpu"], reason = _GPU),
     "//tests:test_cuda_surface": struct(tags = ["runner"], reason = "the source identity it verifies is measured with git, which a remote executor's runfiles don't have."),
+    "//tests:test_merge_suite": struct(tags = ["runner"], reason = "its real producer publication must bind a Git-measured checkout identity to the immutable native launch; partial runfiles cannot attest that source."),
     "//tests:test_bazel_build": struct(tags = ["runner"], reason = "it regenerates every BUILD file, which lists the repository's files with git ls-files."),
     "//tests:test_gate_selection": struct(tags = ["runner"], reason = _GIT),
     "//tests:test_directory_read_census": struct(tags = ["runner"], reason = "it measures every tracked Python source for the repository directory-read ceiling and verifies that complete Git population; partial runfiles can silently omit readers."),

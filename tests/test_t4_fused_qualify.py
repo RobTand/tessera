@@ -251,14 +251,26 @@ def test_prepare_inputs_declares_exact_ranges(tmp_path):
     args = qual.build_parser().parse_args(["--mode", "prepare-inputs", "--out", str(tmp_path / "prepared"),
                                          "--model-root", str(model), "--source-keys", key])
     result = qual.prepare_inputs(args)
-    from prismabuild.client import manifest_read_entries, read_data_manifest
+    from declared_inputs import read_declared_inputs
 
-    manifest, _encoding = read_data_manifest(result["data_manifest"])
-    entries = manifest_read_entries(manifest)
-    # This producer uses a v1 list-order timeline starting at zero. Public
-    # parsing alone does not validate its annotation phase coverage.
-    assert manifest["schema"] == "prismaquant.prismabuild.data_manifest.v1"
-    assert entries == manifest["entries"]
+    manifest, _sha = read_declared_inputs(result["data_manifest"])
+    entries = manifest["entries"]
+    # This producer uses a list-order timeline starting at zero. Parsing alone
+    # does not validate its annotation phase coverage.
+    assert manifest["schema"] == "tessera.declared_inputs.v1"
+    import hashlib
+    import struct
+    raw = (model / 'one.safetensors').read_bytes()
+    header_bytes = 8 + struct.unpack('<Q', raw[:8])[0]
+    spec_path = Path(result['source_spec'])
+    assert entries == [
+        {'path': str(model / 'one.safetensors'), 'offset': 0, 'bytes': header_bytes,
+         'sha256': hashlib.sha256(raw[:header_bytes]).hexdigest()},
+        {'path': str(model / 'one.safetensors'), 'offset': header_bytes, 'bytes': 32 * 256 * 4,
+         'sha256': hashlib.sha256(torch.arange(32 * 256, dtype=torch.float32).numpy().tobytes()).hexdigest()},
+        {'path': str(spec_path), 'offset': 0, 'bytes': spec_path.stat().st_size,
+         'sha256': hashlib.sha256(spec_path.read_bytes()).hexdigest()},
+    ]
     end_bytes = sum(entry["bytes"] for entry in entries)
     assert end_bytes == manifest["total_bytes"]
     assert manifest["annotations"]["phases"] == [

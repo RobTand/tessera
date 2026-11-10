@@ -2,8 +2,10 @@
 
   receipt.py RECEIPTS MANIFEST OUT --eager rE1,rE2 --graph rG1,rG3 [--commit SHA]
 
-RECEIPTS holds one directory per arm (arm.sh's $RECEIPTS/<ARM>/), MANIFEST is
-submit.py's (arm -> PrismaBuild action key). Every graph arm is judged against
+RECEIPTS holds one directory per arm. MANIFEST maps each arm to a flux_job_id.
+The historical arm and submission drivers are archived under
+archive/flux-migration/R-CONTESTED/experiments/graph_attest_702; there is no
+live manifest producer here. Every graph arm is judged against
 the eager pool named by --eager with the tessera#508 membership predicate
 (``eq-member-508.py``'s ``members``); the long-context passes (<ARM>-long)
 are judged the same way and recorded as a screen. The rule, the schema and
@@ -33,7 +35,7 @@ eq_member = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(eq_member)
 
 _COUNT = re.compile(r"^(?P<manager>\w+)\|FULL\|tokens=(?P<tokens>\d+)\|reqs=")
-#: <arm>.dispatch.<pid>.json (one box) or <arm>.rank<r>.dispatch.<pid>.json (arm_tp2.sh, per rank).
+#: <arm>.dispatch.<pid>.json (one box) or <arm>.rank<r>.dispatch.<pid>.json (archive/flux-migration/R-CONTESTED/experiments/graph_attest_702/arm_tp2.sh, per rank).
 _DISPATCH = r"{arm}(?:\.rank(?P<rank>\d+))?\.dispatch\.\d+\.json"
 
 
@@ -123,7 +125,7 @@ SHARED_SCOPE = tuple(f for f in graph_receipt.SCOPE_FIELDS if f != "compilation_
 #: (cause 1, judged by the plugin) and the Tessera env. The fabric is scope (v2).
 SHARED_SETUP = ("equal_script_sha256", "hooks_sha256", "serve_flags", "kernel_config",
                 "tessera_env")
-#: What NCCL's banner says per fabric (arm_tp2.sh records ``fabric_observed`` from both ranks).
+#: What NCCL's banner says per fabric (archive/flux-migration/R-CONTESTED/experiments/graph_attest_702/arm_tp2.sh records ``fabric_observed`` from both ranks).
 _BANNER = {"roce": "Using network IB", "socket": "Using network Socket"}
 #: The flags that are the execution mode under test, or compared on their own.
 _MODE_FLAGS = {"--enforce-eager": 0, "--compilation-config": 1, "--kernel-config": 1}
@@ -149,13 +151,13 @@ def _serve_flags(argv: list[str]) -> list[str]:
 def arm_scope(arm_dir: pathlib.Path, arm: str, legacy_scripts: dict | None = None) -> dict:
     """The scope and setup one arm MEASURED, read from what it recorded, never from a default.
 
-    The serve values come from the argv the arm launched (``serve_args`` from arm.sh,
-    ``serve_rank0`` from arm_tp2.sh). The image is a whole digest reference: the one the
+    The serve values come from the argv the arm launched (``serve_args`` from the archived arm.sh,
+    ``serve_rank0`` from archive/flux-migration/R-CONTESTED/experiments/graph_attest_702/arm_tp2.sh). The image is a whole digest reference: the one the
     runtime gate resolved (``image_resolved_reference``), else the digest-pinned reference the
-    arm declared and PrismaBuild verified. A bare ``sha256:`` digest names no image and a
+    arm recorded. A bare ``sha256:`` digest names no image and a
     box-local image id names one box's store, so neither is ever the scope. The equality
     script is the hash the arm recorded, else the legacy provenance (read out of the arm's own
-    PrismaBuild snapshot) passed in ``legacy_scripts``.
+    historical producer snapshot) passed in ``legacy_scripts``.
     """
     args = engine_args(arm_dir, arm)
     argv = shlex.split(args.get("serve_rank0") or args.get("serve_args") or "")
@@ -245,7 +247,7 @@ def arm_record(receipts, manifest, flat, arm, pool, legacy_scripts=None) -> dict
     spec = json.loads(args["spec_json"]) if args.get("spec_json") else None
     comp = json.loads(args["compilation_json"]) if args.get("compilation_json") else None
     return {
-        "name": arm, "pb_action": manifest.get(arm, {}).get("action_key"), "host": args.get("host"),
+        "name": arm, "arm_schema": "tessera.graph_arm.v2", "flux_job_id": manifest.get(arm, {}).get("flux_job_id"), "host": args.get("host"),
         "execution": "eager" if args.get("eager") == "1" else "graph",
         "compilation_config": comp,
         "kernel_config": json.loads(args["kernel_json"]) if args.get("kernel_json") else None,
@@ -273,8 +275,7 @@ def main() -> int:
                     help="what this receipt does not cover, one per flag (default: the stub-B list)")
     ap.add_argument("--legacy-script-provenance", type=pathlib.Path, default=None,
                     help="JSON {arm: {sha256, source}} for arms that predate the recorded "
-                         "equal_script_sha256 (snapshot_script_hash.py reads it out of each "
-                         "arm's own PrismaBuild snapshot)")
+                         "equal_script_sha256; supply the existing historical script provenance")
     ap.add_argument("--image", default=None,
                     help="optional cross-check: refuse unless the arms measured this image")
     a = ap.parse_args()

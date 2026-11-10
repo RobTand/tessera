@@ -68,7 +68,7 @@ def preparation(tmp_path, monkeypatch):
     owner = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(owner)
     monkeypatch.syspath_prepend(str(CONTROLLER.parent))
-    monkeypatch.setenv("PRISMABUILD_ACTION_KEY", "unit-only-no-admitted-compute")
+    monkeypatch.setenv("FLUX_JOB_ID", "unit-only-no-admitted-compute")
     monkeypatch.setattr(sys, "argv", ["controller", "--packet", packet["path"],
                                      "--packet-sha256", packet["sha256"], "--prepare"])
     return owner, doc, checkout, evidence

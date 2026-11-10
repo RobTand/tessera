@@ -217,7 +217,7 @@ def main():
         print("power sampler unavailable:", repr(exc), flush=True)
     dev = torch.device("cuda")
     meta = dict(host=os.environ.get("HOST_NAME"), image=os.environ.get("ORACLE_IMAGE"),
-                pb_action=os.environ.get("PB_ACTION_KEY"), tessera_head=os.environ.get("TESSERA_HEAD"),
+                meta_schema="tessera.job_meta.v2", flux_job_id=os.environ.get("FLUX_JOB_ID"), tessera_head=os.environ.get("TESSERA_HEAD"),
                 torch=torch.__version__, cuda=torch.version.cuda, device=torch.cuda.get_device_name(),
                 capability=list(torch.cuda.get_device_capability()), cublaslt_version=cublaslt_version(),
                 build_s=round(time.time() - t0, 1), m=ms_list,
@@ -245,7 +245,7 @@ def main():
         os.replace(tmp, path)
         table = dict(schema="tessera.glm53_pinned_gemm.v1", cublaslt_version=meta["cublaslt_version"],
                      torch=meta["torch"], cuda=meta["cuda"], device_name=meta["device"],
-                     capability=meta["capability"], image=meta["image"], source_action=meta["pb_action"],
+                     capability=meta["capability"], image=meta["image"], source_action=meta["flux_job_id"],
                      pinned_gemm_cpp_sha256=meta["pinned_gemm_cpp_sha256"],
                      complete=done, entries=entries)
         with open(table_path + ".part", "w") as fh:

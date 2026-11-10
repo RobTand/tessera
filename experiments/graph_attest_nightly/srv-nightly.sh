@@ -3,7 +3,7 @@
 # (U4_STACK=nightly-20260929). One TP1 serve of a GLM-5.3-Flash stub on sparky,
 # vLLM's own attention backend (FLASHINFER_MLA_SPARSE_SM120, selected by vLLM),
 # no GLM53 NoPE plugin, breakable CUDA graphs off in every arm. A vLLM serve:
-# exempt from PrismaBuild.
+# run only inside a separately approved Flux GPU job.
 #
 #   srv-nightly.sh up | down | status | savelogs TAG
 #

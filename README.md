@@ -32,7 +32,7 @@ and in-process profiles with both Sparks’ Netdata power/residency records.
 GPU qualification requires root authorization; T8 timing is not T16 proof.
 `experiments/t8r_speed/value_prefetch_numeric.py` seals CPU-generated
 syntheticgeometry/nonshipping fixtures and both retained native binaries. Its
-two-arm consumer reuses PB pinned reads and the existing native callback,
+two-arm consumer uses the declared-input reader and the existing native callback,
 compares every stage and final output by bytes on identical input tensors,
 and supplements this with the existing derived-bound oracle. Its sanitizer
 operation executes only the digest-bound retained tool and runtime files.
@@ -40,13 +40,13 @@ This preparation does not replace actual calibrated T16 release acceptance.
 The two-arm diagnostic holds every loaded native FD through experiment teardown
 to prevent `/proc/self/fd` pathname reuse in CPython/dlopen caches. Resolved
 prefetch distance, executable mapped inode and held-ELF digest are recorded per
-arm. `experiments/configs/value_prefetch_874_protocol.json` freezes staging,
+arm. `archive/flux-migration/4C-6/experiments/configs/value_prefetch_874_protocol.json` freezes staging,
 single-attempt admission, finite numeric/sanitizer deadlines and cleanup;
 it is an authorization proposal, not permission to execute GPU work.
-Readset publication validates the actual PB v1 schema and whole-bank staging
+Readset publication validates `tessera.declared_inputs.v1` and the whole-bank staging
 phase. The corrected readset is a separate `readset-v3.json`; original bank-v2
 bytes are preserved. The action takes that frozen manifest as its fourth
-argument, identically to PB admission, rather than silently reading an old file.
+argument rather than silently reading an old file.
 Fixture transfer resolves the native window reader's existing initial-state
 precedence into the declared unit field before copying tensors, so legacy
 repack-attached row-cut history is not discarded by dataclass replacement.
@@ -480,7 +480,7 @@ serving/           vLLM plugin, CUDA sources, and runtime contract
 - [Wire specification](https://github.com/RobTand/tessera/blob/v0.1.0/docs/schema/prismaquant.tessera.v1.md): container layout and decoding rules.
 - [Measurement records](https://github.com/RobTand/tessera/blob/v0.1.0/docs/measurements): workloads, controls, results, and limitations.
 - [Suite population ledger](https://github.com/RobTand/tessera/blob/v0.1.0/docs/status/suite-populations.md): validation by commit, device, run mode, and skips.
-- [Working rules](https://github.com/RobTand/tessera/blob/v0.1.0/AGENTS.md): contribution and test requirements. Tests and GPU work run through PrismaBuild.
+- [Working rules](https://github.com/RobTand/tessera/blob/v0.1.0/AGENTS.md): contribution and test requirements. Scoped CPU suite transport resolves the operator-selected native Flux instance at runtime, accepts an explicit FLUX_URI override, and checks its live resource shape. GPU and container suite transport still require separate qualification.
 
 Hosted CI checks the bytes-only boundary and built-package contents. GPU
 serving coverage requires its own measured population; read the GPU and

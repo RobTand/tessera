@@ -9,7 +9,6 @@ TS_PIN identifier safety, and the retained historical pathname-only mode.
 from pathlib import Path
 import argparse
 import hashlib
-import importlib.util
 import json
 import os
 import re
@@ -17,19 +16,10 @@ import shlex
 import subprocess
 
 import pytest
+from tools import comparison_input_intake as INTAKE
+from tools import comparison_arm_identity as OWNER
 
 ROOT = Path(__file__).resolve().parents[1]
-
-
-def _load(name):
-    spec = importlib.util.spec_from_file_location(name, ROOT / 'tools' / f'{name}.py')
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    return module
-
-
-INTAKE = _load('comparison_input_intake')
-OWNER = _load('comparison_arm_identity')
 
 
 @pytest.fixture
@@ -48,11 +38,16 @@ def fixture(tmp_path):
                 'tessera_serving_manifest.json': {'git': 'c' * 40, 'source': '/qualified/bf16',
                     'serving_gate': {'contract_version': 54},
                     'totals': {'checkpoint_bytes': 3, 'quantized_params': 6, 'passthrough_bytes': 2}}}
+    written = []
     for name, contents in metadata.items():
-        (artifact / name).write_text(json.dumps(contents))
-    (artifact / 'model.safetensors').write_bytes(b'abc')
+        path = artifact / name
+        path.write_text(json.dumps(contents))
+        written.append(path)
+    weights = artifact / 'model.safetensors'
+    weights.write_bytes(b'abc')
+    written.append(weights)
     files = [{'name': p.name, 'sha256': hashlib.sha256(p.read_bytes()).hexdigest(), 'bytes': p.stat().st_size}
-             for p in artifact.iterdir()]
+             for p in written]
     audit = tmp_path / 'audit.json'
     audit.write_text(json.dumps({'schema': 'pact.u2.a8s-audit.v1', 'artifact': str(artifact), 'files': files,
                                 'all_files_bytes': sum(row['bytes'] for row in files),

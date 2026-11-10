@@ -54,7 +54,7 @@ class Report:
             "start_unix": time.time(), "arguments": vars(args).copy(), "source_sha256": source_evidence(),
             "tessera_head": os.environ.get("TESSERA_HEAD"), "image": os.environ.get("ORACLE_IMAGE"),
             "host": os.environ.get("HOST_NAME", os.uname().nodename),
-            "pb_action": os.environ.get("PB_ACTION_KEY", os.environ.get("PRISMABUILD_ACTION_KEY")),
+            "meta_schema": "tessera.job_meta.v2", "flux_job_id": os.environ.get("FLUX_JOB_ID"),
             "admission": args.admission_label,
             "torch": torch.__version__, "shape": {"hidden": HIDDEN, "inter": INTER,
                 "experts": EXPERTS, "top_k": TOP_K, "tensor_parallel_size": 2},

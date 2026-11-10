@@ -1,5 +1,39 @@
 # Tessera plan-to-serve architecture
 
+Re-stamped 2026-11-10 for SHAPE v1 runtime Flux instance resolution. The
+operator-owned `INSTANCE` manifest supplies the client prefix and run;
+`flux-uri.sh` resolves the local broker, with an explicit `FLUX_URI` override.
+The live resource shape decides admission. Config,
+resource-model and version observations are receipt evidence. Saved job IDs
+bind the rank-zero broker starttime observed at submission. Source, runtime,
+allocation, affinity, execution and publication gates remain enforced. CPU
+transport evidence does not qualify GPU or scientific results.
+
+Each test starts with every `FLUX_*` environment variable removed by an
+autouse fixture. Tests set their own connection and admission variables;
+the enclosing Flux job's broker URI and job identity are not test inputs.
+
+Re-stamped 2026-11-10 for the Flux migration at `d6b30853`.
+`tools/build_serving_image.py` prints a CPU build job and submits it through
+`tools/_suite_flux.py` only with `--submit`. Use `--collect DIR` to read a
+saved launch. Collection exits zero only for a terminal record with
+`returncode == 0` and no `evidence_errors`; a running submission is only an
+acknowledgement. `experiments/ts91_chain.sh` and
+`experiments/submit_gb_d1_producer.sh` use `tools/_flux_gpu_jobspec.py` to
+print Flux submission commands without running them. Those GPU paths are
+not yet qualified.
+The gate writes `tessera.gate_result.v2` and `tessera.gate_aggregate.v2`.
+Job metadata uses `tessera.job_meta.v2`; graph arms use `tessera.graph_arm.v2`.
+These job and arm records carry `flux_job_id`. Readers use `pb_action` only
+for legacy records; old receipts retain their original meaning.
+`tools/impacted_tests.py` no longer excludes generated source-closure metadata.
+Unknown changed paths still resolve toward running more tests.
+The CUDA-gated route is `tools/merge_suite.py`'s GPU arm on Flux, on aarch64
+with one whole GPU and rootless Podman. The [CPU gate documentation](ci_gate.md)
+cites its one-test strict-CUDA transport canary receipt. The lane is not yet
+qualified. Until it is, the CUDA-gated surface has no qualified route.
+
+
 The hosted `branch rule` check enforces branch rule 12 for pull requests.
 `pure` retains the same step during the required-check transition.
 The branch must match `tessera-<issue>` or `tessera-<issue>-<word>` and link that issue in the body.
@@ -20,6 +54,10 @@ The Bazel build described in `docs/bazel.md` derives one target per test file an
 
 Final gate summaries report each CPU lane’s pass, failure, skip and uncollected counts, verbatim skip reasons, device details and zero CUDA allocation. CPU passes do not cover CUDA.
 
+
+Re-stamped 2026-11-08 from the G01 native container implementation and admitted
+CPU population/lifecycle proofs. GPU, full-suite and production qualification
+remain required. Rank-zero broker generation binds cross-host collection.
 
 Re-stamped 2026-10-09 for the migrated GB and D1 producer caller (tessera#944).
 Re-stamped 2026-10-09 for the canonical T4 performant menu (issue #1103).
@@ -156,7 +194,9 @@ The 5400-second bound, caps, guards, image and numerical rules stay unchanged.
 
 Re-stamped 2026-10-08 for the explicit A8S graph MNBT matrix (issue #1057).
 
-The opt-in mode `WINDOW_MODE=ship-graph-mnbt-matrix` selects `experiments/graph_attest_702/plan-graph-mnbt-matrix.txt`.
+**Archived driver.** The PrismaBuild-admitted graph-attest window driver (rank, window, queue-watcher, submit and recipe modules, their plans and gate tests) moved to `archive/flux-migration/R-CONTESTED/`; the passages below describe that archived driver as history. Only `experiments/graph_attest_702/managed_window.py` (the process-group `Envelope` with `TERM_GRACE_SECONDS = 10.0`) and `receipt.py` stay live. The D30 memory policy is archived with the driver; its TERM grace remains live. A Flux GPU window path belongs to the GPU-qualification work (4E).
+
+The opt-in mode `WINDOW_MODE=ship-graph-mnbt-matrix` selects `archive/flux-migration/R-CONTESTED/experiments/graph_attest_702/plan-graph-mnbt-matrix.txt`.
 The arms compare maximum batched tokens 2048 and 4096.
 Both arms use the accepted A8S artifact, resident service, socket transport and tensor parallel size two.
 They use graph decode without speculative tokens and retain the existing graph compilation flags.
@@ -211,7 +251,7 @@ Direct buffer assertions use the recorded source rows and columns, not an incide
 
 Re-stamped 2026-10-07 for issue #1036.
 The repository owns the serving Dockerfile, image job and source patch files under `images/serving`.
-The image job prints its PrismaBuild command unless the operator selects `--submit`.
+The image job prints its job description; `--submit` submits through `tools/_suite_flux.py`.
 The job requests central processors only. This change starts no image build.
 Cells use kernel build and module kind for portable lookup.
 The compatibility map preserves historical cell identifiers and image-only calls.
@@ -220,9 +260,9 @@ An explicit build context selects the portable key. The image remains provenance
 Existing defaults, pins, wire bytes, rungs, evidence and paired-rank checks remain unchanged.
 No new device qualification or performance claim accompanies this change.
 Both validators reject overlapping image-only and kernel-build scopes.
-The image job uses an owned rootless BuildKit container through the published Docker shim.
+The image job invokes an owned rootless BuildKit container with the `docker` CLI.
 The builder writes a Docker archive to the explicit shared output directory.
-The producer mounts no host Docker socket. PrismaBuild retains resource ownership.
+The producer mounts no host Docker socket. Flux admits the CPU job, and its payload removes the container it owns.
 The source reader names its repository root. The directory-read ceiling remains unchanged.
 The imported patches retain the GNU Affero General Public License version three and the historical license notice.
 The Dockerfile copies both upstream license files into the image.
@@ -472,9 +512,9 @@ both-Spark Netdata power collection; missing profiles, power or effective
 path evidence cannot establish a performance/default-on claim.
 Native member rows declare their complete actual input manifest and the
 existing stage/RAM-auto/shared-residency options. The local rank reuses
-`StagedInputs` and the public reader lease to hold complete-file descriptors;
+`DeclaredInputs` (digest-checked reads of a declared `tessera.declared_inputs.v1` record on the shared mount) to hold complete-file descriptors;
 Docker mounts those descriptors read-only over the original artifact paths.
-There is no bulk origin fallback or new cache. Reader refs are released only
+There is no bulk origin fallback or new cache. Held descriptors are closed only
 after exact owned containers and GPU descendants are physically empty. Both
 diagnostic scopes enable the existing eager route-trace counters.
 The existing graph observer is extended only in these diagnostic scopes to
@@ -493,7 +533,7 @@ subset caps, strict one-Hertz below-two-GiB guard, exact owned cleanup, byte
 integrity and paired-rank comparability remain unchanged. The same entry
 point must pass a fresh CPU PrismaBuild preflight after source/argument
 changes. The existing full 33-output ship gate, quality gates, defaults and
-serving pin do not change. See `experiments/graph_attest_702/RUNPLAN-artifact.md`.
+serving pin do not change. See `archive/flux-migration/R-CONTESTED/experiments/graph_attest_702/RUNPLAN-artifact.md`.
 
 Historical v1/v2 policy, re-stamped 2026-10-06 for issue #989: `tessera.rung_allowability` is the
 pure-standard-library, non-serving owner of measured-rung table and index
@@ -616,11 +656,11 @@ nor a KL/quality/ship gate. Frozen 2db flag-reader CPU controls establish
 selector reachability, not executed CUDA kernels or served activation;
 actual ON profiles must still demonstrate the selected paths.
 Parent Sol and D5 exact-head review precede any served gang.
-See `experiments/graph_attest_702/RUNPLAN-artifact.md`.
+See `archive/flux-migration/R-CONTESTED/experiments/graph_attest_702/RUNPLAN-artifact.md`.
 
 
 Re-stamped 2026-10-05 for issue980: opt-in `WINDOW_MODE=ship-graph-2048`
-selects `experiments/graph_attest_702/plan-graph-ship.txt`: graph2048_off
+selects `archive/flux-migration/R-CONTESTED/experiments/graph_attest_702/plan-graph-ship.txt`: graph2048_off
 then graph2048_on at the SAME MNBT2048, A8S/socket/TP2/resident/c1 and the
 unchanged release graph compilation flags. Each row explicitly declares
 decode-once, KDA-split and piece-major env; the first disables all three,
@@ -636,11 +676,11 @@ equality/replay receipt. Graph-control, Window4, ship-eager and all D30
 Exact producer parent/D5 and runtime reviews still precede any gang.
 CPU selector qualification grants no graph compatibility, lever publication,
 performance, quality, ship or serving-pin claim; runtime route refusals remain.
-See `experiments/graph_attest_702/RUNPLAN-artifact.md`.
+See `archive/flux-migration/R-CONTESTED/experiments/graph_attest_702/RUNPLAN-artifact.md`.
 
 Re-stamped 2026-10-05 for issue968: the separate opt-in
 `WINDOW_MODE=ship-eager-4096-8192` selects only
-`experiments/graph_attest_702/plan-eager-ship-8192.txt`, eager4096 then eager8192.
+`archive/flux-migration/R-CONTESTED/experiments/graph_attest_702/plan-eager-ship-8192.txt`, eager4096 then eager8192.
 It reuses the existing A8S/socket/TP2/resident/c1 timing/profile lifecycle,
 rank1 client, artifact/client controls and exact executing-code parent/D5 reviews.
 The graph-control default and Window4's eager2048/4096 pair remain unchanged.
@@ -649,7 +689,7 @@ dual-rank abort, 10-second kill grace, 104 GiB host and 102 GiB GPU-subset caps
 are unchanged. CPU selector/protocol qualification is not 8192 fit, throughput,
 quality, ship admission or a serving-pin claim; only a later admitted leg can
 measure those. The independent merged-code 4096 leg need not wait for this selector.
-See `experiments/graph_attest_702/RUNPLAN-artifact.md`.
+See `archive/flux-migration/R-CONTESTED/experiments/graph_attest_702/RUNPLAN-artifact.md`.
 
 ## Routed expert-class storage and execution
 
@@ -784,9 +824,9 @@ scope, the OOM floor and disk admission, the manifest resource/safety fields
 and every format gate. Dev mode adds no release gate: no recompute, archive,
 re-seal, re-pin or identity-proof packet is required or performed for
 identity drift, and no format pin or serving default moves. Regressions:
-`tests/test_graph_attest_producer_identity.py` and
-`tests/test_graph_attest_headroom_preflight.py`. See
-`experiments/graph_attest_702/RUNPLAN-artifact.md`.
+`archive/flux-migration/R-CONTESTED/tests/test_graph_attest_producer_identity.py` and
+`archive/flux-migration/R-CONTESTED/tests/test_graph_attest_headroom_preflight.py`. See
+`archive/flux-migration/R-CONTESTED/experiments/graph_attest_702/RUNPLAN-artifact.md`.
 
 The optional graph-control `BATCH_KL` recipe declaration is retained in window
 inputs and forwarded to both native action environments for rank startup's
@@ -798,24 +838,24 @@ collection currently refuses: no owner-supported live TP2/MTP1 target-model
 attachment handoff is available.
 It does not invoke an isolated scorer, launch another serve or disable MTP.
 Collector exceptions use the native coupled-abort and owned-cleanup lifecycle.
-After graph-receipt creation, `window_driver.py --bind-batch-kl ROOT
+After graph-receipt creation, `archive/flux-migration/R-CONTESTED/experiments/graph_attest_702/window_driver.py --bind-batch-kl ROOT
 --graph-receipt PATH` (with the existing plan argument) writes a separate
 `batch-kl-manifest.json`. The binder rehashes retained raw/result bytes, compares
 all three arms against prepared inputs and both native members, and requires
 replay managers for both native ranks before rerunning the existing
 equality/per-rank replay gate. A completely omitted rank cannot evade that gate
 at this binding boundary. Regressions reuse the normalized fixture in
-`tests/test_graph_attest_batch_kl_binding.py`. This is binding validity, not
+`archive/flux-migration/R-CONTESTED/tests/test_graph_attest_batch_kl_binding.py`. This is binding validity, not
 scientific KL qualification; the graph receipt and its exclusions remain unchanged.
 Production remains unqualified until the existing scorer owner supplies the
 missing capability. The reconciled handoff disposition, configuration and
-normal workflow are in `experiments/graph_attest_702/RUNPLAN-artifact.md`.
+normal workflow are in `archive/flux-migration/R-CONTESTED/experiments/graph_attest_702/RUNPLAN-artifact.md`.
 
 Both live TP2 ranks must agree on image, source digest and config digest before
 either local launch, in dev and certified modes alike. This is execution
 comparability, not recorded-versus-running identity; mismatched gang halves
 fail both ranks without starting a server or emitting probes. Regression:
-`tests/test_graph_attest_window_scenarios.py::test_mismatched_rank_preflight_refuses_before_either_launch`.
+`archive/flux-migration/R-CONTESTED/tests/test_graph_attest_window_scenarios.py::test_mismatched_rank_preflight_refuses_before_either_launch`.
 
 Re-stamped 2026-10-05 for issue959 (D30 Window4 107 GiB admission and dual-rank
 memory abort). The Window4 per-host `MemAvailable` admission predicate moves
@@ -848,7 +888,7 @@ failed-rank exit cannot cause a native withdrawal that shortens the peer's
 10-second grace. A sampled guard is not continuous immunity.
 The acknowledgement loop rechecks the peer claim, exits on peer death and keeps
 a five-second broker-stop margin. Missing physical custody remains explicit.
-`window_driver.py --prepare` emits `rdv/memory-policy.json` once and binds its
+`archive/flux-migration/R-CONTESTED/experiments/graph_attest_702/window_driver.py --prepare` emits `rdv/memory-policy.json` once and binds its
 SHA into the submitted inputs; each rank emits
 `rdv/memory-samples-rank<N>.jsonl` and `rdv/memory-summary-rank<N>.json` —
 baseline, minimum, raw samples and counters kept so a future window can measure
@@ -870,7 +910,7 @@ Protected sysctl, ARC, cache and service settings are untouched. This mints no
 performance, fit or pin claim; old producer approvals do not transfer, and pool
 review must check both the derivation and the guard against the exact new
 producer head before one fresh native gang. See
-`experiments/graph_attest_702/RUNPLAN-artifact.md`.
+`archive/flux-migration/R-CONTESTED/experiments/graph_attest_702/RUNPLAN-artifact.md`.
 
 Re-stamped 2026-10-05 for worker surface-share publication before completion.
 The ordinary session-finish hook writes the named worker share after finalizing
@@ -900,9 +940,9 @@ admission predicate stay exactly as they were: this wait is a bounded
 predicate-satisfaction wait, not a new admission mechanism, and it mints no
 114 GiB admission, no performance or fit evidence, and no transfer of the
 historical frozen producer's source approval. Deterministic regressions live
-in `tests/test_graph_attest_headroom_preflight.py`; the below-to-ready
+in `archive/flux-migration/R-CONTESTED/tests/test_graph_attest_headroom_preflight.py`; the below-to-ready
 regression fails before the change, which refused below threshold instantly
-with no wait report. See `experiments/graph_attest_702/RUNPLAN-artifact.md`.
+with no wait report. See `archive/flux-migration/R-CONTESTED/experiments/graph_attest_702/RUNPLAN-artifact.md`.
 
 Re-stamped 2026-10-05 for issue946: the merged PR943 finite local-rank recipe
 adds only the distinct `window4-eager-2048-4096` A8S/socket/TP2/c1 benchmark mode.
@@ -919,7 +959,7 @@ verification precede actual fit/speed evidence. Those require served requests,
 per-rank memory, matching
 profiles and both-Spark Netdata coverage. No default, serving pin, format,
 scientific gate, graph receipt, ship artifact or performance claim is promoted
-by this source change. See `experiments/graph_attest_702/RUNPLAN-artifact.md`.
+by this source change. See `archive/flux-migration/R-CONTESTED/experiments/graph_attest_702/RUNPLAN-artifact.md`.
 
 Re-stamped 2026-10-05 for local disk admission of the container suite cache.
 The shared container owner refuses known network filesystem types before
@@ -987,29 +1027,7 @@ Only the numeric phase is admitted: no old numericV4 receipt, timing/profile,
 NCU or repeated720-event population can stand for changed-source proof. These
 CPU schema/refusal controls are not CUDA numerical/performance/energy authority.
 
-Re-stamped 2026-10-09 for the stageprev 793 operative gate (tessera#1078).
-The gate checks the public claim names and exact consumer calls the proof uses,
-not the SDK version number. `stageprev_793_claim_contract.required_api_problems`
-binds each `PoolQueue` or ledger call through a blank owner instance, so the
-descriptor protocol removes the receiver whatever name it uses. A static entry
-that keeps its receiver refuses, as do an extra required argument and a keyword
-collision. `observe_current_claim_contract` records that verdict beside the pool
-digest. `stageprev_793_prerequisites` refuses a contract with open API problems.
-The version number stays in the record as provenance only.
-CPU refusal controls remove `PoolQueue.offers` and supply an incompatible signature.
-They exercise the observer and collector without a claim or GPU submission.
-The S7 probe uses `submission.validate_request`, `submission.placement_contract`
-and the invalid-scope refusal in `submission.prepare`, not retired CLI helpers;
-class placement remains distinct from an explicit `--here` hostname pin.
-For S7's delegated claim path the observer also binds `_prepare_host_claim`,
-`candidate_policy.never_fits` and `CandidateDenial` to their manifest file digests.
-It inspects the reservation-demand versus total-capacity predicate, the
-`never_fits_capacity` reason/evidence, and the claim loop's denial recording and
-fail-closed continuation together. Preparation must start with the inspected
-field bindings followed by the refusal: earlier exits and unrecognized input
-transformations (including alias mutation) refuse attestation. An unrecognized
-delegation or missing helper digest also refuses; no scheduling helper is
-executed to obtain evidence.
+Re-stamped 2026-11-09 (Flux migration 4C-7): the stageprev 793 operative approval scenario (claim contract, prerequisites, preparation, its packets and dedicated tests) moved to `archive/flux-migration/4C-7/` and is not executed. The kept `stageprev_probe`, `ab_stageprev_accept` and `stageprev_793_expected.json` with their independent tests keep the numeric acceptance obligations; the PB claim-method introspection is not ported.
 
 Re-stamped 2026-10-04 (`v6/ts696-stock-runner-guard-20261004`, #696):
 the GLM53 NoPE runner-identity owner rejects the known stock V2 runner in
@@ -1089,11 +1107,14 @@ endpoint owner; localhost is never relabelled as Sparky on another worker.
 No raw values, requested windows, cadence labels or historical evidence are
 rewritten; energy and work/J still require actual attribution review.
 
-Re-stamped 2026-10-04 for paired custom-op PB execution admission (#917).
-The paired batch and its wrapper require an admitted PrismaBuild context;
-held-original-FD input transport is not a vLLM service exemption. Existing
+Re-stamped 2026-11-10 for paired custom-op Flux execution context (#917).
+The paired batch and its `experiments/t8r_speed/bench_t8r.sh` wrapper check
+for `FLUX_JOB_ID`; that environment variable alone does not attest GPU approval.
+The wrapper runs the container through `docker run` and passes the context
+value into it. It does not render or submit a Flux command. The Flux GPU
+path is not yet qualified. Existing
 source/native/input/certificate, pressure, affinity and owned-CID fences
-remain unchanged; historical direct evidence is not relabelled as PB proof.
+remain unchanged; historical direct evidence retains its original scope.
 
 Re-stamped 2026-10-04 for the current-base paired-K32 harness/control
 composition (#862 integration-conflict repair). The default-off paired-K32
@@ -1135,11 +1156,11 @@ mapping. A subvolume's virtual `st_dev` is not the kernel mapping device.
 Unknown or ambiguous mount provenance fails closed; hash and FD fences stay
 strict. No native kernel, serving, timing or energy claim is changed.
 
-Re-stamped 2026-10-04 for merge-batch SDK dependency declarations (#915).
-Only controls that invoke the real published PrismaBuild manifest/lease API
-require that SDK; portable numeric, history and cleanup controls still run.
-Missing-SDK collection is named honestly, not fabricated as native coverage;
-real-SDK execution and strict native mapping evidence remain independent.
+Re-stamped 2026-11-10 for merge-batch input declarations (#915).
+The published manifest/lease SDK controls are archived. Live consumers use
+`tessera.declared_inputs.v1` through the repository's declared-input reader.
+Portable numeric, history and cleanup controls do not establish native mapping
+or GPU qualification.
 
 Re-stamped 2026-10-04 for the token-sum output-device input gate (tessera#859).
 Both native bindings require their output on the routed tensor's CUDA device
@@ -1199,7 +1220,7 @@ and the original unapproved GPU numeric/sanitizer proposal are retained in
 `5aba4096` source48a6 identity remains historical; it does not authorize the
 corrected source. The same54-cell corrected-source successor, composing the
 parent-accepted4392 T4 prerequisite lineage and the actual #902 release proof,
-is `experiments/configs/value_prefetch_874_combined_safety_protocol_v3.json`.
+is `archive/flux-migration/4C-6/experiments/configs/value_prefetch_874_combined_safety_protocol_v3.json`.
 It preserves the exact bank/ELF/image/readset and numeric16/GPU8/600 plus
 memcheck32/GPU24/1800 bounds. Parent901/normal/all-used-filesystem/scientific
 authorization gates remain held; no old protocol or ELF is restamped.
@@ -1324,18 +1345,18 @@ Native piece-major dispatch remains limited to routed E4M3 MMA, one-run R4, mode
 CPU checks and compilation alone do not qualify GPU numerics, graph behavior or serving.
 No qualified cell, precision menu, runtime pin or measurement source changes.
 
-The finite PM experiment extends the existing benchmark, StagedInputs and
+The finite PM experiment extends the existing benchmark, DeclaredInputs and
 NativeCallback owners. A versioned protocol binds the authenticated A8SE L10
 ranges, the captured M2048 expert IDs (M1 uses only their first row), frozen
 source, harness bytes and one matched MMA ELF. Actual mode0/1/2 intermediates
 and final output bits must agree before a content-bound numeric receipt can
-admit ABBA timing. This vLLM-backed batch operator runs through PrismaBuild;
-only inference-serving services are exempt. `piece_major_pb_action.py` binds the
+admit ABBA timing. This vLLM-backed batch operator checks `FLUX_JOB_ID`;
+the Flux GPU path is not yet qualified. `piece_major_pb_action.py` binds the
 sealed timing packet and explicit coordinator GPU GO inside an exclusive
 measurement attempt, importing the existing containment owner rather than
 launching a second dispatcher. Held original FDs retain the existing outer/inner
 checks, native load/fence checks and close-before-publication behavior. CPU
-checks and builds also use PB.
+checks and builds use admitted Flux jobs or the approved remote test routes.
 CPU-only PM preparation reuses `piece_major_protocol` to verify the current
 source closure (including the kernel), harness, native bank and origin bytes,
 captured routing and input manifest before publishing its identities. The
@@ -1386,25 +1407,26 @@ their ABI, layout and accumulation order; dense/two-run and other families
 are controls. Source `849b039b` has accepted 54-pair synthetic-only exact
 numeric and full-matrix memcheck evidence, not calibrated original-model
 performance, serving, energy or PACT evidence. Frozen protocol/native/readset
-identities remain in `experiments/configs/value_prefetch_874_protocol.json`.
+identities remain in `archive/flux-migration/4C-6/experiments/configs/value_prefetch_874_protocol.json`.
 Current-base CPU owner controls `75e8d128`:43 passed, one explicit retained-bank
 skip, zero uncollected modules/CUDA allocations. The synthetic-readset fixture
 now uses its temporary root, not an undeclared box path. Issue874 remains open.
 
-Readset SDK boundary repair: `value_prefetch_numeric.validate_readset`
-and `prefetch_qualification.validate_readset` use only the published
-`prismabuild.client.read_data_manifest` and `manifest_read_entries` operations.
-Each locally validates its producer's single whole-bank v1 phase (respectively
-`whole-synthetic-bank` and the T4 `PHASE` constant): identity encoding, exactly
+Readset validation: `value_prefetch_numeric.validate_readset`
+and `prefetch_qualification.validate_readset` use only Tessera's own
+`declared_inputs.validate_whole_phase_readset` over the
+`tessera.declared_inputs.v1` record (no PrismaBuild SDK and no published parser).
+Each locally validates its producer's single whole-bank phase (respectively
+`whole-synthetic-bank` and the T4 `PHASE` constant): plain JSON, exactly
 one correctly named phase, and an integer (not boolean) cumulative frontier
-equal to positive `total_bytes`. They return the exact `[0, total_bytes)` range
-and require public consumption entries to equal declared entries. This is not
-a general PB manifest parser. T4 still requires unique offset-zero qualified
-whole-file members in exact normalized order, with its existing optional
-sanitizer-tool prefix and artifact checks. Controlled public-client regressions
-do not qualify PB's codec or native/GPU numerics; the original optional SDK
-tests, frozen identities, image/source bindings, staging lifetimes and
-default-off behavior remain unchanged.
+equal to positive `total_bytes`; an empty phase is valid only after every byte
+is covered. They return the exact `[0, total_bytes)` range and require the
+ordered reads to equal the declared entries. This is not a general manifest
+parser. T4 still requires unique offset-zero qualified whole-file members in
+exact normalized order, with its existing optional sanitizer-tool prefix and
+artifact checks. These controls do not qualify native/GPU numerics; the
+frozen identities, image/source bindings and default-off behavior remain
+unchanged.
 
 Re-stamped 2026-10-02 for successful native routed-owner retirement (#869).
 The selected fused owner retains immutable projection views of the words,
@@ -1460,10 +1482,11 @@ are not qualification evidence.
 Re-stamped 2026-10-02 (Refs #856): external shape-panel replay preserves
 the original request, producer, worker job and GPU evidence while creating
 a separate CPU replay job bound to the current checker worker. The existing
-installed preflight and full panel validator own both joins. An original
-immutable PB verifier path is accepted only when its held read-only regular
-bytes equal the current published verifier, under bounded stable reads;
-execution uses those held bytes and rechecks them afterwards. No fleet alias,
+installed preflight and full panel validator own both joins. The current worker
+uses `tools/_install_identity.verify_install` for installed-distribution proof.
+`runtime_origins.install_verifier` binds that implementation's path, byte count
+and SHA256, validated by preflight and panel. The old published verifier path
+and `record_verifier` request field are removed. No fleet alias,
 original input rewrite, serving pin change or new GPU measurement is involved.
 
 Re-stamped 2026-10-09 for tessera#1136: the #688 panel admits dense TP1/TP2
@@ -1492,6 +1515,19 @@ reports committed progress only after durable artifact publication. The
 application has one qualified execution/replay at q896/M512/N=K256/TP1 under
 b40/raw0869/f8; no full-menu, quality, compiled, serving or cell qualification
 follows. See `measurements/2026-10-02-native-dense-first-receipt.md`.
+Re-stamped 2026-11-10 for the review fixes to Flux migration 4C-11b: the installed-distribution proof is
+`tools/_install_identity.verify_install`, stdlib-only repository code in the producer
+source-tree and tool identities (one owning distribution, non-editable Git install at the
+reviewed commit, RECORD byte equality, imported module owned by the RECORD, no unrecorded
+file). The worker records `install_verifier {path, bytes, sha256}` in
+`runtime_origins`; both preflight and panel validate it. The PB-published
+verifier and the `record_verifier` request field are gone. The
+panel is `tessera.shape_time_panel.v2`, the request `...dense_shape_time_request.v2`, the
+worker job `...native_shape_worker_job.v2` and the preflight
+`...installed_contract_preflight.v2`. These schema IDs did not change when
+`install_verifier` became required. Older v2 panels and preflights without that
+binding are refused by the current validators. Committed progress is
+the `tessera.durable_progress.v1` line.
 The installed runtime first runs a CPU-only, CUDA-disabled contract preflight.
 Its own unchanged strict validator checks the same owned contract bytes after
 RECORD, imported-root, commit and software/source checks. The successful phase
@@ -1787,15 +1823,32 @@ a straddling group is unknown for this phase and is never interpolated into
 its power statistics. This repairs provenance, without claiming that the
 coarse sensor values or any historical energy comparison are qualified.
 
-Re-stamped 2026-10-02 for the optional container GPU merge-suite arm
-(tessera#818). A source-sealed runner uses PrismaBuild's Docker ownership and
-affinity shim, immutable image and scoped dependency content identities, and
-same-path readonly source/data mounts. The coordinator's existing receipt
-reader authenticates the runner and shared argv owner from the request's
-snapshot bundle before adopting a resumed exit. Container GPU xdist spends
-the declared CPUs with native threads one; all existing source, publication,
-device-allocation and missing-artifact gates remain in force. This changes no
-wire, serving route, runtime pin or artifact.
+Re-stamped 2026-11-08 for the G01 native container boundary, from
+`tools/_suite_container.py`, `_suite_flux.py` and `merge_suite.py`. The runner
+uses `/usr/bin/podman` directly, rootless with no pull, finite networking and
+mounts, explicit entrypoint/environment and the actual assigned cpuset.
+The original Flux jobspec, saved ID, exact source and allocation replace PB
+helper/claim/closure/CAS and PATH Docker-shim authority. Source plus its Git
+metadata, dependencies, data and application artifact roots mount readonly;
+distinct output and native job-ID cache roots are the only writable binds.
+CID registration precedes creation. Failed start and interruption cleanup reap
+only that captured CID, retain errors and independently check absence. Native
+clean is not physical cleanup evidence. Host runtime and actual in-container
+interpreter/stdlib/dependency/source entry/exit seals are separate facts.
+Direct container entry authenticates the actual original native wrapper digest,
+started nonterminal state, allocated R/affinity and current sdexec process unit;
+it also requires the saved broker lifetime to match the live instance. Saved launch JSON and
+a caller-supplied job ID alone cannot authorize it.
+The host-only wrapper seal does not require pytest or xdist; native CPU suites
+and actual in-container runtime seals still require both. Malformed container
+cleanup evidence cannot mask the payload failure or prevent scratch cleanup
+evidence from being written.
+Container evidence binds inspected image content and CID, allocated affinity,
+publication and exact native terminal evidence. CPU proofs do not qualify CUDA.
+Rootless x86 explicitly uses user 0:0; ARM uses keep-id with user 1000:1000.
+Neither route inherits image USER defaults. The optional finite image-host
+dependency binds placement and actual R to that host's immutable local image.
+No wire, serving route, runtime pin or artifact changes.
 
 Re-stamped 2026-10-02 for explicit PrismaQuant accounting-source binding
 (tessera#825). The plan converter and accounting gate use one repo-tooling
@@ -1968,18 +2021,17 @@ T4 activation-prefetch experiment (2026-10-02, #875):
   its distance and benefit remain hypotheses requiring a T4 baseline measurement.
 * First numeric gate is the staged driver
   experiments/t4_code/prefetch_qualification.py consume, which reuses the exact
-  native1 0/4 ELFs through the existing StagedInputs/NativeCallback owners.
-  V1 whole-bank consumers require SDK reads in declared registry order; v2
-  consumption order may differ from that registry.
-  The shared pb_staged_store.validate_whole_phase_readset assertion uses public
-  client.read_data_manifest and client.manifest_read_entries to validate coverage,
-  alignment and consumption order before inspecting v1 annotations.phases or v2
-  read_plan.phases. It requires identity encoding and one nonempty native1-whole
-  range using cumulative frontiers, accepting PB-valid trailing empty phases
-  and ignoring advisory v1 bytes. T4 additionally binds exactly three native files
+  native1 0/4 ELFs through the existing DeclaredInputs/NativeCallback owners.
+  Whole-bank consumers require reads in declared entry order. The shared
+  declared_inputs.validate_whole_phase_readset assertion validates the
+  `tessera.declared_inputs.v1` record (every entry's path, offset, bytes and
+  sha256, unique ranges, entry_count and total_bytes) before inspecting
+  annotations.phases. It requires plain JSON and one nonempty native1-whole
+  range using cumulative frontiers, accepting trailing empty phases
+  and ignoring advisory phase bytes. T4 additionally binds exactly three native files
   (or those files plus the nine qualified sanitizer files), offset zero,
   unique ordered whole-file members and registry/read-order agreement. Both validators return
-  normalized phase ranges while the shared assertion validates public read order.
+  normalized phase ranges while the shared assertion validates read order.
   Numeric repair reports retain those ranges under JSON phases. These metadata checks open no declared native files;
   snapshot SDK tests are not deployed-SDK or GPU numerical qualification.
   Both libraries load ONCE in one process from distinct held SDK FDs, not
@@ -2001,8 +2053,8 @@ T4 activation-prefetch experiment (2026-10-02, #875):
   retained banks; portable x86 dry runs and the actual arm64 container smoke
   are separate evidence, neither a GPU or serving qualification.
   Nonfinite outputs/references/bounds refuse (actual false-pass RED: PB62e3e5ee).
-* GPU qualification uses normal PrismaBuild admission after fresh D1 disk
-  checks; no separate root-authorization gate remains. Use the
+* GPU wrappers render Flux commands; this path is not yet qualified. Fresh D1 disk
+  checks alone do not qualify execution. Use the
   same real captured/calibrated T4 bundle bank, input/global scales, residency,
   recorded routing and quantizer in both arms. Full matrix: modes0/1/2 and
   chain, all admitted uniform/adjacent rates, TP1 and each legal TP2 cut with
@@ -2026,11 +2078,11 @@ T4 activation-prefetch experiment (2026-10-02, #875):
   exactly24 FP4 one-run routed instantiations (modes0/1/2, rates1..8), leaves
   all53 FP4 dense/mixed/utility and345 other-family controls exact, and reports
   zero STACK/LOCAL allocation (FP4 maximum128 registers).
-* Current persisted actions are `pb_875_composed_cpu_prepare.json`,
-  `pb_875_composed_cpu_stage.json` and the complete15-row
-  `pb_875_composed_finite_campaign.json`. The source/image/cohort/readset,
+* Persisted actions (archived 2026-11-09, 4C-6) are `archive/flux-migration/4C-6/experiments/t4_code/pb_875_composed_cpu_prepare.json`,
+  `archive/flux-migration/4C-6/experiments/t4_code/pb_875_composed_cpu_stage.json` and the complete15-row
+  `archive/flux-migration/4C-6/experiments/t4_code/pb_875_composed_finite_campaign.json`. The source/image/cohort/readset,
   full numeric/native/sanitizer population and real local-scratch contract
-  is `pb_875_composed_qualification_contract.json`. The GPU packet stays
+  is `archive/flux-migration/4C-6/experiments/t4_code/pb_875_composed_qualification_contract.json`. The GPU packet stays
   unpublished until the exact current source/SDK-stage/parent/admission
   tuple is accepted; no old source4e/image61 allowance or CPU pass transfers.
   Old packet bytes remain available in commit `5bbd050e` and the old NAS
@@ -2505,9 +2557,8 @@ Re-stamped 2026-09-28 for the source-verifier seam (tessera#599, step 3).
 closure records. A test population leaves an executor-generated file out of
 its source hash only when a verifier, declared in `TESSERA_SOURCE_VERIFIER`,
 vouches for it. Tessera still checks each vouched-for file against the commit.
-`tools/merge_suite.py` declares PrismaBuild's `pbsnapshot.py verify`. The
-seam fails closed, as described in "Each population retains the actual Git
-snapshot commit" below. `src/tessera` now names a client only through the
+`tools/merge_suite.py` now uses the no-verifier path and hashes all tracked
+files. The seam remains available for other declared source verifiers. `src/tessera` now names a client only through the
 `prismaquant.tessera.v1` wire-ID literals.
 
 Re-stamped 2026-09-28 for the serving code identity (contract v41). A cell's
@@ -3971,78 +4022,156 @@ allocator sees is `docs/tessera-one-format.md` §5.
 
 ### 1.1 Integration suite placement
 
-`tools/merge_suite.py` dispatches its device populations only through
-PrismaBuild. Live GPU submissions require an explicit `--gpu-tag` and pass
-`--exclusive`: the deployed scheduler derives the complete GPU reservation
-from that worker's advertised capacity, rather than treating one logical slot
-as physical exclusion. The native GPU arm remains serial under `--strict-cuda`,
-which has three legs since tessera#152: it refuses a device-less session
-before anything runs, refuses at the end a run in which no test allocated on
-the device (torch's own allocator counter, published as
-`cuda_surface.executed`), and refuses a run that skipped because this box
-holds no checkpoint or serve log a gate needs -- `tests/box_artifacts.py`
-resolves those roots and names each one's environment variable, so a GPU box
-without them cannot claim the surface;
-the x86 arm spends its declared `--cpus N` as pytest `-n N` (serial at one).
-Each pytest process explicitly receives `OMP_NUM_THREADS=1`,
-`MKL_NUM_THREADS=1`, `OPENBLAS_NUM_THREADS=1` and `MAX_JOBS=1`, overriding pool
-defaults and preventing each xdist worker's native math or extension compiler
-from multiplying its one-CPU share. The per-process limits are recorded in
-each arm's receipt; these environment settings are not an OS-level CPU quota.
-An explicit `--gpu-image` enables the container GPU arm. It requires
-`--gpu-deps-site`, its `--gpu-deps-sha256` seal, and a new owned
-`--gpu-cache-dir` on local disk outside the checkout. The shared container
-owner refuses known network filesystem types before command construction,
-cache creation or launch, naming the path, mount point and filesystem type.
-The coordinator calls the same rule before any action is submitted. A
-not-yet-created cache uses its nearest existing parent, judged by the mount
-id its opened descriptor reports in `/proc/self/fdinfo` — the mount the
-kernel actually serves at that path — resolved to its single mountinfo
-entry; mount-point depth, table order and parent identities play no part.
-An `autofs`
-entry alone refuses because its backing filesystem is not stably mounted.
-The shared mount reader in `tessera._dev.native_identity` also owns native
-mapped-device provenance; unresolved cache mount provenance fails closed.
-`tools/_suite_container.py` owns
-the finite runner grammar and Docker argv; `tools/suite_container.py` launches
-it only inside an admitted PB action. GPU `--cpus N` becomes pytest `-n N
---dist worksteal` with the same aggregate reservation. Use `--gpu-cpus` and
-`--gpu-mem-gb` when its population needs different CPU
-or aggregate memory reservations from the x86 arm. The pinned image must
-already be local according to PB's `--container-image` contract. Scoped
-dependencies declare their versions and every file's path, mode, length and
-SHA-256 (`tessera.suite_dependencies.v1`); changed bytes or a symlink refuse.
-The runner checks the dependency seal at entry and exit, so a host-side
-mutation during pytest cannot turn a clean summary into a successful action.
-The source and declared data roots mount readonly at their actual absolute
-paths, while the surface directory and action-owned cache mount writable.
-`--artifact-root ENV=PATH` uses the names owned by `tests/box_artifacts.py`;
-these overrides are sealed, mounted and forwarded to pytest. The helper
-disables user-site imports, bytecode writes and implicit pytest plugin
-autoload, fixes the Python entrypoint/workdir and native thread limits, and
-keeps pytest temporary files and compiler caches outside the source tree.
-PB's Docker shim retains responsibility for scope ownership, affinity,
-memory containment and exact-attempt termination.
+Re-stamped 2026-11-08 for the selector subprocess startup boundary.
+`selected_population.choose` also passes explicit `-s` to the selector child;
+the parent interpreter's startup flag is not inherited by a new Python process.
 
-For a resumed arm, `pytest_command` records the effective command from its
-uniquely authenticated producer. `python` names the explicit interpreter of
-that command's `-m pytest` form, including the container's inner interpreter.
-It is unknown for a console pytest entry point or an unbound population;
-the configured arm default is not observed runtime metadata.
+Re-stamped 2026-11-08 for parent startup-isolation review. Native wrapper,
+deadline, container host/inside launcher and pytest invocations all use Python
+`-s`. The original native argv authenticates that flag. Runtime measurement
+uses the same no-user-site mode and explicit source path; no-user-site and
+no-bytecode settings are also present in the allowlisted environment. Private
+startup regression fixtures never access or repair the user's site.
 
-The receipt reader recognizes only the canonical relative runner path and
-its shared finite grammar, never arbitrary Docker tokens or shell fragments.
-It keeps the existing snapshot/stamp/request/publication/terminal checks and
-additionally reads the exact request's authenticated Git bundle (bounded to
-256 MiB), comparing the runner and shared owner blobs with the coordinator's
-sources. A receipt assembly verifies each distinct bundle once; this is
-ephemeral verification state, not a second source-identity cache. A modified
-runner, option/environment/mount shadow, worker/reservation mismatch, unknown
-producer, unverified source or different effective source remains non-green.
-Resume reads only the action keys the population's verified producer stamps
-name. It does not scan unrelated fleet history; several named producers or
-conflicting terminal records remain ambiguous, and an unstamped population
-cannot acquire an exit from another action.
+Presentation defaults are resolved before preflight: quiet appears once and
+durations defaults to ten unless explicitly supplied. Repeated valued options
+refuse. Preflight and submission parse the same final presentation controls.
+
+Resume collects the saved native ID before reading optional population bytes.
+Malformed, wrong-type or unreadable population/stdout errors remain separate;
+a conclusive native failure stays red, and unusable success stays incomplete.
+
+The default paired invocation applies image/dependency/cache options only to
+the GPU arm. Explicit CPU-only invocation with GPU image options refuses.
+Both final arm intentions are preflighted before any native submission.
+
+Re-stamped 2026-11-08 for G01 parent CID ownership correction. Cleanup retains
+the captured CID when its file disappears, refuses conflicting replacement,
+and reports uncaptured partial creation as unknown scope, never removal.
+
+Re-stamped 2026-11-08 from the G01 composed command regression. The finite
+container grammar shares canonical target validation with merge_suite, accepts
+only tool-owned `-o addopts=` config clearing and binds distinct JUnit/surface
+outputs inside the declared writable root. Worker, plugin and target shadows
+refuse at the composed command boundary, including nonadjacent overlaps.
+
+Re-stamped 2026-11-08 from `tools/merge_suite.py`, `tools/selected_population.py`,
+`tools/_suite_flux.py` and `tools/_suite_runtime.py`. CPU transport qualification
+is unit3; G01 adds native rootless container authority. Full-suite, CUDA and
+production qualification remain separate.
+
+`tools/merge_suite.py` submits its CPU population through native Flux. New CPU
+submissions require `--python /path/to/scoped/bin/python`, with no default
+interpreter path. `tools/selected_population.py` requires the same explicit
+input and records it in the selection. Resume needs no new interpreter input
+because it reads saved command evidence. Experiment CPU preflight adapters also
+require an explicit interpreter: `bench_t8r.sh` reads `BENCH_CPU_PYTHON`,
+`regdirect_stage1/run.sh` reads `CPU_PY`, and `extents_cpu_python.sh`,
+`glm_control_pytest_python.py` and `t4_code/fp4_arithmetic_action.sh` read
+`TESSERA_CPU_PYTHON`. The
+operator-owned `/mnt/shared/flux-migration/INSTANCE` supplies the client prefix
+and run. `/mnt/shared/flux-migration/flux-uri.sh` resolves the URI at runtime;
+an explicit caller `FLUX_URI` overrides it. Client PATH and library paths come
+from the current manifest prefix, with an explicit client argument or
+`FLUX_CLIENT` override. Manifest and resolver failures refuse by name,
+including resolver stderr. INSTANCE-derived PATH and LD_LIBRARY_PATH belong
+only to the Flux client process. Jobs keep `/usr/local/bin:/usr/bin:/bin`
+and receive no LD_LIBRARY_PATH, so C-extension and Torch Inductor builds
+use system compilers rather than the client install's dependency toolchain. No local rank table reconstructs a socket.
+No run name, socket, deployment config path, client version path or digest
+constant selects or qualifies the instance. Before submission, the live
+`resource.R` graph, execution rank resources and architecture properties,
+and online ranks must contain one eligible host with the requested cores,
+GiB memory leaves and GPUs. The stock `slot/[core=N;memory=M]` shape adds
+`gpu=1` inside the slot for GPU work. Neither startup nor allocation reads
+core class. The allocation check still counts cores, memory leaves, GPUs,
+node architecture, explicit image host and affinity. It also checks distinct
+`R_lite.children.core` IDs, their graph rank and nodelist agreement, and
+`children.gpu=0` for a GPU request. Efficiency cores remain valid, including
+on a Spark GPU allocation, as SHAPE section 6 requires. No fixed CPU number
+or core class decides acceptance; the observed affinity remains preserved.
+
+`tools/_flux_gpu_jobspec.py` renders SHAPE section 4 requests with one task,
+using the pure duration, thread and shape grammar in `tools/_flux_shape.py`.
+The CPU export renderer uses that same grammar without importing the suite
+transport or container lifecycle.
+The GPU command includes a
+job name, cwd, null input and separate shared output/error paths. It requires
+a positive explicit-unit walltime and an owned directory below `/mnt/shared`,
+seeds HOME and the suite thread limits, and prints `RENDERED, NOT SUBMITTED`
+on stderr. Requests above 10 cores or 32 GiB require
+`--fleet-master-approved <approval reference>`. GPU placement has no implicit
+host pin. The renderer never submits or changes a caller's declared size.
+
+`launch.json` records the selected URI and client, SHA256 of the exact
+`flux config get` and `resource.R` query bytes, canonical JSON SHA256 of the
+scheduling model, rank-zero broker starttime,
+and broker Flux version in `qualification`. These digests are evidence, not
+admission gates. Saved-ID collection, waiting and container entry compare the
+rank-zero `broker_starttime` with the value recorded at submission before
+querying a job ID. Another or restarted instance refuses by name. Config
+reloads and client upgrades do not invalidate a job ID in the same instance.
+Historical receipts retain their `profile` and digest fields and remain
+readable without a profile table. Each job is bounded to
+four cores, 16 GiB and thirty minutes. Every job starts with an empty
+environment and an explicit allowlist, with native math/build threads bounded
+to one. The native original jobspec explicitly limits CMake, Make and Ninja
+as well as OMP/MKL/OpenBLAS/Torch/NumExpr/MAX_JOBS; it relies on no inherited
+build limits. The x86 interpreter capability selects x86, without a host pin.
+The native container intention renders one whole GPU, which selects a Spark
+without an added host constraint. Arm-only CPU requests use `aarch64`.
+GPU render-only wrappers also require an owned shared output directory and
+render explicit cwd, stdin, stdout and stderr paths; they never submit.
+The same bounded cores and memory apply to native suite submissions, inside
+SHAPE sections 3-4 and CAPS v2 limits of 10 cores and 24 GiB on dl380g10.
+Public GPU execution requires an immutable local image and scoped dependency
+seal. This G01 slice qualifies only internal no-GPU container transport; the
+CUDA branch still requires a separately approved device canary. Strict-CUDA
+population, allocation, artifact and serving gates are unchanged.
+`--gpu-tag sparky|sparklina` declares an explicit local-image host dependency;
+empty or `aarch64` allows eligible architecture-wide placement. Cross-host
+submission and saved-ID collection always bind rank zero's broker starttime,
+since individual brokers have distinct starttimes in the same instance.
+
+The source is a clean detached shared checkout. The launch records its actual
+tracked path/mode/byte identity through `suite_source.measured_source`, without
+a generated closure stamp or verifier. The payload checks the source before
+and after execution. Pytest's own entry/publication span and worker agreement
+checks remain independent. Temporary files use job-ID local scratch, removed
+on exit and retained in the payload evidence. A missing cleanup record is
+incomplete evidence, never proof that a native `clean` event fenced readers.
+The payload owns its child process group. Exceptions stop that group before
+scratch cleanup; process and scratch cleanup errors remain in the payload record.
+Interrupted payloads publish cleanup without waiting for exit content seals.
+They retain an unverified runtime state and a conclusive native failure, so
+cancellation cannot become green or consume Flux's cleanup window hashing dependencies.
+Signals arriving during exit seals unwind those seals into cleanup as well.
+Repeated interruption signals are ignored until cleanup evidence is published.
+
+Each arm saves immutable launch intent, the native jobspec and the exact
+returned ID before waiting. ASCII `f` and Unicode `ƒ` f58 spellings are
+normalized for native record comparisons; scratch uses the payload's actual
+`FLUX_JOB_ID`. An unknown acknowledgement is never retried
+implicitly. Resume uses that ID only, checks the broker generation and original
+jobspec, and retains status, eventlog, allocation, stdout/stderr and JUnit.
+The native runtime seal hashes the named interpreter, standard library and
+installed package bytes at submission, entry and exit, bounded by the declared
+finite launch budget. It records directory
+aliases and measures their resolved contents once, including cyclic aliases. This extends the existing
+scoped container dependency seal to host runtimes without importing the suite
+dependencies. Admission verifies the qualified config and live resource graph,
+as well as recording the broker generation. Selection records resolved base/head
+and measured source, and each shard binds the immutable selection digest.
+Resource-controlled pytest options, config overrides and appended targets refuse.
+Explicit targets use canonical paths and cannot overlap directory, node or
+parameter selections, so aliases cannot repeat an effective target.
+
+It reads one population snapshot and binds its exact path, digest, verified
+source and summary counts to that same job. Query failure is unknown; a
+nonzero native ending remains red after an early clean publication. Historical
+PB receipts are not reinterpreted as native evidence. No scheduler, service,
+result cache, CAS or queue reader is introduced.
+
 The sealed inner command also uses `tessera._dev.suite_deadline`, launched through
 `tools/suite_deadline.py` with the arm's named Python. `--timeout-s` must be
 positive and finite; expiry signals its owned process group with TERM, then
@@ -4070,8 +4199,8 @@ not a bound on queueing/retries, detached sessions/containers, or descendants
 left after a command completes before its deadline. Host `timeout` binaries
 are not trusted as interchangeable: the dl380g10 uutils 0.8.0 probe returned
 137 while leaving a same-group child in state S; both Sparks had GNU 9.4.
-The deployed pbrun seals `--timeout-s` as `execution_timeout_s`; its pool
-applies the effective action budget and records requested/effective values
+Historically the deployed pbrun sealed `--timeout-s` as `execution_timeout_s`; its pool
+applied the effective action budget and records requested/effective values
 and any ceiling clamp (verified 2026-09-07 against the published client and
 pool). A worker's outer nonzero status is still not evidence of the inner
 numeric 124/137: retain the inner logs and command deadline/grace per arm.
@@ -4101,15 +4230,8 @@ names no executor:
   `unknown`. With no verifier declared, nothing is left out, so arms that
   carry different generated files never agree on a source.
 
-`tools/merge_suite.py`, which submits both arms through PrismaBuild, declares
-PrismaBuild's published `pbsnapshot.py verify` (RobTand/prismabuild#1280). That
-tool verifies pbrun's closure stamp against the exact sealed action request,
-and its entries carry the `action_key` and `request_sha256` that the resume
-path below binds on. Until a PrismaBuild generation with that tool is
-published, the declared verifier cannot run, so every population is `unknown`
-and names no producer. That is a refusal, never an unverified acceptance.
-Other stamp-looking tracked files remain source. Post-materialization dirty
-state and a failed verification yield `unknown`.
+`tools/merge_suite.py` declares no source verifier. Every tracked file is
+source, including stamp-looking files. A dirty or changed tree yields unknown.
 That hash is of a **span**, not of an instant: `tests/conftest.py` captures the
 identity above its first import of the code under test and the publication is
 bound to it, so a checkout fast-forwarded cleanly mid-run publishes `unknown`
@@ -4181,36 +4303,13 @@ also leaves the comparison unknown. Dry runs do not persist this file. The obser
 provenance: it adds no identity seal or result gate and does not replace source
 validation or the measured commit reported by each population.
 
-A **resumed** receipt (`--resume <dir>`) rebuilds each arm from the population
-it published and, since tessera#218, borrows that arm's exit status from
-PrismaBuild's own outcome record -- shown as `0 (pool)`, never as a status this
-process saw. Since tessera#294 the borrowing is admitted only on evidence the
-population and the record each carry, and absent evidence is absent, not
-agreement. The producer is found by parsing the sealed request's command in the
-shapes this tool seals -- `pytest`, `<python> -m pytest`, or either under
-`tools/suite_deadline.py ... --` -- and taking its *effective* (last)
-`--surface-json`; any other program that names the path is refused by name
-(`echo pytest --surface-json <path>` exits 0 having written nothing), and a
-program string passed to `-c` is not read. A candidate is then bound or
-refused, by reason, on three legs: the request's `checkout_snapshot.commit`
-and the population's `commit` are both present and equal; the population's
-verified source stamp (`source_identity.excluded_metadata[].action_key`, which
-`tessera._dev.suite_source` records only from a source verifier's answer) names
-that action and its `request_sha256` is the digest of the request bytes read;
-and the record's top-level status is `executed` or `failed` -- the two the
-worker writes together with the attempt's own `detail` (a
-`lease_lost_max_attempts` record keeps an earlier attempt's, as `dbd91b92` did)
--- with that attempt's captured stdout containing the run's own publication
-line for this path and a pytest summary line whose counts are the population's,
-both drawn from `terminalreporter.stats`. The
-clock is not evidence: #218's 600 s allowance between the file's mtime and the
-claim asserted how quickly a retry may follow, which nothing here measures, and
-it admitted a retry five minutes behind; it is gone with the inference. A
-population without the stamp (pre-stamp, or `unknown` source) names no producer,
-so its counts are read and no status is adopted; two bound records of the one
-producer are no single status and adopt none. Across the 281 historical
-populations under `/mnt/shared/tessera-suite-receipts` exactly the three
-stamped ones bind.
+A resumed receipt reads the known Flux ID's terminal status. It does not
+search for candidate producers. The original jobspec must equal the saved
+command/resources/environment, and the population must match the launch's
+verified source. The effective pytest `--surface-json` path, announced SHA-256
+and terminal summary must match the one publication snapshot read into the
+receipt. Missing or conflicting evidence leaves the exit unobserved. Published
+failures remain conclusive; their absence cannot prove a successful ending.
 
 That publication line has **one home**, `tessera._dev.surface_publication`:
 `tests/conftest.py` writes it from there and `tools/merge_suite.py` reads it
@@ -4224,11 +4323,10 @@ the line now carries the **SHA-256 of the bytes the run published**, and an
 attempt binds only when the population this receipt holds still hashes to what
 the attempt announced. A second attempt that overwrote the population with one
 of *identical counts* -- a different device, different skip reasons, the same
-buckets -- is refused on bytes, which the counts leg cannot see. A line with no
-digest is still bound on path and counts alone: that is every run captured
-before #331, including the three historical populations above, and a reader
-that demanded the stronger evidence from stdout that never carried it would
-lose them. `tests/test_merge_suite.py` drives one real
+buckets -- is refused on bytes, which the counts leg cannot see. Historical receipts captured before #331 bound lines without a digest on
+path and counts alone. Those retained records keep that historical meaning.
+New native receipts require the exact announced digest and cannot adopt those
+old records as native execution evidence. `tests/test_merge_suite.py` drives one real
 `pytest --surface-json` run's stdout through the reader, so the join is
 exercised by output no test wrote.
 
@@ -4236,23 +4334,26 @@ exercised by output no test wrote.
 runs the test files `tools/impacted_tests.py` selects as shards, each one a
 `merge_suite.py` x86 arm that runs named files and publishes its own
 `--surface-json`. It owns no verdict. Each shard is read through `_resume`
-(the published population, its source identity, and the exit status the pool
-recorded for the action its producer stamp names), and the receipt comes from
+(the published population, its source identity, and the terminal status Flux
+recorded for its saved native ID), and the receipt comes from
 `merge_suite._assemble_receipt`. The set adds four checks that a single arm
 cannot make. The sealed commands must run the selected files exactly, each
-once. No pbrun return code may be non-zero. Each client writes its result to
+once. Every known native job must have a bound successful terminal result. Each client writes its result to
 `client.<shard>.json` when it exits, and `--resume` reads those files back, so a
-population rejected for a pbrun code stays rejected; a shard with no file says
-`not recorded` and the pool's records decide it alone. No shard may leave a
+population rejected for a nonzero native ending stays rejected; a shard with no file says
+`not recorded` and the native job's records decide it alone. No shard may leave a
 module uncollected. These checks refuse in both modes. The comparison of the
 shards' effective source with the checkout's own is a seal (D32), so it goes
 through `tessera.dev_mode.seal_check`. In dev mode, the default, it stamps one
 `[DEV-MODE]` line, computes no digest of the checkout and does not refuse. In
 certified mode (`PRISMAQUANT_DEV_MODE=0`) it measures the checkout with no
-verifier, and a population over another tree is not green. At most eight pbrun
+verifier, and a population over another tree is not green. At most eight native submission
 clients run at once (D21); more shards queue behind them. The report keeps one
 block per shard and every skip reason verbatim, from the surface's own
-histogram. `--resume` rebuilds the receipt without submitting. An aggregate that
+histogram. `--resume` rebuilds the receipt without submitting. `--target` permits a bounded
+explicit subset of the selector's file population. The selection retains the
+original `verdict` and `selector_tests`, and labels its subset `scope`. A full
+selector answer with this scope is never a full-suite result. An aggregate that
 reads a shard's last summary line alone, drops the exit status, or counts a
 missing summary as zero is the defect #1069 records, and this tool is its
 replacement.
@@ -4271,8 +4372,8 @@ B's exit 0, and returned `green on 1 population(s)` -- a source-verification
 bypass assembled out of two honest reads. So the surface file is read exactly
 once, by `_read_publication`, into a `_Publication` carrying its path, its
 bytes, their digest and their parse; `_attach_surface` returns that one
-snapshot and `_resume` hands it to the binding. `_binding_refusal` no longer
-opens a path at all, and there is no constructor that takes a payload someone
+snapshot and `_resume` hands it to the binding. `_native_binding_refusal` never
+opens a path, and there is no constructor that takes a payload someone
 else parsed, so the invariant is structural rather than remembered. The record
 publishes `surface_sha256` -- which publication it is about -- and the file is
 free to change afterwards: what the receipt states is a true statement about
@@ -4297,20 +4398,19 @@ towards running more tests -- an ambiguous spelling edges to every file it can
 name, a module whose dependencies cannot be established selects its consumers,
 and an unresolvable scope forces the whole suite. A narrowed list is a claim
 that the graph read everything relevant, so where it did not, the answer is
-`full`. It reuses this verified exclusion: a closure-shaped
-tracked file is not ignored by name, and unverifiable metadata forces a full
-selection. Verified PB metadata still permits narrowed selection.
+`full`. Generated source-closure metadata has no special exclusion.
+A closure-shaped tracked file remains an ordinary changed path.
 `tests/test_native_a4_serving.py` keeps its manual `run_gate`/`__main__` CUDA
 harness and also exposes a pytest entry point that invokes the same gate. The
 wrapper names its CUDA precondition and resolves `a4-config.json` through
 `box_artifacts`; a CPU skip is not native gate qualification. The selector
-includes this pytest target, so a full-suite PB assignment has a collection and
+includes this pytest target, so a full-suite assignment has a collection and
 outcome record rather than an unexecuted file (tessera#762). Explicit manual-only
 interfaces, when declared, remain in the dependency graph but are removed from
 pytest targets after every selection path, with their path and reason recorded
 in `excluded_tests` and the text receipt (tessera#647). No general
 absence-of-test heuristic drops modules: pytest can collect imported, inherited
-or generated cases. No exclusion weakens uncertainty escalation or PB's
+or generated cases. No exclusion weakens uncertainty escalation or the runner's
 requirement that every assigned pytest file have a collection/outcome record.
 Both normal and parentless diffs use Git's NUL-delimited path protocol, so
 display quoting cannot conceal metadata under tab/newline-containing paths.
@@ -5487,8 +5587,9 @@ tensors across ranks is what makes that checkable rather than asserted.
 **What is CPU-contract and what is device work.** The resolvers, the sidecar,
 the serving document's cut, the distributed declaration, a real two-rank
 `bind_owner_rank` on gloo, and the frozen panel's route are all exercised on
-CPU (`tests/test_native_moe_tp_owner_runtime.py`,
-`_pb_native_moe_tp_owner/binding_arms.py`). The CUDA layer construction, the
+CPU (`tests/test_native_moe_tp_owner_runtime.py`). The historical binding driver
+is archived at `archive/flux-migration/R-MIXED/_pb_native_moe_tp_owner/binding_arms.py`.
+The CUDA layer construction, the
 native decode, and the measured whole-operator apply are NOT: they need the
 pinned sm_121 image and a two-box `tcp://` rendezvous, and they are the GPU
 qualification step that follows. A CPU pass here is a statement about what the
@@ -7713,15 +7814,16 @@ and owned temporary build directory; no pre-existing build path is removed.
 The committed packaging parser preserves Python 3.10 through the declared
 conditional `tomli` dependency, not an implicit interpreter-version cutover.
 
-The repository caller `experiments/submit_gb_d1_producer.sh` forwards both producer selectors unchanged into all three submission actions.
+The repository caller `experiments/submit_gb_d1_producer.sh` forwards both producer selectors unchanged into all three rendered commands.
 It preserves the historical scientific inputs and resource bounds.
 It uses the wrappers in the current checkout, not the separate frozen GB and D1 checkouts.
 The caller requires both selectors by name and never derives them from the current directory.
-The exporter owner authenticates the producer before any submission.
-`PBRUN` can select a submission client. Its default is the published PrismaBuild client.
-Run submission mode on a fleet box because the preflight imports torch and hashes the installed package.
+The exporter owner authenticates the producer before rendering the commands.
+`tools/_flux_gpu_jobspec.py` renders the three Flux GPU submission commands.
+It never submits them, and this GPU path is not yet qualified.
+The preflight imports torch and hashes the installed package, so run it in an admitted job.
 
-`SUBMIT=0` authenticates the producer without submission or GPU work. Run this CPU entry through PrismaBuild.
+`SUBMIT=0` authenticates the producer without submission or GPU work. Run this CPU entry as a Flux CPU job.
 All caller refusals are correctness refusals in dev and certified modes.
 The caller adds no receipt or provenance convention.
 The historical caller stays unchanged at `/home/rob/tmp/resubmit-gb-d1.sh`.
@@ -9637,7 +9739,7 @@ capture outcomes; dirty evidence is retried by the publisher.
 
 Owner keys and generations are local joins, not identity seals. Rank association
 continues through the configured rank-specific `GA_DISPATCH_LOG` prefixes in
-`experiments/graph_attest_702/tp2_recipe.py` and existing rank/PID filename handling
+`archive/flux-migration/R-CONTESTED/experiments/graph_attest_702/tp2_recipe.py` and existing rank/PID filename handling
 in `receipt.py`; no rank count or deployment identity is introduced here.
 Main's producer still aggregates legacy diagnostics unchanged. Strict admission
 of every rank/process/owner's successful descriptor coverage belongs to W3;
@@ -10355,9 +10457,11 @@ process, the empty-denylist refusal (build item 11), and the wheel and sdist che
 above. It proves the parser's dependency boundary and what both
 distributions contain.
 It does not run a CUDA kernel, a decoder against a served artifact, or the
-merged suite: those are the two-population suite of §1.1, dispatched through
-PrismaBuild and read in `docs/status/suite-populations.md`, and a serving
-claim also needs a served receipt (§3).
+merged suite. The scoped CPU suite in §1.1 uses native Flux. G01 proves a
+no-GPU rootless container population; GPU transport still requires qualification.
+Historical population records
+remain in `docs/status/suite-populations.md`, and a serving claim also needs
+a served receipt (§3).
 
 **`publish`** runs only on a `v*` tag and only after `pure` is green. It
 refuses a tag that does not name the version in `pyproject.toml`, builds the
@@ -10485,13 +10589,26 @@ The GLM CPU campaign launcher (`tools/run_glm_cached_cpu_export.py`) is a
 reuse-only wrapper around this same exporter. It requires digest-bound actual
 assignment, PACT result, export plan, selected-manifest receipt, H reference,
 priced scales and routed selection. It does not interpret or certify PACT:
-campaign review must accept that result's scope before submission. The command
-renderer only emits a reviewable PB argument list. It cannot submit a job.
+campaign review must accept that result's scope before submission. Durable
+progress is one `tessera.durable_progress.v1` JSON line per unit, printed by
+`tessera._dev.durable_progress.emit` only after the unit's file and directory are
+fsynced; no external progress helper is read. The command renderer only emits a
+reviewable Flux jobspec (`prismaquant.reviewable_cpu_export_submission.v2`: stock
+`slot/[core=8;memory=48]` shape, host, environment allowlist and command). It
+cannot submit a job. Rendering requires `--walltime` with a positive explicit
+unit and `--fleet-master-approved <approval reference>` for requests above
+10 cores or above 24 GiB on dl380g10, including this 48 GiB row. The approval
+reference is retained in the jobspec. The renderer keeps the plain shape until
+SHAPE section 5 publishes the qualified export shape; rendering does not
+establish topology compatibility or authorize submission.
+The renderer derives its interpreter as
+`/home/rob/venvs/pq-cpu312-tessera-<commit-prefix>/bin/python` from the clean
+checkout commit and records its existence on the placement host as a precondition.
 The launcher forbids encoding, retains all exporter gates, requires fresh output
-and journals cumulative PB progress only after verified source digests or output
+and journals cumulative progress only after verified source digests or output
 shards are durable. Its 8-CPU/48-GiB proposal is a geometric admission ceiling,
 not a measured full-model peak or a serving qualification claim. Final output
-belongs on mothership's local ZFS; PB-owned staging SSD capacity is not output
+belongs on mothership's local ZFS; staging SSD capacity is not output
 space for this workflow.
 
 Native operator runtime records may carry a versioned
@@ -10563,3 +10680,14 @@ The topology specifies two nodes with one rank and one CUDA device per node.
 Defaults, serving pins, kernels, and the T-16 decode-once interface remain unchanged.
 
 The initial gate quarantine also excludes the single no-vLLM benchmark import probe whose newly added bare piece-major helper import fails under file-spec loading. Its open P2 owner tracks the import-context repair outside the gate footprint; other cohort isolation tests stay active.
+
+Native suite target admission compares all bounded target pairs. A sibling
+whose name sorts between a directory and its child cannot hide an overlapping
+selection. Parent regression evidence is in the 2026-11-08 Flux migration record.
+
+The native suite container entrypoint wires the Flux transport and runtime
+observer into the container lifecycle. The container implementation receives
+its source/admission transport, receipt writer, runtime observer and job-ID
+normalizer explicitly. It imports neither the transport nor runtime observer;
+collection still validates the same source, allocation, container and cleanup
+bindings.

@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 """Provision the scoped producer environment overlay for a Tessera commit.
 
-The precedent (fleet record prismaquant-pr-2131, PB action e329d098...) is
-followed exactly, because it is the one recipe already qualified:
+This follows the historical provisioning recipe in fleet record
+prismaquant-pr-2131, PB action e329d098. Each new native installation still
+needs its own qualification:
 
 * the wheel is built from the CLEAN COMMITTED tree (``git archive HEAD``) --
   never from a dirty snapshot tree, and never by copying repository tooling
@@ -26,7 +27,7 @@ against ``TESSERA_PRODUCER_SOURCE``, writing ``qualification.json`` -- that
 phase refuses unless ``--final`` is passed, because final installed-Tessera
 qualification waits for the frozen coherent core commit.
 
-usage (as a PB CPU action payload, run from the sealed checkout root):
+usage (inside an admitted CPU job, run from the sealed checkout root):
   python tools/provision_producer_env.py \
       --base /home/rob/venvs/pq-cu130 \
       --name pq-b770d-producer-<commit8>-<date> [--phase qualify --final]
@@ -149,7 +150,7 @@ def main() -> int:
                     help="qualify only: refuse unless HEAD is exactly this commit")
     ap.add_argument("--source-ref", type=Path, default=None,
                     help="qualify only: the EXTERNALLY QUALIFIED immutable checkout whose "
-                         "src/tessera the authentication binds; a PB snapshot path is not "
+                         "src/tessera the authentication binds; a detached snapshot path is not "
                          "one, so qualify refuses without it")
     args = ap.parse_args()
     if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]*", args.name):
@@ -167,7 +168,7 @@ def main() -> int:
                          "provision a new name instead of mutating a provisioned environment)")
 
     # The authoritative BUILD git root.  Qualify never builds from this script's
-    # PB-snapshot root (a parentless tree whose HEAD is not the branch commit it
+    # detached snapshot root (a parentless tree whose HEAD is not the branch commit it
     # may be expected to match): it builds from the validated external
     # --source-ref checkout -- real HEAD, genuine ancestry, clean committed
     # payload -- and authenticates against that same ref.  Acquire (prototype)
@@ -176,7 +177,7 @@ def main() -> int:
         if not args.source_ref:
             raise SystemExit("--phase qualify requires --source-ref: the externally "
                              "qualified immutable checkout to build and authenticate; a "
-                             "PB snapshot root is not one")
+                             "detached snapshot root is not one")
         build_root = Path(args.source_ref).resolve()
         if not (build_root / "src" / "tessera").is_dir() or not (build_root / "pyproject.toml").is_file():
             raise SystemExit(f"--source-ref {build_root} is not a Tessera checkout")
@@ -271,7 +272,7 @@ def main() -> int:
         "source": {"build_git_root": str(build_root),
                    "build_git_root_kind": ("externally qualified --source-ref"
                                            if args.phase == "qualify" else
-                                           "PB sealed snapshot (acquire prototype)"),
+                                           "sealed checkout (acquire prototype)"),
                    "commit": commit,
                    "commit_title": git_in(build_root, "log", "-1", "--format=%s"),
                    "ancestor": B770_ANCESTOR if args.phase == "qualify" else None,
@@ -296,8 +297,8 @@ def main() -> int:
                  "preflight": {"producer_plan_help_rc": help_run.returncode,
                                "first_line": (help_run.stdout.splitlines() or [""])[0]}},
         "installed": probe,
-        "creator": os.environ.get("PB_WORKER", "ProducerBatchProbeEnvironment"),
-        "provision": "PB CPU action; no GPU; no pre-existing environment touched",
+        "creator": os.environ.get("FLUX_JOB_ID", "ProducerBatchProbeEnvironment"),
+        "provision": "Flux CPU job; no GPU; no pre-existing environment touched",
     }
 
     record = venv_root / ("qualification.json" if args.phase == "qualify" else "acquisition.json")

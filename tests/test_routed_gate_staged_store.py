@@ -80,12 +80,11 @@ def test_main_releases_pin_if_metadata_admission_fails(tmp_path, monkeypatch):
     args = options()
     args.out = str(tmp_path/'out')
     args.outputs_only = False
-    args.direct_vllm_inputs = False
     closed = []
     reader = SimpleNamespace(close=lambda: closed.append(True))
-    module = ModuleType('pb_staged_store')
-    module.StagedInputs = lambda p: reader
-    monkeypatch.setitem(sys.modules, 'pb_staged_store', module)
+    module = ModuleType('declared_inputs')
+    module.DeclaredInputs = lambda p: reader
+    monkeypatch.setitem(sys.modules, 'declared_inputs', module)
     parser = SimpleNamespace(add_argument=lambda *a,**k: None, parse_args=lambda: args)
     def failed_store(*args):
         raise ValueError('metadata admission refused')

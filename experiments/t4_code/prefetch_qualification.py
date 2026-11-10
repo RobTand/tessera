@@ -1,4 +1,4 @@
-"""TS875 finite qualification through the existing PB staged/native owners.
+"""TS875 finite qualification through the existing declared-input/native owners.
 
 These are diagnostic kernel-bank calls, not production _ext serving admission.
 No GPU action is authorized merely by the existence of this runner.
@@ -100,7 +100,7 @@ def validate_bank_record(record, finalization, arm, *, source_module):
 
 
 def validate_readset(path):
-    from pb_staged_store import validate_whole_phase_readset
+    from declared_inputs import validate_whole_phase_readset
 
     manifest, read_entries, expected = validate_whole_phase_readset(path, PHASE)
     if read_entries != manifest["entries"]:
@@ -141,7 +141,7 @@ def prepare_readset(output, *, include_tools=False):
             raise ValueError(f"qualified artifact changed before sealing: {name}")
         entries.append({"path": name, "offset": 0, "bytes": len(raw), "sha256": expected_digest})
     total = sum(entry["bytes"] for entry in entries)
-    value = {"schema": "prismaquant.prismabuild.data_manifest.v1",
+    value = {"schema": "tessera.declared_inputs.v1",
              "produced_by": {"issue": 875, "scope": "actual finalized common-source T4 code banks; not GPU proof"},
              "mount_prefix": "/mnt/shared", "entries": entries, "entry_count": len(entries), "total_bytes": total,
              "annotations": {"phases": [{"name": PHASE, "bytes": total, "cumulative_bytes": total}]}}
@@ -154,17 +154,16 @@ def prepare_readset(output, *, include_tools=False):
 
 
 def staged_read(path):
-    from pb_staged_store import StagedInputs
+    from declared_inputs import DeclaredInputs
 
     manifest, phases = validate_readset(path)
-    reader = StagedInputs(path)
+    reader = DeclaredInputs(path)
     try:
         for entry in manifest["entries"]:
             reader.read(entry["path"], entry["offset"])
         if sum(row["bytes"] for row in reader.reads) != manifest["total_bytes"]:
             raise ValueError("native1 staged-reader coverage differs")
-        print(json.dumps({"kind": "CPU staged-reader proof only", "action_key": reader.ctx["action_key"],
-                          "pin_id": reader.held["pin_id"], "ref_id": reader.held["ref_id"],
+        print(json.dumps({"kind": "CPU staged-reader proof only", "flux_job_id": os.environ.get("FLUX_JOB_ID"),
                           "readset_sha256": reader.manifest_sha256, "phases": phases,
                           "reads": reader.reads}), flush=True)
     finally:
@@ -209,7 +208,7 @@ def finish_banks(reader, owners, fence, *, primary=None):
 @contextmanager
 def leased_banks(manifest_path, out, *, gpu):
     import torch
-    from pb_staged_store import NativeCallback, StagedInputs
+    from declared_inputs import DeclaredInputs, NativeCallback
     from tessera import routed_fused_e2m1 as fe
     from tessera.serving import ext
 
@@ -218,7 +217,7 @@ def leased_banks(manifest_path, out, *, gpu):
         raise ValueError("the diagnostic FP4 kernel matrix requires an admitted GB10 GPU")
     if not gpu and torch.cuda.is_available():
         raise ValueError("CPU native-map proof must have GPU visibility disabled")
-    reader = StagedInputs(manifest_path)
+    reader = DeclaredInputs(manifest_path)
     owners, banks = [], {}
     out = Path(out)
     fence = torch.cuda.synchronize if gpu else lambda: None
@@ -253,7 +252,7 @@ def leased_banks(manifest_path, out, *, gpu):
             for owner in owners:
                 print("T4_STAGED_NATIVE_IDENTITY " + json.dumps(owner.record), flush=True)
             print(json.dumps({"readset_sha256": reader.manifest_sha256,
-                              "pin_id": reader.held["pin_id"], "ref_id": reader.held["ref_id"],
+                              "flux_job_id": os.environ.get("FLUX_JOB_ID"),
                               "kind": "diagnostic code banks; not serving _ext admission"}), flush=True)
 
 
@@ -308,10 +307,10 @@ def consume(args):
 
 
 def sanitize(args):
-    from pb_staged_store import StagedInputs
+    from declared_inputs import DeclaredInputs
 
     validate_readset(args.manifest)
-    reader = StagedInputs(args.manifest)
+    reader = DeclaredInputs(args.manifest)
     out = Path(args.out)
     tool_dir = out / "staged-sanitizer"
     try:
@@ -325,7 +324,7 @@ def sanitize(args):
         if args.command == "tool-preflight":
             subprocess.run([str(tool_dir / "compute-sanitizer"), "--version"], check=True)
             print(json.dumps({"kind": "CPU staged-tool compatibility only",
-                              "pin_id": reader.held["pin_id"], "ref_id": reader.held["ref_id"],
+                              "flux_job_id": os.environ.get("FLUX_JOB_ID"),
                               "reads": reader.reads}), flush=True)
             return 0
         command = [str(tool_dir / "compute-sanitizer"), "--tool", args.tool,

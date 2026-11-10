@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# One PB action: a kernel A/B on one GB10 over any number of arms, each from
+# One Flux job: a kernel A/B on one GB10 over any number of arms, each from
 # an immutable source snapshot under <out_root>/src-<arm>/src (the checkout
 # supplies only the harness), timed interleaved in forward then reverse order
 # so no arm always runs first on a cold GPU.  The first arm is the reference.
@@ -32,7 +32,7 @@ OUT=${1:?out_root}; shift
 ARMS=("$@")
 (( ${#ARMS[@]} >= 2 )) || { echo "need at least two arms" >&2; exit 2; }
 if [[ -z "${ORACLE_IMAGE:-}" ]]; then
-  echo "REFUSED: ORACLE_IMAGE is unset; pass the PB-declared measurement image (pbrun --env ORACLE_IMAGE=...)" >&2
+  echo "REFUSED: ORACLE_IMAGE is unset; pass the declared measurement image (flux submit --env=ORACLE_IMAGE=...)" >&2
   exit 2
 fi
 : "${AB_EXPECTED_CASES:?declare the expected case/rate/source population}"

@@ -89,7 +89,7 @@ def run(args, reference):
     ctx = {"torch": torch.__version__, "torch_git": torch.version.git_version,
            "cuda": torch.version.cuda, "device": device, "native_attestation": args.native_attestation,
            "boundary_attestation": args.boundary_attestation, "image": os.environ.get("ORACLE_IMAGE"),
-           "action_key": os.environ.get("PRISMABUILD_ACTION_KEY"), "host": os.environ.get("HOST_NAME"),
+           "meta_schema": "tessera.job_meta.v2", "flux_job_id": os.environ.get("FLUX_JOB_ID"), "host": os.environ.get("HOST_NAME"),
            "python": sys.version, "unit_sha256": hashlib.sha256(blob).hexdigest()}
     if args.cpu_preflight:
         reference.save(out / "stock-cpu-preflight.json", {"imports": "pass", "unit_bytes": len(blob),

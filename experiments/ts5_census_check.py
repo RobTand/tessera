@@ -2,7 +2,7 @@
 """Fail closed on an incomplete dense/routed campaign census; replay current cells.
 
 This is a receipt/sidecar gate, not a wire audit or a quality measurement. Run
-under PrismaBuild against the same merged checkpoint mounted by the census.
+inside a Flux job against the same merged checkpoint mounted by the census.
 Host and container checkpoint names may differ; exact sidecar hashes bind
 the supplied config/manifest to the serve, and owner evidence joins schemes.
 """

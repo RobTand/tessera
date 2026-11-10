@@ -1,6 +1,6 @@
 """Materialize visibly synthetic, content-bound TP2 protocol fixtures.
 
-Run through PrismaBuild. These records exercise parsers and refusals; they are
+Run as a Flux CPU job. These records exercise parsers and refusals; they are
 not a GPU capture, runtime receipt, quality measurement or admission evidence.
 """
 import argparse

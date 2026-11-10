@@ -111,7 +111,7 @@ def inputs(tmp_path):
     for name in ("e1", "e2", "g"):
         _arm(receipts, model, name, name != "g")
     manifest = tmp_path / "manifest.json"
-    _write(manifest, {n: {"action_key": "fixture-" + n} for n in ("e1", "e2", "g")})
+    _write(manifest, {n: {"flux_job_id": "fixture-" + n} for n in ("e1", "e2", "g")})
     return receipts, manifest, tmp_path / "receipt.json", model
 
 
@@ -143,6 +143,9 @@ def _valid(inputs):
     result, receipt = _produce(inputs)
     assert result.returncode == 0, result.stdout + result.stderr
     assert receipt["verdict"] == "equal"
+    assert {arm['name']: (arm['arm_schema'], arm['flux_job_id'])
+            for arm in [*receipt['eager_pool'], *receipt['arms']]} == {
+        name: ('tessera.graph_arm.v2', 'fixture-' + name) for name in ('e1', 'e2', 'g')}
     assert gr.verify(receipt, _serve(receipt)) is None
     expected = sum(len(specs) for specs, _ in _cases().values())
     assert receipt["equality_set"]["choices_per_pass"] == expected

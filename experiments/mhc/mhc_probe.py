@@ -83,7 +83,6 @@ from __future__ import annotations
 
 import argparse
 import hashlib
-import runpy
 from concurrent.futures import ThreadPoolExecutor
 import json
 import math
@@ -207,13 +206,13 @@ def kernel_device_us(fn, iters: int, trace_path: Path | None = None) -> dict[str
     if trace_path is None:
         context = profile(activities=[ProfilerActivity.CPU, ProfilerActivity.CUDA])
     else:
-        from profile_torch import prismabuild_torch_profile
+        from profile_torch import torch_profile
 
         trace_path.parent.mkdir(parents=True, exist_ok=True)
-        context = prismabuild_torch_profile(activities=[ProfilerActivity.CPU, ProfilerActivity.CUDA], record_shapes=True)
-    previous = os.environ.get("PRISMABUILD_PROFILE_TORCH_OUT")
+        context = torch_profile(activities=[ProfilerActivity.CPU, ProfilerActivity.CUDA], record_shapes=True)
+    previous = os.environ.get("TESSERA_PROFILE_TORCH_OUT")
     if trace_path is not None:
-        os.environ["PRISMABUILD_PROFILE_TORCH_OUT"] = str(trace_path)
+        os.environ["TESSERA_PROFILE_TORCH_OUT"] = str(trace_path)
     try:
         with context as prof:
             for _ in range(iters):
@@ -222,9 +221,9 @@ def kernel_device_us(fn, iters: int, trace_path: Path | None = None) -> dict[str
     finally:
         if trace_path is not None:
             if previous is None:
-                os.environ.pop("PRISMABUILD_PROFILE_TORCH_OUT", None)
+                os.environ.pop("TESSERA_PROFILE_TORCH_OUT", None)
             else:
-                os.environ["PRISMABUILD_PROFILE_TORCH_OUT"] = previous
+                os.environ["TESSERA_PROFILE_TORCH_OUT"] = previous
     out = {}
     for row in rpo.kernel_table(prof, limit=200):
         out[row["name"]] = {"calls": row["count"], "mean_us": row["self_device_us_per_call"]}
@@ -897,7 +896,7 @@ def part_kdafwd(args, sampler) -> dict:
                 out["startup"].append({"tokens": t, "heads": h, "state_dtype": dtype,
                                        "interval_unix": [t0, time.time()], "copies": copies})
                 cells.append((t, h, dtype, calls, graph))
-    primary_trace = os.environ.get("PRISMABUILD_PROFILE_TORCH_OUT")
+    primary_trace = os.environ.get("TESSERA_PROFILE_TORCH_OUT")
     for round_index in range(args.kda_rounds):
         ordered = cells if round_index % 2 == 0 else list(reversed(cells))
         for t, h, dtype, calls, graph in ordered:
@@ -1026,7 +1025,7 @@ def main() -> int:
 
     meta = {"host": os.environ.get("HOST_NAME", socket.gethostname()), "image": os.environ.get("ORACLE_IMAGE"),
             "tessera_head": os.environ.get("TESSERA_HEAD"), "tessera_state": os.environ.get("TESSERA_STATE"),
-            "pb_action": os.environ.get("PB_ACTION_KEY"), "torch": torch.__version__, "vllm": vllm.__version__,
+            "meta_schema": "tessera.job_meta.v2", "flux_job_id": os.environ.get("FLUX_JOB_ID"), "torch": torch.__version__, "vllm": vllm.__version__,
             "device": torch.cuda.get_device_name(0), "model": str(model_dir), "argv": sys.argv,
             "peak_dram_gbs": PEAK_DRAM_GBS, "utc_start": time.time()}
     log("meta", json.dumps(meta))

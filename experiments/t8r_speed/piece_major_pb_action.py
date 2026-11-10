@@ -1,4 +1,4 @@
-"""Execute the sealed PM timing packet inside one admitted PB attempt.
+"""Execute the sealed PM timing packet inside one Flux job context.
 
 Only the existing run_direct_arm and owned_cleanup own launch and containment.
 The original benchmark argv, native bank and numeric proof are not adapted.
@@ -28,13 +28,13 @@ def main():
     parser.add_argument("--go-record")
     parser.add_argument("--go-sha256")
     args = parser.parse_args()
-    if not os.environ.get("PRISMABUILD_ACTION_KEY"):
-        raise ValueError("PM batch controller requires an admitted PrismaBuild attempt")
+    if not os.environ.get("FLUX_JOB_ID"):
+        raise ValueError("PM batch requires FLUX_JOB_ID environment value; this checks context only, not GPU approval or an admission token")
     if digest(args.packet) != args.packet_sha256:
-        raise ValueError("PB packet changed")
+        raise ValueError("PM packet changed")
     packet = json.loads(Path(args.packet).read_bytes())
     if digest(__file__) != packet["controller_sha256"]:
-        raise ValueError("PB controller changed")
+        raise ValueError("PM controller changed")
     if digest(packet["window"]) != packet["window_sha256"]:
         raise ValueError("original timing window changed")
     window = json.loads(Path(packet["window"]).read_bytes())
@@ -58,7 +58,7 @@ def main():
         pp.require_numeric_receipt(numeric["receipt"], numeric["receipt_sha256"],
                                    pp.numeric_protocol_sha256(protocol, window["protocol_sha256"]))
         root.mkdir(exist_ok=False)
-        result = {"schema": "tessera.pm_pb_preparation.v1", "action_key": os.environ["PRISMABUILD_ACTION_KEY"],
+        result = {"schema": "tessera.pm_preparation.v2", "flux_job_id": os.environ["FLUX_JOB_ID"],
                   "packet_sha256": args.packet_sha256, "bindings": bindings,
                   "original_window_sha256": packet["window_sha256"],
                   "benchmark_executed": False, "numeric_qualification_reused": True,
@@ -81,9 +81,9 @@ def main():
     previous_sigterm = signal.signal(signal.SIGTERM, interrupted)
     try:
         env = dict(os.environ, **window["env"])
-        env["PB_ACTION_KEY"] = os.environ["PRISMABUILD_ACTION_KEY"]
+        env["FLUX_JOB_ID"] = os.environ["FLUX_JOB_ID"]
         started = time.time()
-        result = {"schema": "tessera.pm_pb_timing_terminal.v1", "action_key": env["PB_ACTION_KEY"],
+        result = {"schema": "tessera.pm_timing_terminal.v2", "flux_job_id": env["FLUX_JOB_ID"],
                   "packet_sha256": args.packet_sha256, "go": go, "start_unix": started,
                   "assigned_affinity": sorted(os.sched_getaffinity(0)), "returncode": None,
                   "energy_status": "HOLD_pending_independent_coverage_clock_and_instrument_review"}
@@ -108,7 +108,7 @@ def main():
         subprocess.run([sys.executable, "experiments/t8r_speed/routed_gate_netdata.py", str(root)], check=True)
         evidence = {str(p): digest(p) for p in [out / "bench_t8r.json", root / "netdata.json", *sorted(out.glob("torch-*.json"))]}
         (root / "evidence-sha256.json").write_text(json.dumps(evidence, indent=2) + "\n")
-        print(json.dumps({"action_key": env["PB_ACTION_KEY"], "evidence_sha256": evidence}), flush=True)
+        print(json.dumps({"flux_job_id": env["FLUX_JOB_ID"], "evidence_sha256": evidence}), flush=True)
         return 0
     finally:
         signal.signal(signal.SIGTERM, previous_sigterm)

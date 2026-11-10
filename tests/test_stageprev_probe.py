@@ -43,21 +43,6 @@ def test_numeric_mode_refuses_stubbed_vllm():
         probe().require_options(options(),stubbed=True)
 
 
-@pytest.mark.parametrize('layer',[10,11,42])
-def test_explicit_module_roster_binds_without_foreign_layer_alias(layer):
-    spec=importlib.util.spec_from_file_location('pb_staged_store',ROOT/'experiments/t8r_speed/pb_staged_store.py')
-    module=importlib.util.module_from_spec(spec);spec.loader.exec_module(module)
-    reader=module.StagedInputs.__new__(module.StagedInputs)
-    name=f'model.language_model.layers.{layer}.mlp.experts'
-    roles=[{'expert':e,'role':r,'tensor':f'{name}.{e}.{r}.weight'}
-           for e in range(288) for r in ('gate_proj','up_proj','down_proj')]
-    reader.bind_roles('/unused',roles,module=name)
-    assert len(reader.roles)==864
-    roles[-1]=dict(roles[-1],tensor=f'{name}.0.gate_proj.weight')
-    with pytest.raises(ValueError,match='roster'):
-        reader.bind_roles('/unused',roles,module=name)
-
-
 @pytest.mark.parametrize("failure", [False, True])
 def test_observer_restores_actual_frozen_class_on_success_and_failure(tmp_path, monkeypatch, failure):
     """The observer sees both stages at the load-bound uniform launch, as the
@@ -113,4 +98,3 @@ def test_observer_refuses_a_multi_class_owner(tmp_path):
     fn.native_adapter = native
     with pytest.raises(ValueError, match="uniform"):
         probe().observe(fn, (None, None, None), tmp_path/"words")
-

@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # Run experiments/mhc/mhc_probe.py inside the serving image (the mHC and
-# elementwise before-measurements).  Submitted through PrismaBuild (pbrun --gpu
-# --measurement --container-image ...); this script is the admitted action's
-# command.  Usage:
+# elementwise before-measurements).  Run as a Flux GPU job (see the rendered
+# tools/_flux_gpu_jobspec.py line; Flux GPU path rendered, not qualified); this
+# script is the job's command.  Usage:
 #   mhc_probe.sh <checkout> <out_dir> <mhc_probe.py args...>
 # The container mounts the checkout and the served checkpoint read-only and
 # writes only under <out_dir>.  ORACLE_NCU=1 runs the NCU-gated mHC calls under
@@ -10,7 +10,7 @@
 # overrides the filter, e.g. 'regex:_flash_kda_fwd' with --ncu-part kda).
 set -euo pipefail
 CHECKOUT=$(realpath "$1"); OUT=$(realpath -m "$2"); shift 2
-IMAGE_REF=${ORACLE_IMAGE:?set ORACLE_IMAGE to the immutable PB-declared measurement image}
+IMAGE_REF=${ORACLE_IMAGE:?set ORACLE_IMAGE to the immutable digest-pinned measurement image}
 source "$CHECKOUT/experiments/runtime_image.sh"
 runtime_image_require "$IMAGE_REF"
 IMAGE_ENV=()
@@ -27,23 +27,17 @@ echo "host=$(hostname) cpus=$CPUS head=$HEAD state=[$STATE] image=$IMAGE_REF mod
 EXTRA_MOUNTS=()
 OBS_ENV=()
 declare -A OBS_MOUNTED=()
-for OBS_VAR in PRISMABUILD_PROFILE_TORCH_OUT PRISMABUILD_ACTION_PROGRESS_PATH PRISMABUILD_ACTION_PROGRESS_HELPER; do
+for OBS_VAR in TESSERA_PROFILE_TORCH_OUT; do
   OBS_VALUE=${!OBS_VAR:-}
   if [[ -n "$OBS_VALUE" ]]; then
     OBS_PARENT=$(dirname "$OBS_VALUE")
     mkdir -p "$OBS_PARENT"
     if [[ -z "${OBS_MOUNTED[$OBS_PARENT]:-}" ]]; then
-      OBS_READONLY=
-      [[ "$OBS_VAR" != PRISMABUILD_ACTION_PROGRESS_HELPER ]] || OBS_READONLY=,readonly
-      EXTRA_MOUNTS+=(--mount "type=bind,src=$OBS_PARENT,dst=$OBS_PARENT$OBS_READONLY")
+      EXTRA_MOUNTS+=(--mount "type=bind,src=$OBS_PARENT,dst=$OBS_PARENT")
       OBS_MOUNTED[$OBS_PARENT]=1
     fi
     OBS_ENV+=(-e "$OBS_VAR=$OBS_VALUE")
   fi
-done
-for OBS_VAR in PRISMABUILD_ACTION_PROGRESS_TOKEN PRISMABUILD_ACTION_PROGRESS_PHASES PRISMABUILD_ACTION_PROGRESS_ALLOWANCES; do
-  OBS_VALUE=${!OBS_VAR:-}
-  [[ -z "$OBS_VALUE" ]] || OBS_ENV+=(-e "$OBS_VAR=$OBS_VALUE")
 done
 PREFIX=(bash -c 'source /work/experiments/cuda_home_shadow.sh "$TMPDIR/.." && exec "$@"' bash)
 # MHC_PROBE_SCRIPT selects a sibling probe with the same contract (mhc_fused_probe.py, #783).
@@ -73,6 +67,6 @@ exec docker run --rm --gpus all --ipc=host --network=host --cpuset-cpus "$CPUS" 
   -e NUMEXPR_NUM_THREADS=1 -e PYTHONUNBUFFERED=1 \
   -e MAX_JOBS="${MAX_JOBS:-2}" \
   -e ORACLE_IMAGE="$IMAGE_REF" -e TESSERA_HEAD="$HEAD" -e TESSERA_STATE="$STATE" \
-  -e PB_ACTION_KEY="${PB_ACTION_KEY:-${PRISMABUILD_ACTION_KEY:-}}" \
+  -e FLUX_JOB_ID="${FLUX_JOB_ID:-}" \
   "${IMAGE_ENV[@]}" "${OBS_ENV[@]}" "${EXTRA_MOUNTS[@]}" --entrypoint "${PREFIX[0]}" -w /work "$IMAGE_REF" \
   "${PREFIX[@]:1}" "${COMMAND[@]}" --out "$OUT" --model "$MODEL" "$@"

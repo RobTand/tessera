@@ -88,7 +88,7 @@
     ],
     "required_new_inputs": [
       "Complete original-a6 plan and preparation bound to adopted provider and original G64 source_execution/runtime image/modeling/backend identity. Old0b2cc/962207/d025/416bd plan is rejected.",
-      "PB data-manifest covering actual whole source/auxiliary files plus exact calibration and controls with current public SDK phase ownership. Prefix-only layer0..3 manifest cannot run current layers3..44 entrypoint.",
+      "Declared-input record covering actual whole source/auxiliary files plus exact calibration and controls with explicit whole-phase byte coverage. Prefix-only layer0..3 manifest cannot run current layers3..44 entrypoint.",
       "Finite reviewed original source/current+lookahead/alias/cast/packed-expert/head/shared-state/capture-serialization/profiling overlap reservation, CPU affinity/native thread limits and explicit root GPU GO.",
       "Existing capture authority must permit original adopted provider without bypassing require_material_device or require_automatic_capture_source_recording. Current inspected CLI requires explicit DEV and stamps dev_uncertified; its output is not automatically production authority."
     ],
@@ -137,7 +137,7 @@
       "--format",
       "--out"
     ],
-    "admitted_acquire": "experiments/glm_native_moe_acquire.py",
+    "admitted_acquire": "archive/pq_experiments_2026-11-09/experiments/glm_native_moe_acquire.py (PrismaQuant repo, archived in PQ slice 6)",
     "acquire_sha256": "43f875e25a04fa0bf7560de70e0be1ce31e2de48ae3f715e209a653435103274",
     "output": "Existing same-action LocalHandoff produces inputs.json, weight-references.json, phase-tensors.safetensors, origin.json and owned source/render/wire bytes; no cross-action local bundle reuse.",
     "consumer": "Tessera experiments/bench_native_moe_operator.py.prepare_native_moe_operator and existing native serving owner; use its identity/geometry/route/source/reference gates. bench_t8r override stays fail-closed A8SE.",

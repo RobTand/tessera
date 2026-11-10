@@ -1,6 +1,6 @@
 #!/bin/bash
 # Profile real units with the qualified host producer, never container python
-# or a checkout PYTHONPATH. Submit this entry through PrismaBuild; the caller
+# or a checkout PYTHONPATH. Run this entry as a Flux job; the caller
 # supplies its resource demand and the immutable qualified source reference.
 # usage: TESSERA_PRODUCER_PYTHON=/abs/venv/bin/python \
 #        TESSERA_PRODUCER_SOURCE=/abs/frozen/src/tessera \

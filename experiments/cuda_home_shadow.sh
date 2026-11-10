@@ -5,7 +5,7 @@
 # ``vllm/vllm-openai`` image is one), WITHOUT writing into the image.
 #
 # ``tessera_plugin_run.sh`` solved this as root by linking the missing names
-# into ``/usr/local/cuda/include``.  A PB-admitted container runs as the
+# into ``/usr/local/cuda/include``.  A job-owned container runs as the
 # submitting user and cannot; so this builds a shadow ``CUDA_HOME`` under the
 # run's own output directory -- every real toolkit header linked by name, then
 # ONLY the names still missing linked from the cu13 wheel's include dir (the

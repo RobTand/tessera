@@ -36,6 +36,13 @@ ts_py_library(
 )
 
 ts_py_library(
+    name = "_dev/durable_progress",
+    srcs = [
+        "_dev/durable_progress.py",
+    ],
+)
+
+ts_py_library(
     name = "_dev/native_identity",
     srcs = [
         "_dev/native_identity.py",
@@ -450,6 +457,13 @@ ts_py_library(
     name = "jit_build_lock",
     srcs = [
         "jit_build_lock.py",
+    ],
+)
+
+ts_py_library(
+    name = "job_metadata",
+    srcs = [
+        "job_metadata.py",
     ],
 )
 

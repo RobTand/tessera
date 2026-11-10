@@ -114,7 +114,7 @@ def main():
         'launcher_image_inspect': inspected,
         'registry_base': BASE,
         'launcher_declared_image_id': args.launcher_image_id,
-        'identity_scope': ('The PB Docker launch binds the image reference/ID; this recorder '
+        'identity_scope': ('The Docker launch binds the image reference/ID; this recorder '
                            'verifies the complete vLLM file manifest and installs nothing into '
                            'it. Tessera is imported from the read-only checkout bind, named by '
                            'its encoder tree hash and fixture id.'),

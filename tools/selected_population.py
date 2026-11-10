@@ -6,7 +6,7 @@ splits that set into shards, submits each shard through
 ``tools/merge_suite.py`` as one arm, and writes one receipt for the whole
 population.  It owns no verdict of its own: every shard is read the way a
 merge_suite arm is read (its published population, its source identity, and the
-exit status PrismaBuild's worker recorded), and the receipt comes from
+exit status Flux's worker recorded), and the receipt comes from
 ``merge_suite._assemble_receipt``.  What this tool adds is what a set of shards
 needs and a single arm does not:
 
@@ -16,20 +16,20 @@ needs and a single arm does not:
   checkout that chose the files, not only the same source as each other; in
   dev mode (D32, the default) that comparison is a seal, so it is stamped and
   not computed;
-* no pbrun return code may be non-zero, and no shard may leave a module
+* no Flux client return code may be non-zero, and no shard may leave a module
   uncollected.
 
 Without those three, a population could be green over a file nobody ran, over
-a tree the selector never read, or after a shard the pool had already failed
+a tree the selector never read, or after a shard Flux had already failed
 (tessera#1069).
 
 Usage::
 
-    python3 tools/selected_population.py --base origin/master --shards 12
-    python3 tools/selected_population.py --resume <receipt dir>
+    python3 -s tools/selected_population.py --base origin/master --shards 12 --python /path/to/scoped/bin/python
+    python3 -s tools/selected_population.py --resume <receipt dir>
 
 ``--resume`` submits nothing.  It rebuilds the receipt from the selection and
-the populations the pool published, for a run whose submitting process died.
+the populations the native jobs published, for a run whose submitting process died.
 """
 from __future__ import annotations
 
@@ -50,20 +50,19 @@ from tessera.dev_mode import NOT_COMPUTED, dev_mode_enabled, seal_check  # noqa:
 
 #: The selection, saved beside the shard populations so ``--resume`` knows
 #: which files each shard was given.  It is data this tool wrote, and every
-#: claim it supports is re-checked against the pool's sealed commands.
+#: claim it supports is re-checked against the native jobs' sealed commands.
 SELECTION = "selection.json"
 RECEIPT = "receipt.json"
-#: What each pbrun client reported when it exited, written then, so a resume
+#: What each Flux client reported when it exited, written then, so a resume
 #: after the submitter dies reads the client's own result and not only the
-#: pool's.  The pool's record of an action can be clean while pbrun returned 1.
+#: job's. A terminal Flux record and the submitting client's exit are separate evidence.
 CLIENT = "client.{name}.json"
-_CLIENT_FIELDS = ("returncode", "elapsed_s", "stderr_tail", "pbrun")
+_CLIENT_FIELDS = ("returncode", "elapsed_s", "stderr_tail", "flux")
 SELECTOR = Path(__file__).resolve().parent / "impacted_tests.py"
 DEFAULT_RECEIPT_ROOT = merge_suite.SHARED_ROOT / "tessera-selected-populations"
-#: D21: one agent keeps at most eight PrismaBuild clients at once, because each
-#: client snapshots and hashes its checkout on the control seat.  The shard
-#: count is a separate number: shards past this many queue behind the clients.
-MAX_CLIENTS = 8
+#: Tessera's program-wide ceiling, /mnt/shared/flux-migration/CAPS.md.
+#: Callers must reserve their share before launch; shards queue behind clients.
+MAX_CLIENTS = 2
 #: pytest's slowest-test report, so a slow shard is visible in its own stdout.
 PYTEST_ARGS = ["--durations=5"]
 
@@ -91,29 +90,45 @@ def balanced_shards(sizes: dict[str, int], count: int) -> list[list[str]]:
     return [sorted(files) for _, files in bins]
 
 
-def choose(checkout: Path, base: str, count: int) -> dict:
+def choose(checkout: Path, base: str, count: int, *, targets: list[str] | None = None) -> dict:
     """The selector's answer for ``base...HEAD``, split into shards.
 
     Refuses, by name, an answer it cannot run: no JSON (the selector prints
     nothing for an empty change), or a selected file the tree does not hold.
     """
 
+    identity = merge_suite.suite_flux.source(checkout)
+    resolved_base = subprocess.check_output(
+        ["git", "-C", str(checkout), "rev-parse", "--verify", f"{base}^{{commit}}"], text=True).strip()
+    head = identity["snapshot_commit"]
     done = subprocess.run(
-        [sys.executable, str(SELECTOR), "--ref", f"{base}...HEAD", "--json", "--root", "."],
+        [sys.executable, "-s", str(SELECTOR), "--ref", f"{resolved_base}...{head}", "--json", "--root", "."],
         cwd=checkout, capture_output=True, text=True)
     if done.returncode != 0 or not done.stdout.strip():
         raise ValueError(
             f"the selector gave no selection for {base}...HEAD (exit {done.returncode}): "
             + (done.stderr.strip()[-300:] or "no output; the change may be empty"))
     result = json.loads(done.stdout)
+    if merge_suite.suite_flux.source(checkout) != identity:
+        raise ValueError("checkout source changed while selecting tests")
     tests = sorted(result["tests"])
     missing = [path for path in tests if not (checkout / path).is_file()]
     if missing:
         raise ValueError(f"the selector named test files the tree does not hold: {missing}")
+    selector_tests = tests
+    if targets:
+        if len(set(targets)) != len(targets) or not set(targets) <= set(tests):
+            raise ValueError("explicit targets must be unique files selected by this change")
+        tests = sorted(targets)
     shards = balanced_shards({path: (checkout / path).stat().st_size for path in tests}, count)
     return {
         "base": base,
+        "base_commit": resolved_base,
+        "head_commit": head,
+        "source_identity": identity,
         "verdict": result["verdict"],
+        "selector_tests": selector_tests,
+        "scope": "explicit subset of selector population" if targets else "selector population",
         "forces_full": result.get("forces_full"),
         "excluded_tests": result.get("excluded_tests"),
         "tests": tests,
@@ -121,12 +136,17 @@ def choose(checkout: Path, base: str, count: int) -> dict:
     }
 
 
+def selection_binding(selection, receipt_dir):
+    raw = merge_suite.suite_flux.encoded(selection)
+    return {"selection_path": str((receipt_dir / SELECTION).resolve()),
+            "selection_sha256": merge_suite.suite_flux.hashlib.sha256(raw).hexdigest(),
+            "source": selection["source_identity"]}
+
+
 def shard_arm(name: str, files: list[str], python: str | None = None) -> dict:
     """merge_suite's x86 arm, running these files under the declared ``-n`` mode.
 
-    The arm's own interpreter is used unless the run names one: the arm's
-    default has no ``jsonschema``, so a test that imports it fails there for
-    want of the package.
+    New submissions require an explicit interpreter. Resume reads saved commands.
     """
 
     arm = {**merge_suite.ARMS["x86"], "targets": list(files), "dist": "worksteal",
@@ -162,20 +182,31 @@ def read_client_result(receipt_dir: Path, name: str) -> dict | None:
 def submit_all(selection: dict, args, receipt_dir: Path) -> dict[str, dict]:
     """Submit every shard, at most ``MAX_CLIENTS`` at once; each answer is merge_suite's record."""
 
+    max_jobs = getattr(args, "max_jobs", MAX_CLIENTS)
+    if not 1 <= max_jobs <= MAX_CLIENTS:
+        raise ValueError(f"max-jobs must be between 1 and {MAX_CLIENTS} (CAPS.md)")
     submission = SimpleNamespace(
         cpus=args.cpus, mem_gb=args.mem_gb, pytest_arg=[*PYTEST_ARGS, *args.pytest_arg],
         timeout_s=args.timeout_s, wait_s=args.wait_s, checkout=args.checkout,
-        dry_run=args.dry_run, artifact_root=args.artifact_root)
+        dry_run=args.dry_run, artifact_root=args.artifact_root,
+        selection_binding=selection_binding(selection, receipt_dir))
     shards = selection["shards"]
+    for name, files in shards.items():
+        merge_suite._preflight(shard_arm(name, files, selection.get("python")), submission)
 
     def client(name: str, files: list[str]) -> dict:
-        sent = merge_suite._submit(name, shard_arm(name, files, selection.get("python")),
-                                   submission, receipt_dir)
+        try:
+            sent = merge_suite._submit(name, shard_arm(name, files, selection.get("python")),
+                                       submission, receipt_dir)
+        except (ValueError, OSError, subprocess.SubprocessError) as exc:
+            # Keep all siblings and every saved ID collectable after one error.
+            sent = merge_suite._resume(name, shard_arm(name, files, selection.get("python")), receipt_dir)
+            sent["client_error"] = str(exc)
         if not args.dry_run:
             write_client_result(receipt_dir, name, sent)
         return sent
 
-    with ThreadPoolExecutor(max_workers=min(MAX_CLIENTS, len(shards))) as pool:
+    with ThreadPoolExecutor(max_workers=min(max_jobs, len(shards))) as pool:
         futures = {name: pool.submit(client, name, files) for name, files in shards.items()}
         return {name: future.result() for name, future in futures.items()}
 
@@ -219,7 +250,7 @@ def population_problems(selection: dict, records: list[dict]) -> list[str]:
     """What the shards together fail to establish, beyond what each one did.
 
     merge_suite judges each shard.  Four things belong to the set: the files
-    the sealed commands ran, the exit codes pbrun gave, the modules a shard did
+    the sealed commands ran, the exit codes Flux client gave, the modules a shard did
     not collect (a pass count never shows them), and, as a seal,
     the tree the selector read (``checkout_source``).  Every problem is named;
     none is a warning.
@@ -230,10 +261,13 @@ def population_problems(selection: dict, records: list[dict]) -> list[str]:
     ran: dict[str, int] = {}
     for record in records:
         name = record["arm"]
-        action = record.get("pool_action")
-        if not action:
+        action = record.get("native_job")
+        if not action or not action.get("command"):
             problems.append(f"{name}: no sealed command is bound to this shard, so what it ran is unknown")
             continue
+        if action.get("application") != selection_binding(selection, Path(
+                record["selection_path"]).parent):
+            problems.append(f"{name}: native launch is not bound to this immutable selection")
         argv, why = merge_suite._pytest_argv(action.get("command") or [])
         if argv is None:
             problems.append(f"{name}: the sealed command is not read as pytest ({why})")
@@ -250,7 +284,7 @@ def population_problems(selection: dict, records: list[dict]) -> list[str]:
                             f"{', '.join(map(str, uncollected[:3]))}")
         code = record.get("submit_returncode")
         if code not in (0, None):
-            problems.append(f"{name}: pbrun returned {code}")
+            problems.append(f"{name}: Flux client returned {code}")
     selected = set(selection["tests"])
     if set(expected) != {record["arm"] for record in records}:
         problems.append("the shards read back are not the shards the selection names")
@@ -269,9 +303,8 @@ def assemble(selection: dict, receipt_dir: Path, checkout: Path, *,
              assembled_by: str = "resume") -> dict:
     """The one receipt for this population.
 
-    Each shard's record is merge_suite's resumed reading of its published
-    population: the pool's own outcome record supplies the exit status, bound
-    to the population by its producer stamp.  pbrun's return code is not that
+    Each shard uses merge_suite's saved native ID, terminal status and bound
+    publication snapshot.  Flux client's return code is not that
     record, so each client's own result is read back from the file it wrote
     when it exited.  A run this process watched and a resume read the same
     files; a shard with none says ``not recorded``.
@@ -281,20 +314,21 @@ def assemble(selection: dict, receipt_dir: Path, checkout: Path, *,
     for name, files in selection["shards"].items():
         record = merge_suite._resume(
             name, shard_arm(name, files, selection.get("python")), receipt_dir)
+        record["selection_path"] = str(receipt_dir / SELECTION)
         sent = read_client_result(receipt_dir, name)
         record["client_result"] = "recorded" if sent is not None else "not recorded"
         if sent is not None:
             record["submit_returncode"] = sent.get("returncode")
             record["submit_elapsed_s"] = sent.get("elapsed_s")
             record["submit_stderr_tail"] = sent.get("stderr_tail")
-            record["pbrun"] = sent.get("pbrun")
+            record["flux"] = sent.get("flux")
         records.append(record)
     receipt = merge_suite._assemble_receipt(
         records, checkout, assembled_by=assembled_by,
         submission_master=merge_suite._read_submission_master(receipt_dir))
     head_source, source_problems = checkout_source(records, checkout)
     problems = population_problems(selection, records) + source_problems
-    receipt["schema"] = "tessera.selected_population.v1"
+    receipt["schema"] = "tessera.selected_population.flux.v2"
     receipt["selection"] = selection
     receipt["checkout_source"] = head_source
     receipt["population_problems"] = problems
@@ -340,34 +374,42 @@ def main(argv: list[str] | None = None) -> int:
                     help="the tree to test; it must be clean and under /mnt/shared")
     ap.add_argument("--base", default="origin/master", help="the left endpoint of base...HEAD")
     ap.add_argument("--shards", type=int, default=12)
+    ap.add_argument("--max-jobs", type=int, default=MAX_CLIENTS, help="reserved concurrent Flux job slots")
+    ap.add_argument("--target", action="append", default=[],
+                    help="run an explicit subset of selector files; retain the selector verdict")
     ap.add_argument("--python", default="",
-                    help="interpreter every shard runs under; the x86 arm's own when omitted")
+                    help="required for new submissions: scoped CPU interpreter every shard runs under")
     ap.add_argument("--cpus", type=int, default=2, help="cores per shard, also pytest's -n")
     ap.add_argument("--mem-gb", type=int, default=4)
-    ap.add_argument("--timeout-s", type=float, default=2400.0)
-    ap.add_argument("--wait-s", type=float, default=3000.0)
+    ap.add_argument("--timeout-s", type=float, default=1200.0)
+    ap.add_argument("--wait-s", type=float, default=1800.0)
     ap.add_argument("--artifact-root", action="append", default=[], metavar="ENV=PATH")
     ap.add_argument("--pytest-arg", action="append", default=[])
     ap.add_argument("--out", default="", help="receipt directory; default is a timestamped one")
     ap.add_argument("--resume", default="", help="a receipt directory; submit nothing")
-    ap.add_argument("--pool-root", default=str(merge_suite.POOL_ROOT))
     ap.add_argument("--dry-run", action="store_true")
     args = ap.parse_args(argv)
+    if not 1 <= args.max_jobs <= MAX_CLIENTS:
+        ap.error(f"max-jobs must be between 1 and {MAX_CLIENTS} (CAPS.md)")
     if args.shards < 1 or args.cpus < 1 or args.mem_gb < 1:
         ap.error("shards, cpus and memory must be positive")
-    merge_suite.use_pool_root(args.pool_root)
+    if not args.resume and not args.python:
+        ap.error("--python must name the scoped CPU interpreter")
     args.checkout = Path(args.checkout).resolve()
 
     if args.resume:
         receipt_dir = Path(args.resume).resolve()
         selection = json.loads((receipt_dir / SELECTION).read_text())
+        if (receipt_dir / SELECTION).read_bytes() != merge_suite.suite_flux.encoded(selection):
+            ap.error("selection file is not the immutable canonical publication")
     else:
         if not str(args.checkout).startswith(str(merge_suite.SHARED_ROOT)) and not args.dry_run:
             print(f"selected_population: the checkout must be under {merge_suite.SHARED_ROOT}",
                   file=sys.stderr)
             return 2
         try:
-            selection = choose(args.checkout, args.base, args.shards)
+            selection = (choose(args.checkout, args.base, args.shards, targets=args.target)
+                         if args.target else choose(args.checkout, args.base, args.shards))
         except ValueError as error:
             print(f"selected_population: {error}", file=sys.stderr)
             return 2
@@ -380,17 +422,19 @@ def main(argv: list[str] | None = None) -> int:
                        else DEFAULT_RECEIPT_ROOT / time.strftime("%Y%m%dT%H%M%S")).resolve()
         # A dry run composes paths and creates nothing, as merge_suite's does.
         if not args.dry_run:
-            receipt_dir.mkdir(parents=True, exist_ok=True)
-            (receipt_dir / SELECTION).write_text(json.dumps(selection, indent=1) + "\n")
+            receipt_dir.mkdir(parents=True, exist_ok=False)
+            with (receipt_dir / SELECTION).open("xb") as handle:
+                handle.write(merge_suite.suite_flux.encoded(selection))
             merge_suite._write_submission_master(args.checkout, receipt_dir)
         submitted = submit_all(selection, args, receipt_dir)
         if args.dry_run:
             for record in submitted.values():
-                print(record["pbrun"])
+                print(record["flux"])
             return 0
 
     receipt = assemble(selection, receipt_dir, args.checkout,
                        assembled_by="resume" if args.resume else "submit")
+    merge_suite._keep_any_previous(receipt_dir / RECEIPT)
     (receipt_dir / RECEIPT).write_text(json.dumps(receipt, indent=2) + "\n")
     print("\n".join(report_lines(receipt)))
     print(f"selected_population: receipt {receipt_dir / RECEIPT}")
