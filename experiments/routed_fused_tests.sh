@@ -61,6 +61,7 @@ echo "host=$(hostname) cpus=$CPUS head=$HEAD state=[$STATE] image=$IMAGE_REF"
 # mounted read-only at the same path.  TEST_LOCAL_TMP=1 puts TMPDIR and pytest's
 # basetemp on a container tmpfs: flock on an NFS out directory fails with EBADF.
 EXTRA=()
+if [[ -n "${TEST_CONTAINER_CIDFILE:-}" ]]; then EXTRA+=(--cidfile "$TEST_CONTAINER_CIDFILE"); fi
 if [[ -n "${BENCH_SRC:-}" || "$CONTAINER_SRC" != /work/src ]]; then
   SOURCE_HOST=${BENCH_SRC:-$CHECKOUT/src}
   [[ -f "$SOURCE_HOST/tessera/serving/csrc/routed_fused_window.cu" ]] || { echo "not a tessera src tree: $SOURCE_HOST" >&2; exit 2; }

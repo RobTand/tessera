@@ -14,6 +14,7 @@ and suite payload convert incoming IDs once with `flux job id --to=f58plain`
 and use that exact scratch leaf. Receipt IDs retain their original spelling. Suite and wrapper payloads sample their own cgroup `memory.peak`
 after cleanup and record `memory_peak_bytes` beside declared memory. Read
 failures are recorded and do not change the numerical verdict. The receipt records host and container affinity, status and cleanup.
+The regdirect benchmark and pytest entry also use the shared launcher. Their D30 host watchdog still signals the owned CID, through Podman. The pytest entry reuses the fused-test wrapper's offline runner staging.
 The routed and dense oracles, mHC probe, routed census, fused census and
 fused-test wrapper now call this launcher. The T8R benchmark also uses this route. Its closed direct comparison mode
 refuses the legacy per-container memory/CPU flags because disabled nested

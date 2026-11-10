@@ -1,7 +1,6 @@
 #!/usr/bin/env bash
 # eng-regdirect-build: run pytest inside the serving image on one GB10 (vLLM's quantizer ops are
-# there, not in the plain cu130 venv).  The image has no pytest: it installs into this run's
-# own HOME (--user), not into the image.  run_pytest.sh <checkout> <out_dir> [pytest args...]
+# there, not in the plain cu130 venv). The shared fused-test wrapper stages an offline runner.  run_pytest.sh <checkout> <out_dir> [pytest args...]
 # D30: a host watchdog kills the container if MemAvailable falls below 2 GiB.
 set -euo pipefail
 CHECKOUT=$(realpath "$1"); OUT=$(realpath -m "$2"); shift 2
@@ -15,15 +14,11 @@ CID="$OUT/container.cid"; rm -f "$CID" "$OUT/.done"
     a=$(awk '/MemAvailable/ {print $2}' /proc/meminfo)
     if (( a < 2097152 )); then
       echo "D30 WATCHDOG: MemAvailable ${a} kB < 2 GiB; killing the container" >&2
-      [[ -f "$CID" ]] && docker kill "$(cat "$CID")" >/dev/null 2>&1; exit 0
+      [[ -f "$CID" ]] && podman kill "$(cat "$CID")" >/dev/null 2>&1; exit 0
     fi
   done ) &
 WD=$!
 rc=0
-docker run --rm --cidfile "$CID" --gpus all --ipc=host --network=host --cpuset-cpus "$CPUS" \
-  --user "$(id -u):$(id -g)" -v "$CHECKOUT":/work:ro -v "$OUT":"$OUT" \
-  -e HOME="$OUT/home" -e TMPDIR="$OUT/tmp" -e TORCH_EXTENSIONS_DIR="$OUT/home/torch_extensions" \
-  -e PYTHONPATH=/work/src -e OMP_NUM_THREADS=1 -e MAX_JOBS=4 -e PYTHONUNBUFFERED=1 \
-  --entrypoint bash -w /work "$IMAGE" -c 'python3 -m pip install -q --user pytest pytest-xdist >/dev/null && python3 -m pytest -p no:cacheprovider "$@"' pytest "$@" || rc=$?
+TEST_CONTAINER_CIDFILE="$CID" bash "$CHECKOUT/experiments/routed_fused_tests.sh" "$CHECKOUT" "$OUT" "$@" || rc=$?
 touch "$OUT/.done"; kill $WD 2>/dev/null || true
 echo "rc=$rc"; exit $rc
