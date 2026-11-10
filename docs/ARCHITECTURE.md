@@ -2,7 +2,10 @@
 
 Re-stamped 2026-11-10 for the owned GPU container launcher. The `run` entry
 in `tools/_flux_gpu_jobspec.py` accepts a digest-pinned container request
-inside a Flux GPU job. It uses rootless Podman with CDI, disabled nested
+inside a Flux GPU job. `runtime_image.sh` selects the executing image store
+with `TESSERA_CONTAINER_ENGINE`; the resolver CLI accepts `--engine podman`
+and checks that store's RepoDigests with the existing digest rule.
+The launcher uses rootless Podman with CDI, disabled nested
 cgroups, no network and a writable container root for NVIDIA hooks. A unique
 name is registered before creation; TERM and exit remove only that container.
 Scratch lives on ext4 under `/tmp/flux-vanilla/<ASCII job ID>` and is removed

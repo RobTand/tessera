@@ -530,3 +530,17 @@ def test_the_shell_helper_refuses_and_prints_json_a_program_can_read(tmp_path, m
     payload = json.loads(proc.stdout.strip().splitlines()[-1])
     assert "REFUSED" in proc.stderr
     assert payload["refused"] is True and payload["reason"] == "image_pin_mismatch"
+
+
+def test_shell_helper_resolves_the_selected_podman_store(tmp_path):
+    """The runtime's RepoDigests, rather than another daemon's store, decide."""
+    binary = tmp_path / 'podman'
+    image = 'example.invalid/cuda@sha256:' + 'a' * 64
+    binary.write_text('#!/bin/sh\nprintf \'sha256:%s\\t["%s"]\\n\' ' + 'b' * 64 + ' ' + image + '\n')
+    binary.chmod(0o755)
+    command = ['bash', '-c', f'source "{ROOT}/experiments/runtime_image.sh"; runtime_image_require "$1"', '_', image]
+    result = subprocess.run(command, env={**os.environ, 'PATH': f'{tmp_path}:{os.environ["PATH"]}',
+                                         'TESSERA_CONTAINER_ENGINE': 'podman'}, capture_output=True, text=True)
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert image.split('@')[1] in result.stdout
+    assert 'b' * 64 in result.stdout

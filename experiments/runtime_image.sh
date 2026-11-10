@@ -51,7 +51,7 @@ runtime_image_require() {
   # Keep both: a gate only a human can read gets skipped by the script that
   # should have honoured it.
   local json rc=0
-  json="$(_runtime_image_cli resolve --image "$image")" || rc=$?
+  json="$(_runtime_image_cli resolve --engine "${TESSERA_CONTAINER_ENGINE:-docker}" --image "$image")" || rc=$?
   RUNTIME_IMAGE_JSON="$json"
   if [ "$rc" != "0" ]; then
     # Missing images and requested-byte integrity are fatal in every mode.
