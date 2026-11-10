@@ -26,6 +26,7 @@ if [[ ( "$BENCH_PY" == bench_geometry.py || "$BENCH_PY" == bench_class_dispatch.
   PYTHONPATH="$PREFLIGHT_SRC:${PYTHONPATH:-}" exec "${BENCH_CPU_PYTHON:?set BENCH_CPU_PYTHON to the scoped CPU interpreter}" \
     "$CHECKOUT/experiments/t8r_speed/$BENCH_PY" --out "$OUT" "$@"
 fi
+export TESSERA_CONTAINER_ENGINE=podman
 IMAGE_REF=${ORACLE_IMAGE:?set ORACLE_IMAGE to the immutable digest-pinned measurement image}
 source "$CHECKOUT/experiments/runtime_image.sh"
 runtime_image_require "$IMAGE_REF"
@@ -163,7 +164,7 @@ ext_libs() {
 EXT_BEFORE=$(ext_libs)
 echo "ext_dir=$EXT_DIR prebuilt=[$(echo "$EXT_BEFORE" | tr '\n' ';')]"
 rc=0
-"${RUN_PREFIX[@]}" docker run --rm --gpus all --ipc=host --network=host --cpuset-cpus "$CPUS" "${DIRECT_OPTS[@]}" \
+"${RUN_PREFIX[@]}" python3 "$CHECKOUT/tools/_flux_gpu_jobspec.py" run --out "$OUT" --scratch-root "${FLUX_SCRATCH:-/tmp/flux-vanilla}" -- "${DIRECT_OPTS[@]}" \
   "${DOCKER_IDENTITY[@]}" \
   -v "$CHECKOUT":/work:ro "${SRC_MOUNT[@]}" "${ART_MOUNT[@]}" -v "$OUT":"$OUT" \
   -e KERNEL_SHA="$KERNEL_SHA" \

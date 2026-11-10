@@ -48,8 +48,8 @@ def wrapper_environment(tmp_path):
     tools = checkout / 'tools'
     tools.mkdir()
     root = Path(__file__).resolve().parents[1]
-    for module in ('_flux_gpu_jobspec.py', '_flux_shape.py'):
-        shutil.copyfile(root / 'tools' / module, tools / module)
+    shutil.copyfile(root / 'tools/_flux_gpu_jobspec.py', tools / '_flux_gpu_jobspec.py')
+    shutil.copyfile(root / 'tools/_flux_shape.py', tools / '_flux_shape.py')
     source = tmp_path / 'frozen-src'
     kernel = source / 'tessera/serving/csrc/routed_fused_window.cu'
     kernel.parent.mkdir(parents=True)
@@ -147,6 +147,7 @@ def test_actual_wrapper_forwards_resident_layout_selection(tmp_path, selection, 
                    env=env, check=True, capture_output=True, text=True)
     args = argv_path.read_bytes().decode().rstrip('\0').split('\0')
     forwarded = [args[i + 1] for i, value in enumerate(args[:-1]) if value == '-e']
+    assert args[0] == 'create'
     assert 'TESSERA_ROUTED_PIECE_MAJOR=' + selection in forwarded
     assert str(source) + ':' + container_source + ':ro' in args
     assert str(extensions) + ':' + container_extensions in args
@@ -157,7 +158,7 @@ def test_actual_wrapper_forwards_resident_layout_selection(tmp_path, selection, 
 
 
 @pytest.mark.parametrize('phase,deadline', [('numeric', '240s'), ('timing', '600s'), ('repeatability', '600s')])
-def test_direct_pm_numeric_reuses_owned_container_and_canonical_namespace(tmp_path, phase, deadline):
+def test_direct_pm_requires_qualification_of_legacy_container_limits(tmp_path, phase, deadline):
     wrapper = Path(__file__).resolve().parents[1] / 'experiments/t8r_speed/bench_t8r.sh'
     checkout, source, extensions, argv_path, env = wrapper_environment(tmp_path)
     artifact = tmp_path / 'artifact'; artifact.mkdir()
@@ -171,19 +172,15 @@ def test_direct_pm_numeric_reuses_owned_container_and_canonical_namespace(tmp_pa
                BENCH_FIXTURE_RUNNER_SP=env['TEST_RUNNER_SP'],
                NATIVE_CONTAINER_SRC='/tessera/src',
                NATIVE_CONTAINER_EXT='/ext')
-    subprocess.run(['bash', str(wrapper), str(checkout), str(tmp_path / 'out'),
+    result = subprocess.run(['bash', str(wrapper), str(checkout), str(tmp_path / 'out'),
                     '--artifact', str(artifact), '--comparison-protocol', '/owned/protocol.json',
-                    '--comparison-phase', phase],
-                   env=env, check=True, capture_output=True, text=True)
-    args = argv_path.read_bytes().decode().rstrip('\0').split('\0')
+                    '--comparison-phase', phase], env=env, capture_output=True, text=True)
+    assert result.returncode == 2
+    assert 'container option is owned by launcher or unsupported: --memory' in result.stderr
+    assert not argv_path.exists(), 'unqualified legacy limits must not create a container'
     timeout_args = Path(env['TIMEOUT_ARGV_PATH']).read_bytes().decode().rstrip('\0').split('\0')
     assert timeout_args[:3] == ['--signal=TERM', '--kill-after=15s', deadline]
-    assert args[args.index('--label') + 1] == 'tessera.paired_numeric_owner=' + 'e' * 32
-    assert args[args.index('--memory') + 1] == args[args.index('--memory-swap') + 1] == '16g'
-    assert args[args.index('--cpus') + 1] == '2'
-    assert 'PYTHONPATH=/tessera/src:/work/tests:' + env['TEST_RUNNER_SP'] in args
-    assert env['TEST_RUNNER_SP'] + ':' + env['TEST_RUNNER_SP'] + ':ro' in args
-    assert (tmp_path / 'out/owner-token.txt').read_text().strip() == 'e' * 32
+
 
 
 @pytest.mark.parametrize("key,on,library", [
@@ -225,12 +222,12 @@ def test_native_build_choice_wrapper_preserves_declared_value(tmp_path, kind, se
 
 
 @pytest.mark.parametrize('extra,expected_rc,message', [
-    (['--paired-k32-numerics'], 0, None),
+    (['--paired-k32-numerics'], 2, 'container option is owned by launcher or unsupported: --memory'),
     (['--paired-k32-numerics', '--comparison-protocol', '/owned/protocol.json'],
      2, 'paired numeric mode excludes a PM comparison protocol'),
     ([], 2, 'direct transport requires a closed PM protocol or the closed paired numeric mode'),
 ])
-def test_direct_paired_numeric_reuses_owned_container_and_deadline(tmp_path, extra, expected_rc, message):
+def test_direct_paired_numeric_refuses_unqualified_container_limits(tmp_path, extra, expected_rc, message):
     """The closed paired numeric mode rides the same owned-container contract."""
     wrapper = Path(__file__).resolve().parents[1] / 'experiments/t8r_speed/bench_t8r.sh'
     checkout, source, extensions, argv_path, env = wrapper_environment(tmp_path)
@@ -254,14 +251,3 @@ def test_direct_paired_numeric_reuses_owned_container_and_deadline(tmp_path, ext
     if expected_rc:
         assert message in result.stderr
         return
-    args = argv_path.read_bytes().decode().rstrip('\0').split('\0')
-    timeout_args = Path(env['TIMEOUT_ARGV_PATH']).read_bytes().decode().rstrip('\0').split('\0')
-    assert timeout_args[:3] == ['--signal=TERM', '--kill-after=15s', '240s']
-    assert args[args.index('--label') + 1] == 'tessera.paired_numeric_owner=' + 'a' * 32
-    assert args[args.index('--memory') + 1] == args[args.index('--memory-swap') + 1] == '16g'
-    assert args[args.index('--pids-limit') + 1] == '512' and args[args.index('--cpus') + 1] == '2'
-    assert args[args.index('--cidfile') + 1] == str(tmp_path / 'out/owned.cid')
-    assert str(fixture_sp) + ':' + str(fixture_sp) + ':ro' in args
-    assert 'PYTHONPATH=/work/src:/work/tests:' + str(fixture_sp) in args
-    assert (tmp_path / 'out/owner-token.txt').read_text().strip() == 'a' * 32
-    assert not any(x.startswith('PRISMABUILD_') for x in args)
