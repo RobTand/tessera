@@ -559,6 +559,7 @@ def _shell_live(text):
 
 # The Tessera master's rule exempts these read-only queries from the reviewed
 # serving path. Every other literal Docker subcommand, and --gpus, needs a guard.
+# Adding to this allow-list is a reviewed one-line change.
 READ_ONLY_DOCKER_SUBCOMMANDS = frozenset({'ps', 'inspect', 'image inspect', 'images', 'info', 'version'})
 
 
@@ -570,13 +571,19 @@ def _shell_docker_use(text):
     return None
 
 
-@pytest.mark.parametrize('command', ['ps', 'inspect', 'image inspect', 'images', 'info', 'version'])
+@pytest.mark.parametrize('command', sorted(READ_ONLY_DOCKER_SUBCOMMANDS))
 def test_read_only_docker_queries_need_no_guard(command):
     assert _docker_order_errors(f'docker {command}\n', '.sh') == []
 
 
 def test_docker_mutation_after_read_only_query_still_needs_guard():
     assert _docker_order_errors('docker ps\ndocker rm -f owned\n', '.sh')
+
+
+@pytest.mark.parametrize('command', ['exec', 'cp', 'rm', 'kill', 'system prune', 'volume',
+                                   'network', 'compose', 'tag', 'push', 'save', 'frobnicate'])
+def test_docker_commands_outside_allow_list_need_guard(command):
+    assert _docker_order_errors(f'docker {command}\n', '.sh')
 
 
 @pytest.mark.parametrize('job_value', ['', 'f123'])
