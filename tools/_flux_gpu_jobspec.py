@@ -286,12 +286,23 @@ def run_container(arguments, directory, scratch_root, *, gpu=True):
         path.write_text(json.dumps(record, indent=2) + '\n')
     save()  # Register the unique owned name before create can start.
     process = None
+    registering = False
     class Interrupted(BaseException):
         pass
     def interrupt(signum, frame):
         record['signal'] = signum
-        raise Interrupted
+        if not registering:
+            raise Interrupted
     handlers = {sig: signal.signal(sig, interrupt) for sig in (signal.SIGINT, signal.SIGTERM)}
+    def launch(argv, **kwargs):
+        nonlocal process, registering
+        registering = True
+        try:
+            process = subprocess.Popen(argv, **kwargs)
+        finally:
+            registering = False
+        if 'signal' in record:
+            raise Interrupted
     try:
         root.mkdir(exist_ok=True)
         scratch.mkdir()
@@ -308,7 +319,7 @@ def run_container(arguments, directory, scratch_root, *, gpu=True):
                   '--entrypoint', '/bin/sh', image, '-ec',
                   'cat /proc/self/status > /tessera-scratch/container-status; exec "$@"',
                   'tessera-gpu', entrypoint, *command]
-        process = subprocess.Popen(create, stdout=subprocess.PIPE, text=True)
+        launch(create, stdout=subprocess.PIPE, text=True)
         stdout, _ = process.communicate()
         record['create_returncode'] = process.returncode
         if process.returncode:
@@ -320,7 +331,7 @@ def run_container(arguments, directory, scratch_root, *, gpu=True):
         if external_cid:
             with external_cid.open('x') as stream:
                 stream.write(cid + '\n')
-        process = subprocess.Popen(['podman', 'start', '--attach', name])
+        launch(['podman', 'start', '--attach', name])
         record['returncode'] = process.wait()
         status = (scratch / 'container-status').read_text()
         mask = next(line.split(':', 1)[1].strip() for line in status.splitlines() if line.startswith('Cpus_allowed_list:'))

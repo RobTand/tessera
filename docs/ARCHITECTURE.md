@@ -25,6 +25,9 @@ remain. Cancellation through non-exec wrappers and the fleet's signal delivery
 still need a real GPU cancel receipt with fleet-master approval. The Docker
 housekeeping path does not establish cleanup of rootless Podman records.
 Runtime and filesystem validation precede owned scratch creation, and creation runs inside the signal cleanup scope.
+INT and TERM defer interruption across each Podman fork and process-handle
+assignment, so cleanup can reap a creator interrupted before it registers the
+container. Child processes retain unblocked signals.
 GPU scratch requires ext4 under `/tmp/flux-vanilla/<ASCII job ID>` and is removed
 on ordinary exit. CPU-only controls also accept xfs and btrfs. Submitted
 environments set `FLUX_F58_FORCE_ASCII=1`. The launcher

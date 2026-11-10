@@ -431,3 +431,43 @@ def test_invalid_memory_declaration_is_named_before_runtime(tmp_path):
     result = subprocess.run(command, env=env, capture_output=True, text=True, timeout=30)
     assert result.returncode == 2 and 'FLUX_MEMORY_GIB' in result.stderr
     assert not (tmp_path / 'calls').exists()
+
+
+def test_term_during_create_registration_reaps_the_creator(tmp_path, monkeypatch):
+    import runpy
+    module = runpy.run_path(str(LAUNCHER))
+    command, env, out = controlled_runtime(tmp_path, create_hold=True)
+    for key, value in env.items():
+        monkeypatch.setenv(key, value)
+    real_popen = subprocess.Popen
+    creators = []
+    def boundary(argv, **kwargs):
+        child = real_popen(argv, **kwargs)
+        if argv[:2] == ['podman', 'create']:
+            creators.append(child)
+            deadline = time.monotonic() + 30
+            while not (tmp_path / 'create-ready').exists():
+                if child.poll() is not None or time.monotonic() > deadline:
+                    raise AssertionError('creator did not reach the registration boundary')
+                time.sleep(0.01)
+            # The real signal arrives after fork, before Popen's caller can assign.
+            signal.raise_signal(signal.SIGTERM)
+        return child
+    monkeypatch.setattr(subprocess, 'Popen', boundary)
+    try:
+        code = module['run_container'](command[command.index('--') + 1:], out, tmp_path / 'scratch')
+        # An unowned creator can only finish after the launcher's cleanup sweep.
+        (tmp_path / 'create-release').touch()
+        for child in creators:
+            child.communicate(timeout=15)
+        assert code == 143
+        assert len(creators) == 1 and creators[0].returncode == -signal.SIGTERM
+        assert not (tmp_path / 'created').exists()
+        record, = [json.loads(p.read_text()) for p in out.glob('container-*.json')]
+        assert record['removed'] and record['scratch_removed']
+    finally:
+        (tmp_path / 'create-release').touch()
+        for child in creators:
+            if child.poll() is None:
+                child.kill()
+            child.communicate(timeout=15)
