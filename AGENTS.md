@@ -239,7 +239,7 @@ Treat as constraints. Violate slogans when judgment says so.
   `tools/impacted_tests.py --ref master...HEAD` computes which tests those
   are rather than leaving it to judgement: it walks the import graph, inverts
   the edges, and returns everything reverse-reachable from what you changed.
-  A PrismaBuild snapshot is parentless, so give it the exact fetched base as
+  A remote run's source snapshot can be parentless, so give it the exact fetched base as
   the left endpoint; when no merge base exists the selector records and uses a
   direct `BASE..HEAD` tree comparison instead.
   Run it **in your own worktree** -- it reads the tree it is standing in, and
