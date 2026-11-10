@@ -4060,7 +4060,11 @@ production qualification remain separate.
 submissions require `--python /path/to/scoped/bin/python`, with no default
 interpreter path. `tools/selected_population.py` requires the same explicit
 input and records it in the selection. Resume needs no new interpreter input
-because it reads saved command evidence. The
+because it reads saved command evidence. Experiment CPU preflight adapters also
+require an explicit interpreter: `bench_t8r.sh` reads `BENCH_CPU_PYTHON`,
+`regdirect_stage1/run.sh` reads `CPU_PY`, and `extents_cpu_python.sh`,
+`glm_control_pytest_python.py` and `t4_code/fp4_arithmetic_action.sh` read
+`TESSERA_CPU_PYTHON`. The
 operator-owned `/mnt/shared/flux-migration/INSTANCE` supplies the client prefix
 and run. `/mnt/shared/flux-migration/flux-uri.sh` resolves the URI at runtime;
 an explicit caller `FLUX_URI` overrides it. Client PATH and library paths come
@@ -10589,11 +10593,14 @@ unit and `--fleet-master-approved <approval reference>` for requests above
 reference is retained in the jobspec. The renderer keeps the plain shape until
 SHAPE section 5 publishes the qualified export shape; rendering does not
 establish topology compatibility or authorize submission.
+The renderer derives its interpreter as
+`/home/rob/venvs/pq-cpu312-tessera-<commit-prefix>/bin/python` from the clean
+checkout commit and records its existence on the placement host as a precondition.
 The launcher forbids encoding, retains all exporter gates, requires fresh output
-and journals cumulative PB progress only after verified source digests or output
+and journals cumulative progress only after verified source digests or output
 shards are durable. Its 8-CPU/48-GiB proposal is a geometric admission ceiling,
 not a measured full-model peak or a serving qualification claim. Final output
-belongs on mothership's local ZFS; PB-owned staging SSD capacity is not output
+belongs on mothership's local ZFS; staging SSD capacity is not output
 space for this workflow.
 
 Native operator runtime records may carry a versioned
