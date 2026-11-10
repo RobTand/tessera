@@ -230,3 +230,16 @@ def test_launcher_converts_the_native_job_id_at_one_boundary(tmp_path):
     record, = [json.loads(p.read_text()) for p in out.glob('container-*.json')]
     assert Path(record['scratch']).parent.name == 'f123'
     assert (tmp_path / 'flux-id-call').read_text().strip() == 'job id --to=f58plain ƒ123'
+
+
+def test_owned_tmpfs_payload_option_is_forwarded(tmp_path):
+    command, env, out = controlled_runtime(tmp_path)
+    image_at = command.index(IMAGE)
+    command[image_at:image_at] = ['--tmpfs', '/pbtmp:rw,exec,size=8g']
+    result = subprocess.run(command, env=env, capture_output=True, text=True, timeout=30)
+    assert result.returncode == 0, result.stderr
+    calls = [json.loads(line) for line in (tmp_path / 'calls').read_text().splitlines()]
+    create = next(c for c in calls if c[0] == 'create')
+    assert create[create.index('--tmpfs') + 1] == '/pbtmp:rw,exec,size=8g'
+    record, = [json.loads(p.read_text()) for p in out.glob('container-*.json')]
+    assert record['removed'] and record['scratch_removed']

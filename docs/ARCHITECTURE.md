@@ -22,7 +22,7 @@ refuses the legacy per-container memory/CPU flags because disabled nested
 cgroups cannot enforce that contract; it needs separate qualification.
 The T4 arithmetic action and its image identity seam resolve the Podman store.
 The T4 script runner, MLA mask
-and profiling rows, and GLM mHC split runner use the same route. The fused-test wrapper retains an
+and profiling rows, and GLM mHC split runner use the same route. The fused-test wrapper retains owned tmpfs payload mounts and an
 explicit CPU-only control, with no CDI device and an empty CUDA device list.
 Flux job context variables are not an admission token. The submitting caller
 must reserve the aggregate resources and collect native terminal evidence.

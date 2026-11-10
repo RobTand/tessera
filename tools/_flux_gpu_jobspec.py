@@ -196,7 +196,7 @@ trap finish EXIT
 def container_options(arguments):
     """Parse only payload options; containment flags belong to this launcher."""
     paired = {'-v', '--volume', '--mount', '-e', '--env', '-w', '--workdir',
-              '--entrypoint', '--user', '--label', '--cidfile'}
+              '--entrypoint', '--user', '--label', '--cidfile', '--tmpfs'}
     options, entrypoint, external_cid = [], None, None
     index = 0
     while index < len(arguments) and arguments[index].startswith('-'):
