@@ -250,6 +250,11 @@ def container_options(arguments):
 def run_container(arguments, directory, scratch_root, *, gpu=True):
     """Own a foreground rootless container inside the calling Flux job unit."""
     options, entrypoint, image, command, external_cid = container_options(arguments)
+    memory = os.environ.get('FLUX_MEMORY_GIB')
+    try:
+        memory = int(memory) if memory is not None else None
+    except ValueError as exc:
+        raise ValueError('FLUX_MEMORY_GIB must be an integer') from exc
     # Flux injects these values. They are context, not an admission token.
     if not os.environ.get('FLUX_JOB_ID'):
         raise ValueError('GPU container requires Flux job context')
@@ -354,7 +359,7 @@ def run_container(arguments, directory, scratch_root, *, gpu=True):
         except (OSError, ValueError, subprocess.SubprocessError) as exc:
             record['cleanup_errors'].append(str(exc))
         finally:
-            record.update(memory_peak_receipt(os.environ.get('FLUX_MEMORY_GIB')))
+            record.update(memory_peak_receipt(memory))
             save()
             for sig, handler in handlers.items():
                 signal.signal(sig, handler)

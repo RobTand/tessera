@@ -414,3 +414,20 @@ def test_submit_runtime_uid_is_current_and_cuda_is_left_to_flux(tmp_path, monkey
                   if json.loads(line)[0] == 'submit')
     assert '--env=XDG_RUNTIME_DIR=/run/user/1234' in submit
     assert not any(arg.startswith('--env=CUDA_VISIBLE_DEVICES=') for arg in submit)
+
+
+def test_container_memory_declaration_is_an_integer(tmp_path):
+    command, env, out = controlled_runtime(tmp_path)
+    env['FLUX_MEMORY_GIB'] = '8'
+    result = subprocess.run(command, env=env, capture_output=True, text=True, timeout=30)
+    assert result.returncode == 0, result.stderr
+    record, = [json.loads(p.read_text()) for p in out.glob('container-*.json')]
+    assert record['declared_memory_gib'] == 8
+
+
+def test_invalid_memory_declaration_is_named_before_runtime(tmp_path):
+    command, env, out = controlled_runtime(tmp_path)
+    env['FLUX_MEMORY_GIB'] = 'eight'
+    result = subprocess.run(command, env=env, capture_output=True, text=True, timeout=30)
+    assert result.returncode == 2 and 'FLUX_MEMORY_GIB' in result.stderr
+    assert not (tmp_path / 'calls').exists()

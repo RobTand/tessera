@@ -32,8 +32,12 @@ and suite payload convert incoming IDs once with `flux job id --to=f58plain`
 and use that exact scratch leaf. Native submission receipts retain the returned
 ID spelling; container receipts use the normalized ID. Suite and wrapper
 payloads sample their own cgroup `memory.peak`
-after cleanup and record `memory_peak_bytes` beside declared memory. Read
-failures are recorded as a null peak with a reason and do not change the numerical verdict.
+after cleanup and record `memory_peak_bytes` beside declared memory.
+`declared_memory_gib` is an integer or null, parsed from `FLUX_MEMORY_GIB`
+at container entry. `memory_peak_bytes` is the cumulative job cgroup peak,
+not an individual container's peak; sequential containers in one job share
+that measurement scope.
+Read failures are recorded as a null peak with a reason and do not change the numerical verdict.
 The shared reader preserves colons in the unified cgroup path, field 3 onward.
 the generated GPU payload calls the launcher's `memory-receipt` subcommand,
 which uses the same `memory_peak_receipt` reader as container receipts.
