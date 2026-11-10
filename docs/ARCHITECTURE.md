@@ -9,6 +9,10 @@ bind the rank-zero broker starttime observed at submission. Source, runtime,
 allocation, affinity, execution and publication gates remain enforced. CPU
 transport evidence does not qualify GPU or scientific results.
 
+Each test starts with every `FLUX_*` environment variable removed by an
+autouse fixture. Tests set their own connection and admission variables;
+the enclosing Flux job's broker URI and job identity are not test inputs.
+
 Re-stamped 2026-11-10 for the Flux migration at `d6b30853`.
 `tools/build_serving_image.py` prints a CPU build job and submits it through
 `tools/_suite_flux.py` only with `--submit`. Use `--collect DIR` to read a

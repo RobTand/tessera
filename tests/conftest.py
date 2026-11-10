@@ -57,6 +57,14 @@ ALPHABET_BLOB = bytes(range(16))
 DESCENDANT_BLOB = bytes(range(32))
 
 
+@pytest.fixture(autouse=True)
+def isolated_flux_environment(monkeypatch):
+    """Each test owns its Flux connection and admission state."""
+    for name in tuple(os.environ):
+        if name.startswith("FLUX_"):
+            monkeypatch.delenv(name, raising=False)
+
+
 def make_geometry(rows=8, columns=32, superblock_columns=8):
     return Geometry(
         rows=rows,
