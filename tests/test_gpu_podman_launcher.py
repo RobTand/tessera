@@ -42,7 +42,8 @@ def test_wrapper_tmpdir_is_owned_once_by_launcher(tmp_path):
     assert tmpdirs == ['TMPDIR=/tessera-scratch/tmp'], tmpdirs
     assert str(out) + ':' + str(out) in create
 
-def test_real_term_removes_only_owned_container(tmp_path):
+@pytest.mark.parametrize('signum', [signal.SIGTERM, signal.SIGINT])
+def test_real_term_removes_only_owned_container(tmp_path, signum):
     command, env, out = controlled_runtime(tmp_path, hold=True)
     process = subprocess.Popen(command, env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
     try:
@@ -51,9 +52,9 @@ def test_real_term_removes_only_owned_container(tmp_path):
             if process.poll() is not None or time.monotonic() > deadline:
                 raise AssertionError(process.communicate(timeout=5))
             time.sleep(0.01)
-        process.send_signal(signal.SIGTERM)
+        process.send_signal(signum)
         stdout, stderr = process.communicate(timeout=15)
-        assert process.returncode == 143, (stdout, stderr)
+        assert process.returncode == 128 + signum, (stdout, stderr)
         record, = [json.loads(p.read_text()) for p in out.glob('container-*.json')]
         assert record['removed'] and record['scratch_removed']
         assert not (tmp_path / 'created').exists()
@@ -237,3 +238,82 @@ def test_rootful_runtime_refused_without_owned_scratch(tmp_path):
     assert result.returncode == 2 and 'rootless' in result.stderr
     assert not (tmp_path / 'scratch/f123').exists()
     assert not (tmp_path / 'created').exists()
+
+
+def test_changed_container_affinity_is_refused_and_cleaned(tmp_path):
+    # A CPU outside the host's mask, independent of host CPU count or load.
+    other = str(max(os.sched_getaffinity(0)) + 1)
+    command, env, out = controlled_runtime(tmp_path, affinity=other)
+    result = subprocess.run(command, env=env, capture_output=True, text=True, timeout=30)
+    assert result.returncode == 2 and 'changed the Flux CPU affinity' in result.stderr
+    record, = [json.loads(p.read_text()) for p in out.glob('container-*.json')]
+    assert record['container_affinity'] == [int(other)]
+    assert record['removed'] and record['scratch_removed']
+
+
+@pytest.mark.parametrize('case,message', [('tag', 'digest-pinned'), ('entrypoint', 'explicit entrypoint')])
+def test_image_and_entrypoint_refused_before_runtime(tmp_path, case, message):
+    command, env, out = controlled_runtime(tmp_path)
+    if case == 'tag':
+        command[command.index(IMAGE)] = 'example.invalid/cuda:latest'
+    else:
+        at = command.index('--entrypoint')
+        del command[at:at + 2]
+    result = subprocess.run(command, env=env, capture_output=True, text=True, timeout=30)
+    assert result.returncode == 2 and message in result.stderr
+    assert not (tmp_path / 'calls').exists()
+    assert not (tmp_path / 'scratch').exists()
+
+
+@pytest.mark.parametrize('option', [
+    ['--privileged'], ['--network=host'], ['--gpus', 'all'],
+    ['--cgroups', 'enabled'], ['--memory', '1g'],
+])
+def test_containment_flags_are_refused_before_runtime(tmp_path, option):
+    command, env, out = controlled_runtime(tmp_path)
+    command[command.index(IMAGE):command.index(IMAGE)] = option
+    result = subprocess.run(command, env=env, capture_output=True, text=True, timeout=30)
+    assert result.returncode == 2 and 'owned by launcher' in result.stderr
+    assert option[0].partition('=')[0] in result.stderr
+    assert not (tmp_path / 'calls').exists()
+
+
+def test_surviving_container_records_cleanup_error_and_preserves_scratch(tmp_path):
+    command, env, out = controlled_runtime(tmp_path, survives_rm=True)
+    result = subprocess.run(command, env=env, capture_output=True, text=True, timeout=30)
+    assert result.returncode == 2 and 'cleanup failed' in result.stderr
+    record, = [json.loads(p.read_text()) for p in out.glob('container-*.json')]
+    assert record['cleanup_errors'] and 'container remains' in record['cleanup_errors'][0]
+    assert record['removed'] is False and record['scratch_removed'] is False
+    assert Path(record['scratch']).is_dir() and (tmp_path / 'created').exists()
+
+
+def test_create_failure_removes_owned_scratch_without_start(tmp_path):
+    command, env, out = controlled_runtime(tmp_path, create_failure=True)
+    result = subprocess.run(command, env=env, capture_output=True, text=True, timeout=30)
+    assert result.returncode == 2 and 'create failed' in result.stderr
+    record, = [json.loads(p.read_text()) for p in out.glob('container-*.json')]
+    assert record['create_returncode'] == 17
+    assert record['removed'] and record['scratch_removed'] and not record['cleanup_errors']
+    assert not Path(record['scratch']).exists() and not (tmp_path / 'ready').exists()
+
+
+@pytest.mark.parametrize('user,keep_id', [('0:0', False), ('1001:1002', True)])
+def test_container_create_contract_and_identity(tmp_path, user, keep_id):
+    import runpy
+    command, env, out = controlled_runtime(tmp_path)
+    env.update(HOME='/secret-home', HOST_SECRET='must-not-be-forwarded')
+    command[command.index(IMAGE):command.index(IMAGE)] = ['--user', user]
+    result = subprocess.run(command, env=env, capture_output=True, text=True, timeout=30)
+    assert result.returncode == 0, result.stderr
+    calls = [json.loads(line) for line in (tmp_path / 'calls').read_text().splitlines()]
+    create = next(call for call in calls if call[0] == 'create')
+    assert '--pull=never' in create and '--init' in create
+    assert ('--userns=keep-id' in create) is keep_id
+    assert create[create.index('--user') + 1] == user
+    entries = [create[i + 1] for i, arg in enumerate(create[:-1]) if arg == '--env']
+    expected = {'TMPDIR': '/tessera-scratch/tmp', 'CUDA_VISIBLE_DEVICES': '0',
+                **runpy.run_path(str(LAUNCHER))['THREADS']}
+    assert sorted(entries) == sorted(k + '=' + v for k, v in expected.items())
+    assert '-e' not in create and '--env-host' not in create
+    assert not any('must-not-be-forwarded' in arg or '/secret-home' in arg for arg in create)
