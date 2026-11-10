@@ -22,15 +22,16 @@ remain. Cancellation through non-exec wrappers and the fleet's signal delivery
 still need a real GPU cancel receipt with fleet-master approval. The Docker
 housekeeping path does not establish cleanup of rootless Podman records.
 Runtime and filesystem validation precede owned scratch creation, and creation runs inside the signal cleanup scope.
-Scratch lives on ext4 under `/tmp/flux-vanilla/<ASCII job ID>` and is removed
-on exit. Submitted environments set `FLUX_F58_FORCE_ASCII=1`. The launcher
+GPU scratch requires ext4 under `/tmp/flux-vanilla/<ASCII job ID>` and is removed
+on ordinary exit. CPU-only controls also accept xfs and btrfs. Submitted
+environments set `FLUX_F58_FORCE_ASCII=1`. The launcher
 and suite payload convert incoming IDs once with `flux job id --to=f58plain`
 and use that exact scratch leaf. Native submission receipts retain the returned
 ID spelling; container receipts use the normalized ID. Suite and wrapper
 payloads sample their own cgroup `memory.peak`
 after cleanup and record `memory_peak_bytes` beside declared memory. Read
 failures are recorded as a null peak with a reason and do not change the numerical verdict.
-The shared reader preserves colons in the unified cgroup path (field 3 onward);
+The shared reader preserves colons in the unified cgroup path, field 3 onward.
 the generated GPU payload calls the launcher's `memory-receipt` subcommand,
 which uses the same `memory_peak_receipt` reader as container receipts.
 An unknown submission retains its unknown state and publishes a named
@@ -1162,11 +1163,13 @@ rewritten; energy and work/J still require actual attribution review.
 Re-stamped 2026-11-10 for paired custom-op Flux execution context (#917).
 The paired batch and its `experiments/t8r_speed/bench_t8r.sh` wrapper check
 for `FLUX_JOB_ID`; that environment variable alone does not attest GPU approval.
-The wrapper runs the container through `docker run` and passes the context
-value into it. It does not render or submit a Flux command. The Flux GPU
-path is not yet qualified. Existing
-source/native/input/certificate, pressure, affinity and owned-CID fences
-remain unchanged; historical direct evidence retains its original scope.
+The wrapper runs a foreground rootless Podman container through
+`tools/_flux_gpu_jobspec.py run` and passes the context value into it. It
+does not submit a Flux job. Its historical closed direct modes are refused
+because disabled nested cgroups cannot enforce their per-container memory
+and CPU contract. Source/native/input/certificate checks remain, while
+historical direct evidence retains its original scope. The transport canary
+does not qualify these comparison workloads.
 
 Re-stamped 2026-10-04 for the current-base paired-K32 harness/control
 composition (#862 integration-conflict repair). The default-off paired-K32
@@ -1180,8 +1183,9 @@ synthetic one-CTA controls) and its fixed timing mode that reuses the
 accepted numeric receipt under ABBA flag order with unprofiled CUDA events,
 separate profiles and raw board-power windows. The direct mode it requires
 holds original regular nofollow FDs through the existing input owner, and
-the finite owned-CID container mode (16GiB host memory, no extra swap, two
-CPUs, 240s per arm) stays the only direct admission. Both wrappers pass the
+the historical finite owned-CID container mode required 16GiB host memory,
+no extra swap, two CPUs and 240s per arm. That direct admission is now
+closed pending containment qualification on the rootless route. Both wrappers pass the
 strict selector `TESSERA_ROUTED_FUSED_PAIRED_K32` through unset versus
 explicitly empty unchanged, so malformed values reach the strict Python
 gate; the compile flag stays default-off. The paired scope is unchanged:
@@ -1405,7 +1409,9 @@ ranges, the captured M2048 expert IDs (M1 uses only their first row), frozen
 source, harness bytes and one matched MMA ELF. Actual mode0/1/2 intermediates
 and final output bits must agree before a content-bound numeric receipt can
 admit ABBA timing. This vLLM-backed batch operator checks `FLUX_JOB_ID`;
-the Flux GPU path is not yet qualified. `piece_major_pb_action.py` binds the
+its closed direct containment mode remains unqualified on rootless Podman.
+The one-test Flux GPU transport canary does not qualify PM numeric or timing
+results. `piece_major_pb_action.py` binds the
 sealed timing packet and explicit coordinator GPU GO inside an exclusive
 measurement attempt, importing the existing containment owner rather than
 launching a second dispatcher. Held original FDs retain the existing outer/inner
@@ -2107,8 +2113,10 @@ T4 activation-prefetch experiment (2026-10-02, #875):
   retained banks; portable x86 dry runs and the actual arm64 container smoke
   are separate evidence, neither a GPU or serving qualification.
   Nonfinite outputs/references/bounds refuse (actual false-pass RED: PB62e3e5ee).
-* GPU wrappers render Flux commands; this path is not yet qualified. Fresh D1 disk
-  checks alone do not qualify execution. Use the
+* GPU wrappers run inside admitted Flux jobs through the owned rootless Podman
+  launcher. Producer submitters also submit and collect by default, with an
+  explicit preview mode and size/duration refusals. The one-test transport
+  canary and fresh D1 disk checks do not qualify this scientific matrix. Use the
   same real captured/calibrated T4 bundle bank, input/global scales, residency,
   recorded routing and quantizer in both arms. Full matrix: modes0/1/2 and
   chain, all admitted uniform/adjacent rates, TP1 and each legal TP2 cut with
@@ -7868,13 +7876,17 @@ and owned temporary build directory; no pre-existing build path is removed.
 The committed packaging parser preserves Python 3.10 through the declared
 conditional `tomli` dependency, not an implicit interpreter-version cutover.
 
-The repository caller `experiments/submit_gb_d1_producer.sh` forwards both producer selectors unchanged into all three rendered commands.
+The repository caller `experiments/submit_gb_d1_producer.sh` forwards both producer selectors unchanged into all three job requests.
 It preserves the historical scientific inputs and resource bounds.
 It uses the wrappers in the current checkout, not the separate frozen GB and D1 checkouts.
 The caller requires both selectors by name and never derives them from the current directory.
-The exporter owner authenticates the producer before rendering the commands.
-`tools/_flux_gpu_jobspec.py` renders the three Flux GPU submission commands.
-It never submits them, and this GPU path is not yet qualified.
+The exporter owner authenticates the producer before constructing the commands.
+`tools/_flux_gpu_jobspec.py` submits and collects the three Flux GPU requests
+by default through this caller; `SUBMIT=render` prints them for review.
+`experiments/ts91_chain.sh` also submits by default and previews with `FLUX_SUBMIT=0`.
+The retained 45/60-minute and 48 GiB requests exceed the launcher's current
+submission limits and are refused. Transport evidence does not qualify the
+producer workload or its numerical results.
 The preflight imports torch and hashes the installed package, so run it in an admitted job.
 
 `SUBMIT=0` authenticates the producer without submission or GPU work. Run this CPU entry as a Flux CPU job.
