@@ -31,7 +31,7 @@ def main() -> int:
     parser.add_argument("--q256", type=int, default=1024)
     args = parser.parse_args()
     if not torch.cuda.is_available():
-        raise SystemExit("a CUDA-visible PrismaBuild allocation is required")
+        raise SystemExit("a CUDA-visible job is required")
     shards, _shapes, _packed, routed = exporter.quantizable(args.src)
     stacks = exporter.expert_stacks(routed)
     stack = min(stacks, key=lambda name: (exporter.body_layer(name), name))

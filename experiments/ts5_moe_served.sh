@@ -47,13 +47,9 @@ export TRITON_CACHE_DIR=${TRITON_CACHE_DIR:-/home/rob/.triton-cache}
 # LOCAL one.)
 export TS RUNS=${RUNS:-$OUT} EXT=${EXT:-/home/rob/tmp/ts5-ext}
 mkdir -p "$OUT" "$EXT"
-# EVERYTHING THIS SCRIPT SAYS GOES TO A FILE AS IT SAYS IT.  Under the
-# PrismaBuild pool the client buffers an action's stdout and publishes it
-# only when the action ends, so an arm that fails inside a long action is
-# invisible until the action ends -- and an action the pool RETRIES never
-# ends, which on 2026-09-04 hid one dump failure through three attempts.
-# A serve's own container log is not a substitute: the failing message is
-# the CLIENT's.
+# Keep launcher output durable as it is emitted. Historically, buffered
+# scheduler output hid an early dump failure through three attempts on
+# 2026-09-04. A serve container log does not contain launcher errors.
 exec > >(tee -a "$OUT/driver.log") 2>&1
 echo "=== ts5_moe_served $(date -Is)  bf16=$BF16  wire=$WIRE"
 COMMIT=$(cd "$TS" && git rev-parse HEAD 2>/dev/null || echo unknown)

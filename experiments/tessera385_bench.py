@@ -56,7 +56,7 @@ def _file_sha(path):
 
 def _source_identity(package):
     # Actual loaded source, including dirty/untracked code and packaged data;
-    # Git HEAD alone identifies neither a PB snapshot nor an installed wheel.
+    # Git HEAD alone identifies neither a source snapshot nor an installed wheel.
     root = Path(package.__file__).resolve().parent
     files = {str(p.relative_to(root)): _file_sha(p)
              for p in sorted(root.rglob("*"))

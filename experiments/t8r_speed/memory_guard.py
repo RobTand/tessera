@@ -1,9 +1,8 @@
 """Run one admitted payload with the D30 physical-memory abort floor.
 
 The payload has its own process group. Launcher exit does not end that group.
-PrismaBuild owns container cleanup and resource admission.
-Process-group proof does not qualify Docker termination; PrismaBuild issue 1599 owns its signal relay.
-This guard never submits, polls or resubmits PB actions.
+The paired launcher owns container cleanup. This guard stops only its payload
+process group; it does not establish Docker cleanup or submit scheduler jobs.
 """
 from __future__ import annotations
 

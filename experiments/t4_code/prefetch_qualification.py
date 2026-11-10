@@ -1,4 +1,4 @@
-"""TS875 finite qualification through the existing PB staged/native owners.
+"""TS875 finite qualification through the existing declared-input/native owners.
 
 These are diagnostic kernel-bank calls, not production _ext serving admission.
 No GPU action is authorized merely by the existence of this runner.

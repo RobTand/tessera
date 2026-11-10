@@ -1,7 +1,7 @@
 """Frozen syntheticgeometry/nonshipping T16 two-arm qualification (#874).
 
 CPU preparation seals fixtures and retained native bytes. GPU consumption uses
-PB pinned ranges and the existing native build callback; no JIT or origin reads.
+declared ranges and the existing native build callback; no JIT or origin reads.
 """
 from __future__ import annotations
 import argparse

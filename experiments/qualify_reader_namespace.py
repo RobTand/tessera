@@ -1,4 +1,4 @@
-"""PB CPU qualification of an explicit reader alongside an unchanged producer.
+"""Flux CPU qualification of an explicit reader alongside an unchanged producer.
 
 This reads retained small wire fixtures; production-shape GPU qualification and
 performance measurements remain separate. No producer or serving files change.

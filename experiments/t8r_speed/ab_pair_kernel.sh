@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# One PB action: the per-pair kernel instantiation A/B on one GB10, three arms
+# One Flux job: the per-pair kernel instantiation A/B on one GB10, three arms
 # timed interleaved (base, new, rev2; twice) with the host load recorded at
 # each step's start and end.  Usage:
 #   ab_pair_kernel.sh <out_root> <base_src> <rev2_src>

@@ -31,10 +31,10 @@ def main():
     if not os.environ.get("FLUX_JOB_ID"):
         raise ValueError("PM batch requires FLUX_JOB_ID environment value; this checks context only, not GPU approval or an admission token")
     if digest(args.packet) != args.packet_sha256:
-        raise ValueError("PB packet changed")
+        raise ValueError("PM packet changed")
     packet = json.loads(Path(args.packet).read_bytes())
     if digest(__file__) != packet["controller_sha256"]:
-        raise ValueError("PB controller changed")
+        raise ValueError("PM controller changed")
     if digest(packet["window"]) != packet["window_sha256"]:
         raise ValueError("original timing window changed")
     window = json.loads(Path(packet["window"]).read_bytes())

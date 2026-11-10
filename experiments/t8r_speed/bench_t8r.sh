@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Run experiments/t8r_speed/bench_t8r.py inside the serving image on one GB10.
-# Batch benchmarks use PrismaBuild, including stock vLLM custom ops. The
+# Batch benchmarks use Flux, including stock vLLM custom ops. The
 # closed comparison retains its qualified held-original-FD transport. Usage:
 #   bench_t8r.sh <checkout> <out_dir> <bench_t8r.py args...>
 # BENCH_NCU=1 wraps the process in Nsight Compute (routed_fused_kernel and the
@@ -26,7 +26,7 @@ if [[ ( "$BENCH_PY" == bench_geometry.py || "$BENCH_PY" == bench_class_dispatch.
   PYTHONPATH="$PREFLIGHT_SRC:${PYTHONPATH:-}" exec "${BENCH_CPU_PYTHON:?set BENCH_CPU_PYTHON to the scoped CPU interpreter}" \
     "$CHECKOUT/experiments/t8r_speed/$BENCH_PY" --out "$OUT" "$@"
 fi
-IMAGE_REF=${ORACLE_IMAGE:?set ORACLE_IMAGE to the immutable PB-declared measurement image}
+IMAGE_REF=${ORACLE_IMAGE:?set ORACLE_IMAGE to the immutable digest-pinned measurement image}
 source "$CHECKOUT/experiments/runtime_image.sh"
 runtime_image_require "$IMAGE_REF"
 IMAGE_ENV=()

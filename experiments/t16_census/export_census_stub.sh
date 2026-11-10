@@ -21,7 +21,7 @@
 # the exporter and TESSERA_PRODUCER_SOURCE names, explicitly and immutably,
 # the qualified genuine source checkout's src/tessera it must authenticate
 # against.  Both are required by name and passed through UNCHANGED -- never
-# derived from $PWD (a PrismaBuild snapshot is an intentionally parentless
+# derived from $PWD (a parentless source snapshot is an intentionally parentless
 # tree and cannot qualify), never overwritten, and a relative reference
 # refuses.  The interpreter is authenticated BEFORE anything runs through
 # tessera.export_serving.authenticate_producer_python: the installed

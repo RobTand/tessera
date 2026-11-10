@@ -743,7 +743,7 @@ def main():
     ap.add_argument("--samples", default="")
     ap.add_argument("--config", default="")
     ap.add_argument("--model", default="")
-    ap.add_argument("--data-manifest", default="", help="PB staged whole-file readset")
+    ap.add_argument("--data-manifest", default="", help="declared whole-file readset")
     ap.add_argument("--prepare-inputs", action="store_true")
     ap.add_argument("--cpu-preflight", action="store_true")
     ap.add_argument("--quality", action="store_true")

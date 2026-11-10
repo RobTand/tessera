@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# PrismaBuild admits this entry point on both processor and device actions.
+# Flux runs this entry point in CPU or GPU jobs.
 set -euo pipefail
 OUT=$(realpath -m "$1"); shift
 mkdir -p "$OUT/home" "$OUT/tmp"

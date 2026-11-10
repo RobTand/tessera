@@ -1,8 +1,7 @@
 """One finite baseline/candidate run through existing bench/native/input owners.
 
-The historical direct launcher is not a qualified PrismaBuild controller.
-Batch custom-op work is not covered by the vLLM service exemption; the
-paired acceptance packet governs any future PB-bound controller.
+The paired acceptance packet governs each run. FLUX_JOB_ID is an environment
+context hint; GPU approval remains the lead's per-run decision.
 """
 import argparse
 import hashlib

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# One PB action: a kernel A/B on one GB10 over any number of arms, each from
+# One Flux job: a kernel A/B on one GB10 over any number of arms, each from
 # an immutable source snapshot under <out_root>/src-<arm>/src (the checkout
 # supplies only the harness), timed interleaved in forward then reverse order
 # so no arm always runs first on a cold GPU.  The first arm is the reference.

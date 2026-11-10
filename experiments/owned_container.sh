@@ -19,7 +19,7 @@
 # a container -- `docker run` starts a fresh environment -- so a serve launched
 # this way runs with whatever the image defaults to.  The defaults here are
 # derived from the launching process's own CPU affinity (Cpus_allowed_list),
-# which is the mask PrismaBuild assigns, so a container gets exactly the CPUs
+# which is the mask Flux assigns, so a container gets exactly the CPUs
 # its parent was granted and a thread count that matches them.  See
 # `owned_container_limits` for why the mask is spelled with --cpuset-cpus and
 # why the thread counts are stated explicitly rather than left to the runtime.
@@ -120,26 +120,9 @@ owned_container_limits() {
 # subshell, and the parent's cleanup would then own nothing.  Refuses a name
 # that already exists.
 #
-# The id comes from --cidfile rather than from a `docker create` whose id is
-# then handed to `docker start`.  Both spellings put the id in hand before a
-# start can fail; only this one runs under PrismaBuild, whose docker shim
-# refuses `docker start` outright ("start/compose-up cannot attach
-# PrismaBuild's owner label; use docker run/create inside this action",
-# tools/docker `_starts_unowned_container`, exit 125) because a container
-# started that way carries none of PB's ownership labels.  The Docker CLI
-# writes the cidfile between create and start, so a container that is created
-# and then fails to start still leaves its id on disk -- which is exactly the
-# failure this issue is about.  Measured, `experiments/cidfile_probe.sh` on
-# sparky through PrismaBuild (action 00869be43ebc, ubuntu:24.04 at
-# sha256:33ceb71981b602c1a7443a53469e4dba065f7503eab3078a2d7a57a2ab987517):
-#
-#   docker create ... -> rc 0, id printed
-#   docker start   ... -> rc 125, "docker shim: start/compose-up cannot attach
-#                         PrismaBuild's owner label; use docker run/create"
-#   run -d --cidfile, healthy   -> rc 0,   cidfile holds the 64-hex id
-#   run -d --cidfile, bad entrypoint -> rc 127, cidfile STILL holds the id and
-#                         `docker inspect` reports the container in state
-#                         "created" -- the leak, with its handle in hand
+# The Docker CLI writes --cidfile between create and start. A failed start
+# still leaves its owned id on disk for cleanup. The former shim-specific
+# start restriction is historical; this helper owns cleanup itself.
 owned_container_start() {
   local name=$1 id cidfile rc; shift
   # The image gate is the caller's (it knows which of these arguments is the

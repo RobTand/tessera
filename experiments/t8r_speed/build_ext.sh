@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Build the fused window libraries of one A/B arm's source into a torch-extension
 # directory, on a CPU and without a GPU, so the timed action (bench_t8r.sh with
-# BENCH_EXT_DIR) only loads them.  Submit it as its own PrismaBuild row on any
+# BENCH_EXT_DIR) only loads them.  Submit it as its own Flux job on any
 # host holding the image; the timing row runs after it on the measurement host.
 #   build_ext.sh <checkout> <ext_dir> [library ...]   (default: value e4m3 e4m3mma)
 # BENCH_SRC: the arm's Tessera source tree, mounted over the checkout's src at
@@ -16,7 +16,7 @@
 set -euo pipefail
 CHECKOUT=$(realpath "$1"); EXT=$(realpath -m "$2"); shift 2
 LIBS=("$@"); (( ${#LIBS[@]} )) || LIBS=(value e4m3 e4m3mma)
-IMAGE_REF=${ORACLE_IMAGE:?set ORACLE_IMAGE to the immutable PB-declared measurement image}
+IMAGE_REF=${ORACLE_IMAGE:?set ORACLE_IMAGE to the immutable digest-pinned measurement image}
 source "$CHECKOUT/experiments/runtime_image.sh"
 runtime_image_require "$IMAGE_REF"
 IMAGE_ENV=()

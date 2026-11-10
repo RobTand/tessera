@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Two-box NCCL protocol/channel sweep, for a TP2 window's pre-serve step.
 # Run on sparky. Preconditions (the orchestrator owns them): both GPUs idle,
-# no vLLM serve up, no PB clients on the Sparks.
+# no vLLM serve up, no competing jobs on the Sparks.
 # usage: nccl_sweep_window.sh OUT_DIR      -> OUT_DIR/nccl-sweep.json (+ per-rank JSON, logs)
 # OUT_DIR must be under /mnt/shared: the script stages its own bytes there (OUT_DIR/bin,
 # sha256 in OUT_DIR/bin/SHA256SUMS) so both boxes run the same files.

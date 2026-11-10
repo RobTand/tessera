@@ -18,12 +18,12 @@ not import ``torch.profiler`` at all.
 Three things it handles that hand-rolled versions tend not to:
 
 *   **The trace is written atomically.**  A SIGKILL landing mid-export would
-    otherwise leave a truncated file where PrismaBuild expects a trace, and
+    otherwise leave a truncated file where the caller expects a trace, and
     "truncated" and "absent" are different failures with different fixes.
 *   **It exports on SIGTERM**, so an action stopped by its deadline still files
     the profile it reached -- which is the run somebody profiled *because* it
     was slow.  Measured on sparky: 20 s of traced matmuls took 4.5 s to write
-    9.0 MB gzipped, and PrismaBuild's reap allows 6 s for it.
+    9.0 MB gzipped. The launcher must reserve enough TERM grace for export.
 *   **The path ends in ``.json.gz`` and torch gzips by suffix**, which is worth
     19x on a real trace (773 kB against 14.7 MB, same run).  Do not rename it.
 

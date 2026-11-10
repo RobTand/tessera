@@ -1,6 +1,6 @@
-"""One-shot PB-only LFM census/student stages against a sealed merged artifact.
+"""One-shot Flux-job-only LFM census/student stages against a sealed merged artifact.
 
-Run `census` and `student` as separate exclusive-GPU PrismaBuild actions, each
+Run `census` and `student` as separate exclusive-GPU Flux jobs, each
 under an outer timeout with cleanup grace. Campaign paths are defaults; an
 artifact override supplies both its model and assembly seal. An existing stage
 directory is a refusal, never permission to overwrite it.

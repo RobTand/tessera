@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # D1 row: time and profile FlashInfer's SM120 sparse MLA prefill kernel
 # (sparse_mla_prefill_mg_kernel<GLM53_NOPE, FP8, 32, 64, 2>) inside the serving
-# image, at the GLM-5.3 served shape. One PrismaBuild GPU action, exclusive GPU.
+# image, at the GLM-5.3 served shape. One Flux GPU job, exclusive GPU.
 #
 #   MLA_IMAGE=<digest ref> d1_row.sh <out_dir>
 #
@@ -14,7 +14,7 @@ set -uo pipefail
 OUT=$(realpath -m "${1:?out_dir}")
 mkdir -p "$OUT/home" "$OUT/tmp"
 export TMPDIR="$OUT/tmp"
-IMAGE=${MLA_IMAGE:?set MLA_IMAGE to the PB-declared serving image}
+IMAGE=${MLA_IMAGE:?set MLA_IMAGE to the digest-pinned serving image}
 HERE=$(dirname "$(realpath "$0")")
 CHECKOUT=$(realpath "$HERE/../..")
 NCU_ROOT=/opt/nvidia/nsight-compute/2025.3.1
