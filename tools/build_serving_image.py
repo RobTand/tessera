@@ -16,6 +16,7 @@ import subprocess
 import sys
 
 ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT / "tools"))
 #: Image manifest architecture to the Flux resource architecture.
 ARCHITECTURES = {"x86": "x86_64", "aarch64": "aarch64"}
 #: The suite transport's ceiling (``_suite_flux.validate``); a full build that needs more is a held decision.
@@ -66,7 +67,6 @@ def build_job(manifest, tag, output_directory, *, cpus=4, memory_gb=8):
             raise ValueError(f"The patch file is absent: {name}")
     if manifest["architecture"] not in ARCHITECTURES:
         raise ValueError("The image architecture is not supported.")
-    sys.path.insert(0, str(ROOT / "tools"))
     import _suite_flux
     _suite_flux.validate(cpus, memory_gb, TIMEOUT_S, {})
     output_directory = str(Path(output_directory).resolve())
@@ -84,7 +84,6 @@ def build_job(manifest, tag, output_directory, *, cpus=4, memory_gb=8):
 
 def submit(job, launch_directory, checkout, python):
     """Hand the job to the native Flux suite transport and return its saved record."""
-    sys.path.insert(0, str(ROOT / "tools"))
     import _suite_flux
     request = job["request"]
     return _suite_flux.submit(launch_directory, checkout, [str(python), "-s", *job["payload"]],

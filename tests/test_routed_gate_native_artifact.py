@@ -19,7 +19,7 @@ def callback_module():
     return module
 
 
-def owner_fixture(tmp_path,monkeypatch,*,expected=None,exec_hook=None,direct=True,owner_args=None):
+def owner_fixture(tmp_path,monkeypatch,*,expected=None,exec_hook=None,owner_args=None):
     module=callback_module();calls=[]
     staged=tmp_path/'original.so';staged.write_bytes(b'owned-wire')
     native_path=str(staged)
@@ -44,9 +44,8 @@ def owner_fixture(tmp_path,monkeypatch,*,expected=None,exec_hook=None,direct=Tru
     return owner,reader,staged,rf,build,calls
 
 
-@pytest.mark.parametrize('direct',[True])
-def test_retained_binary_uses_existing_owner_and_stays_held_until_fence(tmp_path,monkeypatch,direct):
-    owner,reader,staged,rf,original,calls=owner_fixture(tmp_path,monkeypatch,direct=direct)
+def test_retained_binary_uses_existing_owner_and_stays_held_until_fence(tmp_path,monkeypatch):
+    owner,reader,staged,rf,original,calls=owner_fixture(tmp_path,monkeypatch)
     lib=rf.build_library(owner.MODULE,owner.MODULE,lambda *a:pytest.fail('must not JIT rebuild'))
     owner.bind(lib)
     assert calls==[(owner.MODULE,owner.MODULE)]
@@ -63,10 +62,9 @@ def test_retained_binary_uses_existing_owner_and_stays_held_until_fence(tmp_path
     reader.close()
 
 
-@pytest.mark.parametrize('direct',[True])
-def test_wrong_native_digest_refuses_and_closes_without_callback_install(tmp_path,monkeypatch,direct):
+def test_wrong_native_digest_refuses_and_closes_without_callback_install(tmp_path,monkeypatch):
     with pytest.raises(ValueError,match='digest'):
-        owner_fixture(tmp_path,monkeypatch,expected='0'*64,direct=direct)
+        owner_fixture(tmp_path,monkeypatch,expected='0'*64)
 
 
 def test_foreign_already_loaded_module_is_not_adopted(tmp_path,monkeypatch):
@@ -76,28 +74,26 @@ def test_foreign_already_loaded_module_is_not_adopted(tmp_path,monkeypatch):
 
 
 @pytest.mark.parametrize('fault',['foreign_origin','file_change'])
-@pytest.mark.parametrize('direct',[True])
-def test_load_mutation_refuses_and_restores_callback(tmp_path,monkeypatch,fault,direct):
+def test_load_mutation_refuses_and_restores_callback(tmp_path,monkeypatch,fault):
     def corrupt(lib,staged):
         if fault=='foreign_origin':lib.__file__='/foreign/module.so'
         else:
             before = staged.stat()
             staged.write_bytes(b'other-wire')
             os.utime(staged, ns=(before.st_atime_ns, before.st_mtime_ns + 1_000_000_000))
-    owner,reader,staged,rf,original,calls=owner_fixture(tmp_path,monkeypatch,exec_hook=corrupt,direct=direct)
+    owner,reader,staged,rf,original,calls=owner_fixture(tmp_path,monkeypatch,exec_hook=corrupt)
     with pytest.raises(ValueError):
         rf.build_library(owner.MODULE,owner.MODULE,lambda *a:pytest.fail('JIT'))
     with pytest.raises(ValueError):owner.finish(lambda:None)
     assert owner.closed and rf.build_library is original
     with pytest.raises(OSError):os.fstat(owner.fd)
-    if direct and fault=='file_change':
+    if fault=='file_change':
         with pytest.raises(ValueError,match='identity changed'):reader.close()
     else:reader.close()
 
 
-@pytest.mark.parametrize('direct',[True])
-def test_profile_mutation_refuses_after_fence_and_restores_callback(tmp_path,monkeypatch,direct):
-    owner,reader,staged,rf,original,calls=owner_fixture(tmp_path,monkeypatch,direct=direct)
+def test_profile_mutation_refuses_after_fence_and_restores_callback(tmp_path,monkeypatch):
+    owner,reader,staged,rf,original,calls=owner_fixture(tmp_path,monkeypatch)
     rf.build_library(owner.MODULE,owner.MODULE,lambda *a:pytest.fail('JIT'))
     before = staged.stat()
     staged.write_bytes(b'other-wire')
@@ -105,9 +101,7 @@ def test_profile_mutation_refuses_after_fence_and_restores_callback(tmp_path,mon
     fences=[]
     with pytest.raises(ValueError):owner.finish(lambda:fences.append(True))
     assert fences==[True] and owner.closed and rf.build_library is original
-    if direct:
-        with pytest.raises(ValueError,match='identity changed'):reader.close()
-    else:reader.close()
+    with pytest.raises(ValueError,match='identity changed'):reader.close()
 
 
 def test_other_library_cannot_trigger_fallback_compile(tmp_path,monkeypatch):
@@ -121,11 +115,10 @@ def test_other_library_cannot_trigger_fallback_compile(tmp_path,monkeypatch):
 
 @pytest.mark.parametrize("module", ["tessera_routed_fused_value", "tessera_routed_fused_value_prefetch4",
                                    "tessera_routed_fused_e2m1", "tessera_routed_fused_e2m1_apf4"])
-@pytest.mark.parametrize("direct", [True])
-def test_retained_arms_keep_production_source_owner(tmp_path, monkeypatch, module, direct):
+def test_retained_arms_keep_production_source_owner(tmp_path, monkeypatch, module):
     source_module = "tessera_routed_fused_value"
     owner, reader, staged, rf, original, calls = owner_fixture(
-        tmp_path, monkeypatch, direct=direct, owner_args={"module": module, "source_module": source_module})
+        tmp_path, monkeypatch, owner_args={"module": module, "source_module": source_module})
     lib = rf.build_library(module, source_module, lambda *a: pytest.fail("no JIT"))
     owner.bind(lib)
     assert calls == [(module, source_module)]

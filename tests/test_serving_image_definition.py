@@ -240,3 +240,11 @@ def test_collect_requires_terminal_success_with_complete_evidence(tmp_path, monk
     monkeypatch.setattr(_suite_flux, 'collect', lambda path: seen.append(path) or record)
     assert builder.main(['--collect', str(tmp_path)]) == expected
     assert seen == [tmp_path]
+
+
+def test_repeated_job_construction_does_not_grow_import_search_path(tmp_path):
+    builder = _builder()
+    before = list(sys.path)
+    builder.build_job(_manifest(), 't:1', tmp_path)
+    builder.build_job(_manifest(), 't:2', tmp_path)
+    assert sys.path == before
