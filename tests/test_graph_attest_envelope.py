@@ -48,6 +48,18 @@ def test_tighten_can_only_shorten_the_absolute_deadline(monkeypatch):
     assert envelope.remaining() == 5
 
 
+def test_wall_clock_correction_cannot_extend_the_monotonic_deadline(monkeypatch):
+    clock = FakeClock()
+    monkeypatch.setattr(window, 'time', clock)
+    envelope = window.Envelope(clock.time() + 30, cleanup_seconds=3)
+    earlier_peer_end = envelope.end_unix - 1
+    clock.advance(4)
+    clock.unix_value -= 60
+    envelope.tighten(earlier_peer_end)
+    assert envelope.remaining() == 23
+    assert envelope.remaining(cleanup=True) == 26
+
+
 @pytest.mark.parametrize('value', [0, -1, True, float('inf'), float('nan')])
 def test_deadlines_require_finite_positive_times(value):
     with pytest.raises(window.Refused):
