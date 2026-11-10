@@ -1481,10 +1481,6 @@ ts_py_library(
     srcs = [
         "graph_attest_702/managed_window.py",
     ],
-    deps = [
-        "//src/tessera:__init___cycle",
-        "//src/tessera:dev_mode",
-    ],
 )
 
 ts_py_library(
@@ -1572,6 +1568,8 @@ ts_py_library(
         "kda/verify_conv_bank.py",
     ],
     deps = [
+        "//src/tessera:__init___cycle",
+        "//src/tessera:job_metadata",
         ":kda/conv_gate",
         ":kda/conv_progress",
         ":kda/cubin_cmp",
@@ -3342,6 +3340,9 @@ ts_py_library(
     srcs = [
         "t8r_speed/ab_stageprev_accept.py",
     ],
+    deps = [
+        ":t8r_speed/declared_inputs",
+    ],
 )
 
 ts_py_library(
@@ -3609,6 +3610,7 @@ ts_py_library(
         "//src/tessera:__init___cycle",
         "//src/tessera:bf16_route_cycle",
         "//src/tessera:serving/timing_panel",
+        ":t8r_speed/declared_inputs",
         ":t8r_speed/paired_k32_qualification",
         ":t8r_speed/routed_gate_netdata",
     ],
@@ -3623,6 +3625,7 @@ ts_py_library(
         "//src/tessera:__init___cycle",
         "//src/tessera:bf16_route_cycle",
         "//tests:routed_fused_window_support",
+        ":t8r_speed/declared_inputs",
     ],
 )
 
@@ -3666,6 +3669,7 @@ ts_py_library(
         "//src/tessera:__init___cycle",
         "//src/tessera:bf16_route_cycle",
         "//src/tessera:dev_mode",
+        "//src/tessera:job_metadata",
         "//src/tessera:kernel_a4",
         "//src/tessera:rung_allowability",
     ],
@@ -3675,9 +3679,6 @@ ts_py_library(
     name = "t8r_speed/rung_quality",
     srcs = [
         "t8r_speed/rung_quality.py",
-    ],
-    data = [
-        "t4_code/bench_geometry_e2m1.py",
     ],
     deps = [
         "//src/tessera:__init___cycle",

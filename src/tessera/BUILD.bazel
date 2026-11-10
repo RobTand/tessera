@@ -454,6 +454,13 @@ ts_py_library(
 )
 
 ts_py_library(
+    name = "job_metadata",
+    srcs = [
+        "job_metadata.py",
+    ],
+)
+
+ts_py_library(
     name = "kernel",
     srcs = [
         "kernel.py",
