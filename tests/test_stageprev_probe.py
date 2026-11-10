@@ -98,4 +98,3 @@ def test_observer_refuses_a_multi_class_owner(tmp_path):
     fn.native_adapter = native
     with pytest.raises(ValueError, match="uniform"):
         probe().observe(fn, (None, None, None), tmp_path/"words")
-
