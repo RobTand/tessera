@@ -584,3 +584,23 @@ def test_checked_hash_cache_is_allowed(tmp_path, monkeypatch):
     py_compile.compile(str(package / '__init__.py'),
                        invalidation_mode=py_compile.PycInvalidationMode.CHECKED_HASH, doraise=True)
     assert _verify(name)['verified_files'] == 3
+
+
+def test_real_install_verifier_result_satisfies_panel_installation_schema(panel, tmp_path, monkeypatch):
+    monkeypatch.setenv('PRISMAQUANT_DEV_MODE', '1')
+    name, _, _, _ = _install(tmp_path, monkeypatch)
+    installation = _verify(name)
+    assert tp.validate_panel(panel, expected_runtime=copy.deepcopy(panel['runtime']))
+    path = Path(panel['evidence']['runtime_origins']['path'])
+    origins = tp.json_bytes(tp.read_bound(panel['evidence']['runtime_origins']))
+    # Dev mode stamps this fixture's different module/commit identity; the real
+    # panel still enforces the exact installation result schema in every mode.
+    origins['installation'] = installation
+    path.write_bytes(tp.canonical(origins))
+    panel['evidence']['runtime_origins'] = tp.file_binding(path)
+    assert tp.validate_panel(panel, expected_runtime=copy.deepcopy(panel['runtime']))
+    origins['installation']['unexpected'] = True
+    path.write_bytes(tp.canonical(origins))
+    panel['evidence']['runtime_origins'] = tp.file_binding(path)
+    with pytest.raises(ValueError, match='installed RECORD proof'):
+        tp.validate_panel(panel, expected_runtime=copy.deepcopy(panel['runtime']))

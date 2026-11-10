@@ -823,3 +823,21 @@ def test_preflight_execution_semantics_refuse_in_dev_mode(tmp_path, panel, monke
     kwargs['expected_runtime'] = runtime
     with pytest.raises(ValueError, match='preflight software/contract differs'):
         app.tp._verify_runtime_preflight(result, **kwargs)
+
+
+def test_certified_worker_verifies_the_named_package_at_the_expected_commit(panel, monkeypatch):
+    monkeypatch.setenv('PRISMAQUANT_DEV_MODE', '0')
+    expected, _ = _observe_with_source(panel, monkeypatch, panel['runtime']['serving_source_sha256'])
+    monkeypatch.setattr(worker, 'observed_commit', lambda package: expected['tessera_commit'])
+    calls = []
+    def verify(module, commit):
+        calls.append((module, commit))
+        assert module == 'tessera'
+        assert commit == expected['tessera_commit']
+        return {'module': module, 'distribution': 'controlled-install', 'expected_commit': commit,
+                'installed_commit': commit, 'origin': str(Path(expected['package_root']) / '__init__.py'),
+                'verified_files': 1}
+    monkeypatch.setattr(worker, 'verify_install', verify)
+    got, origins, raw = worker.observe_software_runtime(expected)
+    assert calls == [('tessera', expected['tessera_commit'])]
+    assert origins['installation']['expected_commit'] == expected['tessera_commit']
