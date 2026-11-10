@@ -11,8 +11,6 @@ import signal
 import subprocess
 import sys
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
-
 RUNNER = "tools/suite_container.py"
 PODMAN = "/usr/bin/podman"
 _IMAGE = re.compile(r"sha256:[0-9a-f]{64}")
