@@ -21,7 +21,7 @@ import _suite_flux  # noqa: E402
 ARCHITECTURES = {"x86": "x86_64", "aarch64": "aarch64"}
 #: The suite transport's ceiling (``_suite_flux.validate``); a full build that needs more is a held decision.
 TIMEOUT_S = 1790
-SUBMIT_REFUSAL = ("The serving image targets the root Docker store; no reviewed serving wrapper exists yet. "
+BUILD_REFUSAL = ("The serving image targets the root Docker store; no reviewed serving wrapper exists yet. "
                   "The lead must choose a rootless Podman build in a Flux job plus one reviewed docker load "
                   "of a pinned-digest tarball, or one reviewed root-Docker entry. --run and --submit are refused.")
 
@@ -80,11 +80,6 @@ def build_job(manifest, tag, output_directory, *, cpus=4, memory_gb=8):
         "output_path": str(Path(output_directory) / "serving-image.tar")}
 
 
-def submit(job, launch_directory, checkout, python):
-    """Refuse before creating a Flux job whose payload would itself refuse."""
-    raise ValueError(SUBMIT_REFUSAL)
-
-
 def container_name(identity):
     return "tessera-image-build-" + re.sub(r"[^A-Za-z0-9]", "", identity)
 
@@ -100,9 +95,6 @@ def main(argv=None):
     parser.add_argument("--output-directory", help="Use an output directory on the shared mount.")
     parser.add_argument("--cpus", type=int, default=4)
     parser.add_argument("--memory-gb", type=int, default=8)
-    parser.add_argument("--launch-directory", help="New directory for the Flux launch record (--submit).")
-    parser.add_argument("--checkout", help="Detached clean shared checkout to run in (--submit).")
-    parser.add_argument("--python", default=sys.executable, help="Interpreter the Flux job runs (--submit).")
     mode = parser.add_mutually_exclusive_group()
     mode.add_argument("--submit", action="store_true", help="Refused pending the lead's root-Docker-store decision.")
     mode.add_argument("--run", action="store_true", help="Refused until a reviewed build path exists.")
@@ -110,7 +102,7 @@ def main(argv=None):
     mode.add_argument("--collect", metavar="DIR", help="Collect a saved Flux launch; only verified terminal success exits zero.")
     args = parser.parse_args(argv)
     if args.submit or args.run:
-        print(SUBMIT_REFUSAL, file=sys.stderr)
+        print(BUILD_REFUSAL, file=sys.stderr)
         return 2
     if args.collect:
         record = _suite_flux.collect(Path(args.collect))

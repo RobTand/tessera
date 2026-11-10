@@ -90,16 +90,12 @@ def test_the_request_is_the_suite_transports_stock_demand_and_refuses_more(tmp_p
             builder.build_job(_manifest(), "t:1", tmp_path, **demand)
 
 
-def test_submit_refuses_before_the_suite_transport(tmp_path, monkeypatch):
-    builder = _builder()
-    job = builder.build_job(_manifest(), "t:1", tmp_path)
-    seen = {}
-    import _suite_flux
-    monkeypatch.setattr(_suite_flux, "submit", lambda *a, **k: seen.update(args=a, kwargs=k) or {"state": "running"})
-    with pytest.raises(ValueError, match="root Docker store.*lead"):
-        builder.submit(job, tmp_path / "launch", tmp_path / "checkout", "/named/python")
-    assert seen == {}
-    assert not (tmp_path / "launch").exists()
+@pytest.mark.parametrize('flag', ['--launch-directory', '--checkout', '--python'])
+def test_removed_submission_options_are_rejected(flag, capsys):
+    with pytest.raises(SystemExit) as failure:
+        _builder().main(['--submit', flag, '/unused'])
+    assert failure.value.code == 2
+    assert 'unrecognized arguments: ' + flag in capsys.readouterr().err
 
 
 def test_submit_cli_refuses_before_staging_or_transport(tmp_path, monkeypatch, capsys):
@@ -107,8 +103,7 @@ def test_submit_cli_refuses_before_staging_or_transport(tmp_path, monkeypatch, c
     calls = []
     monkeypatch.setattr(builder._suite_flux, 'submit', lambda *a, **k: calls.append(a))
     code = builder.main(['--submit', '--manifest-json', json.dumps(_manifest()),
-                         '--image-tag', 't:1', '--output-directory', str(tmp_path / 'out'),
-                         '--launch-directory', str(tmp_path / 'launch'), '--checkout', str(ROOT)])
+                         '--image-tag', 't:1', '--output-directory', str(tmp_path / 'out')])
     assert code == 2
     assert 'root Docker store' in capsys.readouterr().err
     assert calls == [] and not (tmp_path / 'launch').exists() and not (tmp_path / 'out').exists()
