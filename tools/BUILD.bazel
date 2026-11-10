@@ -99,6 +99,9 @@ ts_py_library(
     srcs = [
         "build_serving_image.py",
     ],
+    data = [
+        "//experiments:flux_docker_guard.sh",
+    ],
     deps = [
         ":_suite_flux",
     ],

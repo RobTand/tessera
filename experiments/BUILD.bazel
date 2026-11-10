@@ -2627,6 +2627,7 @@ ts_py_library(
     ],
     data = [
         "//src/tessera:serving/csrc/regdirect_routed.cu",
+        "flux_docker_guard.sh",
     ],
 )
 
@@ -2862,6 +2863,9 @@ ts_py_library(
     srcs = [
         "run_glm_native_construction.py",
     ],
+    data = [
+        "flux_docker_guard.sh",
+    ],
 )
 
 ts_py_library(
@@ -2969,6 +2973,7 @@ ts_py_library(
     ],
     data = [
         "//src/tessera:serving/runtime_contract.json",
+        "flux_docker_guard.sh",
     ],
     deps = [
         ":capture_full_engine_resources",

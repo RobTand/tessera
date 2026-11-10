@@ -1,4 +1,7 @@
 #!/usr/bin/env bash
+
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/flux_docker_guard.sh"
+refuse_flux_docker || exit 2
 # Take a route census across TWO boxes: a ray head on this one, a ray worker on
 # the other, one vLLM engine at tensor parallel 2.
 #

@@ -1,4 +1,7 @@
 #!/usr/bin/env bash
+
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/flux_docker_guard.sh"
+refuse_flux_docker || exit 2
 # A served KL in the DECODE regime, on Tessera's own vLLM plugin (issue #102).
 #
 # WHY THIS WRAPPER EXISTS.  ``tessera_plugin_served.sh`` takes one prefill-

@@ -70,6 +70,7 @@ def _run_wrapper(tmp_path, *, fail_remove=False, ready=False, metrics="clean"):
     scripts.mkdir()
     wrapper = scripts / WRAPPER.name
     shutil.copyfile(WRAPPER, wrapper)
+    shutil.copyfile(WRAPPER.parent / "flux_docker_guard.sh", scripts / "flux_docker_guard.sh")
     shutil.copyfile(WRAPPER.parent / "serve_metrics.sh", scripts / "serve_metrics.sh")
     (scripts / "runtime_image.sh").write_text("runtime_image_require() { :; }\n")
     (scripts / "build_identity.sh").write_text(
@@ -116,6 +117,8 @@ esac
         # not there so a run that gets past the gate fails there, fast.
         "TESSERA_KL_CORPUS": str(tmp_path / "no-such-corpus.json"),
     }
+    # Cleanup policy is exercised outside a job; in-job refusal has its own test.
+    env.pop("FLUX_JOB_ID", None)
     result = subprocess.run(
         ["bash", str(wrapper), str(tmp_path / "model"),
          str(tmp_path / "dump.json"), "teacher"],

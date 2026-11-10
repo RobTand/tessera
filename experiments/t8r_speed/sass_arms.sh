@@ -1,4 +1,7 @@
 #!/usr/bin/env bash
+
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/../flux_docker_guard.sh"
+refuse_flux_docker || exit 2
 # SASS and resource usage of one library across A/B arms built by build_ext.sh,
 # disassembled inside the measurement image (cuobjdump), addresses and
 # encodings stripped so two arms compare by instruction.

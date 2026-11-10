@@ -1,4 +1,7 @@
 #!/usr/bin/env bash
+
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/../flux_docker_guard.sh"
+refuse_flux_docker || exit 2
 # Copy, out of the serving image, the stock mHC sources a fused kernel must
 # reproduce bit for bit (#783): vLLM's mHC dispatch, DeepGEMM's sm120 TF32
 # pre-norm GEMM, TileLang's templates and compile flags, and the SASS of the

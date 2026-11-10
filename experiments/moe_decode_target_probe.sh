@@ -1,4 +1,7 @@
 #!/usr/bin/env bash
+
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/flux_docker_guard.sh"
+refuse_flux_docker || exit 2
 # Run experiments/moe_decode_target_probe.py inside the pinned serving build.
 #
 # WITH A GPU, and therefore with the serve lock.  The probe's decisive leg calls

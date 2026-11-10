@@ -1,4 +1,7 @@
 #!/usr/bin/env bash
+
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/flux_docker_guard.sh"
+refuse_flux_docker || exit 2
 # Graph-mode serve smoke: the KL harness serves --enforce-eager, and a format
 # that loads eager can still fail at CUDA-graph capture (principle 9 wants
 # both modes).  Serve WITHOUT --enforce-eager, ask for one greedy completion,

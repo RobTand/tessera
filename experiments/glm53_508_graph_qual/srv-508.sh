@@ -1,4 +1,7 @@
 #!/usr/bin/env bash
+
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/../flux_docker_guard.sh"
+refuse_flux_docker || exit 2
 # tessera#508: whole-engine CUDA-graph divergence bisection on the GLM53 NoPE
 # CUSTOM backend, 4-layer A4 stub, TP1 on sparky, inside an approved Flux GPU job. EAGER=1 (default) serves --enforce-eager; EAGER=0 is a graph arm
 # (COMPILATION_JSON names the mode; glm53_nope._config_reason gates it).

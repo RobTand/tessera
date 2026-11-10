@@ -1,4 +1,7 @@
 #!/usr/bin/env bash
+
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/flux_docker_guard.sh"
+refuse_flux_docker || exit 2
 # Serve one checkpoint, dump its per-position logprobs, stop the serve.
 #
 # The two arms of a KL must not be resident at once: model weights, caches

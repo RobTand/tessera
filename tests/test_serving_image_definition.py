@@ -119,15 +119,17 @@ class _Docker:
 
 @pytest.mark.parametrize("code,remove_error,expected", [
     (0, "", 0), (7, "", 7), (0, "Error: No such container: " + "a" * 12, 0), (7, "daemon refused", 7), (0, "daemon refused", 1)])
-def test_the_owned_container_is_removed_whatever_the_build_does(tmp_path, code, remove_error, expected):
+def test_the_owned_container_is_removed_whatever_the_build_does(tmp_path, monkeypatch, code, remove_error, expected):
     docker = _Docker(code, remove_error=remove_error)
     manifest = _manifest()
-    status = _builder().run_build(manifest, "t:1", str(tmp_path / "out"), "source:x", runner=docker,
-                                  environ={"TMPDIR": str(tmp_path), "FLUX_JOB_ID": "\u0192Abc123"})
+    module = _builder()
+    monkeypatch.setattr(module.os, 'getpid', lambda: 123)
+    status = module.run_build(manifest, "t:1", str(tmp_path / "out"), "source:x", runner=docker,
+                             environ={"TMPDIR": str(tmp_path)})
     assert status == expected
     assert docker.calls[-1] == ["docker", "rm", "-f", "a" * 12]
     run = docker.calls[0]
-    assert run[run.index("--name") + 1] == "tessera-image-build-Abc123"
+    assert run[run.index("--name") + 1] == "tessera-image-build-123"
     assert (tmp_path / "out").is_dir()
 
 

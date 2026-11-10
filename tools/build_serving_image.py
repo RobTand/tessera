@@ -104,6 +104,9 @@ def remove_owned_container(cidfile, runner=subprocess.run):
 
 def run_build(manifest, tag, output_directory, kernel_build, *, runner=subprocess.run, environ=os.environ):
     """Flux job payload: run BuildKit, then remove the container whatever the outcome."""
+    refusal = subprocess.run(['/bin/bash', str(ROOT / 'experiments/flux_docker_guard.sh')], env=environ)
+    if refusal.returncode:
+        return refusal.returncode
     scratch = Path(environ["TMPDIR"])
     owner = {"name": "tessera-image-build-" + re.sub(r"[^A-Za-z0-9]", "", environ.get("FLUX_JOB_ID", str(os.getpid()))),
              "cidfile": str(scratch / "builder.cid")}

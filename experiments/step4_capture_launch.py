@@ -247,6 +247,7 @@ def family_modules(artifact: Path) -> dict:
 def docker_command(*, name: str, image_id: str, mounts, environment, entry, out_host: Path,
                    jit_host: Path, ext_host: Path, ext_readonly: bool, affinity=None,
                    tp2=False, extra_mounts=(), cidfile=None) -> list:
+    subprocess.run(["bash", str(Path(__file__).with_name("flux_docker_guard.sh"))], check=True)
     command = ["docker", "run", "--rm", "--gpus", "all", "--ipc", "host", "--network",
                "host" if tp2 else "none",
                "--name", name, "--workdir", "/tessera"]

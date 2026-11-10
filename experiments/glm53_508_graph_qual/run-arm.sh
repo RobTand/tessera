@@ -1,4 +1,7 @@
 #!/usr/bin/env bash
+
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/../flux_docker_guard.sh"
+refuse_flux_docker || exit 2
 # tessera#508: run one serve arm end to end on sparky under the box serve lock.
 #   run-arm.sh ARM EAGER [COMPILATION_JSON] [BISECT_ENV...]
 # Acquires experiments/serve_lock.sh, launches srv-508.sh up, runs the fixed

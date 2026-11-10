@@ -1,4 +1,7 @@
 #!/usr/bin/env bash
+
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/../flux_docker_guard.sh"
+refuse_flux_docker || exit 2
 # tessera#702/#695: graph-vs-eager equality serves on the vLLM nightly stack
 # (U4_STACK=nightly-20260929). One TP1 serve of a GLM-5.3-Flash stub on sparky,
 # vLLM's own attention backend (FLASHINFER_MLA_SPARSE_SM120, selected by vLLM),

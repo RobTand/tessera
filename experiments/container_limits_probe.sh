@@ -1,4 +1,7 @@
 #!/usr/bin/env bash
+
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/flux_docker_guard.sh"
+refuse_flux_docker || exit 2
 # Do host thread exports cross into a container, and which limit flag do
 # affinity-blind counts see?  ubuntu:24.04, CPU only, no ports, no GPU.
 set -uo pipefail

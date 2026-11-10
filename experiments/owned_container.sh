@@ -1,4 +1,7 @@
 #!/usr/bin/env bash
+
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/flux_docker_guard.sh"
+refuse_flux_docker || exit 2
 # Containers this wrapper owns, and the CPU budget it hands them (#375).
 #
 # Two rules, and both are about a name being the wrong handle for a container.

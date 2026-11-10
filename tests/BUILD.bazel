@@ -1369,6 +1369,7 @@ ts_py_test(
     library = ":test_bench_job_metadata_lib",
     data = [
         "//:pyproject.toml",
+        "//experiments:flux_docker_guard.sh",
         "//experiments:routed_census.sh",
         "//experiments:routed_fused_tests.sh",
         "//experiments:routed_pair_oracle.sh",
@@ -1416,6 +1417,7 @@ ts_py_test(
     library = ":test_bench_job_metadata_lib",
     data = [
         "//:pyproject.toml",
+        "//experiments:flux_docker_guard.sh",
         "//experiments:routed_census.sh",
         "//experiments:routed_fused_tests.sh",
         "//experiments:routed_pair_oracle.sh",
@@ -1526,6 +1528,7 @@ ts_py_test(
     library = ":test_bench_kda_geometry_lib",
     data = [
         "//:pyproject.toml",
+        "//experiments:flux_docker_guard.sh",
         "//experiments:t8r_speed/bench_t8r.sh",
         "//experiments:t8r_speed/build_ext.sh",
     ],
@@ -1550,6 +1553,7 @@ ts_py_test(
     library = ":test_bench_kda_geometry_lib",
     data = [
         "//:pyproject.toml",
+        "//experiments:flux_docker_guard.sh",
         "//experiments:t8r_speed/bench_t8r.sh",
         "//experiments:t8r_speed/build_ext.sh",
     ],
@@ -1584,6 +1588,7 @@ ts_py_test(
     library = ":test_bench_kda_timing_scope_lib",
     data = [
         "//:pyproject.toml",
+        "//experiments:flux_docker_guard.sh",
         "//experiments:t8r_speed/bench_t8r.sh",
         "//experiments:t8r_speed/build_ext.sh",
     ],
@@ -1609,6 +1614,7 @@ ts_py_test(
     library = ":test_bench_kda_timing_scope_lib",
     data = [
         "//:pyproject.toml",
+        "//experiments:flux_docker_guard.sh",
         "//experiments:t8r_speed/bench_t8r.sh",
         "//experiments:t8r_speed/build_ext.sh",
     ],
@@ -1722,6 +1728,7 @@ ts_py_test(
     library = ":test_bench_t8r_routed_builder_lib",
     data = [
         "//:pyproject.toml",
+        "//experiments:flux_docker_guard.sh",
         "//experiments:t8r_speed/bench_t8r.sh",
         "//experiments:t8r_speed/build_ext.sh",
     ],
@@ -1746,6 +1753,7 @@ ts_py_test(
     library = ":test_bench_t8r_routed_builder_lib",
     data = [
         "//:pyproject.toml",
+        "//experiments:flux_docker_guard.sh",
         "//experiments:t8r_speed/bench_t8r.sh",
         "//experiments:t8r_speed/build_ext.sh",
     ],
@@ -3135,6 +3143,7 @@ ts_py_test(
         "//experiments:dense4_comparator_one_teacher.sh",
         "//experiments:dense_fused_oracle.sh",
         "//experiments:extents_cpu_python.sh",
+        "//experiments:flux_docker_guard.sh",
         "//experiments:gemv_chain.sh",
         "//experiments:gemv_pf_chain.sh",
         "//experiments:glm53_508_graph_qual/mhc_split_run.sh",
@@ -3385,6 +3394,7 @@ ts_py_test(
         "//experiments:dense4_comparator_one_teacher.sh",
         "//experiments:dense_fused_oracle.sh",
         "//experiments:extents_cpu_python.sh",
+        "//experiments:flux_docker_guard.sh",
         "//experiments:gemv_chain.sh",
         "//experiments:gemv_pf_chain.sh",
         "//experiments:glm53_508_graph_qual/mhc_split_run.sh",
@@ -3917,6 +3927,7 @@ ts_py_test(
     library = ":test_class_dispatch_measurement_residency_lib",
     data = [
         "//:pyproject.toml",
+        "//experiments:flux_docker_guard.sh",
         "//experiments:t8r_speed/bench_t8r.sh",
         "//experiments:t8r_speed/build_ext.sh",
     ],
@@ -3939,6 +3950,7 @@ ts_py_test(
     library = ":test_class_dispatch_measurement_residency_lib",
     data = [
         "//:pyproject.toml",
+        "//experiments:flux_docker_guard.sh",
         "//experiments:t8r_speed/bench_t8r.sh",
         "//experiments:t8r_speed/build_ext.sh",
     ],
@@ -4496,6 +4508,7 @@ ts_py_test(
     library = ":test_d41_e2m1_geometry_lib",
     data = [
         "//:pyproject.toml",
+        "//experiments:flux_docker_guard.sh",
         "//experiments:t8r_speed/bench_t8r.sh",
         "//experiments:t8r_speed/build_ext.sh",
     ],
@@ -4520,6 +4533,7 @@ ts_py_test(
     library = ":test_d41_e2m1_geometry_lib",
     data = [
         "//:pyproject.toml",
+        "//experiments:flux_docker_guard.sh",
         "//experiments:t8r_speed/bench_t8r.sh",
         "//experiments:t8r_speed/build_ext.sh",
     ],
@@ -4560,6 +4574,7 @@ ts_py_test(
     library = ":test_d41_e2m1_quality_scope_lib",
     data = [
         "//:pyproject.toml",
+        "//experiments:flux_docker_guard.sh",
         "//experiments:t8r_speed/bench_t8r.sh",
         "//experiments:t8r_speed/build_ext.sh",
     ],
@@ -4583,6 +4598,7 @@ ts_py_test(
     library = ":test_d41_e2m1_quality_scope_lib",
     data = [
         "//:pyproject.toml",
+        "//experiments:flux_docker_guard.sh",
         "//experiments:t8r_speed/bench_t8r.sh",
         "//experiments:t8r_speed/build_ext.sh",
     ],
@@ -5666,6 +5682,7 @@ ts_py_test(
         "//:pyproject.toml",
         "//experiments:cuda_home_shadow.sh",
         "//experiments:extents_cpu_python.sh",
+        "//experiments:flux_docker_guard.sh",
         "//experiments:regdirect_stage1/run.sh",
         "//experiments:runtime_image.sh",
         "//experiments:t4_code/fp4_arithmetic_action.sh",
@@ -5705,6 +5722,7 @@ ts_py_test(
         "//:pyproject.toml",
         "//experiments:cuda_home_shadow.sh",
         "//experiments:extents_cpu_python.sh",
+        "//experiments:flux_docker_guard.sh",
         "//experiments:regdirect_stage1/run.sh",
         "//experiments:runtime_image.sh",
         "//experiments:t4_code/fp4_arithmetic_action.sh",
@@ -5785,6 +5803,7 @@ ts_py_test(
         "//experiments:dense4_comparator_one_teacher.sh",
         "//experiments:dense_fused_oracle.sh",
         "//experiments:extents_cpu_python.sh",
+        "//experiments:flux_docker_guard.sh",
         "//experiments:gemv_chain.sh",
         "//experiments:gemv_pf_chain.sh",
         "//experiments:glm53_508_graph_qual/mhc_split_run.sh",
@@ -6033,6 +6052,7 @@ ts_py_test(
         "//experiments:dense4_comparator_one_teacher.sh",
         "//experiments:dense_fused_oracle.sh",
         "//experiments:extents_cpu_python.sh",
+        "//experiments:flux_docker_guard.sh",
         "//experiments:gemv_chain.sh",
         "//experiments:gemv_pf_chain.sh",
         "//experiments:glm53_508_graph_qual/mhc_split_run.sh",
@@ -7120,6 +7140,7 @@ ts_py_test(
     library = ":test_fp4_arithmetic_attestation_lib",
     data = [
         "//:pyproject.toml",
+        "//experiments:flux_docker_guard.sh",
         "//experiments:t8r_speed/bench_t8r.sh",
         "//experiments:t8r_speed/build_ext.sh",
     ],
@@ -7144,6 +7165,7 @@ ts_py_test(
     library = ":test_fp4_arithmetic_attestation_lib",
     data = [
         "//:pyproject.toml",
+        "//experiments:flux_docker_guard.sh",
         "//experiments:t8r_speed/bench_t8r.sh",
         "//experiments:t8r_speed/build_ext.sh",
     ],
@@ -8915,6 +8937,9 @@ ts_py_test(
     name = "test_glm_native_execution_authority",
     path = "tests/test_glm_native_execution_authority.py",
     library = ":test_glm_native_execution_authority_lib",
+    data = [
+        "//experiments:flux_docker_guard.sh",
+    ],
     deps = [
         "//experiments:glm_native_construction",
         "//experiments:glm_packed_intake_observer",
@@ -8934,6 +8959,9 @@ ts_py_test(
     name = "test_glm_native_execution_authority.bytes",
     path = "tests/test_glm_native_execution_authority.py",
     library = ":test_glm_native_execution_authority_lib",
+    data = [
+        "//experiments:flux_docker_guard.sh",
+    ],
     deps = [
         "//experiments:glm_native_construction",
         "//experiments:glm_packed_intake_observer",
@@ -9370,6 +9398,7 @@ ts_py_test(
     data = [
         "//:pyproject.toml",
         "//experiments:cuda_home_shadow.sh",
+        "//experiments:flux_docker_guard.sh",
         "//experiments:regdirect_stage1/run.sh",
         "//experiments:regdirect_stage1/run_pytest.sh",
         "//experiments:runtime_image.sh",
@@ -9407,6 +9436,7 @@ ts_py_test(
     data = [
         "//:pyproject.toml",
         "//experiments:cuda_home_shadow.sh",
+        "//experiments:flux_docker_guard.sh",
         "//experiments:regdirect_stage1/run.sh",
         "//experiments:regdirect_stage1/run_pytest.sh",
         "//experiments:runtime_image.sh",
@@ -9461,6 +9491,7 @@ ts_py_test(
         "//:pyproject.toml",
         "//experiments:cuda_home_shadow.sh",
         "//experiments:dense_fused_oracle.sh",
+        "//experiments:flux_docker_guard.sh",
         "//experiments:glm53_508_graph_qual/mhc_split_run.sh",
         "//experiments:glm53_508_graph_qual/srv-508.sh",
         "//experiments:mhc/mhc_probe.sh",
@@ -9506,6 +9537,7 @@ ts_py_test(
         "//:pyproject.toml",
         "//experiments:cuda_home_shadow.sh",
         "//experiments:dense_fused_oracle.sh",
+        "//experiments:flux_docker_guard.sh",
         "//experiments:glm53_508_graph_qual/mhc_split_run.sh",
         "//experiments:glm53_508_graph_qual/srv-508.sh",
         "//experiments:mhc/mhc_probe.sh",
@@ -11987,6 +12019,7 @@ ts_py_test(
     path = "tests/test_kda_bank_wrapper.py",
     library = ":test_kda_bank_wrapper_lib",
     data = [
+        "//experiments:flux_docker_guard.sh",
         "//experiments:kda/verify_conv_bank.sh",
         "//experiments:runtime_image.sh",
         "//src/tessera:serving/runtime_contract.json",
@@ -12007,6 +12040,7 @@ ts_py_test(
     path = "tests/test_kda_bank_wrapper.py",
     library = ":test_kda_bank_wrapper_lib",
     data = [
+        "//experiments:flux_docker_guard.sh",
         "//experiments:kda/verify_conv_bank.sh",
         "//experiments:runtime_image.sh",
         "//src/tessera:serving/runtime_contract.json",
@@ -14053,6 +14087,7 @@ ts_py_test(
     library = ":test_mma8_dual_b_numeric_protocol_lib",
     data = [
         "//:pyproject.toml",
+        "//experiments:flux_docker_guard.sh",
         "//experiments:t8r_speed/bench_t8r.sh",
         "//experiments:t8r_speed/build_ext.sh",
     ],
@@ -14077,6 +14112,7 @@ ts_py_test(
     library = ":test_mma8_dual_b_numeric_protocol_lib",
     data = [
         "//:pyproject.toml",
+        "//experiments:flux_docker_guard.sh",
         "//experiments:t8r_speed/bench_t8r.sh",
         "//experiments:t8r_speed/build_ext.sh",
     ],
@@ -14151,6 +14187,7 @@ ts_py_test(
     data = [
         "//experiments:build_identity.sh",
         "//experiments:container_limits_probe.sh",
+        "//experiments:flux_docker_guard.sh",
         "//experiments:moe_greedy_smoke_pair.sh",
         "//experiments:owned_container.sh",
         "//experiments:runtime_image.sh",
@@ -14187,6 +14224,7 @@ ts_py_test(
     data = [
         "//experiments:build_identity.sh",
         "//experiments:container_limits_probe.sh",
+        "//experiments:flux_docker_guard.sh",
         "//experiments:moe_greedy_smoke_pair.sh",
         "//experiments:owned_container.sh",
         "//experiments:runtime_image.sh",
@@ -14234,6 +14272,7 @@ ts_py_test(
     data = [
         "//experiments:build_identity.sh",
         "//experiments:container_limits_probe.sh",
+        "//experiments:flux_docker_guard.sh",
         "//experiments:moe_greedy_smoke_pair.sh",
         "//experiments:owned_container.sh",
         "//experiments:runtime_image.sh",
@@ -14268,6 +14307,7 @@ ts_py_test(
     data = [
         "//experiments:build_identity.sh",
         "//experiments:container_limits_probe.sh",
+        "//experiments:flux_docker_guard.sh",
         "//experiments:moe_greedy_smoke_pair.sh",
         "//experiments:owned_container.sh",
         "//experiments:runtime_image.sh",
@@ -15196,6 +15236,9 @@ ts_py_test(
     name = "test_native_shape_gitless",
     path = "tests/test_native_shape_gitless.py",
     library = ":test_native_shape_gitless_lib",
+    data = [
+        "//experiments:flux_docker_guard.sh",
+    ],
     deps = [
         "//experiments:step4_capture_driver",
         "//experiments:step4_route_qualification",
@@ -15213,6 +15256,9 @@ ts_py_test(
     name = "test_native_shape_gitless.bytes",
     path = "tests/test_native_shape_gitless.py",
     library = ":test_native_shape_gitless_lib",
+    data = [
+        "//experiments:flux_docker_guard.sh",
+    ],
     deps = [
         "//experiments:step4_capture_driver",
         "//experiments:step4_route_qualification",
@@ -15242,6 +15288,9 @@ ts_py_test(
     name = "test_native_shape_time_application",
     path = "tests/test_native_shape_time_application.py",
     library = ":test_native_shape_time_application_lib",
+    data = [
+        "//experiments:flux_docker_guard.sh",
+    ],
     deps = [
         "//experiments:step4_capture_driver",
         "//experiments:step4_route_qualification",
@@ -15259,6 +15308,9 @@ ts_py_test(
     name = "test_native_shape_time_application.bytes",
     path = "tests/test_native_shape_time_application.py",
     library = ":test_native_shape_time_application_lib",
+    data = [
+        "//experiments:flux_docker_guard.sh",
+    ],
     deps = [
         "//experiments:step4_capture_driver",
         "//experiments:step4_route_qualification",
@@ -15299,6 +15351,9 @@ ts_py_test(
     name = "test_native_shape_time_scopes",
     path = "tests/test_native_shape_time_scopes.py",
     library = ":test_native_shape_time_scopes_lib",
+    data = [
+        "//experiments:flux_docker_guard.sh",
+    ],
     deps = [
         "//experiments:step4_capture_driver",
         "//experiments:step4_route_qualification",
@@ -15317,6 +15372,9 @@ ts_py_test(
     name = "test_native_shape_time_scopes.bytes",
     path = "tests/test_native_shape_time_scopes.py",
     library = ":test_native_shape_time_scopes_lib",
+    data = [
+        "//experiments:flux_docker_guard.sh",
+    ],
     deps = [
         "//experiments:step4_capture_driver",
         "//experiments:step4_route_qualification",
@@ -15924,6 +15982,7 @@ ts_py_test(
     library = ":test_packed_stock_fixed_tolerance_lib",
     data = [
         "//:pyproject.toml",
+        "//experiments:flux_docker_guard.sh",
         "//experiments:t8r_speed/bench_t8r.sh",
         "//experiments:t8r_speed/build_ext.sh",
     ],
@@ -15948,6 +16007,7 @@ ts_py_test(
     library = ":test_packed_stock_fixed_tolerance_lib",
     data = [
         "//:pyproject.toml",
+        "//experiments:flux_docker_guard.sh",
         "//experiments:t8r_speed/bench_t8r.sh",
         "//experiments:t8r_speed/build_ext.sh",
     ],
@@ -16087,6 +16147,7 @@ ts_py_test(
     library = ":test_paired_k32_action_lib",
     data = [
         "//:pyproject.toml",
+        "//experiments:flux_docker_guard.sh",
         "//experiments:t8r_speed/bench_t8r.sh",
         "//experiments:t8r_speed/build_ext.sh",
     ],
@@ -16114,6 +16175,7 @@ ts_py_test(
     library = ":test_paired_k32_action_lib",
     data = [
         "//:pyproject.toml",
+        "//experiments:flux_docker_guard.sh",
         "//experiments:t8r_speed/bench_t8r.sh",
         "//experiments:t8r_speed/build_ext.sh",
     ],
@@ -16152,6 +16214,7 @@ ts_py_test(
     library = ":test_paired_k32_qualification_lib",
     data = [
         "//:pyproject.toml",
+        "//experiments:flux_docker_guard.sh",
         "//experiments:t8r_speed/bench_t8r.sh",
         "//experiments:t8r_speed/build_ext.sh",
     ],
@@ -16176,6 +16239,7 @@ ts_py_test(
     library = ":test_paired_k32_qualification_lib",
     data = [
         "//:pyproject.toml",
+        "//experiments:flux_docker_guard.sh",
         "//experiments:t8r_speed/bench_t8r.sh",
         "//experiments:t8r_speed/build_ext.sh",
     ],
@@ -16451,6 +16515,7 @@ ts_py_test(
     library = ":test_piece_major_comparison_protocol_lib",
     data = [
         "//:pyproject.toml",
+        "//experiments:flux_docker_guard.sh",
         "//experiments:t8r_speed/bench_t8r.sh",
         "//experiments:t8r_speed/build_ext.sh",
     ],
@@ -16475,6 +16540,7 @@ ts_py_test(
     library = ":test_piece_major_comparison_protocol_lib",
     data = [
         "//:pyproject.toml",
+        "//experiments:flux_docker_guard.sh",
         "//experiments:t8r_speed/bench_t8r.sh",
         "//experiments:t8r_speed/build_ext.sh",
     ],
@@ -16516,6 +16582,7 @@ ts_py_test(
     library = ":test_piece_major_frozen_observer_lib",
     data = [
         "//:pyproject.toml",
+        "//experiments:flux_docker_guard.sh",
         "//experiments:t8r_speed/bench_t8r.sh",
         "//experiments:t8r_speed/build_ext.sh",
     ],
@@ -16540,6 +16607,7 @@ ts_py_test(
     library = ":test_piece_major_frozen_observer_lib",
     data = [
         "//:pyproject.toml",
+        "//experiments:flux_docker_guard.sh",
         "//experiments:t8r_speed/bench_t8r.sh",
         "//experiments:t8r_speed/build_ext.sh",
     ],
@@ -16618,6 +16686,7 @@ ts_py_test(
     library = ":test_piece_major_pb_action_lib",
     data = [
         "//:pyproject.toml",
+        "//experiments:flux_docker_guard.sh",
         "//experiments:t8r_speed/bench_t8r.sh",
         "//experiments:t8r_speed/build_ext.sh",
     ],
@@ -16645,6 +16714,7 @@ ts_py_test(
     library = ":test_piece_major_pb_action_lib",
     data = [
         "//:pyproject.toml",
+        "//experiments:flux_docker_guard.sh",
         "//experiments:t8r_speed/bench_t8r.sh",
         "//experiments:t8r_speed/build_ext.sh",
     ],
@@ -16682,6 +16752,7 @@ ts_py_test(
     library = ":test_piece_major_preparation_lib",
     data = [
         "//:pyproject.toml",
+        "//experiments:flux_docker_guard.sh",
         "//experiments:t8r_speed/bench_t8r.sh",
         "//experiments:t8r_speed/build_ext.sh",
     ],
@@ -16708,6 +16779,7 @@ ts_py_test(
     library = ":test_piece_major_preparation_lib",
     data = [
         "//:pyproject.toml",
+        "//experiments:flux_docker_guard.sh",
         "//experiments:t8r_speed/bench_t8r.sh",
         "//experiments:t8r_speed/build_ext.sh",
     ],
@@ -16790,6 +16862,7 @@ ts_py_test(
     library = ":test_piece_major_real_bytes_lib",
     data = [
         "//:pyproject.toml",
+        "//experiments:flux_docker_guard.sh",
         "//experiments:t8r_speed/bench_t8r.sh",
         "//experiments:t8r_speed/build_ext.sh",
     ],
@@ -16816,6 +16889,7 @@ ts_py_test(
     library = ":test_piece_major_real_bytes_lib",
     data = [
         "//:pyproject.toml",
+        "//experiments:flux_docker_guard.sh",
         "//experiments:t8r_speed/bench_t8r.sh",
         "//experiments:t8r_speed/build_ext.sh",
     ],
@@ -17165,6 +17239,7 @@ ts_py_test(
         "//experiments:dense4_comparator_one_teacher.sh",
         "//experiments:dense_fused_oracle.sh",
         "//experiments:extents_cpu_python.sh",
+        "//experiments:flux_docker_guard.sh",
         "//experiments:gemv_chain.sh",
         "//experiments:gemv_pf_chain.sh",
         "//experiments:glm53_508_graph_qual/mhc_split_run.sh",
@@ -17419,6 +17494,7 @@ ts_py_test(
         "//experiments:dense4_comparator_one_teacher.sh",
         "//experiments:dense_fused_oracle.sh",
         "//experiments:extents_cpu_python.sh",
+        "//experiments:flux_docker_guard.sh",
         "//experiments:gemv_chain.sh",
         "//experiments:gemv_pf_chain.sh",
         "//experiments:glm53_508_graph_qual/mhc_split_run.sh",
@@ -17993,6 +18069,7 @@ ts_py_test(
     library = ":test_refit_trailing_bytes_lib",
     data = [
         "//experiments:build_identity.sh",
+        "//experiments:flux_docker_guard.sh",
         "//experiments:ldlq_lut_export_arms.sh",
         "//experiments:refit_trailing_serve.sh",
         "//experiments:runtime_image.sh",
@@ -18025,6 +18102,7 @@ ts_py_test(
     library = ":test_refit_trailing_bytes_lib",
     data = [
         "//experiments:build_identity.sh",
+        "//experiments:flux_docker_guard.sh",
         "//experiments:ldlq_lut_export_arms.sh",
         "//experiments:refit_trailing_serve.sh",
         "//experiments:runtime_image.sh",
@@ -18127,6 +18205,7 @@ ts_py_test(
     library = ":test_refit_trailing_serve_lib",
     data = [
         "//experiments:build_identity.sh",
+        "//experiments:flux_docker_guard.sh",
         "//experiments:ldlq_lut_export_arms.sh",
         "//experiments:refit_trailing_serve.sh",
         "//experiments:runtime_image.sh",
@@ -18160,6 +18239,7 @@ ts_py_test(
     library = ":test_refit_trailing_serve_lib",
     data = [
         "//experiments:build_identity.sh",
+        "//experiments:flux_docker_guard.sh",
         "//experiments:ldlq_lut_export_arms.sh",
         "//experiments:refit_trailing_serve.sh",
         "//experiments:runtime_image.sh",
@@ -18364,6 +18444,7 @@ ts_py_test(
     library = ":test_regdirect_run_sh_lib",
     data = [
         "//:pyproject.toml",
+        "//experiments:flux_docker_guard.sh",
         "//experiments:regdirect_stage1/run.sh",
         "//experiments:t8r_speed/bench_t8r.sh",
         "//experiments:t8r_speed/build_ext.sh",
@@ -18391,6 +18472,7 @@ ts_py_test(
     library = ":test_regdirect_run_sh_lib",
     data = [
         "//:pyproject.toml",
+        "//experiments:flux_docker_guard.sh",
         "//experiments:regdirect_stage1/run.sh",
         "//experiments:t8r_speed/bench_t8r.sh",
         "//experiments:t8r_speed/build_ext.sh",
@@ -18591,6 +18673,7 @@ ts_py_test(
         "//experiments:dense4_comparator_one_teacher.sh",
         "//experiments:dense_fused_oracle.sh",
         "//experiments:extents_cpu_python.sh",
+        "//experiments:flux_docker_guard.sh",
         "//experiments:gemv_chain.sh",
         "//experiments:gemv_pf_chain.sh",
         "//experiments:gridbook_lane_served.sh",
@@ -18762,6 +18845,7 @@ ts_py_test(
         "//experiments:dense4_comparator_one_teacher.sh",
         "//experiments:dense_fused_oracle.sh",
         "//experiments:extents_cpu_python.sh",
+        "//experiments:flux_docker_guard.sh",
         "//experiments:gemv_chain.sh",
         "//experiments:gemv_pf_chain.sh",
         "//experiments:gridbook_lane_served.sh",
@@ -19000,6 +19084,7 @@ ts_py_library(
         "//experiments:export_stock_compressed.py",
         "//experiments:export_tessera_serving.py",
         "//experiments:extents_cpu_python.sh",
+        "//experiments:flux_docker_guard.sh",
         "//experiments:fp8_band.py",
         "//experiments:freegrid.py",
         "//experiments:full_engine_artifact.py",
@@ -19939,6 +20024,7 @@ ts_py_test(
     library = ":test_routed_gate_direct_vllm_lib",
     data = [
         "//:pyproject.toml",
+        "//experiments:flux_docker_guard.sh",
         "//experiments:t8r_speed/bench_t8r.sh",
         "//experiments:t8r_speed/build_ext.sh",
     ],
@@ -19963,6 +20049,7 @@ ts_py_test(
     library = ":test_routed_gate_direct_vllm_lib",
     data = [
         "//:pyproject.toml",
+        "//experiments:flux_docker_guard.sh",
         "//experiments:t8r_speed/bench_t8r.sh",
         "//experiments:t8r_speed/build_ext.sh",
     ],
@@ -20034,6 +20121,7 @@ ts_py_test(
     library = ":test_routed_gate_native_artifact_lib",
     data = [
         "//:pyproject.toml",
+        "//experiments:flux_docker_guard.sh",
         "//experiments:t8r_speed/bench_t8r.sh",
         "//experiments:t8r_speed/build_ext.sh",
     ],
@@ -20058,6 +20146,7 @@ ts_py_test(
     library = ":test_routed_gate_native_artifact_lib",
     data = [
         "//:pyproject.toml",
+        "//experiments:flux_docker_guard.sh",
         "//experiments:t8r_speed/bench_t8r.sh",
         "//experiments:t8r_speed/build_ext.sh",
     ],
@@ -20133,6 +20222,7 @@ ts_py_test(
     library = ":test_routed_gate_staged_store_lib",
     data = [
         "//:pyproject.toml",
+        "//experiments:flux_docker_guard.sh",
         "//experiments:t8r_speed/bench_t8r.sh",
         "//experiments:t8r_speed/build_ext.sh",
     ],
@@ -20157,6 +20247,7 @@ ts_py_test(
     library = ":test_routed_gate_staged_store_lib",
     data = [
         "//:pyproject.toml",
+        "//experiments:flux_docker_guard.sh",
         "//experiments:t8r_speed/bench_t8r.sh",
         "//experiments:t8r_speed/build_ext.sh",
     ],
@@ -20552,6 +20643,7 @@ ts_py_test(
     library = ":test_rung_allowability_lib_cycle",
     data = [
         "//:pyproject.toml",
+        "//experiments:flux_docker_guard.sh",
         "//experiments:t8r_speed/bench_t8r.sh",
         "//experiments:t8r_speed/build_ext.sh",
     ],
@@ -20576,6 +20668,7 @@ ts_py_test(
     library = ":test_rung_allowability_lib_cycle",
     data = [
         "//:pyproject.toml",
+        "//experiments:flux_docker_guard.sh",
         "//experiments:t8r_speed/bench_t8r.sh",
         "//experiments:t8r_speed/build_ext.sh",
     ],
@@ -20658,6 +20751,7 @@ ts_py_test(
     library = ":test_rung_allowability_lib_cycle",
     data = [
         "//:pyproject.toml",
+        "//experiments:flux_docker_guard.sh",
         "//experiments:t8r_speed/bench_t8r.sh",
         "//experiments:t8r_speed/build_ext.sh",
     ],
@@ -20682,6 +20776,7 @@ ts_py_test(
     library = ":test_rung_allowability_lib_cycle",
     data = [
         "//:pyproject.toml",
+        "//experiments:flux_docker_guard.sh",
         "//experiments:t8r_speed/bench_t8r.sh",
         "//experiments:t8r_speed/build_ext.sh",
     ],
@@ -20773,6 +20868,7 @@ ts_py_test(
         "//experiments:dense4_comparator_one_teacher.sh",
         "//experiments:dense_fused_oracle.sh",
         "//experiments:extents_cpu_python.sh",
+        "//experiments:flux_docker_guard.sh",
         "//experiments:gemv_chain.sh",
         "//experiments:gemv_pf_chain.sh",
         "//experiments:glm53_508_graph_qual/mhc_split_run.sh",
@@ -20887,6 +20983,11 @@ ts_py_test(
         "//experiments:window_gemv_latency_ab.sh",
         "//experiments:window_gemv_served.sh",
         "//src/tessera:serving/runtime_contract.json",
+        "//tools/bazel:build_files.py",
+        "//tools/bazel:generate.sh",
+        "//tools/bazel:requirements.py",
+        "//tools:serve_comparison_gates.sh",
+        "//tools:tessera_construction_census_run.sh",
     ],
     deps = [
         "//experiments:allocated_serve_2026-09-02/find_uniform",
@@ -20970,10 +21071,12 @@ ts_py_test(
         "//src/tessera:identity",
         "//src/tessera:serving/build_identity",
         "//src/tessera:source_digest_cache",
-        "//tools:__init__",
         "//tools:_flux_gpu_jobspec",
+        "//tools:comparison_arm_identity",
         "//tools:impacted_tests",
+        "//tools:tessera_construction_census_cycle",
         "//tools:tessera_lane_preflight",
+        "//tools:tessera_update_construction_block",
         ":test_census_engagement_lib",
         ":test_d41_e2m1_geometry_lib",
         ":test_e4m3_prefill_lib",
@@ -21024,6 +21127,7 @@ ts_py_test(
         "//experiments:dense4_comparator_one_teacher.sh",
         "//experiments:dense_fused_oracle.sh",
         "//experiments:extents_cpu_python.sh",
+        "//experiments:flux_docker_guard.sh",
         "//experiments:gemv_chain.sh",
         "//experiments:gemv_pf_chain.sh",
         "//experiments:glm53_508_graph_qual/mhc_split_run.sh",
@@ -21138,6 +21242,11 @@ ts_py_test(
         "//experiments:window_gemv_latency_ab.sh",
         "//experiments:window_gemv_served.sh",
         "//src/tessera:serving/runtime_contract.json",
+        "//tools/bazel:build_files.py",
+        "//tools/bazel:generate.sh",
+        "//tools/bazel:requirements.py",
+        "//tools:serve_comparison_gates.sh",
+        "//tools:tessera_construction_census_run.sh",
     ],
     deps = [
         "//experiments:allocated_serve_2026-09-02/find_uniform",
@@ -21221,10 +21330,12 @@ ts_py_test(
         "//src/tessera:identity",
         "//src/tessera:serving/build_identity",
         "//src/tessera:source_digest_cache",
-        "//tools:__init__",
         "//tools:_flux_gpu_jobspec",
+        "//tools:comparison_arm_identity",
         "//tools:impacted_tests",
+        "//tools:tessera_construction_census_cycle",
         "//tools:tessera_lane_preflight",
+        "//tools:tessera_update_construction_block",
         ":test_census_engagement_lib",
         ":test_d41_e2m1_geometry_lib",
         ":test_e4m3_prefill_lib",
@@ -21249,6 +21360,8 @@ ts_py_library(
     ],
     data = [
         "//experiments:files",
+        "//tools/bazel:files",
+        "//tools:files",
     ],
     deps = [
         "//src/tessera:__init___cycle",
@@ -21701,6 +21814,7 @@ ts_py_test(
         "//experiments:dense4_comparator_one_teacher.sh",
         "//experiments:dense_fused_oracle.sh",
         "//experiments:extents_cpu_python.sh",
+        "//experiments:flux_docker_guard.sh",
         "//experiments:gemv_chain.sh",
         "//experiments:gemv_pf_chain.sh",
         "//experiments:glm53_508_graph_qual/mhc_split_run.sh",
@@ -21951,6 +22065,7 @@ ts_py_test(
         "//experiments:dense4_comparator_one_teacher.sh",
         "//experiments:dense_fused_oracle.sh",
         "//experiments:extents_cpu_python.sh",
+        "//experiments:flux_docker_guard.sh",
         "//experiments:gemv_chain.sh",
         "//experiments:gemv_pf_chain.sh",
         "//experiments:glm53_508_graph_qual/mhc_split_run.sh",
@@ -22212,6 +22327,7 @@ ts_py_test(
         "//experiments:dense4_comparator_one_teacher.sh",
         "//experiments:dense_fused_oracle.sh",
         "//experiments:extents_cpu_python.sh",
+        "//experiments:flux_docker_guard.sh",
         "//experiments:gemv_chain.sh",
         "//experiments:gemv_pf_chain.sh",
         "//experiments:gridbook_lane_served.sh",
@@ -22384,6 +22500,7 @@ ts_py_test(
         "//experiments:dense4_comparator_one_teacher.sh",
         "//experiments:dense_fused_oracle.sh",
         "//experiments:extents_cpu_python.sh",
+        "//experiments:flux_docker_guard.sh",
         "//experiments:gemv_chain.sh",
         "//experiments:gemv_pf_chain.sh",
         "//experiments:gridbook_lane_served.sh",
@@ -22623,6 +22740,7 @@ ts_py_library(
         "//experiments:export_stock_compressed.py",
         "//experiments:export_tessera_serving.py",
         "//experiments:extents_cpu_python.sh",
+        "//experiments:flux_docker_guard.sh",
         "//experiments:fp8_band.py",
         "//experiments:freegrid.py",
         "//experiments:full_engine_artifact.py",
@@ -22921,6 +23039,7 @@ ts_py_test(
     library = ":test_serve_wrapper_cleanup_lib",
     data = [
         "//experiments:build_identity.sh",
+        "//experiments:flux_docker_guard.sh",
         "//experiments:runtime_image.sh",
         "//experiments:serve_and_dump_kl.sh",
         "//experiments:serve_lock.sh",
@@ -22946,6 +23065,7 @@ ts_py_test(
     library = ":test_serve_wrapper_cleanup_lib",
     data = [
         "//experiments:build_identity.sh",
+        "//experiments:flux_docker_guard.sh",
         "//experiments:runtime_image.sh",
         "//experiments:serve_and_dump_kl.sh",
         "//experiments:serve_lock.sh",
@@ -22971,6 +23091,7 @@ ts_py_library(
         "test_serve_wrapper_cleanup.py",
     ],
     data = [
+        "//experiments:flux_docker_guard.sh",
         "//experiments:serve_and_dump_kl.sh",
         "//experiments:serve_metrics.sh",
     ],
@@ -23002,6 +23123,7 @@ ts_py_test(
         "//experiments:dense4_comparator_one_teacher.sh",
         "//experiments:dense_fused_oracle.sh",
         "//experiments:extents_cpu_python.sh",
+        "//experiments:flux_docker_guard.sh",
         "//experiments:gemv_chain.sh",
         "//experiments:gemv_pf_chain.sh",
         "//experiments:gridbook_lane_served.sh",
@@ -23174,6 +23296,7 @@ ts_py_test(
         "//experiments:dense4_comparator_one_teacher.sh",
         "//experiments:dense_fused_oracle.sh",
         "//experiments:extents_cpu_python.sh",
+        "//experiments:flux_docker_guard.sh",
         "//experiments:gemv_chain.sh",
         "//experiments:gemv_pf_chain.sh",
         "//experiments:gridbook_lane_served.sh",
@@ -23413,6 +23536,7 @@ ts_py_library(
         "//experiments:export_stock_compressed.py",
         "//experiments:export_tessera_serving.py",
         "//experiments:extents_cpu_python.sh",
+        "//experiments:flux_docker_guard.sh",
         "//experiments:fp8_band.py",
         "//experiments:freegrid.py",
         "//experiments:full_engine_artifact.py",
@@ -24493,6 +24617,7 @@ ts_py_test(
     library = ":test_serving_image_definition_lib",
     data = [
         "//:files/images/serving/patches",
+        "//experiments:flux_docker_guard.sh",
         "//src/tessera:files",
     ],
     deps = [
@@ -24513,6 +24638,7 @@ ts_py_test(
     library = ":test_serving_image_definition_lib",
     data = [
         "//:files/images/serving/patches",
+        "//experiments:flux_docker_guard.sh",
         "//src/tessera:files",
     ],
     deps = [
@@ -26345,6 +26471,7 @@ ts_py_test(
     library = ":test_stageprev_acceptance_lib",
     data = [
         "//:pyproject.toml",
+        "//experiments:flux_docker_guard.sh",
         "//experiments:t8r_speed/ab_arms.sh",
         "//experiments:t8r_speed/bench_t8r.sh",
         "//experiments:t8r_speed/build_ext.sh",
@@ -26370,6 +26497,7 @@ ts_py_test(
     library = ":test_stageprev_acceptance_lib",
     data = [
         "//:pyproject.toml",
+        "//experiments:flux_docker_guard.sh",
         "//experiments:t8r_speed/ab_arms.sh",
         "//experiments:t8r_speed/bench_t8r.sh",
         "//experiments:t8r_speed/build_ext.sh",
@@ -26484,6 +26612,9 @@ ts_py_test(
     name = "test_step4_capture_launch",
     path = "tests/test_step4_capture_launch.py",
     library = ":test_step4_capture_launch_lib",
+    data = [
+        "//experiments:flux_docker_guard.sh",
+    ],
     deps = [
         "//src/tessera:identity",
     ],
@@ -26498,6 +26629,9 @@ ts_py_test(
     name = "test_step4_capture_launch.bytes",
     path = "tests/test_step4_capture_launch.py",
     library = ":test_step4_capture_launch_lib",
+    data = [
+        "//experiments:flux_docker_guard.sh",
+    ],
     deps = [
         "//src/tessera:identity",
     ],
@@ -26524,6 +26658,9 @@ ts_py_test(
     name = "test_step4_route_kinds",
     path = "tests/test_step4_route_kinds.py",
     library = ":test_step4_route_kinds_lib",
+    data = [
+        "//experiments:flux_docker_guard.sh",
+    ],
     deps = [
         "//experiments:step4_tp2_peer",
         "//src/tessera:identity",
@@ -26539,6 +26676,9 @@ ts_py_test(
     name = "test_step4_route_kinds.bytes",
     path = "tests/test_step4_route_kinds.py",
     library = ":test_step4_route_kinds_lib",
+    data = [
+        "//experiments:flux_docker_guard.sh",
+    ],
     deps = [
         "//experiments:step4_tp2_peer",
         "//src/tessera:identity",
@@ -26664,6 +26804,7 @@ ts_py_test(
         "//experiments:dense4_comparator_one_teacher.sh",
         "//experiments:dense_fused_oracle.sh",
         "//experiments:extents_cpu_python.sh",
+        "//experiments:flux_docker_guard.sh",
         "//experiments:gemv_chain.sh",
         "//experiments:gemv_pf_chain.sh",
         "//experiments:glm53_508_graph_qual/mhc_split_run.sh",
@@ -26914,6 +27055,7 @@ ts_py_test(
         "//experiments:dense4_comparator_one_teacher.sh",
         "//experiments:dense_fused_oracle.sh",
         "//experiments:extents_cpu_python.sh",
+        "//experiments:flux_docker_guard.sh",
         "//experiments:gemv_chain.sh",
         "//experiments:gemv_pf_chain.sh",
         "//experiments:glm53_508_graph_qual/mhc_split_run.sh",
@@ -28019,6 +28161,7 @@ ts_py_test(
     library = ":test_t8r_output_screen_options_lib",
     data = [
         "//:pyproject.toml",
+        "//experiments:flux_docker_guard.sh",
         "//experiments:t8r_speed/bench_t8r.sh",
         "//experiments:t8r_speed/build_ext.sh",
     ],
@@ -28041,6 +28184,7 @@ ts_py_test(
     library = ":test_t8r_output_screen_options_lib",
     data = [
         "//:pyproject.toml",
+        "//experiments:flux_docker_guard.sh",
         "//experiments:t8r_speed/bench_t8r.sh",
         "//experiments:t8r_speed/build_ext.sh",
     ],
@@ -28075,6 +28219,7 @@ ts_py_test(
     library = ":test_t8r_timing_statistics_lib",
     data = [
         "//:pyproject.toml",
+        "//experiments:flux_docker_guard.sh",
         "//experiments:t8r_speed/bench_t8r.sh",
         "//experiments:t8r_speed/build_ext.sh",
     ],
@@ -28099,6 +28244,7 @@ ts_py_test(
     library = ":test_t8r_timing_statistics_lib",
     data = [
         "//:pyproject.toml",
+        "//experiments:flux_docker_guard.sh",
         "//experiments:t8r_speed/bench_t8r.sh",
         "//experiments:t8r_speed/build_ext.sh",
     ],
@@ -28133,6 +28279,7 @@ ts_py_test(
     library = ":test_t8r_wrapper_extensions_lib",
     data = [
         "//:pyproject.toml",
+        "//experiments:flux_docker_guard.sh",
         "//experiments:routed_census.sh",
         "//experiments:routed_fused_tests.sh",
         "//experiments:routed_pair_oracle.sh",
@@ -28166,6 +28313,7 @@ ts_py_test(
     library = ":test_t8r_wrapper_extensions_lib",
     data = [
         "//:pyproject.toml",
+        "//experiments:flux_docker_guard.sh",
         "//experiments:routed_census.sh",
         "//experiments:routed_fused_tests.sh",
         "//experiments:routed_pair_oracle.sh",
@@ -28500,6 +28648,7 @@ ts_py_test(
     path = "tests/test_tp_launcher_pins_memlock.py",
     library = ":test_tp_launcher_pins_memlock_lib",
     data = [
+        "//experiments:flux_docker_guard.sh",
         "//experiments:runtime_image.sh",
         "//experiments:tessera_plugin_run.sh",
         "//experiments:tessera_plugin_served_tp.sh",
@@ -28522,6 +28671,7 @@ ts_py_test(
     path = "tests/test_tp_launcher_pins_memlock.py",
     library = ":test_tp_launcher_pins_memlock_lib",
     data = [
+        "//experiments:flux_docker_guard.sh",
         "//experiments:runtime_image.sh",
         "//experiments:tessera_plugin_run.sh",
         "//experiments:tessera_plugin_served_tp.sh",
@@ -28658,6 +28808,7 @@ ts_py_test(
         "//experiments:dense4_comparator_one_teacher.sh",
         "//experiments:dense_fused_oracle.sh",
         "//experiments:extents_cpu_python.sh",
+        "//experiments:flux_docker_guard.sh",
         "//experiments:gemv_chain.sh",
         "//experiments:gemv_pf_chain.sh",
         "//experiments:gridbook_lane_served.sh",
@@ -28830,6 +28981,7 @@ ts_py_test(
         "//experiments:dense4_comparator_one_teacher.sh",
         "//experiments:dense_fused_oracle.sh",
         "//experiments:extents_cpu_python.sh",
+        "//experiments:flux_docker_guard.sh",
         "//experiments:gemv_chain.sh",
         "//experiments:gemv_pf_chain.sh",
         "//experiments:gridbook_lane_served.sh",
@@ -29069,6 +29221,7 @@ ts_py_library(
         "//experiments:export_stock_compressed.py",
         "//experiments:export_tessera_serving.py",
         "//experiments:extents_cpu_python.sh",
+        "//experiments:flux_docker_guard.sh",
         "//experiments:fp8_band.py",
         "//experiments:freegrid.py",
         "//experiments:full_engine_artifact.py",
@@ -29369,6 +29522,7 @@ ts_py_test(
     library = ":test_ts5_bound_model_seal_lib",
     data = [
         "//experiments:build_identity.sh",
+        "//experiments:flux_docker_guard.sh",
         "//experiments:runtime_image.sh",
         "//experiments:serve_and_dump_kl.sh",
         "//experiments:serve_lock.sh",
@@ -29396,6 +29550,7 @@ ts_py_test(
     library = ":test_ts5_bound_model_seal_lib",
     data = [
         "//experiments:build_identity.sh",
+        "//experiments:flux_docker_guard.sh",
         "//experiments:runtime_image.sh",
         "//experiments:serve_and_dump_kl.sh",
         "//experiments:serve_lock.sh",
@@ -29576,6 +29731,7 @@ ts_py_test(
         "//experiments:dense4_comparator_one_teacher.sh",
         "//experiments:dense_fused_oracle.sh",
         "//experiments:extents_cpu_python.sh",
+        "//experiments:flux_docker_guard.sh",
         "//experiments:gemv_chain.sh",
         "//experiments:gemv_pf_chain.sh",
         "//experiments:gridbook_lane_served.sh",
@@ -29748,6 +29904,7 @@ ts_py_test(
         "//experiments:dense4_comparator_one_teacher.sh",
         "//experiments:dense_fused_oracle.sh",
         "//experiments:extents_cpu_python.sh",
+        "//experiments:flux_docker_guard.sh",
         "//experiments:gemv_chain.sh",
         "//experiments:gemv_pf_chain.sh",
         "//experiments:gridbook_lane_served.sh",
@@ -29987,6 +30144,7 @@ ts_py_library(
         "//experiments:export_stock_compressed.py",
         "//experiments:export_tessera_serving.py",
         "//experiments:extents_cpu_python.sh",
+        "//experiments:flux_docker_guard.sh",
         "//experiments:fp8_band.py",
         "//experiments:freegrid.py",
         "//experiments:full_engine_artifact.py",
@@ -30323,6 +30481,7 @@ ts_py_test(
     library = ":test_ts5_stage_attempt_lib",
     data = [
         "//experiments:build_identity.sh",
+        "//experiments:flux_docker_guard.sh",
         "//experiments:runtime_image.sh",
         "//experiments:serve_and_dump_kl.sh",
         "//experiments:serve_lock.sh",
@@ -30350,6 +30509,7 @@ ts_py_test(
     library = ":test_ts5_stage_attempt_lib",
     data = [
         "//experiments:build_identity.sh",
+        "//experiments:flux_docker_guard.sh",
         "//experiments:runtime_image.sh",
         "//experiments:serve_and_dump_kl.sh",
         "//experiments:serve_lock.sh",

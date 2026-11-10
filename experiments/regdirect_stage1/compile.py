@@ -46,6 +46,7 @@ def main():
     print(version, flush=True)
     ro = (src.parent, args.toolkit.resolve(), inc, Path(sysconfig.get_paths()["include"]))
     cpus = ",".join(str(c) for c in sorted(os.sched_getaffinity(0)))
+    subprocess.run(["bash", str(Path(__file__).parent / "../flux_docker_guard.sh")], check=True)
     launcher = ["docker", "run", "--rm", "--network=host", "--cpuset-cpus", cpus]
     for p in ro:
         launcher += ["-v", f"{p}:{p}:ro"]

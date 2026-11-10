@@ -1,4 +1,7 @@
 #!/usr/bin/env bash
+
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/flux_docker_guard.sh"
+refuse_flux_docker || exit 2
 # Run a command inside the pinned ROCm vLLM image with Tessera installed as a
 # vLLM plugin, on an AMD device.
 #

@@ -1,5 +1,10 @@
 # Tessera plan-to-serve architecture
 
+Every live direct-Docker entry under `experiments/` and `tools/` calls
+`experiments/flux_docker_guard.sh`. It refuses when `FLUX_JOB_ID` is present,
+including an empty value. Root Docker in a Flux job belongs only to the reviewed
+serving wrapper; all other uses go to the lead. This branch has no serving exemption.
+
 Re-stamped 2026-11-10 for the owned GPU container launcher. The `run` entry
 in `tools/_flux_gpu_jobspec.py` accepts a digest-pinned container request
 inside a Flux GPU job. `runtime_image.sh` selects the executing image store

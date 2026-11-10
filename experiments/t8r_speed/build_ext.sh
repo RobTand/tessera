@@ -1,8 +1,10 @@
 #!/usr/bin/env bash
+
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/../flux_docker_guard.sh"
+refuse_flux_docker || exit 2
 # Build the fused window libraries of one A/B arm's source into a torch-extension
-# directory, on a CPU and without a GPU, so the timed action (bench_t8r.sh with
-# BENCH_EXT_DIR) only loads them.  Submit it as its own Flux job on any
-# host holding the image; the timing row runs after it on the measurement host.
+# directory, on a CPU and without a GPU, so the timed action only loads them.
+# This legacy Docker entry refuses Flux jobs until migrated to rootless Podman.
 #   build_ext.sh <checkout> <ext_dir> [library ...]   (default: value e4m3 e4m3mma)
 # BENCH_SRC: the arm's Tessera source tree, mounted over the checkout's src at
 # the path the timing row mounts it (/work/src), so the build's source paths,

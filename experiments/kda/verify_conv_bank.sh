@@ -1,4 +1,7 @@
 #!/usr/bin/env bash
+
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/../flux_docker_guard.sh"
+refuse_flux_docker || exit 2
 # CPU-only admitted artifact check. No CUDA workload or recompilation.
 set -euo pipefail
 CHECKOUT=$(realpath "$1"); OUT=$(realpath -m "$2"); OLD=$(realpath "$3"); NEW=$(realpath "$4")

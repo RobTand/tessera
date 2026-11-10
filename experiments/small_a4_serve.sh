@@ -1,4 +1,7 @@
 #!/usr/bin/env bash
+
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/flux_docker_guard.sh"
+refuse_flux_docker || exit 2
 # Bounded small A4 TP2 serve: the 4-layer stub on both Sparks, native routes.
 #
 # Settings are SMALL-SERVE-SETTINGS.md's (context 2048, KV 1 GiB/rank,
