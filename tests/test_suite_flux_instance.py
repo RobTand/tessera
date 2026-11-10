@@ -1,7 +1,9 @@
 """Live-instance policy through a controlled native CLI boundary."""
 import hashlib
 import json
+import os
 from pathlib import Path
+import subprocess
 import sys
 from types import SimpleNamespace
 
@@ -10,6 +12,40 @@ from box_artifacts import FLUX_RENDER_ROOT, FLUX_INSTANCE_MANIFEST
 import pytest
 
 from suite_flux_fixtures import ROOT, load, publication, resource_set, instance, suite
+
+
+def test_each_test_owns_its_flux_environment(tmp_path):
+    child = tmp_path / 'test_flux_environment.py'
+    child.write_text('''
+import os
+from types import SimpleNamespace
+import pytest
+from suite_flux_fixtures import suite
+
+def test_no_ambient_flux():
+    assert not {name for name in os.environ if name.startswith('FLUX_')}
+
+def test_connection_refuses_ambient_instance(suite, monkeypatch, tmp_path):
+    flux = suite.suite_flux
+    monkeypatch.setattr(flux, 'instance_settings', lambda: tmp_path)
+    calls = []
+    def resolve(argv, **kwargs):
+        calls.append(argv)
+        return SimpleNamespace(returncode=0, stdout='', stderr='')
+    monkeypatch.setattr(flux.subprocess, 'run', resolve)
+    with pytest.raises(ValueError, match='FLUX_URI or flux-uri.sh'):
+        flux.connection()
+    assert calls == [['/mnt/shared/flux-migration/flux-uri.sh']]
+''')
+    env = {**os.environ, 'FLUX_URI': 'local:///ambient-must-not-be-used',
+           'FLUX_JOB_ID': 'fAMBIENT', 'FLUX_CLIENT': sys.executable,
+           'FLUX_KVS_NAMESPACE': 'ambient-namespace', 'FLUX_FUTURE_SETTING': 'ambient',
+           'PYTHONPATH': os.pathsep.join([str(ROOT / 'src'), str(ROOT / 'tests')])}
+    result = subprocess.run([sys.executable, '-m', 'pytest', '-p', 'conftest',
+                             '-p', 'no:cacheprovider', '-o', 'addopts=', '-q', str(child)],
+                            cwd=tmp_path, env=env, capture_output=True, text=True, timeout=120)
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert '2 passed' in result.stdout
 
 
 
