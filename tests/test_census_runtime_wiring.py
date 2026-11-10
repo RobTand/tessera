@@ -68,7 +68,9 @@ elif args[:2]==['container','exists']: sys.exit(int(not (root/'owned').exists())
 ''')
     podman.chmod(0o755)
     for name, value in [('flux', 'f123'), ('findmnt', 'ext4')]:
-        p=binary/name; p.write_text('#!/bin/sh\necho '+value+'\n'); p.chmod(0o755)
+        p=binary/name
+        p.write_text('#!/bin/sh\nif [ "$3" = --to=dec ]; then echo 123; else echo '+value+'; fi\n')
+        p.chmod(0o755)
     return dict(os.environ, PATH=f"{binary}:{os.environ['PATH']}", CONTROL=str(tmp_path),
                 RUNTIME_IMAGE_PY=sys.executable, IMG=reference, RESOLVED=resolved, TS=str(ROOT),
                 EXT=str(tmp_path/'ext'), RUNS=str(tmp_path/'runs'),

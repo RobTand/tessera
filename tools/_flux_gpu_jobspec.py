@@ -107,6 +107,15 @@ def plain_job_id(value):
     return plain
 
 
+def decimal_job_id(value):
+    client, environment = flux_client()
+    decimal = subprocess.check_output([client, 'job', 'id', '--to=dec', value],
+                                     env=environment, text=True).strip()
+    if not re.fullmatch(r'[0-9]+', decimal):
+        raise ValueError('Flux did not return a decimal job ID for flux.jobid')
+    return decimal
+
+
 def submit_and_collect(argv, directory, *, cores, memory_gib, walltime):
     """Submit one request and wait for its native terminal records, never retry."""
     if duration_seconds(walltime) > 600:
@@ -245,6 +254,7 @@ def run_container(arguments, directory, scratch_root, *, gpu=True):
     if not os.environ.get('FLUX_JOB_ID'):
         raise ValueError('GPU container requires Flux job context')
     job = plain_job_id(os.environ['FLUX_JOB_ID'])
+    job_decimal = decimal_job_id(job)
     if gpu and not os.environ.get('CUDA_VISIBLE_DEVICES'):
         raise ValueError('GPU container requires Flux job and allocated CUDA_VISIBLE_DEVICES context')
     directory = Path(directory).resolve()
@@ -286,6 +296,7 @@ def run_container(arguments, directory, scratch_root, *, gpu=True):
                   *(['--device', 'nvidia.com/gpu=all'] if gpu else []),
                   '--cpuset-cpus', ','.join(map(str, affinity)), '--volume', str(scratch) + ':/tessera-scratch',
                   *identity, *options,
+                  '--label', 'flux.jobid=' + job_decimal,
                   *[arg for key, value in dict(CONTAINER_ENV, CUDA_VISIBLE_DEVICES=(os.environ['CUDA_VISIBLE_DEVICES'] if gpu else '')).items()
                     for arg in ('--env', key + '=' + value)],
                   '--entrypoint', '/bin/sh', image, '-ec',

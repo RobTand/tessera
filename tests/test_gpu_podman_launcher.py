@@ -374,3 +374,12 @@ def test_memory_receipt_cli_preserves_unified_cgroup_colons(tmp_path):
     assert result.returncode == 0, result.stderr
     receipt = json.loads(out.read_text())
     assert receipt == {'declared_memory_gib': 8, 'memory_peak_bytes': 123456}
+
+
+def test_created_container_has_decimal_flux_job_label(tmp_path):
+    command, env, out = controlled_runtime(tmp_path)
+    result = subprocess.run(command, env=env, capture_output=True, text=True, timeout=30)
+    assert result.returncode == 0, result.stderr
+    calls = [json.loads(line) for line in (tmp_path / 'calls').read_text().splitlines()]
+    create = next(call for call in calls if call[0] == 'create')
+    assert create[create.index('--label') + 1] == 'flux.jobid=123'

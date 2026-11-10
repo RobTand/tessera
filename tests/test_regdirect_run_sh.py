@@ -38,7 +38,7 @@ elif args[0]=='rm': pathlib.Path('{tmp_path}/owned').unlink()
 elif args[:2]==['container','exists']: sys.exit(int(not pathlib.Path('{tmp_path}/owned').exists()))
 """)
     flux = bin_dir / 'flux'
-    flux.write_text('#!/bin/sh\necho f123\n')
+    flux.write_text('#!/bin/sh\nif [ "$3" = --to=dec ]; then echo 123; else echo f123; fi\n')
     flux.chmod(0o755)
     findmnt = bin_dir / 'findmnt'
     findmnt.write_text('#!/bin/sh\necho ext4\n')

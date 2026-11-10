@@ -16,6 +16,11 @@ Temporary files use owned scratch; output, HOME and persistent cache mounts
 remain the wrappers' explicit locations. The launcher uses disabled nested
 cgroups, no network and a writable container root for NVIDIA hooks. A unique
 name is registered before creation; TERM and exit remove only that container.
+The container carries `flux.jobid=<decimal job ID>` for ownership discovery.
+SIGKILL cannot run cleanup: the rootless Podman record and owned scratch may
+remain. Cancellation through non-exec wrappers and the fleet's signal delivery
+still need a real GPU cancel receipt with fleet-master approval. The Docker
+housekeeping path does not establish cleanup of rootless Podman records.
 Runtime and filesystem validation precede owned scratch creation, and creation runs inside the signal cleanup scope.
 Scratch lives on ext4 under `/tmp/flux-vanilla/<ASCII job ID>` and is removed
 on exit. Submitted environments set `FLUX_F58_FORCE_ASCII=1`. The launcher

@@ -38,7 +38,7 @@ elif a[:2]==['container','exists']: sys.exit(int(not (p/'created').exists()))
 ''')
     podman.chmod(0o755)
     flux = binary / 'flux'
-    flux.write_text('#!/bin/sh\nprintf \"%s\\n\" \"$*\" > \"$CONTROL/flux-id-call\"\necho f123\n')
+    flux.write_text('#!/bin/sh\nif [ "$3" = --to=dec ]; then echo 123\nelse printf "%s\\n" "$*" > "$CONTROL/flux-id-call"; echo f123\nfi\n')
     flux.chmod(0o755)
     findmnt = binary / 'findmnt'
     findmnt.write_text('#!/bin/sh\nprintf "%s\\n" "${FILESYSTEM:-ext4}"\n')
