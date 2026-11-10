@@ -367,7 +367,10 @@ class Layer(torch.nn.Module):
     # Per-token stand-ins with the shapes of the real ops.
     def _pre(self, residual, fn, scale, base, norm_weight, norm_eps):
         flat = residual.reshape(residual.shape[0], -1)
-        mix = torch.sigmoid(flat @ fn.T * scale[0] + base)            # (T, N)
+        # SP changes T. Batched BLAS may change reduction order with T, so
+        # keep the toy mHC projection's arithmetic fixed for each token.
+        projected = torch.stack([torch.mv(fn, token) for token in flat])
+        mix = torch.sigmoid(projected * scale[0] + base)              # (T, N)
         comb = torch.softmax(torch.einsum("ti,tj->tij", mix, mix), -1)  # (T, N, N)
         x = (mix.unsqueeze(-1) * residual).sum(1)
         x = x * torch.rsqrt(x.pow(2).mean(-1, keepdim=True) + norm_eps) * norm_weight
@@ -385,6 +388,23 @@ class Layer(torch.nn.Module):
         res = self.hc_post(x, residual, post, comb)
         post2, comb2, x2 = self._pre(res, fn, scale, base, norm_weight, norm_eps)
         return res, post2, comb2, x2
+
+
+@pytest.mark.parametrize("tokens", [8, 7])
+def test_mhc_fixture_is_exact_across_token_partitions(tokens):
+    """The toy mHC must preserve each token's arithmetic when SP changes batch size."""
+    layer = _stack(TwoRanks())[0]
+    gen = torch.Generator().manual_seed(7)
+    residual = _hc_expand(torch.randn(tokens, H, generator=gen, dtype=torch.float64), N)
+    args = (layer.hc_attn_fn, layer.hc_attn_scale, layer.hc_attn_base)
+    kwargs = dict(norm_weight=layer.input_layernorm.weight.data,
+                  norm_eps=layer.input_layernorm.variance_epsilon)
+    full = layer.hc_pre(residual, *args, **kwargs)
+    # One token per call fixes the reference operation shape independently of TP.
+    per_token = [layer.hc_pre(row.unsqueeze(0), *args, **kwargs) for row in residual]
+    for index, actual in enumerate(full):
+        expected = torch.cat([result[index] for result in per_token])
+        assert torch.equal(actual, expected), (index, (actual - expected).abs().max())
 
 
 def stock_forward(self, positions, hidden_states, residual=None, post=None, comb=None):
