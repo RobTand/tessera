@@ -108,6 +108,7 @@ def test_abba_summary_checks_qualified_population(monkeypatch,fault):
                 'wall':{'median_ms':1 if arm.startswith('B') else 2},
                 'geometry':{mode:{'paired':arm.startswith('B') and m!='1'} for mode in ('0','2')}}
                 for m in ('1','512','2048')}}]}
+    assert module.timing_summary(reports,cert)['cells']['512']['operator_speedup']==2
     r=reports['B1'];cell=r['results'][0]['cells']['512']
     if fault=='population':reports.pop('A2')
     elif fault=='event_count':cell['raw_events_ms'].pop()
