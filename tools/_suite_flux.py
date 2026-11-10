@@ -73,6 +73,13 @@ def profile_identity():
             or hashlib.sha256(model_raw).hexdigest() != MODEL_SHA):
         raise ValueError("unqualified Flux config/resource model; profile revision required")
     config, model = json.loads(config_raw), json.loads(model_raw)
+    require_profile(config, model)
+    return {"profile": PROFILE, "config_sha256": CONFIG_SHA, "model_sha256": MODEL_SHA,
+            "broker_starttime": broker_starttime()}
+
+
+def require_profile(config, model):
+    """Check deployment policy separately from observing the instance."""
     for section in ("resource", "exec", "sched-fluxion-resource", "sched-fluxion-qmanager"):
         if json.loads(checked(["config", "get", section])) != config[section]:
             raise ValueError("loaded Flux config differs from the qualified profile")
@@ -82,6 +89,9 @@ def profile_identity():
         raise ValueError("all three Flux hosts must be online")
     if sum(line.endswith(": full") for line in checked(["overlay", "status"]).splitlines()) != 3:
         raise ValueError("all three Flux brokers must be healthy")
+
+
+def broker_starttime():
     # Broker starttime is rank-local. Always bind the instance's rank-zero
     # broker, including when the named interpreter/image lives on a Spark.
     if checked(["getattr", "rank"]).strip() == "0":
@@ -89,8 +99,7 @@ def profile_identity():
     else:
         generation = checked(["exec", "-r", "0", "/usr/bin/env", "FLUX_URI=" + URI,
                               f"{PREFIX}/install/bin/flux", "getattr", "broker.starttime"]).strip()
-    return {"profile": PROFILE, "config_sha256": CONFIG_SHA, "model_sha256": MODEL_SHA,
-            "broker_starttime": generation}
+    return generation
 
 
 def validate(cores, memory, timeout, environment):
@@ -242,6 +251,14 @@ def submit(directory, checkout, command, cores, memory, timeout, environment, *,
     return collect(directory)
 
 
+def require_saved_submission(directory, intent, sent, digest):
+    """Authenticate saved launch bytes before querying an instance-local ID."""
+    if (sent.get("state") != "submitted" or sent.get("launch_sha256") != digest
+            or intent["directory"] != str(directory) or intent["uri"] != URI
+            or intent["qualification"] != profile_identity()):
+        raise ValueError("unknown or changed submission identity")
+
+
 def collect(directory):
     """Reconnect to the saved ID. A query error never becomes a payload exit."""
     directory = Path(directory).resolve()
@@ -253,10 +270,7 @@ def collect(directory):
         intent = json.loads((directory / "launch.json").read_bytes())
         sent = json.loads((directory / "submission.json").read_bytes())
         digest = hashlib.sha256(encoded(intent)).hexdigest()
-        if (sent.get("state") != "submitted" or sent.get("launch_sha256") != digest
-                or intent["directory"] != str(directory) or intent["uri"] != URI
-                or intent["qualification"] != profile_identity()):
-            raise ValueError("unknown or changed submission identity")
+        require_saved_submission(directory, intent, sent, digest)
         saved_id = job_id(sent["job_id"])
         record.update(job_id=saved_id, command=intent["command"], source=intent["source"],
                       checkout=intent["checkout"], launch_sha256=digest,
