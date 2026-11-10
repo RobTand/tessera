@@ -4088,6 +4088,10 @@ on a Spark GPU allocation, as SHAPE section 6 requires. No fixed CPU number
 or core class decides acceptance; the observed affinity remains preserved.
 
 `tools/_flux_gpu_jobspec.py` renders SHAPE section 4 requests with one task,
+using the pure duration, thread and shape grammar in `tools/_flux_shape.py`.
+The CPU export renderer uses that same grammar without importing the suite
+transport or container lifecycle.
+The GPU command includes a
 job name, cwd, null input and separate shared output/error paths. It requires
 a positive explicit-unit walltime and an owned directory below `/mnt/shared`,
 seeds HOME and the suite thread limits, and prints `RENDERED, NOT SUBMITTED`

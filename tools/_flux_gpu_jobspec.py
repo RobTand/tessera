@@ -17,7 +17,7 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from _suite_flux import THREADS, duration_seconds, resource_shape  # noqa: E402
+from _flux_shape import THREADS, duration_seconds, resource_shape  # noqa: E402
 
 BASE_ENV = {"PATH": "/usr/bin:/bin", "HOME": "/home/rob", **THREADS}
 

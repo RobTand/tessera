@@ -1,6 +1,6 @@
 """Validate actual export bindings and emit a reviewable Flux jobspec; never submit.
 
-The jobspec asks for the stock slot shape (``_suite_flux.resource_shape``) on the
+The jobspec asks for the stock slot shape (``_flux_shape.resource_shape``) on the
 host the row is placed on. Its 8 cores and 48 GiB exceed the suite transport's
 4 cores / 16 GiB caps, so nothing here can be submitted by ``_suite_flux``: the
 full export stays a held decision until it is sized.
@@ -16,7 +16,7 @@ result records the derived path as a precondition to check there.
 """
 import argparse, hashlib, json, re, subprocess
 from pathlib import Path
-from _suite_flux import duration_seconds, resource_shape
+from _flux_shape import duration_seconds, resource_shape
 from run_glm_cached_cpu_export import INPUTS, complete_inputs, read_bound
 
 SCHEMA = 'prismaquant.reviewable_cpu_export_submission.v2'
