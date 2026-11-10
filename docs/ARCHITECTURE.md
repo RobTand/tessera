@@ -33,6 +33,10 @@ and passes that device to rootless Podman through CDI. Submission leaves CUDA
 selection to Flux and derives `XDG_RUNTIME_DIR` from the current uid.
 Payload `-e` and `--env` cannot set launcher-owned `TMPDIR`,
 `CUDA_VISIBLE_DEVICES`, or any thread-bound name in `_flux_shape.THREADS`.
+`t4_code/run_in_image.sh` changed `OMP_NUM_THREADS` from the affinity count to
+the launcher's fixed 1. `mhc/mhc_probe.sh` now ignores caller `MAX_JOBS` values
+(previous default 2) and uses the launcher's fixed 1. Both are intentional
+single-thread bounds, recorded in the wrapper headers and controlled-runtime tests.
 Temporary files use owned scratch; output, HOME and persistent cache mounts
 remain the wrappers' explicit locations. The launcher uses disabled nested
 cgroups, no network and a writable container root for NVIDIA hooks. A unique

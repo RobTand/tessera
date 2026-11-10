@@ -105,7 +105,7 @@ def test_oracle_wrapper_runs_owned_podman_policy(tmp_path, wrapper):
     (packages / 'py.py').touch()
     env.update(ORACLE_IMAGE=IMAGE, FLUX_SCRATCH=str(tmp_path / 'scratch'),
                DENSE_ORACLE_STUB=str(model), MHC_PROBE_MODEL=str(model),
-               TEST_RUNNER_SP=str(packages))
+               TEST_RUNNER_SP=str(packages), MAX_JOBS='7')
     scripts = {
         'routed_pair_oracle.sh': ROOT / 'experiments/routed_pair_oracle.sh',
         'dense_fused_oracle.sh': ROOT / 'experiments/dense_fused_oracle.sh',
@@ -128,6 +128,10 @@ def test_oracle_wrapper_runs_owned_podman_policy(tmp_path, wrapper):
     assert '--probe-marker' in create
     assert str(ROOT) + ':/work:ro' in create
     assert 'nvidia.com/gpu=0' in create
+    if wrapper == 'mhc/mhc_probe.sh':
+        assert create.count('MAX_JOBS=1') == 1 and 'MAX_JOBS=7' not in create
+        header = scripts[wrapper].read_text().split('set -euo pipefail')[0]
+        assert 'MAX_JOBS' in header and 'caller' in header and '1' in header
     if wrapper == 'routed_fused_tests.sh':
         assert (out / 'runner-sp/pygments').is_dir()
 
@@ -145,7 +149,8 @@ def test_kernel_wrapper_runs_owned_podman_policy(tmp_path, wrapper, expected_con
     (profiler / 'ncu').write_text('#!/bin/sh\nexit 0\n')
     (profiler / 'ncu').chmod(0o755)
     env.update(ORACLE_IMAGE=IMAGE, MLA_IMAGE=IMAGE, FLUX_SCRATCH=str(tmp_path / 'scratch'),
-               T4_SOURCE_ROOT=str(inputs), T4_ACTIVATION_ROOT=str(inputs), NCU_ROOT=str(profiler))
+               T4_SOURCE_ROOT=str(inputs), T4_ACTIVATION_ROOT=str(inputs), NCU_ROOT=str(profiler),
+               OMP_NUM_THREADS='7')
     if wrapper.startswith('t4_code/'):
         args = [str(ROOT), str(out), 'fp4_arithmetic_attest.py', '--probe-marker']
     elif wrapper.startswith('glm53_'):
@@ -164,6 +169,12 @@ def test_kernel_wrapper_runs_owned_podman_policy(tmp_path, wrapper, expected_con
     records = [json.loads(p.read_text()) for p in out.glob('container-*.json')]
     assert len(records) == expected_containers
     assert all(r['removed'] and r['scratch_removed'] for r in records)
+    if wrapper == 't4_code/run_in_image.sh':
+        calls = [json.loads(line) for line in (tmp_path / 'calls').read_text().splitlines()]
+        create, = [call for call in calls if call[0] == 'create']
+        assert create.count('OMP_NUM_THREADS=1') == 1 and 'OMP_NUM_THREADS=7' not in create
+        header = scripts[wrapper].read_text().split('set -euo pipefail')[0]
+        assert 'OMP_NUM_THREADS' in header and 'affinity count' in header and '1' in header
 
 
 def test_submit_collects_native_terminal_records(tmp_path, monkeypatch):

@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 # TMPDIR and thread bounds are launcher-owned; temporary writes use removable job scratch.
+# MAX_JOBS now ignores caller overrides (previous default 2); the launcher fixes it at 1.
 # Run experiments/mhc/mhc_probe.py inside the serving image (the mHC and
 # elementwise before-measurements).  Run inside an admitted Flux GPU job; this
 # script is the job's command.  Usage:

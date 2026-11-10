@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 # TMPDIR and thread bounds are launcher-owned; temporary writes use removable job scratch.
+# OMP_NUM_THREADS changed from the affinity count to the launcher's fixed 1.
 # Run one experiments/t4_code script inside the serving image on one GB10.
 # Run inside an admitted Flux GPU job; this script is the job's command.  Usage:
 #   run_in_image.sh <checkout> <out_dir> <script.py under experiments/t4_code> [args...]
