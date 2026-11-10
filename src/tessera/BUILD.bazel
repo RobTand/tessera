@@ -36,6 +36,13 @@ ts_py_library(
 )
 
 ts_py_library(
+    name = "_dev/durable_progress",
+    srcs = [
+        "_dev/durable_progress.py",
+    ],
+)
+
+ts_py_library(
     name = "_dev/native_identity",
     srcs = [
         "_dev/native_identity.py",

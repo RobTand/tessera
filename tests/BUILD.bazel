@@ -1940,6 +1940,7 @@ ts_py_library(
         "test_d41_e2m1_geometry.py",
         "test_d41_e2m1_quality_scope.py",
         "test_d41_e2m1_runtime_image.py",
+        "test_declared_input_roster.py",
         "test_decode_regime_subset.py",
         "test_dense_fused_census_cells.py",
         "test_dense_fused_window.py",
@@ -1979,6 +1980,7 @@ ts_py_library(
         "test_export_moe_layouts.py",
         "test_export_moe_write.py",
         "test_export_plan_cache.py",
+        "test_export_progress_contract.py",
         "test_export_routed_resident_pricing.py",
         "test_export_serving.py",
         "test_f16_prefetch_probe.py",
@@ -2035,6 +2037,7 @@ ts_py_library(
         "test_glm_packed_intake_observer.py",
         "test_glm_packed_tp2_control.py",
         "test_glm_routed_owner_inputs.py",
+        "test_glm_routed_owner_publication.py",
         "test_glm_selected_expert_control.py",
         "test_glm_u1_census_cells.py",
         "test_glm_u1_tp2_census.py",
@@ -2069,6 +2072,7 @@ ts_py_library(
         "test_issue_refs.py",
         "test_jit_build_lock_600.py",
         "test_kda_bank_verifier.py",
+        "test_kda_bank_wrapper.py",
         "test_kda_probe_driver.py",
         "test_kda_probe_durability.py",
         "test_kda_probe_gate.py",
@@ -4129,7 +4133,6 @@ ts_py_library(
     deps = [
         "//tools:__init__",
         "//tools:_accounting_source",
-        "//tools:_durable_progress",
         "//tools:_flux_gpu_jobspec",
         "//tools:_flux_shape",
         "//tools:_install_identity",
@@ -4691,6 +4694,38 @@ ts_py_library(
         "//experiments:t4_code/geometry_runtime_image",
         "//src/tessera:__init___cycle",
         "//src/tessera:bf16_route_cycle",
+    ],
+)
+
+ts_py_test(
+    name = "test_declared_input_roster",
+    path = "tests/test_declared_input_roster.py",
+    library = ":test_declared_input_roster_lib",
+    lane = "torch",
+    args = [
+        "--budget='{\"enforce\":true,\"seconds\":80,\"slow\":{}}'",
+    ],
+    timeout = "moderate",
+)
+
+ts_py_test(
+    name = "test_declared_input_roster.bytes",
+    path = "tests/test_declared_input_roster.py",
+    library = ":test_declared_input_roster_lib",
+    lane = "bytes",
+    args = [
+        "--budget='{\"enforce\":true,\"seconds\":80,\"slow\":{}}'",
+    ],
+    timeout = "moderate",
+)
+
+ts_py_library(
+    name = "test_declared_input_roster_lib",
+    srcs = [
+        "test_declared_input_roster.py",
+    ],
+    deps = [
+        "//experiments:t8r_speed/declared_inputs",
     ],
 )
 
@@ -5492,7 +5527,6 @@ ts_py_library(
     data = [
         "//tools:__init__.py",
         "//tools:_accounting_source.py",
-        "//tools:_durable_progress.py",
         "//tools:_flux_gpu_jobspec.py",
         "//tools:_flux_shape.py",
         "//tools:_install_identity.py",
@@ -6725,6 +6759,7 @@ ts_py_test(
         "//src/tessera:identity",
         "//src/tessera:serving/build_identity",
         "//src/tessera:source_digest_cache",
+        "//tools:__init__",
         "//tools:_flux_gpu_jobspec",
         "//tools:impacted_tests",
         "//tools:tessera_lane_preflight",
@@ -6972,6 +7007,7 @@ ts_py_test(
         "//src/tessera:identity",
         "//src/tessera:serving/build_identity",
         "//src/tessera:source_digest_cache",
+        "//tools:__init__",
         "//tools:_flux_gpu_jobspec",
         "//tools:impacted_tests",
         "//tools:tessera_lane_preflight",
@@ -7535,6 +7571,46 @@ ts_py_library(
         "//src/tessera:__init___cycle",
         "//src/tessera:bf16_route_cycle",
         "//src/tessera:errors",
+    ],
+)
+
+ts_py_test(
+    name = "test_export_progress_contract",
+    path = "tests/test_export_progress_contract.py",
+    library = ":test_export_progress_contract_lib",
+    deps = [
+        "//src/tessera:identity",
+    ],
+    lane = "torch",
+    args = [
+        "--budget='{\"enforce\":true,\"seconds\":80,\"slow\":{}}'",
+    ],
+    timeout = "moderate",
+)
+
+ts_py_test(
+    name = "test_export_progress_contract.bytes",
+    path = "tests/test_export_progress_contract.py",
+    library = ":test_export_progress_contract_lib",
+    deps = [
+        "//src/tessera:identity",
+    ],
+    lane = "bytes",
+    args = [
+        "--budget='{\"enforce\":true,\"seconds\":80,\"slow\":{}}'",
+    ],
+    timeout = "moderate",
+)
+
+ts_py_library(
+    name = "test_export_progress_contract_lib",
+    srcs = [
+        "test_export_progress_contract.py",
+    ],
+    deps = [
+        "//experiments:glm_routed_owner_inputs",
+        "//tools:pq2459_export_progress",
+        "//tools:run_glm_cached_cpu_export",
     ],
 )
 
@@ -9607,12 +9683,10 @@ ts_py_library(
         "test_glm_cpu_export_progress.py",
     ],
     deps = [
-        "//experiments:glm_routed_owner_inputs",
         "//src/tessera:__init___cycle",
+        "//src/tessera:_dev/__init__",
+        "//src/tessera:_dev/durable_progress",
         "//src/tessera:source_digest_cache",
-        "//tools:__init__",
-        "//tools:_durable_progress",
-        "//tools:pq2459_export_progress",
         "//tools:render_glm_cpu_export_command",
         "//tools:run_glm_cached_cpu_export",
     ],
@@ -9787,9 +9861,6 @@ ts_py_test(
     name = "test_glm_routed_owner_inputs",
     path = "tests/test_glm_routed_owner_inputs.py",
     library = ":test_glm_routed_owner_inputs_lib",
-    data = [
-        "//src/tessera:identity.py",
-    ],
     deps = [
         "//src/tessera:identity",
     ],
@@ -9804,9 +9875,6 @@ ts_py_test(
     name = "test_glm_routed_owner_inputs.bytes",
     path = "tests/test_glm_routed_owner_inputs.py",
     library = ":test_glm_routed_owner_inputs_lib",
-    data = [
-        "//src/tessera:identity.py",
-    ],
     deps = [
         "//src/tessera:identity",
     ],
@@ -9821,6 +9889,50 @@ ts_py_library(
     name = "test_glm_routed_owner_inputs_lib",
     srcs = [
         "test_glm_routed_owner_inputs.py",
+    ],
+    deps = [
+        "//experiments:glm_routed_owner_inputs",
+    ],
+)
+
+ts_py_test(
+    name = "test_glm_routed_owner_publication",
+    path = "tests/test_glm_routed_owner_publication.py",
+    library = ":test_glm_routed_owner_publication_lib",
+    data = [
+        "//src/tessera:identity.py",
+    ],
+    deps = [
+        "//src/tessera:identity",
+    ],
+    lane = "torch",
+    args = [
+        "--budget='{\"enforce\":true,\"seconds\":80,\"slow\":{}}'",
+    ],
+    timeout = "moderate",
+)
+
+ts_py_test(
+    name = "test_glm_routed_owner_publication.bytes",
+    path = "tests/test_glm_routed_owner_publication.py",
+    library = ":test_glm_routed_owner_publication_lib",
+    data = [
+        "//src/tessera:identity.py",
+    ],
+    deps = [
+        "//src/tessera:identity",
+    ],
+    lane = "bytes",
+    args = [
+        "--budget='{\"enforce\":true,\"seconds\":80,\"slow\":{}}'",
+    ],
+    timeout = "moderate",
+)
+
+ts_py_library(
+    name = "test_glm_routed_owner_publication_lib",
+    srcs = [
+        "test_glm_routed_owner_publication.py",
     ],
     deps = [
         "//experiments:glm_routed_owner_inputs",
@@ -11056,6 +11168,7 @@ ts_py_library(
         "test_d41_e2m1_geometry.py",
         "test_d41_e2m1_quality_scope.py",
         "test_d41_e2m1_runtime_image.py",
+        "test_declared_input_roster.py",
         "test_decode_regime_subset.py",
         "test_dense_fused_census_cells.py",
         "test_dense_fused_window.py",
@@ -11095,6 +11208,7 @@ ts_py_library(
         "test_export_moe_layouts.py",
         "test_export_moe_write.py",
         "test_export_plan_cache.py",
+        "test_export_progress_contract.py",
         "test_export_routed_resident_pricing.py",
         "test_export_serving.py",
         "test_f16_prefetch_probe.py",
@@ -11151,6 +11265,7 @@ ts_py_library(
         "test_glm_packed_intake_observer.py",
         "test_glm_packed_tp2_control.py",
         "test_glm_routed_owner_inputs.py",
+        "test_glm_routed_owner_publication.py",
         "test_glm_selected_expert_control.py",
         "test_glm_u1_census_cells.py",
         "test_glm_u1_tp2_census.py",
@@ -11184,6 +11299,7 @@ ts_py_library(
         "test_issue_refs.py",
         "test_jit_build_lock_600.py",
         "test_kda_bank_verifier.py",
+        "test_kda_bank_wrapper.py",
         "test_kda_probe_driver.py",
         "test_kda_probe_durability.py",
         "test_kda_probe_gate.py",
@@ -11811,6 +11927,7 @@ ts_py_library(
         "test_d41_e2m1_geometry.py",
         "test_d41_e2m1_quality_scope.py",
         "test_d41_e2m1_runtime_image.py",
+        "test_declared_input_roster.py",
         "test_decode_regime_subset.py",
         "test_dense_fused_census_cells.py",
         "test_dense_fused_window.py",
@@ -11850,6 +11967,7 @@ ts_py_library(
         "test_export_moe_layouts.py",
         "test_export_moe_write.py",
         "test_export_plan_cache.py",
+        "test_export_progress_contract.py",
         "test_export_routed_resident_pricing.py",
         "test_export_serving.py",
         "test_f16_prefetch_probe.py",
@@ -11906,6 +12024,7 @@ ts_py_library(
         "test_glm_packed_intake_observer.py",
         "test_glm_packed_tp2_control.py",
         "test_glm_routed_owner_inputs.py",
+        "test_glm_routed_owner_publication.py",
         "test_glm_selected_expert_control.py",
         "test_glm_u1_census_cells.py",
         "test_glm_u1_tp2_census.py",
@@ -11939,6 +12058,7 @@ ts_py_library(
         "test_issue_refs.py",
         "test_jit_build_lock_600.py",
         "test_kda_bank_verifier.py",
+        "test_kda_bank_wrapper.py",
         "test_kda_probe_driver.py",
         "test_kda_probe_durability.py",
         "test_kda_probe_gate.py",
@@ -12397,8 +12517,48 @@ ts_py_test(
     path = "tests/test_kda_bank_verifier.py",
     library = ":test_kda_bank_verifier_lib",
     data = [
-        "//experiments:kda/verify_conv_bank.sh",
         "//experiments:mhc/mhc_probe.py",
+    ],
+    lane = "torch",
+    args = [
+        "--budget='{\"enforce\":true,\"seconds\":80,\"slow\":{}}'",
+    ],
+    timeout = "moderate",
+)
+
+ts_py_test(
+    name = "test_kda_bank_verifier.bytes",
+    path = "tests/test_kda_bank_verifier.py",
+    library = ":test_kda_bank_verifier_lib",
+    data = [
+        "//experiments:mhc/mhc_probe.py",
+    ],
+    lane = "bytes",
+    args = [
+        "--budget='{\"enforce\":true,\"seconds\":80,\"slow\":{}}'",
+    ],
+    timeout = "moderate",
+)
+
+ts_py_library(
+    name = "test_kda_bank_verifier_lib",
+    srcs = [
+        "test_kda_bank_verifier.py",
+    ],
+    deps = [
+        "//experiments:kda/verify_conv_bank",
+        "//src/tessera:__init___cycle",
+        "//src/tessera:job_metadata",
+        ":test_kda_probe_gate_lib",
+    ],
+)
+
+ts_py_test(
+    name = "test_kda_bank_wrapper",
+    path = "tests/test_kda_bank_wrapper.py",
+    library = ":test_kda_bank_wrapper_lib",
+    data = [
+        "//experiments:kda/verify_conv_bank.sh",
         "//experiments:runtime_image.sh",
         "//src/tessera:serving/runtime_contract.json",
     ],
@@ -12414,12 +12574,11 @@ ts_py_test(
 )
 
 ts_py_test(
-    name = "test_kda_bank_verifier.bytes",
-    path = "tests/test_kda_bank_verifier.py",
-    library = ":test_kda_bank_verifier_lib",
+    name = "test_kda_bank_wrapper.bytes",
+    path = "tests/test_kda_bank_wrapper.py",
+    library = ":test_kda_bank_wrapper_lib",
     data = [
         "//experiments:kda/verify_conv_bank.sh",
-        "//experiments:mhc/mhc_probe.py",
         "//experiments:runtime_image.sh",
         "//src/tessera:serving/runtime_contract.json",
     ],
@@ -12435,19 +12594,13 @@ ts_py_test(
 )
 
 ts_py_library(
-    name = "test_kda_bank_verifier_lib",
+    name = "test_kda_bank_wrapper_lib",
     srcs = [
-        "test_kda_bank_verifier.py",
+        "test_kda_bank_wrapper.py",
     ],
     data = [
         "//experiments:kda/verify_conv_bank.sh",
         "//experiments:runtime_image.sh",
-    ],
-    deps = [
-        "//experiments:kda/verify_conv_bank",
-        "//src/tessera:__init___cycle",
-        "//src/tessera:job_metadata",
-        ":test_kda_probe_gate_lib",
     ],
 )
 
@@ -12486,8 +12639,9 @@ ts_py_library(
     ],
     deps = [
         "//experiments:mhc/mhc_probe",
-        "//tools:__init__",
-        "//tools:_durable_progress",
+        "//src/tessera:__init___cycle",
+        "//src/tessera:_dev/__init__",
+        "//src/tessera:_dev/durable_progress",
         ":test_kda_probe_durability_lib",
         ":test_kda_probe_gate_lib",
     ],
@@ -12522,8 +12676,9 @@ ts_py_library(
     ],
     deps = [
         "//experiments:kda/conv_progress",
-        "//tools:__init__",
-        "//tools:_durable_progress",
+        "//src/tessera:__init___cycle",
+        "//src/tessera:_dev/__init__",
+        "//src/tessera:_dev/durable_progress",
     ],
 )
 
@@ -21404,6 +21559,7 @@ ts_py_test(
         "//src/tessera:identity",
         "//src/tessera:serving/build_identity",
         "//src/tessera:source_digest_cache",
+        "//tools:__init__",
         "//tools:_flux_gpu_jobspec",
         "//tools:impacted_tests",
         "//tools:tessera_lane_preflight",
@@ -21654,6 +21810,7 @@ ts_py_test(
         "//src/tessera:identity",
         "//src/tessera:serving/build_identity",
         "//src/tessera:source_digest_cache",
+        "//tools:__init__",
         "//tools:_flux_gpu_jobspec",
         "//tools:impacted_tests",
         "//tools:tessera_lane_preflight",
@@ -22327,6 +22484,7 @@ ts_py_test(
         "//src/tessera:export_serving",
         "//src/tessera:identity",
         "//src/tessera:source_digest_cache",
+        "//tools:__init__",
         "//tools:_flux_gpu_jobspec",
         "//tools:impacted_tests",
         "//tools:tessera_lane_preflight",
@@ -22576,6 +22734,7 @@ ts_py_test(
         "//src/tessera:export_serving",
         "//src/tessera:identity",
         "//src/tessera:source_digest_cache",
+        "//tools:__init__",
         "//tools:_flux_gpu_jobspec",
         "//tools:impacted_tests",
         "//tools:tessera_lane_preflight",
@@ -26894,7 +27053,6 @@ ts_py_library(
         "//experiments:t8r_speed/bench_t8r.sh",
     ],
     deps = [
-        "//experiments:t8r_speed/declared_inputs",
         "//experiments:t8r_speed/stageprev_probe",
         "//src/tessera:__init___cycle",
         "//src/tessera:bf16_route_cycle",
@@ -27312,6 +27470,7 @@ ts_py_test(
         "//src/tessera:identity",
         "//src/tessera:serving/build_identity",
         "//src/tessera:source_digest_cache",
+        "//tools:__init__",
         "//tools:_flux_gpu_jobspec",
         "//tools:impacted_tests",
         "//tools:tessera_lane_preflight",
@@ -27561,6 +27720,7 @@ ts_py_test(
         "//src/tessera:identity",
         "//src/tessera:serving/build_identity",
         "//src/tessera:source_digest_cache",
+        "//tools:__init__",
         "//tools:_flux_gpu_jobspec",
         "//tools:impacted_tests",
         "//tools:tessera_lane_preflight",

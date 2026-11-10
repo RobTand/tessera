@@ -1454,11 +1454,11 @@ ts_py_library(
     ],
     deps = [
         "//src/tessera:__init___cycle",
+        "//src/tessera:_dev/__init__",
+        "//src/tessera:_dev/durable_progress",
         "//src/tessera:bf16_route_cycle",
         "//src/tessera:historical_producer",
         "//src/tessera:producer_authority",
-        "//tools:__init__",
-        "//tools:_durable_progress",
         ":export_tessera_serving",
     ],
 )
@@ -1550,8 +1550,9 @@ ts_py_library(
         "kda/conv_progress.py",
     ],
     deps = [
-        "//tools:__init__",
-        "//tools:_durable_progress",
+        "//src/tessera:__init___cycle",
+        "//src/tessera:_dev/__init__",
+        "//src/tessera:_dev/durable_progress",
     ],
 )
 

@@ -26,13 +26,6 @@ ts_py_library(
 )
 
 ts_py_library(
-    name = "_durable_progress",
-    srcs = [
-        "_durable_progress.py",
-    ],
-)
-
-ts_py_library(
     name = "_flux_gpu_jobspec",
     srcs = [
         "_flux_gpu_jobspec.py",
@@ -467,9 +460,9 @@ ts_py_library(
     ],
     deps = [
         "//src/tessera:__init___cycle",
+        "//src/tessera:_dev/__init__",
+        "//src/tessera:_dev/durable_progress",
         "//src/tessera:export_serving",
-        ":__init__",
-        ":_durable_progress",
     ],
 )
 
@@ -601,10 +594,10 @@ ts_py_library(
     ],
     deps = [
         "//src/tessera:__init___cycle",
+        "//src/tessera:_dev/__init__",
+        "//src/tessera:_dev/durable_progress",
         "//src/tessera:export_serving",
         "//src/tessera:source_digest_cache",
-        ":__init__",
-        ":_durable_progress",
     ],
 )
 
@@ -730,12 +723,13 @@ ts_py_library(
         "//experiments:full_engine_plugin_install",
         "//experiments:step4_capture_launch",
         "//src/tessera:__init___cycle",
+        "//src/tessera:_dev/__init__",
+        "//src/tessera:_dev/durable_progress",
         "//src/tessera:bf16_route_cycle",
         "//src/tessera:serving/census_plan",
         "//src/tessera:serving/timing_panel",
         "//src/tessera:source_profiles",
         ":__init__",
-        ":_durable_progress",
         ":run_glm_cached_cpu_export",
     ],
 )
