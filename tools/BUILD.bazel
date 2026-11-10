@@ -26,6 +26,13 @@ ts_py_library(
 )
 
 ts_py_library(
+    name = "_directory_content",
+    srcs = [
+        "_directory_content.py",
+    ],
+)
+
+ts_py_library(
     name = "_flux_docker_guard",
     srcs = [
         "_flux_docker_guard.py",
@@ -47,10 +54,8 @@ ts_py_library(
     srcs = [
         "_flux_serve.py",
     ],
-    data = [
-        "//experiments:lfm_bound_served.sh",
-    ],
     deps = [
+        ":_directory_content",
         ":_flux_gpu_jobspec",
         ":_flux_shape",
     ],

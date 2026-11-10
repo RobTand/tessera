@@ -423,6 +423,7 @@ ts_py_library(
     deps = [
         "//src/tessera:__init___cycle",
         "//src/tessera:bf16_route_cycle",
+        "//tools:_directory_content",
     ],
 )
 
@@ -3659,6 +3660,11 @@ ts_py_library(
         "t8r_speed/bench_t8r.sh",
         "t8r_speed/declared_inputs.py",
     ],
+    deps = [
+        "//src/tessera:__init___cycle",
+        "//src/tessera:_dev/__init__",
+        "//src/tessera:_dev/native_identity",
+    ],
 )
 
 ts_py_library(
@@ -4658,6 +4664,7 @@ ts_py_library(
         "ts5_lfm_served_bound.py",
     ],
     data = [
+        "lfm_bound_served.sh",
         "tessera_plugin_run.sh",
         "tessera_plugin_served.sh",
     ],
@@ -4677,6 +4684,7 @@ ts_py_library(
         "ts5_lfm_teacher_bound.py",
     ],
     data = [
+        "lfm_bound_served.sh",
         "serve_and_dump_kl.sh",
     ],
     deps = [
