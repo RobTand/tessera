@@ -239,21 +239,15 @@ def run_container(arguments, directory, scratch_root, *, gpu=True):
     directory = Path(directory).resolve()
     directory.mkdir(parents=True, exist_ok=True)
     root = Path(scratch_root).resolve() / job
-    root.mkdir(parents=True, exist_ok=True)
-    filesystem = subprocess.check_output(['findmnt', '-n', '-o', 'FSTYPE', '-T', str(root)], text=True).strip()
+    root.parent.mkdir(parents=True, exist_ok=True)
+    filesystem = subprocess.check_output(['findmnt', '-n', '-o', 'FSTYPE', '-T', str(root.parent)], text=True).strip()
     if (gpu and filesystem != 'ext4') or (not gpu and filesystem not in {'ext4', 'xfs', 'btrfs'}):
-        try:
-            root.rmdir()
-        except OSError:
-            pass
         raise ValueError('GPU scratch requires ext4, found ' + filesystem)
     rootless = subprocess.check_output(['podman', 'info', '--format', '{{.Host.Security.Rootless}}'], text=True).strip()
     if rootless != 'true':
         raise ValueError('GPU container requires rootless Podman')
     name = 'tessera-' + job + '-' + uuid.uuid4().hex
     scratch = root / name
-    scratch.mkdir()
-    (scratch / 'tmp').mkdir()
     cidfile = scratch / 'container.cid'
     affinity = sorted(os.sched_getaffinity(0))
     record = {'job_id': job, 'name': name, 'image': image, 'host_affinity': affinity,
@@ -272,6 +266,9 @@ def run_container(arguments, directory, scratch_root, *, gpu=True):
         raise Interrupted
     handlers = {sig: signal.signal(sig, interrupt) for sig in (signal.SIGINT, signal.SIGTERM)}
     try:
+        root.mkdir(exist_ok=True)
+        scratch.mkdir()
+        (scratch / 'tmp').mkdir()
         identity = ['--userns=keep-id'] if '--user' in options and options[options.index('--user') + 1] != '0:0' else []
         create = ['podman', 'create', '--pull=never', '--cgroups=disabled', '--network=none', '--init',
                   '--name', name, '--cidfile', str(cidfile),
@@ -325,7 +322,8 @@ def run_container(arguments, directory, scratch_root, *, gpu=True):
             record['removed'] = absent == 1
             if not record['removed']:
                 raise ValueError('owned Podman container remains: ' + removed.stderr)
-            shutil.rmtree(scratch)
+            if scratch.exists():
+                shutil.rmtree(scratch)
             record['scratch_removed'] = not scratch.exists()
             try:
                 root.rmdir()

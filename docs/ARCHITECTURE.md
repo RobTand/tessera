@@ -8,10 +8,13 @@ and checks that store's RepoDigests with the existing digest rule.
 The launcher uses rootless Podman with CDI, disabled nested
 cgroups, no network and a writable container root for NVIDIA hooks. A unique
 name is registered before creation; TERM and exit remove only that container.
+Runtime and filesystem validation precede owned scratch creation, and creation runs inside the signal cleanup scope.
 Scratch lives on ext4 under `/tmp/flux-vanilla/<ASCII job ID>` and is removed
 on exit. Submitted environments set `FLUX_F58_FORCE_ASCII=1`. The launcher
 and suite payload convert incoming IDs once with `flux job id --to=f58plain`
-and use that exact scratch leaf. Receipt IDs retain their original spelling. Suite and wrapper payloads sample their own cgroup `memory.peak`
+and use that exact scratch leaf. Native submission receipts retain the returned
+ID spelling; container receipts use the normalized ID. Suite and wrapper
+payloads sample their own cgroup `memory.peak`
 after cleanup and record `memory_peak_bytes` beside declared memory. Read
 failures are recorded and do not change the numerical verdict. The receipt records host and container affinity, status and cleanup.
 The foreground vLLM plugin runner uses this route, with an offline install from a scratch copy of the read-only source. Long-lived serving launchers remain pending size, duration and network qualification.

@@ -24,7 +24,7 @@ p=pathlib.Path(os.environ['CONTROL'])
 a=sys.argv[1:]
 with (p/'calls').open('a') as f: f.write(json.dumps(a)+'\\n')
 if a[:2]==['image','inspect']: print('sha256:'+'c'*64+'\\t'+json.dumps([a[2]]))
-elif a[0]=='info': print('true')
+elif a[0]=='info': print(os.environ.get('ROOTLESS', 'true'))
 elif a[0]=='create':
  (p/'created').touch()
  pathlib.Path(a[a.index('--cidfile')+1]).write_text('b'*64)
@@ -243,3 +243,11 @@ def test_owned_tmpfs_payload_option_is_forwarded(tmp_path):
     assert create[create.index('--tmpfs') + 1] == '/pbtmp:rw,exec,size=8g'
     record, = [json.loads(p.read_text()) for p in out.glob('container-*.json')]
     assert record['removed'] and record['scratch_removed']
+
+
+def test_rootful_runtime_refused_without_owned_scratch(tmp_path):
+    command, env, out = controlled_runtime(tmp_path)
+    result = subprocess.run(command, env={**env, 'ROOTLESS': 'false'}, capture_output=True, text=True, timeout=30)
+    assert result.returncode == 2 and 'rootless' in result.stderr
+    assert not (tmp_path / 'scratch/f123').exists()
+    assert not (tmp_path / 'created').exists()
