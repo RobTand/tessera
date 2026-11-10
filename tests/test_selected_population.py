@@ -277,7 +277,8 @@ def test_no_more_than_eight_native_clients_run_at_once(tmp_path, monkeypatch):
     """
 
     shards = {f"shard-{i:02d}": [f"tests/test_{i}.py"] for i in range(12)}
-    selection = {"shards": shards, "source_identity": {"sha256": "a" * 64}}
+    selection = {"shards": shards, "source_identity": {"sha256": "a" * 64},
+                 "python": "/opt/test-cpu/bin/python"}
     lock, release = threading.Lock(), threading.Event()
     state = {"now": 0, "peak": 0}
 
@@ -333,7 +334,8 @@ def test_a_resume_names_the_shards_whose_client_result_was_never_recorded(tmp_pa
 
 
 def test_each_clients_result_is_written_when_that_client_exits(tmp_path, monkeypatch):
-    selection = {"shards": SHARDS, "source_identity": {"sha256": "a" * 64}}
+    selection = {"shards": SHARDS, "source_identity": {"sha256": "a" * 64},
+                 "python": "/opt/test-cpu/bin/python"}
     answers = {"shard-00": {"returncode": 0, "elapsed_s": 1.5, "stderr_tail": ["ok"], "flux": "native a"},
                "shard-01": {"returncode": 1, "elapsed_s": 2.5, "stderr_tail": ["boom"], "flux": "native b"}}
     monkeypatch.setattr(sp.merge_suite, "_submit", lambda name, arm, args, receipt_dir: answers[name])
@@ -415,6 +417,7 @@ def _world(tmp_path, monkeypatch, *, shards=None, ran=None, state=None, source=N
     receipt_dir = tmp_path / "receipt"; receipt_dir.mkdir()
     identity = measured_source(checkout, verifier=None)
     selection = {"base": "HEAD", "base_commit": identity["snapshot_commit"],
+        "python": "/opt/test-cpu/bin/python",
         "head_commit": identity["snapshot_commit"], "source_identity": identity,
         "verdict": "narrowed", "forces_full": [], "excluded_tests": [], "shards": shards,
         "tests": sorted(selected or {path for files in shards.values() for path in files})}
