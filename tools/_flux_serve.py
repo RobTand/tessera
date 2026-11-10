@@ -31,6 +31,7 @@ DIGEST = re.compile(r'[^\s@]+@sha256:[0-9a-f]{64}')
 WRAPPERS = (
     'serve_and_dump_kl.sh', 'tessera_plugin_served.sh', 'decode_regime_kl.sh',
     'gridbook_lane_served.sh', 'window_gemv_latency.sh', 'serve_smoke_graph.sh',
+    'lfm_bound_served.sh',
 )
 SERVE_ENV = (
     'TS', 'GB', 'RUNS', 'EXT', 'VLLM_CACHE', 'TRACEDIR', 'PY', 'KL', 'PORT',
@@ -374,6 +375,29 @@ def rpc(action, arguments):
     require(response['ok'], response.get('error', 'SERVE_RPC_FAILED'))
     if response.get('value'):
         print(response['value'])
+
+
+def enter_lfm_stage(stage):
+    """Put the historical Python stage inside the same foreground supervisor."""
+    if os.environ.get('TESSERA_SERVE_SOCKET'):
+        return
+    arguments = sys.argv[2:] if stage == 'student' else sys.argv[1:]
+    os.execvp('bash', ['bash', str(ROOT / 'experiments/lfm_bound_served.sh'), stage, *arguments])
+
+
+def cleanup_scoring_stage(name, *, launched, completed, stop, monitor):
+    """Stop telemetry and ask the sole container owner to verify cleanup."""
+    result = {'owner': 'reviewed-serving-supervisor', 'measurement_completed': completed,
+              'launched': launched, 'safe_to_release': False}
+    stop.set()
+    monitor.join(timeout=2)
+    try:
+        if launched:
+            rpc('stop', [])
+        result['safe_to_release'] = True
+    except (RuntimeError, OSError) as exc:
+        result['error'] = str(exc)
+    return result
 
 
 def supervise(spec, receipt, command):

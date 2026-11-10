@@ -10779,7 +10779,7 @@ pinned in the submitted environment prevents a later spec-file replacement.
 Missing image, running-image mismatch, spec mismatch, health deadline,
 container exit, or unverifiable cleanup is a named failure with no fallback.
 
-The six serve owners are `serve_and_dump_kl.sh`, `tessera_plugin_served.sh`,
+The direct serve owners are `serve_and_dump_kl.sh`, `tessera_plugin_served.sh`,
 `decode_regime_kl.sh`, `gridbook_lane_served.sh`, `window_gemv_latency.sh`, and
 `serve_smoke_graph.sh`. Shell campaigns use `experiments/flux_serve_campaign.sh`
 to submit and collect each scored run separately. `TESSERA_SERVE_PLANS` names
@@ -10789,6 +10789,15 @@ GPU walltimes over 10 minutes also require `duration_approval` naming the fleet
 master's decision, or `--duration-approval` when rendering a single run.
 A missing or ambiguous plan refuses. A campaign cannot nest inside a Flux job.
 Direct serving wrappers refuse outside Flux.
+
+`lfm_bound_served.sh teacher|student` runs the corresponding source-bound LFM
+Python stage in that same supervisor. The stage's existing teacher or plugin
+wrapper makes the single serve request. Its seal checks, KL comparisons,
+telemetry and build checks run inside the admitted job. The historical 64 GiB
+container overrides are removed: utilization 0.35 declares 43 GiB for Docker
+and 4 GiB for the client. Stage cleanup asks the supervisor to stop and verify
+its container instead of removing a legacy name. The separate in-process
+`census` stage retains its Podman route.
 
 Prepare a normalized spec with `python tools/_flux_serve.py spec --model DIR
 --port PORT --util FRACTION -- [payload mount/env/entrypoint options] IMAGE
@@ -10808,5 +10817,5 @@ that hard-kill path, root-store image availability, numeric-user plugin startup,
 loopback health and scoring, actual CPU affinity, Docker memory enforcement
 including unified GPU allocations, container peak accounting, and complete
 cleanup. TP2, Ray, NCCL and multi-host serving remain blocked. The legacy paired
-MoE and LFM stage drivers retain their separate ownership/memory protocols and
-are not admitted by the reviewed serving renderer.
+MoE driver and detached graph controllers are not admitted by the reviewed
+serving renderer.
