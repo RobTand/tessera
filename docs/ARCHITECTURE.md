@@ -1188,6 +1188,8 @@ Re-stamped 2026-10-04 for strict native mapped-file mount provenance (#915).
 Both qualification owners derive the mapping device from the held FD's
 exact mount ID and require that backing device plus inode on an executable
 mapping. A subvolume's virtual `st_dev` is not the kernel mapping device.
+The piece-major comparison uses the same held-FD mount device, retaining
+the executable path and inode match.
 Unknown or ambiguous mount provenance fails closed; hash and FD fences stay
 strict. No native kernel, serving, timing or energy claim is changed.
 

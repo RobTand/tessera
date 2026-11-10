@@ -6,6 +6,8 @@ import json
 import os
 from pathlib import Path
 
+from tessera._dev.native_identity import mapped_file_device
+
 SCHEMA = "tessera.routed_piece_major_comparison.v1"
 REPEAT_SCHEMA = "tessera.routed_piece_major_repeatability.v1"
 DUAL_B_NUMERIC_SCHEMA = "tessera.routed_mma8_dual_b_numeric.v1"
@@ -268,6 +270,7 @@ def mapped_native_identity(lib, expected):
     with path.open("rb") as stream:
         stat = os.fstat(stream.fileno())
         digest = hashlib.file_digest(stream, "sha256").hexdigest()
+        device = mapped_file_device(stream.fileno())
     if digest != expected["sha256"]:
         raise ValueError("comparison loaded native digest differs")
     mappings = []
@@ -275,7 +278,7 @@ def mapped_native_identity(lib, expected):
         fields = line.split(None, 5)
         if len(fields) == 6 and fields[5] == str(path) and "x" in fields[1]:
             major, minor = (int(v, 16) for v in fields[3].split(":"))
-            if (major, minor, int(fields[4])) == (os.major(stat.st_dev), os.minor(stat.st_dev), stat.st_ino):
+            if (major, minor, int(fields[4])) == (*device, stat.st_ino):
                 mappings.append(line)
     if not mappings:
         raise ValueError("comparison native file inode is not executable-mapped")
