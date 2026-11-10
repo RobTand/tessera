@@ -97,12 +97,15 @@ def test_recorded_request_must_exist_and_carry_its_provenance(quality_binding, f
     if fault == "absent":
         request.unlink()
         error = FileNotFoundError
+        message = action
     else:
         value = json.loads(request.read_text())
         del value["provenance"]
         request.write_text(json.dumps(value))
+        _commit_requests(request.parent.parent)
         error = ValueError
-    with pytest.raises(error):
+        message = 'lacks its provenance'
+    with pytest.raises(error, match=message):
         quality.bind_existing_quality(original, action, output)
 
 
