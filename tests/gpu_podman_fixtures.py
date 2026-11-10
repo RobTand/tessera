@@ -54,3 +54,41 @@ elif a[:2]==['container','exists']: sys.exit(int(not (p/'created').exists()))
                '--scratch-root', str(tmp_path / 'scratch'), '--',
                '--entrypoint', '/bin/sh', IMAGE, '-c', 'exit 0']
     return command, env, out
+
+
+def controlled_submission(tmp_path, monkeypatch, *, evidence='ok'):
+    import runpy
+    module = runpy.run_path(str(LAUNCHER))
+    _, env, out = controlled_runtime(tmp_path)
+    binary = tmp_path / 'bin'
+    flux = binary / 'flux'
+    flux.write_text('''#!/usr/bin/env python3
+import json,os,pathlib,subprocess,sys
+a=sys.argv[1:]; p=pathlib.Path(os.environ['CONTROL']); case=os.environ['EVIDENCE']
+with (p/'flux-calls').open('a') as f: f.write(json.dumps(a)+'\\n')
+if a[:2]==['resource','list']: print('free sparky sparklina dl380g10')
+elif a[0]=='submit':
+ if case=='unknown': print('unrecognized submission'); sys.exit(1)
+ if case=='payload':
+  rc=subprocess.run(a[a.index('--')+1:]).returncode
+  (p/'payload-exit').write_text(str(rc))
+ print('f123')
+elif a[:2]==['job','status']:
+ status=int((p/'payload-exit').read_text())*256 if case=='payload' else (256 if case=='waitstatus' else 0)
+ print(json.dumps({'waitstatus':status,'exception_occurred':case=='exception'}))
+elif a[:2]==['job','eventlog']:
+ print(json.dumps({'name':'finish','context':{'status':0}}))
+ if case!='clean': print(json.dumps({'name':'clean'}))
+elif a[:2]==['job','info']:
+ if case=='unreadable': print('not JSON'); sys.exit(1)
+ print(json.dumps({'execution':{'R_lite':[{'rank':'1','children':{'core':'0-1' if case=='cores' else '0','gpu':'0-1' if case=='gpu' else '0'}}],'nodelist':['sparky']}}))
+''')
+    ssh = binary / 'ssh'
+    ssh.write_text('#!/bin/sh\ncase "$*" in *query-gpu*) echo 0;; esac\n')
+    ssh.chmod(0o755)
+    for key in ('PATH', 'CONTROL'):
+        monkeypatch.setenv(key, env[key])
+    monkeypatch.setenv('EVIDENCE', evidence)
+    argv = ['flux', 'submit', '--env=-*', '--resources-shape=slot/[core=1;memory=8;gpu=1]',
+            '-n1', '-t', '10m', '--', '/bin/true']
+    return module, argv, out

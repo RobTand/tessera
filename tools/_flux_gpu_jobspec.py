@@ -50,6 +50,15 @@ def main(argv=None):
     argv = sys.argv[1:] if argv is None else argv
     if argv[:1] == ["run"]:
         return container_main(argv[1:])
+    if argv[:1] == ['memory-receipt']:
+        parser = argparse.ArgumentParser(description='Sample the current job cgroup memory peak')
+        parser.add_argument('--out', type=Path, required=True)
+        parser.add_argument('--memory-gib', type=int, required=True)
+        parser.add_argument('--proc', type=Path, default=Path('/proc/self/cgroup'))
+        parser.add_argument('--root', type=Path, default=Path('/sys/fs/cgroup'))
+        args = parser.parse_args(argv[1:])
+        args.out.write_text(json.dumps(memory_peak_receipt(args.memory_gib, proc=args.proc, root=args.root)) + '\n')
+        return 0
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--submit", action="store_true", help="submit one bounded job and collect terminal evidence")
     parser.add_argument("--cores", type=int, required=True)
@@ -126,17 +135,10 @@ def submit_and_collect(argv, directory, *, cores, memory_gib, walltime):
     # The last payload step samples its own sdexec unit, including Podman.
     payload = directory / 'payload.sh'
     payload.write_text('''#!/bin/bash
-out=$1; memory=$2; shift 2
+out=$1; memory=$2; launcher=$3; shift 3
 finish(){
  rc=$?; trap - EXIT
- peak_path=/sys/fs/cgroup$(cut -d: -f3- /proc/self/cgroup)/memory.peak
- python3 - "$out/memory.json" "$memory" "$peak_path" <<'MEMORY'
-import json,pathlib,sys
-r={'declared_memory_gib':int(sys.argv[2]),'memory_peak_bytes':None,'memory_peak_path':sys.argv[3]}
-try: r['memory_peak_bytes']=int(pathlib.Path(sys.argv[3]).read_text())
-except OSError as e: r['memory_peak_read_error']=str(e)
-pathlib.Path(sys.argv[1]).write_text(json.dumps(r))
-MEMORY
+ python3 "$launcher" memory-receipt --out "$out/memory.json" --memory-gib "$memory"
  exit "$rc"
 }
 trap finish EXIT
@@ -145,12 +147,18 @@ trap finish EXIT
     split = argv.index('--')
     args = [*argv[2:split], '--env=XDG_RUNTIME_DIR=/run/user/1000',
             '--env=CUDA_VISIBLE_DEVICES=0', f'--env=FLUX_MEMORY_GIB={memory_gib}',
-            '--', '/bin/bash', str(payload), str(directory), str(memory_gib), *argv[split + 1:]]
+            '--', '/bin/bash', str(payload), str(directory), str(memory_gib), str(Path(__file__).resolve()),
+            *argv[split + 1:]]
     (directory / 'submission.json').write_text(json.dumps({'state': 'unknown'}))
     submitted = native(['submit', *args], 'submit')
     job = submitted.stdout.strip()
     if submitted.returncode or not re.fullmatch(r'[fƒ][1-9A-HJ-NP-Za-km-z]+|[0-9]+', job):
-        raise ValueError('submission unknown; reconcile this directory, never resubmit blindly')
+        error = 'submission unknown; reconcile this directory, never resubmit blindly'
+        (directory / 'receipt.json').write_text(json.dumps({
+            'job_id': None, 'returncode': submitted.returncode,
+            'evidence_errors': [error]}, indent=2) + '\n')
+        print(error, file=sys.stderr)
+        return 2
     (directory / 'jobid').write_text(job + '\n')
     (directory / 'submission.json').write_text(json.dumps({'state': 'submitted', 'job_id': job}))
     status = native(['job', 'status', '--json', '--exception-exit-code=125', job], 'status')

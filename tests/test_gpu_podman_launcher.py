@@ -8,7 +8,7 @@ import time
 
 import pytest
 
-from gpu_podman_fixtures import controlled_runtime, IMAGE, ROOT, LAUNCHER
+from gpu_podman_fixtures import controlled_runtime, controlled_submission, IMAGE, ROOT, LAUNCHER
 
 
 def owned_environment_names():
@@ -317,3 +317,60 @@ def test_container_create_contract_and_identity(tmp_path, user, keep_id):
     assert sorted(entries) == sorted(k + '=' + v for k, v in expected.items())
     assert '-e' not in create and '--env-host' not in create
     assert not any('must-not-be-forwarded' in arg or '/secret-home' in arg for arg in create)
+
+
+@pytest.mark.parametrize('case,error', [
+    ('waitstatus', 'native job failed or raised an exception'),
+    ('exception', 'native job failed or raised an exception'),
+    ('clean', 'native clean event missing'),
+    ('gpu', 'allocation is not one whole Spark GPU'),
+    ('cores', 'allocated core count differs from request'),
+    ('unreadable', 'unreadable native terminal/allocation evidence'),
+    ('unknown', 'submission unknown'),
+])
+def test_submission_negative_evidence_refuses(tmp_path, monkeypatch, case, error):
+    positive = tmp_path / 'positive'
+    positive.mkdir()
+    module, argv, out = controlled_submission(positive, monkeypatch)
+    assert module['submit_and_collect'](argv, out, cores=1, memory_gib=8, walltime='10m') == 0
+    assert json.loads((out / 'receipt.json').read_text())['evidence_errors'] == []
+    negative = tmp_path / 'negative'
+    negative.mkdir()
+    module, argv, out = controlled_submission(negative, monkeypatch, evidence=case)
+    code = module['submit_and_collect'](argv, out, cores=1, memory_gib=8, walltime='10m')
+    assert code == 2
+    receipt = json.loads((out / 'receipt.json').read_text())
+    assert any(error in entry for entry in receipt['evidence_errors'])
+    if case == 'unknown':
+        assert json.loads((out / 'submission.json').read_text())['state'] == 'unknown'
+        calls = [json.loads(line) for line in (negative / 'flux-calls').read_text().splitlines()]
+        assert sum(call[0] == 'submit' for call in calls) == 1
+        assert not any(call[:2] == ['job', 'status'] for call in calls)
+
+
+@pytest.mark.parametrize('payload_code', [0, 7])
+def test_generated_payload_executes_shared_memory_receipt(tmp_path, monkeypatch, payload_code):
+    module, argv, out = controlled_submission(tmp_path, monkeypatch, evidence='payload')
+    argv[-1:] = ['/bin/sh', '-c', f'exit {payload_code}']
+    assert module['submit_and_collect'](argv, out, cores=1, memory_gib=8, walltime='10m') == (2 if payload_code else 0)
+    assert (tmp_path / 'payload-exit').read_text() == str(payload_code)
+    assert 'memory-receipt' in (out / 'payload.sh').read_text()
+    receipt = json.loads((out / 'memory.json').read_text())
+    assert receipt['declared_memory_gib'] == 8
+    assert 'memory_peak_bytes' in receipt
+
+
+def test_memory_receipt_cli_preserves_unified_cgroup_colons(tmp_path):
+    proc = tmp_path / 'cgroup'
+    proc.write_text('5:cpu:/wrong\n0::/job:sys.service\n')
+    root = tmp_path / 'cgroups'
+    peak = root / 'job:sys.service/memory.peak'
+    peak.parent.mkdir(parents=True)
+    peak.write_text('123456')
+    out = tmp_path / 'memory.json'
+    result = subprocess.run([os.sys.executable, str(LAUNCHER), 'memory-receipt', '--out', str(out),
+                             '--memory-gib', '8', '--proc', str(proc), '--root', str(root)],
+                            capture_output=True, text=True, timeout=30)
+    assert result.returncode == 0, result.stderr
+    receipt = json.loads(out.read_text())
+    assert receipt == {'declared_memory_gib': 8, 'memory_peak_bytes': 123456}

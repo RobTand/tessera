@@ -26,6 +26,10 @@ payloads sample their own cgroup `memory.peak`
 after cleanup and record `memory_peak_bytes` beside declared memory. Read
 failures are recorded as a null peak with a reason and do not change the numerical verdict.
 The shared reader preserves colons in the unified cgroup path (field 3 onward);
+the generated GPU payload calls the launcher's `memory-receipt` subcommand,
+which uses the same `memory_peak_receipt` reader as container receipts.
+An unknown submission retains its unknown state and publishes a named
+`evidence_errors` entry with exit 2; it is never retried automatically.
 missing membership files and malformed peak values are observational failures too.
 The receipt records host and container affinity, status and cleanup.
 The foreground vLLM plugin runner uses this route, with an offline install from a scratch copy of the read-only source. Long-lived serving launchers remain pending size, duration and network qualification.
