@@ -11,7 +11,12 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 @pytest.mark.parametrize("container_evidence", ["none", "malformed"])
-def test_payload_exception_stops_owned_group_and_preserves_cleanup_error(tmp_path, monkeypatch, container_evidence):
+@pytest.mark.parametrize("machine,filesystem,qualified", [
+    ("x86_64", "xfs", True), ("aarch64", "ext4", True),
+    ("x86_64", "ext4", False), ("aarch64", "xfs", False),
+])
+def test_payload_exception_stops_owned_group_and_preserves_cleanup_error(
+        tmp_path, monkeypatch, container_evidence, machine, filesystem, qualified):
     monkeypatch.syspath_prepend(str(ROOT / "tools"))
     spec = importlib.util.spec_from_file_location("payload_flux", ROOT / "tools/_suite_flux.py")
     flux = importlib.util.module_from_spec(spec); spec.loader.exec_module(flux)
@@ -36,7 +41,8 @@ def test_payload_exception_stops_owned_group_and_preserves_cleanup_error(tmp_pat
     monkeypatch.setattr(flux, "broker_starttime", lambda **kw: "fixture-instance")
     monkeypatch.setattr(flux, "source", lambda path: identity)
     monkeypatch.setattr(flux, "runtime_identity", lambda *args, **kwargs: intent["runtime"])
-    monkeypatch.setattr(flux.subprocess, "check_output", lambda *args, **kwargs: "xfs")
+    monkeypatch.setattr(flux.os, "uname", lambda: SimpleNamespace(machine=machine))
+    monkeypatch.setattr(flux.subprocess, "check_output", lambda *args, **kwargs: filesystem)
     handlers = {}
     monkeypatch.setattr(flux.signal, "signal", lambda sig, handler: handlers.setdefault(sig, handler))
     monkeypatch.setattr(flux.time, "sleep", lambda seconds: None)
@@ -56,6 +62,13 @@ def test_payload_exception_stops_owned_group_and_preserves_cleanup_error(tmp_pat
     monkeypatch.setattr(flux.subprocess, "Popen", popen)
     def cleanup(path): raise PermissionError("owned scratch cleanup failed")
     monkeypatch.setattr(flux.shutil, "rmtree", cleanup)
+    if not qualified:
+        with pytest.raises(ValueError, match="unqualified local scratch filesystem"):
+            flux.payload(str(directory), digest)
+        assert not signals
+        assert not (scratch_root / "123").exists()
+        assert not (directory / "payload.json").exists()
+        return
     with pytest.raises(OSError, match="payload wait failed"):
         flux.payload(str(directory), flux.hashlib.sha256((directory / "launch.json").read_bytes()).hexdigest())
     record = json.loads((directory / "payload.json").read_bytes())
@@ -65,7 +78,9 @@ def test_payload_exception_stops_owned_group_and_preserves_cleanup_error(tmp_pat
 
 
 @pytest.mark.parametrize("interrupt_at", ["wait", "source", "runtime"])
-def test_interrupt_publishes_cleanup_without_waiting_for_an_exit_seal(tmp_path, monkeypatch, interrupt_at):
+@pytest.mark.parametrize("machine,filesystem", [("x86_64", "xfs"), ("aarch64", "ext4")])
+def test_interrupt_publishes_cleanup_without_waiting_for_an_exit_seal(
+        tmp_path, monkeypatch, interrupt_at, machine, filesystem):
     monkeypatch.syspath_prepend(str(ROOT / "tools"))
     spec = importlib.util.spec_from_file_location("interrupt_flux", ROOT / "tools/_suite_flux.py")
     flux = importlib.util.module_from_spec(spec); spec.loader.exec_module(flux)
@@ -101,7 +116,8 @@ def test_interrupt_publishes_cleanup_without_waiting_for_an_exit_seal(tmp_path, 
         return intent["runtime"]
     monkeypatch.setattr(flux, "source", source)
     monkeypatch.setattr(flux, "runtime_identity", runtime)
-    monkeypatch.setattr(flux.subprocess, "check_output", lambda *args, **kwargs: "xfs")
+    monkeypatch.setattr(flux.os, "uname", lambda: SimpleNamespace(machine=machine))
+    monkeypatch.setattr(flux.subprocess, "check_output", lambda *args, **kwargs: filesystem)
     handlers = {}
     monkeypatch.setattr(flux.signal, "signal", lambda sig, handler: handlers.__setitem__(sig, handler))
     signals = []
