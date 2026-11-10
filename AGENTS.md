@@ -290,8 +290,10 @@ Treat as constraints. Violate slogans when judgment says so.
   native Flux profile. It starts from an empty environment with explicit
   artifact roots, `PYTHONPATH=src`, and bounded math/build threads. Containers
   use native rootless Podman with immutable local images and scoped dependencies.
-  GPU intent reserves one whole GPU on aarch64; execution still needs separate
-  device qualification. A CPU result cannot establish a CUDA population.
+  The CUDA-gated route is `tools/merge_suite.py`'s GPU arm on Flux, on aarch64
+  with one whole GPU and rootless Podman. Its transport ran once, and the lane
+  is not yet qualified. Until it is, the CUDA-gated surface has no qualified
+  route. A CPU result cannot establish a CUDA population.
   `--record` appends each arm to the ledger,
   including arms not submitted. Read the mode, device, skip reasons and
   uncollected modules beside every count.

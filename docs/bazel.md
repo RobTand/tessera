@@ -109,7 +109,7 @@ TL3 keeps BuildBuddy priority if a fallback batch lands while TL3's queue is bac
 Most tests run on BuildBuddy's remote executors. An executor has a few CPUs of a larger host, no network, no `.git`, and every input staged as executable. `tools/bazel/nonhermetic.bzl` names the tests that need more, each with its reason:
 
 - **`runner`:** the test runs on the Remote Bazel runner itself, in its git checkout, which must hold full history. Its result is never cached. The runner is amd64, so the arm64 pass (`--config=remote-arm64`) leaves these out.
-- **`gpu`:** every node needs a CUDA device. The target is `manual`, so the cloud gate leaves it out, and a GPU lane selects it by the tag. Its CUDA run stays on PrismaBuild with `--strict-cuda`.
+- **`gpu`:** every node needs a CUDA device. The target is `manual`, so the cloud gate leaves it out. The CUDA-gated route is `tools/merge_suite.py`'s GPU arm on Flux, with `--strict-cuda`, aarch64, one whole GPU and rootless Podman. Its transport ran once, and the lane is not yet qualified. Until it is, the CUDA-gated surface has no qualified route.
 - **`requires-network`:** the remote executor gets a network.
 
 ## Configurations

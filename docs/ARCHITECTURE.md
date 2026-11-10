@@ -11,6 +11,9 @@ These job and arm records carry `flux_job_id`. Readers use `pb_action` only
 for legacy records; old receipts retain their original meaning.
 `tools/impacted_tests.py` no longer excludes generated source-closure metadata.
 Unknown changed paths still resolve toward running more tests.
+The CUDA-gated route is `tools/merge_suite.py`'s GPU arm on Flux, on aarch64
+with one whole GPU and rootless Podman. Its transport ran once, and the lane
+is not yet qualified. Until it is, the CUDA-gated surface has no qualified route.
 
 Re-stamped 2026-11-08 for native Flux profile v2. The migration lead qualified
 the exact config revision making `exec.sdexec-constrain-resources` explicitly

@@ -24,7 +24,7 @@ The merge gate runs on Bazel through BuildBuddy (#1589); [docs/bazel.md](bazel.m
 
 **Secrets.** No child the gate starts on the runner, other than Bazel, gets `BUILDBUDDY_API_KEY`, `MERGIFY_TOKEN`, `GITHUB_TOKEN` or any `*_API_KEY` or `*_TOKEN`. `tools/ci/check_no_secret_leak.py` must pass before any artifact upload.
 
-CUDA-gated tests are not covered: every Bazel test runs with `CUDA_VISIBLE_DEVICES` empty, and the 30 files whose every node needs CUDA are tagged `gpu` and left out. Their run stays on PrismaBuild with `--strict-cuda`.
+CUDA-gated tests are not covered: every Bazel test runs with `CUDA_VISIBLE_DEVICES` empty, and the 30 files whose every node needs CUDA are tagged `gpu` and left out. Their route is `tools/merge_suite.py`'s GPU arm on Flux, with `--strict-cuda`, aarch64, one whole GPU and rootless Podman. Its transport ran once, and the lane is not yet qualified. Until it is, the CUDA-gated surface has no qualified route.
 
 The sections below describe the hosted gate this replaced. Its populations, budgets and quarantine rules carry over into the Bazel runner (`tools/bazel/python_runner.py`); its scheduling does not.
 
@@ -52,8 +52,8 @@ live in the ignored `.pytest_cache` directory so source-identity tests still
 measure a clean checkout. The population
 reports device presence, CUDA allocations, uncollected modules, and verbatim
 skip reasons. CUDA-gated tests skip on these runners. A CPU pass does not prove
-the CUDA population. The coordinator's PrismaBuild GPU run with `--strict-cuda`
-remains the CUDA qualification, as described in `AGENTS.md`.
+the CUDA population. The Flux GPU arm described above is not yet qualified;
+until it is, the CUDA-gated surface has no qualified route.
 
 ## Scheduling and verdicts
 
