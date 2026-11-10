@@ -145,7 +145,7 @@ def test_public_producer_api_and_safe_path_cli_use_real_expert_geometry(tmp_path
            if key not in {"TESSERA_REPO", "PRISMAQUANT_REPO", "PRISMABUILD_REPO"}}
     env["PYTHONSAFEPATH"] = "1"
     # Keep API and CLI on the same package after cwd changes. In an installed
-    # qualifier this is site-packages; in a source run it is the PB snapshot.
+    # qualifier this is site-packages; in a source run it is the source checkout.
     # Do not inherit relative paths or experiment/sibling repository roots.
     env["PYTHONPATH"] = str(Path(producer_plan.__file__).resolve().parent.parent)
     result = subprocess.run(

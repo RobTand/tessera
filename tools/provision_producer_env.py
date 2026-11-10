@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 """Provision the scoped producer environment overlay for a Tessera commit.
 
-The precedent (fleet record prismaquant-pr-2131, PB action e329d098...) is
-followed exactly, because it is the one recipe already qualified:
+This follows the historical provisioning recipe in fleet record
+prismaquant-pr-2131, PB action e329d098. Each new native installation still
+needs its own qualification:
 
 * the wheel is built from the CLEAN COMMITTED tree (``git archive HEAD``) --
   never from a dirty snapshot tree, and never by copying repository tooling
