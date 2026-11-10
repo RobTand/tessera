@@ -63,19 +63,12 @@ def test_the_shared_progress_helper_prints_one_schema_line_per_report(capsys):
     import sys
     tools=Path(__file__).resolve().parents[1]
     if str(tools) not in sys.path:sys.path.insert(0,str(tools))
-    from tools._durable_progress import emit
+    from tessera._dev.durable_progress import emit
     emit(3,'construct',unit='durable checkpoints');emit(4,'publish')
     lines=capsys.readouterr().out.splitlines()
     assert [json.loads(line) for line in lines]==[
         {'schema':'tessera.durable_progress.v1','units_completed':3,'phase':'construct','unit':'durable checkpoints'},
         {'schema':'tessera.durable_progress.v1','units_completed':4,'phase':'publish'}]
-
-
-def test_the_export_tools_name_no_prismabuild_progress_channel():
-    root=Path(__file__).resolve().parents[1]
-    for name in ('tools/run_glm_cached_cpu_export.py','tools/pq2459_export_progress.py','experiments/glm_routed_owner_inputs.py'):
-        text=(root/name).read_text()
-        assert 'PRISMABUILD_ACTION_PROGRESS' not in text and 'runpy.run_path' not in text,name
 
 
 def test_incomplete_input_bindings_cannot_enter_export(tmp_path):

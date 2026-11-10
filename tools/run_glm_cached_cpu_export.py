@@ -111,7 +111,7 @@ def main(argv=None):
     def forbidden(*a,**k):raise RuntimeError('reuse-only export attempted encoding')
     exporter.encode_linear_planes=forbidden
     sys.path.insert(0,str(root))
-    from tools._durable_progress import emit
+    from tessera._dev.durable_progress import emit
     progress=DurableExportProgress(doc['progress_directory'],output,expected_source,emit)
     sys.argv=['export',str(source),str(output),'--device','cpu','--cached-units',inputs['selected_manifest']['path'],
         '--plan-json',inputs['plan']['path'],'--hessian',inputs['hessian']['path'],

@@ -46,7 +46,7 @@ def test_partial_progress_waits_for_durable_published_name(probe, monkeypatch, t
         assert events == ["file", "replace", "directory"]
         events.append("progress")
 
-    import tools._durable_progress as durable
+    import tessera._dev.durable_progress as durable
     monkeypatch.setattr(durable, "emit", commit)
     probe.kda_commit(payload, path, 1)
     assert events == ["file", "replace", "directory", "progress"]
@@ -64,7 +64,7 @@ def test_directory_sync_failure_refuses_progress(probe, monkeypatch, tmp_path):
         return fsync(fd)
 
     monkeypatch.setattr(probe.os, "fsync", sync_or_fail)
-    import tools._durable_progress as durable
+    import tessera._dev.durable_progress as durable
     monkeypatch.setattr(durable, "emit", lambda *a: published.append(a))
     with pytest.raises(OSError, match="directory persistence failed"):
         probe.kda_commit({"cells": [{}]}, tmp_path / "kdafwd_partial.json", 1)

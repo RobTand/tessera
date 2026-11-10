@@ -12,7 +12,7 @@ import sys
 def main():
     import tessera.export_serving as exporter
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-    from tools._durable_progress import emit as commit
+    from tessera._dev.durable_progress import emit as commit
     output = Path(sys.argv[2])
     checkpoint = output.with_name(output.name + "-unit-checkpoints")
     try:

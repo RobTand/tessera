@@ -82,7 +82,7 @@ def test_publish_progress_waits_for_complete_durable_result(probe, monkeypatch, 
         assert events == ["file", "replace", "directory"]
         events.append("progress")
 
-    import tools._durable_progress as durable
+    import tessera._dev.durable_progress as durable
     monkeypatch.setattr(durable, "emit", commit)
     assert probe.main() == 0
     assert events == ["file", "replace", "directory", "progress"]

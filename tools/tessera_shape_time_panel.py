@@ -19,7 +19,7 @@ sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(ROOT / "src"))  # Producer-only process, never shared with native worker.
 
 from tessera.serving import census_plan, timing_panel as tp
-from tools._durable_progress import emit
+from tessera._dev.durable_progress import emit
 from tools.run_glm_cached_cpu_export import fsync_path
 if Path(tp.__file__).resolve() != ROOT / "src/tessera/serving/timing_panel.py":
     raise RuntimeError("producer schema origin differs from owned source")
@@ -66,7 +66,7 @@ def producer_source_identity(root=ROOT):
               root / "experiments/bench_native_operator.py", root / "experiments/step4_capture_launch.py",
               root / "experiments/full_engine_plugin_install.py", root / "tools/run_glm_cached_cpu_export.py",
               root / "experiments/box_power_window.py", root / "experiments/routed_pair_oracle.py",
-              root / "tools/_install_identity.py", root / "tools/_durable_progress.py"]
+              root / "tools/_install_identity.py", root / "src/tessera/_dev/durable_progress.py"]
     profile = "tessera.shape_panel.tools.v2"
     value = source_profiles(((str(Path(p).relative_to(root)), Path(p).read_bytes()) for p in owners),
                             legacy_profile=profile, legacy_prefix=profile.encode() + b"\0")

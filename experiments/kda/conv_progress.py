@@ -5,8 +5,8 @@ import os
 from pathlib import Path
 import sys
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
-from tools import _durable_progress
+sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "src"))
+from tessera._dev import durable_progress
 
 def kda_commit(out: dict, path: Path, units: int, phase: str = "measure"):
     """Publish each complete measured cell before advancing its progress counter."""
@@ -21,4 +21,4 @@ def kda_commit(out: dict, path: Path, units: int, phase: str = "measure"):
         os.fsync(directory)
     finally:
         os.close(directory)
-    _durable_progress.emit(units, phase)
+    durable_progress.emit(units, phase)

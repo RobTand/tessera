@@ -133,7 +133,7 @@ def commit_progress(units: int, phase: str, unit: str | None = None) -> None:
     durable.  A report is a claim that the unit is on disk, not that a loop
     reached it.
     """
-    from tools._durable_progress import emit
+    from tessera._dev.durable_progress import emit
 
     emit(units, phase, unit)
 
