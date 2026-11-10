@@ -10799,6 +10799,12 @@ and 4 GiB for the client. Stage cleanup asks the supervisor to stop and verify
 its container instead of removing a legacy name. The separate in-process
 `census` stage retains its Podman route.
 
+`moe_greedy_smoke_pair.sh` dispatches and collects two jobs before joining its
+smoke receipts. Each reviewed invocation adds `--arm bf16` or `--arm tessera`
+to the original four operands. An arm requests one serve from this supervisor,
+keeps its source/seal checks, telemetry and build stamps, and reserves 47 GiB
+at utilization 0.35. It takes no legacy box lock or 64 GiB override.
+
 Prepare a normalized spec with `python tools/_flux_serve.py spec --model DIR
 --port PORT --util FRACTION -- [payload mount/env/entrypoint options] IMAGE
 [exact image command]`. The operands are the same payload request the wrapper
@@ -10816,6 +10822,6 @@ drains its own rank if removal fails. A real Spark qualification must verify
 that hard-kill path, root-store image availability, numeric-user plugin startup,
 loopback health and scoring, actual CPU affinity, Docker memory enforcement
 including unified GPU allocations, container peak accounting, and complete
-cleanup. TP2, Ray, NCCL and multi-host serving remain blocked. The legacy paired
-MoE driver and detached graph controllers are not admitted by the reviewed
-serving renderer.
+cleanup. TP2, Ray, NCCL and multi-host serving remain blocked. Detached graph
+controllers are not admitted by the reviewed serving renderer; their up/down
+protocol and auxiliary Docker self-tests need a separate lifecycle rewrite.

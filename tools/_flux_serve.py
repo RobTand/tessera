@@ -32,6 +32,7 @@ WRAPPERS = (
     'serve_and_dump_kl.sh', 'tessera_plugin_served.sh', 'decode_regime_kl.sh',
     'gridbook_lane_served.sh', 'window_gemv_latency.sh', 'serve_smoke_graph.sh',
     'lfm_bound_served.sh',
+    'moe_greedy_smoke_pair.sh',
 )
 SERVE_ENV = (
     'TS', 'GB', 'RUNS', 'EXT', 'VLLM_CACHE', 'TRACEDIR', 'PY', 'KL', 'PORT',
@@ -44,6 +45,7 @@ SERVE_ENV = (
     'TESSERA_KL_PROFILE_DIR', 'TESSERA_LANE_EAGER', 'TESSERA_LANE_DOCKER_EXTRA',
     'TESSERA_SERVE_DETERMINISTIC', 'TESSERA_KL_PYTHON', 'TESSERA_KL_TOOL',
     'TESSERA_PROFILE_MIN_AVAILABLE_BYTES', 'TESSERA_PROFILE_SUMMARY_TIMEOUT_S',
+    'PROMPTS',
 )
 ROOT = Path(__file__).resolve().parents[1]
 
