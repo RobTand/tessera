@@ -368,14 +368,16 @@ def test_container_cache_refuses_before_creating_or_launching(tmp_path, monkeypa
         monkeypatch.setenv(name, value)
     monkeypatch.setenv("TESSERA_SUITE_DIRECTORY", str(tmp_path))
     monkeypatch.setenv("TESSERA_SUITE_LAUNCH_SHA256", "a" * 64)
-    monkeypatch.setattr(owner, "admitted_context", lambda *args: {"resources": {"cores": 1, "gpus": 1}, "container": spec})
+    monkeypatch.setattr(owner, "admitted_context", lambda *args, **kwargs: {"resources": {"cores": 1, "gpus": 1}, "container": spec})
     monkeypatch.setattr(owner, "dependency_manifest", lambda *args: ({}, "b" * 64))
     launches = []
     monkeypatch.setattr(owner.subprocess, "call", lambda argv: launches.append(argv) or 0)
     argv = command(spec["surface"], spec["--cache-dir"], spec["--deps-site"])
     cut = argv.index("--")
     argv[cut:cut] = ["--data-root", str(tmp_path / "data")]
-    assert owner.main(argv[argv.index(owner.RUNNER) + 1:]) == 2
+    from _suite_runtime import identity
+    assert owner.main(argv[argv.index(owner.RUNNER) + 1:],
+                      transport=merge_module().suite_flux, runtime_identity=identity) == 2
     assert "filesystem type nfs4" in capsys.readouterr().err
     assert launches == []
     assert not Path(spec["--cache-dir"]).exists()
