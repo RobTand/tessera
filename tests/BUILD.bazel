@@ -3630,7 +3630,6 @@ ts_py_test(
     data = [
         "//:pyproject.toml",
         "//experiments:cuda_home_shadow.sh",
-        "//experiments:flux_docker_guard.sh",
         "//experiments:routed_census.sh",
         "//experiments:routed_fused_census.sh",
         "//experiments:routed_fused_tests.sh",
@@ -3661,7 +3660,6 @@ ts_py_test(
     data = [
         "//:pyproject.toml",
         "//experiments:cuda_home_shadow.sh",
-        "//experiments:flux_docker_guard.sh",
         "//experiments:routed_census.sh",
         "//experiments:routed_fused_census.sh",
         "//experiments:routed_fused_tests.sh",
