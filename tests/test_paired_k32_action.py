@@ -95,12 +95,13 @@ def test_active_bound_stops_only_its_owned_process_group_and_cleans_up(tmp_path,
 
 
 @pytest.mark.parametrize('fault',[None,'population','event_count','dispatch','native','owner','output',
-    'advertised_median','sample_nan','sample_inf','sample_zero','sample_negative','sample_bool','median_bool'])
+    'advertised_median','sample_nan','sample_inf','sample_zero','sample_negative','sample_bool','median_bool','transport'])
 def test_abba_summary_checks_qualified_population(monkeypatch,fault):
+    from experiments.t8r_speed.declared_inputs import DIRECT_TRANSPORT
     module=action(monkeypatch);reports={}
     cert={'compared':[{'M':int(m),'role':'out','sha256':m} for m in ('1','512','2048')]}
     for arm in ('A1','B1','B2','A2'):
-        reports[arm]={'meta':{'direct_input_bindings':{'before':{'owned':1},'after':{'owned':1}},
+        reports[arm]={'meta':{'direct_input_bindings':{'transport':DIRECT_TRANSPORT,'before':{'owned':1},'after':{'owned':1}},
             'native_code_artifact':{k:'sha' for k in ('before_load_sha256','after_load_sha256','after_profile_sha256')}},
             'results':[{'ok':True,'cells':{m:{'raw_events_ms':([0.5,1.5] if arm.startswith('B') else [1,3])*15,'out_sha256':m,
                 'numeric_receipt_sha256':module.NUMERIC_RECEIPT_SHA,'native_paired_build':arm.startswith('B'),
@@ -116,11 +117,17 @@ def test_abba_summary_checks_qualified_population(monkeypatch,fault):
     elif fault=='output':cell['out_sha256']='wrong'
     elif fault=='advertised_median':cell['wall']['median_ms']=0.25
     elif fault=='median_bool':cell['wall']['median_ms']=True
+    elif fault=='transport':r['meta']['direct_input_bindings']['transport']='unqualified'
     elif fault in ('sample_nan','sample_inf','sample_zero','sample_negative','sample_bool'):
         cell['raw_events_ms'][0]={'sample_nan':float('nan'),'sample_inf':float('inf'),
             'sample_zero':0,'sample_negative':-1,'sample_bool':True}[fault]
     if fault:
-        with pytest.raises(ValueError):module.timing_summary(reports,cert)
+        messages = {'population':'ABBA population', 'event_count':'exact events/numeric binding',
+            'dispatch':'dispatch differs', 'native':'native owner changed', 'owner':'input ownership changed',
+            'output':'exact events/numeric binding', 'advertised_median':'median differs',
+            'median_bool':'median differs', 'transport':'input transport differs'}
+        message = messages.get(fault, 'finite positive')
+        with pytest.raises(ValueError, match=message):module.timing_summary(reports,cert)
     else:assert module.timing_summary(reports,cert)['cells']['512']['operator_speedup']==2
 
 
