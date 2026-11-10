@@ -49,6 +49,7 @@ ts_py_library(
     ],
     deps = [
         ":_flux_gpu_jobspec",
+        ":_flux_shape",
     ],
 )
 
