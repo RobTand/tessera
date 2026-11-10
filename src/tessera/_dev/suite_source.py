@@ -68,8 +68,8 @@ def _git(root, *args):
 def committed_file(path, *, root=None, field="source"):
     """Return the repository root and bytes of an unchanged committed file."""
     path = Path(path)
-    raw = path.read_bytes()
     if root is None:
+        path.read_bytes()  # Preserve the missing-file refusal before querying Git.
         root = Path(subprocess.check_output(
             ['git', '-C', str(path.parent), 'rev-parse', '--show-toplevel'],
             text=True, stderr=subprocess.PIPE).strip()).resolve()
@@ -79,7 +79,7 @@ def committed_file(path, *, root=None, field="source"):
             ['git', '-C', str(root), 'show', 'HEAD:' + relative], stderr=subprocess.PIPE)
     except subprocess.CalledProcessError as exc:
         raise ValueError(field + ' is not committed: ' + relative) from exc
-    if raw != committed:
+    if path.read_bytes() != committed:
         raise ValueError(field + ' differs from committed bytes: ' + relative)
     return root, committed
 
