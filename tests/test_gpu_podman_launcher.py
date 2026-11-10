@@ -10,6 +10,38 @@ import pytest
 
 from gpu_podman_fixtures import controlled_runtime, IMAGE, ROOT, LAUNCHER
 
+
+def owned_environment_names():
+    import runpy
+    return sorted({'TMPDIR', 'CUDA_VISIBLE_DEVICES', *runpy.run_path(str(LAUNCHER))['THREADS']})
+
+
+@pytest.mark.parametrize('name', owned_environment_names())
+@pytest.mark.parametrize('flag', ['-e', '--env', '--env='])
+def test_payload_cannot_override_launcher_environment(tmp_path, name, flag):
+    command, env, out = controlled_runtime(tmp_path)
+    at = command.index(IMAGE)
+    option = [flag + name + '=untrusted'] if flag.endswith('=') else [flag, name + '=untrusted']
+    command[at:at] = option
+    result = subprocess.run(command, env=env, capture_output=True, text=True, timeout=30)
+    assert result.returncode == 2, result.stderr
+    assert name in result.stderr and 'owned' in result.stderr
+    assert not (tmp_path / 'created').exists()
+
+
+def test_wrapper_tmpdir_is_owned_once_by_launcher(tmp_path):
+    _, env, out = controlled_runtime(tmp_path)
+    env.update(ORACLE_IMAGE=IMAGE, FLUX_SCRATCH=str(tmp_path / 'scratch'))
+    result = subprocess.run(['bash', str(ROOT / 'experiments/routed_pair_oracle.sh'), str(ROOT), str(out)],
+                            env=env, capture_output=True, text=True, timeout=30)
+    assert result.returncode == 0, result.stdout + result.stderr
+    calls = [json.loads(line) for line in (tmp_path / 'calls').read_text().splitlines()]
+    create = next(call for call in calls if call[0] == 'create')
+    tmpdirs = [create[i + 1] for i, arg in enumerate(create[:-1])
+               if arg in {'--env', '-e'} and create[i + 1].startswith('TMPDIR=')]
+    assert tmpdirs == ['TMPDIR=/tessera-scratch/tmp'], tmpdirs
+    assert str(out) + ':' + str(out) in create
+
 def test_real_term_removes_only_owned_container(tmp_path):
     command, env, out = controlled_runtime(tmp_path, hold=True)
     process = subprocess.Popen(command, env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)

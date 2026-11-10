@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# TMPDIR and thread bounds are launcher-owned; temporary writes use removable job scratch.
 # Run mhc_split_repro.py inside IMAGE_REF (tessera#508). Every write goes under
 # OUT_DIR; the checkout is mounted read-only. Root in the container, as the
 # serve runs, so the image's CUDA include links for TileLang's JIT can be made
@@ -24,8 +25,8 @@ CPUS=$(python3 -c 'import os; print(",".join(map(str, sorted(os.sched_getaffinit
 echo "host=$(hostname) cpus=$CPUS image=$IMG"
 python3 "$CHECKOUT/tools/_flux_gpu_jobspec.py" run --out "$OUT" --scratch-root "${FLUX_SCRATCH:-/tmp/flux-vanilla}" -- \
   -v "$here":/exp:ro -v /mnt/shared:/mnt/shared:ro -v "$OUT":/out \
-  -e HOME=/out/home -e TMPDIR=/out/tmp -e PYTHONDONTWRITEBYTECODE=1 -e PYTHONUNBUFFERED=1 \
-  -e OMP_NUM_THREADS=1 "${imgenv[@]}" --entrypoint bash "$IMG" -c '
+  -e HOME=/out/home -e PYTHONDONTWRITEBYTECODE=1 -e PYTHONUNBUFFERED=1 \
+  "${imgenv[@]}" --entrypoint bash "$IMG" -c '
 inc="$(python3 -c "import glob; p=sorted(glob.glob(\"/usr/local/lib/python3*/dist-packages/nvidia/cu*/include\")); print(p[0] if p else \"\")")"
 dst=/usr/local/cuda/include
 for src in "$inc"/*; do n="$(basename "$src")"; [ -e "$dst/$n" ] || ln -s "$src" "$dst/$n"; done

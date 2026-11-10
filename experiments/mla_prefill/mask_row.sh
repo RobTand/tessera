@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# TMPDIR and thread bounds are launcher-owned; temporary writes use removable job scratch.
 # One admitted kernel quantum; independent invocations share no mutable build/output state.
 set -euo pipefail
 export TESSERA_CONTAINER_ENGINE=podman
@@ -17,8 +18,7 @@ if [[ -n "${MLA_BUILD_ROOT:-}" ]]; then
   BUILD_MOUNT=(-v "$BUILD_ROOT":"$BUILD_ROOT":ro)
 fi
 python3 "$CHECKOUT/tools/_flux_gpu_jobspec.py" run --out "$OUT" --scratch-root "${FLUX_SCRATCH:-/tmp/flux-vanilla}" -- --user "$(id -u):$(id -g)" \
- -v "$CHECKOUT":/work:ro -v "$OUT":"$OUT" "${BUILD_MOUNT[@]}" -e HOME="$OUT/home" -e TMPDIR="$OUT/tmp" \
+ -v "$CHECKOUT":/work:ro -v "$OUT":"$OUT" "${BUILD_MOUNT[@]}" -e HOME="$OUT/home" \
  -e TORCH_EXTENSIONS_DIR="$OUT/home/torch_extensions" -e PYTHONPATH=/work/src:/work/experiments/mla_prefill:/work/experiments \
- -e MAX_JOBS=1 -e OMP_NUM_THREADS=1 -e MKL_NUM_THREADS=1 -e OPENBLAS_NUM_THREADS=1 \
  -e MLA_SCRIPT="$SCRIPT" -e MLA_PLACEMENT="${MLA_PLACEMENT:-unqualified}" -e HOST_NAME="$(hostname)" "${IMAGE_ENV[@]}" -w /work --entrypoint bash "$MLA_IMAGE" -c \
  'source experiments/cuda_home_shadow.sh "$HOME"; python3 "experiments/mla_prefill/$MLA_SCRIPT" "$@"' _ --out "$OUT" "$@"

@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# TMPDIR and thread bounds are launcher-owned; temporary writes use removable job scratch.
 # Flux runs this entry point in CPU or GPU jobs.
 set -euo pipefail
 export TESSERA_CONTAINER_ENGINE=podman
@@ -29,9 +30,8 @@ for argument in "$@"; do
 done
 exec python3 "$PWD/tools/_flux_gpu_jobspec.py" run --out "$OUT" --scratch-root "${FLUX_SCRATCH:-/tmp/flux-vanilla}" -- \
     --user "$(id -u):$(id -g)" -v "$PWD":/work:ro -v "$OUT":"$OUT" \
-    -e HOME="$OUT/home" -e TMPDIR="$OUT/tmp" -e PYTHONDONTWRITEBYTECODE=1 \
-    -e PYTHONUNBUFFERED=1 -e PYTHONPATH=/work/src -e MAX_JOBS=1 \
-    -e OMP_NUM_THREADS=1 -e MKL_NUM_THREADS=1 -e OPENBLAS_NUM_THREADS=1 \
+    -e HOME="$OUT/home" -e PYTHONDONTWRITEBYTECODE=1 \
+    -e PYTHONUNBUFFERED=1 -e PYTHONPATH=/work/src \
     -e FLUX_JOB_ID="${FLUX_JOB_ID:?}" -e ORACLE_IMAGE="$IMAGE" -e HOST_NAME="$(hostname)" \
     "${INPUT_MOUNTS[@]}" "${IMAGE_ENV[@]}" --entrypoint bash -w /work "$IMAGE" \
     -c 'source experiments/cuda_home_shadow.sh "$TMPDIR"; exec python3 experiments/t4_code/fp4_arithmetic_attest.py "$@"' -- --out "$OUT" "$@"

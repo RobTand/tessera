@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# TMPDIR and thread bounds are launcher-owned; temporary writes use removable job scratch.
 # Run a command inside the vLLM 0.28 image with Tessera installed as a vLLM plugin.
 #
 # Tessera is pip-installed (not just PYTHONPATH'd) because a plugin is only a
@@ -35,7 +36,7 @@ exec python3 "$TS/tools/_flux_gpu_jobspec.py" run --out "$RUNS" --scratch-root "
   -v "$TS/src":/work/src:ro -v "$TS/pyproject.toml":/work/pyproject.toml:ro \
   -v "$TS/tools":/work/tools:ro -v "$TS/tests":/work/tests:ro \
   -v "$EXT":/ext -v /home/rob/models:/home/rob/models:ro \
-  -e TORCH_EXTENSIONS_DIR=/ext -e TMPDIR=/ext -e TRITON_CACHE_DIR=/ext/triton \
+  -e TORCH_EXTENSIONS_DIR=/ext -e TRITON_CACHE_DIR=/ext/triton \
   -w /work "${extra[@]}" ${imgenv[@]+"${imgenv[@]}"} \
   --entrypoint bash "$RUNTIME_IMAGE_REFERENCE" -c '
 # torch.utils.cpp_extension pulls CUDA headers the stock image does not ship.

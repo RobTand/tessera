@@ -1,12 +1,13 @@
 #!/usr/bin/env bash
+# TMPDIR and thread bounds are launcher-owned; temporary writes use removable job scratch.
 # Run experiments/t8r_speed/bench_t8r.py inside the serving image on one GB10.
 # Batch benchmarks use Flux, including stock vLLM custom ops. The
 # closed comparison retains its qualified held-original-FD transport. Usage:
 #   bench_t8r.sh <checkout> <out_dir> <bench_t8r.py args...>
 # BENCH_NCU=1 wraps the process in Nsight Compute (routed_fused_kernel and the
 # dense window kernels; one profiled call per (group, M) via --profile-from-start off).
-# The container mounts the checkout and the artifact read-only and writes only
-# under <out_dir> (HOME/TMPDIR/Triton and torch-extension caches included).
+# The container mounts the checkout and the artifact read-only. Persistent writes
+# stay under <out_dir> (HOME/Triton and torch-extension caches included).
 set -euo pipefail
 CHECKOUT=$(realpath "$1"); OUT=$(realpath -m "$2"); shift 2
 BENCH_PY=${BENCH_PY:-bench_t8r.py}
@@ -168,11 +169,10 @@ rc=0
   "${DOCKER_IDENTITY[@]}" \
   -v "$CHECKOUT":/work:ro "${SRC_MOUNT[@]}" "${ART_MOUNT[@]}" -v "$OUT":"$OUT" \
   -e KERNEL_SHA="$KERNEL_SHA" \
-  -e HOME="$OUT/home" -e TMPDIR="$OUT/tmp" -e TRITON_CACHE_DIR="$OUT/triton" \
+  -e HOME="$OUT/home" -e TRITON_CACHE_DIR="$OUT/triton" \
   -e TORCH_EXTENSIONS_DIR="$CONTAINER_EXT" \
   -e PYTHONPATH="$CONTAINER_SRC":/work/tests -e HOST_NAME="$(hostname)" \
-  -e OMP_NUM_THREADS=1 -e MKL_NUM_THREADS=1 -e OPENBLAS_NUM_THREADS=1 \
-  -e NUMEXPR_NUM_THREADS=1 -e MAX_JOBS=1 -e PYTHONUNBUFFERED=1 -e TESSERA_SERVE_MODE=resident \
+  -e PYTHONUNBUFFERED=1 -e TESSERA_SERVE_MODE=resident \
   -e ORACLE_IMAGE="$IMAGE_REF" -e TESSERA_HEAD="$HEAD" -e TESSERA_STATE="$STATE" \
   -e FLUX_JOB_ID="${FLUX_JOB_ID:-}" \
   "${IMAGE_ENV[@]}" "${EXTRA_MOUNTS[@]}" --entrypoint "${COMMAND[0]}" -w /work "$IMAGE_REF" \

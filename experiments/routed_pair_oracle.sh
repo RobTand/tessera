@@ -1,10 +1,11 @@
 #!/usr/bin/env bash
+# TMPDIR and thread bounds are launcher-owned; temporary writes use removable job scratch.
 # Run experiments/routed_pair_oracle.py inside the serving image (tessera#604).
 # Run inside an admitted Flux GPU job; this script is the job's command.  Usage:
 #   routed_pair_oracle.sh <checkout> <out_dir> <oracle.py args...>
 # The job's CPU mask is preserved; the container mounts the
 # checkout read-only at /work and the measurement tree read-only, and writes
-# only under <out_dir> (HOME/TMPDIR/Triton cache included).
+# only under <out_dir> (HOME/Triton cache included).
 set -euo pipefail
 export TESSERA_CONTAINER_ENGINE=podman
 CHECKOUT=$(realpath "$1"); OUT=$(realpath -m "$2"); shift 2
@@ -45,10 +46,9 @@ fi
 exec python3 "$CHECKOUT/tools/_flux_gpu_jobspec.py" run --out "$OUT" --scratch-root "${FLUX_SCRATCH:-/tmp/flux-vanilla}" -- \
   --user "$(id -u):$(id -g)" \
   -v "$CHECKOUT":/work:ro -v "$MEAS":"$MEAS":ro -v "$OUT":"$OUT" \
-  -e HOME="$OUT/home" -e TMPDIR="$OUT/tmp" -e TRITON_CACHE_DIR="$OUT/triton" \
+  -e HOME="$OUT/home" -e TRITON_CACHE_DIR="$OUT/triton" \
   -e PYTHONPATH=/work/src:/work/tests -e HOST_NAME="$(hostname)" \
-  -e OMP_NUM_THREADS=1 -e MKL_NUM_THREADS=1 -e OPENBLAS_NUM_THREADS=1 \
-  -e NUMEXPR_NUM_THREADS=1 -e PYTHONUNBUFFERED=1 \
+  -e PYTHONUNBUFFERED=1 \
   -e ORACLE_IMAGE="$IMAGE_REF" -e TESSERA_HEAD="$HEAD" -e TESSERA_STATE="$STATE" \
   -e FLUX_JOB_ID="${FLUX_JOB_ID:-}" \
   "${IMAGE_ENV[@]}" "${EXTRA_MOUNTS[@]}" --entrypoint "${COMMAND[0]}" -w /work "$IMAGE_REF" \

@@ -1,11 +1,12 @@
 #!/usr/bin/env bash
+# TMPDIR and thread bounds are launcher-owned; temporary writes use removable job scratch.
 # Run experiments/dense_fused_oracle.py inside the serving image (contract v43,
 # the fused window kernel's dense identity).  Run as a Flux GPU job
 # inside an admitted Flux GPU job; this script is the job's command.  Usage:
 #   dense_fused_oracle.sh <checkout> <out_dir> <oracle.py args...>
 # The job's CPU mask is preserved; the container mounts the
 # checkout read-only at /work and the stub checkpoint read-only, and writes
-# only under <out_dir> (HOME/TMPDIR/Triton cache/JIT build included).
+# only under <out_dir> (HOME/Triton cache/JIT build included).
 # ORACLE_NCU=1 runs dense_fused_ncu.py under Nsight Compute instead, gated to
 # the dense window launches of both lanes.
 set -euo pipefail
@@ -55,11 +56,10 @@ fi
 exec python3 "$CHECKOUT/tools/_flux_gpu_jobspec.py" run --out "$OUT" --scratch-root "${FLUX_SCRATCH:-/tmp/flux-vanilla}" -- \
   --user "$(id -u):$(id -g)" \
   -v "$CHECKOUT":/work:ro -v "$STUB":"$STUB":ro -v "$OUT":"$OUT" \
-  -e HOME="$OUT/home" -e TMPDIR="$OUT/tmp" -e TRITON_CACHE_DIR="$OUT/triton" \
+  -e HOME="$OUT/home" -e TRITON_CACHE_DIR="$OUT/triton" \
   -e TORCH_EXTENSIONS_DIR="$OUT/torch-ext" -e PYTHONDONTWRITEBYTECODE=1 \
   -e PYTHONPATH=/work/src:/work/tests:/work/experiments -e HOST_NAME="$(hostname)" \
-  -e OMP_NUM_THREADS=1 -e MKL_NUM_THREADS=1 -e OPENBLAS_NUM_THREADS=1 \
-  -e NUMEXPR_NUM_THREADS=1 -e PYTHONUNBUFFERED=1 \
+  -e PYTHONUNBUFFERED=1 \
   -e ORACLE_IMAGE="$IMAGE_REF" -e TESSERA_HEAD="$HEAD" -e TESSERA_STATE="$STATE" \
   -e FLUX_JOB_ID="${FLUX_JOB_ID:-}" \
   "${IMAGE_ENV[@]}" "${EXTRA_MOUNTS[@]}" --entrypoint "${PREFIX[0]}" -w /work "$IMAGE_REF" \

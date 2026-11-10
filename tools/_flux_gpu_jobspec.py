@@ -21,6 +21,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from _flux_shape import THREADS, duration_seconds, resource_shape, memory_peak_receipt  # noqa: E402
 
 BASE_ENV = {"PATH": "/usr/bin:/bin", "HOME": "/home/rob", "FLUX_F58_FORCE_ASCII": "1", **THREADS}
+CONTAINER_ENV = {'TMPDIR': '/tessera-scratch/tmp', 'CUDA_VISIBLE_DEVICES': '', **THREADS}
 
 
 def render(command, *, cores, memory_gib, walltime, env=(), hosts=None, directory=None, cwd=None, fleet_master_approved=None):
@@ -217,6 +218,8 @@ def container_options(arguments):
             if external_cid.exists():
                 raise ValueError('external cidfile already exists')
         else:
+            if key in {'-e', '--env'} and value.partition('=')[0] in CONTAINER_ENV:
+                raise ValueError('container environment is owned by launcher: ' + value.partition('=')[0])
             options.extend([key, value])
         index += 1
     if index == len(arguments) or not entrypoint:
@@ -275,9 +278,8 @@ def run_container(arguments, directory, scratch_root, *, gpu=True):
                   *(['--device', 'nvidia.com/gpu=all'] if gpu else []),
                   '--cpuset-cpus', ','.join(map(str, affinity)), '--volume', str(scratch) + ':/tessera-scratch',
                   *identity, *options,
-                  '--env', 'TMPDIR=/tessera-scratch/tmp',
-                  '--env', 'CUDA_VISIBLE_DEVICES=' + (os.environ['CUDA_VISIBLE_DEVICES'] if gpu else ''),
-                  *[arg for key, value in THREADS.items() for arg in ('--env', key + '=' + value)],
+                  *[arg for key, value in dict(CONTAINER_ENV, CUDA_VISIBLE_DEVICES=(os.environ['CUDA_VISIBLE_DEVICES'] if gpu else '')).items()
+                    for arg in ('--env', key + '=' + value)],
                   '--entrypoint', '/bin/sh', image, '-ec',
                   'cat /proc/self/status > /tessera-scratch/container-status; exec "$@"',
                   'tessera-gpu', entrypoint, *command]

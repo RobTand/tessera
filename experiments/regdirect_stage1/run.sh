@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# TMPDIR and thread bounds are launcher-owned; temporary writes use removable job scratch.
 # eng-regdirect-build stage 1: run bench_stage1.py in the serving image on one GB10, or
 # (--cpu-preflight) on the CPU interpreter.
 #   run.sh <checkout> <out_dir> [bench args...]
@@ -51,9 +52,9 @@ WD=$!
 rc=0
 python3 "$CHECKOUT/tools/_flux_gpu_jobspec.py" run --out "$OUT" --scratch-root "${FLUX_SCRATCH:-/tmp/flux-vanilla}" -- --cidfile "$CID" \
   --user "$(id -u):$(id -g)" -v "$CHECKOUT":/work:ro -v "$OUT":"$OUT" "${MOUNTS[@]}" \
-  -e HOME="$OUT/home" -e TMPDIR="$OUT/tmp" -e TORCH_EXTENSIONS_DIR="$OUT/home/torch_extensions" \
+  -e HOME="$OUT/home" -e TORCH_EXTENSIONS_DIR="$OUT/home/torch_extensions" \
   -e PYTHONPATH=/work/src -e HOST_NAME="$(hostname)" -e TESSERA_HEAD="$HEAD" -e ORACLE_IMAGE="$IMAGE" \
-  -e OMP_NUM_THREADS=1 -e MKL_NUM_THREADS=1 -e MAX_JOBS=1 -e PYTHONUNBUFFERED=1 -e TESSERA_SERVE_MODE=resident \
+  -e PYTHONUNBUFFERED=1 -e TESSERA_SERVE_MODE=resident \
   -e FLUX_JOB_ID="${FLUX_JOB_ID:-}" \
   --entrypoint "${COMMAND[0]}" -w /work "$IMAGE" "${COMMAND[@]:1}" --out "$OUT" "$@" || rc=$?
 touch "$OUT/.done"; kill $WD 2>/dev/null || true

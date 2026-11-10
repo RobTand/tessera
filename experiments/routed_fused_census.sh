@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# TMPDIR and thread bounds are launcher-owned; temporary writes use removable job scratch.
 # Route census of a Tessera checkpoint inside the pinned serving image, with
 # THIS checkout's plugin discovered by vLLM (tessera#640).  Submitted through
 # Flux as the job's command; same container discipline as
@@ -67,11 +68,11 @@ echo "host=$(hostname) cpus=$CPUS head=$HEAD state=[$STATE] image=$IMAGE_REF mod
 python3 "$CHECKOUT/tools/_flux_gpu_jobspec.py" run --out "$OUT" --scratch-root "${FLUX_SCRATCH:-/tmp/flux-vanilla}" -- \
   --user "$(id -u):$(id -g)" \
   -v "$CHECKOUT":/work:ro -v "$OUT":"$OUT" -v "$MODEL":"$MODEL":ro \
-  -e HOME="$OUT/home" -e TMPDIR="$OUT/tmp" -e TRITON_CACHE_DIR="$OUT/triton" \
+  -e HOME="$OUT/home" -e TRITON_CACHE_DIR="$OUT/triton" \
   -e TORCH_EXTENSIONS_DIR="$OUT/torch-ext" -e PYTHONDONTWRITEBYTECODE=1 \
   -e PYTHONPATH=/work/src:"$OUT/plugin-sp" \
-  -e HOST_NAME="$(hostname)" -e OMP_NUM_THREADS=1 -e MKL_NUM_THREADS=1 \
-  -e OPENBLAS_NUM_THREADS=1 -e NUMEXPR_NUM_THREADS=1 -e PYTHONUNBUFFERED=1 \
+  -e HOST_NAME="$(hostname)" \
+  -e PYTHONUNBUFFERED=1 \
   -e TESSERA_SERVE_MODE="${TESSERA_SERVE_MODE:-resident}" \
   -e TESSERA_RESEARCH_GLM53_NOPE="${TESSERA_RESEARCH_GLM53_NOPE:-1}" \
   -e TESSERA_ROUTED_FUSED_VERBOSE="${TESSERA_ROUTED_FUSED_VERBOSE:-}" \
