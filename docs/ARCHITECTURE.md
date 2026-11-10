@@ -11,6 +11,8 @@ All remaining direct-Docker serving entries refuse, as do
 that bound to migrate it. `experiments/t8r_speed/build_ext.sh` now runs through
 the rootless launcher in CPU-only mode, with the consumer's source and extension
 mounts, persistent HOME and launcher-owned TMPDIR and single-thread build bounds.
+`experiments/step4_capture_launch.py` refuses at entry to `main`, before argument
+processing, output creation, image inspection or the GPU sampler, with exit 2.
 
 Re-stamped 2026-11-10 for the owned GPU container launcher. The `run` entry
 in `tools/_flux_gpu_jobspec.py` accepts a digest-pinned container request
