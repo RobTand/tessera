@@ -20,6 +20,7 @@ def test_each_test_owns_its_flux_environment(tmp_path):
 import os
 from types import SimpleNamespace
 import pytest
+from box_artifacts import FLUX_URI_RESOLVER
 from suite_flux_fixtures import suite
 
 def test_no_ambient_flux():
@@ -35,7 +36,7 @@ def test_connection_refuses_ambient_instance(suite, monkeypatch, tmp_path):
     monkeypatch.setattr(flux.subprocess, 'run', resolve)
     with pytest.raises(ValueError, match='FLUX_URI or flux-uri.sh'):
         flux.connection()
-    assert calls == [['/mnt/shared/flux-migration/flux-uri.sh']]
+    assert calls == [[str(FLUX_URI_RESOLVER)]]
 ''')
     env = {**os.environ, 'FLUX_URI': 'local:///ambient-must-not-be-used',
            'FLUX_JOB_ID': 'fAMBIENT', 'FLUX_CLIENT': sys.executable,
