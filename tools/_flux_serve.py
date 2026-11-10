@@ -48,6 +48,8 @@ SERVE_ENV = (
     'PROMPTS',
 )
 ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT / 'tools'))
+from _directory_entries import directory_entries
 
 
 class Refused(RuntimeError):
@@ -76,7 +78,7 @@ def content_sha256(directory):
     root = Path(directory).resolve(strict=True)
     require(root.is_dir(), 'MODEL_DIRECTORY_REQUIRED')
     entries = []
-    for path in sorted(root.rglob('*')):
+    for path in directory_entries(root):
         if path.is_file():
             with path.open('rb') as stream:
                 digest = hashlib.file_digest(stream, 'sha256').hexdigest()

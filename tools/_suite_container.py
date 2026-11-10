@@ -11,6 +11,8 @@ import signal
 import subprocess
 import sys
 
+from _directory_entries import directory_entries
+
 RUNNER = "tools/suite_container.py"
 PODMAN = "/usr/bin/podman"
 _IMAGE = re.compile(r"sha256:[0-9a-f]{64}")
@@ -200,7 +202,7 @@ def dependency_manifest(site):
     root = absolute(str(site))
     _require(root.resolve() == root and root.is_dir(), "dependency site is missing or a symlink")
     files = []
-    for path in sorted(root.rglob("*")):
+    for path in directory_entries(root):
         _require(not path.is_symlink(), "dependency site contains a symlink")
         if path.is_file():
             raw = path.read_bytes()

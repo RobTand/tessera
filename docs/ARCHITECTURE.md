@@ -10741,6 +10741,8 @@ The child retains the scoring commands, metrics gates, log checks and build stam
 Scoring producers supply their entry command to `enter_scoring_stage`; the
 supervisor does not import or name an LFM producer. The renderer validates the
 resolved entry's parent and approved basename without constructing producer paths.
+Model hashing and suite dependency sealing share `_directory_entries`'s
+recursive listing; both retain file symlinks and leave directory links untraversed.
 
 Root Docker in a Flux job is allowed only through this reviewed wrapper pattern,
 with an image by digest and `--pull=never`. Anything else that wants Docker in
