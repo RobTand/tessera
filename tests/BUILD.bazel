@@ -27473,6 +27473,7 @@ ts_py_library(
     ],
     deps = [
         "//tools:_flux_gpu_jobspec",
+        "//tools:_flux_shape",
         "//tools:_suite_flux",
         ":box_artifacts",
         ":suite_flux_fixtures",
