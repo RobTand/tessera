@@ -15,6 +15,10 @@ _CONSTRUCTION_REASON = "experiments/t8r_speed/bench_dense_module.py reads this c
 _PRISMAQUANT = "it reads PrismaQuant, pinned in tools/ci/gate_prismaquant_requirements.txt; its own dependencies are heavy, so only the tests that read it carry it."
 
 TEST_INPUTS = {
+    "//tests:test_gpu_podman_launcher": struct(
+        data = ["//experiments:t4_code/fp4_arithmetic_attest.py"],
+        reason = "run_in_image.sh checks the script named by the test's bare filename under the checkout argument; the controlled container does not execute it.",
+    ),
     "//tests:test_bazel_gate": struct(
         data = ["//tools/bazel:BUILD.bazel"],
         reason = "the pool contract reads the handwritten platform BUILD file; BUILD files are excluded from inferred source inputs.",
