@@ -22,6 +22,8 @@ import struct
 from pathlib import Path
 
 SCHEMA = "tessera.declared_inputs.v1"
+FILE_TRANSPORT = "declared-path-held-fd"
+DIRECT_TRANSPORT = "declared-path-held-fds"
 
 
 def read_declared_inputs(path):
@@ -102,7 +104,7 @@ def verify_cached_frame(raw, role):
 
 
 class DeclaredInputs:
-    TRANSPORT = 'declared-path-held-fd'
+    TRANSPORT = FILE_TRANSPORT
 
     def __init__(self, manifest_path):
         self.manifest, self.manifest_sha256 = read_declared_inputs(manifest_path)
@@ -114,7 +116,7 @@ class DeclaredInputs:
         self.entries = {(e['path'], e['offset']): e for e in manifest['entries']}
         self.actual_digests = {identity: entry['sha256'] for identity, entry in self.entries.items()}
         self.direct_files = {}
-        self.direct_record = {'transport': 'declared-path-held-fds',
+        self.direct_record = {'transport': DIRECT_TRANSPORT,
             'manifest_sha256': self.manifest_sha256, 'before': {}, 'after': None}
         try:
             for path in sorted({path for path, _offset in self.entries}):
@@ -233,7 +235,7 @@ class DeclaredInputs:
             raise ValueError('undeclared complete declared file')
         self._direct_identity(str(path))
         fd = os.dup(self.direct_files[str(path)]['fd'])
-        serving = {'transport': 'declared-path-held-fd'}
+        serving = {'transport': FILE_TRANSPORT}
         try:
             info = os.fstat(fd)
             if not stat.S_ISREG(info.st_mode) or info.st_size != entry['bytes']:
@@ -287,7 +289,7 @@ class NativeCallback:
         self.record = {'code_artifact_contract':'experimental trusted binary owner; not immutable original tensor provider',
                        'declared_path':str(path),'expected_sha256':expected_sha256,
                        'serving_tier':self.serving,'source_sha256':source_sha256}
-        self.record['input_transport'] = 'declared-path-held-fd'
+        self.record['input_transport'] = FILE_TRANSPORT
         self.source_sha256 = source_sha256
         try:
             cache_info = getattr(rf._ext, "cache_info", None)

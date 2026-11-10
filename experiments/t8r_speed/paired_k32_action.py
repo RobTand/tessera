@@ -125,6 +125,12 @@ def timing_summary(reports,certificate):
     for arm in ('A1','B1','B2','A2'):
         r=reports[arm]
         if len(r['results'])!=1 or not r['results'][0]['ok']:raise ValueError('timing arm failed')
+        if __package__:
+            from .declared_inputs import DIRECT_TRANSPORT
+        else:
+            from declared_inputs import DIRECT_TRANSPORT
+        if r['meta']['direct_input_bindings'].get('transport') != DIRECT_TRANSPORT:
+            raise ValueError('timing input transport differs from declared reader')
         owners.append(r['meta']['direct_input_bindings']['before'])
         if owners[-1]!=r['meta']['direct_input_bindings']['after']:raise ValueError('timing input ownership changed')
         native=r['meta']['native_code_artifact']
