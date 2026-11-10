@@ -5,9 +5,10 @@ Re-stamped 2026-11-10 for the Flux migration at `d6b30853`.
 `tools/_suite_flux.py` only with `--submit`. Use `--collect DIR` to read a
 saved launch. Collection exits zero only for a terminal record with
 `returncode == 0` and no `evidence_errors`; a running submission is only an
-acknowledgement. GPU wrappers use
-`tools/_flux_gpu_jobspec.py` to print Flux submission commands without running
-them. Those GPU paths are not yet qualified.
+acknowledgement. `experiments/ts91_chain.sh` and
+`experiments/submit_gb_d1_producer.sh` use `tools/_flux_gpu_jobspec.py` to
+print Flux submission commands without running them. Those GPU paths are
+not yet qualified.
 The gate writes `tessera.gate_result.v2` and `tessera.gate_aggregate.v2`.
 Job metadata uses `tessera.job_meta.v2`; graph arms use `tessera.graph_arm.v2`.
 These job and arm records carry `flux_job_id`. Readers use `pb_action` only
@@ -1102,9 +1103,11 @@ No raw values, requested windows, cadence labels or historical evidence are
 rewritten; energy and work/J still require actual attribution review.
 
 Re-stamped 2026-11-10 for paired custom-op Flux execution context (#917).
-The paired batch checks for `FLUX_JOB_ID`; that environment variable alone
-does not attest GPU approval. Its wrapper renders a Flux GPU command, and
-the path is not yet qualified. Existing
+The paired batch and its `experiments/t8r_speed/bench_t8r.sh` wrapper check
+for `FLUX_JOB_ID`; that environment variable alone does not attest GPU approval.
+The wrapper runs the container through `docker run` and passes the context
+value into it. It does not render or submit a Flux command. The Flux GPU
+path is not yet qualified. Existing
 source/native/input/certificate, pressure, affinity and owned-CID fences
 remain unchanged; historical direct evidence retains its original scope.
 
