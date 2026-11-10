@@ -68,7 +68,7 @@ def test_cpu_dry_run_reads_and_refuses_bad_tensor_bytes(artifact, defect):
     manifest = json.loads(artifact.read_text())
     row = next(r for r in manifest["modules"] if r["prefix"].startswith("visual."))
     file = artifact.parent / row["file"]
-    original = load_file(str(file))
+    original = {name: tensor.clone() for name, tensor in load_file(str(file)).items()}
     damaged = {name: tensor.clone() for name, tensor in original.items()}
     if defect == "width":
         damaged["input"] = damaged["input"][:, :-1].contiguous()
@@ -82,6 +82,8 @@ def test_cpu_dry_run_reads_and_refuses_bad_tensor_bytes(artifact, defect):
             smoke.read_inputs(artifact, 3)
     finally:
         save_file(original, str(file))
+    # Restoration must leave the shared producer fixture valid for the next reader.
+    smoke.read_inputs(artifact, 3)
 
 
 @pytest.mark.parametrize("family", ["T-8", "T-16"])
