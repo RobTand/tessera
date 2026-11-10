@@ -1,5 +1,17 @@
 # Tessera plan-to-serve architecture
 
+Re-stamped 2026-11-10 for the Flux migration at `d6b30853`.
+`tools/build_serving_image.py` prints a CPU build job and submits it through
+`tools/_suite_flux.py` only with `--submit`. GPU wrappers use
+`tools/_flux_gpu_jobspec.py` to print Flux submission commands without running
+them. Those GPU paths are not yet qualified.
+The gate writes `tessera.gate_result.v2` and `tessera.gate_aggregate.v2`.
+Job metadata uses `tessera.job_meta.v2`; graph arms use `tessera.graph_arm.v2`.
+These job and arm records carry `flux_job_id`. Readers use `pb_action` only
+for legacy records; old receipts retain their original meaning.
+`tools/impacted_tests.py` no longer excludes generated source-closure metadata.
+Unknown changed paths still resolve toward running more tests.
+
 Re-stamped 2026-11-08 for native Flux profile v2. The migration lead qualified
 the exact config revision making `exec.sdexec-constrain-resources` explicitly
 false, with config SHA256 `ff9384f0...`. The resource model, broker generation,
@@ -226,7 +238,7 @@ Direct buffer assertions use the recorded source rows and columns, not an incide
 
 Re-stamped 2026-10-07 for issue #1036.
 The repository owns the serving Dockerfile, image job and source patch files under `images/serving`.
-The image job prints its PrismaBuild command unless the operator selects `--submit`.
+The image job prints its job description; `--submit` submits through `tools/_suite_flux.py`.
 The job requests central processors only. This change starts no image build.
 Cells use kernel build and module kind for portable lookup.
 The compatibility map preserves historical cell identifiers and image-only calls.
@@ -235,9 +247,9 @@ An explicit build context selects the portable key. The image remains provenance
 Existing defaults, pins, wire bytes, rungs, evidence and paired-rank checks remain unchanged.
 No new device qualification or performance claim accompanies this change.
 Both validators reject overlapping image-only and kernel-build scopes.
-The image job uses an owned rootless BuildKit container through the published Docker shim.
+The image job invokes an owned rootless BuildKit container with the `docker` CLI.
 The builder writes a Docker archive to the explicit shared output directory.
-The producer mounts no host Docker socket. PrismaBuild retains resource ownership.
+The producer mounts no host Docker socket. Flux admits the CPU job, and its payload removes the container it owns.
 The source reader names its repository root. The directory-read ceiling remains unchanged.
 The imported patches retain the GNU Affero General Public License version three and the historical license notice.
 The Dockerfile copies both upstream license files into the image.
@@ -1082,11 +1094,12 @@ endpoint owner; localhost is never relabelled as Sparky on another worker.
 No raw values, requested windows, cadence labels or historical evidence are
 rewritten; energy and work/J still require actual attribution review.
 
-Re-stamped 2026-10-04 for paired custom-op PB execution admission (#917).
-The paired batch and its wrapper require an admitted PrismaBuild context;
-held-original-FD input transport is not a vLLM service exemption. Existing
+Re-stamped 2026-11-10 for paired custom-op Flux execution context (#917).
+The paired batch checks for `FLUX_JOB_ID`; that environment variable alone
+does not attest GPU approval. Its wrapper renders a Flux GPU command, and
+the path is not yet qualified. Existing
 source/native/input/certificate, pressure, affinity and owned-CID fences
-remain unchanged; historical direct evidence is not relabelled as PB proof.
+remain unchanged; historical direct evidence retains its original scope.
 
 Re-stamped 2026-10-04 for the current-base paired-K32 harness/control
 composition (#862 integration-conflict repair). The default-off paired-K32
@@ -1128,11 +1141,11 @@ mapping. A subvolume's virtual `st_dev` is not the kernel mapping device.
 Unknown or ambiguous mount provenance fails closed; hash and FD fences stay
 strict. No native kernel, serving, timing or energy claim is changed.
 
-Re-stamped 2026-10-04 for merge-batch SDK dependency declarations (#915).
-Only controls that invoke the real published PrismaBuild manifest/lease API
-require that SDK; portable numeric, history and cleanup controls still run.
-Missing-SDK collection is named honestly, not fabricated as native coverage;
-real-SDK execution and strict native mapping evidence remain independent.
+Re-stamped 2026-11-10 for merge-batch input declarations (#915).
+The published manifest/lease SDK controls are archived. Live consumers use
+`tessera.declared_inputs.v1` through the repository's declared-input reader.
+Portable numeric, history and cleanup controls do not establish native mapping
+or GPU qualification.
 
 Re-stamped 2026-10-04 for the token-sum output-device input gate (tessera#859).
 Both native bindings require their output on the routed tensor's CUDA device
@@ -1322,13 +1335,13 @@ NativeCallback owners. A versioned protocol binds the authenticated A8SE L10
 ranges, the captured M2048 expert IDs (M1 uses only their first row), frozen
 source, harness bytes and one matched MMA ELF. Actual mode0/1/2 intermediates
 and final output bits must agree before a content-bound numeric receipt can
-admit ABBA timing. This vLLM-backed batch operator runs through PrismaBuild;
-only inference-serving services are exempt. `piece_major_pb_action.py` binds the
+admit ABBA timing. This vLLM-backed batch operator checks `FLUX_JOB_ID`;
+the Flux GPU path is not yet qualified. `piece_major_pb_action.py` binds the
 sealed timing packet and explicit coordinator GPU GO inside an exclusive
 measurement attempt, importing the existing containment owner rather than
 launching a second dispatcher. Held original FDs retain the existing outer/inner
 checks, native load/fence checks and close-before-publication behavior. CPU
-checks and builds also use PB.
+checks and builds use admitted Flux jobs or the approved remote test routes.
 CPU-only PM preparation reuses `piece_major_protocol` to verify the current
 source closure (including the kernel), harness, native bank and origin bytes,
 captured routing and input manifest before publishing its identities. The
@@ -1454,10 +1467,9 @@ are not qualification evidence.
 Re-stamped 2026-10-02 (Refs #856): external shape-panel replay preserves
 the original request, producer, worker job and GPU evidence while creating
 a separate CPU replay job bound to the current checker worker. The existing
-installed preflight and full panel validator own both joins. An original
-immutable PB verifier path is accepted only when its held read-only regular
-bytes equal the current published verifier, under bounded stable reads;
-execution uses those held bytes and rechecks them afterwards. No fleet alias,
+installed preflight and full panel validator own both joins. The current worker
+uses `tools/_install_identity.verify_install` for installed-distribution proof;
+the published verifier path and `record_verifier` binding are removed. No fleet alias,
 original input rewrite, serving pin change or new GPU measurement is involved.
 
 Re-stamped 2026-10-09 for tessera#1136: the #688 panel admits dense TP1/TP2
@@ -2020,8 +2032,8 @@ T4 activation-prefetch experiment (2026-10-02, #875):
   retained banks; portable x86 dry runs and the actual arm64 container smoke
   are separate evidence, neither a GPU or serving qualification.
   Nonfinite outputs/references/bounds refuse (actual false-pass RED: PB62e3e5ee).
-* GPU qualification uses normal PrismaBuild admission after fresh D1 disk
-  checks; no separate root-authorization gate remains. Use the
+* GPU wrappers render Flux commands; this path is not yet qualified. Fresh D1 disk
+  checks alone do not qualify execution. Use the
   same real captured/calibrated T4 bundle bank, input/global scales, residency,
   recorded routing and quantizer in both arms. Full matrix: modes0/1/2 and
   chain, all admitted uniform/adjacent rates, TP1 and each legal TP2 cut with
@@ -4317,20 +4329,19 @@ towards running more tests -- an ambiguous spelling edges to every file it can
 name, a module whose dependencies cannot be established selects its consumers,
 and an unresolvable scope forces the whole suite. A narrowed list is a claim
 that the graph read everything relevant, so where it did not, the answer is
-`full`. It reuses this verified exclusion: a closure-shaped
-tracked file is not ignored by name, and unverifiable metadata forces a full
-selection. Verified PB metadata still permits narrowed selection.
+`full`. Generated source-closure metadata has no special exclusion.
+A closure-shaped tracked file remains an ordinary changed path.
 `tests/test_native_a4_serving.py` keeps its manual `run_gate`/`__main__` CUDA
 harness and also exposes a pytest entry point that invokes the same gate. The
 wrapper names its CUDA precondition and resolves `a4-config.json` through
 `box_artifacts`; a CPU skip is not native gate qualification. The selector
-includes this pytest target, so a full-suite PB assignment has a collection and
+includes this pytest target, so a full-suite assignment has a collection and
 outcome record rather than an unexecuted file (tessera#762). Explicit manual-only
 interfaces, when declared, remain in the dependency graph but are removed from
 pytest targets after every selection path, with their path and reason recorded
 in `excluded_tests` and the text receipt (tessera#647). No general
 absence-of-test heuristic drops modules: pytest can collect imported, inherited
-or generated cases. No exclusion weakens uncertainty escalation or PB's
+or generated cases. No exclusion weakens uncertainty escalation or the runner's
 requirement that every assigned pytest file have a collection/outcome record.
 Both normal and parentless diffs use Git's NUL-delimited path protocol, so
 display quoting cannot conceal metadata under tab/newline-containing paths.
@@ -7733,15 +7744,16 @@ and owned temporary build directory; no pre-existing build path is removed.
 The committed packaging parser preserves Python 3.10 through the declared
 conditional `tomli` dependency, not an implicit interpreter-version cutover.
 
-The repository caller `experiments/submit_gb_d1_producer.sh` forwards both producer selectors unchanged into all three submission actions.
+The repository caller `experiments/submit_gb_d1_producer.sh` forwards both producer selectors unchanged into all three rendered commands.
 It preserves the historical scientific inputs and resource bounds.
 It uses the wrappers in the current checkout, not the separate frozen GB and D1 checkouts.
 The caller requires both selectors by name and never derives them from the current directory.
-The exporter owner authenticates the producer before any submission.
-`PBRUN` can select a submission client. Its default is the published PrismaBuild client.
-Run submission mode on a fleet box because the preflight imports torch and hashes the installed package.
+The exporter owner authenticates the producer before rendering the commands.
+`tools/_flux_gpu_jobspec.py` renders the three Flux GPU submission commands.
+It never submits them, and this GPU path is not yet qualified.
+The preflight imports torch and hashes the installed package, so run it in an admitted job.
 
-`SUBMIT=0` authenticates the producer without submission or GPU work. Run this CPU entry through PrismaBuild.
+`SUBMIT=0` authenticates the producer without submission or GPU work. Run this CPU entry as a Flux CPU job.
 All caller refusals are correctness refusals in dev and certified modes.
 The caller adds no receipt or provenance convention.
 The historical caller stays unchanged at `/home/rob/tmp/resubmit-gb-d1.sh`.
