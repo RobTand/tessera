@@ -29,7 +29,11 @@ processing, output creation, image inspection or the GPU sampler, with exit 2.
 The source-derived guard test checks call order before literal Docker launch
 argv, and runs every guarded shell entry with empty and nonempty Flux job IDs
 against a recording fake Docker. Python guards must precede the argv in the
-same function or run at entry to `main`. The serving-image CLI calls the guard
+same function or run at entry to `main`, and explicitly return a nonzero guard
+status. Discarded results and branch-local calls do not qualify. A source-derived
+Python entry sweep checks exit 2, the guard's message, and no traceback before
+runtime access. GLM construction and regdirect compilation also guard before
+argument processing. The serving-image CLI calls the guard
 at entry too; inside Flux rendering refuses. Both `--run` and `--submit` refuse
 on every host with the root-store reason, and historical `--collect` remains available.
 

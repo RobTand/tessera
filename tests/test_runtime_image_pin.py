@@ -646,6 +646,27 @@ def _guard_call(node):
                     and item.value.endswith('flux_docker_guard.sh') for item in ast.walk(node)))
 
 
+@pytest.mark.parametrize('entry', [path for path in _live_container_entries()
+                                  if path.suffix == '.py' and
+                                  any(_guard_call(node) for node in ast.walk(ast.parse(path.read_text())))],
+                         ids=lambda path: str(path.relative_to(ROOT)))
+@pytest.mark.parametrize('job_value', ['', 'f123'])
+def test_python_guard_exits_two_without_traceback(tmp_path, entry, job_value):
+    for name in ('docker', 'nvidia-smi', 'nvcc'):
+        binary = tmp_path / name
+        binary.write_text('#!/bin/sh\ntouch "$CONTROL/runtime-reached"\nexit 99\n')
+        binary.chmod(0o755)
+    args = ['--dry-run'] if entry.name == 'build_serving_image.py' else []
+    result = subprocess.run([sys.executable, str(entry), *args], cwd=tmp_path,
+                            env={**os.environ, 'FLUX_JOB_ID': job_value, 'CONTROL': str(tmp_path),
+                                 'PATH': f'{tmp_path}:{os.environ["PATH"]}'},
+                            capture_output=True, text=True, timeout=30)
+    assert result.returncode == 2, result.stdout + result.stderr
+    assert 'FLUX_JOB_ID' in result.stderr and 'reviewed serving wrapper' in result.stderr
+    assert 'Traceback' not in result.stderr
+    assert not (tmp_path / 'runtime-reached').exists()
+
+
 def _docker_order_errors(text, suffix):
     # Literal commands only: Docker through a variable or dynamically built argv
     # is not detected. No such direct-Docker entry exists in this tree today.
@@ -667,10 +688,32 @@ def _docker_order_errors(text, suffix):
                 return node
         return tree
 
-    guards = [node for node in ast.walk(tree) if _guard_call(node)]
+    def checked_guard(call):
+        assignment = parents[call]
+        if not (isinstance(assignment, ast.Assign) and len(assignment.targets) == 1
+                and isinstance(assignment.targets[0], ast.Name)):
+            return None
+        block = parents[assignment]
+        if not isinstance(block, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            return None
+        name = assignment.targets[0].id
+
+        def returncode(node):
+            return (isinstance(node, ast.Attribute) and node.attr == 'returncode'
+                    and isinstance(node.value, ast.Name) and node.value.id == name)
+
+        for statement in block.body[block.body.index(assignment) + 1:]:
+            if (isinstance(statement, ast.If) and returncode(statement.test)
+                    and isinstance(statement.body[-1], ast.Return)
+                    and returncode(statement.body[-1].value)):
+                return statement
+        return None
+
+    guards = [(node, checked_guard(node)) for node in ast.walk(tree) if _guard_call(node)]
+    guards = [(node, check) for node, check in guards if check is not None]
     main = next((node for node in tree.body if isinstance(node, ast.FunctionDef) and node.name == 'main'), None)
     first = main.body[0] if main else None
-    main_guard = first is not None and any(_guard_call(node) for node in ast.walk(first))
+    main_guard = first is not None and any(guard in ast.walk(first) for guard, _ in guards)
     errors = []
     for node in ast.walk(tree):
         if not isinstance(node, (ast.List, ast.Tuple)):
@@ -678,8 +721,9 @@ def _docker_order_errors(text, suffix):
         values = [item.value if isinstance(item, ast.Constant) else None for item in node.elts]
         if not (values[:2] == ['docker', 'run'] or '--gpus' in values):
             continue
-        if not main_guard and not any(function(guard) is function(node) and guard.lineno < node.lineno
-                                      for guard in guards):
+        if not (main_guard and function(node) is not main) and not any(
+                function(guard) is function(node) and check.end_lineno < node.lineno
+                for guard, check in guards):
             errors.append(f'Python order at line {node.lineno}')
     return errors
 
@@ -689,6 +733,9 @@ def _docker_order_errors(text, suffix):
     ('.sh', 'source ./flux_docker_guard.sh\ndocker run image\nrefuse_flux_docker || exit 2\n'),
     ('.py', 'def main():\n subprocess.run(["docker", "run"])\n subprocess.run(["bash", "flux_docker_guard.sh"], check=True)\n'),
     ('.py', 'def unrelated():\n subprocess.run(["bash", "flux_docker_guard.sh"], check=True)\ndef main():\n subprocess.run(["docker", "run"])\n'),
+    ('.py', 'def main():\n subprocess.run(["bash", "flux_docker_guard.sh"])\n subprocess.run(["docker", "run"])\n'),
+    ('.py', 'def main():\n subprocess.run(["bash", "flux_docker_guard.sh"], check=True)\n subprocess.run(["docker", "run"])\n'),
+    ('.py', 'def main():\n if False:\n  refusal = subprocess.run(["bash", "flux_docker_guard.sh"])\n  if refusal.returncode:\n   return refusal.returncode\n subprocess.run(["docker", "run"])\n'),
 ])
 def test_guard_order_rejects_late_or_unrelated_call(suffix, text):
     assert _docker_order_errors(text, suffix)

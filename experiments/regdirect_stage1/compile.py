@@ -20,6 +20,9 @@ import torch
 
 
 def main():
+    refusal = subprocess.run(["bash", str(Path(__file__).parent / "../flux_docker_guard.sh")])
+    if refusal.returncode:
+        return refusal.returncode
     ap = argparse.ArgumentParser()
     ap.add_argument("--out", type=Path, required=True)
     ap.add_argument("--toolkit", type=Path, default=Path("/tmp/eng-rung-aligned-toolkit"))
@@ -46,7 +49,6 @@ def main():
     print(version, flush=True)
     ro = (src.parent, args.toolkit.resolve(), inc, Path(sysconfig.get_paths()["include"]))
     cpus = ",".join(str(c) for c in sorted(os.sched_getaffinity(0)))
-    subprocess.run(["bash", str(Path(__file__).parent / "../flux_docker_guard.sh")], check=True)
     launcher = ["docker", "run", "--rm", "--network=host", "--cpuset-cpus", cpus]
     for p in ro:
         launcher += ["-v", f"{p}:{p}:ro"]

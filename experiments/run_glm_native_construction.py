@@ -22,6 +22,9 @@ def digest(path):
 
 
 def main():
+    refusal = subprocess.run(["bash", str(Path(__file__).with_name("flux_docker_guard.sh"))])
+    if refusal.returncode:
+        return refusal.returncode
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--request', type=Path, required=True)
     parser.add_argument('--out', type=Path, required=True)
@@ -37,7 +40,6 @@ def main():
     parser.add_argument('--cpus', type=int, default=4)
     parser.add_argument('--memory-gib', type=int, default=12)
     args = parser.parse_args()
-    subprocess.run(["bash", str(Path(__file__).with_name("flux_docker_guard.sh"))], check=True)
     request = json.loads(args.request.read_text())
     root = args.out
     root.mkdir(parents=True, exist_ok=False)
