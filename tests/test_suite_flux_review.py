@@ -58,10 +58,10 @@ def test_conclusive_failure_precedes_incomplete_sibling(suite, failed):
 def native_world(suite, tmp_path, monkeypatch):
     flux = suite.suite_flux
     launch = {"schema": "tessera.flux.launch.v1", "directory": str(tmp_path),
-              "uri": flux.URI, "broker_starttime": "generation-A",
+              "uri": "local:///historical-instance", "broker_starttime": "generation-A",
               "command": ["python", "-m", "pytest"], "source": {"sha256": "a" * 64},
               "checkout": "/mnt/shared/source", "runtime": {"sha256": "c" * 64},
-              "application": None, "qualification": {"profile": "fixture-A"}}
+              "application": None, "qualification": {"profile": "fixture-A", "broker_starttime": "generation-A"}}
     flux.save(tmp_path / "launch.json", launch)
     digest = flux.hashlib.sha256(flux.encoded(launch)).hexdigest()
     flux.save(tmp_path / "submission.json", {"state": "submitted", "job_id": "ƒ123",
@@ -98,7 +98,7 @@ def native_world(suite, tmp_path, monkeypatch):
             raise AssertionError(f"unexpected native operation {argv}")
         return SimpleNamespace(returncode=code, stdout=raw, stderr="")
 
-    monkeypatch.setattr(flux, "profile_identity", lambda: {"profile": "fixture-A"})
+    monkeypatch.setattr(flux, "broker_starttime", lambda **kw: "generation-A")
     monkeypatch.setattr(flux, "native", native)
     assert flux.collect(tmp_path)["returncode"] == 0
     return SimpleNamespace(flux=flux, directory=tmp_path, state=state, calls=calls)

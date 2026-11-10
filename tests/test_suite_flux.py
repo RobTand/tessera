@@ -119,7 +119,10 @@ def test_submit_environment_and_runtime_budget_are_explicit(suite, tmp_path, mon
     flux = suite.suite_flux
     source = {"snapshot_commit": "a" * 40, "sha256": "b" * 64}
     monkeypatch.setattr(flux, "source", lambda path: source)
-    monkeypatch.setattr(flux, "profile_identity", lambda: {"profile": "fixture", "broker_starttime": "A"})
+    monkeypatch.setattr(flux, "instance_identity", lambda **kw: {"broker_starttime": "A"})
+    monkeypatch.setattr(flux, "require_capacity", lambda *a, **kw: None)
+    monkeypatch.setenv("FLUX_URI", "local:///test-instance")
+    monkeypatch.setenv("FLUX_CLIENT", "/usr/bin/python3")
     budgets, calls = [], []
     def runtime(python, checkout, *, timeout=None):
         budgets.append(timeout)
@@ -160,21 +163,15 @@ def test_resource_shape_is_the_stock_slot_with_no_node_wrapper_or_core_class(sui
         assert not shape.startswith("node/") and "perf" not in shape
 
 
-def test_profile_selector_names_one_qualified_row_and_derives_its_digests(suite):
-    flux = suite.suite_flux
-    row = flux.PROFILES[flux.PROFILE]
-    assert (flux.CONFIG_SHA, flux.MODEL_SHA) == (row["config_sha256"], row["model_sha256"])
-    assert all(len(value) == 64 for entry in flux.PROFILES.values() for value in entry.values())
-
 
 def test_image_host_is_a_finite_architecture_bound_dependency(suite):
     flux = suite.suite_flux
     demand = flux.resources(2, 16, 600, gpus=1, architecture="aarch64", host="sparky")
     assert demand == {"schema": "tessera.suite_resources.v1", "cores": 2, "memory_gib": 16,
                       "timeout_s": 600, "gpus": 1, "architecture": "aarch64", "host": "sparky"}
-    for architecture, host in [("aarch64", "dl380g10"), ("x86_64", "sparky"), ("aarch64", "foreign")]:
+    for host in ("bad host", "host:injection", ""):
         with pytest.raises(ValueError, match="host"):
-            flux.resources(2, 16, 600, architecture=architecture, host=host)
+            flux.resources(2, 16, 600, host=host)
 
 
 def test_portable_noncontainer_cannot_pin_a_host(suite, tmp_path):
@@ -182,41 +179,6 @@ def test_portable_noncontainer_cannot_pin_a_host(suite, tmp_path):
         suite.suite_flux.submit(tmp_path / "unused", tmp_path, ["python", "-m", "pytest"],
                                 1, 1, 60, {}, host="dl380g10")
     assert not (tmp_path / "unused").exists()
-
-
-@pytest.mark.parametrize("rank", ["0", "1", "2"])
-def test_profile_generation_is_rank_zero_on_every_client(suite, monkeypatch, rank):
-    flux = suite.suite_flux
-    config = {name: {} for name in ("resource", "exec", "sched-fluxion-resource", "sched-fluxion-qmanager")}
-    model = {"scheduling": {"fixture": "loaded graph"}}
-    raw_config, raw_model = json.dumps(config).encode(), json.dumps(model).encode()
-    original = Path.read_bytes
-    monkeypatch.setattr(Path, "read_bytes", lambda path: raw_config if path == flux.CONFIG else
-                        raw_model if path == flux.MODEL else original(path))
-    monkeypatch.setattr(flux, "CONFIG_SHA", flux.hashlib.sha256(raw_config).hexdigest())
-    monkeypatch.setattr(flux, "MODEL_SHA", flux.hashlib.sha256(raw_model).hexdigest())
-    calls = []
-    def checked(argv):
-        calls.append(argv)
-        if argv[:2] == ["config", "get"]:
-            return json.dumps(config[argv[2]])
-        if argv == ["kvs", "get", "resource.R"]:
-            return json.dumps(model)
-        if argv[:2] == ["resource", "status"]:
-            return "0-2"
-        if argv == ["overlay", "status"]:
-            return "0: full\n1: full\n2: full\n"
-        if argv == ["getattr", "rank"]:
-            return rank
-        if argv == ["getattr", "broker.starttime"]:
-            return "root-generation" if rank == "0" else "different-local-generation"
-        assert argv == ["exec", "-r", "0", "/usr/bin/env", "FLUX_URI=" + flux.URI,
-                        f"{flux.PREFIX}/install/bin/flux", "getattr", "broker.starttime"]
-        return "root-generation"
-    monkeypatch.setattr(flux, "checked", checked)
-    assert flux.profile_identity()["broker_starttime"] == "root-generation"
-    if rank != "0":
-        assert ["getattr", "broker.starttime"] not in calls
 
 
 @pytest.mark.parametrize('targets', [
@@ -237,7 +199,8 @@ def test_gpu_jobspec_is_rendered_in_the_stock_shape_and_never_run():
     assert argv[:3] == ["flux", "submit", "--env=-*"]
     assert "--env=PATH=/usr/bin:/bin" in argv and "--env=PROFILE=0" in argv
     assert "--resources-shape=slot/[core=8;memory=16;gpu=1]" in argv
-    assert "--requires=host:sparky,sparklina" in argv
+    assert "--requires=aarch64" in argv
+    assert not any("host:" in token for token in argv)
     assert argv[argv.index("-t") + 1] == "45m"
     assert argv[argv.index("--") + 1:] == ["bash", "x.sh", "a b"]
     assert not any("perf" in part or "core-type" in part for part in argv)

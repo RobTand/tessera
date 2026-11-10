@@ -1,13 +1,11 @@
 # Tessera plan-to-serve architecture
 
-Re-stamped 2026-11-08 for native Flux profile v2. The migration lead qualified
-the exact config revision making `exec.sdexec-constrain-resources` explicitly
-false, with config SHA256 `ff9384f0...`. The resource model, broker generation,
-CPU/performance-core/memory shape and every execution/publication gate remain
-pinned. Unknown config/model bytes refuse. The archived single-key comparison
-and both old-profile refusals are retained in migration Job69; a separate real
-CPU native proof checks the updated profile. No additional GPU or scientific
-qualification follows from this settings fingerprint update.
+Re-stamped 2026-11-10 for runtime Flux instance resolution. `FLUX_URI`
+selects the instance, and its live resource shape decides admission. Config,
+resource-model and version observations are receipt evidence. Saved job IDs
+bind the rank-zero broker starttime observed at submission. Source, runtime,
+allocation, affinity, execution and publication gates remain enforced. CPU
+transport evidence does not qualify GPU or scientific results.
 
 The hosted `branch rule` check enforces branch rule 12 for pull requests.
 `pure` retains the same step during the required-check transition.
@@ -4028,14 +4026,26 @@ is unit3; G01 adds native rootless container authority. Full-suite, CUDA and
 production qualification remain separate.
 
 `tools/merge_suite.py` submits its CPU population through native Flux. The
-versioned `fv1-explicit-memory.v3` profile (a `PROFILES` row of config and
-resource-model digests, selected by one `PROFILE` line) asks for the stock
-`slot/[core=N;memory=M]` shape, plus `gpu=1` inside the slot for a GPU job, with
-no node wrapper and no core-class marker; the allocation check counts cores,
-memory leaves, GPUs, node architecture, host and affinity and does not read the
-core class (Rob, 2026-11-08). Earlier launches saved under
-`fv1-explicit-perf-memory.v2` keep their recorded profile name and are not
-rewritten. A topology cutover adds one row and bumps `PROFILE`. Each job is bounded to
+caller selects the instance with `FLUX_URI` and the client with `FLUX_CLIENT`
+or `flux` on `PATH`. Missing connection settings refuse by variable name.
+No run name, socket, deployment config path, client version path or digest
+constant selects or qualifies the instance. Before submission, the live
+`resource.R` graph, execution rank resources and architecture properties,
+and online ranks must contain one eligible host with the requested cores,
+GiB memory leaves and GPUs. The stock `slot/[core=N;memory=M]` shape adds
+`gpu=1` inside the slot for GPU work. Neither startup nor allocation reads
+core class. The allocation check still counts cores, memory leaves, GPUs,
+node architecture, explicit image host and affinity.
+
+`launch.json` records the selected URI and client, canonical JSON SHA256 of
+the observed config, scheduling model and full R, rank-zero broker starttime,
+and broker Flux version in `qualification`. These digests are evidence, not
+admission gates. Saved-ID collection, waiting and container entry compare the
+rank-zero `broker_starttime` with the value recorded at submission before
+querying a job ID. Another or restarted instance refuses by name. Config
+reloads and client upgrades do not invalidate a job ID in the same instance.
+Historical receipts retain their `profile` and digest fields and remain
+readable without a profile table. Each job is bounded to
 four cores, 16 GiB and thirty minutes. Every job starts with an empty
 environment and an explicit allowlist, with native math/build threads bounded
 to one. The native original jobspec explicitly limits CMake, Make and Ninja

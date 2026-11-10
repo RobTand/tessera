@@ -2,7 +2,7 @@
 
 GPU work on Flux needs the owner's per-run approval, so this module only prints
 the ``flux submit`` argv a caller would run: the stock slot shape with one GPU,
-Spark hosts only, a closed environment (``--env=-*`` plus an explicit allowlist)
+eligible aarch64 hosts, a closed environment (``--env=-*`` plus an explicit allowlist)
 and an explicit walltime. It imports no process runner.
 
     python3 tools/_flux_gpu_jobspec.py --cores 8 --memory-gib 16 --walltime 45m \\
@@ -18,12 +18,10 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from _suite_flux import resource_shape  # noqa: E402
 
-#: The only hosts with a GPU. A rendered line names them; it never floats to another class.
-SPARK_HOSTS = "sparky,sparklina"
 BASE_ENV = ("PATH=/usr/bin:/bin",)
 
 
-def render(command, *, cores, memory_gib, walltime, env=(), hosts=SPARK_HOSTS):
+def render(command, *, cores, memory_gib, walltime, env=(), hosts=None):
     """Return the flux submit argv for ``command``. Nothing is executed."""
     if not command or not walltime or cores < 1 or memory_gib < 1:
         raise ValueError("a GPU jobspec needs a command, a walltime, cores >= 1 and memory >= 1")
@@ -33,7 +31,7 @@ def render(command, *, cores, memory_gib, walltime, env=(), hosts=SPARK_HOSTS):
             raise ValueError(f"environment allowlist entry is not NAME=VALUE: {entry!r}")
     return ["flux", "submit", "--env=-*", *[f"--env={entry}" for entry in allowlist],
             f"--resources-shape={resource_shape(cores, memory_gib, 1)}",
-            f"--requires=host:{hosts}", "-t", walltime, "--", *command]
+            "--requires=aarch64" + (f" and host:{hosts}" if hosts else ""), "-t", walltime, "--", *command]
 
 
 def main(argv=None):

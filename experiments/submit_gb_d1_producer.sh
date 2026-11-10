@@ -113,7 +113,7 @@ PY
 fi
 
 [ -f "$SCALES" ] || refuse "INPUT_SCALES=$SCALES is not a file"
-# GPU on Flux needs the owner's per-run approval: these are RENDERED lines (stock GPU shape, Spark
+# GPU on Flux needs the owner's per-run approval: these are RENDERED lines (stock GPU shape, eligible aarch64
 # hosts, closed environment, explicit walltime) for review. This script never submits or runs them.
 for spec in "GB 3" "GB 4"; do
   set -- $spec

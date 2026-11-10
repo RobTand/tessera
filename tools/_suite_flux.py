@@ -15,24 +15,6 @@ import time
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 from tessera._dev.suite_source import measured_source
 
-PREFIX = "/home/rob/flux-vanilla/0.91.0-0.56.0"
-URI = f"local://{PREFIX}/runs/fv1-model/run/local-0"
-#: Qualified Flux profiles by name. A topology cutover adds one row with its new
-#: config and resource-model digests, then bumps PROFILE. Rows already launched
-#: under stay as history; launches saved under them are never rewritten.
-PROFILES = {
-    "fv1-explicit-perf-memory.v2": {
-        "config_sha256": "ff9384f0aaede8d07499e43da400123a4e6afbcce05f52042244a3c78995fa08",
-        "model_sha256": "261a084b72cb3a0c5055816f642f51ccbf473d3373876f34e67be55d5b5221a8"},
-    "fv1-explicit-memory.v3": {
-        "config_sha256": "ff9384f0aaede8d07499e43da400123a4e6afbcce05f52042244a3c78995fa08",
-        "model_sha256": "261a084b72cb3a0c5055816f642f51ccbf473d3373876f34e67be55d5b5221a8"},
-}
-PROFILE = "fv1-explicit-memory.v3"
-CONFIG = Path(PREFIX) / "runs/fv1-model/config.json"
-MODEL = Path(PREFIX) / "config/R-model.json"
-CONFIG_SHA = PROFILES[PROFILE]["config_sha256"]
-MODEL_SHA = PROFILES[PROFILE]["model_sha256"]
 THREADS = dict.fromkeys(("OMP_NUM_THREADS", "MKL_NUM_THREADS", "OPENBLAS_NUM_THREADS",
                          "TORCH_NUM_THREADS", "NUMEXPR_NUM_THREADS", "MAX_JOBS",
                          "CMAKE_BUILD_PARALLEL_LEVEL"), "1")
@@ -49,57 +31,128 @@ def save(path, value):
     temporary.replace(path)
 
 
-def native(argv, timeout=30):
+def connection(*, client=None, library_path=None):
+    """Resolve the caller's standard Flux connection without instance defaults."""
+    uri = os.environ.get("FLUX_URI")
+    if not uri or any(character.isspace() or character == "\0" for character in uri):
+        raise ValueError("FLUX_URI must name the Flux instance")
+    requested = client or os.environ.get("FLUX_CLIENT") or "flux"
+    executable = shutil.which(requested)
+    if executable is None:
+        raise ValueError("FLUX_CLIENT or flux on PATH must name an executable Flux client")
+    executable = str(Path(executable).absolute())
+    env = {"PATH": str(Path(executable).parent) + os.pathsep + os.environ.get("PATH", ""),
+           "FLUX_URI": uri, "HOME": os.environ.get("HOME", "/home/rob"), "PYTHONNOUSERSITE": "1"}
+    libraries = library_path if library_path is not None else os.environ.get("LD_LIBRARY_PATH")
+    if libraries:
+        env["LD_LIBRARY_PATH"] = libraries
+    return executable, env
+
+
+def native(argv, timeout=30, *, client=None, library_path=None):
     # The client needs a broker connection; the payload gets its own allowlist.
-    env = {"PATH": f"{PREFIX}/install/bin:{PREFIX}/deps/bin:/usr/bin:/bin",
-           "LD_LIBRARY_PATH": f"{PREFIX}/install/lib:{PREFIX}/deps/lib",
-           "FLUX_URI": URI.replace("local-0", {"sparky": "local-1", "sparklina": "local-2"}.get(os.uname().nodename, "local-0")),
-           "HOME": "/home/rob", "PYTHONNOUSERSITE": "1"}
-    return subprocess.run([f"{PREFIX}/install/bin/flux", *argv], env=env,
+    executable, env = connection(client=client, library_path=library_path)
+    return subprocess.run([executable, *argv], env=env,
                           capture_output=True, text=True, timeout=timeout)
 
 
-def checked(argv):
-    result = native(argv)
+def checked(argv, **options):
+    result = native(argv, **options)
     if result.returncode:
         raise ValueError(f"Flux {argv[0]} query failed")
     return result.stdout
 
 
-def profile_identity():
-    """Require the qualified installed and live baseline, not just a URI."""
-    config_raw, model_raw = CONFIG.read_bytes(), MODEL.read_bytes()
-    if (hashlib.sha256(config_raw).hexdigest() != CONFIG_SHA
-            or hashlib.sha256(model_raw).hexdigest() != MODEL_SHA):
-        raise ValueError("unqualified Flux config/resource model; profile revision required")
-    config, model = json.loads(config_raw), json.loads(model_raw)
-    require_profile(config, model)
-    return {"profile": PROFILE, "config_sha256": CONFIG_SHA, "model_sha256": MODEL_SHA,
-            "broker_starttime": broker_starttime()}
-
-
-def require_profile(config, model):
-    """Check deployment policy separately from observing the instance."""
-    for section in ("resource", "exec", "sched-fluxion-resource", "sched-fluxion-qmanager"):
-        if json.loads(checked(["config", "get", section])) != config[section]:
-            raise ValueError("loaded Flux config differs from the qualified profile")
-    if json.loads(checked(["kvs", "get", "resource.R"]))["scheduling"] != model["scheduling"]:
-        raise ValueError("loaded Flux resource graph differs from the qualified profile")
-    if checked(["resource", "status", "-s", "online", "-n", "-o", "{ranks}"]).strip() != "0-2":
-        raise ValueError("all three Flux hosts must be online")
-    if sum(line.endswith(": full") for line in checked(["overlay", "status"]).splitlines()) != 3:
-        raise ValueError("all three Flux brokers must be healthy")
-
-
-def broker_starttime():
-    # Broker starttime is rank-local. Always bind the instance's rank-zero
-    # broker, including when the named interpreter/image lives on a Spark.
-    if checked(["getattr", "rank"]).strip() == "0":
-        generation = checked(["getattr", "broker.starttime"]).strip()
-    else:
-        generation = checked(["exec", "-r", "0", "/usr/bin/env", "FLUX_URI=" + URI,
-                              f"{PREFIX}/install/bin/flux", "getattr", "broker.starttime"]).strip()
+def broker_starttime(**options):
+    # attr.get is broker-local. Address rank zero directly over the selected
+    # connection, without guessing its socket from this client's hostname.
+    generation = checked(["python", "-c",
+        'import flux; print(flux.Flux().rpc("attr.get", '
+        '{"name": "broker.starttime"}, nodeid=0).get()["value"])'], **options).strip()
+    if not generation:
+        raise ValueError("Flux broker_starttime is missing")
     return generation
+
+
+def instance_identity(**options):
+    """Observe the live deployment. Digests are evidence, never admission pins."""
+    generation = broker_starttime(**options)
+    config = json.loads(checked(["config", "get"], **options))
+    model = json.loads(checked(["kvs", "get", "resource.R"], **options))
+    version = checked(["getattr", "version"], **options).strip()
+    if broker_starttime(**options) != generation:
+        raise ValueError("Flux broker_starttime changed during observation")
+    return {"config_sha256": hashlib.sha256(encoded(config)).hexdigest(),
+            "model_sha256": hashlib.sha256(encoded(model["scheduling"])).hexdigest(),
+            "r_sha256": hashlib.sha256(encoded(model)).hexdigest(),
+            "broker_starttime": generation, "flux_version": version}
+
+
+def client_options(intent):
+    # A saved client locates the transport inside the closed payload environment.
+    # Reconnecting callers may select a newly installed client without rewriting receipts.
+    options = {key: intent[key] for key in ("client", "library_path") if key in intent}
+    current = os.environ.get("FLUX_CLIENT") or shutil.which("flux")
+    if current:
+        options["client"] = current
+    if "LD_LIBRARY_PATH" in os.environ:
+        options["library_path"] = os.environ["LD_LIBRARY_PATH"]
+    return options
+
+
+def require_instance(intent, **options):
+    """Job IDs are instance-local; historical profile names remain evidence."""
+    saved = intent["qualification"].get("broker_starttime", intent.get("broker_starttime"))
+    current = broker_starttime(**options)
+    if not saved or saved != current:
+        raise ValueError("Flux broker_starttime differs from saved submission; instance restarted or FLUX_URI selects another instance")
+
+
+def idset(value):
+    result = set()
+    for part in value.strip().strip("[]").split(","):
+        if not part:
+            continue
+        low, separator, high = part.partition("-")
+        result.update(range(int(low), int(high) + 1) if separator else [int(low)])
+    return result
+
+
+def require_capacity(demand, **options):
+    """Require one online eligible host with the requested stock slot shape."""
+    model = json.loads(checked(["kvs", "get", "resource.R"], **options))
+    online = idset(checked(["resource", "status", "-s", "online", "-n", "-o", "{ranks}"], **options))
+    metadata = [node["metadata"] for node in model["scheduling"]["graph"]["nodes"]]
+    hosts = [item for item in metadata if item["type"] == "node"]
+    eligible = idset(model["execution"].get("properties", {}).get(demand["architecture"], ""))
+    hosts = [item for item in hosts if item.get("properties", {}).get("arch") == demand["architecture"]
+             and item["rank"] in eligible]
+    if not hosts:
+        raise ValueError("Flux architecture cannot satisfy request: " + demand["architecture"])
+    if demand.get("host") is not None:
+        hosts = [item for item in hosts if item["name"] == demand["host"]]
+        if not hosts:
+            raise ValueError("Flux host cannot satisfy local image dependency: " + demand["host"])
+    hosts = [item for item in hosts if item["rank"] in online]
+    if not hosts:
+        raise ValueError("Flux online resources cannot satisfy request")
+    execution = {}
+    for entry in model["execution"]["R_lite"]:
+        for rank in idset(entry["rank"]):
+            execution[rank] = entry["children"]
+    for field, kind in (("cores", "core"), ("memory_gib", "memory"), ("gpus", "gpu")):
+        remaining = []
+        for host in hosts:
+            children = execution.get(host["rank"], {})
+            leaves = [item for item in metadata if item["type"] == kind and item["rank"] == host["rank"]
+                      and item.get("size", 1) == 1
+                      and (item.get("unit") == "GiB" if kind == "memory"
+                           else item["id"] in idset(children.get(kind, "")))]
+            if len(leaves) >= demand[field]:
+                remaining.append(host)
+        if not remaining:
+            raise ValueError(f"Flux {field} cannot satisfy request on one eligible online host: {demand[field]}")
+        hosts = remaining
 
 
 def validate(cores, memory, timeout, environment):
@@ -145,8 +198,8 @@ def resources(cores, memory, timeout, *, gpus=0, architecture="x86_64", host=Non
         raise ValueError("finite architecture/whole-GPU resource profile required")
     if gpus and architecture != "aarch64":
         raise ValueError("qualified GPU architecture is aarch64")
-    if host is not None and {"dl380g10": "x86_64", "sparky": "aarch64", "sparklina": "aarch64"}.get(host) != architecture:
-        raise ValueError("local image host differs from its finite architecture")
+    if host is not None and (not isinstance(host, str) or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]*", host)):
+        raise ValueError("invalid local image host")
     return {"schema": "tessera.suite_resources.v1", "architecture": architecture,
             "cores": cores, "memory_gib": memory, "gpus": gpus, "timeout_s": timeout,
             **({"host": host} if host is not None else {})}
@@ -191,7 +244,7 @@ def require_original_launch(intent, digest, jobspec):
 
 
 def submit(directory, checkout, command, cores, memory, timeout, environment, *, application=None,
-           gpus=0, architecture="x86_64", host=None):
+           gpus=0, architecture="x86_64", host=None, client=None):
     validate(cores, memory, timeout, environment)
     demand = resources(cores, memory, timeout, gpus=gpus, architecture=architecture, host=host)
     container = container_spec(command)
@@ -208,12 +261,16 @@ def submit(directory, checkout, command, cores, memory, timeout, environment, *,
         validate_mounts(container, Path(checkout))
     directory, checkout = Path(directory).resolve(), Path(checkout).resolve()
     identity = source(checkout)
-    qualified = profile_identity()
+    executable, client_env = connection(client=client)
+    options = {"client": executable, "library_path": client_env.get("LD_LIBRARY_PATH", "")}
+    require_capacity(demand, **options)
+    qualified = instance_identity(**options)
     if application is not None:
         require_selection(application, identity)
     runtime = runtime_identity(command[0], checkout, timeout=timeout,
                                **({"wrapper": True} if container is not None else {}))
-    intent = {"schema": "tessera.flux.launch.v1", "profile": PROFILE, "uri": URI,
+    intent = {"schema": "tessera.flux.launch.v1", "uri": client_env["FLUX_URI"],
+              "client": executable, "library_path": client_env.get("LD_LIBRARY_PATH", ""),
               "qualification": qualified, "broker_starttime": qualified["broker_starttime"],
               "directory": str(directory), "checkout": str(checkout), "source": identity,
               "command": command, "cores": cores, "memory_gib": memory,
@@ -236,9 +293,9 @@ def submit(directory, checkout, command, cores, memory, timeout, environment, *,
             "--input=/dev/null", f"--output={directory}/stdout", f"--error={directory}/stderr",
             "--job-name=tessera-" + digest[:16], *wrapper]
     # Dry-run is native rendering only. It emits no whole-node request.
-    jobspec = json.loads(checked([*args[:2], "--dry-run", *args[2:]]))
+    jobspec = json.loads(checked([*args[:2], "--dry-run", *args[2:]], **options))
     save(directory / "jobspec.json", jobspec)
-    result = native(["job", "submit", str(directory / "jobspec.json")])
+    result = native(["job", "submit", str(directory / "jobspec.json")], **options)
     (directory / "submit.stdout").write_text(result.stdout)
     (directory / "submit.stderr").write_text(result.stderr)
     acknowledged = result.stdout.strip()
@@ -254,9 +311,9 @@ def submit(directory, checkout, command, cores, memory, timeout, environment, *,
 def require_saved_submission(directory, intent, sent, digest):
     """Authenticate saved launch bytes before querying an instance-local ID."""
     if (sent.get("state") != "submitted" or sent.get("launch_sha256") != digest
-            or intent["directory"] != str(directory) or intent["uri"] != URI
-            or intent["qualification"] != profile_identity()):
+            or intent["directory"] != str(directory)):
         raise ValueError("unknown or changed submission identity")
+    require_instance(intent, **client_options(intent))
 
 
 def collect(directory):
@@ -271,25 +328,26 @@ def collect(directory):
         sent = json.loads((directory / "submission.json").read_bytes())
         digest = hashlib.sha256(encoded(intent)).hexdigest()
         require_saved_submission(directory, intent, sent, digest)
+        options = client_options(intent)
         saved_id = job_id(sent["job_id"])
         record.update(job_id=saved_id, command=intent["command"], source=intent["source"],
                       checkout=intent["checkout"], launch_sha256=digest,
                       application=intent["application"], runtime=intent["runtime"],
                       qualification=intent["qualification"])
-        original = json.loads(checked(["job", "info", "--original", saved_id, "jobspec"]))
+        original = json.loads(checked(["job", "info", "--original", saved_id, "jobspec"], **options))
         expected = json.loads((directory / "jobspec.json").read_bytes())
         if original != expected:
             raise ValueError("native jobspec differs from saved command/resources/environment")
         require_original_launch(intent, digest, original)
         # No environments are copied into the public record.
-        events = checked(["job", "eventlog", "--format=json", saved_id])
+        events = checked(["job", "eventlog", "--format=json", saved_id], **options)
         (directory / "eventlog.jsonl").write_text(events)
         events = [json.loads(line) for line in events.splitlines()]
         names = {event["name"] for event in events}
         if "clean" not in names:
             record["state"] = "running"
             return record
-        status = native(["job", "status", "--json", "--exception-exit-code=125", saved_id])
+        status = native(["job", "status", "--json", "--exception-exit-code=125", saved_id], **options)
         (directory / "status.json").write_text(status.stdout)
         (directory / "status.stderr").write_text(status.stderr)
         (directory / "flux-exit-code.txt").write_text(str(status.returncode) + "\n")
@@ -313,7 +371,7 @@ def collect(directory):
             raise ValueError("successful native status has no finish event")
         record["exit_status_observed"] = True
         terminal_confirmed = True
-        allocation = native(["job", "info", saved_id, "R"])
+        allocation = native(["job", "info", saved_id, "R"], **options)
         (directory / "R.json").write_text(allocation.stdout)
         (directory / "R.stderr").write_text(allocation.stderr)
         if "alloc" in names:
@@ -345,7 +403,10 @@ def collect(directory):
 def wait(directory, timeout):
     directory = Path(directory)
     sent = json.loads((directory / "submission.json").read_bytes())
-    result = native(["job", "wait-event", sent["job_id"], "clean"], timeout=timeout)
+    intent = json.loads((directory / "launch.json").read_bytes())
+    digest = hashlib.sha256(encoded(intent)).hexdigest()
+    require_saved_submission(directory.resolve(), intent, sent, digest)
+    result = native(["job", "wait-event", sent["job_id"], "clean"], timeout=timeout, **client_options(intent))
     (directory / "wait.stdout").write_text(result.stdout)
     (directory / "wait.stderr").write_text(result.stderr)
     return collect(directory)
@@ -358,7 +419,9 @@ def payload(directory, digest):
         raise ValueError("launch bytes changed")
     intent = json.loads(raw)
     saved = json.loads((directory / "submission.json").read_bytes())
-    original = json.loads(checked(["job", "info", "--original", os.environ["FLUX_JOB_ID"], "jobspec"]))
+    options = client_options(intent)
+    require_instance(intent, **options)
+    original = json.loads(checked(["job", "info", "--original", os.environ["FLUX_JOB_ID"], "jobspec"], **options))
     if (saved["state"] not in ("submitted", "unknown") or saved["launch_sha256"] != digest
             or (saved["state"] == "submitted" and job_id(saved["job_id"]) != job_id(os.environ["FLUX_JOB_ID"]))
             or original != json.loads((directory / "jobspec.json").read_bytes())):
@@ -383,7 +446,7 @@ def payload(directory, digest):
               "scratch": str(scratch), "scratch_removed": False,
               "affinity": sorted(os.sched_getaffinity(0))}
     if intent.get("resources") is not None:
-        allocation = json.loads(checked(["job", "info", os.environ["FLUX_JOB_ID"], "R"]))
+        allocation = json.loads(checked(["job", "info", os.environ["FLUX_JOB_ID"], "R"], **options))
         record["allocated_affinity"] = sorted({int(pu) for node in allocation["scheduling"]["graph"]["nodes"]
             if node["metadata"]["type"] == "core" for pu in node["metadata"]["properties"]["os-pus"].split(",")})
         require_allocation(allocation, intent["resources"], record["affinity"], record["allocated_affinity"])

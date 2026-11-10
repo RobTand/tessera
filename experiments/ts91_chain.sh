@@ -28,7 +28,7 @@ RUNS=${RUNS:-/home/rob/tessera-runs/ts91}
 # predates issue #100 runs the same bytes as the after-arm.
 source "$WT/experiments/runtime_image.sh"
 IMG=${IMG:-$(runtime_image_pin)}
-# GPU on Flux needs the owner's per-run approval: this RENDERS the stock-shape Flux GPU line (Spark
+# GPU on Flux needs the owner's per-run approval: this RENDERS the stock-shape Flux GPU line (eligible aarch64
 # hosts, closed environment, explicit walltime) and never submits or runs it.
 # Flux GPU path rendered, not qualified.
 exec /usr/bin/python3 "$RENDER" --cores 4 --memory-gib 32 --walltime 60m -- \

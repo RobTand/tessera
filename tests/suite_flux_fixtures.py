@@ -14,7 +14,7 @@ class NativeJobs:
         self.jobs = {}
         self.calls = []
         self.qualification = {"profile": "fixture", "broker_starttime": "generation-A"}
-        monkeypatch.setattr(self.flux, "profile_identity", lambda: self.qualification)
+        monkeypatch.setattr(self.flux, "broker_starttime", lambda **kw: self.qualification["broker_starttime"])
         monkeypatch.setattr(self.flux, "native", self.native)
 
     def add(self, receipt_dir, name, population, command=None, code=0, application=None):
@@ -24,8 +24,8 @@ class NativeJobs:
         surface.write_text(json.dumps(population))
         command = command or ["/usr/bin/python3", "-m", "pytest", "tests", "--surface-json", str(surface)]
         identity = population["source_identity"]
-        intent = {"schema": "tessera.flux.launch.v1", "profile": self.flux.PROFILE,
-                  "uri": self.flux.URI, "directory": str(directory), "checkout": "/mnt/shared/fixture",
+        intent = {"schema": "tessera.flux.launch.v1", "profile": "legacy-fixture-profile",
+                  "uri": "local:///historical-instance", "directory": str(directory), "checkout": "/mnt/shared/fixture",
                   "source": identity, "command": command, "cores": 2, "memory_gib": 4,
                   "timeout_s": 60, "application": application, "runtime": {"sha256": "d" * 64},
                   "qualification": self.qualification, "broker_starttime": "generation-A"}
