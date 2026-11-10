@@ -1,8 +1,6 @@
 #!/usr/bin/env bash
-# TP1 route census of one dense census stub (T-16 or T-8) on sparky (vLLM work is exempt
-# from PrismaBuild; the coordinator ruled 2026-09-30 that these serves run on
-# sparky, which hosts no timing rows, one at a time).  Runs
-# experiments/routed_fused_census.sh with the u1 stub B census settings of the
+# TP1 route census of one dense census stub on sparky, inside a Flux job.
+# Runs experiments/routed_fused_census.sh with the u1 stub B census settings of the
 # E4M3 cell matrix (docs/measurements/2026-09-30-e4m3-cells-census-matrix.md),
 # on the image the BF16 dense cells name.
 #
@@ -15,11 +13,7 @@
 # every 10 s during the run, which stops the census container if one opens;
 # MemAvailable >= 16 GiB plus the serve's planned footprint (the
 # --gpu-memory-utilization share of the 121.6 GiB pool); the box's serve lock,
-# so no other serve runs beside it; and no PrismaBuild measurement row (a
-# timing or NCU row: task_class measurement, or an exclusive GPU demand)
-# claimed on this box, checked before launch and every 10 s during the run,
-# which stops the census container if one is claimed.  PB test containers may
-# share the box; the memory check is the guard against them.  The container is removed when the
+# so no other serve runs beside it. The container is removed when the
 # census ends (docker run --rm) or on any exit of this script.
 set -uo pipefail
 NAME=${1:?}; CHECKOUT=$(realpath "${2:?}"); shift 2
@@ -48,9 +42,6 @@ trap cleanup EXIT
   echo "args=$*"; echo "started=$(date -u +%FT%TZ)"; } > "$OUT/census-args.txt"
 ( while sleep 10; do
     if [ -e "$WINDOW" ]; then echo "WINDOW_ACTIVE appeared at $(date -u +%FT%TZ); stopping" >> "$OUT/census-args.txt"
-      stop_container; exit 0; fi
-    MC=$(measurement_claims)
-    if [ -n "$MC" ]; then echo "PB measurement row(s) $MC claimed on this box at $(date -u +%FT%TZ); stopping" >> "$OUT/census-args.txt"
       stop_container; exit 0; fi
   done ) &
 WATCH=$!
