@@ -1,4 +1,4 @@
-"""Finite admitted-PB batch bounds and exact owned cleanup, no real Docker."""
+"""Finite Flux batch bounds and exact owned cleanup, no real Docker."""
 import importlib.util
 import json
 import copy
@@ -17,22 +17,15 @@ def action(monkeypatch):
     return module
 
 
-@pytest.mark.parametrize("admitted,staged", [(False, False), (True, False), (True, True)])
-def test_paired_batch_requires_admitted_pb_without_mixing_input_transports(monkeypatch, admitted, staged):
+@pytest.mark.parametrize("admitted", [False, True])
+def test_paired_batch_requires_flux_context_without_claiming_gpu_approval(monkeypatch, admitted):
     module = action(monkeypatch)
     if admitted:
         monkeypatch.setenv("FLUX_JOB_ID", "fAAAAAAAAAAA")
     else:
         monkeypatch.delenv("FLUX_JOB_ID", raising=False)
-    if staged:
-        monkeypatch.setenv("BENCH_STRICT_STAGED", "1")
-    else:
-        monkeypatch.delenv("BENCH_STRICT_STAGED", raising=False)
     if not admitted:
         with pytest.raises(ValueError, match="admitted Flux job"):
-            module.require_flux_execution()
-    elif staged:
-        with pytest.raises(ValueError, match="cannot also use staged"):
             module.require_flux_execution()
     else:
         module.require_flux_execution()

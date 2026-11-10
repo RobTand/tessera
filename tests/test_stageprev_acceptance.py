@@ -203,3 +203,8 @@ def test_native_acceptor_consumes_real_callback_record(tmp_path, monkeypatch):
     finally:
         owner.finish(lambda: None)
         reader.close()
+
+
+def test_acceptance_launch_no_longer_requires_deleted_staging():
+    expected = json.loads((ROOT / 'experiments/configs/stageprev_793_expected.json').read_text())
+    assert 'BENCH_STRICT_STAGED' not in expected['launch']

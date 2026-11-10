@@ -81,7 +81,6 @@ RUN_PREFIX=()
 # Reuse the qualified direct benchmark containment contract. Numeric phase
 # and separately reviewed finite timing/repeatability resource windows.
 if [[ "${BENCH_DIRECT_VLLM:-0}" == 1 ]]; then
-  [[ -z "${BENCH_STRICT_STAGED:-}" ]] || { echo "held-original-FD mode cannot also use staged input transport" >&2; exit 2; }
   if [[ " $* " == *" --paired-k32-numerics "* && " $* " == *" --direct-vllm-inputs "* ]]; then
     # Closed paired batch uses held FDs, but always stays inside a Flux job.
     [[ -n "${FLUX_JOB_ID:-}" ]] || { echo "paired custom-op batch requires an admitted Flux job" >&2; exit 2; }
@@ -131,9 +130,6 @@ if [[ "${BENCH_NCU:-0}" == 1 ]]; then
   [[ -x "$NCU_ROOT/ncu" ]] || { echo "missing profiler: $NCU_ROOT/ncu" >&2; exit 2; }
   EXTRA_MOUNTS+=(--mount "type=bind,src=$NCU_ROOT,dst=$NCU_ROOT,readonly")
   NCU_EXACT=()
-  if [[ -n "${BENCH_STRICT_STAGED:-}" ]]; then
-    NCU_EXACT=(--kernel-name-base demangled --cache-control none --launch-count 1)
-  fi
   COMMAND=("$NCU_ROOT/ncu" --profile-from-start off --target-processes all "${NCU_EXACT[@]}"
     --kernel-name "regex:${BENCH_NCU_KERNELS:-routed_fused_kernel|token_sum_kernel|window}"
     --section LaunchStats --section Occupancy --section SpeedOfLight

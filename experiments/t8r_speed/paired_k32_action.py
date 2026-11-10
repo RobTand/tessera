@@ -168,8 +168,6 @@ def require_flux_execution():
     """Held-original-FD transport does not exempt a batch from Flux admission."""
     if not os.environ.get("FLUX_JOB_ID"):
         raise ValueError("paired custom-op batch requires an admitted Flux job")
-    if os.environ.get("BENCH_STRICT_STAGED"):
-        raise ValueError("held-original-FD paired transport cannot also use staged input transport")
 
 
 def main():
