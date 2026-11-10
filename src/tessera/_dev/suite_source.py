@@ -65,6 +65,25 @@ def _git(root, *args):
                                    stderr=subprocess.DEVNULL, timeout=10)
 
 
+def committed_file(path, *, root=None, field="source"):
+    """Return the repository root and bytes of an unchanged committed file."""
+    path = Path(path)
+    raw = path.read_bytes()
+    if root is None:
+        root = Path(subprocess.check_output(
+            ['git', '-C', str(path.parent), 'rev-parse', '--show-toplevel'],
+            text=True, stderr=subprocess.PIPE).strip()).resolve()
+    relative = path.resolve().relative_to(root).as_posix()
+    try:
+        committed = subprocess.check_output(
+            ['git', '-C', str(root), 'show', 'HEAD:' + relative], stderr=subprocess.PIPE)
+    except subprocess.CalledProcessError as exc:
+        raise ValueError(field + ' is not committed: ' + relative) from exc
+    if raw != committed:
+        raise ValueError(field + ' differs from committed bytes: ' + relative)
+    return root, committed
+
+
 def declared_verifier(env=None):
     """The verifier argv :data:`VERIFIER_ENV` declares, or ``None`` if unset.
 

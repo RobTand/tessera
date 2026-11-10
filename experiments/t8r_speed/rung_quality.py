@@ -5,7 +5,6 @@ import hashlib
 import json
 import os
 import re
-import subprocess
 from pathlib import Path
 import time
 
@@ -15,6 +14,7 @@ from tessera.control import grid_for_name, unit_wire_bits
 from tessera.export import encode_linear
 from tessera.unit_artifact import read_unit_artifact
 from tessera.dev_mode import seal_check
+from tessera._dev.suite_source import committed_file
 
 
 def quality_scope(grid,q,recipe):
@@ -34,34 +34,20 @@ def quality_scope(grid,q,recipe):
 RECORDED_REQUESTS=Path(__file__).resolve().parent/'history'/'quality_requests'
 
 
-def _committed_bytes(path, root):
-    relative = path.resolve().relative_to(root).as_posix()
-    try:
-        committed = subprocess.check_output(['git', '-C', str(root), 'show', 'HEAD:' + relative],
-                                            stderr=subprocess.PIPE)
-    except subprocess.CalledProcessError as exc:
-        raise ValueError('quality request is not committed: ' + relative) from exc
-    if path.read_bytes() != committed:
-        raise ValueError('quality request differs from committed bytes: ' + relative)
-    return committed
-
-
 def bind_existing_quality(path,action_key,out,*,requests=None):
     """Recover scope from the recorded executed arguments and stored scores; paths stamp in dev."""
     from tessera.export import wire_recipe
     if not isinstance(action_key, str) or re.fullmatch('[0-9a-f]{64}', action_key) is None:
         raise ValueError('quality action_key must be 64 lowercase hex characters')
     request = Path(requests or RECORDED_REQUESTS)/(action_key+'.json')
-    request.read_bytes()  # Preserve the absent-record refusal before asking Git.
-    root = Path(subprocess.check_output(['git', '-C', str(request.parent), 'rev-parse', '--show-toplevel'],
-                                        text=True, stderr=subprocess.PIPE).strip()).resolve()
-    sealed=json.loads(_committed_bytes(request, root))
+    root, raw = committed_file(request, field='quality request')
+    sealed=json.loads(raw)
     if set(sealed.get('provenance',{}))!={'source','sha256'}:raise ValueError('recorded quality request lacks its provenance')
     source = sealed['provenance']['source']
     if not isinstance(source, str) or Path(source).is_absolute():
         raise ValueError('quality provenance source must be a repository-relative path')
     try:
-        raw_request = _committed_bytes(root / source, root)
+        _, raw_request = committed_file(root / source, root=root, field='quality request')
     except ValueError as exc:
         raise ValueError('quality provenance source is outside the repository or uncommitted') from exc
     request_sha256 = hashlib.sha256(raw_request).hexdigest()
