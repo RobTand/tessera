@@ -25,7 +25,7 @@ def test_paired_batch_requires_flux_context_without_claiming_gpu_approval(monkey
     else:
         monkeypatch.delenv("FLUX_JOB_ID", raising=False)
     if not admitted:
-        with pytest.raises(ValueError, match="admitted Flux job"):
+        with pytest.raises(ValueError, match="FLUX_JOB_ID.*context only, not GPU approval or an admission token"):
             module.require_flux_execution()
     else:
         module.require_flux_execution()

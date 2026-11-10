@@ -165,9 +165,9 @@ def netdata_window(after,before):
 
 
 def require_flux_execution():
-    """Held-original-FD transport does not exempt a batch from Flux admission."""
+    """Require a Flux context hint. GPU approval remains the lead's per-run decision."""
     if not os.environ.get("FLUX_JOB_ID"):
-        raise ValueError("paired custom-op batch requires an admitted Flux job")
+        raise ValueError("paired batch requires FLUX_JOB_ID environment value; this checks context only, not GPU approval or an admission token")
 
 
 def main():
