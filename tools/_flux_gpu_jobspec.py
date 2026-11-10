@@ -50,6 +50,7 @@ def main(argv=None):
     if argv[:1] == ["run"]:
         return container_main(argv[1:])
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser.add_argument("--submit", action="store_true", help="submit one bounded job and collect terminal evidence")
     parser.add_argument("--cores", type=int, required=True)
     parser.add_argument("--memory-gib", type=int, required=True)
     parser.add_argument("--walltime", required=True, help="explicit walltime, e.g. 45m")
@@ -60,11 +61,123 @@ def main(argv=None):
     parser.add_argument("command", nargs=argparse.REMAINDER)
     args = parser.parse_args(argv)
     command = args.command[1:] if args.command[:1] == ["--"] else args.command
-    print(shlex.join(render(command, cores=args.cores, memory_gib=args.memory_gib,
-                            walltime=args.walltime, env=args.env, directory=args.out, cwd=args.cwd,
-                            fleet_master_approved=args.fleet_master_approved)))
+    rendered = render(command, cores=args.cores, memory_gib=args.memory_gib,
+                      walltime=args.walltime, env=args.env, directory=args.out, cwd=args.cwd,
+                      fleet_master_approved=args.fleet_master_approved)
+    if args.submit:
+        try:
+            return submit_and_collect(rendered, args.out, cores=args.cores,
+                                      memory_gib=args.memory_gib, walltime=args.walltime)
+        except (ValueError, OSError, subprocess.SubprocessError) as exc:
+            print(str(exc), file=sys.stderr)
+            return 2
+    print(shlex.join(rendered))
     print("RENDERED, NOT SUBMITTED", file=sys.stderr)
     return 0
+def submit_and_collect(argv, directory, *, cores, memory_gib, walltime):
+    """Submit one request and wait for its native terminal records, never retry."""
+    if duration_seconds(walltime) > 600:
+        raise ValueError('GPU runs over 10 minutes need a fleet-master duration decision; not submitted')
+    if cores > 10 or memory_gib > 32:
+        raise ValueError('GPU request exceeds 10 cores / 32 GiB; needs a size decision; not submitted')
+    directory = Path(directory)
+    directory.mkdir(parents=True, exist_ok=False)
+    client = shutil.which('flux')
+    client_environment = None
+    if client is None:
+        prefix = Path('/mnt/shared/flux-migration/INSTANCE').read_text().split()[0]
+        client = prefix + '/install/bin/flux'
+        client_environment = {'PATH': prefix + '/install/bin:' + prefix + '/deps/bin:/usr/bin:/bin',
+                              'LD_LIBRARY_PATH': prefix + '/install/lib:' + prefix + '/deps/lib',
+                              'HOME': '/home/rob'}
+        client_environment['FLUX_URI'] = subprocess.check_output(
+            ['/mnt/shared/flux-migration/flux-uri.sh'], env=client_environment, text=True).strip()
+    def native(arguments, name):
+        result = subprocess.run([client, *arguments], env=client_environment, capture_output=True, text=True)
+        (directory / (name + '.stdout')).write_text(result.stdout)
+        (directory / (name + '.stderr')).write_text(result.stderr)
+        return result
+    resources = native(['resource', 'list'], 'resources-before')
+    if resources.returncode:
+        raise ValueError('Flux resource inspection failed; not submitted')
+    explicit = [arg.removeprefix('--requires=host:') for arg in argv if arg.startswith('--requires=host:')]
+    for host in explicit or ['sparky', 'sparklina']:
+        for field in ('--query-gpu=utilization.gpu', '--query-compute-apps=process_name'):
+            result = subprocess.run(['ssh', '-o', 'BatchMode=yes', host, 'nvidia-smi', field,
+                                     '--format=csv,noheader,nounits'], capture_output=True, text=True)
+            (directory / (host + ('.utilization' if 'query-gpu' in field else '.process-names'))).write_text(result.stdout)
+            if result.returncode or (result.stdout.strip() != '0' if 'query-gpu' in field else bool(result.stdout.strip())):
+                raise ValueError('external GPU load or unreadable preflight on ' + host + '; not submitted')
+    # The last payload step samples its own sdexec unit, including Podman.
+    payload = directory / 'payload.sh'
+    payload.write_text('''#!/bin/bash
+out=$1; memory=$2; shift 2
+finish(){
+ rc=$?; trap - EXIT
+ peak_path=/sys/fs/cgroup$(cut -d: -f3- /proc/self/cgroup)/memory.peak
+ python3 - "$out/memory.json" "$memory" "$peak_path" <<'MEMORY'
+import json,pathlib,sys
+r={'declared_memory_gib':int(sys.argv[2]),'memory_peak_bytes':None,'memory_peak_path':sys.argv[3]}
+try: r['memory_peak_bytes']=int(pathlib.Path(sys.argv[3]).read_text())
+except OSError as e: r['memory_peak_read_error']=str(e)
+pathlib.Path(sys.argv[1]).write_text(json.dumps(r))
+MEMORY
+ exit "$rc"
+}
+trap finish EXIT
+"$@"
+''')
+    split = argv.index('--')
+    args = [*argv[2:split], '--env=XDG_RUNTIME_DIR=/run/user/1000',
+            '--env=CUDA_VISIBLE_DEVICES=0', f'--env=FLUX_MEMORY_GIB={memory_gib}',
+            '--', '/bin/bash', str(payload), str(directory), str(memory_gib), *argv[split + 1:]]
+    (directory / 'submission.json').write_text(json.dumps({'state': 'unknown'}))
+    submitted = native(['submit', *args], 'submit')
+    job = submitted.stdout.strip()
+    if submitted.returncode or not re.fullmatch(r'[fƒ][1-9A-HJ-NP-Za-km-z]+|[0-9]+', job):
+        raise ValueError('submission unknown; reconcile this directory, never resubmit blindly')
+    (directory / 'jobid').write_text(job + '\n')
+    (directory / 'submission.json').write_text(json.dumps({'state': 'submitted', 'job_id': job}))
+    status = native(['job', 'status', '--json', '--exception-exit-code=125', job], 'status')
+    native(['job', 'wait-event', job, 'clean'], 'wait-clean')
+    events = native(['job', 'eventlog', '--format=json', job], 'eventlog')
+    allocation = native(['job', 'info', job, 'R'], 'R')
+    (directory / 'status.json').write_text(status.stdout)
+    (directory / 'eventlog.jsonl').write_text(events.stdout)
+    (directory / 'R.json').write_text(allocation.stdout)
+    (directory / 'flux-exit-code.txt').write_text(str(status.returncode) + '\n')
+    errors = []
+    try:
+        terminal = json.loads(status.stdout)
+        if terminal.get('exception_occurred') or terminal.get('waitstatus') != 0:
+            errors.append('native job failed or raised an exception')
+        if not any(json.loads(line).get('name') == 'clean' for line in events.stdout.splitlines()):
+            errors.append('native clean event missing')
+        assigned = json.loads(allocation.stdout)['execution']['R_lite']
+        if len(assigned) != 1 or assigned[0]['children'].get('gpu') != '0':
+            errors.append('allocation is not one whole Spark GPU')
+        else:
+            allocated_cores = set()
+            for part in assigned[0]['children']['core'].split(','):
+                low, _, high = part.partition('-')
+                allocated_cores.update(range(int(low), int(high or low) + 1))
+            if len(allocated_cores) != cores:
+                errors.append('allocated core count differs from request')
+    except (ValueError, KeyError, TypeError):
+        errors.append('unreadable native terminal/allocation evidence')
+    if events.returncode or allocation.returncode:
+        errors.append('native evidence query failed')
+    receipt = {'job_id': job, 'returncode': status.returncode,
+               'declared_memory_gib': memory_gib, 'memory_peak_bytes': None,
+               'evidence_errors': errors}
+    try:
+        receipt.update(json.loads((directory / 'memory.json').read_text()))
+    except (OSError, ValueError) as exc:
+        receipt['memory_peak_read_error'] = str(exc)
+    (directory / 'receipt.json').write_text(json.dumps(receipt, indent=2) + '\n')
+    print('Flux job ' + job + ': ' + str(directory / 'receipt.json'))
+    return status.returncode or (2 if errors else 0)
+
 
 def container_options(arguments):
     """Parse only payload options; containment flags belong to this launcher."""

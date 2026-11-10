@@ -41,8 +41,9 @@ saved launch. Collection exits zero only for a terminal record with
 `returncode == 0` and no `evidence_errors`; a running submission is only an
 acknowledgement. `experiments/ts91_chain.sh` and
 `experiments/submit_gb_d1_producer.sh` use `tools/_flux_gpu_jobspec.py` to
-print Flux submission commands without running them. Those GPU paths are
-not yet qualified.
+submit and collect through `--submit`, with an explicit preview mode. Their
+retained 45/60-minute requests and the 48 GiB D1 request are refused under
+the current 10-minute, 32 GiB cap. The renderer remains available for review.
 The gate writes `tessera.gate_result.v2` and `tessera.gate_aggregate.v2`.
 Job metadata uses `tessera.job_meta.v2`; graph arms use `tessera.graph_arm.v2`.
 These job and arm records carry `flux_job_id`. Readers use `pb_action` only

@@ -116,7 +116,15 @@ def test_oracle_wrapper_runs_owned_podman_policy(tmp_path, wrapper):
     env.update(ORACLE_IMAGE=IMAGE, FLUX_SCRATCH=str(tmp_path / 'scratch'),
                DENSE_ORACLE_STUB=str(model), MHC_PROBE_MODEL=str(model),
                TEST_RUNNER_SP=str(packages))
-    command = ['bash', str(ROOT / 'experiments' / wrapper), str(ROOT), str(out)]
+    scripts = {
+        'routed_pair_oracle.sh': ROOT / 'experiments/routed_pair_oracle.sh',
+        'dense_fused_oracle.sh': ROOT / 'experiments/dense_fused_oracle.sh',
+        'mhc/mhc_probe.sh': ROOT / 'experiments/mhc/mhc_probe.sh',
+        'routed_census.sh': ROOT / 'experiments/routed_census.sh',
+        'routed_fused_census.sh': ROOT / 'experiments/routed_fused_census.sh',
+        'routed_fused_tests.sh': ROOT / 'experiments/routed_fused_tests.sh',
+    }
+    command = ['bash', str(scripts[wrapper]), str(ROOT), str(out)]
     if wrapper == 'routed_fused_census.sh':
         command.append(str(model))
     command.append('--probe-marker')
@@ -154,9 +162,58 @@ def test_kernel_wrapper_runs_owned_podman_policy(tmp_path, wrapper, expected_con
         args = [IMAGE, str(out)]
     else:
         args = [str(out)]
-    result = subprocess.run(['bash', str(ROOT / 'experiments' / wrapper), *args],
+    scripts = {
+        't4_code/run_in_image.sh': ROOT / 'experiments/t4_code/run_in_image.sh',
+        'mla_prefill/mask_row.sh': ROOT / 'experiments/mla_prefill/mask_row.sh',
+        'mla_prefill/d1_row.sh': ROOT / 'experiments/mla_prefill/d1_row.sh',
+        'glm53_508_graph_qual/mhc_split_run.sh': ROOT / 'experiments/glm53_508_graph_qual/mhc_split_run.sh',
+    }
+    result = subprocess.run(['bash', str(scripts[wrapper]), *args],
                             env=env, capture_output=True, text=True, timeout=30)
     assert result.returncode == 0, result.stdout + result.stderr
     records = [json.loads(p.read_text()) for p in out.glob('container-*.json')]
     assert len(records) == expected_containers
     assert all(r['removed'] and r['scratch_removed'] for r in records)
+
+
+def test_submit_collects_native_terminal_records(tmp_path, monkeypatch):
+    import runpy
+    module = runpy.run_path(str(LAUNCHER))
+    command, env, out = controlled_runtime(tmp_path)
+    binary = tmp_path / 'bin'
+    flux = binary / 'flux'
+    flux.write_text('''#!/usr/bin/env python3
+import json,os,pathlib,sys
+args=sys.argv[1:]
+with pathlib.Path(os.environ['CONTROL'],'flux-calls').open('a') as f: f.write(json.dumps(args)+'\\n')
+if args[:2]==['resource','list']: print('free sparky sparklina dl380g10')
+elif args[0]=='submit': print('f123')
+elif args[:2]==['job','status']: print('{"waitstatus":0,"exception_occurred":false}')
+elif args[:2]==['job','eventlog']: print(json.dumps({'name':'finish','context':{'status':0}})); print(json.dumps({'name':'clean'}))
+elif args[:2]==['job','info']: print(json.dumps({'execution':{'R_lite':[{'rank':'1','children':{'core':'0','gpu':'0'}}],'nodelist':['sparky']}}))
+''')
+    flux.chmod(0o755)
+    ssh = binary / 'ssh'
+    ssh.write_text('#!/bin/sh\ncase "$*" in *query-gpu*) echo 0;; esac\n')
+    ssh.chmod(0o755)
+    for key in ('PATH', 'CONTROL'):
+        monkeypatch.setenv(key, env[key])
+    argv = ['flux', 'submit', '--env=-*', '--resources-shape=slot/[core=1;memory=8;gpu=1]',
+            '-n1', '-t', '10m', '--', '/bin/true']
+    assert module['submit_and_collect'](argv, out, cores=1, memory_gib=8, walltime='10m') == 0
+    receipt = json.loads((out / 'receipt.json').read_text())
+    assert receipt['job_id'] == 'f123' and receipt['returncode'] == 0
+    assert (out / 'R.json').is_file() and (out / 'eventlog.jsonl').is_file()
+    calls = [json.loads(line) for line in (tmp_path / 'flux-calls').read_text().splitlines()]
+    assert sum(call[0] == 'submit' for call in calls) == 1
+    assert ['job', 'status', '--json', '--exception-exit-code=125', 'f123'] in calls
+    assert '--env=-*' in next(call for call in calls if call[0] == 'submit')
+
+
+def test_submit_refuses_caps_before_any_native_boundary(tmp_path):
+    import runpy
+    module = runpy.run_path(str(LAUNCHER))
+    with pytest.raises(ValueError, match='10 minutes'):
+        module['submit_and_collect'](['flux', 'submit'], tmp_path / 'out', cores=4,
+                                     memory_gib=8, walltime='45m')
+    assert not (tmp_path / 'out').exists()
