@@ -20,7 +20,7 @@ sys.path[:0] = [str(Path.cwd() / "src"), str(Path.cwd())]
 from tessera.serving_parts import source_identity, sha256_file
 from tessera.serving.build_identity import incomplete_reason, is_complete
 from experiments.ts5_stage_cleanup import cleanup_stage
-from tools._flux_serve import cleanup_scoring_stage, enter_lfm_stage
+from tools._flux_serve import cleanup_scoring_stage, enter_scoring_stage
 
 
 def campaign_stage_paths(stage, attempt):
@@ -69,7 +69,8 @@ def interrupted(signum, _frame):
     raise TimeoutError(f"{stage} action interrupted by signal {signum}")
 
 if stage == 'student':
-    enter_lfm_stage('student')
+    enter_scoring_stage(['bash', str(Path(__file__).resolve().parent / 'lfm_bound_served.sh'),
+                         'student', *sys.argv[2:]])
     cleanup_stage = cleanup_scoring_stage
 signal.signal(signal.SIGTERM, interrupted)
 signal.signal(signal.SIGINT, interrupted)

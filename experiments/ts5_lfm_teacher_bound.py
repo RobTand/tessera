@@ -16,7 +16,7 @@ import threading
 sys.path[:0] = [str(Path.cwd() / "src"), str(Path.cwd())]
 from tessera.serving_parts import source_identity, sha256_file
 from tessera.serving.build_identity import incomplete_reason, is_complete
-from tools._flux_serve import cleanup_scoring_stage as cleanup_stage, enter_lfm_stage
+from tools._flux_serve import cleanup_scoring_stage as cleanup_stage, enter_scoring_stage
 
 CAMPAIGN = Path("/mnt/shared/tessera-runs/ts5/lfm25/astra-campaign-r2")
 SOURCE = Path("/mnt/shared/models/LFM2.5-8B-A1B-BF16")
@@ -28,7 +28,8 @@ PY = "/home/rob/dq-runs/venvs/prismaquant-cu130/bin/python"
 def interrupted(signum, _frame):
     raise TimeoutError(f"teacher action interrupted by signal {signum}")
 
-enter_lfm_stage('teacher')
+enter_scoring_stage(['bash', str(Path(__file__).resolve().parent / 'lfm_bound_served.sh'),
+                     'teacher', *sys.argv[1:]])
 signal.signal(signal.SIGTERM, interrupted)
 signal.signal(signal.SIGINT, interrupted)
 OUT.mkdir()  # Exclusive one-shot guard: retries never start a second serve.

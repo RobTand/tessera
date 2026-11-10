@@ -379,12 +379,11 @@ def rpc(action, arguments):
         print(response['value'])
 
 
-def enter_lfm_stage(stage):
-    """Put the historical Python stage inside the same foreground supervisor."""
+def enter_scoring_stage(command):
+    """Enter the caller's scoring command through its foreground supervisor."""
     if os.environ.get('TESSERA_SERVE_SOCKET'):
         return
-    arguments = sys.argv[2:] if stage == 'student' else sys.argv[1:]
-    os.execvp('bash', ['bash', str(ROOT / 'experiments/lfm_bound_served.sh'), stage, *arguments])
+    os.execvp(command[0], command)
 
 
 def cleanup_scoring_stage(name, *, launched, completed, stop, monitor):
@@ -486,7 +485,8 @@ def supervise(spec, receipt, command):
 def render_serving(command, spec, *, out, cores=4, walltime='10m', image_host=None, spec_path,
                    duration_approval=None):
     require(1 <= cores <= 10, 'SERVE_CORE_BOUND')
-    require(command and Path(command[0]).resolve() in {ROOT / 'experiments' / name for name in WRAPPERS},
+    entry = Path(command[0]).resolve() if command else None
+    require(entry is not None and entry.parent == ROOT / 'experiments' and entry.name in WRAPPERS,
             'REVIEWED_SERVING_WRAPPER_REQUIRED')
     sys.path.insert(0, str(ROOT / 'tools'))
     from _flux_gpu_jobspec import render

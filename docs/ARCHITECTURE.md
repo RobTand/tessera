@@ -10738,6 +10738,9 @@ as a child, and accepts one serve request. It checks the normalized spec before
 starting Docker, waits for `/v1/models`, monitors container liveness during
 scoring, and stops, removes and verifies the container on EXIT or TERM.
 The child retains the scoring commands, metrics gates, log checks and build stamps.
+Scoring producers supply their entry command to `enter_scoring_stage`; the
+supervisor does not import or name an LFM producer. The renderer validates the
+resolved entry's parent and approved basename without constructing producer paths.
 
 Root Docker in a Flux job is allowed only through this reviewed wrapper pattern,
 with an image by digest and `--pull=never`. Anything else that wants Docker in
