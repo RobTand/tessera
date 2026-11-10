@@ -10741,6 +10741,8 @@ The child retains the scoring commands, metrics gates, log checks and build stam
 Scoring producers supply their entry command to `enter_scoring_stage`; the
 supervisor does not import or name an LFM producer. The renderer validates the
 resolved entry's parent and approved basename without constructing producer paths.
+The shell campaign adapter resolves the wrapper in its own checkout before
+calling the dispatcher; historical caller working directories do not choose code.
 Model hashing and suite dependency sealing share `_directory_entries`'s
 recursive listing; both retain file symlinks and leave directory links untraversed.
 

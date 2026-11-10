@@ -573,9 +573,8 @@ def dispatch(command):
     require(len(matches) == 1, 'SERVE_PLAN_MISSING: exactly one reviewed plan must match wrapper and arguments')
     plan = matches[0]
     spec = json.loads(Path(plan['spec']).read_text())
-    # Campaigns may change cwd to a historical checkout; only our reviewed
-    # wrapper is submitted, regardless of the caller's checkout location.
-    command = [str(ROOT / 'experiments' / Path(command[0]).name), *command[1:]]
+    # The campaign adapter supplies its own checkout's entry. Rendering
+    # refuses any path outside this checkout's reviewed wrapper directory.
     argv = render_serving(command, spec, out=plan['out'], spec_path=plan['spec'],
                           cores=plan.get('cores', 4), walltime=plan['walltime'],
                           image_host=plan.get('image_host'), duration_approval=plan.get('duration_approval'))
