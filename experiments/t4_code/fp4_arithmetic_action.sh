@@ -6,7 +6,7 @@ mkdir -p "$OUT/home" "$OUT/tmp"
 export OMP_NUM_THREADS=1 MKL_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 MAX_JOBS=1
 if [[ " $* " == *" --cpu-preflight "* ]]; then
     export PYTHONPATH="$PWD/src" PYTHONDONTWRITEBYTECODE=1
-    exec /home/rob/venvs/pb-cpu/bin/python experiments/t4_code/fp4_arithmetic_attest.py --out "$OUT" "$@"
+    exec "${TESSERA_CPU_PYTHON:?set TESSERA_CPU_PYTHON to the scoped CPU interpreter}" experiments/t4_code/fp4_arithmetic_attest.py --out "$OUT" "$@"
 fi
 IMAGE=${ORACLE_IMAGE:?the admitted native runtime image is required}
 source experiments/runtime_image.sh

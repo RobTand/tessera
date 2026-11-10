@@ -23,7 +23,7 @@ if [[ ( "$BENCH_PY" == bench_geometry.py || "$BENCH_PY" == bench_class_dispatch.
     rm -- "$probe"
   done
   PREFLIGHT_SRC=${BENCH_SRC:-$CHECKOUT/src}
-  PYTHONPATH="$PREFLIGHT_SRC:${PYTHONPATH:-}" exec "${BENCH_CPU_PYTHON:-/home/rob/venvs/pb-cpu/bin/python}" \
+  PYTHONPATH="$PREFLIGHT_SRC:${PYTHONPATH:-}" exec "${BENCH_CPU_PYTHON:?set BENCH_CPU_PYTHON to the scoped CPU interpreter}" \
     "$CHECKOUT/experiments/t8r_speed/$BENCH_PY" --out "$OUT" "$@"
 fi
 IMAGE_REF=${ORACLE_IMAGE:?set ORACLE_IMAGE to the immutable PB-declared measurement image}
