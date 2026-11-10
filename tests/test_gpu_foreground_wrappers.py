@@ -38,11 +38,12 @@ def test_foreground_wrapper_owns_its_container(tmp_path, family):
     result = subprocess.run(['bash', str(script), *args], cwd=ROOT, env=env,
                             capture_output=True, text=True, timeout=30)
     assert result.returncode == 0, result.stdout + result.stderr
-    records = [json.loads(p.read_text()) for p in out.glob('container-*.json')]
-    assert len(records) == 1
-    assert records[0]['removed'] and records[0]['scratch_removed']
     calls = [json.loads(line) for line in (tmp_path / 'calls').read_text().splitlines()]
-    create = next(c for c in calls if c[0] == 'create')
+    create, = [c for c in calls if c[0] == 'create']
+    name = create[create.index('--name') + 1]
+    record = json.loads((out / f'container-{name}.json').read_text())
+    assert record['name'] == name
+    assert record['removed'] and record['scratch_removed']
     assert any('--probe-marker' in a for a in create)
     assert '--network=none' in create and 'nvidia.com/gpu=all' in create
     if family == 'regdirect-pytest':
