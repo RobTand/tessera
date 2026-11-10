@@ -154,8 +154,8 @@ def test_actual_wrapper_forwards_resident_layout_selection(tmp_path, selection, 
         assert str(checkout / 'pyproject.toml') + ':/tessera/pyproject.toml:ro' in args
 
 
-@pytest.mark.parametrize('phase,deadline', [('numeric', '240s'), ('timing', '600s'), ('repeatability', '600s')])
-def test_direct_pm_requires_qualification_of_legacy_container_limits(tmp_path, phase, deadline):
+@pytest.mark.parametrize('phase', ['numeric', 'timing', 'repeatability'])
+def test_direct_pm_requires_qualification_of_legacy_container_limits(tmp_path, phase):
     wrapper = Path(__file__).resolve().parents[1] / 'experiments/t8r_speed/bench_t8r.sh'
     checkout, source, extensions, argv_path, env = wrapper_environment(tmp_path)
     artifact = tmp_path / 'artifact'; artifact.mkdir()
@@ -173,10 +173,10 @@ def test_direct_pm_requires_qualification_of_legacy_container_limits(tmp_path, p
                     '--artifact', str(artifact), '--comparison-protocol', '/owned/protocol.json',
                     '--comparison-phase', phase], env=env, capture_output=True, text=True)
     assert result.returncode == 2
-    assert 'container option is owned by launcher or unsupported: --memory' in result.stderr
+    assert 'BENCH_DIRECT_VLLM=1' in result.stderr and 'containment' in result.stderr
     assert not argv_path.exists(), 'unqualified legacy limits must not create a container'
-    timeout_args = Path(env['TIMEOUT_ARGV_PATH']).read_bytes().decode().rstrip('\0').split('\0')
-    assert timeout_args[:3] == ['--signal=TERM', '--kill-after=15s', deadline]
+    assert not (tmp_path / 'out').exists(), 'refusal must precede output staging'
+    assert not Path(env['TIMEOUT_ARGV_PATH']).exists()
 
 
 
@@ -224,14 +224,13 @@ def test_native_build_choice_wrapper_preserves_declared_value(tmp_path, kind, se
         assert choices == [key + '=' + selection]
 
 
-@pytest.mark.parametrize('extra,expected_rc,message', [
-    (['--paired-k32-numerics'], 2, 'container option is owned by launcher or unsupported: --memory'),
-    (['--paired-k32-numerics', '--comparison-protocol', '/owned/protocol.json'],
-     2, 'paired numeric mode excludes a PM comparison protocol'),
-    ([], 2, 'direct transport requires a closed PM protocol or the closed paired numeric mode'),
+@pytest.mark.parametrize('extra', [
+    ['--paired-k32-numerics'],
+    ['--paired-k32-numerics', '--comparison-protocol', '/owned/protocol.json'],
+    [],
 ])
-def test_direct_paired_numeric_refuses_unqualified_container_limits(tmp_path, extra, expected_rc, message):
-    """The closed paired numeric mode rides the same owned-container contract."""
+def test_direct_paired_numeric_refuses_unqualified_container_limits(tmp_path, extra):
+    """Every closed direct variant refuses before any output staging."""
     wrapper = Path(__file__).resolve().parents[1] / 'experiments/t8r_speed/bench_t8r.sh'
     checkout, source, extensions, argv_path, env = wrapper_environment(tmp_path)
     artifact = tmp_path / 'artifact'; artifact.mkdir()
@@ -250,7 +249,6 @@ def test_direct_paired_numeric_refuses_unqualified_container_limits(tmp_path, ex
     result = subprocess.run(['bash', str(wrapper), str(checkout), str(tmp_path / 'out'),
                              '--artifact', str(artifact), *extra],
                             env=env, capture_output=True, text=True)
-    assert result.returncode == expected_rc, result.stderr
-    if expected_rc:
-        assert message in result.stderr
-        return
+    assert result.returncode == 2, result.stderr
+    assert 'BENCH_DIRECT_VLLM=1' in result.stderr and 'containment' in result.stderr
+    assert not (tmp_path / 'out').exists(), 'refusal must precede output staging'
