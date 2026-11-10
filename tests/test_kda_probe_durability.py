@@ -49,7 +49,7 @@ def test_partial_progress_waits_for_durable_published_name(probe, monkeypatch, t
     import tools._durable_progress as durable
     monkeypatch.setattr(durable, "emit", commit)
     probe.kda_commit(payload, path, 1)
-    assert events[-1] == "progress"
+    assert events == ["file", "replace", "directory", "progress"]
 
 
 

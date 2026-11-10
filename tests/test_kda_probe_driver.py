@@ -85,7 +85,7 @@ def test_publish_progress_waits_for_complete_durable_result(probe, monkeypatch, 
     import tools._durable_progress as durable
     monkeypatch.setattr(durable, "emit", commit)
     assert probe.main() == 0
-    assert events[-1] == "progress"
+    assert events == ["file", "replace", "directory", "progress"]
 
 
 @pytest.mark.parametrize("mode", ["ncu", "normal", "numerics"])
