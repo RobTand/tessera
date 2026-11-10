@@ -2,7 +2,7 @@
 """Measure one explicitly frozen native dense operator (#688).
 
 Repository application only: no scheduler, encoding, serving or cell publication.
-Agents submit the command through PB; the library validator does not know PB.
+Agents submit the command through admitted Flux jobs.
 The first slice is E4M3 dense, TP1, eager/resident, with one owned output.
 """
 from __future__ import annotations
