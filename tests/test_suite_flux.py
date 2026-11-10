@@ -1,42 +1,11 @@
 """Native suite authority refuses changed facts after a positive control."""
 import copy
-import importlib.util
 import json
-from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
 
-ROOT = Path(__file__).resolve().parents[1]
-
-
-def load(name, path):
-    spec = importlib.util.spec_from_file_location(name, path)
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    return module
-
-
-@pytest.fixture
-def suite():
-    return load("native_merge_suite", ROOT / "tools/merge_suite.py")
-
-
-def publication(suite, tmp_path):
-    from tessera._dev.surface_publication import publication_line, POPULATION
-    path = tmp_path / "surface.x86.json"
-    identity = {"schema": "tessera.suite_source.v1", "verification": "verified", "snapshot_commit": "a" * 40,
-                "sha256": "b" * 64}
-    payload = {"schema": "tessera.test_surface.v3", "role": "population",
-               "commit": "a" * 40, "source_identity": identity,
-               "counts": {"passed": 3, "failed": 0, "skipped": 0}}
-    path.write_text(json.dumps(payload))
-    published = suite._read_publication(path)
-    native = {"command": ["/usr/bin/python3", "-m", "pytest", "tests/test_a.py",
-                          "--surface-json", str(path)],
-              "source": identity, "returncode": 0, "exit_status_observed": True}
-    stdout = publication_line(POPULATION, path, published.digest) + "\n3 passed in 0.10s\n"
-    return published, native, stdout
+from suite_flux_fixtures import ROOT, load, publication, suite
 
 
 def test_native_transport_has_no_pb_discovery(suite):

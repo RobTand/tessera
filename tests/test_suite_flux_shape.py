@@ -8,8 +8,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from test_suite_flux import suite
-from test_suite_flux_instance import instance
+from suite_flux_fixtures import suite, instance
 
 
 @pytest.mark.parametrize('override', [None, 'local:///caller-selected'])

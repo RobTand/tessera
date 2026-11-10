@@ -1,11 +1,106 @@
 """Saved native records with a controlled CLI, without contacting a broker."""
 import copy
 import hashlib
+import importlib.util
+import sys
+import pytest
 import json
 from pathlib import Path
 from types import SimpleNamespace
 
 from tessera._dev.surface_publication import publication_line, POPULATION
+
+
+ROOT = Path(__file__).resolve().parents[1]
+
+
+def load(name, path):
+    spec = importlib.util.spec_from_file_location(name, path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+@pytest.fixture
+def suite():
+    return load("native_merge_suite", ROOT / "tools/merge_suite.py")
+
+
+def publication(suite, tmp_path):
+    from tessera._dev.surface_publication import publication_line, POPULATION
+    path = tmp_path / "surface.x86.json"
+    identity = {"schema": "tessera.suite_source.v1", "verification": "verified", "snapshot_commit": "a" * 40,
+                "sha256": "b" * 64}
+    payload = {"schema": "tessera.test_surface.v3", "role": "population",
+               "commit": "a" * 40, "source_identity": identity,
+               "counts": {"passed": 3, "failed": 0, "skipped": 0}}
+    path.write_text(json.dumps(payload))
+    published = suite._read_publication(path)
+    native = {"command": ["/usr/bin/python3", "-m", "pytest", "tests/test_a.py",
+                          "--surface-json", str(path)],
+              "source": identity, "returncode": 0, "exit_status_observed": True}
+    stdout = publication_line(POPULATION, path, published.digest) + "\n3 passed in 0.10s\n"
+    return published, native, stdout
+
+
+def resource_set():
+    nodes = []
+    for rank, arch, cores, memory, gpus in [(4, 'x86_64', 4, 16, 0), (9, 'aarch64', 4, 16, 1)]:
+        items = [{'type': 'node', 'name': f'worker-{rank}', 'properties': {'arch': arch}}]
+        for kind, count in [('core', cores), ('memory', memory), ('gpu', gpus)]:
+            items += [{'type': kind, 'id': i, 'size': 1, 'unit': 'GiB' if kind == 'memory' else '',
+                       'properties': {'core-type': 'eff'}} for i in range(count)]
+        nodes += [{'id': str(len(nodes) + i), 'metadata': {**item, 'rank': rank}} for i, item in enumerate(items)]
+    return {'scheduling': {'graph': {'nodes': nodes}}, 'execution': {
+        'R_lite': [{'rank': '4', 'children': {'core': '0-3'}},
+                   {'rank': '9', 'children': {'core': '0-3', 'gpu': '0'}}],
+        'properties': {'x86_64': '4', 'aarch64': '9'}}}
+
+
+@pytest.fixture
+def instance(suite, monkeypatch, tmp_path):
+    flux = suite.suite_flux
+    state = SimpleNamespace(config={'resource': {'path': '/operator/new-model.json'}},
+                            model=resource_set(), generation='instance-A', online='4,9', calls=[])
+    monkeypatch.setenv('FLUX_URI', 'local:///operator/selected-instance')
+    monkeypatch.setenv('FLUX_CLIENT', sys.executable)
+    monkeypatch.setattr(flux, 'instance_settings', lambda: tmp_path)
+    monkeypatch.setattr(flux, 'source', lambda path: {'sha256': 'a' * 64})
+    monkeypatch.setattr(flux, 'runtime_identity', lambda *a, **kw: {'schema': 'tessera.suite_runtime.v1'})
+    monkeypatch.setattr(flux, 'collect', lambda directory: {'state': 'running'})
+    # The old implementation reads deployment files before reaching the CLI.
+    # Give it real changed files so its pre-fix refusal identifies the defect.
+    for name, value in [('CONFIG', state.config), ('MODEL', state.model)]:
+        if hasattr(flux, name):
+            path = tmp_path / name
+            path.write_text(json.dumps(value))
+            monkeypatch.setattr(flux, name, path)
+    def native(argv, **kwargs):
+        state.calls.append(argv)
+        if argv == ['config', 'get']:
+            value = json.dumps(state.config)
+        elif argv == ['kvs', 'get', 'resource.R']:
+            value = json.dumps(state.model)
+        elif argv[:2] == ['resource', 'status']:
+            value = state.online
+        elif argv == ['getattr', 'rank']:
+            value = '0'
+        elif argv == ['getattr', 'broker.starttime'] or argv[:1] == ['python']:
+            value = state.generation
+        elif argv == ['getattr', 'version']:
+            value = 'test-flux-version'
+        elif argv[:3] == ['submit', '--env=-*', '--dry-run']:
+            value = '{}'
+        elif argv[:2] == ['job', 'submit']:
+            value = 'f123'
+        else:
+            raise AssertionError(argv)
+        return SimpleNamespace(returncode=0, stdout=value, stderr='')
+    monkeypatch.setattr(flux, 'native', native)
+    state.submit = lambda directory, **kw: flux.submit(directory, tmp_path,
+        [sys.executable, '-s', '-c', 'pass'], 2, 8, 30, {}, **kw)
+    state.flux = flux
+    return state
 
 
 class NativeJobs:

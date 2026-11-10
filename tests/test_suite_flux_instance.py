@@ -7,67 +7,8 @@ from types import SimpleNamespace
 
 import pytest
 
-from test_suite_flux import suite
+from suite_flux_fixtures import ROOT, load, publication, resource_set, instance, suite
 
-
-def resource_set():
-    nodes = []
-    for rank, arch, cores, memory, gpus in [(4, 'x86_64', 4, 16, 0), (9, 'aarch64', 4, 16, 1)]:
-        items = [{'type': 'node', 'name': f'worker-{rank}', 'properties': {'arch': arch}}]
-        for kind, count in [('core', cores), ('memory', memory), ('gpu', gpus)]:
-            items += [{'type': kind, 'id': i, 'size': 1, 'unit': 'GiB' if kind == 'memory' else '',
-                       'properties': {'core-type': 'eff'}} for i in range(count)]
-        nodes += [{'id': str(len(nodes) + i), 'metadata': {**item, 'rank': rank}} for i, item in enumerate(items)]
-    return {'scheduling': {'graph': {'nodes': nodes}}, 'execution': {
-        'R_lite': [{'rank': '4', 'children': {'core': '0-3'}},
-                   {'rank': '9', 'children': {'core': '0-3', 'gpu': '0'}}],
-        'properties': {'x86_64': '4', 'aarch64': '9'}}}
-
-
-@pytest.fixture
-def instance(suite, monkeypatch, tmp_path):
-    flux = suite.suite_flux
-    state = SimpleNamespace(config={'resource': {'path': '/operator/new-model.json'}},
-                            model=resource_set(), generation='instance-A', online='4,9', calls=[])
-    monkeypatch.setenv('FLUX_URI', 'local:///operator/selected-instance')
-    monkeypatch.setenv('FLUX_CLIENT', sys.executable)
-    monkeypatch.setattr(flux, 'instance_settings', lambda: tmp_path)
-    monkeypatch.setattr(flux, 'source', lambda path: {'sha256': 'a' * 64})
-    monkeypatch.setattr(flux, 'runtime_identity', lambda *a, **kw: {'schema': 'tessera.suite_runtime.v1'})
-    monkeypatch.setattr(flux, 'collect', lambda directory: {'state': 'running'})
-    # The old implementation reads deployment files before reaching the CLI.
-    # Give it real changed files so its pre-fix refusal identifies the defect.
-    for name, value in [('CONFIG', state.config), ('MODEL', state.model)]:
-        if hasattr(flux, name):
-            path = tmp_path / name
-            path.write_text(json.dumps(value))
-            monkeypatch.setattr(flux, name, path)
-    def native(argv, **kwargs):
-        state.calls.append(argv)
-        if argv == ['config', 'get']:
-            value = json.dumps(state.config)
-        elif argv == ['kvs', 'get', 'resource.R']:
-            value = json.dumps(state.model)
-        elif argv[:2] == ['resource', 'status']:
-            value = state.online
-        elif argv == ['getattr', 'rank']:
-            value = '0'
-        elif argv == ['getattr', 'broker.starttime'] or argv[:1] == ['python']:
-            value = state.generation
-        elif argv == ['getattr', 'version']:
-            value = 'test-flux-version'
-        elif argv[:3] == ['submit', '--env=-*', '--dry-run']:
-            value = '{}'
-        elif argv[:2] == ['job', 'submit']:
-            value = 'f123'
-        else:
-            raise AssertionError(argv)
-        return SimpleNamespace(returncode=0, stdout=value, stderr='')
-    monkeypatch.setattr(flux, 'native', native)
-    state.submit = lambda directory, **kw: flux.submit(directory, tmp_path,
-        [sys.executable, '-s', '-c', 'pass'], 2, 8, 30, {}, **kw)
-    state.flux = flux
-    return state
 
 
 def test_changed_config_with_same_shape_submits_and_records_observation(instance, tmp_path):
@@ -129,7 +70,6 @@ def test_live_capacity_refuses_by_field_before_submission(instance, tmp_path, fi
 
 def test_resume_restart_names_broker_starttime_before_reading_job(suite, tmp_path, monkeypatch):
     from suite_flux_fixtures import NativeJobs
-    from test_suite_flux import publication
     published, native, stdout = publication(suite, tmp_path)
     jobs = NativeJobs(suite, monkeypatch)
     world = jobs.add(tmp_path, 'x86', published.payload)
@@ -153,7 +93,6 @@ def test_connection_requires_named_client(suite, monkeypatch):
 
 def test_legacy_profile_receipt_reads_without_reinstating_profile_gate(suite, tmp_path, monkeypatch):
     from suite_flux_fixtures import NativeJobs
-    from test_suite_flux import publication
     published, _, _ = publication(suite, tmp_path)
     jobs = NativeJobs(suite, monkeypatch)
     world = jobs.add(tmp_path, 'x86', published.payload)
@@ -207,7 +146,6 @@ def test_native_uses_caller_connection_without_inheriting_credentials(suite, mon
 
 
 def test_gpu_renderer_has_no_implicit_host_roster(suite):
-    from test_suite_flux import load, ROOT
     spec = load('portable_gpu_render', ROOT / 'tools/_flux_gpu_jobspec.py')
     argv = spec.render(['payload'], cores=1, memory_gib=1, walltime='30s', directory='/mnt/shared/render-fixture')
     assert not any(token.startswith('--requires=') for token in argv)
