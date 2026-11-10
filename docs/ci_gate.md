@@ -24,7 +24,17 @@ The merge gate runs on Bazel through BuildBuddy (#1589); [docs/bazel.md](bazel.m
 
 **Secrets.** No child the gate starts on the runner, other than Bazel, gets `BUILDBUDDY_API_KEY`, `MERGIFY_TOKEN`, `GITHUB_TOKEN` or any `*_API_KEY` or `*_TOKEN`. `tools/ci/check_no_secret_leak.py` must pass before any artifact upload.
 
-CUDA-gated tests are not covered: every Bazel test runs with `CUDA_VISIBLE_DEVICES` empty, and the 30 files whose every node needs CUDA are tagged `gpu` and left out. Their route is `tools/merge_suite.py`'s GPU arm on Flux, with `--strict-cuda`, aarch64, one whole GPU and rootless Podman. Its transport ran once, and the lane is not yet qualified. Until it is, the CUDA-gated surface has no qualified route.
+CUDA-gated tests are not covered: every Bazel test runs with `CUDA_VISIBLE_DEVICES` empty, and the 30 files whose every node needs CUDA are tagged `gpu` and left out. Their route is `tools/merge_suite.py`'s GPU arm on Flux, with `--strict-cuda`, aarch64, one whole GPU and rootless Podman. The transport has the canary evidence below, and the lane is not yet qualified. Until it is, the CUDA-gated surface has no qualified route.
+
+The strict-CUDA transport canary's coordinator is `ƒGTy24paUP`, child
+`fGU3RLzvBq`. Its record directory is
+`/mnt/shared/flux-migration/pq-tessera/jobs/unit4-tessera-strict-cuda-canary-01/`.
+`population/receipt.json` records strict-CUDA mode on one NVIDIA GB10 with
+torch 2.11.0+cu130: 1 passed, 0 failed, 0 skipped, no skip reasons and no
+uncollected modules. `strict-cuda-proof.json` records one allocating CUDA test,
+container removal and no cleanup errors. `fresh-resume.stdout` reports a green
+GPU population and names `resumed.receipt.json`. This is a one-test transport
+canary, not qualification of the CUDA-gated surface.
 
 The sections below describe the hosted gate this replaced. Its populations, budgets and quarantine rules carry over into the Bazel runner (`tools/bazel/python_runner.py`); its scheduling does not.
 

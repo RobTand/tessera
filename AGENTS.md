@@ -291,8 +291,9 @@ Treat as constraints. Violate slogans when judgment says so.
   artifact roots, `PYTHONPATH=src`, and bounded math/build threads. Containers
   use native rootless Podman with immutable local images and scoped dependencies.
   The CUDA-gated route is `tools/merge_suite.py`'s GPU arm on Flux, on aarch64
-  with one whole GPU and rootless Podman. Its transport ran once, and the lane
-  is not yet qualified. Until it is, the CUDA-gated surface has no qualified
+  with one whole GPU and rootless Podman. The [CPU gate documentation](docs/ci_gate.md)
+  cites its one-test strict-CUDA transport canary receipt. The lane is not yet
+  qualified. Until it is, the CUDA-gated surface has no qualified
   route. A CPU result cannot establish a CUDA population.
   `--record` appends each arm to the ledger,
   including arms not submitted. Read the mode, device, skip reasons and
