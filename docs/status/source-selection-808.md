@@ -67,7 +67,7 @@ inventory does not assert complete arbitrary-Python read discovery.
 | `experiments/checkout_runtime_identity.py:110` | Checkout-root assertion; distinct identity |
 | `experiments/full_engine_worker.py:239,266,288` (two at 288) | Package file hashes and loaded-origin census; native measurement owner |
 | `experiments/full_model_original_wire_checkpoint.py:92`, `experiments/full_model_research_selected_checkpoint.py:107`, `experiments/original_wire_checkpoint.py:71` | Exporter subprocess argv, an explicitly unsupported source-execution route; no export migration |
-| `experiments/measure_glm_native_execution.py:124`, `experiments/qualify_native_artifact_operator.py:74` | Neighbor resource-analysis source hashes, not parse/exec of those bytes; native measurement owner |
+| `experiments/measure_glm_native_execution.py:124` at inventory base `4e5674d8b0c7b413dfdfe5829f261c92c6897748`, `experiments/qualify_native_artifact_operator.py:74` | Neighbor resource-analysis source hashes, not parse/exec of those bytes; native measurement owner. The former site was in the standalone entry now archived under `archive/flux-migration/T-FINAL/experiments/measure_glm_native_execution_main.py`; it is absent from the live freezing module. |
 | `experiments/moe_greedy_smoke.py:296,326` | Path identity guard and metadata; no read/execute seam |
 | `experiments/original_wire_generation.py:43,55,74` (two at 74) | Package source manifest hashes and loaded-origin identity; native measurement owner |
 | `experiments/qualify_reader_namespace.py:102` | Loaded namespace-root assertion; distinct identity |
