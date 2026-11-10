@@ -38,7 +38,7 @@ def test_foreground_wrapper_owns_its_container(tmp_path, family):
     result = subprocess.run(['bash', str(script), *args], cwd=ROOT, env=env,
                             capture_output=True, text=True, timeout=30)
     assert result.returncode == 0, result.stdout + result.stderr
-    records = [json.loads(p.read_text()) for p in out.rglob('container-*.json')]
+    records = [json.loads(p.read_text()) for p in out.glob('container-*.json')]
     assert len(records) == 1
     assert records[0]['removed'] and records[0]['scratch_removed']
     calls = [json.loads(line) for line in (tmp_path / 'calls').read_text().splitlines()]
