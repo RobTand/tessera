@@ -2,8 +2,8 @@
 python3 "$(dirname "${BASH_SOURCE[0]}")/../../tools/_flux_docker_guard.py" || exit $?
 # Build the fused window libraries of one A/B arm's source into a torch-extension
 # directory, on a CPU and without a GPU, so the timed action (bench_t8r.sh with
-# BENCH_EXT_DIR) only loads them.  Submit it as its own Flux job on any
-# host holding the image; the timing row runs after it on the measurement host.
+# BENCH_EXT_DIR) only loads them. This legacy Docker build now refuses inside
+# Flux; its admitted replacement requires the lead's review.
 #   build_ext.sh <checkout> <ext_dir> [library ...]   (default: value e4m3 e4m3mma)
 # BENCH_SRC: the arm's Tessera source tree, mounted over the checkout's src at
 # the path the timing row mounts it (/work/src), so the build's source paths,

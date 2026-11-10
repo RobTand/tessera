@@ -3,8 +3,8 @@ python3 "$(dirname "${BASH_SOURCE[0]}")/../../tools/_flux_docker_guard.py" || ex
 # tessera#702/#695: graph-vs-eager equality serves on the vLLM nightly stack
 # (U4_STACK=nightly-20260929). One TP1 serve of a GLM-5.3-Flash stub on sparky,
 # vLLM's own attention backend (FLASHINFER_MLA_SPARSE_SM120, selected by vLLM),
-# no GLM53 NoPE plugin, breakable CUDA graphs off in every arm. A vLLM serve:
-# run only inside a separately approved Flux GPU job.
+# no GLM53 NoPE plugin, breakable CUDA graphs off in every arm. This legacy
+# detached lifecycle refuses inside Flux until its scoring caller migrates.
 #
 #   srv-nightly.sh up | down | status | savelogs TAG
 #
