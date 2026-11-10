@@ -38,7 +38,7 @@ runtime_image_require "$IMAGE" || exit 2
 MODEL_MOUNT="$(cd "$(dirname "$MODEL")" && pwd)"
 mkdir -p "$EXT" "$R"
 echo "serving $MODEL via gridbook ($IMAGE -> ${RUNTIME_IMAGE_DIGEST:-unresolved}, mode=$MODE)"
-NAME=$(flux_serve_start --model "$MODEL" --log "$LOG" --plugin "$GB" --port "$PORT" --util "${TESSERA_GPU_MEM_UTIL:-0.85}" -- \
+NAME=$(flux_serve_start --model "$MODEL" --log "$LOG" --plugin "$GB" --supporting-plugin "$TS" --port "$PORT" --util "${TESSERA_GPU_MEM_UTIL:-0.85}" -- \
   -v /mnt/shared:/mnt/shared:ro -v "${MODEL_MOUNT}:${MODEL_MOUNT}:ro" \
   -v "$GB":/gb:ro -v "$TS":/tessera:ro -v "$EXT":/ext \
   -e TORCH_EXTENSIONS_DIR=/ext -e PRISMAQUANT_CB_EXT_DIR=/ext -e TMPDIR=/ext -e TESSERA_GPU_MEM_UTIL="${TESSERA_GPU_MEM_UTIL:-0.85}" \
@@ -46,6 +46,7 @@ NAME=$(flux_serve_start --model "$MODEL" --log "$LOG" --plugin "$GB" --port "$PO
   -e GRIDBOOK_TESSERA=1 -e GRIDBOOK_TESSERA_MODE="$MODE" \
   ${TESSERA_LANE_DOCKER_EXTRA:-} \
   --entrypoint bash "$IMAGE" -c '
+set -euo pipefail
 inc="$(python3 -c "import glob; p=sorted(glob.glob(\"/usr/local/lib/python3*/dist-packages/nvidia/cu*/include\")); print(p[0] if p else \"\")")"
 export CPATH="$inc${CPATH:+:$CPATH}"
 plugin_project=$(mktemp -d /tmp/tessera-plugin.XXXXXX)

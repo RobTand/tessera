@@ -88,6 +88,7 @@ NAME=$(flux_serve_start --model "$MODEL" --log "$LOG" --plugin "$TS" --port "$PO
   $(build_identity_docker_env) \
   ${TESSERA_LANE_DOCKER_EXTRA:-} \
   --entrypoint bash "$IMAGE" -c '
+set -euo pipefail
 inc="$(python3 -c "import glob; p=sorted(glob.glob(\"/usr/local/lib/python3*/dist-packages/nvidia/cu*/include\")); print(p[0] if p else \"\")")"
 export CPATH="$inc${CPATH:+:$CPATH}"
 plugin_project=$(mktemp -d /tmp/tessera-plugin.XXXXXX)

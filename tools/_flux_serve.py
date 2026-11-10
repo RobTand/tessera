@@ -107,22 +107,34 @@ def payload_options(options):
     return result
 
 
+def plugin_identity(directory):
+    def git(*args):
+        return subprocess.check_output(['git', '-C', directory, *args], text=True).strip()
+    require(not git('status', '--porcelain', '--untracked-files=normal'), 'PLUGIN_TREE_DIRTY')
+    return {'commit': git('rev-parse', 'HEAD'), 'tree': git('rev-parse', 'HEAD^{tree}')}
+
+
+def plugin_roots(request):
+    return [Path(path).resolve() for path in
+            ([request['plugin']] if request.get('plugin') else []) + request.get('supporting_plugins', [])]
+
+
 def make_spec(request):
     require(DIGEST.fullmatch(request['image']), 'IMAGE_DIGEST_REQUIRED')
     options = payload_options(request['options'])
     bounds(request['util'])
     plugin = request.get('plugin')
-    identity = None
+    identity = plugin_identity(plugin) if plugin else None
+    supporting = request.get('supporting_plugins', [])
+    aliases = [(str(Path(path).resolve()), '${SUPPORTING_PLUGIN_' + str(index) + '}')
+               for index, path in enumerate(supporting)]
     if plugin:
-        def git(*args):
-            return subprocess.check_output(['git', '-C', plugin, *args], text=True).strip()
-        require(not git('status', '--porcelain', '--untracked-files=normal'), 'PLUGIN_TREE_DIRTY')
-        identity = {'commit': git('rev-parse', 'HEAD'), 'tree': git('rev-parse', 'HEAD^{tree}')}
+        aliases.append((str(Path(plugin).resolve()), '${PLUGIN}'))
     # Paths and arguments retain their meaning without naming a requesting repo.
     # Host plugin locations are replaced by their mounted project identity.
     def normalize(value):
-        if plugin:
-            value = value.replace(str(Path(plugin).resolve()), '${PLUGIN}')
+        for path, alias in sorted(aliases, key=lambda pair: len(pair[0]), reverse=True):
+            value = value.replace(path, alias)
         try:
             parsed = json.loads(value)
         except (ValueError, TypeError):
@@ -130,6 +142,7 @@ def make_spec(request):
         return canonical(parsed).decode() if isinstance(parsed, (list, dict)) else value
     return {'image_digest': request['image'], 'model_dir': str(Path(request['model']).resolve()),
             'model_sha256': content_sha256(request['model']), 'plugin': identity,
+            'supporting_plugins': [plugin_identity(path) for path in supporting],
             'vllm_args': [normalize(arg) for arg in request['command']],
             'container_options': [normalize(arg) for arg in options],
             'gpu_memory_utilization': str(Decimal(request['util']).normalize())}
@@ -251,8 +264,8 @@ class Serve:
                 model_source = Path(request['model']).resolve()
                 if source.is_relative_to(model_source) or model_source.is_relative_to(source):
                     require(readonly, 'MODEL_MOUNT_READ_ONLY')
-                plugin = Path(request['plugin']).resolve() if request.get('plugin') else None
-                if plugin and (source.is_relative_to(plugin) or plugin.is_relative_to(source)):
+                if any(source.is_relative_to(plugin) or plugin.is_relative_to(source)
+                       for plugin in plugin_roots(request)):
                     require(readonly, 'PLUGIN_MOUNT_READ_ONLY')
                 if not readonly:
                     require(source.stat().st_uid == os.getuid(), 'CONTAINER_MOUNT_OWNER: ' + str(source))
@@ -334,6 +347,7 @@ def request_from_args(argv):
     p = argparse.ArgumentParser()
     p.add_argument('--model', required=True)
     p.add_argument('--plugin')
+    p.add_argument('--supporting-plugin', action='append', default=[])
     p.add_argument('--log')
     p.add_argument('--port', type=int, required=True)
     p.add_argument('--util', required=True)
@@ -346,7 +360,8 @@ def request_from_args(argv):
         require(key in {'-v', '--volume', '-e', '--env', '-w', '--workdir', '--entrypoint'}, 'CONTAINER_OPTION: ' + key)
         index += 1 if equal else 2
     require(index < len(args), 'IMAGE_DIGEST_REQUIRED')
-    return {'model': a.model, 'plugin': a.plugin, 'port': a.port, 'util': a.util,
+    return {'model': a.model, 'plugin': a.plugin, 'supporting_plugins': a.supporting_plugin,
+            'port': a.port, 'util': a.util,
             'log': a.log, 'options': args[:index], 'image': args[index], 'command': args[index + 1:]}
 
 

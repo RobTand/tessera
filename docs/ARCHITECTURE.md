@@ -10758,7 +10758,8 @@ memory-swap bounds, the allocated `CUDA_VISIBLE_DEVICES` as its GPU device,
 and a port published only on `127.0.0.1`. Model and plugin inputs are read-only.
 Writable host mounts must already exist and belong to the launching user.
 Plugin installs use fresh container-local temporary directories with no writes
-to the plugin source. The migrated wrappers do not take `serve_lock.sh` or a
+to the plugin source. Installation failure stops startup before vLLM can use
+an ambient plugin. The migrated wrappers do not take `serve_lock.sh` or a
 box GPU lock. Flux owns the GPU reservation, so unrelated containers cannot
 hold a legacy lock in front of an admitted serve.
 
@@ -10769,7 +10770,11 @@ The peak is read from the inspected container process's Docker scope cgroup
 `memory.peak`, never from `docker stats`. `job-memory.json` records the client's
 own cgroup peak as the final payload step. The two scopes are distinct.
 The spec binds image digest, model directory and content SHA256, plugin commit
-and tree, normalized command/options, and GPU memory utilization. A spec hash
+and tree, normalized command/options, and GPU memory utilization. Supporting
+plugin checkouts carry their own commit/tree identities and normalized mount
+roots. Gridbook binds both its own source and the supporting Tessera checkout.
+All plugin roots, including supporting roots and their parent mounts, are
+read-only. A spec hash
 pinned in the submitted environment prevents a later spec-file replacement.
 Missing image, running-image mismatch, spec mismatch, health deadline,
 container exit, or unverifiable cleanup is a named failure with no fallback.
