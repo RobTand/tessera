@@ -7,7 +7,7 @@ exists to avoid: it would pass while the pin was wrong, and it would have to be
 edited every time the runtime is re-pinned.  These tests pin the RULE (the
 shape of the value, the membership check, the refusal) and read the value.
 
-No test here shells out to ``docker``.  The daemon's answer is injected, which
+Docker calls use controlled fakes. The daemon's answer is injected, which
 is what lets the cross-box case -- identical bytes, different local ``.Id`` --
 be tested at all: there is no second box inside a test run.
 """

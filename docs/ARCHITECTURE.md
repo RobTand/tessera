@@ -1,13 +1,15 @@
 # Tessera plan-to-serve architecture
 
-Every live shell entry containing a literal mutating Docker subcommand, and every
-Python entry constructing Docker launch argv, under `experiments/` and `tools/`
+Every live shell entry containing a literal Docker subcommand outside the
+read-only allow-list, and every Python entry constructing Docker launch argv,
+under `experiments/` and `tools/`
 calls `experiments/flux_docker_guard.sh` before that use. This includes shell
 cleanup commands, not just `docker run`. Read-only `ps`, `inspect`, `image inspect`,
 `images`, `info` and `version` queries need no guard; `--gpus` still does. Python cleanup-only
 helpers are outside this tree check. The guard refuses when `FLUX_JOB_ID` is present,
 including an empty value. No reviewed serving wrapper exists yet;
-the only route for a root-Docker use inside Flux is the lead's decision.
+Mutating root-Docker use inside Flux needs the lead's reviewed path. Every
+subcommand outside the allow-list is guarded, including unknown subcommands.
 All remaining direct-Docker serving entries refuse, as do
 `tools/build_serving_image.py --run` and every stage of
 `experiments/run_glm_native_construction.py`, including `encode`: its declared
