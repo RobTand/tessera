@@ -803,8 +803,8 @@ def _source_problem(commits: dict) -> str | None:
     The receipt already computed this and the verdict did not read it, so a
     merge check could exit 0 over two populations of two different source
     trees -- which is not a merge check, it is two measurements.  Snapshot
-    commit IDs may legitimately differ (PB stamps an action-specific closure
-    member), so the field that decides is the independently verified effective
+    commit IDs in historical PB receipts may differ because of action-specific
+    closure metadata, so the field that decides is the independently verified effective
     source, never the raw commit.
     """
 
@@ -932,8 +932,8 @@ def _verdict(arms: list[dict], commits: dict | None = None) -> str:
 def _commits_measured(arms: list[dict]) -> dict:
     """The trees the arms actually ran, and whether they agree.
 
-    Snapshot IDs remain verbatim. PB embeds action-specific closure metadata,
-    so effective source agreement is a separate, independently verified fact.
+    Snapshot IDs remain verbatim. Historical PB snapshots embedded action-specific
+    closure metadata, so effective source agreement is verified independently.
 
     ``agree`` is ``True`` only when every arm said which tree it ran and they
     all said the same one.  One arm that cannot answer makes agreement
@@ -1037,8 +1037,8 @@ because a suite can exit non-zero after a clean summary.
 
 `mode` is how that arm ran, and it changes what the row means as much as the
 device does. The legacy `merge_suite.py` wrapper clamps its GPU arm to
-`serial`; direct PrismaBuild runs can install scoped xdist and reserve
-parallel workers on the same device. Its x86 arm runs `-n <cpus>`, so
+`serial`; the native Flux container arm uses scoped xdist and explicitly
+reserved parallel workers on the same device. Its x86 arm runs `-n <cpus>`, so
 two rows of one commit can differ by more than the box. On `d11dc01` the gpu
 row is green and the x86 row is red at 5 failed, and those five are an
 `-n`-only defect in the suite's own conftest, not a CUDA one. Match a pair by
