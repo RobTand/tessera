@@ -215,7 +215,10 @@ def test_gpu_renderer_requires_shared_job_directory(directory):
         spec.render(["true"], cores=1, memory_gib=1, walltime="10m", directory=directory)
 
 
-def test_gpu_renderer_cli_marks_no_submission_and_bounds_threads(capsys):
+def test_gpu_renderer_cli_marks_no_submission_and_bounds_threads(capsys, tmp_path, monkeypatch):
+    checkout = tmp_path / "flux-vanilla" / "checkout"
+    checkout.mkdir(parents=True)
+    monkeypatch.chdir(checkout)
     spec = load("flux_gpu_jobspec", ROOT / "tools/_flux_gpu_jobspec.py")
     assert spec.main(["--cores", "4", "--memory-gib", "8", "--walltime", "10m",
                       "--out", str(FLUX_RENDER_ROOT / "render-fixture"), "--", "true"]) == 0
@@ -227,7 +230,8 @@ def test_gpu_renderer_cli_marks_no_submission_and_bounds_threads(capsys):
     assert "--env=HOME=/home/rob" in argv
     for key, value in suite_flux_threads().items():
         assert f"--env={key}={value}" in argv
-    assert not any("flux-vanilla" in token or "LD_LIBRARY_PATH" in token for token in argv)
+    job_environment = [token for token in argv if token.startswith("--env=")]
+    assert not any("flux-vanilla" in token or "LD_LIBRARY_PATH" in token for token in job_environment)
 
 
 def suite_flux_threads():
