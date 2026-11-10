@@ -4,6 +4,8 @@ import json
 from pathlib import Path
 from types import SimpleNamespace
 
+from box_artifacts import FLUX_RENDER_ROOT
+
 import pytest
 
 from suite_flux_fixtures import ROOT, load, publication, suite
@@ -166,20 +168,20 @@ def test_nonadjacent_target_overlap_refuses(suite, targets):
 
 def test_gpu_jobspec_is_rendered_in_the_stock_shape_and_never_run():
     spec = load("flux_gpu_jobspec", ROOT / "tools/_flux_gpu_jobspec.py")
-    argv = spec.render(["bash", "x.sh", "a b"], cores=8, memory_gib=16, walltime="45m", env=["PROFILE=0"], directory="/mnt/shared/render-fixture")
+    argv = spec.render(["bash", "x.sh", "a b"], cores=8, memory_gib=16, walltime="45m", env=["PROFILE=0"], directory=str(FLUX_RENDER_ROOT / "render-fixture"))
     assert argv[:3] == ["flux", "submit", "--env=-*"]
     assert "--env=PATH=/usr/bin:/bin" in argv and "--env=PROFILE=0" in argv
     assert "--resources-shape=slot/[core=8;memory=16;gpu=1]" in argv
     assert not any(token.startswith("--requires=") for token in argv)
     assert "--input=/dev/null" in argv
-    assert "--output=/mnt/shared/render-fixture/stdout" in argv
-    assert "--error=/mnt/shared/render-fixture/stderr" in argv
+    assert f"--output={FLUX_RENDER_ROOT}/render-fixture/stdout" in argv
+    assert f"--error={FLUX_RENDER_ROOT}/render-fixture/stderr" in argv
     assert "--cwd" in argv
     assert argv[argv.index("-t") + 1] == "45m"
     assert argv[argv.index("--") + 1:] == ["bash", "x.sh", "a b"]
     assert not any("perf" in part or "core-type" in part for part in argv)
     for bad in ({"command": []}, {"walltime": ""}, {"cores": 0}, {"memory_gib": 0}, {"env": ["NOVALUE"]}):
-        kwargs = dict(command=["x"], cores=1, memory_gib=1, walltime="1m", env=[], directory="/mnt/shared/render-fixture", **{})
+        kwargs = dict(command=["x"], cores=1, memory_gib=1, walltime="1m", env=[], directory=str(FLUX_RENDER_ROOT / "render-fixture"), **{})
         kwargs.update(bad)
         with pytest.raises(ValueError):
             spec.render(kwargs.pop("command"), **kwargs)
@@ -192,21 +194,21 @@ def test_gpu_renderer_refuses_unbounded_walltime(walltime):
     spec = load("flux_gpu_jobspec", ROOT / "tools/_flux_gpu_jobspec.py")
     with pytest.raises(ValueError, match="positive|walltime"):
         spec.render(["true"], cores=1, memory_gib=1, walltime=walltime,
-                    directory="/mnt/shared/render-fixture")
+                    directory=str(FLUX_RENDER_ROOT / "render-fixture"))
 
 
 @pytest.mark.parametrize("cores,memory", [(11, 8), (4, 48)])
 def test_gpu_renderer_requires_named_size_approval(cores, memory):
     spec = load("flux_gpu_jobspec", ROOT / "tools/_flux_gpu_jobspec.py")
     kwargs = dict(cores=cores, memory_gib=memory, walltime="10m",
-                  directory="/mnt/shared/render-fixture")
+                  directory=str(FLUX_RENDER_ROOT / "render-fixture"))
     with pytest.raises(ValueError, match="--fleet-master-approved"):
         spec.render(["true"], **kwargs)
     argv = spec.render(["true"], **kwargs, fleet_master_approved="fleet-master decision 2026-11-10/fixture")
     assert f"--resources-shape=slot/[core={cores};memory={memory};gpu=1]" in argv
 
 
-@pytest.mark.parametrize("directory", ["/mnt/shared/../escape", "/mnt/shared"])
+@pytest.mark.parametrize("directory", [str(FLUX_RENDER_ROOT.parent / ".." / "escape"), "/mnt/shared"])
 def test_gpu_renderer_requires_shared_job_directory(directory):
     spec = load("flux_gpu_jobspec", ROOT / "tools/_flux_gpu_jobspec.py")
     with pytest.raises(ValueError, match="output directory"):
@@ -216,7 +218,7 @@ def test_gpu_renderer_requires_shared_job_directory(directory):
 def test_gpu_renderer_cli_marks_no_submission_and_bounds_threads(capsys):
     spec = load("flux_gpu_jobspec", ROOT / "tools/_flux_gpu_jobspec.py")
     assert spec.main(["--cores", "4", "--memory-gib", "8", "--walltime", "10m",
-                      "--out", "/mnt/shared/render-fixture", "--", "true"]) == 0
+                      "--out", str(FLUX_RENDER_ROOT / "render-fixture"), "--", "true"]) == 0
     captured = capsys.readouterr()
     import shlex
     argv = shlex.split(captured.out)

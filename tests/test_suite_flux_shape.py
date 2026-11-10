@@ -6,6 +6,8 @@ from pathlib import Path
 import sys
 from types import SimpleNamespace
 
+from box_artifacts import FLUX_INSTANCE_MANIFEST, FLUX_URI_RESOLVER
+
 import pytest
 
 from suite_flux_fixtures import suite, instance
@@ -17,7 +19,7 @@ def test_instance_manifest_and_resolver_select_connection(suite, monkeypatch, tm
     prefix = tmp_path / 'operator-client'
     original = Path.read_text
     monkeypatch.setattr(Path, 'read_text', lambda path, *a, **kw:
-        f'{prefix} selected-run\n' if str(path) == '/mnt/shared/flux-migration/INSTANCE' else original(path, *a, **kw))
+        f'{prefix} selected-run\n' if str(path) == str(FLUX_INSTANCE_MANIFEST) else original(path, *a, **kw))
     monkeypatch.setenv('FLUX_CLIENT', sys.executable)
     monkeypatch.delenv('FLUX_URI', raising=False)
     if override:
@@ -33,7 +35,7 @@ def test_instance_manifest_and_resolver_select_connection(suite, monkeypatch, tm
     assert options['env']['FLUX_URI'] == (override or 'local:///resolved-at-runtime')
     assert options['env']['PATH'].startswith(f'{prefix}/install/bin:{prefix}/deps/bin:')
     assert options['env']['LD_LIBRARY_PATH'] == f'{prefix}/install/lib:{prefix}/deps/lib'
-    assert any(argv == ['/mnt/shared/flux-migration/flux-uri.sh'] for argv, _ in calls) == (override is None)
+    assert any(argv == [str(FLUX_URI_RESOLVER)] for argv, _ in calls) == (override is None)
 
 
 def test_resolver_refusal_names_resolver_and_preserves_stderr(suite, monkeypatch):

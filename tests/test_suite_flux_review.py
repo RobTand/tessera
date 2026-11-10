@@ -61,7 +61,7 @@ def native_world(suite, tmp_path, monkeypatch):
     launch = {"schema": "tessera.flux.launch.v1", "directory": str(tmp_path),
               "uri": "local:///historical-instance", "broker_starttime": "generation-A",
               "command": ["python", "-m", "pytest"], "source": {"sha256": "a" * 64},
-              "checkout": "/mnt/shared/source", "runtime": {"sha256": "c" * 64},
+              "checkout": str(tmp_path / "source"), "runtime": {"sha256": "c" * 64},
               "application": None, "qualification": {"profile": "fixture-A", "broker_starttime": "generation-A"}}
     flux.save(tmp_path / "launch.json", launch)
     digest = flux.hashlib.sha256(flux.encoded(launch)).hexdigest()

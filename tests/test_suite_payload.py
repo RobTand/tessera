@@ -16,11 +16,7 @@ def test_payload_exception_stops_owned_group_and_preserves_cleanup_error(tmp_pat
     flux = importlib.util.module_from_spec(spec); spec.loader.exec_module(flux)
     directory = tmp_path / "record"; directory.mkdir()
     scratch_root = tmp_path / "scratch"; scratch_root.mkdir()
-    class Paths:
-        def __new__(cls, value):
-            return scratch_root if str(value) == "/home/rob/tl-gates/flux-validation" else Path(value)
-        cwd = Path.cwd
-    monkeypatch.setattr(flux, "Path", Paths)
+    monkeypatch.setattr(flux, "payload_scratch_root", lambda: scratch_root)
     monkeypatch.chdir(tmp_path)
     monkeypatch.setenv("FLUX_JOB_ID", "123")
     identity = {"snapshot_commit": "a" * 40, "sha256": "b" * 64}
@@ -73,11 +69,7 @@ def test_interrupt_publishes_cleanup_without_waiting_for_an_exit_seal(tmp_path, 
     flux = importlib.util.module_from_spec(spec); spec.loader.exec_module(flux)
     directory = tmp_path / "record"; directory.mkdir()
     scratch_root = tmp_path / "scratch"; scratch_root.mkdir()
-    class Paths:
-        def __new__(cls, value):
-            return scratch_root if str(value) == "/home/rob/tl-gates/flux-validation" else Path(value)
-        cwd = Path.cwd
-    monkeypatch.setattr(flux, "Path", Paths)
+    monkeypatch.setattr(flux, "payload_scratch_root", lambda: scratch_root)
     monkeypatch.chdir(tmp_path)
     monkeypatch.setenv("FLUX_JOB_ID", "123")
     identity = {"snapshot_commit": "a" * 40, "sha256": "b" * 64}

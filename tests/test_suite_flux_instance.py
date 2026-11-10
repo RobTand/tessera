@@ -5,6 +5,8 @@ from pathlib import Path
 import sys
 from types import SimpleNamespace
 
+from box_artifacts import FLUX_RENDER_ROOT, FLUX_INSTANCE_MANIFEST
+
 import pytest
 
 from suite_flux_fixtures import ROOT, load, publication, resource_set, instance, suite
@@ -147,9 +149,9 @@ def test_native_uses_caller_connection_without_inheriting_credentials(suite, mon
 
 def test_gpu_renderer_has_no_implicit_host_roster(suite):
     spec = load('portable_gpu_render', ROOT / 'tools/_flux_gpu_jobspec.py')
-    argv = spec.render(['payload'], cores=1, memory_gib=1, walltime='30s', directory='/mnt/shared/render-fixture')
+    argv = spec.render(['payload'], cores=1, memory_gib=1, walltime='30s', directory=str(FLUX_RENDER_ROOT / "render-fixture"))
     assert not any(token.startswith('--requires=') for token in argv)
-    explicit = spec.render(['payload'], cores=1, memory_gib=1, walltime='30s', hosts='image-owner', directory='/mnt/shared/render-fixture')
+    explicit = spec.render(['payload'], cores=1, memory_gib=1, walltime='30s', hosts='image-owner', directory=str(FLUX_RENDER_ROOT / "render-fixture"))
     assert '--requires=host:image-owner' in explicit
 
 
@@ -158,7 +160,7 @@ def test_submit_keeps_instance_client_paths_out_of_job_environment(suite, monkey
     prefix = tmp_path / 'INSTANCE-client'
     manifest_read = Path.read_text
     monkeypatch.setattr(Path, 'read_text', lambda path, *a, **kw:
-        f'{prefix} operator-run\n' if str(path) == '/mnt/shared/flux-migration/INSTANCE'
+        f'{prefix} operator-run\n' if str(path) == str(FLUX_INSTANCE_MANIFEST)
         else manifest_read(path, *a, **kw))
     monkeypatch.setenv('FLUX_URI', 'local:///selected-instance')
     monkeypatch.setenv('FLUX_CLIENT', sys.executable)

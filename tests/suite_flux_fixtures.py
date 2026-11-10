@@ -122,7 +122,7 @@ class NativeJobs:
         command = command or ["/usr/bin/python3", "-m", "pytest", "tests", "--surface-json", str(surface)]
         identity = population["source_identity"]
         intent = {"schema": "tessera.flux.launch.v1", "profile": "legacy-fixture-profile",
-                  "uri": "local:///historical-instance", "directory": str(directory), "checkout": "/mnt/shared/fixture",
+                  "uri": "local:///historical-instance", "directory": str(directory), "checkout": str(directory / "checkout"),
                   "source": identity, "command": command, "cores": 2, "memory_gib": 4,
                   "timeout_s": 60, "application": application, "runtime": {"sha256": "d" * 64},
                   "qualification": self.qualification, "broker_starttime": "generation-A"}

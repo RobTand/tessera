@@ -42,6 +42,13 @@ from pathlib import Path
 #: knows was written here, so a new gate cannot silently fall outside the set.
 ABSENT = "box artifact absent"
 
+# Render-only fixtures never read or write this tree. These tools require paths
+# below the shared mount, so tmp_path cannot represent their accepted requests.
+FLUX_RENDER_ROOT = Path("/mnt/shared/tessera-flux-render-fixtures")
+# Controlled transport tests recognize these operator-owned resolver boundaries.
+FLUX_INSTANCE_MANIFEST = Path("/mnt/shared/flux-migration/INSTANCE")
+FLUX_URI_RESOLVER = Path("/mnt/shared/flux-migration/flux-uri.sh")
+
 
 @dataclass(frozen=True)
 class Root:

@@ -448,6 +448,12 @@ def wait(directory, timeout):
     return collect(directory)
 
 
+def payload_scratch_root():
+    """The local scratch filesystem for the allocated host architecture."""
+    return (Path("/home/rob/tl-gates/flux-validation") if os.uname().machine == "x86_64"
+            else Path("/tmp/flux-vanilla"))
+
+
 def payload(directory, digest):
     directory = Path(directory)
     raw = (directory / "launch.json").read_bytes()
@@ -470,8 +476,7 @@ def payload(directory, digest):
     if runtime_identity(intent["command"][0], Path.cwd(), timeout=intent["timeout_s"], **runtime_options) != intent["runtime"]:
         raise ValueError("interpreter/dependencies changed before payload")
     actual_job_id = os.environ["FLUX_JOB_ID"]
-    scratch_root = (Path("/home/rob/tl-gates/flux-validation") if os.uname().machine == "x86_64"
-                    else Path("/tmp/flux-vanilla"))
+    scratch_root = payload_scratch_root()
     scratch = scratch_root / actual_job_id
     filesystem = subprocess.check_output(["findmnt", "-n", "-o", "FSTYPE", "-T", str(scratch_root)], text=True).strip()
     if filesystem != ("xfs" if os.uname().machine == "x86_64" else "ext4"):
