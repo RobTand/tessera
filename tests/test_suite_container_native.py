@@ -149,7 +149,7 @@ def test_native_source_authentication_and_mutation_replace_bundle_fixture(tmp_pa
     directory = tmp_path / "record"
     directory.mkdir()
     intent = {"directory": str(directory), "checkout": str(checkout), "source": identity,
-              "qualification": {"profile": "fixture"},
+              "qualification": {"profile": "fixture", "broker_starttime": "generation-A"},
               "command": ["/usr/bin/python3", container.RUNNER],
               "resources": {"architecture": "x86_64", "cores": 1, "memory_gib": 1, "gpus": 0}}
     flux.save(directory / "launch.json", intent)

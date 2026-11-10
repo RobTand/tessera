@@ -347,15 +347,14 @@ def admitted_context(directory, digest, environment):
              and flux.job_id(sent["job_id"]) == flux.job_id(environment["FLUX_JOB_ID"]), "native job ID differs")
     _require(intent["directory"] == str(directory) and Path(intent["checkout"]) == Path.cwd(), "native source/root differs")
     _require(flux.source(Path.cwd()) == intent["source"], "native source authentication failed")
-    options = flux.client_options(intent)
-    flux.require_instance(intent, **options)
+    flux.require_instance(intent)
     native_id = flux.job_id(environment["FLUX_JOB_ID"])
-    original = json.loads(flux.checked(["job", "info", "--original", native_id, "jobspec"], **options))
+    original = json.loads(flux.checked(["job", "info", "--original", native_id, "jobspec"]))
     flux.require_original_launch(intent, digest, original)
-    events = [json.loads(line) for line in flux.checked(["job", "eventlog", "--format=json", native_id], **options).splitlines()]
+    events = [json.loads(line) for line in flux.checked(["job", "eventlog", "--format=json", native_id]).splitlines()]
     names = {event["name"] for event in events}
     _require("start" in names and not names.intersection(("finish", "clean")), "native job is not executing")
-    allocation = json.loads(flux.checked(["job", "info", native_id, "R"], **options))
+    allocation = json.loads(flux.checked(["job", "info", native_id, "R"]))
     affinity = sorted(os.sched_getaffinity(0))
     flux.require_allocation(allocation, intent["resources"], affinity, affinity)
     unit = "/shell-" + native_id + ":sys.service"

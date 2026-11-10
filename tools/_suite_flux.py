@@ -42,7 +42,7 @@ def instance_settings():
     return Path(fields[0])
 
 
-def connection(*, client=None, library_path=None):
+def connection(*, client=None):
     """Resolve SHAPE section 2's operator-owned instance and client settings."""
     prefix = instance_settings()
     env = {"PATH": f"{prefix}/install/bin:{prefix}/deps/bin:/usr/bin:/bin",
@@ -65,13 +65,12 @@ def connection(*, client=None, library_path=None):
     executable = shutil.which(requested, path=env["PATH"])
     if executable is None:
         raise ValueError("FLUX_CLIENT or INSTANCE client on PATH must name an executable Flux client")
-    # Historical library_path is evidence; the current INSTANCE owns client libraries.
     return str(Path(executable).absolute()), env
 
 
-def native(argv, timeout=30, *, client=None, library_path=None):
+def native(argv, timeout=30, *, client=None):
     # The client needs a broker connection; the payload gets its own allowlist.
-    executable, env = connection(client=client, library_path=library_path)
+    executable, env = connection(client=client)
     return subprocess.run([executable, *argv], env=env,
                           capture_output=True, text=True, timeout=timeout)
 
@@ -108,11 +107,6 @@ def instance_identity(**options):
             "model_sha256": hashlib.sha256(encoded(model["scheduling"])).hexdigest(),
             "r_sha256": hashlib.sha256(model_raw.encode()).hexdigest(),
             "broker_starttime": generation, "flux_version": version}
-
-
-def client_options(intent):
-    # Recorded client paths do not select a deployment on reconnect or entry.
-    return {"client": os.environ["FLUX_CLIENT"]} if os.environ.get("FLUX_CLIENT") else {}
 
 
 def require_instance(intent, **options):
@@ -292,7 +286,7 @@ def submit(directory, checkout, command, cores, memory, timeout, environment, *,
     directory, checkout = Path(directory).resolve(), Path(checkout).resolve()
     identity = source(checkout)
     executable, client_env = connection(client=client)
-    options = {"client": executable, "library_path": client_env.get("LD_LIBRARY_PATH", "")}
+    options = {"client": executable}
     require_capacity(demand, **options)
     qualified = instance_identity(**options)
     if application is not None:
@@ -344,7 +338,7 @@ def require_saved_submission(directory, intent, sent, digest):
     if (sent.get("state") != "submitted" or sent.get("launch_sha256") != digest
             or intent["directory"] != str(directory)):
         raise ValueError("unknown or changed submission identity")
-    require_instance(intent, **client_options(intent))
+    require_instance(intent)
 
 
 def collect(directory):
@@ -359,26 +353,25 @@ def collect(directory):
         sent = json.loads((directory / "submission.json").read_bytes())
         digest = hashlib.sha256(encoded(intent)).hexdigest()
         require_saved_submission(directory, intent, sent, digest)
-        options = client_options(intent)
         saved_id = job_id(sent["job_id"])
         record.update(job_id=saved_id, command=intent["command"], source=intent["source"],
                       checkout=intent["checkout"], launch_sha256=digest,
                       application=intent["application"], runtime=intent["runtime"],
                       qualification=intent["qualification"])
-        original = json.loads(checked(["job", "info", "--original", saved_id, "jobspec"], **options))
+        original = json.loads(checked(["job", "info", "--original", saved_id, "jobspec"]))
         expected = json.loads((directory / "jobspec.json").read_bytes())
         if original != expected:
             raise ValueError("native jobspec differs from saved command/resources/environment")
         require_original_launch(intent, digest, original)
         # No environments are copied into the public record.
-        events = checked(["job", "eventlog", "--format=json", saved_id], **options)
+        events = checked(["job", "eventlog", "--format=json", saved_id])
         (directory / "eventlog.jsonl").write_text(events)
         events = [json.loads(line) for line in events.splitlines()]
         names = {event["name"] for event in events}
         if "clean" not in names:
             record["state"] = "running"
             return record
-        status = native(["job", "status", "--json", "--exception-exit-code=125", saved_id], **options)
+        status = native(["job", "status", "--json", "--exception-exit-code=125", saved_id])
         (directory / "status.json").write_text(status.stdout)
         (directory / "status.stderr").write_text(status.stderr)
         (directory / "flux-exit-code.txt").write_text(str(status.returncode) + "\n")
@@ -402,7 +395,7 @@ def collect(directory):
             raise ValueError("successful native status has no finish event")
         record["exit_status_observed"] = True
         terminal_confirmed = True
-        allocation = native(["job", "info", saved_id, "R"], **options)
+        allocation = native(["job", "info", saved_id, "R"])
         (directory / "R.json").write_text(allocation.stdout)
         (directory / "R.stderr").write_text(allocation.stderr)
         if "alloc" in names:
@@ -437,7 +430,7 @@ def wait(directory, timeout):
     intent = json.loads((directory / "launch.json").read_bytes())
     digest = hashlib.sha256(encoded(intent)).hexdigest()
     require_saved_submission(directory.resolve(), intent, sent, digest)
-    result = native(["job", "wait-event", sent["job_id"], "clean"], timeout=timeout, **client_options(intent))
+    result = native(["job", "wait-event", sent["job_id"], "clean"], timeout=timeout)
     (directory / "wait.stdout").write_text(result.stdout)
     (directory / "wait.stderr").write_text(result.stderr)
     return collect(directory)
@@ -450,9 +443,8 @@ def payload(directory, digest):
         raise ValueError("launch bytes changed")
     intent = json.loads(raw)
     saved = json.loads((directory / "submission.json").read_bytes())
-    options = client_options(intent)
-    require_instance(intent, **options)
-    original = json.loads(checked(["job", "info", "--original", os.environ["FLUX_JOB_ID"], "jobspec"], **options))
+    require_instance(intent)
+    original = json.loads(checked(["job", "info", "--original", os.environ["FLUX_JOB_ID"], "jobspec"]))
     if (saved["state"] not in ("submitted", "unknown") or saved["launch_sha256"] != digest
             or (saved["state"] == "submitted" and job_id(saved["job_id"]) != job_id(os.environ["FLUX_JOB_ID"]))
             or original != json.loads((directory / "jobspec.json").read_bytes())):
@@ -477,7 +469,7 @@ def payload(directory, digest):
               "scratch": str(scratch), "scratch_removed": False,
               "affinity": sorted(os.sched_getaffinity(0))}
     if intent.get("resources") is not None:
-        allocation = json.loads(checked(["job", "info", os.environ["FLUX_JOB_ID"], "R"], **options))
+        allocation = json.loads(checked(["job", "info", os.environ["FLUX_JOB_ID"], "R"]))
         record["allocated_affinity"] = sorted({int(pu) for node in allocation["scheduling"]["graph"]["nodes"]
             if node["metadata"]["type"] == "core" for pu in node["metadata"]["properties"]["os-pus"].split(",")})
         require_allocation(allocation, intent["resources"], record["affinity"], record["allocated_affinity"])
