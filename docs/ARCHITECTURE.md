@@ -1837,7 +1837,7 @@ clean is not physical cleanup evidence. Host runtime and actual in-container
 interpreter/stdlib/dependency/source entry/exit seals are separate facts.
 Direct container entry authenticates the actual original native wrapper digest,
 started nonterminal state, allocated R/affinity and current sdexec process unit;
-it also requires the current pinned profile/generation. Saved launch JSON and
+it also requires the saved broker lifetime to match the live instance. Saved launch JSON and
 a caller-supplied job ID alone cannot authorize it.
 The host-only wrapper seal does not require pytest or xdist; native CPU suites
 and actual in-container runtime seals still require both. Malformed container
