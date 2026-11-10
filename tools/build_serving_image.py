@@ -11,6 +11,7 @@ import json
 import os
 from pathlib import Path
 import re
+import signal
 import subprocess
 import sys
 
@@ -19,6 +20,10 @@ ROOT = Path(__file__).resolve().parents[1]
 ARCHITECTURES = {"x86": "x86_64", "aarch64": "aarch64"}
 #: The suite transport's ceiling (``_suite_flux.validate``); a full build that needs more is a held decision.
 TIMEOUT_S = 1790
+
+
+def _terminate(signum, frame):
+    raise SystemExit(128 + signum)
 
 
 def _kernel_build():
@@ -105,21 +110,25 @@ def run_build(manifest, tag, output_directory, kernel_build, *, runner=subproces
     owner = {"name": "tessera-image-build-" + re.sub(r"[^A-Za-z0-9]", "", environ.get("FLUX_JOB_ID", str(os.getpid()))),
              "cidfile": str(scratch / "builder.cid")}
     Path(output_directory).mkdir(parents=True, exist_ok=True)
+    previous = signal.signal(signal.SIGTERM, _terminate)
     try:
         code = runner(builder_command(manifest, tag, output_directory, kernel_build, owner=owner),
                       check=False).returncode
     finally:
-        removed = remove_owned_container(owner["cidfile"], runner)
+        try:
+            removed = remove_owned_container(owner["cidfile"], runner)
+        finally:
+            signal.signal(signal.SIGTERM, previous)
     return code or (0 if removed else 1)
 
 
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
-    source = parser.add_mutually_exclusive_group(required=True)
+    source = parser.add_mutually_exclusive_group()
     source.add_argument("--manifest")
     source.add_argument("--manifest-json")
-    parser.add_argument("--image-tag", required=True)
-    parser.add_argument("--output-directory", required=True, help="Use an output directory on the shared mount.")
+    parser.add_argument("--image-tag")
+    parser.add_argument("--output-directory", help="Use an output directory on the shared mount.")
     parser.add_argument("--cpus", type=int, default=4)
     parser.add_argument("--memory-gb", type=int, default=8)
     parser.add_argument("--launch-directory", help="New directory for the Flux launch record (--submit).")
@@ -129,7 +138,16 @@ def main(argv=None):
     mode.add_argument("--submit", action="store_true", help="Submit the image job through the native Flux transport.")
     mode.add_argument("--run", action="store_true", help="Run the build in this process (the Flux job payload).")
     mode.add_argument("--dry-run", action="store_true", help="Print the job without a build.")
+    mode.add_argument("--collect", metavar="DIR", help="Collect a saved Flux launch; only verified terminal success exits zero.")
     args = parser.parse_args(argv)
+    if args.collect:
+        import _suite_flux
+        record = _suite_flux.collect(Path(args.collect))
+        print(json.dumps(record, sort_keys=True))
+        return 0 if (record.get("state") == "terminal" and record.get("returncode") == 0
+                     and not record.get("evidence_errors")) else 1
+    if not (args.manifest or args.manifest_json) or not args.image_tag or not args.output_directory:
+        parser.error("a build requires a manifest, --image-tag and --output-directory")
     manifest = json.loads(args.manifest_json if args.manifest_json is not None else Path(args.manifest).read_text())
     job = build_job(manifest, args.image_tag, args.output_directory, cpus=args.cpus, memory_gb=args.memory_gb)
     print(json.dumps(job, sort_keys=True))
@@ -140,7 +158,9 @@ def main(argv=None):
             parser.error("--submit requires --launch-directory and --checkout")
         record = submit(job, args.launch_directory, args.checkout, args.python)
         print(json.dumps(record, sort_keys=True))
-        return 0 if record.get("state") in ("running", "terminal") else 3
+        if record.get("state") == "terminal":
+            return 0 if record.get("returncode") == 0 and not record.get("evidence_errors") else 1
+        return 0 if record.get("state") == "running" else 3
     return 0
 
 
