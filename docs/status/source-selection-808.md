@@ -61,7 +61,7 @@ inventory does not assert complete arbitrary-Python read discovery.
 
 | File(s) and lead lines | Actual semantics; disposition / owner |
 |---|---|
-| `_pb_native_moe_measure/run_native_child.py:18,28,51` | Package/loaded-origin census plus package file identity; native measurement owner, unchanged |
+| `_pb_native_moe_measure/run_native_child.py:18,28,51` at inventory base `4e5674d8b0c7b413dfdfe5829f261c92c6897748` | Package/loaded-origin census plus package file identity; now archived at `archive/flux-migration/R-MIXED/_pb_native_moe_measure/run_native_child.py`. |
 | `experiments/bench_native_operator.py:499,500,505,514` | Binary-library hashes and runtime-contract bytes, not Python execution from those reads; native measurement owner |
 | `experiments/bench_routed_load.py:671,672,789` | Checkout-path guard and printed identity; distinct metadata |
 | `experiments/checkout_runtime_identity.py:110` | Checkout-root assertion; distinct identity |
