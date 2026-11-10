@@ -1,9 +1,18 @@
 """A fresh extension directory is a valid pre-build measurement state."""
 from pathlib import Path
+import json
 import os
 import subprocess
 
 import pytest
+
+
+def test_reviewed_launch_has_no_staged_transport_mode():
+    root = Path(__file__).resolve().parents[1]
+    expected = json.loads((root / 'experiments/configs/stageprev_793_expected.json').read_text())
+    assert 'BENCH_STRICT_STAGED' not in expected['launch']
+    wrapper = (root / 'experiments/t8r_speed/bench_t8r.sh').read_text()
+    assert 'BENCH_STRICT_STAGED' not in wrapper
 
 
 def extension_listing(directory):
