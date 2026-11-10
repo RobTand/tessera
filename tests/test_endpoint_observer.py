@@ -73,7 +73,7 @@ def server(value, publication, *, status=200, envelope=True, replace=False, cach
 
 
 def command(tool, *args):
-    return subprocess.run([sys.executable, str(ROOT / "tools" / tool), *map(str, args)],
+    return subprocess.run([sys.executable, str(tool), *map(str, args)],
                           capture_output=True, text=True, timeout=45)
 
 
@@ -81,11 +81,11 @@ def test_the_probe_publishes_and_the_standalone_verifier_rechecks_the_listener(t
     artifact = tmp_path / "artifact"
     value = receipt(artifact)
     with server(value, tmp_path / "public") as (url, observed, calls):
-        result = command("probe_endpoint_witness.py", "--base-url", url, "--artifact-dir", artifact)
+        result = command(ROOT / "tools/probe_endpoint_witness.py", "--base-url", url, "--artifact-dir", artifact)
         assert result.returncode == 0, result.stderr
         published = Path(result.stdout.strip())
         assert json.loads(published.read_bytes())["listener"] == observed["listener"]
-        checked = command("verify_endpoint_witness.py", published, "--served-dir", artifact,
+        checked = command(ROOT / "tools/verify_endpoint_witness.py", published, "--served-dir", artifact,
                           *expectation_args(observed, tmp_path))
         assert checked.returncode == 0, checked.stderr
         verdict = json.loads(checked.stdout)
@@ -99,7 +99,7 @@ def test_same_alias_replacement_listener_cannot_reuse_the_receipt(tmp_path):
     artifact = tmp_path / "artifact"
     value = receipt(artifact)
     with server(value, tmp_path / "public", replace=True) as (url, _, _):
-        result = command("probe_endpoint_witness.py", "--base-url", url, "--artifact-dir", artifact)
+        result = command(ROOT / "tools/probe_endpoint_witness.py", "--base-url", url, "--artifact-dir", artifact)
         assert result.returncode == 4
         assert "binding differs" in result.stderr
 
