@@ -2047,6 +2047,7 @@ ts_py_library(
         "test_glm_u1_census_cells.py",
         "test_glm_u1_tp2_census.py",
         "test_glm_x_census_cells.py",
+        "test_gpu_podman_launcher.py",
         "test_grammar.py",
         "test_graph_attest_d30_memory_guard.py",
         "test_graph_attest_envelope.py",
@@ -9355,6 +9356,38 @@ ts_py_library(
 )
 
 ts_py_test(
+    name = "test_gpu_podman_launcher",
+    path = "tests/test_gpu_podman_launcher.py",
+    library = ":test_gpu_podman_launcher_lib",
+    lane = "torch",
+    args = [
+        "--budget='{\"enforce\":true,\"seconds\":80,\"slow\":{}}'",
+    ],
+    timeout = "moderate",
+)
+
+ts_py_test(
+    name = "test_gpu_podman_launcher.bytes",
+    path = "tests/test_gpu_podman_launcher.py",
+    library = ":test_gpu_podman_launcher_lib",
+    lane = "bytes",
+    args = [
+        "--budget='{\"enforce\":true,\"seconds\":80,\"slow\":{}}'",
+    ],
+    timeout = "moderate",
+)
+
+ts_py_library(
+    name = "test_gpu_podman_launcher_lib",
+    srcs = [
+        "test_gpu_podman_launcher.py",
+    ],
+    deps = [
+        "//tools:_flux_gpu_jobspec",
+    ],
+)
+
+ts_py_test(
     name = "test_grammar",
     path = "tests/test_grammar.py",
     library = ":test_grammar_lib",
@@ -10481,6 +10514,7 @@ ts_py_library(
         "test_glm_u1_census_cells.py",
         "test_glm_u1_tp2_census.py",
         "test_glm_x_census_cells.py",
+        "test_gpu_podman_launcher.py",
         "test_grammar.py",
         "test_graph_attest_d30_memory_guard.py",
         "test_graph_attest_envelope.py",
@@ -11241,6 +11275,7 @@ ts_py_library(
         "test_glm_u1_census_cells.py",
         "test_glm_u1_tp2_census.py",
         "test_glm_x_census_cells.py",
+        "test_gpu_podman_launcher.py",
         "test_grammar.py",
         "test_graph_attest_d30_memory_guard.py",
         "test_graph_attest_envelope.py",

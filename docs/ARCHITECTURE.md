@@ -1,5 +1,16 @@
 # Tessera plan-to-serve architecture
 
+Re-stamped 2026-11-10 for the owned GPU container launcher. The `run` entry
+in `tools/_flux_gpu_jobspec.py` accepts a digest-pinned container request
+inside a Flux GPU job. It uses rootless Podman with CDI, disabled nested
+cgroups, no network and a writable container root for NVIDIA hooks. A unique
+name is registered before creation; TERM and exit remove only that container.
+Scratch lives on ext4 under `/tmp/flux-vanilla/<ASCII job ID>` and is removed
+on exit. The receipt records host and container affinity, status and cleanup.
+Flux job context variables are not an admission token. The submitting caller
+must reserve the aggregate resources and collect native terminal evidence.
+
+
 Re-stamped 2026-11-10 for SHAPE v1 runtime Flux instance resolution. The
 operator-owned `INSTANCE` manifest supplies the client prefix and run;
 `flux-uri.sh` resolves the local broker, with an explicit `FLUX_URI` override.
