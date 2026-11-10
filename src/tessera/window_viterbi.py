@@ -143,7 +143,7 @@ _WINDOW_PLAN_CACHE = 8
 #: Plans are **per thread**, and that is a correctness requirement rather than
 #: a tuning choice: a plan owns the fronts and the traceback its Viterbi
 #: writes, so two threads sharing one would overwrite each other's states, and
-#: Encoder workers process units concurrently in one process.  The kernel
+#: encoder workers process units concurrently in one process.  The kernel
 #: cache above is shared because it is read-only; these are not.
 _WINDOW_LOCAL = threading.local()
 
