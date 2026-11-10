@@ -59,7 +59,6 @@ def run_direct_arm(argv,env,log,arm_out,guard_path,*,pressure=None,popen=subproc
     start=floor+16*(1<<30)
     deadline=240.0
     term_grace=20.0
-    cleanup_container=True
     if policy is not None:
         measured=policy["measured_cpu_peak_bytes"]
         overhead=policy["unmeasured_gpu_overhead_bytes"]
@@ -71,7 +70,6 @@ def run_direct_arm(argv,env,log,arm_out,guard_path,*,pressure=None,popen=subproc
         floor=2*(1<<30)
         start=measured+overhead+3*(1<<30)
         term_grace=10.0
-        cleanup_container=False
     available,psi=pressure()
     if available < start or psi>=20:
         if policy is None:
@@ -102,10 +100,9 @@ def run_direct_arm(argv,env,log,arm_out,guard_path,*,pressure=None,popen=subproc
                     except ProcessLookupError:pass
                     child.wait(timeout=5)
         finally:
-            if cleanup_container:
-                cleanup=owned_cleanup(arm_out)
-            else:
-                cleanup={"state":"PrismaBuild owns scope and container cleanup"}
+            cleanup=owned_cleanup(arm_out)
+            cleanup['owner'] = {'flux_job_id_env': os.environ.get('FLUX_JOB_ID'),
+                                'authority': 'environment value, not an admission token'}
             (arm_out.parent/(arm_out.name+"-cleanup.json")).write_text(json.dumps(cleanup,indent=2)+"\n")
 
 

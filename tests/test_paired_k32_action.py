@@ -146,7 +146,7 @@ def test_paired_netdata_uses_the_same_stable_box_endpoints(monkeypatch):
 
 
 @pytest.mark.parametrize("memory_gib,kill_required", [(3, False), (1, True)])
-def test_explicit_d30_policy_uses_two_gib_floor_and_pb_cleanup(tmp_path, monkeypatch, memory_gib, kill_required):
+def test_explicit_d30_policy_uses_two_gib_floor_and_owned_cleanup(tmp_path, monkeypatch, memory_gib, kill_required):
     module = action(monkeypatch)
     policy = {"measured_cpu_peak_bytes": 2557706240,
               "unmeasured_gpu_overhead_bytes": 1 << 30, "deadline_s": 600}
@@ -156,7 +156,9 @@ def test_explicit_d30_policy_uses_two_gib_floor_and_pb_cleanup(tmp_path, monkeyp
     monkeypatch.setattr(module.time, "sleep", lambda _: None)
     signals = []
     monkeypatch.setattr(module.os, "killpg", lambda pid, sig: signals.append((pid, sig)))
-    monkeypatch.setattr(module, "owned_cleanup", lambda _: pytest.fail("PB owns container cleanup"))
+    cleanup_calls = []
+    monkeypatch.setenv('FLUX_JOB_ID', 'controlled-job')
+    monkeypatch.setattr(module, "owned_cleanup", lambda path: cleanup_calls.append(path) or {'state': 'removed'})
     class Child:
         pid = 424242
         returncode = 0
@@ -181,5 +183,9 @@ def test_explicit_d30_policy_uses_two_gib_floor_and_pb_cleanup(tmp_path, monkeyp
     assert record["floor_bytes"] == 2 << 30
     assert record["start_bytes"] == 2557706240 + (4 << 30)
     assert record["gpu_overhead_measured"] is False
-    assert json.loads((tmp_path / "arm-cleanup.json").read_text())["state"].startswith("PrismaBuild")
+    cleanup = json.loads((tmp_path / "arm-cleanup.json").read_text())
+    assert cleanup_calls == [tmp_path / 'arm']
+    assert cleanup['state'] == 'removed'
+    assert cleanup['owner'] == {'flux_job_id_env': 'controlled-job',
+                               'authority': 'environment value, not an admission token'}
 
