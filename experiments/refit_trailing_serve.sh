@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+source "$(dirname "${BASH_SOURCE[0]}")/flux_serve_campaign.sh"
 # tessera#75's fair pair, exported and served -- BOTH arms built by the same
 # encoder, on the same day.
 #
@@ -188,7 +189,7 @@ serve)
   dump=$KLDIR/qwen_ts75_$ARM.json
   npz=$dump.npz
   if [ ! -f "$npz" ]; then
-    experiments/serve_and_dump_kl.sh "$twin" "$dump" student || exit 1
+    flux_serve_score experiments/serve_and_dump_kl.sh "$twin" "$dump" student || exit 1
   fi
   # The comparison is a STAGE of this step, not a postscript to it.  This
   # script runs under `set -uo pipefail` and not errexit, so a failed

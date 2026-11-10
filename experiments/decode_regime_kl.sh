@@ -34,6 +34,7 @@
 #
 # usage: decode_regime_kl.sh <model-dir> <arm-name> [resident|streamed]
 set -euo pipefail
+source "$(dirname "$0")/flux_serve.sh"
 MODEL="$1"; ARM="$2"; MODE="${3:-streamed}"
 WT=${WT:-$(cd "$(dirname "$0")/.." && pwd)}
 # The tree under test is THIS worktree, never the shared checkout: another
@@ -69,9 +70,7 @@ if [ -n "$PROFILE_DIR" ]; then
     exit 2
   fi
   mkdir -p "$PROFILE_DIR"
-  # /mnt/shared is root-squashed: the image runs as root, but that identity is
-  # deliberately not privileged on the host mount.  Make this fresh campaign
-  # directory writable before Docker binds it at /prof.
+  # The numeric container user owns this fresh campaign directory.
   chmod a+rwx "$PROFILE_DIR"
   PROFILE_MOUNT=(-v "$PROFILE_DIR:/prof")
   PROFILE_CONFIG='{"profiler":"torch","torch_profiler_dir":"/prof"}'
@@ -88,8 +87,7 @@ source "$(dirname "$0")/runtime_image.sh"
 IMAGE=${IMAGE:-$(runtime_image_pin)}
 source "$(dirname "$0")/build_identity.sh"
 mkdir -p "$EXT" "$VLLM_CACHE" "$RUNS" "$TRACEDIR"
-# The route writer runs inside the container.  On a root-squashed shared mount
-# host ownership alone is insufficient even though the action owns RUNS.
+# The route writer uses the job's numeric user inside the container.
 chmod a+rwx "$TRACEDIR"
 MODEL_MOUNT="$(cd "$(dirname "$MODEL")" && pwd)"
 echo "serving $MODEL via the tessera plugin ($IMAGE, mode=$MODE, port=$PORT)"
@@ -97,12 +95,8 @@ runtime_image_require "$IMAGE" || exit 2
 SERVE_REAPED=1
 reap() {
   [ "$SERVE_REAPED" = 0 ] || return 0
-  docker logs "$NAME" > "$LOG" 2>&1 || true
-  if docker rm -f "$NAME" >/dev/null 2>&1; then SERVE_REAPED=1; fi
+  if flux_serve_stop; then SERVE_REAPED=1; fi
 }
-source "$(dirname "$0")/serve_lock.sh"; SERVE_LOCK_OWNER="$0 $ARM"; serve_lock_acquire
-trap 'reap; if [ "$SERVE_REAPED" = 1 ]; then serve_lock_release; else echo "REFUSED: live serve cleanup unverified; retaining $SERVE_LOCK" >&2; fi' EXIT
-docker rm -f "$NAME" >/dev/null 2>&1 || true
 
 # --enable-prompt-tokens-details is what makes the decode regime a MEASUREMENT:
 # without it vLLM omits usage.prompt_tokens_details.cached_tokens, and
@@ -111,10 +105,10 @@ docker rm -f "$NAME" >/dev/null 2>&1 || true
 # mounts its extensions root read-only, and telemetry never raises, so a trace
 # under /ext would be silently absent in exactly the arm that needs it.
 SERVE_REAPED=0
-docker run -d --name "$NAME" --gpus all --ipc=host -p "${PORT}:8000" \
-  -v /mnt/shared:/mnt/shared -v "${MODEL_MOUNT}:${MODEL_MOUNT}" \
+NAME=$(flux_serve_start --model "$MODEL" --log "$LOG" --plugin "$TS" --port "$PORT" --util "${TESSERA_GPU_MEM_UTIL:-0.45}" -- \
+  -v /mnt/shared:/mnt/shared:ro -v "${MODEL_MOUNT}:${MODEL_MOUNT}:ro" \
   -v "$TS/src":/work/src:ro -v "$TS/pyproject.toml":/work/pyproject.toml:ro \
-  -v "$EXT":/ext -v "$VLLM_CACHE":/root/.cache/vllm \
+  -v "$EXT":/ext -v "$VLLM_CACHE":/tmp/vllm-cache -e VLLM_CACHE_ROOT=/tmp/vllm-cache \
   -v "$TRACEDIR":/trace \
   "${PROFILE_MOUNT[@]}" \
   -e TORCH_EXTENSIONS_DIR=/ext -e TMPDIR=/ext \
@@ -125,23 +119,19 @@ docker run -d --name "$NAME" --gpus all --ipc=host -p "${PORT}:8000" \
   $(build_identity_docker_env) \
   ${TESSERA_LANE_DOCKER_EXTRA:-} \
   --entrypoint bash "$IMAGE" -c '
+set -euo pipefail
 inc="$(python3 -c "import glob; p=sorted(glob.glob(\"/usr/local/lib/python3*/dist-packages/nvidia/cu*/include\")); print(p[0] if p else \"\")")"
-dst=/usr/local/cuda/include; for src in "$inc"/*; do n="$(basename "$src")"; [ -e "$dst/$n" ] || ln -s "$src" "$dst/$n"; done
-pip install --no-deps --no-build-isolation -q -e /work 2>&1 | tail -2
+export CPATH="$inc${CPATH:+:$CPATH}"
+plugin_project=$(mktemp -d /tmp/tessera-plugin.XXXXXX)
+cp -a /work/src /work/pyproject.toml "$plugin_project/"
+pip install --no-index --no-deps --no-build-isolation -q --target "$plugin_project/site" "$plugin_project"
+export PYTHONPATH="$plugin_project/site${PYTHONPATH:+:$PYTHONPATH}"
 profile_args=(); [ -z "${TESSERA_KL_PROFILE_CONFIG:-}" ] || profile_args=(--profiler-config "$TESSERA_KL_PROFILE_CONFIG")
 exec vllm serve '"$MODEL"' --served-model-name kl-target --host 0.0.0.0 --port 8000 \
   --max-model-len 4096 --max-num-seqs 8 --gpu-memory-utilization "${TESSERA_GPU_MEM_UTIL:-0.45}" \
   --max-logprobs '"${TESSERA_KL_TOPK:-1024}"' --enable-prompt-tokens-details \
-  '"$EAGER_FLAG"' --trust-remote-code "${profile_args[@]}"' >/dev/null
+  '"$EAGER_FLAG"' --trust-remote-code "${profile_args[@]}"')
 
-for i in $(seq 1 240); do
-  if curl -sf "http://127.0.0.1:${PORT}/v1/models" >/dev/null 2>&1; then echo "  up after ${i}0s"; break; fi
-  if ! docker ps -q -f name="$NAME" | grep -q .; then
-    reap
-    echo "serve died; log at $LOG"; tail -40 "$LOG"; exit 1
-  fi
-  sleep 10
-done
 # The shared gate (tessera#247): the complete metrics response into a file,
 # then grepped there.  The piped form this replaces could not detect the
 # condition it owns -- `grep -q` exits at the first match, curl fails its

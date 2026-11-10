@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+source "$(dirname "${BASH_SOURCE[0]}")/../flux_serve_campaign.sh"
 # Second wave: the layer-0 separator pair, then the 3.0 and 5.0 allocations
 # against their own byte-matched uniform controls.
 #
@@ -25,7 +26,7 @@ kl () {       # <checkpoint> <arm>
   [ -f "$KLDIR/qwen_tessera_$arm.json.npz" ] && { echo "== kl $arm: already dumped"; return 0; }
   echo "== kl $arm"
   TESSERA_KL_NAME=alloc-serve-$arm TESSERA_LANE_EAGER=1 \
-    "$TS/experiments/tessera_plugin_served.sh" "$ckpt" "$arm" resident \
+    flux_serve_score "$TS/experiments/tessera_plugin_served.sh" "$ckpt" "$arm" resident \
     > "$RUNS/arm_$arm.log" 2>&1
   echo "   rc=$?"
   sed -n '/--- KL vs teacher ---/,$p' "$RUNS/arm_$arm.log" | head -8

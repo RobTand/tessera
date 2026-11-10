@@ -10,20 +10,22 @@
 # and reaped before the other starts; the two receipts are then joined by
 # `moe_greedy_smoke.py compare` into the pair the measurement doc quotes.
 #
-# Containers are owned, not named: each arm is launched through
-# `experiments/owned_container.sh`, which refuses a name already in use, keeps
-# the container's own id, and reaps by that id from EXIT and from INT/TERM/HUP.
-# The same helper hands the container the launcher's CPU mask and an explicit
-# thread count, because a host export does not cross into a container (#375).
-#
-# Host memory is gated, not assumed: the GPU and host share one pool, and this
-# script refuses to start a serve while MemAvailable is under $MIN_AVAIL_GIB.
-# A telemetry log per arm samples MemAvailable every 10 s so the receipt can
-# state the high-water mark rather than guess it.
+# Each arm is a separate collected Flux job through the reviewed serving
+# supervisor. Flux reserves the GPU and the whole memory bound; Docker gets
+# the job's affinity, numeric user, hard bound and decimal job identity.
+# Each arm keeps its memory/power telemetry and source/build checks.
 #
 # usage: IMAGE=<pinned digest> EXT=<dir> VLLM_CACHE=<dir> \
 #          moe_greedy_smoke_pair.sh <bf16-source-dir> <tessera-artifact-dir> <seal.json> <out-dir>
 set -euo pipefail
+if [ "${1:-}" = --arm ]; then
+  source "$(dirname "$0")/flux_serve.sh"
+  ONLY_ARM=${2:?--arm requires bf16 or tessera}
+  shift 2
+else
+  source "$(dirname "$0")/flux_serve_campaign.sh"
+  ONLY_ARM=
+fi
 SOURCE="$1"; ARTIFACT="$2"; SEAL="$3"; OUT="$4"
 TS=${TS:-$(cd "$(dirname "$0")/.." && pwd)}
 IMAGE=${IMAGE:?set IMAGE to the pinned image digest of the cells under test}
@@ -31,21 +33,17 @@ EXT=${EXT:?set EXT to a torch-extensions dir outside the tree}
 VLLM_CACHE=${VLLM_CACHE:?set VLLM_CACHE to a vLLM cache dir outside the tree}
 PY=${PY:-python3}
 PORT=${PORT:-8198}
-NAME_PREFIX=${NAME_PREFIX:-ts198-smoke}
 PROMPTS=${PROMPTS:-$TS/experiments/moe_greedy_smoke_prompts.json}
-MIN_AVAIL_GIB=${MIN_AVAIL_GIB:-40}
 UTIL=${TESSERA_GPU_MEM_UTIL:-0.35}
 export RUNTIME_IMAGE_PY="$PY" BUILD_IDENTITY_PY="$PY"
 source "$TS/experiments/runtime_image.sh"
 source "$TS/experiments/build_identity.sh"
 source "$TS/experiments/serve_metrics.sh"
-source "$TS/experiments/serve_lock.sh"
-source "$TS/experiments/owned_container.sh"
 mkdir -p "$OUT" "$EXT" "$VLLM_CACHE"
 [ -e "$OUT/pair.json" ] && { echo "REFUSED: $OUT/pair.json exists; a rerun gets its own directory"; exit 2; }
 # The run ENDS in a join that imports the contract's aggregation, and both
 # serves happen before it.  So the join is proven possible HERE -- before
-# docker, before the box's one serve lock, before either arm -- for the reason
+# either arm -- for the reason
 # runtime_image.sh states about the image pin: a wrapper that is going to
 # refuse must not first spend an hour of GPU and make everyone queue behind a
 # failure (#341).  The check IS the join's own import, made by the same $PY
@@ -53,14 +51,6 @@ mkdir -p "$OUT" "$EXT" "$VLLM_CACHE"
 "$PY" "$TS/experiments/moe_greedy_smoke.py" preflight 2>&1 | tee -a "$OUT/driver.log"
 
 mem_avail_gib() { awk '/^MemAvailable:/ {printf "%d", $2 / 1048576}' /proc/meminfo; }
-require_memory() {
-  local avail; avail=$(mem_avail_gib)
-  echo "MemAvailable ${avail} GiB before $1 (gate ${MIN_AVAIL_GIB} GiB)" | tee -a "$OUT/driver.log"
-  if [ "$avail" -lt "$MIN_AVAIL_GIB" ]; then
-    echo "REFUSED: ${avail} GiB available < ${MIN_AVAIL_GIB} GiB; not starting $1" | tee -a "$OUT/driver.log"
-    exit 3
-  fi
-}
 telemetry() {  # every 10 s: wall clock, GPU power, MemAvailable -- until the arm is reaped
   while :; do
     date --iso-8601=seconds
@@ -76,27 +66,22 @@ from tessera.serving_parts import source_identity
 print(json.dumps(source_identity(sys.argv[1]), indent=2, sort_keys=True))' "$1"
 }
 
-# Everything this arm must give back, in one place and safe to run twice: the
-# container first -- by the immutable id `owned_container_start` captured, never
-# by the name -- then the telemetry sampler, and the serve lock last, so the box
-# is never advertised as free while a serve of ours still holds the GPU.
+# Container ownership stays in the supervisor. Repeated stop requests are safe.
 SERVE_ARM_TELE=""
 serve_arm_cleanup() {
-  owned_container_cleanup
+  flux_serve_stop
   if [ -n "${SERVE_ARM_TELE:-}" ]; then
     kill "$SERVE_ARM_TELE" 2>/dev/null || true
     wait "$SERVE_ARM_TELE" 2>/dev/null || true
     SERVE_ARM_TELE=""
   fi
-  serve_lock_release
 }
 
 serve_arm() {
-  local arm="$1" model="$2" name="${NAME_PREFIX}-$1" log="$OUT/serve_$1.log" cid
+  local arm="$1" model="$2" log="$OUT/serve_$1.log" cid
   local model_mount; model_mount="$(cd "$model" && pwd)"
-  require_memory "$arm"
+  runtime_image_require "$IMAGE" || return 2
   identity "$model" > "$OUT/identity_${arm}_before.json"
-  serve_lock_acquire
   # EXIT does not run on a signal, and a signal during a 40-minute startup is
   # exactly when a container is left behind, so the handlers are spelled out
   # and each exits with the signal's own status after cleaning up.
@@ -109,53 +94,44 @@ serve_arm() {
   if [ "$arm" = "bf16" ]; then
     # experiments/ts5_lfm_teacher_bound.py's serve, verbatim in effect: the
     # image's own vLLM, no plugin, eager, the model mounted read-only.
-    owned_container_start "$name" --gpus all --ipc=host -p "${PORT}:8000" \
+    cid=$(flux_serve_start --model "$model" --log "$log" --port "$PORT" --util "$UTIL" -- \
       -v /mnt/shared:/mnt/shared:ro -v "${model_mount}:${model_mount}:ro" \
-      --memory=64g --memory-swap=64g $(build_identity_docker_env) \
+      $(build_identity_docker_env) \
       --entrypoint=vllm "$IMAGE" serve "$model" --served-model-name kl-target \
       --host 0.0.0.0 --port 8000 --max-model-len 4096 --max-num-seqs 8 \
       --gpu-memory-utilization "$UTIL" --max-logprobs 1024 --enforce-eager \
-      --trust-remote-code
+      --trust-remote-code)
   else
-    # experiments/tessera_plugin_served.sh's container body, verbatim: link the
-    # CUDA headers, install this tree's plugin editable, serve resident + eager.
-    owned_container_start "$name" --gpus all --ipc=host -p "${PORT}:8000" \
+    # Install a scratch copy of the read-only plugin and serve resident + eager.
+    cid=$(flux_serve_start --model "$model" --log "$log" --plugin "$TS" --port "$PORT" --util "$UTIL" -- \
       -v /mnt/shared:/mnt/shared:ro -v "${model_mount}:${model_mount}:ro" \
       -v "$TS/src":/work/src:ro -v "$TS/pyproject.toml":/work/pyproject.toml:ro \
-      -v "$EXT":/ext -v "$VLLM_CACHE":/root/.cache/vllm \
+      -v "$EXT":/ext -v "$VLLM_CACHE":/tmp/vllm-cache -e VLLM_CACHE_ROOT=/tmp/vllm-cache \
       -e TORCH_EXTENSIONS_DIR=/ext -e TMPDIR=/ext \
       -e TESSERA_SERVE_MODE=resident -e TESSERA_GPU_MEM_UTIL="$UTIL" \
-      --memory=64g --memory-swap=64g $(build_identity_docker_env) \
+      $(build_identity_docker_env) \
       --entrypoint bash "$IMAGE" -c '
+set -euo pipefail
 inc="$(python3 -c "import glob; p=sorted(glob.glob(\"/usr/local/lib/python3*/dist-packages/nvidia/cu*/include\")); print(p[0] if p else \"\")")"
-dst=/usr/local/cuda/include; for src in "$inc"/*; do n="$(basename "$src")"; [ -e "$dst/$n" ] || ln -s "$src" "$dst/$n"; done
-pip install --no-deps --no-build-isolation -q -e /work 2>&1 | tail -2
+export CPATH="$inc${CPATH:+:$CPATH}"
+plugin_project=$(mktemp -d /tmp/tessera-plugin.XXXXXX)
+cp -a /work/src /work/pyproject.toml "$plugin_project/"
+pip install --no-index --no-deps --no-build-isolation -q --target "$plugin_project/site" "$plugin_project"
+export PYTHONPATH="$plugin_project/site${PYTHONPATH:+:$PYTHONPATH}"
 python3 -c "import importlib.metadata as m; print(\"[plugin] vllm.general_plugins:\", [e.name for e in m.entry_points(group=\"vllm.general_plugins\")])"
 exec vllm serve '"$model"' --served-model-name kl-target --host 0.0.0.0 --port 8000 \
   --max-model-len 4096 --max-num-seqs 8 --gpu-memory-utilization "${TESSERA_GPU_MEM_UTIL}" \
-  --max-logprobs 1024 --enforce-eager --trust-remote-code'
+  --max-logprobs 1024 --enforce-eager --trust-remote-code')
   fi
-  cid=$OWNED_CONTAINER_LAST_ID
-  echo "$arm container $cid (name $name)" | tee -a "$OUT/driver.log"
-  local up=0
-  for i in $(seq 1 240); do
-    if curl -sf "http://127.0.0.1:${PORT}/v1/models" >/dev/null 2>&1; then
-      echo "$arm up after ${i}0s" | tee -a "$OUT/driver.log"; up=1; break
-    fi
-    # Liveness by id, so the loop follows the container this run actually
-    # created, even if something else takes the name while the serve is up.
-    if ! owned_container_running "$cid"; then break; fi
-    sleep 10
-  done
+  echo "$arm container $cid" | tee -a "$OUT/driver.log"
   local rc=0
-  if [ "$up" = 1 ] && serve_require_no_spec_decode "$PORT" "$OUT/metrics_$arm.txt"; then
+  if serve_require_no_spec_decode "$PORT" "$OUT/metrics_$arm.txt"; then
     "$PY" "$TS/experiments/moe_greedy_smoke.py" run --url "http://127.0.0.1:${PORT}/v1/completions" \
       --tokenizer "$ARTIFACT" --prompts "$PROMPTS" --arm "$arm" --out "$OUT/smoke_$arm.json" \
       --pure-greedy 2>&1 | tee -a "$OUT/driver.log" || rc=$?
   else
     echo "$arm: serve did not come up or is speculative; see $log" | tee -a "$OUT/driver.log"; rc=1
   fi
-  docker logs "$cid" > "$log" 2>&1 || true
   serve_arm_cleanup; trap - EXIT INT TERM HUP
   # After the reap, never before: a stamp that failed first would leave a
   # headless serve holding the GPU.
@@ -187,8 +163,17 @@ assert source_identity(artifact) == seal["checkpoint_identity"], "artifact diffe
 print(json.dumps({"seal": str(seal_path), "seal_sha256": sha256_file(seal_path),
                   "checkpoint": str(artifact), "bound": True}, indent=2))' "$ARTIFACT" "$SEAL" \
   | tee "$OUT/seal_binding.json"
-serve_arm bf16 "$SOURCE"
-serve_arm tessera "$ARTIFACT"
+# Submit each scored arm and collect it before the next arm or final join.
+if [ -n "$ONLY_ARM" ]; then
+  case "$ONLY_ARM" in
+    bf16) serve_arm bf16 "$SOURCE" ;;
+    tessera) serve_arm tessera "$ARTIFACT" ;;
+    *) echo 'REFUSED: MOE_SCORED_ARM_REQUIRED' >&2; exit 2 ;;
+  esac
+  exit "$?"
+fi
+flux_serve_score "$(dirname "$0")/moe_greedy_smoke_pair.sh" --arm bf16 "$SOURCE" "$ARTIFACT" "$SEAL" "$OUT"
+flux_serve_score "$(dirname "$0")/moe_greedy_smoke_pair.sh" --arm tessera "$SOURCE" "$ARTIFACT" "$SEAL" "$OUT"
 # --subject/--reference make the pair carry the evidence.smoke.record block a
 # contract cell transcribes, and the status word contract.derive_smoke_status
 # reads off it, so the receipt and the contract cannot disagree about the word

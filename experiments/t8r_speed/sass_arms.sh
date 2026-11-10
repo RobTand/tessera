@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+python3 "$(dirname "${BASH_SOURCE[0]}")/../../tools/_flux_docker_guard.py" || exit $?
 # SASS and resource usage of one library across A/B arms built by build_ext.sh,
 # disassembled inside the measurement image (cuobjdump), addresses and
 # encodings stripped so two arms compare by instruction.

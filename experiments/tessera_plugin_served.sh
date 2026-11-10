@@ -16,6 +16,7 @@
 #
 # usage: tessera_plugin_served.sh <model-dir> <arm-name> [resident|streamed]
 set -euo pipefail
+source "$(dirname "$0")/flux_serve.sh"
 MODEL="$1"; ARM="$2"; MODE="${3:-resident}"
 TS=${TS:-/home/rob/tessera}
 RUNS=${RUNS:-/home/rob/tessera-runs/tsplugin}
@@ -25,10 +26,6 @@ source "$(dirname "$0")/runtime_image.sh"
 IMAGE=${IMAGE:-$(runtime_image_pin)}
 KLDIR=/mnt/shared/tessera-kl
 PORT=${PORT:-${TESSERA_KL_PORT:-8000}}
-# Per-arm container name (overridable, like serve_and_dump_kl.sh's TESSERA_KL_NAME):
-# two workers on one box must never contend for a container name, and a stale
-# container of MINE must never be a name another worker's `docker rm -f` matches.
-NAME=${TESSERA_KL_NAME:-tessera-plugin-serve-$ARM}
 CORPUS=${TESSERA_KL_CORPUS:-$KLDIR/corpus_qwen_n8_s512.json}
 # The three paths a NON-Qwen arm has to move, defaulted to what every arm
 # before them used so an existing command line records the same files.  The
@@ -61,52 +58,41 @@ source "$(dirname "$0")/build_identity.sh"
 mkdir -p "$EXT" "$VLLM_CACHE" "$RUNS"
 MODEL_MOUNT="$(cd "$(dirname "$MODEL")" && pwd)"
 echo "serving $MODEL via the tessera plugin ($IMAGE, mode=$MODE, port=$PORT)"
-# Refuse a floating image BEFORE the serve lock (issue #100): a wrapper that
-# is going to refuse must not first take the box's one serve lock.  The
-# resolved digest reaches this arm's build sidecar through build_identity.sh.
+# Resolve the immutable image for this arm's build sidecar. The supervisor
+# checks the same digest and assigns the container's decimal job name.
 runtime_image_require "$IMAGE" || exit 2
-# One serve at a time on this box: the GPU and host share one 128 GB pool.
-source "$(dirname "$0")/serve_lock.sh"; SERVE_LOCK_OWNER="$0 $ARM"; serve_lock_acquire
-trap serve_lock_release EXIT
-# Reaping a stale container of my own happens INSIDE the lock: outside it, a
-# `docker rm -f` races a serve another worker is starting under the same GPU.
-docker rm -f "$NAME" >/dev/null 2>&1 || true
+# Flux owns the GPU reservation and container cleanup.
 # ONE compile cache across every arm, deliberately: resident-after-streamed in
 # one cache is the regression test for the compile-cache identity key (the mode
 # is folded into additional_config by tessera.serving.compile_identity).
 # Separate caches would hide a broken key.
-docker run -d --name "$NAME" --gpus all --ipc=host -p "${PORT}:8000" \
-  -v /mnt/shared:/mnt/shared -v "${MODEL_MOUNT}:${MODEL_MOUNT}" \
+NAME=$(flux_serve_start --model "$MODEL" --log "$LOG" --plugin "$TS" --port "$PORT" --util "${TESSERA_GPU_MEM_UTIL:-0.85}" -- \
+  -v /mnt/shared:/mnt/shared:ro -v "${MODEL_MOUNT}:${MODEL_MOUNT}:ro" \
   -v "$TS/src":/work/src:ro -v "$TS/pyproject.toml":/work/pyproject.toml:ro \
-  -v "$EXT":/ext -v "$VLLM_CACHE":/root/.cache/vllm \
+  -v "$EXT":/ext -v "$VLLM_CACHE":/tmp/vllm-cache -e VLLM_CACHE_ROOT=/tmp/vllm-cache \
   -e TORCH_EXTENSIONS_DIR=/ext -e TMPDIR=/ext \
   -e TESSERA_SERVE_MODE="$MODE" \
   -e TESSERA_GPU_MEM_UTIL="${TESSERA_GPU_MEM_UTIL:-0.85}" \
   $(build_identity_docker_env) \
   ${TESSERA_LANE_DOCKER_EXTRA:-} \
   --entrypoint bash "$IMAGE" -c '
+set -euo pipefail
 inc="$(python3 -c "import glob; p=sorted(glob.glob(\"/usr/local/lib/python3*/dist-packages/nvidia/cu*/include\")); print(p[0] if p else \"\")")"
-dst=/usr/local/cuda/include; for src in "$inc"/*; do n="$(basename "$src")"; [ -e "$dst/$n" ] || ln -s "$src" "$dst/$n"; done
-pip install --no-deps --no-build-isolation -q -e /work 2>&1 | tail -2
+export CPATH="$inc${CPATH:+:$CPATH}"
+plugin_project=$(mktemp -d /tmp/tessera-plugin.XXXXXX)
+cp -a /work/src /work/pyproject.toml "$plugin_project/"
+pip install --no-index --no-deps --no-build-isolation -q --target "$plugin_project/site" "$plugin_project"
+export PYTHONPATH="$plugin_project/site${PYTHONPATH:+:$PYTHONPATH}"
 python3 -c "import importlib.metadata as m; print(\"[plugin] vllm.general_plugins:\", [e.name for e in m.entry_points(group=\"vllm.general_plugins\")])"
 exec vllm serve '"$MODEL"' --served-model-name kl-target --host 0.0.0.0 --port 8000 \
   --max-model-len 4096 --max-num-seqs 8 --gpu-memory-utilization "${TESSERA_GPU_MEM_UTIL:-0.85}" \
-  --max-logprobs '"${TESSERA_KL_TOPK:-1024}"' '"${EAGER_FLAG}"' --trust-remote-code' >/dev/null
-for i in $(seq 1 240); do
-  if curl -sf "http://127.0.0.1:${PORT}/v1/models" >/dev/null 2>&1; then echo "  up after ${i}0s"; break; fi
-  if ! docker ps -q -f name="$NAME" | grep -q .; then
-    docker logs "$NAME" > "$LOG" 2>&1 || true
-    echo "serve died; log at $LOG"; tail -40 "$LOG"; docker rm -f "$NAME" >/dev/null 2>&1; exit 1
-  fi
-  sleep 10
-done
+  --max-logprobs '"${TESSERA_KL_TOPK:-1024}"' '"${EAGER_FLAG}"' --trust-remote-code')
 # The shared gate (tessera#247): the complete metrics response into a file,
 # then grepped there.  A fetch failure or an HTTP error refuses too -- it used
 # to take the same branch as "no marker present".
 source "$(dirname "$0")/serve_metrics.sh"
 if ! serve_require_no_spec_decode "$PORT" "$RUNS/metrics_$ARM.txt"; then
-  docker logs "$NAME" > "$LOG" 2>&1 || true
-  docker rm -f "$NAME" >/dev/null; exit 2
+  flux_serve_stop; exit 2
 fi
 # greedy smoke first: the answer to the other arms' prompt
 curl -s "http://127.0.0.1:${PORT}/v1/completions" -H 'content-type: application/json' \
@@ -114,11 +100,10 @@ curl -s "http://127.0.0.1:${PORT}/v1/completions" -H 'content-type: application/
 if ! $PY /home/rob/dq-runs/kl_tool.py dump --model kl-target --out "$DUMP" --url "http://127.0.0.1:${PORT}/v1/completions" \
   --top-k "${TESSERA_KL_TOPK:-1024}" \
   --corpus-contract "$CORPUS" --role student --artifact-path "$MODEL"; then
-  docker logs "$NAME" > "$LOG" 2>&1 || true; docker rm -f "$NAME" >/dev/null 2>&1
+  flux_serve_stop
   echo "dump FAILED; serve log at $LOG"; exit 3
 fi
-docker logs "$NAME" > "$LOG" 2>&1 || true
-docker rm -f "$NAME" >/dev/null
+flux_serve_stop
 # After the reap, never before: a stamp that failed first would leave a
 # headless serve holding the GPU.
 build_identity_stamp "$LOG" "${DUMP%.json}.build.json" "$VLLM_CACHE" "$IMAGE" \

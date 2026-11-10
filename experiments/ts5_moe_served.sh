@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+source "$(dirname "${BASH_SOURCE[0]}")/flux_serve_campaign.sh"
 # Issue #5, item 5: serve a routed-MoE Tessera checkpoint, census its routes,
 # and measure its KL against a BF16 teacher of the SAME model.
 #
@@ -92,7 +93,7 @@ else
   # be supplied by convention later.  Omitting it cost three pool attempts and
   # about ten GPU-minutes on 2026-09-04, each of which stood a serve up for
   # three minutes to be refused by a client-side check.
-  TESSERA_KL_NAME=ts5-kl-teacher "$HERE/serve_and_dump_kl.sh" \
+  TESSERA_KL_NAME=ts5-kl-teacher flux_serve_score "$HERE/serve_and_dump_kl.sh" \
     "$BF16" "$OUT/teacher_bf16.json" teacher BF16
   rc_teacher=$?
 fi
@@ -105,7 +106,7 @@ elif [ "$rc_teacher" = 0 ]; then
   TESSERA_KL_TEACHER="$OUT/teacher_bf16.json" \
   TESSERA_KL_DUMP="$OUT/student_tessera.json" \
   TESSERA_KL_LOG="$OUT/serve_student_tessera.log" \
-    "$HERE/tessera_plugin_served.sh" "$WIRE" ts5moe "$MODE"
+    flux_serve_score "$HERE/tessera_plugin_served.sh" "$WIRE" ts5moe "$MODE"
   rc_student=$?
 fi
 

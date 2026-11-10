@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+python3 "$(dirname "${BASH_SOURCE[0]}")/../tools/_flux_docker_guard.py" || exit $?
 # Take a route census across TWO boxes: a ray head on this one, a ray worker on
 # the other, one vLLM engine at tensor parallel 2.
 #

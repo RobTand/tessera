@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+source "$(dirname "${BASH_SOURCE[0]}")/flux_serve_campaign.sh"
 # Served KL across Tessera's rungs at ONE fixed size, one family, one harness.
 #
 # **The rung is not a rate.**  A column at rate R writes R body bits *and*
@@ -42,7 +43,7 @@ for Q in 640 704 768; do
   [ -f "$DEC/model.safetensors.index.json" ] || \
     $PY experiments/decode_back_to_bf16.py "$ART" "$DEC"
   [ -f "$DUMP.npz" ] || \
-    experiments/serve_and_dump_kl.sh "$DEC" "$DUMP" student
+    flux_serve_score experiments/serve_and_dump_kl.sh "$DEC" "$DUMP" student
 done
 
 echo "=================== compare ==================="

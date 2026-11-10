@@ -108,7 +108,7 @@ def test_gpu_test_wrapper_reuses_native_namespace_and_xdist(tmp_path, canonical)
 
 
 @pytest.mark.parametrize('canonical', [False, True])
-def test_build_wrapper_matches_the_consumer_namespace(tmp_path, canonical):
+def test_legacy_build_refuses_before_entering_the_consumer_namespace(tmp_path, canonical):
     wrapper = Path(__file__).resolve().parents[1] / 'experiments/t8r_speed/build_ext.sh'
     checkout, source, extensions, argv_path, env = wrapper_environment(tmp_path)
     container_source = '/tessera/src' if canonical else '/work/src'
@@ -117,17 +117,11 @@ def test_build_wrapper_matches_the_consumer_namespace(tmp_path, canonical):
     env['NATIVE_BUILD_WORK_DIR'] = str(work)
     if canonical:
         env.update(NATIVE_CONTAINER_SRC=container_source, NATIVE_CONTAINER_EXT=container_extensions)
-    subprocess.run(['bash', str(wrapper), str(checkout), str(extensions), 'e4m3mma'],
-                   env=env, check=True, capture_output=True, text=True)
-    args = argv_path.read_bytes().decode().rstrip('\0').split('\0')
-    assert str(source) + ':' + container_source + ':ro' in args
-    assert str(extensions) + ':' + container_extensions in args
-    assert 'TORCH_EXTENSIONS_DIR=' + container_extensions in args
-    assert 'PYTHONPATH=' + container_source in args
-    assert 'HOME=' + str(work / 'home') in args
-    assert 'TMPDIR=' + str(work / 'tmp') in args
-    if canonical:
-        assert str(checkout / 'pyproject.toml') + ':/tessera/pyproject.toml:ro' in args
+    result = subprocess.run(['bash', str(wrapper), str(checkout), str(extensions), 'e4m3mma'],
+                            env=env, capture_output=True, text=True)
+    assert result.returncode == 2
+    assert 'ROOT_DOCKER_REQUIRES_REVIEWED_SERVING_WRAPPER' in result.stderr
+    assert not argv_path.exists(), 'blocked legacy build reached a container engine'
 
 
 @pytest.mark.parametrize('selection', ['0', '1'])
@@ -195,8 +189,8 @@ def test_direct_pm_requires_qualification_of_legacy_container_limits(tmp_path, p
 @pytest.mark.parametrize('kind', ['build', 'benchmark'])
 @pytest.mark.parametrize('selection', [None, '', '0', 'on', 'bad'],
                          ids=['unset', 'empty', 'off', 'on', 'invalid'])
-def test_native_build_choice_wrapper_preserves_declared_value(tmp_path, kind, selection, key, on, library):
-    """Real shell paths preserve strict Python choice; only Docker/image are inert."""
+def test_native_build_choice_is_forwarded_or_refused_by_the_legacy_guard(tmp_path, kind, selection, key, on, library):
+    """Podman consumers preserve choices; the legacy Docker build is blocked."""
     if selection == "on":
         selection = on
     root = Path(__file__).resolve().parents[1]
@@ -214,7 +208,13 @@ def test_native_build_choice_wrapper_preserves_declared_value(tmp_path, kind, se
         extensions.mkdir()
         command = ['bash', str(wrapper), str(checkout), str(tmp_path / 'out'),
                    '--artifact', str(artifact), '--groups', 'experts.R1024.L10']
-    subprocess.run(command, env=env, check=True, capture_output=True, text=True)
+    result = subprocess.run(command, env=env, capture_output=True, text=True)
+    if kind == 'build':
+        assert result.returncode == 2
+        assert 'ROOT_DOCKER_REQUIRES_REVIEWED_SERVING_WRAPPER' in result.stderr
+        assert not argv_path.exists(), 'build selection bypassed the legacy guard'
+        return
+    assert result.returncode == 0, result.stderr
     args = argv_path.read_bytes().decode().rstrip('\0').split('\0')
     forwarded = [args[i + 1] for i, arg in enumerate(args[:-1]) if arg == '-e']
     choices = [value for value in forwarded if value.startswith(key + '=')]

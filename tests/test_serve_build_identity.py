@@ -1036,28 +1036,16 @@ def test_profile_roster_refuses_target_split_across_scan_chunks(tmp_path):
     assert not out.exists()
 
 
-def test_decode_wrapper_exit_reaps_before_releasing_the_serve_lock():
+def test_decode_wrapper_delegates_cleanup_to_flux_supervisor(tmp_path):
     body = _EAGER_WRAPPERS[0].read_text()
-    reap = body.index("reap() {")
-    cleanup = body.index("trap 'reap; ")
-    launch = body.index('docker run -d --name "$NAME"')
-    assert reap < cleanup < launch
-    trap = next(line for line in body.splitlines() if line.startswith("trap "))
-    result = subprocess.run(
-        ["bash", "-c", "reap() { echo reap; SERVE_REAPED=1; }; "
-         "serve_lock_release() { echo release; }; " + trap + "; exit 42"],
-        capture_output=True, text=True,
-    )
-    assert result.returncode == 42
-    assert result.stdout.splitlines() == ["reap", "release"]
-    failed = subprocess.run(
-        ["bash", "-c", "reap() { echo reap; SERVE_REAPED=0; }; "
-         "serve_lock_release() { echo release; }; " + trap + "; exit 42"],
-        capture_output=True, text=True,
-    )
-    assert failed.returncode == 42
-    assert failed.stdout.splitlines() == ["reap"]
-    assert "cleanup unverified" in failed.stderr
+    assert 'source "$(dirname "$0")/flux_serve.sh"' in body
+    assert 'NAME=$(flux_serve_start ' in body
+    assert 'serve_lock_acquire' not in body
+    from serve_wrapper_fakes import _run_wrapper
+    result, events = _run_wrapper(tmp_path)
+    assert result.returncode == 2
+    assert events == ['logs', 'remove']
+    assert not (tmp_path / 'live').exists()
 
 
 def test_a_half_parsed_dispatch_line_is_not_a_known_dispatch() -> None:

@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+source "$(dirname "${BASH_SOURCE[0]}")/flux_serve_campaign.sh"
 # Serve ONE arm's stock twin and score it against the teacher the 0.640
 # comparator was scored against, on the same box.
 #
@@ -35,7 +36,7 @@ for arm in "$@"; do
       2>&1 | tail -5
   npz=/mnt/shared/tessera-kl/qwen_lut_$arm.json.npz
   if [ ! -f "$npz" ]; then
-    experiments/serve_and_dump_kl.sh "$twin" \
+    flux_serve_score experiments/serve_and_dump_kl.sh "$twin" \
         "/mnt/shared/tessera-kl/qwen_lut_$arm.json" student || exit 1
   fi
   $PY /home/rob/dq-runs/kl_tool.py compare "$TEACHER" "$npz" \

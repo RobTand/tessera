@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+python3 "$(dirname "${BASH_SOURCE[0]}")/../tools/_flux_docker_guard.py" || exit $?
 # Run experiments/moe_route_load_probe.py inside a pinned serving build.
 #
 # WITH A GPU.  The probe constructs vLLM's real ``RoutedExperts``, loads

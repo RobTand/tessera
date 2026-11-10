@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+python3 "$(dirname "${BASH_SOURCE[0]}")/../tools/_flux_docker_guard.py" || exit $?
 # Do host thread exports cross into a container, and which limit flag do
 # affinity-blind counts see?  ubuntu:24.04, CPU only, no ports, no GPU.
 set -uo pipefail

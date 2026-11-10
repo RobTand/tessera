@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+python3 "$(dirname "${BASH_SOURCE[0]}")/../tools/_flux_docker_guard.py" || exit $?
 # Bounded small A4 TP2 serve: the 4-layer stub on both Sparks, native routes.
 #
 # Settings are SMALL-SERVE-SETTINGS.md's (context 2048, KV 1 GiB/rank,

@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+python3 "$(dirname "${BASH_SOURCE[0]}")/../tools/_flux_docker_guard.py" || exit $?
 # Run a command inside the pinned ROCm vLLM image with Tessera installed as a
 # vLLM plugin, on an AMD device.
 #

@@ -1,8 +1,8 @@
-"""Print, submit or run an owned serving-image build job. No graphics processor is requested.
+"""Prepare serving-image build inputs. No graphics processor is requested.
 
-``--submit`` hands the job to the native Flux suite transport (``_suite_flux.submit``);
-the Flux job's payload is this tool's ``--run`` mode, which executes the BuildKit
-container and removes the container it owns.
+The legacy ``--submit`` route reaches the shared root-Docker refusal inside
+Flux. A working image-build job needs the lead's separate reviewed pattern;
+the approved serving wrapper does not authorize a BuildKit container.
 """
 from __future__ import annotations
 import argparse
@@ -17,6 +17,8 @@ import sys
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "tools"))
+from _flux_docker_guard import refuse_unreviewed_docker
+refuse_unreviewed_docker()
 import _suite_flux  # noqa: E402
 #: Image manifest architecture to the Flux resource architecture.
 ARCHITECTURES = {"x86": "x86_64", "aarch64": "aarch64"}
@@ -103,7 +105,7 @@ def remove_owned_container(cidfile, runner=subprocess.run):
 
 
 def run_build(manifest, tag, output_directory, kernel_build, *, runner=subprocess.run, environ=os.environ):
-    """Flux job payload: run BuildKit, then remove the container whatever the outcome."""
+    """Legacy BuildKit action; its shared guard refuses execution inside Flux."""
     scratch = Path(environ["TMPDIR"])
     owner = {"name": "tessera-image-build-" + re.sub(r"[^A-Za-z0-9]", "", environ.get("FLUX_JOB_ID", str(os.getpid()))),
              "cidfile": str(scratch / "builder.cid")}

@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+source "$(dirname "${BASH_SOURCE[0]}")/flux_serve_campaign.sh"
 # Serve rotation arms on sparklina's vLLM 0.28, dump logprobs on the Qwen
 # corpus, and compare to a teacher served on the SAME box, so no number in the
 # receipt carries a cross-box confound.  One serve at a time (serve_lock.sh).
@@ -35,7 +36,7 @@ TEACHER=$KLDIR/qwen_rot_teacher_lina.json
 # Teacher: the unrotated BF16 source, served on this box.  Every arm below is
 # scored against it.
 if [ ! -f "$TEACHER.npz" ]; then
-  experiments/serve_and_dump_kl.sh /home/rob/models/Qwen3-0.6B "$TEACHER" teacher BF16 || exit 1
+  flux_serve_score experiments/serve_and_dump_kl.sh /home/rob/models/Qwen3-0.6B "$TEACHER" teacher BF16 || exit 1
 fi
 
 serve_one() {
@@ -46,7 +47,7 @@ serve_one() {
     echo "ARM MISSING (not exported yet): $arm"; return 1
   fi
   if [ ! -f "$dump.npz" ]; then
-    experiments/serve_and_dump_kl.sh "$dir" "$dump" student || { echo "ARM FAILED: $arm"; return 1; }
+    flux_serve_score experiments/serve_and_dump_kl.sh "$dir" "$dump" student || { echo "ARM FAILED: $arm"; return 1; }
   fi
   local log=$R/logs/serve_qwen_rot_$arm.log
   echo "--- route ($arm) ---"

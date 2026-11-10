@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+python3 "$(dirname "${BASH_SOURCE[0]}")/../tools/_flux_docker_guard.py" || exit $?
 # Run experiments/moe_wire_loader_probe.py inside the pinned serving build.
 #
 # NO GPU and NO serve lock, unlike nvfp4_moe_oracle_probe.sh: this probe imports

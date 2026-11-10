@@ -7177,8 +7177,9 @@ that reference and the record itself into the container it starts, under the
 two variable names the module owns -- so a tag on the command line becomes a
 digest inside the run rather than travelling as a name that identifies nothing.
 
-`experiments/serve_lock.sh` is the one lock protocol for every serve and every
-GPU-only probe.  Acquisition publishes one symlink at the host-local
+`experiments/serve_lock.sh` remains the legacy host lock for unported serves
+and GPU-only probes. Flux serving wrappers use the admitted GPU instead and
+do not acquire this lock; unrelated host containers cannot block admission.  Acquisition publishes one symlink at the host-local
 `serve.lock` pathname; its target binds PID, `/proc` start ticks and a random
 nonce, so publication has no directory-to-owner gap and PID reuse is not
 ownership.  All new-protocol observe/reap/publish transitions run under a
@@ -7216,10 +7217,11 @@ export does not cross into a container, a `--cpus` quota changes no CPU count a
 library can read, and `_NPROCESSORS_ONLN` still reports all 20 host CPUs inside
 a cpuset (`experiments/container_limits_probe.sh`, sparky, PB action `00869be43ebc`).
 
-`serve_and_dump_kl.sh` reaps its named container on every exit, including an
-unexpected shell failure. Successful removal is remembered so normal exit
-preserves the collected log. The wrapper releases its serve lock only after
-removal succeeds; failed cleanup retains ownership and refuses certification.
+`tools/_flux_docker_guard.py` owns the refusal for legacy root Docker entry
+points inside a Flux job. Shell and Python launchers call this helper before
+any work. Outside a Flux job their behavior is unchanged. Root Docker inside
+a job is allowed only through the reviewed serving wrapper pattern; anything
+else goes to the lead. The Podman launcher and suite transport remain separate.
 
 `experiments/serve_metrics.sh` owns the speculative-decoding refusal for every
 wrapper that dumps logprobs (`serve_and_dump_kl.sh`, `decode_regime_kl.sh`,
@@ -10726,3 +10728,106 @@ its source/admission transport, receipt writer, runtime observer and job-ID
 normalizer explicitly. It imports neither the transport nor runtime observer;
 collection still validates the same source, allocation, container and cleanup
 bindings.
+
+### One scored serve per Flux job
+
+`tools/_flux_serve.py` owns the reviewed root Docker serving pattern.
+`experiments/flux_serve.sh` is its shell entry and local request adapter.
+The supervisor remains in the foreground, starts the existing scoring wrapper
+as a child, and accepts one serve request. It checks the normalized spec before
+starting Docker, waits for `/v1/models`, monitors container liveness during
+scoring, and stops, removes and verifies the container on EXIT or TERM.
+The child retains the scoring commands, metrics gates, log checks and build stamps.
+
+Root Docker in a Flux job is allowed only through this reviewed wrapper pattern,
+with an image by digest and `--pull=never`. Anything else that wants Docker in
+a job goes to the lead. Legacy entry points call `tools/_flux_docker_guard.py`
+and refuse by name inside Flux. This includes the old BuildKit image-build
+payload; its root-Docker job route needs a separate lead decision.
+
+Each run reserves `slot/[core=N;memory=M;gpu=1]` and an explicit walltime through
+`tools/_flux_gpu_jobspec.py`'s renderer. GPU placement has no host constraint
+unless the spec's image exists on only one Spark. The serve bound is
+`ceil(gpu_memory_utilization * 121.6 GiB)`. The job reserves that bound plus a
+4 GiB client allowance, at most 108 GiB under CAPS v7. The current default
+bounds are 104 + 4 GiB for utilization 0.85, 55 + 4 GiB for 0.45, and 73 + 4 GiB
+for the 0.60 graph smoke. These are declared bounds, not measured peaks.
+
+The container uses `--init`, `--pull=never`, numeric `--user=uid:gid`,
+`--name=flux-<decimal job id>`, and `--label=flux.jobid=<decimal job id>`.
+The decimal id comes from `flux job id --to=dec`; the f58 id does not match
+housekeeping. Docker receives the job's `Cpus_allowed_list`, equal memory and
+memory-swap bounds, the allocated `CUDA_VISIBLE_DEVICES` as its GPU device,
+and a port published only on `127.0.0.1`. Model and plugin inputs are read-only.
+Until F-6, Spark allocations may include efficiency cores; the receipt records
+the actual CPU mask without claiming performance-core placement.
+Writable host mounts must already exist and belong to the launching user.
+Plugin installs use fresh container-local temporary directories with no writes
+to the plugin source. Installation failure stops startup before vLLM can use
+an ambient plugin. The migrated wrappers do not take `serve_lock.sh` or a
+box GPU lock. Flux owns the GPU reservation, so unrelated containers cannot
+hold a legacy lock in front of an admitted serve.
+
+`serve-receipt.json` records the normalized spec and its SHA256, inspected image
+id and RepoDigest, container id and StartedAt, `/v1/models`, the job's CPU list,
+both declared memory bounds, cleanup, and the container's peak memory.
+The peak is read from the inspected container process's Docker scope cgroup
+`memory.peak`, never from `docker stats`. `job-memory.json` records the client's
+own cgroup peak as the final payload step. The two scopes are distinct.
+An entry spec-id refusal still records the final client peak before returning.
+The spec binds image digest, model directory and content SHA256, plugin commit
+and tree, normalized command/options, and GPU memory utilization. Supporting
+plugin checkouts carry their own commit/tree identities and normalized mount
+roots. Gridbook binds both its own source and the supporting Tessera checkout.
+All plugin roots, including supporting roots and their parent mounts, are
+read-only. A spec hash
+pinned in the submitted environment prevents a later spec-file replacement.
+Missing image, running-image mismatch, spec mismatch, health deadline,
+container exit, or unverifiable cleanup is a named failure with no fallback.
+
+The direct serve owners are `serve_and_dump_kl.sh`, `tessera_plugin_served.sh`,
+`decode_regime_kl.sh`, `gridbook_lane_served.sh`, `window_gemv_latency.sh`, and
+`serve_smoke_graph.sh`. Shell campaigns use `experiments/flux_serve_campaign.sh`
+to submit and collect each scored run separately. `TESSERA_SERVE_PLANS` names
+a JSON list of reviewed plans, each with `wrapper`, exact `arguments`, `spec`,
+a unique shared `out`, `walltime`, and optional `cores` and `image_host`.
+GPU walltimes over 10 minutes also require `duration_approval` naming the fleet
+master's decision, or `--duration-approval` when rendering a single run.
+A missing or ambiguous plan refuses. A campaign cannot nest inside a Flux job.
+Direct serving wrappers refuse outside Flux.
+
+`lfm_bound_served.sh teacher|student` runs the corresponding source-bound LFM
+Python stage in that same supervisor. The stage's existing teacher or plugin
+wrapper makes the single serve request. Its seal checks, KL comparisons,
+telemetry and build checks run inside the admitted job. The historical 64 GiB
+container overrides are removed: utilization 0.35 declares 43 GiB for Docker
+and 4 GiB for the client. Stage cleanup asks the supervisor to stop and verify
+its container instead of removing a legacy name. The separate in-process
+`census` stage retains its Podman route.
+
+`moe_greedy_smoke_pair.sh` dispatches and collects two jobs before joining its
+smoke receipts. Each reviewed invocation adds `--arm bf16` or `--arm tessera`
+to the original four operands. An arm requests one serve from this supervisor,
+keeps its source/seal checks, telemetry and build stamps, and reserves 47 GiB
+at utilization 0.35. It takes no legacy box lock or 64 GiB override.
+
+Prepare a normalized spec with `python tools/_flux_serve.py spec --model DIR
+--port PORT --util FRACTION -- [payload mount/env/entrypoint options] IMAGE
+[exact image command]`. The operands are the same payload request the wrapper
+makes; `--log` is an output and is excluded from the spec. Render a single run
+with `python tools/_flux_serve.py render --spec SPEC.json --out /mnt/shared/RUN
+--walltime 10m -- experiments/serve_smoke_graph.sh DIR`. Rendering starts no job.
+Campaign dispatch checks eligible Sparks for external GPU processes, submits
+once, saves the job id before waiting, and reads
+native status, clean event, allocation and the serve receipt. An unknown
+submission is reconciled from its saved directory and is never retried blindly.
+
+These wrappers remain **unqualified until F-6 housekeeping is live**. Fleet
+housekeeping removes decimal-labelled leftovers before releasing the node and
+drains its own rank if removal fails. A real Spark qualification must verify
+that hard-kill path, root-store image availability, numeric-user plugin startup,
+loopback health and scoring, actual CPU affinity, Docker memory enforcement
+including unified GPU allocations, container peak accounting, and complete
+cleanup. TP2, Ray, NCCL and multi-host serving remain blocked. Detached graph
+controllers are not admitted by the reviewed serving renderer; their up/down
+protocol and auxiliary Docker self-tests need a separate lifecycle rewrite.

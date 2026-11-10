@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+source "$(dirname "${BASH_SOURCE[0]}")/flux_serve_campaign.sh"
 # #110, the residual: is what still separates the two arms the LANE'S OWN
 # accumulation nondeterminism, or a difference between the arms?
 #
@@ -38,7 +39,7 @@ export TESSERA_KL_DUMP_PREFIX=qwen_ts110r
 
 echo "=== arm A, second serve, identical tree and bytes  $(date -Is)"
 EXT=$ARMS/ext-A TESSERA_LANE_DOCKER_EXTRA="" \
-  experiments/decode_regime_kl.sh "$ARMS/armA" "ts110r-armA" streamed \
+  flux_serve_score experiments/decode_regime_kl.sh "$ARMS/armA" "ts110r-armA" streamed \
   2>&1 | tee "$RUNS/armA_replicate.log" | tail -30
 
 echo "=== the replicate compare: arm A against arm A, decode regime  $(date -Is)"

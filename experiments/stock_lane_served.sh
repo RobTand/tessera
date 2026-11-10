@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+source "$(dirname "${BASH_SOURCE[0]}")/flux_serve_campaign.sh"
 # The stock lane, served: Tessera materialised to the compressed-tensors
 # formats vanilla vLLM serves, measured on the gold metric against the
 # production comparators on the same image, same corpus, same box.
@@ -29,7 +30,7 @@ export TESSERA_KL_LOGDIR=$R
 cd /home/rob/tessera
 
 TEACHER=$KLDIR/qwen_teacher_bf16_v028.json
-[ -f "$TEACHER.npz" ] || experiments/serve_and_dump_kl.sh /home/rob/models/Qwen3-0.6B "$TEACHER" teacher BF16
+[ -f "$TEACHER.npz" ] || flux_serve_score experiments/serve_and_dump_kl.sh /home/rob/models/Qwen3-0.6B "$TEACHER" teacher BF16
 
 declare -A ARMS=(
   [nvfp4-prod]=/home/rob/dq-runs/fc45-0p6b-nvfp4/exported
@@ -40,7 +41,7 @@ declare -A ARMS=(
 for ARM in nvfp4-prod tessera-k2 tessera-e8 fp8-rtn; do
   DUMP=$KLDIR/qwen_stock_$ARM.json
   echo "=================== $ARM ==================="
-  [ -f "$DUMP.npz" ] || experiments/serve_and_dump_kl.sh "${ARMS[$ARM]}" "$DUMP" student
+  [ -f "$DUMP.npz" ] || flux_serve_score experiments/serve_and_dump_kl.sh "${ARMS[$ARM]}" "$DUMP" student
   LOG=$R/serve_qwen_stock_$ARM.log
   echo "--- route ($ARM) ---"
   # vLLM 0.28 says "Using X for NVFP4 GEMM" and "Selected X for CompressedTensorsW8A8Fp8".

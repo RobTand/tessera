@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+source "$(dirname "${BASH_SOURCE[0]}")/../flux_serve_campaign.sh"
 # Third wave.
 #
 # Two mechanism arms that take the separator apart.  The separator says the
@@ -35,7 +36,7 @@ kl () {       # <checkpoint> <arm>
   [ -f "$KLDIR/qwen_tessera_$arm.json.npz" ] && { echo "== kl $arm: already dumped"; return 0; }
   echo "== kl $arm"
   TESSERA_KL_NAME=alloc-serve-$arm TESSERA_LANE_EAGER=1 \
-    "$TS/experiments/tessera_plugin_served.sh" "$ckpt" "$arm" resident \
+    flux_serve_score "$TS/experiments/tessera_plugin_served.sh" "$ckpt" "$arm" resident \
     > "$RUNS/arm_$arm.log" 2>&1
   echo "   rc=$?"
   sed -n '/--- KL vs teacher ---/,$p' "$RUNS/arm_$arm.log" | head -8
@@ -48,7 +49,7 @@ TWIN=$OUT/qwen3-0.6b-l0-alloc-twin
 if [ -d "$TWIN" ] && [ ! -f "$KLDIR/qwen_tessera_l0-alloc-twin.json.npz" ]; then
   echo "== kl l0-alloc-twin (stock twin, vanilla vLLM, no plugin)"
   TESSERA_KL_IMAGE="$(runtime_image_pin)" TESSERA_KL_NAME=alloc-serve-l0twin \
-    "$TS/experiments/serve_and_dump_kl.sh" "$TWIN" \
+    flux_serve_score "$TS/experiments/serve_and_dump_kl.sh" "$TWIN" \
     "$KLDIR/qwen_tessera_l0-alloc-twin.json" student > "$RUNS/arm_l0-alloc-twin.log" 2>&1
   echo "   rc=$?"; tail -8 "$RUNS/arm_l0-alloc-twin.log"
   if [ -f "$KLDIR/qwen_tessera_l0-alloc-twin.json.npz" ]; then

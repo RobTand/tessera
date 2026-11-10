@@ -1,26 +1,10 @@
-"""What `moe_greedy_smoke_pair.sh` owns, and what it must never touch (#375).
+"""Real paired-arm scoring and lifecycle, driven through the serving supervisor.
 
-The wrapper's failure modes live between `docker run` and the reap, which is
-exactly the stretch no in-process test of the instrument can see.  Before this
-file, two of them were reachable:
-
-* the pre-launch `docker rm -f "$NAME_PREFIX-$arm"` removed whatever held that
-  name -- a colliding run's live serve included -- because a name is a mutable
-  label and not an identity;
-* the EXIT trap released the serve lock and nothing else, and no INT/TERM/HUP
-  handler existed, so a signal or a `set -e` abort after startup left the
-  container (and the telemetry sampler) alive while the lock said the box was
-  free.
-
-Every test here drives the wrapper's REAL `serve_arm`, extracted from the
-script and sourced with the surrounding stages stubbed, against a fake Docker
-that keeps a container store on disk.  Nothing starts a container, binds a
-port or talks to a GPU: the assertions are about which Docker calls the
-wrapper makes and what is left in the store when it exits.
-
-Set ``TESSERA_PAIR_WRAPPER_UNDER_TEST`` to a copy of an older wrapper to point
-these tests at it; that is how the pre-fix behaviour in #375 was demonstrated
-rather than asserted.
+The extracted producer function runs against a fake Docker store and HTTP
+boundary. Real child signals exercise startup cleanup; scoring failure retains
+its own status. The pre-existing-name, failed-start, thread-bound and cleanup
+assertions remain. Legacy cidfile and CPU-mask units retain their old helper.
+No container, port or GPU is used.
 """
 from __future__ import annotations
 
@@ -29,10 +13,13 @@ import os
 import re
 import signal
 import subprocess
+import sys
 import time
 from pathlib import Path
 
 import pytest
+from box_artifacts import FLUX_RENDER_ROOT
+from tools import _flux_serve as serve_policy
 
 ROOT = Path(__file__).resolve().parents[1]
 WRAPPER = Path(os.environ.get("TESSERA_PAIR_WRAPPER_UNDER_TEST",
@@ -73,8 +60,11 @@ def event(line):
         fh.write(line + "\n")
 
 cmd = argv[0] if argv else ""
-if cmd == "create" or (cmd == "run" and "-d" in argv):
-    name = argv[argv.index("--name") + 1]
+if cmd == "image" and argv[1] == "inspect":
+    print(json.dumps([{"Id": "sha256:cccc", "RepoDigests": [os.environ["IMAGE"]]}]))
+elif cmd == "create" or (cmd == "run" and "-d" in argv):
+    name = next((a.split("=", 1)[1] for a in argv if a.startswith("--name=")), None)
+    if name is None: name = argv[argv.index("--name") + 1]
     if resolve(name) is not None:
         print(f"Conflict. The container name /{name} is already in use", file=sys.stderr)
         sys.exit(125)
@@ -101,6 +91,10 @@ elif cmd == "start":
         sys.exit(125)
     rec = containers()[cid]; rec["running"] = True; write(cid, rec)
     event(f"started {rec['name']} {cid}")
+elif cmd == "stop":
+    cid = resolve(argv[-1])
+    if cid:
+        rec = containers()[cid]; rec["running"] = False; write(cid, rec)
 elif cmd == "rm":
     ref = argv[-1]
     cid = resolve(ref)
@@ -109,7 +103,10 @@ elif cmd == "rm":
     event(f"removed {containers()[cid]['name']} {cid} by={ref}")
     (state / f"{cid}.json").unlink()
 elif cmd == "container" and argv[1:2] == ["inspect"]:
-    sys.exit(0 if resolve(argv[-1]) is not None else 1)
+    cid = resolve(argv[-1])
+    if cid is None: sys.exit(1)
+    print(json.dumps([{"Id": cid, "Image": "sha256:cccc", "State": {
+        "Running": containers()[cid]["running"], "Pid": 123, "StartedAt": "fixture-start"}}]))
 elif cmd == "inspect":
     cid = resolve(argv[-1])
     if cid is None:
@@ -118,10 +115,10 @@ elif cmd == "inspect":
 elif cmd == "ps":
     want = None
     for i, a in enumerate(argv):
-        if a == "-f":
+        if a in ("-f", "--filter"):
             want = argv[i + 1]
     for cid, c in containers().items():
-        if not c["running"]:
+        if not c["running"] and not any("a" in a for a in argv[1:] if a.startswith("-")):
             continue
         if want is None or want in (f"name=^/{c['name']}$", f"id={cid}"):
             print(cid)
@@ -156,16 +153,18 @@ def _serve_arm_source(text: str) -> str:
 def _driver(tmp_path: Path) -> Path:
     """A script that runs the real serve_arm with every other stage stubbed."""
     body = _serve_arm_source(WRAPPER.read_text())
-    helper = f'source "{HELPER}"\n' if HELPER.exists() else ""
+    helper = f'source "{ROOT / "experiments/flux_serve.sh"}"\n'
+    if 'source "$TS/experiments/owned_container.sh"' in WRAPPER.read_text():
+        helper += f'source "{HELPER}"\n'
     script = tmp_path / "driver.sh"
     script.write_text(f'''#!/usr/bin/env bash
 set -euo pipefail
 OUT="$1"
 TS="{ROOT}"
-PY=python3
+PY=${{SCORE_PY:-python3}}
 PORT=${{PORT:?the test must pin a port that binds nothing}}
 NAME_PREFIX=ts198-smoke
-IMAGE=fake-image:test
+IMAGE=${{IMAGE:?}}
 UTIL=0.35
 EXT="$OUT/ext"; VLLM_CACHE="$OUT/cache"; ARTIFACT="$OUT"; PROMPTS="$OUT/prompts.json"
 mkdir -p "$OUT" "$EXT" "$VLLM_CACHE"
@@ -177,6 +176,9 @@ identity() {{ echo '{{}}'; }}
 # these tests stub the gate, and `test_an_ungated_image_is_refused` is what
 # proves the stub is standing in for a check that really does bite.
 RUNTIME_IMAGE_JSON=${{RUNTIME_IMAGE_JSON-'{{"stub": true}}'}}
+runtime_image_require() {{
+  [ -n "$RUNTIME_IMAGE_JSON" ] || {{ echo runtime_image_require-required >&2; return 2; }}
+}}
 serve_lock_acquire() {{ SERVE_LOCK_TOKEN=test:1:2; export SERVE_LOCK_TOKEN; echo lock_acquired >> "$OUT/events"; }}
 serve_lock_release() {{ [ -n "${{SERVE_LOCK_TOKEN:-}}" ] || return 0; unset SERVE_LOCK_TOKEN; echo lock_released >> "$OUT/events"; }}
 serve_require_no_spec_decode() {{ return 0; }}
@@ -184,10 +186,36 @@ build_identity_docker_env() {{ :; }}
 build_identity_stamp() {{ :; }}
 telemetry() {{ while :; do sleep 1; done; }}
 {body}
-serve_arm bf16 "$OUT"
+serve_arm bf16 "$OUT/model"
 ''')
     script.chmod(0o755)
-    return script
+    driver = tmp_path / 'supervise.py'
+    driver.write_text('''#!''' + sys.executable + '''
+import os,pathlib,sys
+sys.path.insert(0, ''' + repr(str(ROOT)) + ''')
+from tools import _flux_serve as policy
+out=pathlib.Path(sys.argv[1]); out.mkdir(parents=True,exist_ok=True)
+model=out/'model'; model.mkdir(); (model/'weights').write_text('independent weights')
+(out/'peak').write_text('1234')
+policy.decimal_job_id=lambda value: '12345'
+policy.cpu_list=lambda: '2-5'
+policy.container_peak_path=lambda info: out/'peak'
+def models(url,timeout):
+ if os.environ.get('FAKE_READY')!='1': raise OSError('startup not ready')
+ return {'data':[]}
+policy.fetch_models=models
+req={'model':str(model),'plugin':None,'port':0,'util':'.35',
+ 'image':os.environ['IMAGE'],
+ 'options':['-v','/mnt/shared:/mnt/shared:ro','-v',f'{model}:{model}:ro','--entrypoint','vllm'],
+ 'command':['serve',str(model),'--served-model-name','kl-target','--host','0.0.0.0','--port','8000',
+ '--max-model-len','4096','--max-num-seqs','8','--gpu-memory-utilization','0.35',
+ '--max-logprobs','1024','--enforce-eager','--trust-remote-code']}
+os.environ.update(FLUX_JOB_ID='fABC',CUDA_VISIBLE_DEVICES='0',FLUX_MEMORY_GIB='47',FLUX_SCRATCH=str(out/'scratch'))
+sys.exit(policy.supervise(policy.make_spec(req),out/'receipt.json',['bash',
+ ''' + repr(str(script)) + ''',str(out)]))
+''')
+    driver.chmod(0o755)
+    return driver
 
 
 def _env(tmp_path: Path) -> dict[str, str]:
@@ -203,6 +231,7 @@ def _env(tmp_path: Path) -> dict[str, str]:
         os.environ,
         PATH=f"{bindir}:{os.environ['PATH']}",
         FAKE_DOCKER_STATE=str(state),
+        IMAGE='test/serve@sha256:' + 'a' * 64,
         # Nothing binds here; the value only keeps the wrapper's curl URL and
         # -p flag off any port a real serve could be holding.
         PORT="0",
@@ -224,6 +253,57 @@ def _argvs(env: dict[str, str]) -> list[list[str]]:
 def _events(env: dict[str, str]) -> list[str]:
     log = Path(env["FAKE_DOCKER_STATE"]) / "events.log"
     return log.read_text().splitlines() if log.exists() else []
+
+
+def test_each_pair_arm_is_a_reviewed_job_and_refuses_without_flux(tmp_path):
+    argv = serve_policy.render_serving(
+        [str(WRAPPER), '--arm', 'bf16', 'source', 'artifact', 'seal', 'out'],
+        {'gpu_memory_utilization': '.35'}, out=str(FLUX_RENDER_ROOT / 'moe-arm'),
+        spec_path=tmp_path / 'spec.json')
+    assert '--resources-shape=slot/[core=4;memory=47;gpu=1]' in argv
+    env = {key: value for key, value in os.environ.items()
+           if not key.startswith(('FLUX_', 'TESSERA_SERVE_'))}
+    result = subprocess.run(['bash', str(WRAPPER), '--arm', 'bf16', 'source', 'artifact', 'seal', 'out'],
+                            env=env, text=True, capture_output=True)
+    assert result.returncode == 2
+    assert 'OUTSIDE_FLUX_JOB' in result.stderr
+
+
+def test_a_scoring_failure_reaps_the_real_arm(tmp_path):
+    env = _env(tmp_path)
+    scorer = tmp_path / 'score'
+    scorer.write_text('#!/bin/sh\ntouch "$SCORE_CALLED"\nexit 17\n')
+    scorer.chmod(0o755)
+    env.update(FAKE_READY='1', SCORE_PY=str(scorer), SCORE_CALLED=str(tmp_path / 'scored'))
+    out = tmp_path / 'out'
+    result = subprocess.run([str(_driver(tmp_path)), str(out)], env=env,
+                            capture_output=True, text=True, timeout=60)
+    assert (tmp_path / 'scored').exists(), result.stderr
+    assert result.returncode == 17, result.stderr
+    assert _store(env) == {}
+    receipt = json.loads((out / 'receipt.json').read_text())
+    assert receipt['removed'] and receipt['container_memory_peak_bytes'] == 1234
+
+
+def test_parent_collects_both_arms_before_comparing(tmp_path):
+    text = WRAPPER.read_text()
+    start = text.index('# Submit each scored arm')
+    calls = tmp_path / 'calls'
+    driver = tmp_path / 'parent.sh'
+    driver.write_text('''#!/bin/bash
+set -euo pipefail
+ONLY_ARM=
+SOURCE=source; ARTIFACT=artifact; SEAL=seal; OUT=$PARENT_OUT
+mkdir -p "$OUT"
+flux_serve_score() { echo "${3}:collected" >> "$CALLS"; }
+score() { echo compared >> "$CALLS"; }
+PY=score; TS=tree
+''' + text[start:])
+    result = subprocess.run(['bash', str(driver)],
+                            env=os.environ | {'CALLS': str(calls), 'PARENT_OUT': str(tmp_path / 'out')},
+                            capture_output=True, text=True)
+    assert result.returncode == 0, result.stderr
+    assert calls.read_text().splitlines() == ['bf16:collected', 'tessera:collected', 'compared']
 
 
 def test_a_failed_start_leaves_no_container(tmp_path):
@@ -260,7 +340,7 @@ def test_a_signal_during_startup_reaps_the_container(tmp_path):
     proc.send_signal(signal.SIGTERM)
     proc.communicate(timeout=60)
     assert _store(env) == {}, f"leaked after SIGTERM: {_store(env)}"
-    assert (out / "events").read_text().count("lock_released") >= 1
+    assert json.loads((out / 'receipt.json').read_text())['removed']
 
 
 def test_cleanup_in_the_window_before_the_id_is_recorded_still_reaps(tmp_path):
@@ -310,7 +390,7 @@ def test_a_preexisting_name_is_refused_not_removed(tmp_path):
     state.mkdir(parents=True, exist_ok=True)
     squatter = "f" * 64
     (state / f"{squatter}.json").write_text(
-        json.dumps({"name": "ts198-smoke-bf16", "running": True, "argv": ["someone-else"]}))
+        json.dumps({"name": "flux-12345", "running": True, "argv": ["someone-else"]}))
     out = tmp_path / "out"
     proc = subprocess.run([str(_driver(tmp_path)), str(out)], env=env,
                           capture_output=True, text=True, timeout=120)
@@ -328,7 +408,9 @@ def test_every_removal_addresses_an_id(tmp_path):
                    capture_output=True, text=True, timeout=120)
     for argv in _argvs(env):
         if argv[:1] in (["rm"], ["logs"]) or argv[:1] == ["inspect"]:
-            assert HEX64.match(argv[-1]), f"addressed by name, not id: {argv}"
+            # A failed Docker run can register its unique job name before it
+            # returns an id. The supervisor owns exactly this one name.
+            assert HEX64.match(argv[-1]) or argv[-1] == 'flux-12345', argv
 
 
 def test_the_container_is_given_explicit_thread_bounds(tmp_path):
@@ -340,9 +422,9 @@ def test_the_container_is_given_explicit_thread_bounds(tmp_path):
     subprocess.run([str(_driver(tmp_path)), str(out)], env=env,
                    capture_output=True, text=True, timeout=120)
     create = next(a for a in _argvs(env) if a[:1] in (["create"], ["run"]))
-    assert "--cpuset-cpus" in create and create[create.index("--cpuset-cpus") + 1] == "2-5"
+    assert '--cpuset-cpus=2-5' in create
     for var in ("OMP_NUM_THREADS", "MKL_NUM_THREADS", "OPENBLAS_NUM_THREADS", "MAX_JOBS"):
-        assert f"{var}=4" in create, f"{var} not bound to the 4 CPUs of cpuset 2-5: {create}"
+        assert f"{var}=1" in create, f"{var} is not explicitly bounded: {create}"
 
 
 def test_the_wrapper_never_calls_docker_start(tmp_path):

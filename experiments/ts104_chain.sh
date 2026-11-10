@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+source "$(dirname "${BASH_SOURCE[0]}")/flux_serve_campaign.sh"
 # Issue #104, one GPU slot: the rate preflight over every checkpoint we hold,
 # then the two route censuses.
 #
@@ -71,7 +72,7 @@ export TS=$WT RUNS
 for arm in "R1024:$NEW" "R1006:$ALLOC/qwen3-0.6b-uniform-R1006"; do
   name=${arm%%:*}; model=${arm#*:}
   echo "=== served KL $name  $model  $(date -Is)"
-  bash "$WT/experiments/tessera_plugin_served.sh" "$model" "ts104-$name-streamed" streamed \
+  flux_serve_score "$WT/experiments/tessera_plugin_served.sh" "$model" "ts104-$name-streamed" streamed \
     2>&1 | tail -30
   echo "served KL $name exit: ${PIPESTATUS[0]}"
 done

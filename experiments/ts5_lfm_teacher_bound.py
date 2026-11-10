@@ -16,7 +16,7 @@ import threading
 sys.path[:0] = [str(Path.cwd() / "src"), str(Path.cwd())]
 from tessera.serving_parts import source_identity, sha256_file
 from tessera.serving.build_identity import incomplete_reason, is_complete
-from experiments.ts5_stage_cleanup import cleanup_stage
+from tools._flux_serve import cleanup_scoring_stage as cleanup_stage, enter_lfm_stage
 
 CAMPAIGN = Path("/mnt/shared/tessera-runs/ts5/lfm25/astra-campaign-r2")
 SOURCE = Path("/mnt/shared/models/LFM2.5-8B-A1B-BF16")
@@ -28,6 +28,7 @@ PY = "/home/rob/dq-runs/venvs/prismaquant-cu130/bin/python"
 def interrupted(signum, _frame):
     raise TimeoutError(f"teacher action interrupted by signal {signum}")
 
+enter_lfm_stage('teacher')
 signal.signal(signal.SIGTERM, interrupted)
 signal.signal(signal.SIGINT, interrupted)
 OUT.mkdir()  # Exclusive one-shot guard: retries never start a second serve.
@@ -58,7 +59,6 @@ monitor.start()
 completed = False
 launched = False
 try:
-    assert not capture(["docker", "ps", "-aq", "--filter", f"name=^/{NAME}$"]), "unique container name already exists"
     manifest_path = CAMPAIGN / "part0/tessera_serving_manifest.json"
     manifest = json.loads(manifest_path.read_text())
     identity = manifest["export_partition"]["identity"]
@@ -81,7 +81,7 @@ try:
     env = os.environ.copy()
     env.update({
         "TESSERA_KL_IMAGE": IMAGE,
-        "TESSERA_KL_DOCKER_EXTRA": f"--entrypoint=vllm --memory=64g --memory-swap=64g -v {SOURCE}:{SOURCE}:ro",
+        "TESSERA_KL_DOCKER_EXTRA": f"--entrypoint=vllm -v {SOURCE}:{SOURCE}:ro",
         "TESSERA_KL_IMAGE_COMMAND": "serve",
         "TESSERA_KL_CORPUS": str(CORPUS), "TESSERA_KL_LOGDIR": str(OUT),
         "TESSERA_KL_NAME": NAME, "TESSERA_KL_PORT": "8152",

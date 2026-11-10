@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+source "$(dirname "${BASH_SOURCE[0]}")/flux_serve_campaign.sh"
 # The 16-bit route, served: the gate issue #9 asks for, end to end.
 #
 # The BF16 wire has had an encoder, a recipe, an exporter and a stock twin
@@ -137,13 +138,13 @@ for Q in "${@:-1792}"; do
   #    is the same acceptance the other two families' modes carry.
   for MODE in resident streamed; do
     echo "=== serve R=$R $MODE  $(date -Is)"
-    experiments/tessera_plugin_served.sh "$PLUG" "$ARM-$MODE" "$MODE"
+    flux_serve_score experiments/tessera_plugin_served.sh "$PLUG" "$ARM-$MODE" "$MODE"
   done
 
   # 4. The control: the twin, on vanilla vLLM with no plugin at all.
   if [ ! -f "$KLDIR/qwen_bf16twin_r$R.npz" ]; then
     echo "=== serve twin R=$R  $(date -Is)"
-    experiments/serve_and_dump_kl.sh "$TWIN" "$KLDIR/qwen_bf16twin_r$R" student
+    flux_serve_score experiments/serve_and_dump_kl.sh "$TWIN" "$KLDIR/qwen_bf16twin_r$R" student
   else
     echo "=== twin R=$R already dumped"
   fi

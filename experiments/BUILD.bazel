@@ -2628,6 +2628,9 @@ ts_py_library(
     data = [
         "//src/tessera:serving/csrc/regdirect_routed.cu",
     ],
+    deps = [
+        "//tools:_flux_docker_guard",
+    ],
 )
 
 ts_py_library(
@@ -2862,6 +2865,9 @@ ts_py_library(
     srcs = [
         "run_glm_native_construction.py",
     ],
+    deps = [
+        "//tools:_flux_docker_guard",
+    ],
 )
 
 ts_py_library(
@@ -2971,6 +2977,7 @@ ts_py_library(
         "//src/tessera:serving/runtime_contract.json",
     ],
     deps = [
+        "//tools:_flux_docker_guard",
         ":capture_full_engine_resources",
         ":full_engine_plugin_install",
     ],
@@ -4658,6 +4665,8 @@ ts_py_library(
         "//src/tessera:__init___cycle",
         "//src/tessera:bf16_route_cycle",
         "//src/tessera:serving/build_identity",
+        "//tools:__init__",
+        "//tools:_flux_serve",
         ":ts5_stage_cleanup",
     ],
 )
@@ -4674,7 +4683,8 @@ ts_py_library(
         "//src/tessera:__init___cycle",
         "//src/tessera:bf16_route_cycle",
         "//src/tessera:serving/build_identity",
-        ":ts5_stage_cleanup",
+        "//tools:__init__",
+        "//tools:_flux_serve",
     ],
 )
 

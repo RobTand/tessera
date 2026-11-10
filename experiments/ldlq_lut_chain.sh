@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+source "$(dirname "${BASH_SOURCE[0]}")/flux_serve_campaign.sh"
 # The 4-bit route's activation-aware arm, exported and served on one box.
 #
 # The claim under test is "the gap between Tessera's 4.0 bpp E2M1x2 wire and
@@ -59,7 +60,7 @@ serve_arm () {    # name
   if [ -f "/mnt/shared/tessera-kl/qwen_lut_$name.json.npz" ]; then
     echo "== $name already dumped"; return 0
   fi
-  experiments/serve_and_dump_kl.sh "$RUNS/$name-stock-twin" \
+  flux_serve_score experiments/serve_and_dump_kl.sh "$RUNS/$name-stock-twin" \
       "/mnt/shared/tessera-kl/qwen_lut_$name.json" student || return 1
 }
 
