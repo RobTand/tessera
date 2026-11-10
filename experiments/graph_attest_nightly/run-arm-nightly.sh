@@ -1,4 +1,7 @@
 #!/usr/bin/env bash
+
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/../flux_docker_guard.sh"
+refuse_flux_docker || exit 2
 # tessera#702/#695: one serve arm on the vLLM nightly stack, end to end, on sparky.
 #
 #   run-arm-nightly.sh ARM

@@ -553,11 +553,12 @@ def _live_container_entries():
 
 
 def _shell_live(text):
-    return '\n'.join(line for line in text.splitlines() if not line.lstrip().startswith('#'))
+    return '\n'.join(re.sub(r'\s+#.*$', '', line) for line in text.splitlines()
+                     if not line.lstrip().startswith('#'))
 
 
 def _shell_docker_use(text):
-    return re.search(r'\bdocker\s+run\b|--gpus\b', _shell_live(text))
+    return re.search(r'\bdocker\s+(?=\S)|--gpus\b', _shell_live(text))
 
 
 @pytest.mark.parametrize('entry', [path for path in _live_container_entries()
@@ -625,6 +626,7 @@ def _docker_order_errors(text, suffix):
 
 
 @pytest.mark.parametrize('suffix,text', [
+    ('.sh', 'docker rm -f somebody-elses-container\n'),
     ('.sh', 'source ./flux_docker_guard.sh\ndocker run image\nrefuse_flux_docker || exit 2\n'),
     ('.py', 'def main():\n subprocess.run(["docker", "run"])\n subprocess.run(["bash", "flux_docker_guard.sh"], check=True)\n'),
     ('.py', 'def unrelated():\n subprocess.run(["bash", "flux_docker_guard.sh"], check=True)\ndef main():\n subprocess.run(["docker", "run"])\n'),

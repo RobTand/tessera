@@ -1,4 +1,7 @@
 #!/usr/bin/env bash
+
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/../flux_docker_guard.sh"
+refuse_flux_docker || exit 2
 # TP1 route census of one dense census stub on sparky, inside a Flux job.
 # Runs experiments/routed_fused_census.sh with the u1 stub B census settings of the
 # E4M3 cell matrix (docs/measurements/2026-09-30-e4m3-cells-census-matrix.md),

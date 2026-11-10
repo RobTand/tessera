@@ -1,4 +1,7 @@
 #!/usr/bin/env bash
+
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/../flux_docker_guard.sh"
+refuse_flux_docker || exit 2
 # tessera#508: decode-throughput arm with a GPU power series.
 #   run-tput.sh ARM EAGER [COMPILATION_JSON] [BISECT_ENV...]
 # Same serve as run-arm.sh; runs tput-probe-508.py (8 concurrent greedy decodes,

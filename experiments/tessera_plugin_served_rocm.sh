@@ -1,4 +1,7 @@
 #!/usr/bin/env bash
+
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/flux_docker_guard.sh"
+refuse_flux_docker || exit 2
 # Serve a Tessera-wire checkpoint through Tessera's own vLLM plugin on an AMD
 # device, dump its logprobs on the model-matched corpus, and record the route.
 #

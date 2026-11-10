@@ -1,4 +1,7 @@
 #!/usr/bin/env bash
+
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/flux_docker_guard.sh"
+refuse_flux_docker || exit 2
 # Is the eager-vs-compiled KL gap the dispatch switch, or something else?  (#16)
 #
 # THE CLAIM UNDER TEST.  vLLM 0.28 does not run one program two ways.  When it

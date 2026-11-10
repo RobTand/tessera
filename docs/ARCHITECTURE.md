@@ -1,7 +1,10 @@
 # Tessera plan-to-serve architecture
 
-Every live direct-Docker entry under `experiments/` and `tools/` calls
-`experiments/flux_docker_guard.sh`. It refuses when `FLUX_JOB_ID` is present,
+Every live shell entry containing a literal Docker subcommand, and every
+Python entry constructing Docker launch argv, under `experiments/` and `tools/`
+calls `experiments/flux_docker_guard.sh` before that use. This includes shell
+cleanup and inspection commands, not just `docker run`. Python cleanup-only
+helpers are outside this tree check. The guard refuses when `FLUX_JOB_ID` is present,
 including an empty value. No reviewed serving wrapper exists on this branch;
 the only route for a root-Docker use inside Flux is the lead's decision.
 All remaining direct-Docker serving entries refuse, as do

@@ -1,4 +1,7 @@
 #!/usr/bin/env bash
+
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/flux_docker_guard.sh"
+refuse_flux_docker || exit 2
 # Hold the box's serve lock through a GEMV measurement, and record what else
 # was on the GPU when it ran.  Usage (from the repo root on the GPU box):
 #
