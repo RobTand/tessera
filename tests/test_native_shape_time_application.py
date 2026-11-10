@@ -823,3 +823,51 @@ def test_preflight_execution_semantics_refuse_in_dev_mode(tmp_path, panel, monke
     kwargs['expected_runtime'] = runtime
     with pytest.raises(ValueError, match='preflight software/contract differs'):
         app.tp._verify_runtime_preflight(result, **kwargs)
+
+
+def test_certified_worker_verifies_the_named_package_at_the_expected_commit(panel, monkeypatch):
+    monkeypatch.setenv('PRISMAQUANT_DEV_MODE', '0')
+    expected, _ = _observe_with_source(panel, monkeypatch, panel['runtime']['serving_source_sha256'])
+    origin_checks = []
+    def strict_origins(root, facts=None):
+        origin_checks.append((root, facts))
+        assert facts is None, 'certified mode must retain strict origin checking'
+        return {'package_root': root, 'modules': {}}
+    monkeypatch.setattr(worker, 'runtime_origins', strict_origins)
+    monkeypatch.setattr(worker, 'observed_commit', lambda package: expected['tessera_commit'])
+    calls = []
+    def verify(module, commit):
+        calls.append((module, commit))
+        assert module == 'tessera'
+        assert commit == expected['tessera_commit']
+        return {'module': module, 'distribution': 'controlled-install', 'expected_commit': commit,
+                'installed_commit': commit, 'origin': str(Path(expected['package_root']) / '__init__.py'),
+                'verified_files': 1}
+    monkeypatch.setattr(worker, 'verify_install', verify)
+    got, origins, raw = worker.observe_software_runtime(expected)
+    assert calls == [('tessera', expected['tessera_commit'])]
+    assert origin_checks == [(expected['package_root'], None)]
+    assert origins['installation']['expected_commit'] == expected['tessera_commit']
+
+
+def test_runtime_origins_bind_the_installation_verifier(installed_origins):
+    root, *_ = installed_origins
+    proof = worker.runtime_origins(str(root))
+    path = worker.ROOT / 'tools/_install_identity.py'
+    raw = path.read_bytes()
+    assert proof['install_verifier'] == {'path': str(path), 'bytes': len(raw),
+                                         'sha256': hashlib.sha256(raw).hexdigest()}
+
+
+def test_panel_refuses_changed_installation_verifier(panel, tmp_path):
+    origins_path = Path(panel['evidence']['runtime_origins']['path'])
+    origins = json.loads(origins_path.read_bytes())
+    assert app.tp.validate_panel(panel, expected_runtime=copy.deepcopy(panel['runtime']))
+    verifier = tmp_path / '_install_identity.py'
+    verifier.write_text('# retained verifier\n')
+    origins['install_verifier'] = app.tp.file_binding(verifier)
+    panel['evidence']['runtime_origins'] = app.publish_json(origins, origins_path)
+    assert app.tp.validate_panel(panel, expected_runtime=copy.deepcopy(panel['runtime']))
+    verifier.write_text('# changed verifier\n')
+    with pytest.raises(ValueError):
+        app.tp.validate_panel(panel, expected_runtime=copy.deepcopy(panel['runtime']))

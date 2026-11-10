@@ -45,8 +45,9 @@ def numeric_population():
                   "build_action_key":"d"*64, "build_receipt_sha256":"e"*64}
         expected["native_files"][arm] = native
         record = {"declared_path":native["path"], "source_sha256":sha,
-                  "executable_mappings":["CPU fixture, not ELF/GPU evidence"], "pin_id":"fixture",
-                  "ref_id":"fixture", "final_fence_complete":True, "load_fd_closed_after_fence":True}
+                  "executable_mappings":["CPU fixture, not ELF/GPU evidence"],
+                  "input_transport":"declared-path-held-fd", "serving_tier":{"transport":"declared-path-held-fd"},
+                  "final_fence_complete":True, "load_fd_closed_after_fence":True}
         for name in ("expected_sha256","before_load_sha256","after_load_sha256","mapped_sha256","after_profile_sha256"):
             record[name] = sha
         for suffix in ("","b"): records[arm+"-routed"+suffix] = deepcopy(record)
@@ -179,3 +180,39 @@ def test_numeric_provenance_cannot_be_relabelled_or_omitted(tmp_path,defect):
     elif defect=="ratio": summary["rows"][0]["fix_ratio"]=1.0
     result=run_checker(tmp_path,expected,summary)
     assert result.returncode!=0,result.stdout
+
+
+def test_native_acceptor_consumes_real_callback_record(tmp_path, monkeypatch):
+    from experiments.t8r_speed.ab_stageprev_accept import validate_native_record
+    from routed_native_support import owner_fixture
+    owner, reader, staged, rf, original, calls = owner_fixture(tmp_path, monkeypatch)
+    try:
+        rf.build_library(owner.MODULE, owner.MODULE, lambda *a: pytest.fail('JIT'))
+        # Mapping observations are controlled; real callback owns load hashes and fence state.
+        owner.record['executable_mappings'] = ['controlled executable mapping']
+        owner.record['mapped_sha256'] = owner._hash()
+        owner.finish(lambda: None)
+        native = {'path': str(staged), 'source_sha256': owner.source_sha256,
+                  'sha256': owner.entry['sha256']}
+        validate_native_record(owner.record, native)
+        for key in ('final_fence_complete', 'load_fd_closed_after_fence'):
+            damaged = deepcopy(owner.record)
+            damaged[key] = False
+            with pytest.raises(ValueError):
+                validate_native_record(damaged, native)
+        for field in ('input_transport', 'serving_tier'):
+            damaged = deepcopy(owner.record)
+            if field == 'serving_tier':
+                damaged[field]['transport'] = 'unqualified'
+            else:
+                damaged[field] = 'unqualified'
+            with pytest.raises(ValueError, match='declared-file boundary evidence'):
+                validate_native_record(damaged, native)
+    finally:
+        owner.finish(lambda: None)
+        reader.close()
+
+
+def test_acceptance_launch_no_longer_requires_deleted_staging():
+    expected = json.loads((ROOT / 'experiments/configs/stageprev_793_expected.json').read_text())
+    assert 'BENCH_STRICT_STAGED' not in expected['launch']

@@ -334,7 +334,7 @@ _TCQ_PLAN_CACHE = 4
 #: Plans are **per thread**, and that is a correctness requirement, not a
 #: tuning choice.  A plan owns the buffers its Viterbi writes, so two threads
 #: sharing one would overwrite each other's front, traceback and outputs --
-#: and PrismaBuild's workers encode units concurrently in one process.  The
+#: and encoder workers process units concurrently in one process.  The
 #: table memos above are shared because they are read-only; these are not.
 _TCQ_LOCAL = threading.local()
 #: Whether ``auto`` takes the fused trellis (``tcq_fused``) wherever it is

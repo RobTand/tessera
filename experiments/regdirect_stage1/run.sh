@@ -9,7 +9,7 @@ set -euo pipefail
 CHECKOUT=$(realpath "$1"); OUT=$(realpath -m "$2"); shift 2
 mkdir -p "$OUT/home" "$OUT/tmp"
 if [[ " $* " == *" --cpu-preflight "* ]]; then
-  PYTHONPATH="$CHECKOUT/src:${PYTHONPATH:-}" exec "${CPU_PY:-/home/rob/venvs/pb-cpu/bin/python}" \
+  PYTHONPATH="$CHECKOUT/src:${PYTHONPATH:-}" exec "${CPU_PY:?set CPU_PY to the scoped CPU interpreter}" \
     "$CHECKOUT/experiments/regdirect_stage1/bench_stage1.py" --out "$OUT" "$@"
 fi
 IMAGE=${ORACLE_IMAGE:?set ORACLE_IMAGE}

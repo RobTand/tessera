@@ -258,7 +258,19 @@ def test_prepare_inputs_declares_exact_ranges(tmp_path):
     # This producer uses a list-order timeline starting at zero. Parsing alone
     # does not validate its annotation phase coverage.
     assert manifest["schema"] == "tessera.declared_inputs.v1"
-    assert entries == manifest["entries"]
+    import hashlib
+    import struct
+    raw = (model / 'one.safetensors').read_bytes()
+    header_bytes = 8 + struct.unpack('<Q', raw[:8])[0]
+    spec_path = Path(result['source_spec'])
+    assert entries == [
+        {'path': str(model / 'one.safetensors'), 'offset': 0, 'bytes': header_bytes,
+         'sha256': hashlib.sha256(raw[:header_bytes]).hexdigest()},
+        {'path': str(model / 'one.safetensors'), 'offset': header_bytes, 'bytes': 32 * 256 * 4,
+         'sha256': hashlib.sha256(torch.arange(32 * 256, dtype=torch.float32).numpy().tobytes()).hexdigest()},
+        {'path': str(spec_path), 'offset': 0, 'bytes': spec_path.stat().st_size,
+         'sha256': hashlib.sha256(spec_path.read_bytes()).hexdigest()},
+    ]
     end_bytes = sum(entry["bytes"] for entry in entries)
     assert end_bytes == manifest["total_bytes"]
     assert manifest["annotations"]["phases"] == [

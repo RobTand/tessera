@@ -44,12 +44,18 @@ def test_differing_source_or_failed_publish_cannot_advance(tmp_path):
 
 def test_progress_line_follows_the_fsync_of_the_unit_it_reports(tmp_path,monkeypatch):
     """Order is the obligation: the durable record is on disk before the progress line is printed."""
-    module=driver();order=[];real=module.fsync_path
-    monkeypatch.setattr(module,'fsync_path',lambda path:(order.append('fsync'),real(path))[1])
+    import os
+    import stat
+    module=driver();order=[];real=module.os.fsync
+    def fsync(fd):
+        order.append('directory-fsync' if stat.S_ISDIR(os.fstat(fd).st_mode) else 'file-fsync')
+        return real(fd)
+    monkeypatch.setattr(module.os, 'fsync', fsync)
     output=tmp_path/'output';output.mkdir()
     progress=module.DurableExportProgress(tmp_path/'events',output,{},lambda n,p:order.append(('commit',n,p)))
     progress.completed('export_shards','a',{'bytes':1})
-    assert order[-1]==('commit',1,'export_shards') and 'fsync' in order[:-1]
+    assert order[-1]==('commit',1,'export_shards')
+    assert order.index('file-fsync') < order.index('directory-fsync') < len(order) - 1
     assert (tmp_path/'events'/'durable-events.jsonl').read_text().count('\n')==1
 
 

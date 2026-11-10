@@ -202,7 +202,7 @@ def main():
                         cases.append({"cut": list(cut) if cut else None, "error": repr(exc)[:800]})
             except Exception as exc:  # noqa: BLE001
                 cases.append({"error": "encode: " + repr(exc)[:800]})
-            peak = round(torch.cuda.max_memory_allocated() / 2**30, 2)   # sizes the PB memory demand
+            peak = round(torch.cuda.max_memory_allocated() / 2**30, 2)   # sizes the job memory demand
             for r in cases:
                 r.update(tensor=tag, q256=q, L=L, peak_gib=peak)
                 r.setdefault("ok", False)

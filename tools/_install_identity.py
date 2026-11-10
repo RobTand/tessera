@@ -8,7 +8,7 @@
 - every hashed RECORD entry exists and its bytes match the recorded hash;
 - the module Python actually imports is owned by that RECORD (a checkout or
   PYTHONPATH shadow, and an editable import, are refused);
-- the package directory holds no unrecorded file (``.pyc`` aside).
+- the package directory holds no unrecorded file except source-checked cache bytecode.
 
 It runs as ordinary repository code from the commit-bound checkout: nothing is
 published, re-read for a self-hash, or located through an environment variable.
@@ -25,6 +25,19 @@ import json
 from pathlib import Path
 
 _ALGORITHMS = {"sha256", "sha384", "sha512"}
+
+
+def _source_checked_cache(path: Path, recorded: dict) -> bool:
+    if path.suffix != ".pyc" or path.parent.name != "__pycache__":
+        return False
+    try:
+        source = Path(importlib.util.source_from_cache(str(path))).resolve()
+        header = path.read_bytes()[:16]
+    except (ValueError, OSError):
+        return False
+    return (source in recorded and len(header) == 16
+            and header[:4] == importlib.util.MAGIC_NUMBER
+            and int.from_bytes(header[4:8], "little") in (0, 3))
 
 
 def _digest(path: Path, algorithm: str) -> bytes:
@@ -92,7 +105,8 @@ def verify_record_bytes(module: str) -> dict:
         raise ValueError(f"{identity}; imported {module} is not owned by its RECORD")
     for root in spec.submodule_search_locations or []:
         for path in Path(root).rglob("*"):
-            if path.is_file() and path.suffix != ".pyc" and path.resolve() not in recorded:
+            if (path.is_file() and path.resolve() not in recorded
+                    and not _source_checked_cache(path, recorded)):
                 raise ValueError(f"{identity}; unrecorded package file: {path}")
     return {"module": module, "distribution": name, "installed_commit": observed,
             "origin": spec.origin, "verified_files": len(recorded)}

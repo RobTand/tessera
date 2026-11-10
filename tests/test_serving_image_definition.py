@@ -12,6 +12,15 @@ import pytest
 ROOT = Path(__file__).resolve().parents[1]
 
 
+@pytest.fixture(autouse=True)
+def restore_import_search_path():
+    before = sys.path[:]
+    try:
+        yield
+    finally:
+        sys.path[:] = before
+
+
 def _builder():
     spec = importlib.util.spec_from_file_location("image_builder", ROOT / "tools/build_serving_image.py")
     module = importlib.util.module_from_spec(spec)
@@ -185,3 +194,66 @@ def test_extracted_patch_refuses_a_missing_target(tmp_path):
     result = subprocess.run([sys.executable, "-c", source], capture_output=True, text=True)
     assert result.returncode != 0 and "expected exactly one patch target" in result.stderr
     assert target.read_text() == original
+
+
+def _term_build_child(directory, connection):
+    import signal
+    class WaitingDocker(_Docker):
+        def __call__(self, command, **kwargs):
+            result = super().__call__(command, **kwargs)
+            if command[:2] == ['docker', 'run']:
+                connection.send('ready')
+                signal.pause()
+            else:
+                connection.send(command)
+            return result
+    _builder().run_build(_manifest(), 't:1', str(Path(directory) / 'out'), 'source:x',
+                         runner=WaitingDocker(0), environ={'TMPDIR': directory})
+
+
+def test_real_term_removes_the_owned_container(tmp_path):
+    import multiprocessing
+    import signal
+    context = multiprocessing.get_context('spawn')
+    parent, child = context.Pipe()
+    process = context.Process(target=_term_build_child, args=(str(tmp_path), child))
+    process.start()
+    try:
+        assert parent.poll(20), 'builder never became ready'
+        assert parent.recv() == 'ready'
+        __import__('os').kill(process.pid, signal.SIGTERM)
+        process.join(20)
+        assert not process.is_alive()
+        assert parent.poll(2), 'TERM bypassed owned-container cleanup'
+        assert parent.recv() == ['docker', 'rm', '-f', 'a' * 12]
+        assert process.exitcode == 128 + signal.SIGTERM
+    finally:
+        if process.is_alive():
+            process.kill()
+        process.join(5)
+        parent.close()
+        child.close()
+
+
+@pytest.mark.parametrize('record,expected', [
+    ({'state': 'running'}, 1), ({'state': 'unknown'}, 1),
+    ({'state': 'terminal', 'returncode': 7}, 1),
+    ({'state': 'terminal', 'returncode': 0, 'evidence_errors': ['missing evidence']}, 1),
+    ({'state': 'terminal', 'returncode': 0, 'evidence_errors': []}, 0),
+])
+def test_collect_requires_terminal_success_with_complete_evidence(tmp_path, monkeypatch, record, expected):
+    builder = _builder()
+    monkeypatch.syspath_prepend(str(ROOT / 'tools'))
+    import _suite_flux
+    seen = []
+    monkeypatch.setattr(_suite_flux, 'collect', lambda path: seen.append(path) or record)
+    assert builder.main(['--collect', str(tmp_path)]) == expected
+    assert seen == [tmp_path]
+
+
+def test_repeated_job_construction_does_not_grow_import_search_path(tmp_path):
+    builder = _builder()
+    before = list(sys.path)
+    builder.build_job(_manifest(), 't:1', tmp_path)
+    builder.build_job(_manifest(), 't:2', tmp_path)
+    assert sys.path == before

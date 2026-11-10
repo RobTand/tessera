@@ -6,7 +6,6 @@
   "launch": {
     "AB_STEPS": "routed", "AB_MS": "1,2048",
     "AB_ROUTED": "experts.R1024.L10,experts.R1088.L11,experts.R832.L42",
-    "BENCH_STRICT_STAGED": "1",
     "AB_BENCH_ARGS": ["--stageprev-numerics", "--hash-only", "--no-graph",
       "--warmup", "0", "--iters", "0", "--power-s", "0",
       "--artifact", "/mnt/shared/tessera-measurements/pact-e4m3-accuracy-20260928/release-t8/exported"]

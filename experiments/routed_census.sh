@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Run experiments/routed_census.py (and optionally the PACT routed timing
 # harness) inside the pinned serving image (tessera#640).  Submitted through
-# PrismaBuild as the admitted action's command; same container discipline as
+# Flux as the job's command; same container discipline as
 # routed_pair_oracle.sh (checkout read-only at /work, measurement trees
 # read-only, every write under <out_dir>).
 #   routed_census.sh <checkout> <out_dir> [census.py args...]
@@ -12,7 +12,7 @@
 #   PACT_BENCH_ARGS  arguments for bench_linears.py (default: the routed groups)
 set -euo pipefail
 CHECKOUT=$(realpath "$1"); OUT=$(realpath -m "$2"); shift 2
-IMAGE_REF=${ORACLE_IMAGE:?set ORACLE_IMAGE to the immutable PB-declared measurement image}
+IMAGE_REF=${ORACLE_IMAGE:?set ORACLE_IMAGE to the immutable digest-pinned measurement image}
 source "$CHECKOUT/experiments/runtime_image.sh"
 runtime_image_require "$IMAGE_REF"
 IMAGE_ENV=()

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# One PB action: bench_rates.py parts in sequence on one GB10, each in its own
+# One Flux job: bench_rates.py parts in sequence on one GB10, each in its own
 # output directory through bench_t8r.sh (the serving image, the checkout's src).
 # BENCH_PY picks the script (default bench_rates.py; bench_geometry.py for the rung sweep).
 # Usage: bench_rates.sh <out_root> '<bench_rates.py args>' ['<args>' ...]

@@ -22,6 +22,8 @@ import struct
 from pathlib import Path
 
 SCHEMA = "tessera.declared_inputs.v1"
+FILE_TRANSPORT = "declared-path-held-fd"
+DIRECT_TRANSPORT = "declared-path-held-fds"
 
 
 def read_declared_inputs(path):
@@ -33,6 +35,10 @@ def read_declared_inputs(path):
     entries = record.get("entries")
     if not isinstance(entries, list) or not entries:
         raise ValueError("declared inputs require a nonempty entries list")
+    mount = record.get("mount_prefix")
+    if not isinstance(mount, str) or not Path(mount).is_absolute():
+        raise ValueError("declared inputs require an absolute mount_prefix")
+    mount = Path(mount).resolve()
     seen = set()
     for entry in entries:
         if (not isinstance(entry, dict) or not isinstance(entry.get("path"), str)
@@ -41,6 +47,8 @@ def read_declared_inputs(path):
                 or isinstance(entry.get("bytes"), bool) or entry["bytes"] <= 0):
             raise ValueError("declared input entry needs path, offset >= 0 and bytes > 0")
         digest = entry.get("sha256")
+        if not Path(entry['path']).is_absolute() or not Path(entry['path']).resolve().is_relative_to(mount):
+            raise ValueError("declared input path must be absolute and within mount_prefix")
         if not isinstance(digest, str) or len(digest) != 64 or any(c not in "0123456789abcdef" for c in digest):
             raise ValueError("single replay requires every input digest")
         identity = (entry["path"], entry["offset"])
@@ -63,7 +71,9 @@ def validate_whole_phase_readset(path, phase_name):
     ranges = []
     previous = 0
     for phase in record.get("annotations", {}).get("phases", []):
-        frontier = phase["cumulative_bytes"]
+        frontier = phase.get("cumulative_bytes") if isinstance(phase, dict) else None
+        if type(frontier) is not int or not previous <= frontier <= record['total_bytes']:
+            raise ValueError("whole-bank phase cumulative_bytes must be monotone integers within total_bytes")
         if frontier == previous and previous != record["total_bytes"]:
             raise ValueError("whole-bank staging phase has an empty phase before its bytes")
         if frontier > previous:
@@ -102,7 +112,7 @@ def verify_cached_frame(raw, role):
 
 
 class DeclaredInputs:
-    TRANSPORT = 'declared-path-held-fd'
+    TRANSPORT = FILE_TRANSPORT
 
     def __init__(self, manifest_path):
         self.manifest, self.manifest_sha256 = read_declared_inputs(manifest_path)
@@ -114,7 +124,7 @@ class DeclaredInputs:
         self.entries = {(e['path'], e['offset']): e for e in manifest['entries']}
         self.actual_digests = {identity: entry['sha256'] for identity, entry in self.entries.items()}
         self.direct_files = {}
-        self.direct_record = {'transport': 'declared-path-held-fds',
+        self.direct_record = {'transport': DIRECT_TRANSPORT,
             'manifest_sha256': self.manifest_sha256, 'before': {}, 'after': None}
         try:
             for path in sorted({path for path, _offset in self.entries}):
@@ -233,7 +243,7 @@ class DeclaredInputs:
             raise ValueError('undeclared complete declared file')
         self._direct_identity(str(path))
         fd = os.dup(self.direct_files[str(path)]['fd'])
-        serving = {'transport': 'declared-path-held-fd'}
+        serving = {'transport': FILE_TRANSPORT}
         try:
             info = os.fstat(fd)
             if not stat.S_ISREG(info.st_mode) or info.st_size != entry['bytes']:
@@ -287,7 +297,7 @@ class NativeCallback:
         self.record = {'code_artifact_contract':'experimental trusted binary owner; not immutable original tensor provider',
                        'declared_path':str(path),'expected_sha256':expected_sha256,
                        'serving_tier':self.serving,'source_sha256':source_sha256}
-        self.record['input_transport'] = 'declared-path-held-fd'
+        self.record['input_transport'] = FILE_TRANSPORT
         self.source_sha256 = source_sha256
         try:
             cache_info = getattr(rf._ext, "cache_info", None)

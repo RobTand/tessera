@@ -24,7 +24,7 @@ esac
 mkdir -p "$OUT/home" "$OUT/tmp"
 HERE=$(dirname "$(realpath "$0")")
 CHECKOUT=$(realpath "$HERE/../..")
-IMAGE=${MLA_IMAGE:?set MLA_IMAGE to the immutable PB-declared serving image}
+IMAGE=${MLA_IMAGE:?set MLA_IMAGE to the immutable digest-pinned serving image}
 source "$CHECKOUT/experiments/runtime_image.sh"
 runtime_image_require "$IMAGE" || exit 2
 IMAGE_ENV=()

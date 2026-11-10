@@ -8,6 +8,10 @@ second decoder, runtime or benchmark scheduler.
 from pathlib import Path
 import hashlib
 import json
+if __package__:
+    from .declared_inputs import DIRECT_TRANSPORT
+else:
+    from declared_inputs import DIRECT_TRANSPORT
 
 REPLAY_ARTIFACT = '/mnt/shared/tessera-runs/moe/glm53-a8-bf16menu-20260930/release/exported'
 GROUP = 'experts.R1024.L10'
@@ -242,7 +246,7 @@ def compare_reports(baseline, candidate):
     """Compare the exact retained raw words, not worker-declared status strings."""
     for report in (baseline, candidate):
         direct = report['meta'].get('direct_input_bindings', {})
-        if (direct.get('transport') != 'direct-vllm-held-original-fds'
+        if (direct.get('transport') != DIRECT_TRANSPORT
                 or not direct.get('before') or direct.get('before') != direct.get('after')
                 or direct.get('manifest_sha256') != report['meta']['paired_k32']['input_manifest_sha256']):
             raise ValueError('direct input ownership is not stable through the numeric arm')

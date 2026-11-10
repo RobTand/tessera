@@ -114,3 +114,10 @@ def test_observer_refuses_a_multi_class_owner(tmp_path):
     with pytest.raises(ValueError, match="uniform"):
         probe().observe(fn, (None, None, None), tmp_path/"words")
 
+
+
+def test_reviewed_launch_has_no_staged_transport_mode():
+    expected = json.loads((ROOT / 'experiments/configs/stageprev_793_expected.json').read_text())
+    assert 'BENCH_STRICT_STAGED' not in expected['launch']
+    wrapper = (ROOT / 'experiments/t8r_speed/bench_t8r.sh').read_text()
+    assert 'BENCH_STRICT_STAGED' not in wrapper

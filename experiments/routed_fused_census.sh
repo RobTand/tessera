@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Route census of a Tessera checkpoint inside the pinned serving image, with
 # THIS checkout's plugin discovered by vLLM (tessera#640).  Submitted through
-# PrismaBuild as the admitted action's command; same container discipline as
+# Flux as the job's command; same container discipline as
 # routed_fused_tests.sh (checkout read-only at /work, every write under
 # <out_dir>, the container runs as the submitting user).
 #
@@ -26,7 +26,7 @@
 # <out_dir> when, and only when, a header is missing.
 set -euo pipefail
 CHECKOUT=$(realpath "$1"); OUT=$(realpath -m "$2"); MODEL=$(realpath "$3"); shift 3
-IMAGE_REF=${ORACLE_IMAGE:?set ORACLE_IMAGE to the immutable PB-declared serving image}
+IMAGE_REF=${ORACLE_IMAGE:?set ORACLE_IMAGE to the immutable digest-pinned serving image}
 source "$CHECKOUT/experiments/runtime_image.sh"
 runtime_image_require "$IMAGE_REF"
 IMAGE_ENV=()

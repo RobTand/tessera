@@ -19,6 +19,8 @@ from tools import tessera_shape_time_worker as worker
 from tessera.serving import census_plan, contract, scheme
 from tessera.serving import timing_panel as tp
 
+ROOT = Path(__file__).resolve().parents[1]
+
 
 def _save(root, name, value, raw=False):
     path = Path(root) / name
@@ -239,6 +241,7 @@ def _routed_panel(tmp_path, monkeypatch):
     evidence = {
         "runtime": tp.file_binding(_save(tmp_path, "runtime.json", runtime)),
         "runtime_origins": tp.file_binding(_save(tmp_path, "origins.json", {
+            "install_verifier": tp.file_binding(ROOT / "tools/_install_identity.py"),
             "package_root": runtime["package_root"],
             "installation": {"module": "tessera", "distribution": "tessera-quant",
                              "expected_commit": runtime["tessera_commit"],
@@ -535,10 +538,10 @@ def test_a_checkout_shadow_ahead_of_the_install_is_refused(tmp_path, monkeypatch
         _verify(name)
 
 
-def test_an_unrecorded_package_file_is_refused_and_bytecode_is_not(tmp_path, monkeypatch):
+def test_an_unrecorded_package_file_is_refused_and_checked_bytecode_is_allowed(tmp_path, monkeypatch):
     name, _, package, _ = _install(tmp_path, monkeypatch)
-    (package / "__pycache__").mkdir()
-    (package / "__pycache__" / "x.pyc").write_bytes(b"\0")
+    import py_compile
+    py_compile.compile(str(package / "__init__.py"), doraise=True)
     assert _verify(name)["verified_files"] == 3
     (package / "extra.py").write_text("X = 1\n")
     with pytest.raises(ValueError, match="unrecorded package file"):
@@ -560,3 +563,47 @@ def test_the_worker_calls_the_repository_verifier_and_names_no_published_pb_one(
     assert "prismabuild" not in text.lower() and "record_verifier" not in text
     import inspect
     assert list(inspect.signature(worker.observe_software_runtime).parameters) == ["expected"]
+
+
+@pytest.mark.parametrize('kind', ['sourceless', 'unchecked', 'malformed'])
+def test_unrecorded_bytecode_cannot_bypass_record(tmp_path, monkeypatch, kind):
+    import py_compile
+    name, _, package, _ = _install(tmp_path, monkeypatch)
+    assert _verify(name)['verified_files'] == 3
+    if kind == 'sourceless':
+        py_compile.compile(str(package / '__init__.py'), cfile=str(package / 'extra.pyc'), doraise=True)
+    else:
+        mode = py_compile.PycInvalidationMode.UNCHECKED_HASH
+        cache = Path(py_compile.compile(str(package / '__init__.py'), invalidation_mode=mode, doraise=True))
+        if kind == 'malformed':
+            cache.write_bytes(b'bad')
+    with pytest.raises(ValueError, match='unrecorded package file'):
+        _verify(name)
+
+
+def test_checked_hash_cache_is_allowed(tmp_path, monkeypatch):
+    import py_compile
+    name, _, package, _ = _install(tmp_path, monkeypatch)
+    py_compile.compile(str(package / '__init__.py'),
+                       invalidation_mode=py_compile.PycInvalidationMode.CHECKED_HASH, doraise=True)
+    assert _verify(name)['verified_files'] == 3
+
+
+def test_real_install_verifier_result_satisfies_panel_installation_schema(panel, tmp_path, monkeypatch):
+    monkeypatch.setenv('PRISMAQUANT_DEV_MODE', '1')
+    name, _, _, _ = _install(tmp_path, monkeypatch)
+    installation = _verify(name)
+    assert tp.validate_panel(panel, expected_runtime=copy.deepcopy(panel['runtime']))
+    path = Path(panel['evidence']['runtime_origins']['path'])
+    origins = tp.json_bytes(tp.read_bound(panel['evidence']['runtime_origins']))
+    # Dev mode stamps this fixture's different module/commit identity; the real
+    # panel still enforces the exact installation result schema in every mode.
+    origins['installation'] = installation
+    path.write_bytes(tp.canonical(origins))
+    panel['evidence']['runtime_origins'] = tp.file_binding(path)
+    assert tp.validate_panel(panel, expected_runtime=copy.deepcopy(panel['runtime']))
+    origins['installation']['unexpected'] = True
+    path.write_bytes(tp.canonical(origins))
+    panel['evidence']['runtime_origins'] = tp.file_binding(path)
+    with pytest.raises(ValueError, match='installed RECORD proof'):
+        tp.validate_panel(panel, expected_runtime=copy.deepcopy(panel['runtime']))

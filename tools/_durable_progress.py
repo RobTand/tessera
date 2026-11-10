@@ -1,4 +1,8 @@
-"""One home for the durable-progress line: print it only after the unit is on disk."""
+"""Print durable-progress telemetry only after the unit is on disk.
+
+Stock Flux has no consumer for these lines. They do not enforce phase deadlines
+or detect stalls; the job walltime is the only scheduler deadline.
+"""
 from __future__ import annotations
 
 import json

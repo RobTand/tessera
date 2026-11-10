@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # tessera#702: a TP1 route census of a GLM stub on the vLLM nightly stack, run
-# directly on sparky (vLLM work is exempt from PrismaBuild) through
+# on sparky through a separately approved Flux GPU job using
 # experiments/routed_fused_census.sh, under the same gates as run-arm-nightly.sh.
 #
 #   census-nightly.sh NAME CHECKOUT MODEL [census args...]

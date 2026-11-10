@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Profile only native grouped GEMMs, after their warmup, using ncu's CUDA API gate.
 
-Run via routed_pair_action.sh under PrismaBuild with ORACLE_NCU=1. The numerical
+Run via routed_pair_action.sh inside a Flux job with ORACLE_NCU=1. The numerical
 oracle remains routed_pair_oracle.py; this instrument makes no accuracy claim.
 """
 import argparse

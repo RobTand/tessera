@@ -1,6 +1,6 @@
 """Bind a selected original-wire reference checkpoint to an engine plan.
 
-This verifies bytes and the export statement. It is not exporter/PB provenance
+This verifies bytes and the export statement. It is not exporter provenance
 admission, a served quality result, or a planner-selected assignment.
 """
 import hashlib
@@ -64,4 +64,4 @@ def verify_reference_checkpoint(proof_path, source, roster, census_sha256):
     return {"checkpoint": str(checkpoint), "checkpoint_files": proof["checkpoint_files"],
             "checkpoint_sha256": canonical_hash(proof["checkpoint_files"]), "proof_path": str(path),
             "proof_sha256": digest(path), "assignment": assignment,
-            "scope": "hash-verified selected export statement; owning PB/export evidence still required for admission"}
+            "scope": "hash-verified selected export statement; owning producer/export evidence still required for admission"}

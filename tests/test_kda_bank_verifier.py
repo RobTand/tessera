@@ -2,12 +2,39 @@
 import hashlib
 import importlib.util
 import json
+import subprocess
 import sys
 from pathlib import Path
 
 import pytest
 
 from test_kda_probe_gate import _screen, probe
+
+
+def test_bank_wrapper_exposes_the_mounted_checkout_package(tmp_path):
+    root = Path(__file__).resolve().parents[1]
+    checkout = tmp_path / 'checkout'
+    (checkout / 'experiments').mkdir(parents=True)
+    # Image resolution is outside this command-construction control.
+    (checkout / 'experiments/runtime_image.sh').write_text('runtime_image_require() { :; }\n')
+    capture = tmp_path / 'command'
+    boundary = tmp_path / 'capture.sh'
+    boundary.write_text('exec() { printf "%s\\0" "$@" > "$COMMAND_CAPTURE"; }\n')
+    paths = [tmp_path / name for name in ('old.so', 'new.so', 'bank.json', 'control.json')]
+    for path in paths:
+        path.touch()
+    command = ['bash', str(root / 'experiments/kda/verify_conv_bank.sh'), str(checkout),
+               str(tmp_path / 'out'), *map(str, paths), 'bank-sha', 'control-sha', 'module-sha']
+    done = subprocess.run(command, env={'PATH': '/usr/bin:/bin', 'HOME': str(tmp_path),
+        'BASH_ENV': str(boundary), 'COMMAND_CAPTURE': str(capture), 'ORACLE_IMAGE': 'fixture-image'},
+        capture_output=True, text=True, timeout=30)
+    assert done.returncode == 0, done.stderr
+    argv = capture.read_bytes().decode().rstrip('\0').split('\0')
+    assert argv[:2] == ['docker', 'run']
+    assert argv[argv.index('-v') + 1] == str(checkout) + ':/work:ro'
+    assert 'PYTHONPATH=/work/src' in [argv[i + 1] for i, value in enumerate(argv[:-1]) if value == '-e']
+    container_script = argv[argv.index('-c') + 1]
+    assert 'python3 /work/experiments/kda/verify_conv_bank.py' in container_script
 
 
 @pytest.mark.parametrize("fault", [None, "old", "new", "both", "subset", "extra"])
@@ -49,3 +76,22 @@ def test_module_binding_and_exact_mode_roster(probe, monkeypatch, tmp_path, faul
                                       hashlib.sha256(bank.read_bytes()).hexdigest(),
                                       hashlib.sha256(control.read_bytes()).hexdigest(), old_sha])
     assert (verifier.main() == 0) is (fault is None)
+
+
+@pytest.mark.parametrize('schema', ['tessera.job_meta.v2', 'tessera.geometry_meta.v2', None, 'unknown'])
+def test_bank_reader_uses_the_shared_schema_boundary(probe, monkeypatch, schema):
+    from tessera.job_metadata import job_identity
+    root = Path(__file__).resolve().parents[1]
+    monkeypatch.syspath_prepend(str(root / 'experiments/kda'))
+    spec = importlib.util.spec_from_file_location('bank_schema_reader', root / 'experiments/kda/verify_conv_bank.py')
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    assert module.job_identity is job_identity
+    meta = {'flux_job_id': 'job', 'pb_action': 'legacy'}
+    if schema is not None:
+        meta['meta_schema'] = schema
+    if schema == 'unknown':
+        with pytest.raises(ValueError, match='unknown job meta schema'):
+            module.job_identity(meta)
+    else:
+        assert module.job_identity(meta) == ('legacy' if schema is None else 'job')

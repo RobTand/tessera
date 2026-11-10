@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Run experiments/t8r_speed/bench_t8r.py inside the serving image on one GB10.
-# Batch benchmarks use PrismaBuild, including stock vLLM custom ops. The
+# Batch benchmarks use Flux, including stock vLLM custom ops. The
 # closed comparison retains its qualified held-original-FD transport. Usage:
 #   bench_t8r.sh <checkout> <out_dir> <bench_t8r.py args...>
 # BENCH_NCU=1 wraps the process in Nsight Compute (routed_fused_kernel and the
@@ -23,10 +23,10 @@ if [[ ( "$BENCH_PY" == bench_geometry.py || "$BENCH_PY" == bench_class_dispatch.
     rm -- "$probe"
   done
   PREFLIGHT_SRC=${BENCH_SRC:-$CHECKOUT/src}
-  PYTHONPATH="$PREFLIGHT_SRC:${PYTHONPATH:-}" exec "${BENCH_CPU_PYTHON:-/home/rob/venvs/pb-cpu/bin/python}" \
+  PYTHONPATH="$PREFLIGHT_SRC:${PYTHONPATH:-}" exec "${BENCH_CPU_PYTHON:?set BENCH_CPU_PYTHON to the scoped CPU interpreter}" \
     "$CHECKOUT/experiments/t8r_speed/$BENCH_PY" --out "$OUT" "$@"
 fi
-IMAGE_REF=${ORACLE_IMAGE:?set ORACLE_IMAGE to the immutable PB-declared measurement image}
+IMAGE_REF=${ORACLE_IMAGE:?set ORACLE_IMAGE to the immutable digest-pinned measurement image}
 source "$CHECKOUT/experiments/runtime_image.sh"
 runtime_image_require "$IMAGE_REF"
 IMAGE_ENV=()
@@ -81,10 +81,9 @@ RUN_PREFIX=()
 # Reuse the qualified direct benchmark containment contract. Numeric phase
 # and separately reviewed finite timing/repeatability resource windows.
 if [[ "${BENCH_DIRECT_VLLM:-0}" == 1 ]]; then
-  [[ -z "${BENCH_STRICT_STAGED:-}" ]] || { echo "held-original-FD mode cannot also use staged input transport" >&2; exit 2; }
-  if [[ " $* " == *" --paired-k32-numerics "* && " $* " == *" --direct-vllm-inputs "* ]]; then
+  if [[ " $* " == *" --paired-k32-numerics "* ]]; then
     # Closed paired batch uses held FDs, but always stays inside a Flux job.
-    [[ -n "${FLUX_JOB_ID:-}" ]] || { echo "paired custom-op batch requires an admitted Flux job" >&2; exit 2; }
+    [[ -n "${FLUX_JOB_ID:-}" ]] || { echo "paired batch requires FLUX_JOB_ID environment value; context only, not GPU approval or an admission token" >&2; exit 2; }
     [[ " $* " != *" --comparison-protocol "* ]] || { echo "paired numeric mode excludes a PM comparison protocol" >&2; exit 2; }
     DIRECT_TIMEOUT=240
   else
@@ -131,9 +130,6 @@ if [[ "${BENCH_NCU:-0}" == 1 ]]; then
   [[ -x "$NCU_ROOT/ncu" ]] || { echo "missing profiler: $NCU_ROOT/ncu" >&2; exit 2; }
   EXTRA_MOUNTS+=(--mount "type=bind,src=$NCU_ROOT,dst=$NCU_ROOT,readonly")
   NCU_EXACT=()
-  if [[ -n "${BENCH_STRICT_STAGED:-}" ]]; then
-    NCU_EXACT=(--kernel-name-base demangled --cache-control none --launch-count 1)
-  fi
   COMMAND=("$NCU_ROOT/ncu" --profile-from-start off --target-processes all "${NCU_EXACT[@]}"
     --kernel-name "regex:${BENCH_NCU_KERNELS:-routed_fused_kernel|token_sum_kernel|window}"
     --section LaunchStats --section Occupancy --section SpeedOfLight

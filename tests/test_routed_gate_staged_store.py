@@ -80,7 +80,6 @@ def test_main_releases_pin_if_metadata_admission_fails(tmp_path, monkeypatch):
     args = options()
     args.out = str(tmp_path/'out')
     args.outputs_only = False
-    args.direct_vllm_inputs = False
     closed = []
     reader = SimpleNamespace(close=lambda: closed.append(True))
     module = ModuleType('declared_inputs')

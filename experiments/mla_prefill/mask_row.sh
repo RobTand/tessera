@@ -6,7 +6,7 @@ SCRIPT=${MLA_SCRIPT:-mask_gate.py}
 OUT=$(realpath -m "${1:?output_dir}");shift
 HERE=$(dirname "$(realpath "$0")");CHECKOUT=$(realpath "$HERE/../..")
 source "$CHECKOUT/experiments/runtime_image.sh"
-runtime_image_require "${MLA_IMAGE:?immutable PB-declared image required}"
+runtime_image_require "${MLA_IMAGE:?immutable digest-pinned image required}"
 mkdir -p "$OUT/home" "$OUT/tmp"
 CPUS=$(python3 -c 'import os;print(",".join(map(str,sorted(os.sched_getaffinity(0)))))')
 IMAGE_ENV=();while IFS= read -r line;do [[ -z "$line" ]]||IMAGE_ENV+=(-e "$line");done <<< "$RUNTIME_IMAGE_CONTAINER_ENV"

@@ -55,15 +55,14 @@ SELECTION = "selection.json"
 RECEIPT = "receipt.json"
 #: What each Flux client reported when it exited, written then, so a resume
 #: after the submitter dies reads the client's own result and not only the
-#: pool's.  The pool's record of an action can be clean while Flux client returned 1.
+#: job's. A terminal Flux record and the submitting client's exit are separate evidence.
 CLIENT = "client.{name}.json"
 _CLIENT_FIELDS = ("returncode", "elapsed_s", "stderr_tail", "flux")
 SELECTOR = Path(__file__).resolve().parent / "impacted_tests.py"
 DEFAULT_RECEIPT_ROOT = merge_suite.SHARED_ROOT / "tessera-selected-populations"
-#: D21: one agent keeps at most eight Flux clients at once, because each
-#: client snapshots and hashes its checkout on the control seat.  The shard
-#: count is a separate number: shards past this many queue behind the clients.
-MAX_CLIENTS = 8
+#: Tessera's program-wide ceiling, /mnt/shared/flux-migration/CAPS.md.
+#: Callers must reserve their share before launch; shards queue behind clients.
+MAX_CLIENTS = 2
 #: pytest's slowest-test report, so a slow shard is visible in its own stdout.
 PYTEST_ARGS = ["--durations=5"]
 
@@ -183,6 +182,9 @@ def read_client_result(receipt_dir: Path, name: str) -> dict | None:
 def submit_all(selection: dict, args, receipt_dir: Path) -> dict[str, dict]:
     """Submit every shard, at most ``MAX_CLIENTS`` at once; each answer is merge_suite's record."""
 
+    max_jobs = getattr(args, "max_jobs", MAX_CLIENTS)
+    if not 1 <= max_jobs <= MAX_CLIENTS:
+        raise ValueError(f"max-jobs must be between 1 and {MAX_CLIENTS} (CAPS.md)")
     submission = SimpleNamespace(
         cpus=args.cpus, mem_gb=args.mem_gb, pytest_arg=[*PYTEST_ARGS, *args.pytest_arg],
         timeout_s=args.timeout_s, wait_s=args.wait_s, checkout=args.checkout,
@@ -204,7 +206,7 @@ def submit_all(selection: dict, args, receipt_dir: Path) -> dict[str, dict]:
             write_client_result(receipt_dir, name, sent)
         return sent
 
-    with ThreadPoolExecutor(max_workers=min(MAX_CLIENTS, len(shards))) as pool:
+    with ThreadPoolExecutor(max_workers=min(max_jobs, len(shards))) as pool:
         futures = {name: pool.submit(client, name, files) for name, files in shards.items()}
         return {name: future.result() for name, future in futures.items()}
 
@@ -372,6 +374,7 @@ def main(argv: list[str] | None = None) -> int:
                     help="the tree to test; it must be clean and under /mnt/shared")
     ap.add_argument("--base", default="origin/master", help="the left endpoint of base...HEAD")
     ap.add_argument("--shards", type=int, default=12)
+    ap.add_argument("--max-jobs", type=int, default=MAX_CLIENTS, help="reserved concurrent Flux job slots")
     ap.add_argument("--target", action="append", default=[],
                     help="run an explicit subset of selector files; retain the selector verdict")
     ap.add_argument("--python", default="",
@@ -386,6 +389,8 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--resume", default="", help="a receipt directory; submit nothing")
     ap.add_argument("--dry-run", action="store_true")
     args = ap.parse_args(argv)
+    if not 1 <= args.max_jobs <= MAX_CLIENTS:
+        ap.error(f"max-jobs must be between 1 and {MAX_CLIENTS} (CAPS.md)")
     if args.shards < 1 or args.cpus < 1 or args.mem_gb < 1:
         ap.error("shards, cpus and memory must be positive")
     if not args.resume and not args.python:

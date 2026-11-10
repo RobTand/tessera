@@ -14,13 +14,12 @@
 #   ORACLE_IMAGE      the immutable image reference (required)
 #   TEST_RUNNER_SP    site-packages holding the pure-Python runner (required)
 #   TEST_RO_MOUNTS    host directories mounted read-only at the same path
-#   PB_CLIENT_ROOT    optional frozen published SDK root for owner controls
 #   TEST_CPU_ONLY    1: admitted CPU controls, no GPU request inside the container
 #   TEST_LOCAL_TMP    1: TMPDIR and pytest's basetemp on a container tmpfs
 #   NATIVE_CONTAINER_SRC / NATIVE_CONTAINER_EXT: match retained build paths
 set -euo pipefail
 CHECKOUT=$(realpath "$1"); OUT=$(realpath -m "$2"); shift 2
-IMAGE_REF=${ORACLE_IMAGE:?set ORACLE_IMAGE to the immutable PB-declared measurement image}
+IMAGE_REF=${ORACLE_IMAGE:?set ORACLE_IMAGE to the immutable digest-pinned measurement image}
 SP=${TEST_RUNNER_SP:?set TEST_RUNNER_SP to a python3.12 site-packages holding the test runner}
 source "$CHECKOUT/experiments/runtime_image.sh"
 runtime_image_require "$IMAGE_REF"

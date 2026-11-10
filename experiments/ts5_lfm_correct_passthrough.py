@@ -1,4 +1,4 @@
-"""PB-only, one-shot metadata correction of the sealed LFM campaign artifact.
+"""Flux-job-only, one-shot metadata correction of the sealed LFM campaign artifact.
 
 Preserves the original artifact and seal. The new directory hard-links all
 unchanged files and writes its own config. No weight tensor is rewritten.

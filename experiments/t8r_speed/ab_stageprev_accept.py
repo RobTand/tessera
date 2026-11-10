@@ -91,10 +91,16 @@ def validate_native_record(record, native):
     for name in ("expected_sha256", "before_load_sha256", "after_load_sha256", "mapped_sha256", "after_profile_sha256"):
         if record.get(name) != native["sha256"]:
             raise ValueError("observed native digest differs or is incomplete")
-    if (not record.get("executable_mappings") or not record.get("pin_id") or not record.get("ref_id")
+    if __package__:
+        from .declared_inputs import FILE_TRANSPORT
+    else:
+        from declared_inputs import FILE_TRANSPORT
+    if (not record.get("executable_mappings")
+            or record.get("input_transport") != FILE_TRANSPORT
+            or record.get("serving_tier", {}).get("transport") != FILE_TRANSPORT
             or record.get("final_fence_complete") is not True
             or record.get("load_fd_closed_after_fence") is not True):
-        raise ValueError("native mapping/final-fence/lease boundary evidence is incomplete")
+        raise ValueError("native mapping/final-fence/declared-file boundary evidence is incomplete")
 
 
 def observed_rates(tables):

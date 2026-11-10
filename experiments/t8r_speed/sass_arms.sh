@@ -9,7 +9,7 @@
 # stack and local-memory usage.  Exit 0 whatever the comparison says.
 set -uo pipefail
 OUT=$(realpath "$1"); REF=$2; shift 2
-IMG=${ORACLE_IMAGE:?set ORACLE_IMAGE to the immutable PB-declared measurement image}
+IMG=${ORACLE_IMAGE:?set ORACLE_IMAGE to the immutable digest-pinned measurement image}
 # Issue #100: every wrapper that starts a container gates its image first,
 # before the first `docker run` (experiments/runtime_image.sh).
 HERE=$(cd "$(dirname "$0")" && pwd)

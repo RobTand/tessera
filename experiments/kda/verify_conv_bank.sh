@@ -18,7 +18,7 @@ exec docker run --rm --network none --cpuset-cpus "$CPUS" --user "$(id -u):$(id 
   -v "$(dirname "$NEW")":"$(dirname "$NEW")":ro \
   -v "$(dirname "$BANK")":"$(dirname "$BANK")":ro \
   -v "$(dirname "$CONTROL")":"$(dirname "$CONTROL")":ro \
-  -e CUDA_VISIBLE_DEVICES= -e PYTHONDONTWRITEBYTECODE=1 \
+  -e CUDA_VISIBLE_DEVICES= -e PYTHONDONTWRITEBYTECODE=1 -e PYTHONPATH=/work/src \
   -e OMP_NUM_THREADS=1 -e MKL_NUM_THREADS=1 -e OPENBLAS_NUM_THREADS=1 \
   --entrypoint bash "$IMAGE_REF" -c '
     set -euo pipefail

@@ -1,9 +1,8 @@
 """Run one admitted payload with the D30 physical-memory abort floor.
 
 The payload has its own process group. Launcher exit does not end that group.
-PrismaBuild owns container cleanup and resource admission.
-Process-group proof does not qualify Docker termination; PrismaBuild issue 1599 owns its signal relay.
-This guard never submits, polls or resubmits PB actions.
+The paired launcher owns container cleanup. This guard stops only its payload
+process group; it does not establish Docker cleanup or submit scheduler jobs.
 """
 from __future__ import annotations
 
@@ -90,7 +89,7 @@ def main():
                   'minimum_available_bytes': minimum, 'memory_aborted': aborted,
                   'payload_returncode': child.returncode, 'command': command,
                   "process_group_signals": stop,
-                  "cleanup_owner": "PrismaBuild owns admitted containers and the resource scope"}
+                  "cleanup_owner": "paired action owns container cleanup; Flux job " + os.environ.get('FLUX_JOB_ID', '<unset>') + " (environment value, not an admission token)"}
         path.write_text(json.dumps(result, indent=2) + '\n')
         print('D30_MEMORY_RESULT ' + json.dumps(result), flush=True)
     return 1 if aborted else (128 - child.returncode if child.returncode < 0 else child.returncode)

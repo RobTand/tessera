@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# One PB action: the dense-module A/B (tessera#750 WP2) on one GB10.  Each arm
+# One Flux job: the dense-module A/B (tessera#750 WP2) on one GB10.  Each arm
 # is an immutable source snapshot under <out_root>/src-<arm>/src; the checkout
 # supplies only the harness.  The arms run A B B A, each a full
 # bench_dense_module.py run (itself forward then reverse over its cells), so

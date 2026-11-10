@@ -520,8 +520,6 @@ def require_single_replay_options(args, *, stubbed=False):
         raise ValueError("hash-only requires the closed stageprev numeric mode")
     if getattr(args,'paired_k32_timing',False) and not getattr(args,'paired_k32_numerics',False):
         raise ValueError('paired timing requires the closed qualified mode')
-    if getattr(args,'direct_vllm_inputs',False) and not getattr(args,'paired_k32_numerics',False):
-        raise ValueError('direct-vLLM input transport requires the closed paired numeric mode')
     if getattr(args, 'paired_k32_numerics', False):
         from paired_k32_qualification import require_options
         require_options(args, stubbed=stubbed)
@@ -809,8 +807,6 @@ def main():
     ap.add_argument('--paired-k32-numerics', action='store_true',
                     help='closed-world pinned A8SE L10 TP2rank0 M1,512,2048 raw-bit qualification')
     ap.add_argument('--paired-k32-source-sha256', default=None)
-    ap.add_argument('--direct-vllm-inputs', action='store_true',
-                    help='same sealed ranges through held original FDs; vLLM execution exemption')
     ap.add_argument('--paired-k32-timing',action='store_true',
                     help='reuse accepted numeric receipt; fixed10 warmup/30 events plus separate profile/power')
     args = ap.parse_args()
@@ -876,7 +872,7 @@ def main():
             return run_piece_major_comparison(args, comparison, comparison_sha, inputs, store, native_owner)
         power = PowerSampler()
         import tessera
-        meta = {"device": torch.cuda.get_device_name(), "torch": torch.__version__, "tp": [TP_RANK, TP_SIZE],
+        meta = {"meta_schema": "tessera.job_meta.v2", "device": torch.cuda.get_device_name(), "torch": torch.__version__, "tp": [TP_RANK, TP_SIZE],
                 "top_k": TOP_K, "experts": EXPERTS, "ms": ms, "warmup": args.warmup, "iters": args.iters,
                 "power_source": power.source, "tessera_file": tessera.__file__, "artifact": args.artifact,
                 "tessera_head": os.environ.get("TESSERA_HEAD"), "tessera_state": os.environ.get("TESSERA_STATE"),

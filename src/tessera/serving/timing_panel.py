@@ -430,8 +430,16 @@ class _RuntimeContractValidation:
     def phase(self):return json_bytes(self.phase_bytes)
 
 
+def _validate_install_verifier(bound):
+    _object(bound, {'path', 'bytes', 'sha256'}, 'install verifier')
+    if Path(bound['path']).name != '_install_identity.py':
+        raise ValueError('install verifier path differs')
+    read_bound(bound)
+
+
 def _preflight_origins(origins, expected):
-    _object(origins, {"package_root","modules","installation"}, "preflight origins")
+    _object(origins, {"package_root","modules","installation","install_verifier"}, "preflight origins")
+    _validate_install_verifier(origins['install_verifier'])
     if origins["package_root"]!=expected["package_root"]:raise ValueError("preflight runtime root differs")
     _object(origins["modules"], RUNTIME_MODULES, "preflight modules")
     for name,bound in origins["modules"].items():
@@ -567,7 +575,8 @@ def _validate_panel(panel, *, expected_runtime, runtime_validation=None):
         raise ValueError("raw contract differs from runtime")
     if json_bytes(raw["runtime"]) != runtime:
         raise ValueError("runtime identity evidence differs")
-    origins = _object(json_bytes(raw["runtime_origins"]), {"package_root", "modules", "installation"}, "runtime origins")
+    origins = _object(json_bytes(raw["runtime_origins"]), {"package_root", "modules", "installation", "install_verifier"}, "runtime origins")
+    _validate_install_verifier(origins['install_verifier'])
     if origins["package_root"] != runtime["package_root"]:
         raise ValueError("runtime origin root differs")
     installed = _object(origins["installation"], {"module", "distribution", "expected_commit", "installed_commit", "origin", "verified_files"}, "installed RECORD proof")

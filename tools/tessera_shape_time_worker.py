@@ -139,7 +139,8 @@ def runtime_origins(expected_root, facts=None):
    if path is None or not Path(path).resolve().is_relative_to(root):
     if facts is None:raise ValueError("foreign loaded runtime owner: "+name)
     facts.append("foreign loaded runtime owner: "+name)
- return {"package_root":str(root),"modules":files}
+ return {"package_root":str(root),"modules":files,
+         "install_verifier":file_binding(ROOT/"tools/_install_identity.py")}
 
 
 def observe_software_runtime(expected):
@@ -181,7 +182,7 @@ def observe_software_runtime(expected):
  # certified mode, before anything queries a device.
  seal("runtime source/contract/version",declared,observed,
       ValueError("runtime source/contract/version differs before device setup"))
- for fact in provenance:
+ for fact in provenance or ():
   seal("runtime provenance",expected["tessera_commit"],fact,
        ValueError("runtime provenance differs before device setup"))
  if not dev:

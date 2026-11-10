@@ -1,10 +1,10 @@
 """Finite native T-4 serving checks and a matched-budget weight-space screen.
 
 GPU entry: --mode correctness|timing [--q256 896] [--ms 1 16 2048 4096].
-Before that invocation, run THE SAME arguments plus --dry-run on PB x86.
+Before that invocation, run THE SAME arguments plus --dry-run on a CPU Flux job.
 CPU independent fixture: --mode research-fixture. It is not serving evidence.
 Real weight screen: --mode quality-screen --source-spec SPEC --data-manifest MANIFEST.
-Prepare the bounded model read set on PB x86: --mode prepare-inputs --out DIRECTORY.
+Prepare the bounded model read set on a CPU Flux job: --mode prepare-inputs --out DIRECTORY.
 
 Production builders create/load/finalize/apply the actual wire. Their retained
 owners supply diagnostic mode 0/1/2 calls; they are never constructed in place
@@ -1061,7 +1061,7 @@ def prepare_inputs(args):
         start, end = info["data_offsets"]
         if len(info["shape"]) != 2:
             raise ValueError("quality read set requires real two-dimensional weight units")
-        # Reading/hashing only these exact tensor ranges belongs to PB CPU,
+        # Reading/hashing only these exact tensor ranges belongs to Flux CPU,
         # not a control-seat analysis or a whole model materialization.
         with path.open("rb") as fh:
             fh.seek(offset + start)
@@ -1183,7 +1183,7 @@ def mode_quality(args):
     if not args.source_spec:
         raise ValueError("quality screen needs the bounded real GLM source specification")
     if args.quality_device == "cuda" and not args.data_manifest:
-        raise ValueError("GPU quality input ranges must be declared in the PB data manifest")
+        raise ValueError("GPU quality input ranges must be declared in the declared-input record")
     specs = json.loads(Path(args.source_spec).read_text())["units"]
     if not specs or not any(s["kind"] == "dense" for s in specs) or not all(
         any(s["kind"] == ROLE_NAMES[p] for s in specs) for p in ROLE_NAMES):

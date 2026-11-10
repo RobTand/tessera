@@ -4,6 +4,7 @@ import copy
 import hashlib
 import importlib.util
 import json
+import sys
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -11,6 +12,7 @@ import pytest
 
 ROOT=Path(__file__).resolve().parents[1]
 PATH=ROOT/'experiments/t8r_speed/paired_k32_qualification.py'
+sys.path.insert(0, str(PATH.parent))
 spec=importlib.util.spec_from_file_location('paired_k32_qualification',PATH)
 q=importlib.util.module_from_spec(spec)
 spec.loader.exec_module(q)
@@ -53,6 +55,20 @@ def test_stubbed_vllm_refuses():
 
 
 def report(tmp_path,build):
+    from experiments.t8r_speed.declared_inputs import DeclaredInputs
+    from declared_inputs_support import manifest_value, write_manifest
+    # Both arms hold the same real input inode and declaration.
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    owned = tmp_path.parent / 'owned-input'
+    if not owned.exists():
+        owned.write_bytes(b'owned input')
+    declaration = tmp_path.parent / 'declared.json'
+    entry = {'path': str(owned), 'offset': 0, 'bytes': owned.stat().st_size,
+             'sha256': hashlib.sha256(owned.read_bytes()).hexdigest()}
+    write_manifest(declaration, manifest_value([entry], 'whole'))
+    reader = DeclaredInputs(declaration)
+    reader.read(owned)
+    reader.close()
     cells={}
     for key in ('1','512','2048'):
         outputs={}
@@ -72,9 +88,8 @@ def report(tmp_path,build):
         control=copy.deepcopy(cells['512']);control['diagnostic_grid']=1
         control['geometry']={mode:{'paired':bool(build and (mode=='0' or K=='192')),'bm':128} for mode in ('0','2')}
         synthetic[K]=control
-    return {'meta':{'paired_k32':{'input_manifest_sha256':'c'*64},
-        'direct_input_bindings':{'transport':'direct-vllm-held-original-fds','manifest_sha256':'c'*64,
-            'before':{'owned':'fingerprint'},'after':{'owned':'fingerprint'}},
+    return {'meta':{'paired_k32':{'input_manifest_sha256':reader.manifest_sha256},
+        'direct_input_bindings':reader.direct_record,
         'native_code_artifact':{k:'d'*64 for k in ['before_load_sha256','after_load_sha256','after_profile_sha256']}},
         'results':[{'ok':True,'cells':cells,'synthetic_controls':synthetic}]}
 

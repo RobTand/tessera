@@ -1,6 +1,6 @@
 #!/bin/bash
 # Export one whole-layer part of a T-8 routed census stub: the serving
-# exporter's --partition INDEX/COUNT, so one PrismaBuild row encodes one layer
+# exporter's --partition INDEX/COUNT, so one Flux job encodes one layer
 # (a MoE layer is 288 experts x 3 projections, about 7.25 G parameters) and a
 # lost row costs that layer only.  experiments/merge_tessera_parts.py assembles
 # the parts into $R/stubs/stub-NAME.  Run on the host with cwd = the Tessera
@@ -38,7 +38,7 @@
 # exporter; TESSERA_PRODUCER_SOURCE names, explicitly and immutably, the
 # qualified genuine source checkout's src/tessera it must authenticate
 # against.  Both are required by name and passed through UNCHANGED -- the
-# wrapper never derives a source reference from $PWD (a PrismaBuild snapshot
+# wrapper never derives a source reference from $PWD (a parentless source snapshot
 # is an intentionally parentless tree and cannot qualify), never overwrites
 # what the caller set, and refuses a relative reference.  Both variables are
 # read and authenticated BEFORE anything can skip or start, through

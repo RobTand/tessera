@@ -2,8 +2,10 @@
 
   receipt.py RECEIPTS MANIFEST OUT --eager rE1,rE2 --graph rG1,rG3 [--commit SHA]
 
-RECEIPTS holds one directory per arm (arm.sh's $RECEIPTS/<ARM>/), MANIFEST is
-submit.py's (arm -> PrismaBuild action key). Every graph arm is judged against
+RECEIPTS holds one directory per arm. MANIFEST maps each arm to a flux_job_id.
+The historical arm and submission drivers are archived under
+archive/flux-migration/R-CONTESTED/experiments/graph_attest_702; there is no
+live manifest producer here. Every graph arm is judged against
 the eager pool named by --eager with the tessera#508 membership predicate
 (``eq-member-508.py``'s ``members``); the long-context passes (<ARM>-long)
 are judged the same way and recorded as a screen. The rule, the schema and
@@ -149,13 +151,13 @@ def _serve_flags(argv: list[str]) -> list[str]:
 def arm_scope(arm_dir: pathlib.Path, arm: str, legacy_scripts: dict | None = None) -> dict:
     """The scope and setup one arm MEASURED, read from what it recorded, never from a default.
 
-    The serve values come from the argv the arm launched (``serve_args`` from arm.sh,
+    The serve values come from the argv the arm launched (``serve_args`` from the archived arm.sh,
     ``serve_rank0`` from archive/flux-migration/R-CONTESTED/experiments/graph_attest_702/arm_tp2.sh). The image is a whole digest reference: the one the
     runtime gate resolved (``image_resolved_reference``), else the digest-pinned reference the
-    arm declared and PrismaBuild verified. A bare ``sha256:`` digest names no image and a
+    arm recorded. A bare ``sha256:`` digest names no image and a
     box-local image id names one box's store, so neither is ever the scope. The equality
     script is the hash the arm recorded, else the legacy provenance (read out of the arm's own
-    PrismaBuild snapshot) passed in ``legacy_scripts``.
+    historical producer snapshot) passed in ``legacy_scripts``.
     """
     args = engine_args(arm_dir, arm)
     argv = shlex.split(args.get("serve_rank0") or args.get("serve_args") or "")

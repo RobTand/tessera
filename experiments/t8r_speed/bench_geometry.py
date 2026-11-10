@@ -745,7 +745,7 @@ def main():
     ap.add_argument("--config", default="", help="actual GLM config for shape provenance")
     ap.add_argument("--ncu", action="store_true",
                     help="profile one call per (group, M) under bench_t8r.sh's BENCH_NCU=1; no timing")
-    ap.add_argument('--data-manifest',default='',help='admitted PB whole-file routing readset')
+    ap.add_argument('--data-manifest',default='',help='declared whole-file routing readset')
     args = ap.parse_args()
     if ":" in args.shapes:
         shapes = {}

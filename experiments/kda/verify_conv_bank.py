@@ -12,11 +12,7 @@ from cubin_cmp import sections
 
 
 
-def job_identity(meta):
-    """Records written from job_meta.v2 name their job in flux_job_id; earlier records (no meta_schema) say pb_action."""
-    if meta.get("meta_schema") == "tessera.job_meta.v2":
-        return meta["flux_job_id"]
-    return meta["pb_action"]
+from tessera.job_metadata import job_identity
 
 def main() -> int:
     out = Path(sys.argv[1])
