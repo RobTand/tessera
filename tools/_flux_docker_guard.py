@@ -7,11 +7,11 @@ REASON = ('ROOT_DOCKER_REQUIRES_REVIEWED_SERVING_WRAPPER: root Docker in a Flux 
 
 
 def refuse_unreviewed_docker():
-    if os.environ.get('FLUX_JOB_ID'):
+    if 'FLUX_JOB_ID' in os.environ:
         raise SystemExit('REFUSED: ' + REASON)
 
 
 if __name__ == '__main__':
-    if os.environ.get('FLUX_JOB_ID'):
+    if 'FLUX_JOB_ID' in os.environ:
         print('REFUSED: ' + REASON, file=sys.stderr)
         sys.exit(2)
