@@ -9,7 +9,6 @@ TS_PIN identifier safety, and the retained historical pathname-only mode.
 from pathlib import Path
 import argparse
 import hashlib
-import importlib.util
 import json
 import os
 import re
@@ -17,19 +16,10 @@ import shlex
 import subprocess
 
 import pytest
+from tools import comparison_input_intake as INTAKE
+from tools import comparison_arm_identity as OWNER
 
 ROOT = Path(__file__).resolve().parents[1]
-
-
-def _load(name):
-    spec = importlib.util.spec_from_file_location(name, ROOT / 'tools' / f'{name}.py')
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    return module
-
-
-INTAKE = _load('comparison_input_intake')
-OWNER = _load('comparison_arm_identity')
 
 
 @pytest.fixture
