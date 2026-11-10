@@ -185,8 +185,16 @@ def test_gpu_jobspec_is_rendered_in_the_stock_shape_and_never_run():
         kwargs.update(bad)
         with pytest.raises(ValueError):
             spec.render(kwargs.pop("command"), **kwargs)
-    source = (ROOT / "tools/_flux_gpu_jobspec.py").read_text()
-    assert "subprocess" not in source and "os.exec" not in source and "os.system" not in source
+    # Render is pure even though the explicit run entry owns processes.
+    def unexpected(*args, **kwargs):
+        raise AssertionError("render crossed a process boundary")
+    original = spec.subprocess.run
+    spec.subprocess.run = unexpected
+    try:
+        assert spec.render(["true"], cores=1, memory_gib=1, walltime="1m",
+                           directory=str(FLUX_RENDER_ROOT / "render-fixture"))[1] == "submit"
+    finally:
+        spec.subprocess.run = original
 
 
 @pytest.mark.parametrize("walltime", ["0", "12", "0s", "-1m", "nanm", "infh"])

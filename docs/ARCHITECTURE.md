@@ -10,6 +10,9 @@ cgroups, no network and a writable container root for NVIDIA hooks. A unique
 name is registered before creation; TERM and exit remove only that container.
 Scratch lives on ext4 under `/tmp/flux-vanilla/<ASCII job ID>` and is removed
 on exit. The receipt records host and container affinity, status and cleanup.
+The routed and dense oracles, mHC probe, routed census, fused census and
+fused-test wrapper now call this launcher. The fused-test wrapper retains an
+explicit CPU-only control, with no CDI device and an empty CUDA device list.
 Flux job context variables are not an admission token. The submitting caller
 must reserve the aggregate resources and collect native terminal evidence.
 

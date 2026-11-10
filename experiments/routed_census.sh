@@ -11,6 +11,7 @@
 #                  harness runs after the census with PACT_BENCH_ARGS
 #   PACT_BENCH_ARGS  arguments for bench_linears.py (default: the routed groups)
 set -euo pipefail
+export TESSERA_CONTAINER_ENGINE=podman
 CHECKOUT=$(realpath "$1"); OUT=$(realpath -m "$2"); shift 2
 IMAGE_REF=${ORACLE_IMAGE:?set ORACLE_IMAGE to the immutable digest-pinned measurement image}
 source "$CHECKOUT/experiments/runtime_image.sh"
@@ -31,7 +32,7 @@ if [[ -n "${PACT_BENCH_DIR:-}" ]]; then
   EXTRA_MOUNTS+=(-v "$(realpath "$PACT_BENCH_DIR")":/pact:ro)
 fi
 run_in_image() {
-  docker run --rm --gpus all --ipc=host --network=host --cpuset-cpus "$CPUS" \
+  python3 "$CHECKOUT/tools/_flux_gpu_jobspec.py" run --out "$OUT" --scratch-root "${FLUX_SCRATCH:-/tmp/flux-vanilla}" -- \
     --user "$(id -u):$(id -g)" \
     -v "$CHECKOUT":/work:ro -v "$MEAS":"$MEAS":ro -v "$RUNS":"$RUNS":ro -v "$OUT":"$OUT" \
     -e HOME="$OUT/home" -e TMPDIR="$OUT/tmp" -e TRITON_CACHE_DIR="$OUT/triton" \

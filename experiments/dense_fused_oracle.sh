@@ -1,8 +1,7 @@
 #!/usr/bin/env bash
 # Run experiments/dense_fused_oracle.py inside the serving image (contract v43,
 # the fused window kernel's dense identity).  Run as a Flux GPU job
-# (see the rendered tools/_flux_gpu_jobspec.py line; Flux GPU path rendered, not
-# qualified); this script is the job's command.  Usage:
+# inside an admitted Flux GPU job; this script is the job's command.  Usage:
 #   dense_fused_oracle.sh <checkout> <out_dir> <oracle.py args...>
 # The job's CPU mask is preserved; the container mounts the
 # checkout read-only at /work and the stub checkpoint read-only, and writes
@@ -10,6 +9,7 @@
 # ORACLE_NCU=1 runs dense_fused_ncu.py under Nsight Compute instead, gated to
 # the dense window launches of both lanes.
 set -euo pipefail
+export TESSERA_CONTAINER_ENGINE=podman
 CHECKOUT=$(realpath "$1"); OUT=$(realpath -m "$2"); shift 2
 IMAGE_REF=${ORACLE_IMAGE:?set ORACLE_IMAGE to the immutable digest-pinned measurement image}
 source "$CHECKOUT/experiments/runtime_image.sh"
@@ -52,7 +52,7 @@ if [[ "${ORACLE_NCU:-0}" == 1 ]]; then
     --export "$OUT/dense" --force-overwrite
     python3 /work/experiments/dense_fused_ncu.py)
 fi
-exec docker run --rm --gpus all --ipc=host --network=host --cpuset-cpus "$CPUS" \
+exec python3 "$CHECKOUT/tools/_flux_gpu_jobspec.py" run --out "$OUT" --scratch-root "${FLUX_SCRATCH:-/tmp/flux-vanilla}" -- \
   --user "$(id -u):$(id -g)" \
   -v "$CHECKOUT":/work:ro -v "$STUB":"$STUB":ro -v "$OUT":"$OUT" \
   -e HOME="$OUT/home" -e TMPDIR="$OUT/tmp" -e TRITON_CACHE_DIR="$OUT/triton" \

@@ -25,6 +25,7 @@
 # inside the container and points CUDA_HOME at a user-owned shadow under
 # <out_dir> when, and only when, a header is missing.
 set -euo pipefail
+export TESSERA_CONTAINER_ENGINE=podman
 CHECKOUT=$(realpath "$1"); OUT=$(realpath -m "$2"); MODEL=$(realpath "$3"); shift 3
 IMAGE_REF=${ORACLE_IMAGE:?set ORACLE_IMAGE to the immutable digest-pinned serving image}
 source "$CHECKOUT/experiments/runtime_image.sh"
@@ -63,7 +64,7 @@ CPUS=$(python3 -c 'import os; s=sorted(os.sched_getaffinity(0)); print(",".join(
 HEAD=${TESSERA_HEAD:-$(git -C "$CHECKOUT" rev-parse HEAD 2>/dev/null || echo unknown)}
 STATE=${TESSERA_STATE:-$(git -C "$CHECKOUT" status --short 2>/dev/null | tr '\n' ';' || echo unknown)}
 echo "host=$(hostname) cpus=$CPUS head=$HEAD state=[$STATE] image=$IMAGE_REF model=$MODEL"
-docker run --rm --gpus all --ipc=host --network=host --cpuset-cpus "$CPUS" \
+python3 "$CHECKOUT/tools/_flux_gpu_jobspec.py" run --out "$OUT" --scratch-root "${FLUX_SCRATCH:-/tmp/flux-vanilla}" -- \
   --user "$(id -u):$(id -g)" \
   -v "$CHECKOUT":/work:ro -v "$OUT":"$OUT" -v "$MODEL":"$MODEL":ro \
   -e HOME="$OUT/home" -e TMPDIR="$OUT/tmp" -e TRITON_CACHE_DIR="$OUT/triton" \

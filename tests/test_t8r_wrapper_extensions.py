@@ -3,6 +3,7 @@ from pathlib import Path
 import json
 import os
 import subprocess
+import shutil
 
 import pytest
 
@@ -44,6 +45,11 @@ def wrapper_environment(tmp_path):
     (checkout / 'experiments/runtime_image.sh').write_text(
         'runtime_image_require() { RUNTIME_IMAGE_CONTAINER_ENV=""; RUNTIME_IMAGE_JSON="{}"; }\n')
     (checkout / 'pyproject.toml').write_text('[project]\nname="tessera-quant"\nversion="0.0.0"\n')
+    tools = checkout / 'tools'
+    tools.mkdir()
+    root = Path(__file__).resolve().parents[1]
+    for module in ('_flux_gpu_jobspec.py', '_flux_shape.py'):
+        shutil.copyfile(root / 'tools' / module, tools / module)
     source = tmp_path / 'frozen-src'
     kernel = source / 'tessera/serving/csrc/routed_fused_window.cu'
     kernel.parent.mkdir(parents=True)
@@ -59,12 +65,19 @@ def wrapper_environment(tmp_path):
     docker = binaries / 'docker'
     docker.write_text('#!/bin/bash\nprintf "%s\\0" "$@" > "$DOCKER_ARGV_PATH"\n')
     docker.chmod(0o755)
+    podman = binaries / 'podman'
+    podman.write_text("#!/usr/bin/env python3\nimport json, os, pathlib, sys\nargs=sys.argv[1:]\np=pathlib.Path(os.environ['DOCKER_ARGV_PATH'])\nif args[0]=='info': print('true')\nelif args[0]=='create':\n p.write_bytes(('\\0'.join(args)+'\\0').encode())\n pathlib.Path(args[args.index('--cidfile')+1]).write_text('b'*64)\nelif args[0]=='start':\n a=p.read_bytes().decode().rstrip('\\0').split('\\0')\n scratch=a[a.index('--volume')+1].split(':')[0]\n pathlib.Path(scratch,'container-status').write_text('Cpus_allowed_list:\\t'+','.join(map(str,sorted(os.sched_getaffinity(0))))+'\\n')\nelif args[:2]==['container','exists']: sys.exit(1)\n")
+    podman.chmod(0o755)
+    findmnt = binaries / 'findmnt'
+    findmnt.write_text('#!/bin/sh\necho ext4\n')
+    findmnt.chmod(0o755)
     argv_path = tmp_path / 'argv'
     env = {k: v for k, v in os.environ.items() if not k.startswith(('BENCH_', 'NATIVE_', 'TEST_'))}
     env.update(PATH=str(binaries) + os.pathsep + os.environ['PATH'],
-               ORACLE_IMAGE='inert-image', TEST_RUNNER_SP=str(packages),
+               ORACLE_IMAGE='example.invalid/cuda@sha256:' + 'a' * 64, TEST_RUNNER_SP=str(packages),
                BENCH_SRC=str(source), BENCH_EXT_DIR=str(extensions), TEST_XDIST='1',
-               DOCKER_ARGV_PATH=str(argv_path), FLUX_JOB_ID="fTESTJOBID")
+               DOCKER_ARGV_PATH=str(argv_path), FLUX_JOB_ID="f123",
+               CUDA_VISIBLE_DEVICES="0", FLUX_SCRATCH=str(tmp_path / "scratch"))
     return checkout, source, extensions, argv_path, env
 
 

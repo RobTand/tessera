@@ -100,19 +100,19 @@ def container_options(arguments):
     return options, entrypoint, image, arguments[index + 1:], external_cid
 
 
-def run_container(arguments, directory, scratch_root):
+def run_container(arguments, directory, scratch_root, *, gpu=True):
     """Own a foreground rootless container inside the calling Flux job unit."""
     options, entrypoint, image, command, external_cid = container_options(arguments)
     # Flux injects these values. They are context, not an admission token.
     job = os.environ.get('FLUX_JOB_ID', '').replace('ƒ', 'f')
-    if not re.fullmatch(r'f[1-9A-HJ-NP-Za-km-z]+|[0-9]+', job) or not os.environ.get('CUDA_VISIBLE_DEVICES'):
+    if not re.fullmatch(r'f[1-9A-HJ-NP-Za-km-z]+|[0-9]+', job) or (gpu and not os.environ.get('CUDA_VISIBLE_DEVICES')):
         raise ValueError('GPU container requires Flux job and allocated CUDA_VISIBLE_DEVICES context')
     directory = Path(directory).resolve()
     directory.mkdir(parents=True, exist_ok=True)
     root = Path(scratch_root).resolve() / job
     root.mkdir(parents=True, exist_ok=True)
     filesystem = subprocess.check_output(['findmnt', '-n', '-o', 'FSTYPE', '-T', str(root)], text=True).strip()
-    if filesystem != 'ext4':
+    if (gpu and filesystem != 'ext4') or (not gpu and filesystem not in {'ext4', 'xfs', 'btrfs'}):
         try:
             root.rmdir()
         except OSError:
@@ -145,11 +145,12 @@ def run_container(arguments, directory, scratch_root):
     try:
         identity = ['--userns=keep-id'] if '--user' in options and options[options.index('--user') + 1] != '0:0' else []
         create = ['podman', 'create', '--pull=never', '--cgroups=disabled', '--network=none', '--init',
-                  '--name', name, '--cidfile', str(cidfile), '--device', 'nvidia.com/gpu=all',
+                  '--name', name, '--cidfile', str(cidfile),
+                  *(['--device', 'nvidia.com/gpu=all'] if gpu else []),
                   '--cpuset-cpus', ','.join(map(str, affinity)), '--volume', str(scratch) + ':/tessera-scratch',
                   *identity, *options,
                   '--env', 'TMPDIR=/tessera-scratch/tmp',
-                  '--env', 'CUDA_VISIBLE_DEVICES=' + os.environ['CUDA_VISIBLE_DEVICES'],
+                  '--env', 'CUDA_VISIBLE_DEVICES=' + (os.environ['CUDA_VISIBLE_DEVICES'] if gpu else ''),
                   *[arg for key, value in THREADS.items() for arg in ('--env', key + '=' + value)],
                   '--entrypoint', '/bin/sh', image, '-ec',
                   'cat /proc/self/status > /tessera-scratch/container-status; exec "$@"',
@@ -222,12 +223,13 @@ def run_container(arguments, directory, scratch_root):
 def container_main(argv):
     parser = argparse.ArgumentParser(description='Run inside an admitted Flux GPU job with rootless Podman')
     parser.add_argument('--out', required=True)
+    parser.add_argument('--cpu-only', action='store_true')
     parser.add_argument('--scratch-root', default='/tmp/flux-vanilla')
     parser.add_argument('arguments', nargs=argparse.REMAINDER)
     args = parser.parse_args(argv)
     arguments = args.arguments[1:] if args.arguments[:1] == ['--'] else args.arguments
     try:
-        return run_container(arguments, args.out, args.scratch_root)
+        return run_container(arguments, args.out, args.scratch_root, gpu=not args.cpu_only)
     except (ValueError, OSError, subprocess.SubprocessError) as exc:
         print(str(exc), file=sys.stderr)
         return 2

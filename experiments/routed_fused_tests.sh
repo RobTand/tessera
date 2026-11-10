@@ -1,8 +1,6 @@
 #!/usr/bin/env bash
 # Run the fused routed window lane's GPU tests (tests/test_routed_fused_window.py,
-# tessera#640) inside the pinned serving image.  Run as a Flux GPU job (see the
-# rendered tools/_flux_gpu_jobspec.py line; Flux GPU path rendered, not qualified)
-# as the job's command; same container discipline as
+# tessera#640) inside the pinned serving image.  Run inside an admitted Flux GPU job as its command; same container discipline as
 # routed_census.sh (checkout read-only at /work, every write under <out_dir>).
 #
 # The image ships no pytest.  The runner is borrowed, pure Python, from a host
@@ -18,6 +16,7 @@
 #   TEST_LOCAL_TMP    1: TMPDIR and pytest's basetemp on a container tmpfs
 #   NATIVE_CONTAINER_SRC / NATIVE_CONTAINER_EXT: match retained build paths
 set -euo pipefail
+export TESSERA_CONTAINER_ENGINE=podman
 CHECKOUT=$(realpath "$1"); OUT=$(realpath -m "$2"); shift 2
 IMAGE_REF=${ORACLE_IMAGE:?set ORACLE_IMAGE to the immutable digest-pinned measurement image}
 SP=${TEST_RUNNER_SP:?set TEST_RUNNER_SP to a python3.12 site-packages holding the test runner}
@@ -76,9 +75,9 @@ fi
 for d in ${TEST_RO_MOUNTS:-}; do [[ -d "$d" ]] || { echo "missing $d" >&2; exit 2; }; EXTRA+=(-v "$d":"$d":ro); done
 BT="$OUT/tmp/pytest-tmp"; TD="$OUT/tmp"
 if [[ "${TEST_LOCAL_TMP:-0}" == 1 ]]; then EXTRA+=(--tmpfs /pbtmp:rw,exec,size=8g); BT=/pbtmp/pytest-tmp; TD=/pbtmp; fi
-GPU_ARGS=(--gpus all)
-if [[ "${TEST_CPU_ONLY:-0}" == 1 ]]; then GPU_ARGS=(); fi
-docker run --rm "${GPU_ARGS[@]}" --ipc=host --network=host --cpuset-cpus "$CPUS" \
+GPU_ARGS=()
+if [[ "${TEST_CPU_ONLY:-0}" == 1 ]]; then GPU_ARGS=(--cpu-only); fi
+python3 "$CHECKOUT/tools/_flux_gpu_jobspec.py" run --out "$OUT" --scratch-root "${FLUX_SCRATCH:-/tmp/flux-vanilla}" "${GPU_ARGS[@]}" -- \
   --user "$(id -u):$(id -g)" \
   -v "$CHECKOUT":/work:ro -v "$OUT":"$OUT" \
   -e HOME="$OUT/home" -e TMPDIR="$TD" -e TRITON_CACHE_DIR="$OUT/triton" \
