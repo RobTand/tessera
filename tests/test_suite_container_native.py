@@ -93,7 +93,7 @@ def native_record(tmp_path):
         digest = flux.hashlib.sha256((directory / "container.json").read_bytes()).hexdigest()
         (directory / "stdout").write_text(f"Tessera container evidence {directory}/container.json sha256={digest}\n")
     publish()
-    assert container.verify_record(directory, intent, "e" * 64, "ƒ123", [2, 42]) == record
+    assert container.verify_record(directory, intent, "e" * 64, "ƒ123", [2, 42], job_id=flux.job_id) == record
     return directory, intent, record, publish
 
 
@@ -128,7 +128,7 @@ def test_native_verifier_accepts_positive_before_mutation(native_record, fact):
         path.rename(target)
         path.symlink_to(target)
     with pytest.raises((ValueError, OSError)):
-        container.verify_record(directory, intent, "e" * 64, "f123", [2, 42])
+        container.verify_record(directory, intent, "e" * 64, "f123", [2, 42], job_id=flux.job_id)
 
 
 def test_native_source_authentication_and_mutation_replace_bundle_fixture(tmp_path, monkeypatch):
@@ -158,16 +158,16 @@ def test_native_source_authentication_and_mutation_replace_bundle_fixture(tmp_pa
     monkeypatch.chdir(checkout)
     monkeypatch.setattr(flux, "source", lambda root: measured_source(root, verifier=None))
     _mock_native_admission(monkeypatch, directory, intent, digest)
-    assert container.admitted_context(directory, digest, {"FLUX_JOB_ID": "ƒ123"}) == intent
+    assert container.admitted_context(directory, digest, {"FLUX_JOB_ID": "ƒ123"}, transport=flux) == intent
     (checkout / "runner.py").write_text("print('forged source')\n")
     with pytest.raises(ValueError, match="source authentication"):
-        container.admitted_context(directory, digest, {"FLUX_JOB_ID": "f123"})
+        container.admitted_context(directory, digest, {"FLUX_JOB_ID": "f123"}, transport=flux)
     git("add", ".")
     git("-c", "user.name=Fixture", "-c", "user.email=fixture@local", "commit", "--quiet", "-m", "replacement")
     with pytest.raises(ValueError, match="source authentication"):
-        container.admitted_context(directory, digest, {"FLUX_JOB_ID": "f123"})
+        container.admitted_context(directory, digest, {"FLUX_JOB_ID": "f123"}, transport=flux)
     with pytest.raises(ValueError, match="job ID"):
-        container.admitted_context(directory, digest, {"FLUX_JOB_ID": "f124"})
+        container.admitted_context(directory, digest, {"FLUX_JOB_ID": "f124"}, transport=flux)
 
 
 @pytest.mark.parametrize("gpus,arch", [(2, "aarch64"), (0.5, "aarch64"), (True, "aarch64"), (1, "x86_64"), (0, "arm")])
@@ -293,9 +293,9 @@ def test_cid_registration_precedes_creation_and_errors_survive(tmp_path, monkeyp
     monkeypatch.setattr(container, "cleanup_cid", cleanup)
     if boundary == "failed-start":
         with pytest.raises(FileNotFoundError):
-            container.run(spec, tmp_path, {"FLUX_JOB_ID": "f123", "TMPDIR": str(scratch)}, directory, intent, "e" * 64)
+            container.run(spec, tmp_path, {"FLUX_JOB_ID": "f123", "TMPDIR": str(scratch)}, directory, intent, "e" * 64, save=flux.save)
     else:
-        assert container.run(spec, tmp_path, {"FLUX_JOB_ID": "f123", "TMPDIR": str(scratch)}, directory, intent, "e" * 64) == 143
+        assert container.run(spec, tmp_path, {"FLUX_JOB_ID": "f123", "TMPDIR": str(scratch)}, directory, intent, "e" * 64, save=flux.save) == 143
     record = json.loads((directory / "container.json").read_bytes())
     assert touched == [cid]
     assert record["cid"] == cid
@@ -345,7 +345,7 @@ def test_direct_container_entry_authenticates_actual_native_context(tmp_path, mo
     flux.save(directory / 'submission.json', {'state': 'submitted', 'job_id': 'f123', 'launch_sha256': digest})
     monkeypatch.setattr(flux, 'source', lambda root: identity)
     state = _mock_native_admission(monkeypatch, directory, intent, digest)
-    assert container.admitted_context(directory, digest, {'FLUX_JOB_ID': 'ƒ123'}) == intent
+    assert container.admitted_context(directory, digest, {'FLUX_JOB_ID': 'ƒ123'}, transport=flux) == intent
     if fact == 'original':
         state['original']['tasks'][0]['command'][-1] = '0' * 64
     elif fact == 'allocation':
@@ -357,7 +357,7 @@ def test_direct_container_entry_authenticates_actual_native_context(tmp_path, mo
     else:
         state['cgroup'] = state['cgroup'].replace('shell-f123:', 'shell-f124:')
     with pytest.raises(ValueError):
-        container.admitted_context(directory, digest, {'FLUX_JOB_ID': 'f123'})
+        container.admitted_context(directory, digest, {'FLUX_JOB_ID': 'f123'}, transport=flux)
 @pytest.mark.parametrize('handle', ['present', 'missing', 'conflicting'])
 def test_captured_cid_remains_the_only_cleanup_authority(tmp_path, monkeypatch, handle):
     owned, foreign = '1' * 64, '2' * 64

@@ -10680,3 +10680,10 @@ The initial gate quarantine also excludes the single no-vLLM benchmark import pr
 Native suite target admission compares all bounded target pairs. A sibling
 whose name sorts between a directory and its child cannot hide an overlapping
 selection. Parent regression evidence is in the 2026-11-08 Flux migration record.
+
+The native suite container entrypoint wires the Flux transport and runtime
+observer into the container lifecycle. The container implementation receives
+its source/admission transport, receipt writer, runtime observer and job-ID
+normalizer explicitly. It imports neither the transport nor runtime observer;
+collection still validates the same source, allocation, container and cleanup
+bindings.

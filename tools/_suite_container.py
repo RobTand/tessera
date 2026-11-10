@@ -336,8 +336,8 @@ def cleanup_cid(record):
         record["cleanup_errors"].append(str(exc))
 
 
-def admitted_context(directory, digest, environment):
-    import _suite_flux as flux
+def admitted_context(directory, digest, environment, *, transport):
+    flux = transport
     directory = Path(directory)
     raw = (directory / "launch.json").read_bytes()
     _require(hashlib.sha256(raw).hexdigest() == digest, "launch bytes changed")
@@ -363,8 +363,7 @@ def admitted_context(directory, digest, environment):
     return intent
 
 
-def run(spec, checkout, environment, directory, intent, digest):
-    import _suite_flux as flux
+def run(spec, checkout, environment, directory, intent, digest, *, save):
     directory, checkout = Path(directory), Path(checkout)
     resources = intent["resources"]
     _require(intent["container"] == spec and spec["workers"] == resources["cores"], "container/native intent differs")
@@ -383,7 +382,7 @@ def run(spec, checkout, environment, directory, intent, digest):
               "driver": driver_identity(resources["gpus"])}
     path = directory / "container.json"
     _require(not path.exists() and not Path(record["cidfile"]).exists(), "container record already exists")
-    flux.save(path, record)  # Register the cidfile before the first create.
+    save(path, record)  # Register the cidfile before the first create.
     process = None
     class Interrupted(BaseException):
         pass
@@ -413,7 +412,7 @@ def run(spec, checkout, environment, directory, intent, digest):
         record["inspection"] = {"Id": actual["Id"], "Image": actual["Image"],
                                 "CpusetCpus": actual["HostConfig"]["CpusetCpus"]}
         _require(actual["Id"] == cid and actual["Image"].removeprefix("sha256:") == image["Id"].removeprefix("sha256:"), "actual container image differs")
-        flux.save(path, record)
+        save(path, record)
         process = subprocess.Popen([PODMAN, "start", "--attach", cid])
         record["returncode"] = process.wait()
         for phase in ("entry", "exit"):
@@ -441,16 +440,14 @@ def run(spec, checkout, environment, directory, intent, digest):
         except (OSError, subprocess.SubprocessError) as exc:
             record["cleanup_errors"].append(str(exc))
         finally:
-            flux.save(path, record)
+            save(path, record)
             print("Tessera container evidence " + str(path) + " sha256=" + hashlib.sha256(path.read_bytes()).hexdigest(), flush=True)
             for sig, handler in handlers.items():
                 signal.signal(sig, handler)
 
 
-def inside(directory, digest):
+def inside(directory, digest, *, source, save, runtime_identity):
     """Measure the numerical runtime inside the actual immutable container."""
-    import _suite_flux as flux
-    from _suite_runtime import identity
     directory = Path(directory)
     raw = (directory / "launch.json").read_bytes()
     _require(hashlib.sha256(raw).hexdigest() == digest, "inside launch changed")
@@ -458,23 +455,22 @@ def inside(directory, digest):
     spec = intent["container"]
     def snapshot():
         return {"schema": "tessera.suite_container_runtime.v1", "job_id": os.environ["FLUX_JOB_ID"],
-                "launch_sha256": digest, "source": flux.source(Path.cwd()),
-                "runtime": identity(extra_sites=(spec["--deps-site"],)),
+                "launch_sha256": digest, "source": source(Path.cwd()),
+                "runtime": runtime_identity(extra_sites=(spec["--deps-site"],)),
                 "dependencies": dependency_manifest(spec["--deps-site"])[1],
                 "affinity": sorted(os.sched_getaffinity(0)), "driver": driver_identity(intent["resources"]["gpus"])}
     entry = snapshot()
     _require(entry["source"] == intent["source"] and entry["dependencies"] == spec["--deps-sha256"], "inside source/dependencies differ")
-    flux.save(directory / "container.entry.json", entry)
+    save(directory / "container.entry.json", entry)
     command = [*spec["inner"], "--basetemp", str(Path(os.environ["TMPDIR"]) / "pytest")]
     result = subprocess.call(command)
     exit_record = snapshot()
-    flux.save(directory / "container.exit.json", exit_record)
+    save(directory / "container.exit.json", exit_record)
     _require(entry == exit_record, "inside source/runtime/dependencies changed")
     return result
 
 
-def verify_record(directory, intent, digest, native_id, affinity):
-    import _suite_flux as flux
+def verify_record(directory, intent, digest, native_id, affinity, *, job_id):
     path = Path(directory) / "container.json"
     _require(not path.is_symlink(), "container evidence symlink")
     raw = path.read_bytes()
@@ -483,7 +479,7 @@ def verify_record(directory, intent, digest, native_id, affinity):
     _require(announcement in (Path(directory) / "stdout").read_text().splitlines(), "container evidence missing or replaced")
     spec, resources = intent["container"], intent["resources"]
     _require(record["schema"] == "tessera.suite_container_execution.v1"
-             and flux.job_id(record["job_id"]) == flux.job_id(native_id)
+             and job_id(record["job_id"]) == job_id(native_id)
              and record["launch_sha256"] == digest and record["source"] == intent["source"]
              and record["image"]["Id"] == spec["--image"]
              and record["image"]["Os"] == "linux"
@@ -501,7 +497,7 @@ def verify_record(directory, intent, digest, native_id, affinity):
     entry = record["entry"]
     _require(entry["schema"] == "tessera.suite_container_runtime.v1"
              and entry["source"] == intent["source"] and entry["launch_sha256"] == digest
-             and flux.job_id(entry["job_id"]) == flux.job_id(native_id)
+             and job_id(entry["job_id"]) == job_id(native_id)
              and entry["dependencies"] == spec["--deps-sha256"] and entry["affinity"] == affinity
              and entry["driver"] == record["driver"] and bool(entry["driver"]) == bool(resources["gpus"])
              and entry["runtime"]["schema"] == "tessera.suite_runtime.v1", "inside runtime/source/allocation binding differs")
@@ -513,15 +509,16 @@ def verify_record(directory, intent, digest, native_id, affinity):
     return record
 
 
-def main(argv=None):
+def main(argv=None, *, transport, runtime_identity):
     try:
         argv = sys.argv[1:] if argv is None else argv
         if len(argv) == 3 and argv[0] == "inside":
-            return inside(argv[1], argv[2])
+            return inside(argv[1], argv[2], source=transport.source,
+                          save=transport.save, runtime_identity=runtime_identity)
         spec = parse(argv)
         directory, digest = os.environ["TESSERA_SUITE_DIRECTORY"], os.environ["TESSERA_SUITE_LAUNCH_SHA256"]
-        intent = admitted_context(directory, digest, os.environ)
-        return run(spec, Path.cwd(), os.environ, directory, intent, digest)
+        intent = admitted_context(directory, digest, os.environ, transport=transport)
+        return run(spec, Path.cwd(), os.environ, directory, intent, digest, save=transport.save)
     except (ValueError, OSError, KeyError, subprocess.SubprocessError) as error:
         print(str(error), file=sys.stderr)
         return 2

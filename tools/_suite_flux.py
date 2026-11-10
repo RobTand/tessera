@@ -405,7 +405,8 @@ def collect(directory):
                 require_allocation(value, intent["resources"], payload["affinity"], payload["allocated_affinity"])
             if intent.get("container") is not None:
                 from _suite_container import verify_record
-                record["container"] = verify_record(directory, intent, digest, saved_id, payload["affinity"])
+                record["container"] = verify_record(directory, intent, digest, saved_id,
+                                                    payload["affinity"], job_id=job_id)
     except (OSError, ValueError, KeyError, TypeError, subprocess.SubprocessError) as exc:
         if terminal_confirmed:
             record["evidence_errors"].append(str(exc))
