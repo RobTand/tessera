@@ -13,7 +13,7 @@ from routed_gate_staged_store_support import reader_class
 def direct_fixture(tmp_path, *, digest=None, offset=7, length=10):
     original=tmp_path/'original.so'
     original.write_bytes(b'prefix!owned-wireignored-tail')
-    manifest={'schema':'tessera.declared_inputs.v1','entries':[{'path':str(original),'offset':offset,'bytes':length,
+    manifest={'schema':'tessera.declared_inputs.v1','mount_prefix':str(tmp_path),'entries':[{'path':str(original),'offset':offset,'bytes':length,
         'sha256':digest or hashlib.sha256(b'owned-wire').hexdigest()}],
         'entry_count':1,'total_bytes':length}
     path=tmp_path/'manifest.json';path.write_text(json.dumps(manifest))
@@ -85,7 +85,7 @@ def test_direct_symlink_refuses(tmp_path):
 def test_declared_record_refuses_every_malformed_declaration(tmp_path,fault):
     original=tmp_path/'original.so';original.write_bytes(b'prefix!owned-wireignored-tail')
     entry={'path':str(original),'offset':7,'bytes':10,'sha256':hashlib.sha256(b'owned-wire').hexdigest()}
-    record={'schema':'tessera.declared_inputs.v1','entries':[entry],'entry_count':1,'total_bytes':10}
+    record={'schema':'tessera.declared_inputs.v1','mount_prefix':str(tmp_path),'entries':[entry],'entry_count':1,'total_bytes':10}
     path=tmp_path/'declared.json'
     path.write_text(json.dumps(record))
     reader_class()(path).close()  # the accepted control beside every refusal
@@ -101,3 +101,40 @@ def test_declared_record_refuses_every_malformed_declaration(tmp_path,fault):
     if fault=='not-plain-json':
         import gzip;path.write_bytes(gzip.compress(path.read_bytes()))
     with pytest.raises(ValueError):reader_class()(path)
+
+
+@pytest.mark.parametrize('fault', ['relative', 'outside', 'missing-mount', 'uppercase-digest'])
+def test_declared_paths_are_bound_to_the_named_mount(tmp_path, fault):
+    from declared_inputs_support import manifest_value, write_manifest
+    from experiments.t8r_speed.declared_inputs import read_declared_inputs
+    source = tmp_path / 'owned'
+    source.write_bytes(b'owned')
+    record = manifest_value([{'path': str(source), 'offset': 0, 'bytes': 5,
+                              'sha256': hashlib.sha256(b'owned').hexdigest()}], 'whole')
+    path = write_manifest(tmp_path / 'declaration.json', record)
+    read_declared_inputs(path)
+    if fault == 'relative':
+        record['entries'][0]['path'] = 'owned'
+    elif fault == 'outside':
+        record['mount_prefix'] = str(tmp_path / 'other')
+    elif fault == 'missing-mount':
+        del record['mount_prefix']
+    else:
+        record['entries'][0]['sha256'] = record['entries'][0]['sha256'].upper()
+    write_manifest(path, record)
+    with pytest.raises(ValueError):
+        read_declared_inputs(path)
+
+
+@pytest.mark.parametrize('frontier', [0, None, '5', True, 6])
+def test_phase_frontiers_are_monotone_integer_byte_counts(tmp_path, frontier):
+    from declared_inputs_support import manifest_value, write_manifest
+    from experiments.t8r_speed.declared_inputs import validate_whole_phase_readset
+    record = manifest_value([{'path': str(tmp_path / 'owned'), 'offset': 0, 'bytes': 5,
+                              'sha256': 'a' * 64}], 'whole')
+    path = write_manifest(tmp_path / 'declaration.json', record)
+    validate_whole_phase_readset(path, 'whole')
+    record['annotations']['phases'].append({'name': 'trailing', 'cumulative_bytes': frontier})
+    write_manifest(path, record)
+    with pytest.raises(ValueError, match='cumulative_bytes'):
+        validate_whole_phase_readset(path, 'whole')

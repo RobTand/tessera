@@ -35,6 +35,10 @@ def read_declared_inputs(path):
     entries = record.get("entries")
     if not isinstance(entries, list) or not entries:
         raise ValueError("declared inputs require a nonempty entries list")
+    mount = record.get("mount_prefix")
+    if not isinstance(mount, str) or not Path(mount).is_absolute():
+        raise ValueError("declared inputs require an absolute mount_prefix")
+    mount = Path(mount).resolve()
     seen = set()
     for entry in entries:
         if (not isinstance(entry, dict) or not isinstance(entry.get("path"), str)
@@ -43,6 +47,8 @@ def read_declared_inputs(path):
                 or isinstance(entry.get("bytes"), bool) or entry["bytes"] <= 0):
             raise ValueError("declared input entry needs path, offset >= 0 and bytes > 0")
         digest = entry.get("sha256")
+        if not Path(entry['path']).is_absolute() or not Path(entry['path']).resolve().is_relative_to(mount):
+            raise ValueError("declared input path must be absolute and within mount_prefix")
         if not isinstance(digest, str) or len(digest) != 64 or any(c not in "0123456789abcdef" for c in digest):
             raise ValueError("single replay requires every input digest")
         identity = (entry["path"], entry["offset"])
@@ -65,7 +71,9 @@ def validate_whole_phase_readset(path, phase_name):
     ranges = []
     previous = 0
     for phase in record.get("annotations", {}).get("phases", []):
-        frontier = phase["cumulative_bytes"]
+        frontier = phase.get("cumulative_bytes") if isinstance(phase, dict) else None
+        if type(frontier) is not int or not previous <= frontier <= record['total_bytes']:
+            raise ValueError("whole-bank phase cumulative_bytes must be monotone integers within total_bytes")
         if frontier == previous and previous != record["total_bytes"]:
             raise ValueError("whole-bank staging phase has an empty phase before its bytes")
         if frontier > previous:

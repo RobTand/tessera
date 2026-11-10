@@ -24,7 +24,7 @@ def owner_fixture(tmp_path,monkeypatch,*,expected=None,exec_hook=None,direct=Tru
     staged=tmp_path/'original.so';staged.write_bytes(b'owned-wire')
     native_path=str(staged)
     manifest=tmp_path/'declared.json'
-    manifest.write_text(json.dumps({'schema':'tessera.declared_inputs.v1','entries':[{'path':native_path,'offset':0,'bytes':10,
+    manifest.write_text(json.dumps({'schema':'tessera.declared_inputs.v1','mount_prefix':str(tmp_path),'entries':[{'path':native_path,'offset':0,'bytes':10,
         'sha256':hashlib.sha256(b'owned-wire').hexdigest()}],'entry_count':1,'total_bytes':10}))
     reader=module.DeclaredInputs(manifest)
     source=ROOT/'src/tessera/serving/csrc/routed_fused_window.cu'
