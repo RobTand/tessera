@@ -5,6 +5,7 @@ from pathlib import Path
 import shutil
 import hashlib
 import subprocess
+import os
 
 import pytest
 
@@ -44,10 +45,24 @@ def quality_binding(tmp_path, monkeypatch):
 
 
 def _commit_requests(root):
-    subprocess.run(['git', 'init', str(root)], check=True, capture_output=True)
-    subprocess.run(['git', '-C', str(root), 'add', 'requests', 'source-request.json'], check=True)
-    subprocess.run(['git', '-C', str(root), '-c', 'user.name=Test', '-c', 'user.email=test@example.invalid',
-                    'commit', '-m', 'record requests'], check=True, capture_output=True)
+    env = {key: value for key, value in os.environ.items() if not key.startswith('GIT_CONFIG')}
+    env.update(GIT_CONFIG_GLOBAL='/dev/null', GIT_CONFIG_NOSYSTEM='1', GIT_TEMPLATE_DIR='')
+    git = ['git', '-c', 'commit.gpgsign=false', '-c', 'core.hooksPath=/dev/null',
+           '-c', 'user.name=Test', '-c', 'user.email=test@example.invalid']
+    subprocess.run([*git, 'init', str(root)], env=env, check=True, capture_output=True)
+    subprocess.run([*git, '-C', str(root), 'add', 'requests', 'source-request.json'], env=env, check=True)
+    subprocess.run([*git, '-C', str(root), 'commit', '-m', 'record requests'],
+                   env=env, check=True, capture_output=True)
+
+
+def test_recorded_request_fixture_ignores_host_git_configuration(quality_binding, monkeypatch, tmp_path):
+    hostile = tmp_path / 'host.gitconfig'
+    hostile.write_text('[commit]\n gpgsign = true\n[gpg]\n program = /does/not/exist\n')
+    monkeypatch.setenv('GIT_CONFIG_GLOBAL', str(hostile))
+    quality, action, _, _ = quality_binding
+    source = quality.RECORDED_REQUESTS.parent / 'source-request.json'
+    source.write_text(source.read_text() + '\n')
+    _commit_requests(source.parent)
 
 
 def test_relocated_stored_quality_continues_in_default_dev_mode(quality_binding, monkeypatch, capsys):

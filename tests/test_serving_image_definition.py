@@ -12,6 +12,15 @@ import pytest
 ROOT = Path(__file__).resolve().parents[1]
 
 
+@pytest.fixture(autouse=True)
+def restore_import_search_path():
+    before = sys.path[:]
+    try:
+        yield
+    finally:
+        sys.path[:] = before
+
+
 def _builder():
     spec = importlib.util.spec_from_file_location("image_builder", ROOT / "tools/build_serving_image.py")
     module = importlib.util.module_from_spec(spec)

@@ -20,11 +20,16 @@ ROOT = Path(__file__).resolve().parents[1]
 def test_cpu_adapter_requires_and_executes_its_explicit_interpreter(tmp_path, adapter, variable, provided):
     capture = tmp_path / 'captured'
     interpreter = tmp_path / 'python'
-    interpreter.write_text('#!/bin/sh\nprintf "%s\\n" "$@" > "$INPUT_CAPTURE"\n')
-    interpreter.chmod(0o755)
-    env = {**os.environ, 'INPUT_CAPTURE': str(capture), 'BENCH_PY': 'bench_geometry.py'}
-    for key in ('TESSERA_CPU_PYTHON', 'CPU_PY', 'BENCH_CPU_PYTHON'):
-        env.pop(key, None)
+    # Execute an existing shell binary, even when the fixture mount is noexec.
+    # Its startup file captures Python-shaped arguments without running Python.
+    interpreter.symlink_to('/bin/bash')
+    startup = tmp_path / 'capture.sh'
+    startup.write_text('if [[ "$0" == *.py ]]; then\n'
+                       '  printf "%s\\n" "$0" "$@" > "$INPUT_CAPTURE"\n'
+                       '  exit 0\nfi\n')
+    env = {'PATH': '/usr/bin:/bin', 'HOME': str(tmp_path), 'BASH_ENV': str(startup),
+           'INPUT_CAPTURE': str(capture), 'BENCH_PY': 'bench_geometry.py',
+           'PYTHONNOUSERSITE': '1', 'PYTHONDONTWRITEBYTECODE': '1'}
     if provided:
         env[variable] = str(interpreter)
     command = [sys.executable if adapter.endswith('.py') else 'bash', str(ROOT / 'experiments' / adapter)]
@@ -33,7 +38,7 @@ def test_cpu_adapter_requires_and_executes_its_explicit_interpreter(tmp_path, ad
     elif adapter == 't4_code/fp4_arithmetic_action.sh':
         command += [str(tmp_path / 'out'), '--cpu-preflight']
     else:
-        command += ['-m', 'pytest', 'tests/example.py']
+        command += ['-c', ':', 'tests/example.py']
     done = subprocess.run(command, cwd=ROOT, env=env, capture_output=True, text=True, timeout=30)
     if provided:
         assert done.returncode == 0, done.stderr

@@ -1,11 +1,13 @@
 """Launch evidence states only the Flux context it observed."""
 import json
 import sys
+from pathlib import Path
 from types import SimpleNamespace
 
 
 def test_encode_launch_records_flux_environment_without_claiming_admission(tmp_path, monkeypatch):
     from experiments import run_glm_native_construction as driver
+    monkeypatch.chdir(Path(__file__).resolve().parents[1])
     request = tmp_path / 'request.json'
     request.write_text(json.dumps({'runtime_image': 'image@sha256:fixture'}))
     out = tmp_path / 'out'
