@@ -60,6 +60,8 @@ python3 "$CHECKOUT/tools/_flux_gpu_jobspec.py" run --cpu-only --out "$BUILD_WORK
   -e TESSERA_ROUTED_FUSED_MMA8_A_RING="${TESSERA_ROUTED_FUSED_MMA8_A_RING-0}" \
   "${IMAGE_ENV[@]}" --entrypoint python3 -w /work "$IMAGE_REF" -c "$(cat <<'PY'
 import glob, hashlib, json, os, sys, time
+if len(sys.argv) < 2:
+    sys.exit("native build requires at least one library")
 from pathlib import Path
 from experiments.t8r_speed.finalize_native_build import finalize
 from tessera import routed_fused as rf

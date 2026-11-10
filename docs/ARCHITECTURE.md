@@ -15,6 +15,8 @@ All remaining direct-Docker serving entries refuse, as do
 that bound to migrate it. `experiments/t8r_speed/build_ext.sh` now runs through
 the rootless launcher in CPU-only mode, with the consumer's source and extension
 mounts, persistent HOME and launcher-owned TMPDIR and single-thread build bounds.
+Its `python3 -c` program precedes the library arguments and refuses an empty
+library selection before writing a native-build record.
 `serve_lock.sh`, `run_gemv_bench.sh` and `graph_attest_nightly/census-nightly.sh`
 only query Docker and no longer refuse Flux. `t16_census/census_stub.sh` delegates
 container lifetime to the Podman launcher; its obsolete root-Docker cleanup and

@@ -4,6 +4,7 @@ import json
 import os
 import subprocess
 import shutil
+import sys
 
 import pytest
 
@@ -131,6 +132,49 @@ def test_build_wrapper_matches_the_consumer_namespace(tmp_path, canonical):
     assert not any(value.startswith('TMPDIR=' + str(work)) for value in args)
     assert not any(value.startswith('nvidia.com/gpu=') for value in args)
     assert 'CUDA_VISIBLE_DEVICES=' in args
+    image_index = args.index(env['ORACLE_IMAGE'])
+    assert args[image_index - 2:image_index] == ['--entrypoint', '/bin/sh']
+    assert args[args.index('-w') + 1] == '/work'
+    assert args[image_index + 1:image_index + 6] == [
+        '-ec', 'cat /proc/self/status > /tessera-scratch/container-status; exec "$@"',
+        'tessera-gpu', 'python3', '-c']
+    program = args[image_index + 6]
+    assert program.startswith('import glob, hashlib, json, os, sys, time\n')
+    assert 'for lib in sys.argv[1:]:' in program
+    assert 'finalize(Path(so).parent, source)' in program
+    compile(program, '<build_ext python3 -c>', 'exec')
+    assert args[image_index + 7:] == ['e4m3mma']
+
+
+def test_build_program_refuses_an_empty_library_record(tmp_path):
+    root = Path(__file__).resolve().parents[1]
+    checkout, source, extensions, argv_path, env = wrapper_environment(tmp_path)
+    result = subprocess.run(['bash', str(root / 'experiments/t8r_speed/build_ext.sh'),
+                             str(checkout), str(extensions), 'e4m3mma'],
+                            env=env, capture_output=True, text=True)
+    assert result.returncode == 0, result.stdout + result.stderr
+    args = argv_path.read_bytes().decode().rstrip('\0').split('\0')
+    program = args[args.index('-c') + 1]
+    empty = subprocess.run([sys.executable, '-c', program], cwd=root,
+                           env={**env, 'TORCH_EXTENSIONS_DIR': str(extensions),
+                                'NATIVE_BUILD_IMAGE_RECORD': '{}', 'PYTHONPATH': str(root / 'src')},
+                           capture_output=True, text=True, timeout=30)
+    assert empty.returncode != 0, empty.stdout + empty.stderr
+    assert 'at least one library' in empty.stderr
+    assert not (extensions / 'native-build-record.json').exists()
+
+
+def test_build_wrapper_preserves_container_failure(tmp_path):
+    root = Path(__file__).resolve().parents[1]
+    checkout, source, extensions, argv_path, env = wrapper_environment(tmp_path)
+    podman = Path(env['PATH'].split(os.pathsep)[0]) / 'podman'
+    podman.write_text(podman.read_text().replace("elif args[:2]==['container','exists']:",
+                                               " sys.exit(7)\nelif args[:2]==['container','exists']:"))
+    result = subprocess.run(['bash', str(root / 'experiments/t8r_speed/build_ext.sh'),
+                             str(checkout), str(extensions), 'e4m3mma'],
+                            env=env, capture_output=True, text=True)
+    assert result.returncode == 7, result.stdout + result.stderr
+    assert 'end=' not in result.stdout
 
 
 @pytest.mark.parametrize('selection', ['0', '1'])
