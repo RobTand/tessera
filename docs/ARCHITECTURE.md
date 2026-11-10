@@ -20,6 +20,7 @@ The routed and dense oracles, mHC probe, routed census, fused census and
 fused-test wrapper now call this launcher. The T8R benchmark also uses this route. Its closed direct comparison mode
 refuses the legacy per-container memory/CPU flags because disabled nested
 cgroups cannot enforce that contract; it needs separate qualification.
+The T4 arithmetic action and its image identity seam resolve the Podman store.
 The T4 script runner, MLA mask
 and profiling rows, and GLM mHC split runner use the same route. The fused-test wrapper retains an
 explicit CPU-only control, with no CDI device and an empty CUDA device list.

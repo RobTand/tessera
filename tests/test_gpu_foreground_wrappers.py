@@ -8,7 +8,7 @@ import pytest
 from test_gpu_podman_launcher import controlled_runtime, IMAGE, ROOT
 
 
-@pytest.mark.parametrize('family', ['regdirect', 'regdirect-pytest', 'plugin'])
+@pytest.mark.parametrize('family', ['regdirect', 'regdirect-pytest', 'plugin', 'fp4'])
 def test_foreground_wrapper_owns_its_container(tmp_path, family):
     _, env, out = controlled_runtime(tmp_path)
     # A legacy Docker call must fail immediately rather than touch a daemon.
@@ -29,9 +29,12 @@ def test_foreground_wrapper_owns_its_container(tmp_path, family):
         (packages / 'py.py').touch()
         env['TEST_RUNNER_SP'] = str(packages)
         args = [str(ROOT), str(out), '--probe-marker']
-    else:
+    elif family == 'plugin':
         script = ROOT / 'experiments/tessera_plugin_run.sh'
         args = ['--', 'echo --probe-marker']
+    else:
+        script = ROOT / 'experiments/t4_code/fp4_arithmetic_action.sh'
+        args = [str(out), '--probe-marker']
     result = subprocess.run(['bash', str(script), *args], cwd=ROOT, env=env,
                             capture_output=True, text=True, timeout=30)
     assert result.returncode == 0, result.stdout + result.stderr
