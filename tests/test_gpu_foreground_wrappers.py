@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pytest
 
-from test_gpu_podman_launcher import controlled_runtime, IMAGE, ROOT
+from gpu_podman_fixtures import controlled_runtime, IMAGE, ROOT
 
 
 @pytest.mark.parametrize('family', ['regdirect', 'regdirect-pytest', 'plugin', 'fp4'])

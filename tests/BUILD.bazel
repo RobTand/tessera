@@ -216,6 +216,16 @@ ts_py_library(
 )
 
 ts_py_library(
+    name = "gpu_podman_fixtures",
+    srcs = [
+        "gpu_podman_fixtures.py",
+    ],
+    deps = [
+        "//tools:_flux_gpu_jobspec",
+    ],
+)
+
+ts_py_library(
     name = "graph_owner_hooks_support",
     srcs = [
         "graph_owner_hooks_support.py",
@@ -1854,6 +1864,7 @@ ts_py_library(
         "export_serving_support.py",
         "fused_bound.py",
         "glm_nightly_cells.py",
+        "gpu_podman_fixtures.py",
         "graph_owner_hooks_support.py",
         "hessian_reference_support.py",
         "managed_window_support.py",
@@ -9359,39 +9370,18 @@ ts_py_test(
     data = [
         "//:pyproject.toml",
         "//experiments:cuda_home_shadow.sh",
-        "//experiments:dense_fused_oracle.sh",
-        "//experiments:glm53_508_graph_qual/mhc_split_run.sh",
-        "//experiments:glm53_508_graph_qual/srv-508.sh",
-        "//experiments:mhc/mhc_probe.sh",
-        "//experiments:mla_prefill/d1_row.sh",
-        "//experiments:mla_prefill/mask_row.sh",
         "//experiments:regdirect_stage1/run.sh",
         "//experiments:regdirect_stage1/run_pytest.sh",
-        "//experiments:routed_census.sh",
-        "//experiments:routed_fused_census.sh",
-        "//experiments:routed_fused_tests.sh",
-        "//experiments:routed_pair_oracle.sh",
         "//experiments:runtime_image.sh",
         "//experiments:t4_code/fp4_arithmetic_action.sh",
-        "//experiments:t4_code/run_in_image.sh",
         "//experiments:t8r_speed/bench_t8r.sh",
         "//experiments:t8r_speed/build_ext.sh",
         "//experiments:tessera_plugin_run.sh",
         "//src/tessera:serving/runtime_contract.json",
     ],
     deps = [
-        "//experiments:dense_fused_ncu",
-        "//experiments:dense_fused_oracle",
-        "//experiments:glm53_508_graph_qual/digest/usercustomize",
-        "//experiments:glm53_508_graph_qual/mhc_split_repro",
-        "//experiments:glm53_695_drafter_qual/draftlog-695",
-        "//experiments:mhc/mhc_fused_probe",
-        "//experiments:mhc/mhc_probe",
-        "//experiments:mla_prefill/mask_abba",
-        "//experiments:mla_prefill/mask_gate",
         "//experiments:regdirect_stage1/bench_stage1",
         "//experiments:regdirect_stage1/real_stack",
-        "//experiments:routed_census",
         "//experiments:routed_pair_oracle",
         "//experiments:t4_code/fp4_arithmetic_attest",
         "//experiments:t4_code/geometry_runtime_image",
@@ -9402,7 +9392,6 @@ ts_py_test(
         "//src/tessera:identity",
         ":test_d41_e2m1_geometry_lib",
         ":test_fp4_arithmetic_attestation_lib",
-        ":test_routed_fused_window_lib",
     ],
     lane = "torch",
     args = [
@@ -9418,39 +9407,18 @@ ts_py_test(
     data = [
         "//:pyproject.toml",
         "//experiments:cuda_home_shadow.sh",
-        "//experiments:dense_fused_oracle.sh",
-        "//experiments:glm53_508_graph_qual/mhc_split_run.sh",
-        "//experiments:glm53_508_graph_qual/srv-508.sh",
-        "//experiments:mhc/mhc_probe.sh",
-        "//experiments:mla_prefill/d1_row.sh",
-        "//experiments:mla_prefill/mask_row.sh",
         "//experiments:regdirect_stage1/run.sh",
         "//experiments:regdirect_stage1/run_pytest.sh",
-        "//experiments:routed_census.sh",
-        "//experiments:routed_fused_census.sh",
-        "//experiments:routed_fused_tests.sh",
-        "//experiments:routed_pair_oracle.sh",
         "//experiments:runtime_image.sh",
         "//experiments:t4_code/fp4_arithmetic_action.sh",
-        "//experiments:t4_code/run_in_image.sh",
         "//experiments:t8r_speed/bench_t8r.sh",
         "//experiments:t8r_speed/build_ext.sh",
         "//experiments:tessera_plugin_run.sh",
         "//src/tessera:serving/runtime_contract.json",
     ],
     deps = [
-        "//experiments:dense_fused_ncu",
-        "//experiments:dense_fused_oracle",
-        "//experiments:glm53_508_graph_qual/digest/usercustomize",
-        "//experiments:glm53_508_graph_qual/mhc_split_repro",
-        "//experiments:glm53_695_drafter_qual/draftlog-695",
-        "//experiments:mhc/mhc_fused_probe",
-        "//experiments:mhc/mhc_probe",
-        "//experiments:mla_prefill/mask_abba",
-        "//experiments:mla_prefill/mask_gate",
         "//experiments:regdirect_stage1/bench_stage1",
         "//experiments:regdirect_stage1/real_stack",
-        "//experiments:routed_census",
         "//experiments:routed_pair_oracle",
         "//experiments:t4_code/fp4_arithmetic_attest",
         "//experiments:t4_code/geometry_runtime_image",
@@ -9461,7 +9429,6 @@ ts_py_test(
         "//src/tessera:identity",
         ":test_d41_e2m1_geometry_lib",
         ":test_fp4_arithmetic_attestation_lib",
-        ":test_routed_fused_window_lib",
     ],
     lane = "bytes",
     args = [
@@ -9482,7 +9449,7 @@ ts_py_library(
         "//experiments:tessera_plugin_run.sh",
     ],
     deps = [
-        ":test_gpu_podman_launcher_lib",
+        ":gpu_podman_fixtures",
     ],
 )
 
@@ -9594,7 +9561,7 @@ ts_py_library(
         "//experiments:t4_code/run_in_image.sh",
     ],
     deps = [
-        "//tools:_flux_gpu_jobspec",
+        ":gpu_podman_fixtures",
     ],
 )
 
@@ -10533,6 +10500,7 @@ ts_py_library(
         "export_serving_support.py",
         "fused_bound.py",
         "glm_nightly_cells.py",
+        "gpu_podman_fixtures.py",
         "graph_owner_hooks_support.py",
         "hessian_reference_support.py",
         "managed_window_support.py",
@@ -11295,6 +11263,7 @@ ts_py_library(
         "export_serving_support.py",
         "fused_bound.py",
         "glm_nightly_cells.py",
+        "gpu_podman_fixtures.py",
         "graph_owner_hooks_support.py",
         "hessian_reference_support.py",
         "managed_window_support.py",
