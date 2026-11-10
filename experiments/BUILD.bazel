@@ -3652,6 +3652,11 @@ ts_py_library(
         "t8r_speed/bench_t8r.sh",
         "t8r_speed/declared_inputs.py",
     ],
+    deps = [
+        "//src/tessera:__init___cycle",
+        "//src/tessera:_dev/__init__",
+        "//src/tessera:_dev/native_identity",
+    ],
 )
 
 ts_py_library(
