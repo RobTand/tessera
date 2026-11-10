@@ -17,6 +17,10 @@ the rootless launcher in CPU-only mode, with the consumer's source and extension
 mounts, persistent HOME and launcher-owned TMPDIR and single-thread build bounds.
 Its `python3 -c` program precedes the library arguments and refuses an empty
 library selection before writing a native-build record.
+The build wrapper defaults to `/tmp/flux-vanilla`, with `FLUX_SCRATCH` overriding
+it as in the other wrappers. Single-thread build duration is unmeasured; its
+admitted CPU row needs a longer walltime than a parallel build, sized from
+measurement rather than the timing action's walltime.
 `serve_lock.sh`, `run_gemv_bench.sh` and `graph_attest_nightly/census-nightly.sh`
 only query Docker and no longer refuse Flux. `t16_census/census_stub.sh` delegates
 container lifetime to the Podman launcher; its obsolete root-Docker cleanup and

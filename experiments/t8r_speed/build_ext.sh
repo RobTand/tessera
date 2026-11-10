@@ -4,6 +4,8 @@
 # directory, on a CPU and without a GPU, so the timed action only loads them.
 # Run in an admitted Flux CPU job through the rootless-Podman launcher.
 # TMPDIR and native/build threads (one) are launcher-owned; HOME stays in BUILD_WORK.
+# A single-thread build needs a longer admitted walltime than a parallel build.
+# Its duration is unmeasured; size the admitted CPU row from a measured build.
 #   build_ext.sh <checkout> <ext_dir> [library ...]   (default: value e4m3 e4m3mma)
 # BENCH_SRC: the arm's Tessera source tree, mounted over the checkout's src at
 # the path the timing row mounts it (/work/src), so the build's source paths,
@@ -44,7 +46,7 @@ mkdir -p "$EXT" "$BUILD_WORK/home"
 CPUS=$(python3 -c 'import os; s=sorted(os.sched_getaffinity(0)); print(",".join(map(str,s)))')
 echo "host=$(hostname) cpus=$CPUS image=$IMAGE_REF libs=${LIBS[*]} ext=$EXT start=$(date -u +%FT%TZ)"
 echo "arm src=$KSRC kernel_sha=$(sha256sum "$KSRC/tessera/serving/csrc/routed_fused_window.cu" | cut -d' ' -f1)"
-python3 "$CHECKOUT/tools/_flux_gpu_jobspec.py" run --cpu-only --out "$BUILD_WORK" --scratch-root "${FLUX_SCRATCH:-/var/tmp/flux-vanilla}" -- \
+python3 "$CHECKOUT/tools/_flux_gpu_jobspec.py" run --cpu-only --out "$BUILD_WORK" --scratch-root "${FLUX_SCRATCH:-/tmp/flux-vanilla}" -- \
   --user "$(id -u):$(id -g)" \
   -v "$CHECKOUT":/work:ro "${SRC_MOUNT[@]}" -v "$EXT":"$CONTAINER_EXT" -v "$BUILD_WORK":"$BUILD_WORK" \
   -e HOME="$BUILD_WORK/home" -e XDG_CACHE_HOME="$BUILD_WORK/home/.cache" \

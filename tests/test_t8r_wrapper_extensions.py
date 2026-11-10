@@ -177,6 +177,24 @@ def test_build_wrapper_preserves_container_failure(tmp_path):
     assert 'end=' not in result.stdout
 
 
+@pytest.mark.parametrize('override', [False, True])
+def test_native_build_scratch_root_uses_wrapper_convention(tmp_path, override):
+    root = Path(__file__).resolve().parents[1]
+    checkout, source, extensions, argv_path, env = wrapper_environment(tmp_path)
+    (checkout / 'tools/_flux_gpu_jobspec.py').write_text(
+        'import json, os, pathlib, sys\n'
+        'pathlib.Path(os.environ["DOCKER_ARGV_PATH"]).write_text(json.dumps(sys.argv[1:]))\n')
+    expected = env['FLUX_SCRATCH'] if override else '/tmp/flux-vanilla'
+    if not override:
+        env.pop('FLUX_SCRATCH')
+    result = subprocess.run(['bash', str(root / 'experiments/t8r_speed/build_ext.sh'),
+                             str(checkout), str(extensions), 'e4m3mma'],
+                            env=env, capture_output=True, text=True)
+    assert result.returncode == 0, result.stdout + result.stderr
+    args = json.loads(argv_path.read_text())
+    assert args[args.index('--scratch-root') + 1] == expected
+
+
 @pytest.mark.parametrize('selection', ['0', '1'])
 @pytest.mark.parametrize('canonical', [False, True])
 def test_actual_wrapper_forwards_resident_layout_selection(tmp_path, selection, canonical):
