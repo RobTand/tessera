@@ -21,6 +21,18 @@ THREADS = dict.fromkeys(("OMP_NUM_THREADS", "MKL_NUM_THREADS", "OPENBLAS_NUM_THR
 THREADS.update(MAKEFLAGS="-j1", NINJAFLAGS="-j1")
 
 
+def duration_seconds(value):
+    """Parse a positive, finite Flux duration with an explicit unit."""
+    if not isinstance(value, str) or re.fullmatch(r"[0-9]+(?:\.[0-9]+)?[smhd]", value) is None:
+        raise ValueError("walltime requires a positive explicit-unit duration, e.g. 10m")
+    from argparse import ArgumentTypeError
+    from tessera._dev.suite_deadline import positive_seconds
+    try:
+        return positive_seconds(float(value[:-1]) * {"s": 1, "m": 60, "h": 3600, "d": 86400}[value[-1]])
+    except ArgumentTypeError as exc:
+        raise ValueError("walltime must be positive and finite") from exc
+
+
 def encoded(value):
     return (json.dumps(value, sort_keys=True, ensure_ascii=False, allow_nan=False) + "\n").encode()
 

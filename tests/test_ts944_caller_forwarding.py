@@ -10,7 +10,7 @@ requires both selector variables by name, authenticates the selected
 producer through the existing exporter owner before anything submits,
 and forwards both values unchanged into each submission action.
 
-The submission test uses a stub producer and a stub PrismaBuild client.
+The submission test uses a stub producer and the real render-only Flux tool.
 The refusal tests also call the real authentication owner.
 These CPU control tests make no native byte claim.
 """
@@ -129,7 +129,8 @@ def test_caller_refuses_real_unqualified_interpreter(tmp_path):
     assert "TESSERA_PRODUCER_PYTHON" in text or "TESSERA_PRODUCER_SOURCE" in text, text
 
 
-def test_caller_preserves_selectors_in_all_submissions(tmp_path):
+@pytest.mark.parametrize("approved", [False, True])
+def test_caller_preserves_selectors_in_all_submissions(tmp_path, approved):
     """Capture the real caller's three actions without GPU work."""
     capture = tmp_path / "events.jsonl"
     producer = tmp_path / "selected producer"
@@ -158,8 +159,25 @@ def test_caller_preserves_selectors_in_all_submissions(tmp_path):
         tmp_path, TESSERA_PRODUCER_PYTHON=producer, FLUX_OUT="/mnt/shared/producer-render-fixture",
         TESSERA_PRODUCER_SOURCE=source, SUBMIT=1,
         INPUT_SCALES=scales, CALLER_CAPTURE=capture)
+    if approved:
+        # Exercise forwarding through the real renderer with a named test approval.
+        # The unchanged caller intentionally has no approval for its 48 GiB D1 row.
+        client_bin = tmp_path / "client-bin"
+        client_bin.mkdir()
+        client = client_bin / "python3"
+        client.write_text(
+            f"#!{sys.executable}\n"
+            "import os, sys\n"
+            "args = sys.argv[1:]\n"
+            "if '--memory-gib' in args and args[args.index('--memory-gib') + 1] == '48':\n"
+            "    args[1:1] = ['--fleet-master-approved', 'fleet-master fixture decision']\n"
+            f"os.execv({sys.executable!r}, [{sys.executable!r}, *args])\n")
+        client.chmod(0o755)
+        env['PATH'] = str(client_bin) + os.pathsep + env['PATH']
     done = _run_caller(tmp_path, env)
-    assert done.returncode == 0, done.stdout + done.stderr
+    assert (done.returncode == 0) == approved, done.stdout + done.stderr
+    if not approved:
+        assert '--fleet-master-approved' in done.stderr
     events = [json.loads(line) for line in capture.read_text().splitlines()]
     assert events == [{"event": "authenticate", "python": str(producer), "source": str(source)}]
     lines = [shlex.split(line) for line in done.stdout.splitlines() if line.startswith("flux submit ")]
@@ -168,7 +186,7 @@ def test_caller_preserves_selectors_in_all_submissions(tmp_path):
         ["bash", "experiments/t8_census/export_routed_part.sh", "GB", "4", "8"],
         ["bash", "experiments/t16_census/export_census_stub.sh", "D1"],
     ]
-    assert len(lines) == 3, done.stdout
+    assert len(lines) == (3 if approved else 2), done.stdout
     for argv, command in zip(lines, expected_commands):
         assert argv[argv.index("--") + 1:] == command
         assert "--env=-*" in argv and not any(token.startswith("--requires=") for token in argv)
@@ -194,6 +212,9 @@ def test_ts91_chain_renders_a_stock_shape_flux_gpu_line_and_runs_nothing(tmp_pat
     assert "--input=/dev/null" in argv and "--cwd" in argv
     assert "--output=/mnt/shared/chain-render-fixture/stdout" in argv
     assert "--error=/mnt/shared/chain-render-fixture/stderr" in argv
+    assert "RENDERED, NOT SUBMITTED" in done.stderr
+    assert "--job-name=chain-render-fixture" in argv
+    assert "--env=OMP_NUM_THREADS=1" in argv
     assert argv[argv.index("-t") + 1] == "60m"
     command = argv[argv.index("--") + 1:]
     assert command[0] == "bash" and command[1].endswith("experiments/ts91_chain_body.sh")

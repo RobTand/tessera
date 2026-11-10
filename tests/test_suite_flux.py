@@ -185,3 +185,48 @@ def test_gpu_jobspec_is_rendered_in_the_stock_shape_and_never_run():
             spec.render(kwargs.pop("command"), **kwargs)
     source = (ROOT / "tools/_flux_gpu_jobspec.py").read_text()
     assert "subprocess" not in source and "os.exec" not in source and "os.system" not in source
+
+
+@pytest.mark.parametrize("walltime", ["0", "12", "0s", "-1m", "nanm", "infh"])
+def test_gpu_renderer_refuses_unbounded_walltime(walltime):
+    spec = load("flux_gpu_jobspec", ROOT / "tools/_flux_gpu_jobspec.py")
+    with pytest.raises(ValueError, match="positive|walltime"):
+        spec.render(["true"], cores=1, memory_gib=1, walltime=walltime,
+                    directory="/mnt/shared/render-fixture")
+
+
+@pytest.mark.parametrize("cores,memory", [(11, 8), (4, 48)])
+def test_gpu_renderer_requires_named_size_approval(cores, memory):
+    spec = load("flux_gpu_jobspec", ROOT / "tools/_flux_gpu_jobspec.py")
+    kwargs = dict(cores=cores, memory_gib=memory, walltime="10m",
+                  directory="/mnt/shared/render-fixture")
+    with pytest.raises(ValueError, match="--fleet-master-approved"):
+        spec.render(["true"], **kwargs)
+    argv = spec.render(["true"], **kwargs, fleet_master_approved="fleet-master decision 2026-11-10/fixture")
+    assert f"--resources-shape=slot/[core={cores};memory={memory};gpu=1]" in argv
+
+
+@pytest.mark.parametrize("directory", ["/mnt/shared/../escape", "/mnt/shared"])
+def test_gpu_renderer_requires_shared_job_directory(directory):
+    spec = load("flux_gpu_jobspec", ROOT / "tools/_flux_gpu_jobspec.py")
+    with pytest.raises(ValueError, match="output directory"):
+        spec.render(["true"], cores=1, memory_gib=1, walltime="10m", directory=directory)
+
+
+def test_gpu_renderer_cli_marks_no_submission_and_bounds_threads(capsys):
+    spec = load("flux_gpu_jobspec", ROOT / "tools/_flux_gpu_jobspec.py")
+    assert spec.main(["--cores", "4", "--memory-gib", "8", "--walltime", "10m",
+                      "--out", "/mnt/shared/render-fixture", "--", "true"]) == 0
+    captured = capsys.readouterr()
+    import shlex
+    argv = shlex.split(captured.out)
+    assert captured.err == "RENDERED, NOT SUBMITTED\n"
+    assert "--job-name=render-fixture" in argv and "-n1" in argv
+    assert "--env=HOME=/home/rob" in argv
+    for key, value in suite_flux_threads().items():
+        assert f"--env={key}={value}" in argv
+    assert not any("flux-vanilla" in token or "LD_LIBRARY_PATH" in token for token in argv)
+
+
+def suite_flux_threads():
+    return load("suite_flux_thread_table", ROOT / "tools/_suite_flux.py").THREADS

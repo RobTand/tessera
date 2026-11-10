@@ -4050,6 +4050,14 @@ node architecture, explicit image host and affinity. It also checks distinct
 on a Spark GPU allocation, as SHAPE section 6 requires. No fixed CPU number
 or core class decides acceptance; the observed affinity remains preserved.
 
+`tools/_flux_gpu_jobspec.py` renders SHAPE section 4 requests with one task,
+job name, cwd, null input and separate shared output/error paths. It requires
+a positive explicit-unit walltime and an owned directory below `/mnt/shared`,
+seeds HOME and the suite thread limits, and prints `RENDERED, NOT SUBMITTED`
+on stderr. Requests above 10 cores or 32 GiB require
+`--fleet-master-approved <approval reference>`. GPU placement has no implicit
+host pin. The renderer never submits or changes a caller's declared size.
+
 `launch.json` records the selected URI and client, SHA256 of the exact
 `flux config get` and `resource.R` query bytes, canonical JSON SHA256 of the
 scheduling model, rank-zero broker starttime,
