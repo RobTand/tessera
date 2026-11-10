@@ -5521,8 +5521,9 @@ tensors across ranks is what makes that checkable rather than asserted.
 **What is CPU-contract and what is device work.** The resolvers, the sidecar,
 the serving document's cut, the distributed declaration, a real two-rank
 `bind_owner_rank` on gloo, and the frozen panel's route are all exercised on
-CPU (`tests/test_native_moe_tp_owner_runtime.py`,
-`_pb_native_moe_tp_owner/binding_arms.py`). The CUDA layer construction, the
+CPU (`tests/test_native_moe_tp_owner_runtime.py`). The historical binding driver
+is archived at `archive/flux-migration/R-MIXED/_pb_native_moe_tp_owner/binding_arms.py`.
+The CUDA layer construction, the
 native decode, and the measured whole-operator apply are NOT: they need the
 pinned sm_121 image and a two-box `tcp://` rendezvous, and they are the GPU
 qualification step that follows. A CPU pass here is a statement about what the
