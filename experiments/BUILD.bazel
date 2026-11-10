@@ -4665,6 +4665,8 @@ ts_py_library(
         "//src/tessera:__init___cycle",
         "//src/tessera:bf16_route_cycle",
         "//src/tessera:serving/build_identity",
+        "//tools:__init__",
+        "//tools:_flux_serve",
         ":ts5_stage_cleanup",
     ],
 )
@@ -4681,7 +4683,8 @@ ts_py_library(
         "//src/tessera:__init___cycle",
         "//src/tessera:bf16_route_cycle",
         "//src/tessera:serving/build_identity",
-        ":ts5_stage_cleanup",
+        "//tools:__init__",
+        "//tools:_flux_serve",
     ],
 )
 

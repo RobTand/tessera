@@ -47,6 +47,9 @@ ts_py_library(
     srcs = [
         "_flux_serve.py",
     ],
+    data = [
+        "//experiments:lfm_bound_served.sh",
+    ],
     deps = [
         ":_flux_gpu_jobspec",
         ":_flux_shape",
