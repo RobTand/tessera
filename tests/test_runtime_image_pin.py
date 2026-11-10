@@ -557,8 +557,67 @@ def _shell_live(text):
                      if not line.lstrip().startswith('#'))
 
 
+# The Tessera master's rule exempts these read-only queries from the reviewed
+# serving path. Every other literal Docker subcommand, and --gpus, needs a guard.
+READ_ONLY_DOCKER_SUBCOMMANDS = frozenset({'ps', 'inspect', 'image inspect', 'images', 'info', 'version'})
+
+
 def _shell_docker_use(text):
-    return re.search(r'\bdocker\s+(?=\S)|--gpus\b', _shell_live(text))
+    for match in re.finditer(r'\bdocker\s+(\w+)(?:[ \t]+(\w+))?|--gpus\b', _shell_live(text)):
+        command, following = match.groups()
+        if command not in READ_ONLY_DOCKER_SUBCOMMANDS and f'{command} {following}' not in READ_ONLY_DOCKER_SUBCOMMANDS:
+            return match
+    return None
+
+
+@pytest.mark.parametrize('command', ['ps', 'inspect', 'image inspect', 'images', 'info', 'version'])
+def test_read_only_docker_queries_need_no_guard(command):
+    assert _docker_order_errors(f'docker {command}\n', '.sh') == []
+
+
+def test_docker_mutation_after_read_only_query_still_needs_guard():
+    assert _docker_order_errors('docker ps\ndocker rm -f owned\n', '.sh')
+
+
+@pytest.mark.parametrize('job_value', ['', 'f123'])
+def test_sourcing_serve_lock_in_flux_returns_to_caller(job_value):
+    result = subprocess.run(['bash', '-c', 'source "$1"; echo caller-continued',
+                             '_', str(ROOT / 'experiments/serve_lock.sh')],
+                            env={**os.environ, 'FLUX_JOB_ID': job_value}, capture_output=True, text=True)
+    assert result.returncode == 0, result.stderr
+    assert result.stdout == 'caller-continued\n'
+
+
+@pytest.mark.parametrize('entry', ['t16_census/census_stub.sh', 'graph_attest_nightly/census-nightly.sh'])
+def test_podman_census_reaches_launcher_in_flux(tmp_path, entry):
+    checkout = tmp_path / 'checkout'
+    experiments = checkout / 'experiments'
+    (experiments / Path(entry).parent).mkdir(parents=True)
+    (experiments / entry).write_text((ROOT / 'experiments' / entry).read_text())
+    (experiments / 'flux_docker_guard.sh').write_text((ROOT / 'experiments/flux_docker_guard.sh').read_text())
+    (experiments / 'serve_lock.sh').write_text('serve_lock_acquire() { :; }\nserve_lock_release() { :; }\n')
+    launcher = experiments / 'routed_fused_census.sh'
+    launcher.write_text('#!/bin/sh\nprintf "%s\\n" "$@" > "$CONTROL/launcher-argv"\nexit 7\n')
+    launcher.chmod(0o755)
+    model = tmp_path / 'stubs/stub-probe'
+    model.mkdir(parents=True)
+    (model / 'config.json').write_text('{}')
+    binaries = tmp_path / 'bin'
+    binaries.mkdir()
+    for name, body in {'hostname': 'echo sparky', 'awk': 'echo 200',
+                       'docker': '[ "$1" = ps ] || exit 99', 'nvidia-smi': 'exit 0',
+                       'git': 'echo controlled'}.items():
+        path = binaries / name
+        path.write_text('#!/bin/sh\n' + body + '\n')
+        path.chmod(0o755)
+    result = subprocess.run(['bash', str(experiments / entry), 'probe', str(checkout), str(model)],
+                            env={**os.environ, 'FLUX_JOB_ID': 'f123', 'CONTROL': str(tmp_path),
+                                 'PATH': f'{binaries}:{os.environ["PATH"]}', 'CENSUS_ROOT': str(tmp_path),
+                                 'CENSUS_OUT': str(tmp_path / 'out')},
+                            capture_output=True, text=True, timeout=30)
+    assert result.returncode == 7, result.stdout + result.stderr
+    assert (tmp_path / 'launcher-argv').read_text().splitlines()[:1] == [str(checkout)]
+    assert 'root Docker inside a Flux job is refused' not in result.stderr
 
 
 @pytest.mark.parametrize('entry', [path for path in _live_container_entries()

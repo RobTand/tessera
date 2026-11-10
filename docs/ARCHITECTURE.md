@@ -1,9 +1,10 @@
 # Tessera plan-to-serve architecture
 
-Every live shell entry containing a literal Docker subcommand, and every
+Every live shell entry containing a literal mutating Docker subcommand, and every
 Python entry constructing Docker launch argv, under `experiments/` and `tools/`
 calls `experiments/flux_docker_guard.sh` before that use. This includes shell
-cleanup and inspection commands, not just `docker run`. Python cleanup-only
+cleanup commands, not just `docker run`. Read-only `ps`, `inspect`, `image inspect`,
+`images`, `info` and `version` queries need no guard; `--gpus` still does. Python cleanup-only
 helpers are outside this tree check. The guard refuses when `FLUX_JOB_ID` is present,
 including an empty value. No reviewed serving wrapper exists on this branch;
 the only route for a root-Docker use inside Flux is the lead's decision.
@@ -14,6 +15,13 @@ All remaining direct-Docker serving entries refuse, as do
 that bound to migrate it. `experiments/t8r_speed/build_ext.sh` now runs through
 the rootless launcher in CPU-only mode, with the consumer's source and extension
 mounts, persistent HOME and launcher-owned TMPDIR and single-thread build bounds.
+`serve_lock.sh`, `run_gemv_bench.sh` and `graph_attest_nightly/census-nightly.sh`
+only query Docker and no longer refuse Flux. `t16_census/census_stub.sh` delegates
+container lifetime to the Podman launcher; its obsolete root-Docker cleanup and
+the watcher that called it are removed. Its TP2-window check is before launch.
+`graph_attest_nightly/run-arm-nightly.sh` stays refused because `srv-nightly.sh`
+starts a root-Docker GPU serve. `compile_dispatch_served.sh` also keeps its guard
+because it calls the root-Docker `serve_and_dump_kl.sh`.
 `experiments/step4_capture_launch.py` refuses at entry to `main`, before argument
 processing, output creation, image inspection or the GPU sampler, with exit 2.
 The source-derived guard test checks call order before literal Docker launch

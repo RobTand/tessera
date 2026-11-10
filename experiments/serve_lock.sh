@@ -1,7 +1,5 @@
 #!/usr/bin/env bash
 
-source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/flux_docker_guard.sh"
-refuse_flux_docker || exit 2
 # One serve at a time on this box: source this file, then call serve_lock_acquire
 # before `docker run` and serve_lock_release after the container is gone.  The
 # GPU and host share one 128 GB pool, so two vLLM serves (0.85 utilisation each)

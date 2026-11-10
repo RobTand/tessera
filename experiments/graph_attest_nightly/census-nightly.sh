@@ -1,7 +1,5 @@
 #!/usr/bin/env bash
 
-source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/../flux_docker_guard.sh"
-refuse_flux_docker || exit 2
 # tessera#702: a TP1 route census of a GLM stub on the vLLM nightly stack, run
 # on sparky through a separately approved Flux GPU job using
 # experiments/routed_fused_census.sh, under the same gates as run-arm-nightly.sh.
