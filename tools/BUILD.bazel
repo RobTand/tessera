@@ -26,12 +26,29 @@ ts_py_library(
 )
 
 ts_py_library(
+    name = "_flux_docker_guard",
+    srcs = [
+        "_flux_docker_guard.py",
+    ],
+)
+
+ts_py_library(
     name = "_flux_gpu_jobspec",
     srcs = [
         "_flux_gpu_jobspec.py",
     ],
     deps = [
         ":_flux_shape",
+    ],
+)
+
+ts_py_library(
+    name = "_flux_serve",
+    srcs = [
+        "_flux_serve.py",
+    ],
+    deps = [
+        ":_flux_gpu_jobspec",
     ],
 )
 
@@ -100,6 +117,7 @@ ts_py_library(
         "build_serving_image.py",
     ],
     deps = [
+        ":_flux_docker_guard",
         ":_suite_flux",
     ],
 )

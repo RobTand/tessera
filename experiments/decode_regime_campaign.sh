@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+source "$(dirname "${BASH_SOURCE[0]}")/flux_serve_campaign.sh"
 # The #102 campaign: one decode-regime teacher and two arms on one checkpoint.
 #
 # Three serves, sequential, each taking the box's serve lock in turn:
@@ -65,7 +66,7 @@ if [ "$STAGE" = teacher ] || [ "$STAGE" = all ]; then
   else
     echo "=== decode-regime teacher  $(date -Is)"
     TESSERA_KL_REGIME=decode TESSERA_KL_NAME=tessera-ts102-teacher \
-      experiments/serve_and_dump_kl.sh /home/rob/models/Qwen3-0.6B \
+      flux_serve_score experiments/serve_and_dump_kl.sh /home/rob/models/Qwen3-0.6B \
       "$TEACHER" teacher BF16 2>&1 | tee "$RUNS/teacher-decode.log"
   fi
 fi
@@ -87,7 +88,7 @@ if [ "$STAGE" = arms ] || [ "$STAGE" = all ]; then
     [ "$ARM" = armB ] && EXTRA="-v $EXT_B_RO:/ext-ro:ro -e TORCH_EXTENSIONS_DIR=/ext-ro"
     echo "=== $ARM  $(date -Is)"
     EXT=$ARMS/ext-A TESSERA_LANE_DOCKER_EXTRA="$EXTRA" \
-      experiments/decode_regime_kl.sh "$ARMS/$ARM" "$TAG-$ARM" streamed \
+      flux_serve_score experiments/decode_regime_kl.sh "$ARMS/$ARM" "$TAG-$ARM" streamed \
       2>&1 | tee "$RUNS/$ARM.log"
   done
 

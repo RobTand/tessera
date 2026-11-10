@@ -15,6 +15,8 @@ def test_failed_route_census_cannot_report_successful_campaign(tmp_path):
     experiments.mkdir()
     driver = experiments / "ts5_moe_served.sh"
     shutil.copyfile(ROOT / "experiments" / driver.name, driver)
+    (experiments / "flux_serve_campaign.sh").write_text(
+        'flux_serve_score() { "$@"; }\n')
     for name, status in (("serve_and_dump_kl.sh", 0),
                          ("tessera_plugin_served.sh", 0),
                          ("tessera_plugin_run.sh", 23)):

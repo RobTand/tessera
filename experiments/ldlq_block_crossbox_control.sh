@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+source "$(dirname "${BASH_SOURCE[0]}")/flux_serve_campaign.sh"
 # The student-side leg of the ts#60 box-portability question.
 #
 # The teacher-side leg is already settled and cost no GPU time: the two BF16
@@ -43,7 +44,7 @@ OUT=$KLDIR/qwen_lb_$LABEL.json
 [ -f "$TWIN/model.safetensors" ] || { echo "no checkpoint at $TWIN"; exit 1; }
 echo "== control serve $LABEL on $(hostname) $(date -u +%FT%TZ)"; uptime
 if [ ! -f "$OUT.npz" ]; then
-  experiments/serve_and_dump_kl.sh "$TWIN" "$OUT" student || exit 1
+  flux_serve_score experiments/serve_and_dump_kl.sh "$TWIN" "$OUT" student || exit 1
 fi
 echo "== vs teacher $(basename "$TEACHER")"
 $PY /home/rob/dq-runs/kl_tool.py compare "$TEACHER" "$OUT.npz" \

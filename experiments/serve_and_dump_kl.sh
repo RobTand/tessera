@@ -9,18 +9,13 @@
 #
 # usage: serve_and_dump_kl.sh <model-dir> <out.json> <role> [teacher-label]
 set -euo pipefail
+source "$(dirname "$0")/flux_serve.sh"
 
 MODEL="$1"; OUT="$2"; ROLE="$3"; LABEL="${4:-}"
-# The default is Mia's GLM image, which is a different runtime and carries no
-# pin: it is resolved and stamped, not refused. The default repository must
-# use its contract pin; any explicit digest is verified against the local
-# image's RepoDigests, including images from other repositories (issue #100).
-IMAGE="${TESSERA_KL_IMAGE:-prismaquant/glm53-mia-sm121:487ecf187}"
+# The supervisor supplies the reviewed image digest from the normalized spec.
 PORT="${TESSERA_KL_PORT:-8000}"
 CORPUS="${TESSERA_KL_CORPUS:-/mnt/shared/tessera-kl/corpus_n8_s512.json}"
-# The container name must be unique per worker: several agents share this box
-# and a fixed name means one worker's `docker rm -f` reaps another's serve.
-NAME="${TESSERA_KL_NAME:-tessera-kl-serve}"
+# The supervisor returns the immutable container id in NAME.
 LOG="${TESSERA_KL_LOGDIR:-/mnt/shared/tessera-kl}/serve_$(basename "$OUT" .json).log"
 
 # TESSERA_KL_EAGER=0 serves in graph mode (vLLM's default).  An inactive
@@ -41,9 +36,9 @@ DETAILS_FLAGS=()
 [ "$REGIME" = "prefill" ] || DETAILS_FLAGS=(--enable-prompt-tokens-details)
 
 # Which image, and which compiled build, served this dump -- both recorded
-# beside it (issues #100 and #30).  The image gate runs first and BEFORE the
-# serve lock: a refusal must not make the rest of the box queue behind it.
+# beside it (issues #100 and #30).
 source "$(dirname "$0")/runtime_image.sh"
+IMAGE="${TESSERA_KL_IMAGE:-prismaquant/glm53-mia-sm121:487ecf187}"
 runtime_image_require "$IMAGE" || exit 2
 
 # TESSERA_KL_VLLM_EXTRA passes further vLLM arguments through, word-split on
@@ -72,7 +67,7 @@ source "$(dirname "$0")/build_identity.sh"
 VLLM_CACHE_ARG=""
 if [ -n "${TESSERA_KL_VLLM_CACHE:-}" ]; then
   mkdir -p "$TESSERA_KL_VLLM_CACHE"
-  VLLM_CACHE_ARG="-v ${TESSERA_KL_VLLM_CACHE}:/root/.cache/vllm"
+  VLLM_CACHE_ARG="-v ${TESSERA_KL_VLLM_CACHE}:/tmp/vllm-cache -e VLLM_CACHE_ROOT=/tmp/vllm-cache"
 fi
 
 echo "serving $MODEL  ($IMAGE -> ${RUNTIME_IMAGE_DIGEST:-unresolved})"
@@ -83,18 +78,12 @@ MODEL_MOUNT="$(cd "$(dirname "$MODEL")" && pwd)"
 SERVE_REAPED=1
 reap() {
   [ "$SERVE_REAPED" = 0 ] || return 0
-  docker logs "$NAME" > "$LOG" 2>&1 || true
-  if docker rm -f "$NAME" >/dev/null 2>&1; then
+  if flux_serve_stop; then
     SERVE_REAPED=1
   else
     return 1
   fi
 }
-source "$(dirname "$0")/serve_lock.sh"; SERVE_LOCK_OWNER="$0"; serve_lock_acquire
-trap 'reap || true; if [ "$SERVE_REAPED" = 1 ]; then serve_lock_release; else echo "REFUSED: live serve cleanup unverified; retaining $SERVE_LOCK" >&2; fi' EXIT
-# Only after the lock: removing a stale container of our own name is fine,
-# doing it before the lock would race another worker holding the serve.
-docker rm -f "$NAME" >/dev/null 2>&1 || true
 # The unquoted expansions below are word-split on purpose (that is how
 # --kernel-config and its JSON arrive as two argv entries).  Globbing is not
 # wanted with them: JSON carries [ and ], and a file in cwd that happened to
@@ -105,10 +94,9 @@ docker rm -f "$NAME" >/dev/null 2>&1 || true
 # seams and neither can substitute for the other.
 set -f
 SERVE_REAPED=0
-docker run -d --name "$NAME" --gpus all --ipc=host \
-  -p "${PORT}:8000" \
-  -v /mnt/shared:/mnt/shared \
-  -v "${MODEL_MOUNT}:${MODEL_MOUNT}" \
+NAME=$(flux_serve_start --model "$MODEL" --log "$LOG" --port "$PORT" --util "${TESSERA_GPU_MEM_UTIL:-0.85}" -- \
+  -v /mnt/shared:/mnt/shared:ro \
+  -v "${MODEL_MOUNT}:${MODEL_MOUNT}:ro" \
   ${VLLM_CACHE_ARG} \
   $(build_identity_docker_env) \
   ${TESSERA_KL_DOCKER_EXTRA:-} \
@@ -120,24 +108,8 @@ docker run -d --name "$NAME" --gpus all --ipc=host \
   --gpu-memory-utilization "${TESSERA_GPU_MEM_UTIL:-0.85}" \
   --max-logprobs "${TESSERA_KL_TOPK:-1024}" \
   "${EAGER_FLAGS[@]}" "${DETAILS_FLAGS[@]}" --trust-remote-code \
-  ${TESSERA_KL_VLLM_EXTRA:-} \
-  >/dev/null
+  ${TESSERA_KL_VLLM_EXTRA:-})
 set +f
-
-# The serve is the long pole; give it room but fail rather than hang forever.
-for i in $(seq 1 240); do
-  if curl -sf "http://127.0.0.1:${PORT}/v1/models" >/dev/null 2>&1; then
-    echo "  up after ${i}0s"; break
-  fi
-  if ! docker ps -q -f name="$NAME" | grep -q .; then
-    # Not --rm: a container that dies during startup takes its logs with it,
-    # and the startup failures are exactly the ones worth reading.
-    echo "serve died (exit $(docker inspect -f '{{.State.ExitCode}}' "$NAME" 2>/dev/null)); log at $LOG"
-    reap || true
-    tail -30 "$LOG"; exit 1
-  fi
-  sleep 10
-done
 
 # Spec-decode poisons a logprob readout: /v1/completions returns the DRAFT
 # model's numbers when vLLM serves with a speculative config.  Refuse rather
@@ -155,12 +127,12 @@ fi
 # What the runtime resolved, checked against what this arm asked for, while
 # the container is still up and before anything is measured on it.
 if [ -n "${TESSERA_KL_REQUIRE_IN_LOG:-}" ]; then
+  docker logs "$NAME" > "$LOG" 2>&1 || true
   # Grep the FILE, never a pipe.  Under `set -o pipefail` (line 11) a
   # `docker logs | grep -Eq` that MATCHES returns NON-zero: grep -q exits at the
   # first hit and SIGPIPEs the producer, whose 141 is what pipefail propagates.
   # So the piped form refused exactly the arms it should have passed, and did,
   # on every arm that reached this gate on 2026-09-03.
-  docker logs "$NAME" > "$LOG" 2>&1 || true
   if ! grep -Eq "$TESSERA_KL_REQUIRE_IN_LOG" "$LOG"; then
     reap || true
     echo "REFUSED: the serve's own log does not match TESSERA_KL_REQUIRE_IN_LOG"
@@ -184,7 +156,7 @@ ARGS=(dump --model kl-target --out "$OUT" --url "http://127.0.0.1:${PORT}/v1/com
 # container down: under `set -e` the failure used to exit here, keeping the GPU
 # reserved by a headless serve and recording nothing (2026-09-02, the cuDNN
 # floor arm: one 400 on chunk 7, no log, container still up).
-if ! /home/rob/dq-runs/venvs/prismaquant-cu130/bin/python /home/rob/dq-runs/kl_tool.py "${ARGS[@]}"; then
+if ! "${TESSERA_KL_PYTHON:-/home/rob/dq-runs/venvs/prismaquant-cu130/bin/python}" "${TESSERA_KL_TOOL:-/home/rob/dq-runs/kl_tool.py}" "${ARGS[@]}"; then
   reap || true
   echo "dump FAILED for $MODEL; serve log at $LOG"; exit 3
 fi

@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+source "$(dirname "${BASH_SOURCE[0]}")/flux_serve_campaign.sh"
 # The window GEMV, SERVED: the census, the two-arm KL and the latency that #10
 # wired but never measured (issue #83).
 #
@@ -169,7 +170,7 @@ kl_one() {  # arm mode regime
     EXT=$EXT_A VLLM_CACHE=$RUNS/vllm-cache-$arm \
       TESSERA_LANE_EAGER=$eager TESSERA_KL_NAME=tessera-ts83-$name \
       TESSERA_LANE_DOCKER_EXTRA="$extra" \
-      "$GPULOCK" experiments/tessera_plugin_served.sh "$RUNS/$arm" "$name" "$mode" \
+      flux_serve_score experiments/tessera_plugin_served.sh "$RUNS/$arm" "$name" "$mode" \
       2>&1 | tee "$RUNS/kl-$name.log"
     [ -f "$RUNS/kl_tessera_$name.json" ]
   }

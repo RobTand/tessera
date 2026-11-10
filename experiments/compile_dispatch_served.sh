@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+source "$(dirname "${BASH_SOURCE[0]}")/flux_serve_campaign.sh"
 # Is the eager-vs-compiled KL gap the dispatch switch, or something else?  (#16)
 #
 # THE CLAIM UNDER TEST.  vLLM 0.28 does not run one program two ways.  When it
@@ -114,7 +115,7 @@ arm() {  # arm <name> <eager 0|1> <require-ere> [extra vllm args...]
   if ! TESSERA_KL_EAGER=$eager \
        TESSERA_KL_REQUIRE_IN_LOG="$require" \
        TESSERA_KL_VLLM_EXTRA="$*" \
-       "$HERE/serve_and_dump_kl.sh" "$MODEL" "$dump" student; then
+       flux_serve_score "$HERE/serve_and_dump_kl.sh" "$MODEL" "$dump" student; then
     echo "ARM FAILED (continuing): $name"
     return 0
   fi

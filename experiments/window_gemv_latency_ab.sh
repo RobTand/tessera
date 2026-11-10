@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+source "$(dirname "${BASH_SOURCE[0]}")/flux_serve_campaign.sh"
 # THE window-GEMV decode-path latency A/B: both arms, one session, one box, with
 # the box's own idle reading taken before either serve exists (issue #109).
 #
@@ -153,7 +154,7 @@ arm_one() {  # armA|armB rep
   echo "### $tag  $(date -u +%FT%TZ)"
   RUNS=$RUNS TAG=$tag EXT=$SRC/ext-A VLLM_CACHE=$SRC/vllm-cache-lat-$arm \
     NAME=tessera-ts109-lat-$tag TESSERA_LANE_DOCKER_EXTRA="$extra" \
-    bash "$(dirname "$0")/window_gemv_latency.sh" "$SRC/$arm" "$arm" "$MODE" "$REGIME"
+    flux_serve_score "$(dirname "$0")/window_gemv_latency.sh" "$SRC/$arm" "$arm" "$MODE" "$REGIME"
   # The box-side instrument, cut to THIS arm's own marks.  Netdata's finest tier
   # is 10 s, so a two-minute window is a handful of points and is reported as
   # such rather than smoothed into a single figure.

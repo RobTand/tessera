@@ -40,6 +40,7 @@
 #
 # usage: window_gemv_latency.sh <arm-dir> <arm-name> <resident|streamed> <eager|compiled>
 set -euo pipefail
+source "$(dirname "$0")/flux_serve.sh"
 MODEL="$1"; ARM="$2"; MODE="${3:-streamed}"; REGIME="${4:-eager}"
 WT=${WT:-$(cd "$(dirname "$0")/.." && pwd)}
 TS=${TS:-$WT}
@@ -75,18 +76,12 @@ source "$(dirname "$0")/build_identity.sh"
 mkdir -p "$EXT" "$VLLM_CACHE" "$RUNS" "$PROF"
 MODEL_MOUNT="$(cd "$(dirname "$MODEL")" && pwd)"
 
-# One serve at a time on this box, AND no other GPU job beside it: a latency
-# number taken next to another agent's job is a number about that job.  The
-# caller holds the box lock; this takes the serve lock.
-source "$(dirname "$0")/serve_lock.sh"; SERVE_LOCK_OWNER="$0 $TAG"; serve_lock_acquire
-trap serve_lock_release EXIT
-docker rm -f "$NAME" >/dev/null 2>&1 || true
-
+# Flux owns the GPU reservation; the supervisor owns container cleanup.
 echo "=== serve $TAG  $(date -u +%FT%TZ)"
-docker run -d --name "$NAME" --gpus all --ipc=host -p "${PORT}:8000" \
-  -v /mnt/shared:/mnt/shared -v "${MODEL_MOUNT}:${MODEL_MOUNT}" \
+NAME=$(flux_serve_start --model "$MODEL" --log "$LOG" --plugin "$TS" --port "$PORT" --util "${TESSERA_GPU_MEM_UTIL:-0.45}" -- \
+  -v /mnt/shared:/mnt/shared:ro -v "${MODEL_MOUNT}:${MODEL_MOUNT}:ro" \
   -v "$TS/src":/work/src:ro -v "$TS/pyproject.toml":/work/pyproject.toml:ro \
-  -v "$EXT":/ext -v "$VLLM_CACHE":/root/.cache/vllm -v "$PROF":/prof \
+  -v "$EXT":/ext -v "$VLLM_CACHE":/tmp/vllm-cache -e VLLM_CACHE_ROOT=/tmp/vllm-cache -v "$PROF":/prof \
   -e TORCH_EXTENSIONS_DIR=/ext -e TMPDIR=/ext \
   -e TESSERA_SERVE_MODE="$MODE" \
   -e TESSERA_GPU_MEM_UTIL="${TESSERA_GPU_MEM_UTIL:-0.45}" \
@@ -94,23 +89,18 @@ docker run -d --name "$NAME" --gpus all --ipc=host -p "${PORT}:8000" \
   ${TESSERA_LANE_DOCKER_EXTRA:-} \
   --entrypoint bash "$IMAGE" -c '
 inc="$(python3 -c "import glob; p=sorted(glob.glob(\"/usr/local/lib/python3*/dist-packages/nvidia/cu*/include\")); print(p[0] if p else \"\")")"
-dst=/usr/local/cuda/include; for src in "$inc"/*; do n="$(basename "$src")"; [ -e "$dst/$n" ] || ln -s "$src" "$dst/$n"; done
-pip install --no-deps --no-build-isolation -q -e /work 2>&1 | tail -2
+export CPATH="$inc${CPATH:+:$CPATH}"
+plugin_project=$(mktemp -d /tmp/tessera-plugin.XXXXXX)
+cp -a /work/src /work/pyproject.toml "$plugin_project/"
+pip install --no-index --no-deps --no-build-isolation -q --target "$plugin_project/site" "$plugin_project"
+export PYTHONPATH="$plugin_project/site${PYTHONPATH:+:$PYTHONPATH}"
 exec vllm serve '"$MODEL"' --served-model-name kl-target --host 0.0.0.0 --port 8000 \
   --max-model-len 2048 --max-num-seqs 8 --gpu-memory-utilization "${TESSERA_GPU_MEM_UTIL:-0.45}" \
   --profiler-config '"'"'{"profiler":"torch","torch_profiler_dir":"/prof"}'"'"' \
-  '"${EAGER_FLAG}"' --trust-remote-code' >/dev/null
+  '"${EAGER_FLAG}"' --trust-remote-code')
 
-for i in $(seq 1 240); do
-  if curl -sf "http://127.0.0.1:${PORT}/v1/models" >/dev/null 2>&1; then echo "  up after ${i}0s"; break; fi
-  if ! docker ps -q -f name="$NAME" | grep -q .; then
-    docker logs "$NAME" > "$LOG" 2>&1 || true
-    echo "serve died; log at $LOG"; tail -40 "$LOG"; docker rm -f "$NAME" >/dev/null 2>&1; exit 1
-  fi
-  sleep 10
-done
 if curl -s "http://127.0.0.1:${PORT}/metrics" | grep -q 'vllm:spec_decode'; then
-  echo "REFUSED: spec-decode active"; docker rm -f "$NAME" >/dev/null; exit 2
+  echo "REFUSED: spec-decode active"; flux_serve_stop; exit 2
 fi
 
 # THE BOX'S LOAD, EITHER SIDE OF THE TIMED WINDOWS.  The GPU lock serialises GPU
@@ -123,11 +113,10 @@ fi
 echo "--- host load BEFORE the timed windows ---"; uptime
 $PY "$(dirname "$0")/window_gemv_load.py" \
   --url "http://127.0.0.1:${PORT}" --out "$OUT" --arm "$ARM" --mode "$MODE" --regime "$REGIME" \
-  || { docker logs "$NAME" > "$LOG" 2>&1 || true; docker rm -f "$NAME" >/dev/null 2>&1; exit 3; }
+  || { flux_serve_stop; exit 3; }
 
 echo "--- host load AFTER the timed windows ---"; uptime
-docker logs "$NAME" > "$LOG" 2>&1 || true
-docker rm -f "$NAME" >/dev/null
+flux_serve_stop
 build_identity_stamp "$LOG" "${OUT%.json}.build.json" "$VLLM_CACHE" "$IMAGE" \
   "$MODE" "$([ "$REGIME" = compiled ] && echo 0 || echo 1)" "$MODEL"
 # A MISSING TRACE IS REPORTED LOUDLY, NOT LEFT IN A FIELD NOBODY READS.  The

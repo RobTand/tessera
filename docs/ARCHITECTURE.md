@@ -10725,3 +10725,80 @@ its source/admission transport, receipt writer, runtime observer and job-ID
 normalizer explicitly. It imports neither the transport nor runtime observer;
 collection still validates the same source, allocation, container and cleanup
 bindings.
+
+### One scored serve per Flux job
+
+`tools/_flux_serve.py` owns the reviewed root Docker serving pattern.
+`experiments/flux_serve.sh` is its shell entry and local request adapter.
+The supervisor remains in the foreground, starts the existing scoring wrapper
+as a child, and accepts one serve request. It checks the normalized spec before
+starting Docker, waits for `/v1/models`, monitors container liveness during
+scoring, and stops, removes and verifies the container on EXIT or TERM.
+The child retains the scoring commands, metrics gates, log checks and build stamps.
+
+Root Docker in a Flux job is allowed only through this reviewed wrapper pattern,
+with an image by digest and `--pull=never`. Anything else that wants Docker in
+a job goes to the lead. Legacy entry points call `tools/_flux_docker_guard.py`
+and refuse by name inside Flux. This includes the old BuildKit image-build
+payload; its root-Docker job route needs a separate lead decision.
+
+Each run reserves `slot/[core=N;memory=M;gpu=1]` and an explicit walltime through
+`tools/_flux_gpu_jobspec.py`'s renderer. GPU placement has no host constraint
+unless the spec's image exists on only one Spark. The serve bound is
+`ceil(gpu_memory_utilization * 121.6 GiB)`. The job reserves that bound plus a
+4 GiB client allowance, at most 108 GiB under CAPS v7. The current default
+bounds are 104 + 4 GiB for utilization 0.85, 55 + 4 GiB for 0.45, and 73 + 4 GiB
+for the 0.60 graph smoke. These are declared bounds, not measured peaks.
+
+The container uses `--init`, `--pull=never`, numeric `--user=uid:gid`,
+`--name=flux-<decimal job id>`, and `--label=flux.jobid=<decimal job id>`.
+The decimal id comes from `flux job id --to=dec`; the f58 id does not match
+housekeeping. Docker receives the job's `Cpus_allowed_list`, equal memory and
+memory-swap bounds, the allocated `CUDA_VISIBLE_DEVICES` as its GPU device,
+and a port published only on `127.0.0.1`. Model and plugin inputs are read-only.
+Writable host mounts must already exist and belong to the launching user.
+Plugin installs use fresh container-local temporary directories with no writes
+to the plugin source. The migrated wrappers do not take `serve_lock.sh` or a
+box GPU lock. Flux owns the GPU reservation, so unrelated containers cannot
+hold a legacy lock in front of an admitted serve.
+
+`serve-receipt.json` records the normalized spec and its SHA256, inspected image
+id and RepoDigest, container id and StartedAt, `/v1/models`, the job's CPU list,
+both declared memory bounds, cleanup, and the container's peak memory.
+The peak is read from the inspected container process's Docker scope cgroup
+`memory.peak`, never from `docker stats`. `job-memory.json` records the client's
+own cgroup peak as the final payload step. The two scopes are distinct.
+The spec binds image digest, model directory and content SHA256, plugin commit
+and tree, normalized command/options, and GPU memory utilization. A spec hash
+pinned in the submitted environment prevents a later spec-file replacement.
+Missing image, running-image mismatch, spec mismatch, health deadline,
+container exit, or unverifiable cleanup is a named failure with no fallback.
+
+The six serve owners are `serve_and_dump_kl.sh`, `tessera_plugin_served.sh`,
+`decode_regime_kl.sh`, `gridbook_lane_served.sh`, `window_gemv_latency.sh`, and
+`serve_smoke_graph.sh`. Shell campaigns use `experiments/flux_serve_campaign.sh`
+to submit and collect each scored run separately. `TESSERA_SERVE_PLANS` names
+a JSON list of reviewed plans, each with `wrapper`, exact `arguments`, `spec`,
+a unique shared `out`, `walltime`, and optional `cores` and `image_host`.
+A missing or ambiguous plan refuses. A campaign cannot nest inside a Flux job.
+Direct serving wrappers refuse outside Flux.
+
+Prepare a normalized spec with `python tools/_flux_serve.py spec --model DIR
+--port PORT --util FRACTION -- [payload mount/env/entrypoint options] IMAGE
+[exact image command]`. The operands are the same payload request the wrapper
+makes; `--log` is an output and is excluded from the spec. Render a single run
+with `python tools/_flux_serve.py render --spec SPEC.json --out /mnt/shared/RUN
+--walltime 10m -- experiments/serve_smoke_graph.sh DIR`. Rendering starts no job.
+Campaign dispatch submits once, saves the job id before waiting, and reads
+native status, clean event, allocation and the serve receipt. An unknown
+submission is reconciled from its saved directory and is never retried blindly.
+
+These wrappers remain **unqualified until F-6 housekeeping is live**. Fleet
+housekeeping removes decimal-labelled leftovers before releasing the node and
+drains its own rank if removal fails. A real Spark qualification must verify
+that hard-kill path, root-store image availability, numeric-user plugin startup,
+loopback health and scoring, actual CPU affinity, Docker memory enforcement
+including unified GPU allocations, container peak accounting, and complete
+cleanup. TP2, Ray, NCCL and multi-host serving remain blocked. The legacy paired
+MoE and LFM stage drivers retain their separate ownership/memory protocols and
+are not admitted by the reviewed serving renderer.

@@ -81,6 +81,8 @@ def fake_repo(tmp_path):
     experiments = repo / "experiments"
     experiments.mkdir(parents=True)
     shutil.copyfile(WRAPPER, experiments / WRAPPER.name)
+    (experiments / "flux_serve_campaign.sh").write_text(
+        'flux_serve_score() { "$@"; }\n')
     (experiments / "runtime_image.sh").write_text(
         "runtime_image_pin() { echo image@sha256:stub; }\n")
     dump = experiments / "serve_and_dump_kl.sh"

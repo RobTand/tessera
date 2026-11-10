@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+source "$(dirname "${BASH_SOURCE[0]}")/flux_serve_campaign.sh"
 # The served leg of tessera#60: ldlq_block=4 against a RE-RUN of the default 32,
 # on dense Qwen3-0.6B, at byte-identical bytes, scored against the same teacher
 # the incumbent 0.531028 was scored against.
@@ -55,7 +56,7 @@ run () {   # dump-label, twin-name
   [ -f "$twin/model.safetensors" ] || { echo "no export for $2"; return 1; }
   if [ ! -f "$out.npz" ]; then
     echo "== serving $label ($twin) $(date -u +%FT%TZ)"; uptime
-    experiments/serve_and_dump_kl.sh "$twin" "$out" student || return 1
+    flux_serve_score experiments/serve_and_dump_kl.sh "$twin" "$out" student || return 1
   fi
   $PY /home/rob/dq-runs/kl_tool.py compare "$TEACHER" "$out.npz" \
       --out "$RUNS/kl_$label.json" 2>&1 | tee "$RUNS/kl_$label.log" | tail -8

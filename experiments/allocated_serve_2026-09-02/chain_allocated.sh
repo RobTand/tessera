@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+source "$(dirname "${BASH_SOURCE[0]}")/../flux_serve_campaign.sh"
 # The allocated-Tessera serving chain, on sparklina.
 #
 # Six arms: the PrismaQuant-allocated 4.0-bpp checkpoint and its matched-BYTES
@@ -46,7 +47,7 @@ kl () {       # <checkpoint> <arm> <mode> <eager 1|0>
   [ -f "$KLDIR/qwen_tessera_$arm.json.npz" ] && { echo "== kl $arm: already dumped"; return 0; }
   echo "== kl $arm (mode=$mode eager=$eager)"
   TESSERA_KL_NAME=alloc-serve-$arm TESSERA_LANE_EAGER=$eager \
-    "$TS/experiments/tessera_plugin_served.sh" "$ckpt" "$arm" "$mode" \
+    flux_serve_score "$TS/experiments/tessera_plugin_served.sh" "$ckpt" "$arm" "$mode" \
     > "$RUNS/arm_$arm.log" 2>&1
   echo "   rc=$?"
   tail -14 "$RUNS/arm_$arm.log"
@@ -81,7 +82,7 @@ kl "$ALLOC" alloc4-streamed        streamed 1
 if [ -d "$TWIN" ] && [ ! -f "$KLDIR/qwen_tessera_alloc4-twin.json.npz" ]; then
   echo "== kl alloc4-twin (stock twin, vanilla vLLM, no plugin)"
   TESSERA_KL_IMAGE="$(runtime_image_pin)" TESSERA_KL_NAME=alloc-serve-twin \
-    "$TS/experiments/serve_and_dump_kl.sh" "$TWIN" \
+    flux_serve_score "$TS/experiments/serve_and_dump_kl.sh" "$TWIN" \
     "$KLDIR/qwen_tessera_alloc4-twin.json" student > "$RUNS/arm_alloc4-twin.log" 2>&1
   echo "   rc=$?"; tail -6 "$RUNS/arm_alloc4-twin.log"
   $PY /home/rob/dq-runs/kl_tool.py compare "$KLDIR/qwen_teacher_bf16_v028.json.npz" \
