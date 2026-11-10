@@ -520,8 +520,6 @@ def require_single_replay_options(args, *, stubbed=False):
         raise ValueError("hash-only requires the closed stageprev numeric mode")
     if getattr(args,'paired_k32_timing',False) and not getattr(args,'paired_k32_numerics',False):
         raise ValueError('paired timing requires the closed qualified mode')
-    if getattr(args,'direct_vllm_inputs',False) and not getattr(args,'paired_k32_numerics',False):
-        raise ValueError('direct-vLLM input transport requires the closed paired numeric mode')
     if getattr(args, 'paired_k32_numerics', False):
         from paired_k32_qualification import require_options
         require_options(args, stubbed=stubbed)
@@ -809,8 +807,6 @@ def main():
     ap.add_argument('--paired-k32-numerics', action='store_true',
                     help='closed-world pinned A8SE L10 TP2rank0 M1,512,2048 raw-bit qualification')
     ap.add_argument('--paired-k32-source-sha256', default=None)
-    ap.add_argument('--direct-vllm-inputs', action='store_true',
-                    help='same sealed ranges through held original FDs; vLLM execution exemption')
     ap.add_argument('--paired-k32-timing',action='store_true',
                     help='reuse accepted numeric receipt; fixed10 warmup/30 events plus separate profile/power')
     args = ap.parse_args()

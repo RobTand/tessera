@@ -219,7 +219,7 @@ def main():
                  BENCH_OWNER_TOKEN=secrets.token_hex(16),
                  BENCH_RO_MOUNTS=' '.join([*(str(p.parent) for p in natives),str(Path(NUMERIC_RECEIPT).parent)]))
         argv=['bash','experiments/t8r_speed/bench_t8r.sh','.',str(out/arm),
-            '--paired-k32-numerics','--direct-vllm-inputs','--paired-k32-source-sha256',bindings['src/tessera/serving/csrc/routed_fused_window.cu'],
+            '--paired-k32-numerics','--paired-k32-source-sha256',bindings['src/tessera/serving/csrc/routed_fused_window.cu'],
             '--artifact','/mnt/shared/tessera-runs/moe/glm53-a8-bf16menu-20260930/release/exported',
             '--groups','experts.R1024.L10','--ms','1,512,2048','--no-graph',
             '--power-s','3' if args.timing else '0','--warmup','10' if args.timing else '0',

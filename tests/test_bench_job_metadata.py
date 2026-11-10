@@ -12,3 +12,11 @@ def test_regular_bench_record_declares_the_job_schema():
                   if isinstance(k, ast.Constant) and k.value == 'meta_schema')
     assert schema == JOB_META_SCHEMA
     assert job_identity({'meta_schema': schema, 'flux_job_id': 'job'}) == 'job'
+
+
+def test_reader_selection_has_no_dead_transport_switch():
+    root = Path(__file__).resolve().parents[1]
+    for name in ('bench_t8r.py', 'bench_t8r.sh', 'paired_k32_action.py'):
+        text = (root / 'experiments/t8r_speed' / name).read_text()
+        assert '--direct-vllm-inputs' not in text
+        assert 'direct_vllm_inputs' not in text

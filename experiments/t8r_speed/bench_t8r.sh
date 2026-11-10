@@ -81,7 +81,7 @@ RUN_PREFIX=()
 # Reuse the qualified direct benchmark containment contract. Numeric phase
 # and separately reviewed finite timing/repeatability resource windows.
 if [[ "${BENCH_DIRECT_VLLM:-0}" == 1 ]]; then
-  if [[ " $* " == *" --paired-k32-numerics "* && " $* " == *" --direct-vllm-inputs "* ]]; then
+  if [[ " $* " == *" --paired-k32-numerics "* ]]; then
     # Closed paired batch uses held FDs, but always stays inside a Flux job.
     [[ -n "${FLUX_JOB_ID:-}" ]] || { echo "paired batch requires FLUX_JOB_ID environment value; context only, not GPU approval or an admission token" >&2; exit 2; }
     [[ " $* " != *" --comparison-protocol "* ]] || { echo "paired numeric mode excludes a PM comparison protocol" >&2; exit 2; }

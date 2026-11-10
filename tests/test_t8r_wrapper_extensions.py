@@ -203,8 +203,8 @@ def test_native_build_choice_wrapper_preserves_declared_value(tmp_path, kind, se
 
 
 @pytest.mark.parametrize('extra,expected_rc,message', [
-    (['--paired-k32-numerics', '--direct-vllm-inputs'], 0, None),
-    (['--paired-k32-numerics', '--direct-vllm-inputs', '--comparison-protocol', '/owned/protocol.json'],
+    (['--paired-k32-numerics'], 0, None),
+    (['--paired-k32-numerics', '--comparison-protocol', '/owned/protocol.json'],
      2, 'paired numeric mode excludes a PM comparison protocol'),
     ([], 2, 'direct transport requires a closed PM protocol or the closed paired numeric mode'),
 ])
@@ -225,7 +225,6 @@ def test_direct_paired_numeric_reuses_owned_container_and_deadline(tmp_path, ext
     env['TIMEOUT_ARGV_PATH'] = str(tmp_path / 'timeout-argv')
     env.update(BENCH_DIRECT_VLLM='1', BENCH_OWNER_TOKEN='a' * 32,
                BENCH_FIXTURE_RUNNER_SP=str(fixture_sp))
-    env.pop('BENCH_STRICT_STAGED', None)
     result = subprocess.run(['bash', str(wrapper), str(checkout), str(tmp_path / 'out'),
                              '--artifact', str(artifact), *extra],
                             env=env, capture_output=True, text=True)
