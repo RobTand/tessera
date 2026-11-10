@@ -604,8 +604,8 @@ def main(argv=None):
     command = a.command[1:] if a.command[:1] == ['--'] else a.command
     require(command, 'WRAPPER_REQUIRED')
     if action == 'wrapper':
-        require(spec_id(spec) == os.environ.get('TESSERA_SERVE_EXPECTED_SPEC_ID'), 'SPEC_ID_MISMATCH')
         try:
+            require(spec_id(spec) == os.environ.get('TESSERA_SERVE_EXPECTED_SPEC_ID'), 'SPEC_ID_MISMATCH')
             return supervise(spec, Path(a.out) / 'serve-receipt.json', command)
         finally:
             # Docker's scope is separate; this is the client's own final peak.

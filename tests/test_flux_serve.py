@@ -294,6 +294,26 @@ def test_long_gpu_run_requires_duration_approval(setup):
     assert m.render_serving(command, s.spec, duration_approval='fleet-master test decision', **arguments)
 
 
+def test_spec_refusal_still_records_the_final_client_peak(tmp_path, monkeypatch):
+    m = policy()
+    spec = tmp_path / 'spec.json'
+    spec.write_text(json.dumps({'gpu_memory_utilization': '.35'}))
+    (tmp_path / 'cgroup').write_text('0::/controlled-job\n')
+    group = tmp_path / 'cgroups/controlled-job'
+    group.mkdir(parents=True)
+    (group / 'memory.peak').write_text('987654')
+    real_path = m.Path
+    def observed_path(value):
+        if value == '/proc/self/cgroup': return tmp_path / 'cgroup'
+        if value == '/sys/fs/cgroup': return tmp_path / 'cgroups'
+        return real_path(value)
+    monkeypatch.setattr(m, 'Path', observed_path)
+    monkeypatch.setenv('TESSERA_SERVE_EXPECTED_SPEC_ID', 'different')
+    with pytest.raises(m.Refused, match='SPEC_ID_MISMATCH'):
+        m.main(['wrapper', '--spec', str(spec), '--out', str(tmp_path), '--', 'unreached-score'])
+    assert json.loads((tmp_path / 'job-memory.json').read_text()) == {'memory_peak_bytes': 987654}
+
+
 def test_model_mount_cannot_be_writable_or_duplicated(setup):
     m, s, d, request, root = setup
     s.start(request)

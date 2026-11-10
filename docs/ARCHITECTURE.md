@@ -10769,6 +10769,7 @@ both declared memory bounds, cleanup, and the container's peak memory.
 The peak is read from the inspected container process's Docker scope cgroup
 `memory.peak`, never from `docker stats`. `job-memory.json` records the client's
 own cgroup peak as the final payload step. The two scopes are distinct.
+An entry spec-id refusal still records the final client peak before returning.
 The spec binds image digest, model directory and content SHA256, plugin commit
 and tree, normalized command/options, and GPU memory utilization. Supporting
 plugin checkouts carry their own commit/tree identities and normalized mount
