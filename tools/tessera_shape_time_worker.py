@@ -182,7 +182,7 @@ def observe_software_runtime(expected):
  # certified mode, before anything queries a device.
  seal("runtime source/contract/version",declared,observed,
       ValueError("runtime source/contract/version differs before device setup"))
- for fact in provenance:
+ for fact in provenance or ():
   seal("runtime provenance",expected["tessera_commit"],fact,
        ValueError("runtime provenance differs before device setup"))
  if not dev:
