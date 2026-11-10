@@ -25,7 +25,7 @@ a tree the selector never read, or after a shard Flux had already failed
 
 Usage::
 
-    python3 -s tools/selected_population.py --base origin/master --shards 12
+    python3 -s tools/selected_population.py --base origin/master --shards 12 --python /path/to/scoped/bin/python
     python3 -s tools/selected_population.py --resume <receipt dir>
 
 ``--resume`` submits nothing.  It rebuilds the receipt from the selection and
@@ -147,9 +147,7 @@ def selection_binding(selection, receipt_dir):
 def shard_arm(name: str, files: list[str], python: str | None = None) -> dict:
     """merge_suite's x86 arm, running these files under the declared ``-n`` mode.
 
-    The arm's own interpreter is used unless the run names one: the arm's
-    default has no ``jsonschema``, so a test that imports it fails there for
-    want of the package.
+    New submissions require an explicit interpreter. Resume reads saved commands.
     """
 
     arm = {**merge_suite.ARMS["x86"], "targets": list(files), "dist": "worksteal",
@@ -377,7 +375,7 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--target", action="append", default=[],
                     help="run an explicit subset of selector files; retain the selector verdict")
     ap.add_argument("--python", default="",
-                    help="interpreter every shard runs under; the x86 arm's own when omitted")
+                    help="required for new submissions: scoped CPU interpreter every shard runs under")
     ap.add_argument("--cpus", type=int, default=2, help="cores per shard, also pytest's -n")
     ap.add_argument("--mem-gb", type=int, default=4)
     ap.add_argument("--timeout-s", type=float, default=1200.0)
@@ -390,6 +388,8 @@ def main(argv: list[str] | None = None) -> int:
     args = ap.parse_args(argv)
     if args.shards < 1 or args.cpus < 1 or args.mem_gb < 1:
         ap.error("shards, cpus and memory must be positive")
+    if not args.resume and not args.python:
+        ap.error("--python must name the scoped CPU interpreter")
     args.checkout = Path(args.checkout).resolve()
 
     if args.resume:

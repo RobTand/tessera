@@ -23,7 +23,9 @@ def load(name, path):
 
 @pytest.fixture
 def suite():
-    return load("native_merge_suite", ROOT / "tools/merge_suite.py")
+    module = load("native_merge_suite", ROOT / "tools/merge_suite.py")
+    module.ARMS["x86"]["python"] = "/opt/test-cpu/bin/python"
+    return module
 
 
 def publication(suite, tmp_path):

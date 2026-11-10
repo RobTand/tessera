@@ -53,7 +53,7 @@ ARMS = {
     "x86": {
         "why": "the device-less population: torch present, no CUDA device, "
                "which is what dl380g10 actually reports",
-        "python": "/home/rob/venvs/pb-cpu/bin/python",
+        "python": None,
         "strict_cuda": False,
         "needs_shared_checkout": True,
         "fans_out": True,
@@ -197,6 +197,8 @@ def _command(arm: dict, surface_json: Path, extra: list[str],
     targets = arm.get("targets", ["tests"])
     suite_container.validate_targets(targets)
     cpus = _arm_cpus(arm, cpus)
+    if not arm.get("python"):
+        raise ValueError("--python must name the scoped CPU interpreter")
     command = [arm["python"], "-s", "-m", "pytest", *targets, "-q",
                "-o", "addopts=", "-p", "no:cacheprovider",
                "--surface-json", str(surface_json)]

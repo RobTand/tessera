@@ -4027,7 +4027,11 @@ Re-stamped 2026-11-08 from `tools/merge_suite.py`, `tools/selected_population.py
 is unit3; G01 adds native rootless container authority. Full-suite, CUDA and
 production qualification remain separate.
 
-`tools/merge_suite.py` submits its CPU population through native Flux. The
+`tools/merge_suite.py` submits its CPU population through native Flux. New CPU
+submissions require `--python /path/to/scoped/bin/python`, with no default
+interpreter path. `tools/selected_population.py` requires the same explicit
+input and records it in the selection. Resume needs no new interpreter input
+because it reads saved command evidence. The
 operator-owned `/mnt/shared/flux-migration/INSTANCE` supplies the client prefix
 and run. `/mnt/shared/flux-migration/flux-uri.sh` resolves the URI at runtime;
 an explicit caller `FLUX_URI` overrides it. Client PATH and library paths come

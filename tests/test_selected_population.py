@@ -235,7 +235,7 @@ def test_a_dry_run_prints_each_shards_command_and_creates_nothing(tmp_path, monk
                  "excluded_tests": [], "tests": sorted(sum(SHARDS.values(), [])), "shards": SHARDS}
     monkeypatch.setattr(sp, "choose", lambda checkout, base, count: selection)
     out_dir = tmp_path / "never-created"
-    status = sp.main(["--dry-run", "--checkout", str(_checkout(tmp_path)), "--out", str(out_dir)])
+    status = sp.main(["--dry-run", "--python", "/opt/venv/bin/python", "--checkout", str(_checkout(tmp_path)), "--out", str(out_dir)])
     lines = [line for line in capsys.readouterr().out.splitlines() if "-m pytest" in line]
     assert status == 0
     assert not out_dir.exists()
@@ -253,22 +253,16 @@ def test_a_dry_run_prints_each_shards_command_and_creates_nothing(tmp_path, monk
 
 
 def test_every_shard_runs_under_the_interpreter_the_run_names(tmp_path, monkeypatch, capsys):
-    """The arm's default interpreter may lack what the suite imports.
-
-    merge_suite's x86 arm names ``pb-cpu``, which has no ``jsonschema``, so a
-    test that needs it fails there for want of the package and not for any
-    defect.  The run names its interpreter, and the selection records it so
-    ``--resume`` reads the same one.
-    """
+    """The explicit interpreter is saved for resume, with no machine default."""
 
     arm = sp.shard_arm("shard-00", ["tests/test_a.py"], python="/opt/venv/bin/python")
     assert arm["python"] == "/opt/venv/bin/python"
-    assert sp.shard_arm("shard-00", ["tests/test_a.py"])["python"] == sp.merge_suite.ARMS["x86"]["python"]
+    assert sp.shard_arm("shard-00", ["tests/test_a.py"])["python"] is None
     selection = {"source_identity": {"sha256": "a" * 64}, "base": "origin/master", "verdict": "narrowed", "forces_full": [],
                  "excluded_tests": [], "tests": sorted(sum(SHARDS.values(), [])), "shards": SHARDS}
     monkeypatch.setattr(sp, "choose", lambda checkout, base, count: dict(selection))
-    status = sp.main(["--dry-run", "--checkout", str(_checkout(tmp_path)),
-                      "--out", str(tmp_path / "never"), "--python", "/opt/venv/bin/python"])
+    status = sp.main(["--dry-run", "--python", "/opt/venv/bin/python", "--checkout", str(_checkout(tmp_path)),
+                      "--out", str(tmp_path / "never")])
     lines = [line for line in capsys.readouterr().out.splitlines() if "-m pytest" in line]
     assert status == 0 and len(lines) == 2
     assert all("/opt/venv/bin/python -s -m pytest" in line for line in lines)
@@ -430,7 +424,7 @@ def _world(tmp_path, monkeypatch, *, shards=None, ran=None, state=None, source=N
                                      commit=identity["snapshot_commit"])["surface"]
         surface["skip_reasons"] = (skip_reasons or {}).get(name, {})
         surface["not_collected"] = (not_collected or {}).get(name, [])
-        arm = sp.shard_arm(name, ran.get(name, files) if ran else files)
+        arm = sp.shard_arm(name, ran.get(name, files) if ran else files, python="/opt/test-cpu/bin/python")
         command = sp.merge_suite._timed_command(sp.merge_suite._command(
             arm, receipt_dir / f"surface.{name}.json", sp.PYTEST_ARGS, 2), 60)
         status = (state or {}).get(name, ("done", 0))
@@ -541,3 +535,10 @@ def test_explicit_scope_preserves_full_selector_verdict_and_source(tmp_path, mon
     assert result["shards"] == {"shard-00": ["tests/test_a.py"]}
     with pytest.raises(ValueError, match="selected"):
         sp.choose(checkout, "HEAD~1", 2, targets=["tests/not_selected.py"])
+
+
+def test_new_selection_requires_explicit_python_before_source_probe(tmp_path, capsys):
+    with pytest.raises(SystemExit) as error:
+        sp.main(['--dry-run', '--checkout', str(tmp_path/'absent')])
+    assert error.value.code == 2
+    assert '--python' in capsys.readouterr().err

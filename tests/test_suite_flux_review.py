@@ -14,6 +14,7 @@ def suite():
     spec = importlib.util.spec_from_file_location("review_merge_suite", ROOT / "tools/merge_suite.py")
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
+    module.ARMS["x86"]["python"] = "/opt/test-cpu/bin/python"
     return module
 
 

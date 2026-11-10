@@ -26,6 +26,7 @@ def _module():
     spec = importlib.util.spec_from_file_location("_merge_suite", TOOL)
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
+    module.ARMS["x86"]["python"] = "/opt/test-cpu/bin/python"
     return module
 
 
@@ -1115,7 +1116,7 @@ def test_real_producer_publication_binds_without_rewriting_its_output(real_publi
 @pytest.mark.parametrize("cores", [1, 4])
 def test_native_dry_run_declares_exact_workers_deadline_and_creates_nothing(tmp_path, cores):
     out = tmp_path / "fresh" / "receipt.json"
-    result = subprocess.run([sys.executable, str(TOOL), "--arm", "x86", "--dry-run",
+    result = subprocess.run([sys.executable, str(TOOL), "--arm", "x86", "--python", sys.executable, "--dry-run",
         "--cpus", str(cores), "--target", CHILD_SUITE, "--checkout", str(ROOT), "--out", str(out)],
         capture_output=True, text=True, timeout=60)
     assert result.returncode == 0, result.stderr
@@ -1465,7 +1466,7 @@ def test_submit_time_master_survives_a_ref_advance(
         return arm
 
     monkeypatch.setattr(merge, "_submit", client)
-    argv = ["merge_suite", "--arm", "x86", "--checkout", str(checkout)]
+    argv = ["merge_suite", "--arm", "x86", "--python", sys.executable, "--checkout", str(checkout)]
     monkeypatch.setattr(sys, "argv", argv)
     if lifecycle == "resume":
         with pytest.raises(RuntimeError, match="submitter stopped"):
@@ -1549,3 +1550,19 @@ def test_native_binding_keeps_subtest_summary_coverage(tmp_path, monkeypatch):
     path.write_text(path.read_text().replace(" in 0.10s", ", 28 subtests passed in 0.10s"))
     record = merge._resume("x86", merge.ARMS["x86"], tmp_path)
     assert record["exit_status_observed"] and record["returncode"] == 0
+
+
+def test_cpu_interpreter_has_no_default_and_is_refused_by_name(tmp_path):
+    spec = importlib.util.spec_from_file_location('_merge_without_fixture_defaults', TOOL)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    assert module.ARMS['x86']['python'] is None
+    with pytest.raises(ValueError, match='--python'):
+        module._command(module.ARMS['x86'], tmp_path/'surface.json', [])
+    explicit = {**module.ARMS['x86'], 'python': '/opt/scoped/bin/python'}
+    assert module._command(explicit, tmp_path/'surface.json', [])[0] == '/opt/scoped/bin/python'
+    result = subprocess.run([sys.executable, str(TOOL), '--arm', 'x86', '--dry-run',
+                             '--out', str(tmp_path/'never'/'receipt.json')],
+                            capture_output=True, text=True, timeout=60)
+    assert result.returncode == 2 and '--python' in result.stderr
+    assert not (tmp_path/'never').exists()
