@@ -127,6 +127,8 @@ def run_build(manifest, tag, output_directory, kernel_build, *, runner=subproces
 
 
 def main(argv=None):
+    refusal = subprocess.run(['/bin/bash', str(ROOT / 'experiments/flux_docker_guard.sh')],
+                             capture_output=True, text=True)
     parser = argparse.ArgumentParser(description=__doc__)
     source = parser.add_mutually_exclusive_group()
     source.add_argument("--manifest")
@@ -152,6 +154,9 @@ def main(argv=None):
         print(json.dumps(record, sort_keys=True))
         return 0 if (record.get("state") == "terminal" and record.get("returncode") == 0
                      and not record.get("evidence_errors")) else 1
+    if refusal.returncode:
+        print(refusal.stderr, file=sys.stderr, end='')
+        return refusal.returncode
     if not (args.manifest or args.manifest_json) or not args.image_tag or not args.output_directory:
         parser.error("a build requires a manifest, --image-tag and --output-directory")
     manifest = json.loads(args.manifest_json if args.manifest_json is not None else Path(args.manifest).read_text())

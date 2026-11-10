@@ -546,20 +546,31 @@ def test_shell_helper_resolves_the_selected_podman_store(tmp_path):
     assert 'b' * 64 in result.stdout
 
 
+def _live_container_entries():
+    return sorted(path for directory in ('experiments', 'tools')
+                  for path in (ROOT / directory).rglob('*')
+                  if 'archive' not in path.parts and path.suffix in {'.sh', '.py'})
+
+
+def _shell_live(text):
+    return '\n'.join(line for line in text.splitlines() if not line.lstrip().startswith('#'))
+
+
+def _shell_docker_use(text):
+    return re.search(r'\bdocker\s+run\b|--gpus\b', _shell_live(text))
+
+
+@pytest.mark.parametrize('entry', [path for path in _live_container_entries()
+                                  if path.suffix == '.sh' and
+                                  'refuse_flux_docker || exit 2' in path.read_text()],
+                         ids=lambda path: str(path.relative_to(ROOT)))
 @pytest.mark.parametrize('job_value', ['', 'f123'])
-def test_direct_docker_entry_refuses_flux_before_runtime(tmp_path, job_value):
-    image = 'example.invalid/cuda@sha256:' + 'a' * 64
+def test_direct_docker_entry_refuses_flux_before_runtime(tmp_path, job_value, entry):
     docker = tmp_path / 'docker'
-    docker.write_text('''#!/bin/sh
-if [ "$1 $2" = "image inspect" ]; then
-  printf 'sha256:%s\\t["%s"]\\n' ''' + 'b' * 64 + ' ' + image + '''
-else
-  touch "$CONTROL/docker-reached"
-fi
-''')
+    docker.write_text('#!/bin/sh\ntouch "$CONTROL/docker-reached"\nexit 99\n')
     docker.chmod(0o755)
-    result = subprocess.run(['bash', str(ROOT / 'experiments/container_limits_probe.sh')],
-                            env={**os.environ, 'FLUX_JOB_ID': job_value, 'IMAGE': image,
+    result = subprocess.run(['bash', str(entry)], cwd=tmp_path,
+                            env={**os.environ, 'FLUX_JOB_ID': job_value,
                                  'CONTROL': str(tmp_path), 'PATH': f'{tmp_path}:{os.environ["PATH"]}'},
                             capture_output=True, text=True, timeout=30)
     assert not (tmp_path / 'docker-reached').exists(), result.stdout + result.stderr
@@ -567,30 +578,64 @@ fi
     assert 'FLUX_JOB_ID' in result.stderr and 'reviewed serving wrapper' in result.stderr
 
 
+def _guard_call(node):
+    return (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
+            and isinstance(node.func.value, ast.Name) and node.func.value.id == 'subprocess'
+            and node.func.attr == 'run'
+            and any(isinstance(item, ast.Constant) and isinstance(item.value, str)
+                    and item.value.endswith('flux_docker_guard.sh') for item in ast.walk(node)))
+
+
+def _docker_order_errors(text, suffix):
+    # Literal commands only: Docker through a variable or dynamically built argv
+    # is not detected. No such direct-Docker entry exists in this tree today.
+    if suffix == '.sh':
+        live = _shell_live(text)
+        use = _shell_docker_use(text)
+        if use is None:
+            return []
+        source = re.search(r'^\s*source .*flux_docker_guard.sh', live, re.M)
+        call = re.search(r'^\s*refuse_flux_docker\s*\|\|\s*exit 2', live, re.M)
+        return [] if source and call and source.start() < call.start() < use.start() else ['shell order']
+    tree = ast.parse(text)
+    parents = {child: node for node in ast.walk(tree) for child in ast.iter_child_nodes(node)}
+
+    def function(node):
+        while node in parents:
+            node = parents[node]
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                return node
+        return tree
+
+    guards = [node for node in ast.walk(tree) if _guard_call(node)]
+    main = next((node for node in tree.body if isinstance(node, ast.FunctionDef) and node.name == 'main'), None)
+    first = main.body[0] if main else None
+    main_guard = first is not None and any(_guard_call(node) for node in ast.walk(first))
+    errors = []
+    for node in ast.walk(tree):
+        if not isinstance(node, (ast.List, ast.Tuple)):
+            continue
+        values = [item.value if isinstance(item, ast.Constant) else None for item in node.elts]
+        if not (values[:2] == ['docker', 'run'] or '--gpus' in values):
+            continue
+        if not main_guard and not any(function(guard) is function(node) and guard.lineno < node.lineno
+                                      for guard in guards):
+            errors.append(f'Python order at line {node.lineno}')
+    return errors
+
+
+@pytest.mark.parametrize('suffix,text', [
+    ('.sh', 'source ./flux_docker_guard.sh\ndocker run image\nrefuse_flux_docker || exit 2\n'),
+    ('.py', 'def main():\n subprocess.run(["docker", "run"])\n subprocess.run(["bash", "flux_docker_guard.sh"], check=True)\n'),
+    ('.py', 'def unrelated():\n subprocess.run(["bash", "flux_docker_guard.sh"], check=True)\ndef main():\n subprocess.run(["docker", "run"])\n'),
+])
+def test_guard_order_rejects_late_or_unrelated_call(suffix, text):
+    assert _docker_order_errors(text, suffix)
+
+
 def test_live_docker_entries_call_the_flux_guard():
-    # Ignore prose and archived programs; Python argv lists are executable inputs too.
-    import ast
     offenders = []
-    for directory in ('experiments', 'tools'):
-        for path in (ROOT / directory).rglob('*'):
-            if 'archive' in path.parts or path.suffix not in {'.sh', '.py'}:
-                continue
-            text = path.read_text()
-            if path.suffix == '.py':
-                tree = ast.parse(text)
-                values = [[item.value for item in node.elts if isinstance(item, ast.Constant)]
-                          for node in ast.walk(tree) if isinstance(node, (ast.List, ast.Tuple))]
-                direct = any(items[:2] == ['docker', 'run'] or '--gpus' in items for items in values)
-                guarded = any(isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
-                              and node.func.attr == 'run' and
-                              any(isinstance(item, ast.Constant) and isinstance(item.value, str)
-                                  and item.value.endswith('flux_docker_guard.sh') for item in ast.walk(node))
-                              for node in ast.walk(tree))
-            else:
-                live = '\n'.join(line for line in text.splitlines() if not line.lstrip().startswith('#'))
-                direct = bool(re.search(r'\bdocker\s+run\b|--gpus\b', live))
-                guarded = bool(re.search(r'^\s*source .*flux_docker_guard.sh', live, re.M)
-                               and re.search(r'^\s*refuse_flux_docker\s*\|\|\s*exit 2', live, re.M))
-            if direct and not guarded:
-                offenders.append(str(path.relative_to(ROOT)))
-    assert offenders == [], 'unguarded direct Docker entries: ' + ', '.join(offenders)
+    for path in _live_container_entries():
+        for error in _docker_order_errors(path.read_text(), path.suffix):
+            offenders.append(f'{path.relative_to(ROOT)}: {error}')
+    assert offenders == [], 'unguarded or late direct Docker entries: ' + ', '.join(offenders)

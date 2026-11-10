@@ -13,6 +13,12 @@ the rootless launcher in CPU-only mode, with the consumer's source and extension
 mounts, persistent HOME and launcher-owned TMPDIR and single-thread build bounds.
 `experiments/step4_capture_launch.py` refuses at entry to `main`, before argument
 processing, output creation, image inspection or the GPU sampler, with exit 2.
+The source-derived guard test checks call order before literal Docker launch
+argv, and runs every guarded shell entry with empty and nonempty Flux job IDs
+against a recording fake Docker. Python guards must precede the argv in the
+same function or run at entry to `main`. The serving-image CLI calls the guard
+at entry too; inside Flux its render/run paths refuse, `--submit` gives the
+root-store reason, and historical `--collect` remains available.
 
 Re-stamped 2026-11-10 for the owned GPU container launcher. The `run` entry
 in `tools/_flux_gpu_jobspec.py` accepts a digest-pinned container request
