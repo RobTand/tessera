@@ -15,6 +15,7 @@ from pathlib import Path
 import os
 import shutil
 import subprocess
+from tools import _flux_serve as policy
 
 WRAPPER = Path(__file__).resolve().parents[1] / "experiments" / "serve_and_dump_kl.sh"
 
@@ -66,15 +67,11 @@ exit 1
 
 
 def _run_wrapper(tmp_path, *, fail_remove=False, ready=False, metrics="clean"):
-    import importlib.util
     import json
     import sys
 
     root = WRAPPER.parents[1]
     module = root / 'tools/_flux_serve.py'
-    loaded = importlib.util.spec_from_file_location('serve_policy', module)
-    policy = importlib.util.module_from_spec(loaded)
-    loaded.loader.exec_module(policy)
     scripts = tmp_path / 'scripts'
     scripts.mkdir()
     wrapper = scripts / WRAPPER.name

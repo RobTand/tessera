@@ -10789,7 +10789,8 @@ Prepare a normalized spec with `python tools/_flux_serve.py spec --model DIR
 makes; `--log` is an output and is excluded from the spec. Render a single run
 with `python tools/_flux_serve.py render --spec SPEC.json --out /mnt/shared/RUN
 --walltime 10m -- experiments/serve_smoke_graph.sh DIR`. Rendering starts no job.
-Campaign dispatch submits once, saves the job id before waiting, and reads
+Campaign dispatch checks eligible Sparks for external GPU processes, submits
+once, saves the job id before waiting, and reads
 native status, clean event, allocation and the serve receipt. An unknown
 submission is reconciled from its saved directory and is never retried blindly.
 

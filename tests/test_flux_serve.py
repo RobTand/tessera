@@ -305,6 +305,15 @@ def test_model_mount_cannot_be_writable_or_duplicated(setup):
     s.stop()
 
 
+def test_model_alias_mount_must_be_read_only(setup):
+    m, s, d, request, root = setup
+    request['options'] += ['-v', request['model'] + ':/writable-alias']
+    s.spec = m.make_spec(request)
+    with pytest.raises(m.Refused, match='MODEL_MOUNT_READ_ONLY'):
+        s.start(request)
+    assert not any(call[0] == 'run' for call in d.calls)
+
+
 def test_campaign_dispatch_selects_exact_plan_and_waits(setup, monkeypatch):
     m, s, d, request, root = setup
     monkeypatch.delenv('FLUX_JOB_ID')
@@ -381,7 +390,8 @@ def test_extensionless_docker_path_is_checked(tmp_path):
                                         ('gpu', 'GPU_ALLOCATION_MISSING'),
                                         ('receipt', 'SERVE_RECEIPT_INCOMPLETE'),
                                         ('spec', 'SPEC_ID_MISMATCH'),
-                                        ('jobpeak', 'JOB_MEMORY_PEAK_MISSING')])
+                                        ('jobpeak', 'JOB_MEMORY_PEAK_MISSING'),
+                                        ('external', 'EXTERNAL_GPU_LOAD')])
 def test_native_collection_requires_its_own_complete_evidence(tmp_path, monkeypatch, case, reason):
     m = policy()
     sys.path.insert(0, str(ROOT / 'tools'))
@@ -411,9 +421,14 @@ elif a[:2]==['job','info']:
 else: sys.exit(92)
 ''')
     client.chmod(0o755)
+    ssh = tmp_path / 'ssh'
+    ssh.write_text('#!/bin/sh\n[ "$CONTROL_CASE" != external ] || echo external-gpu-process\nexit 0\n')
+    ssh.chmod(0o755)
+    monkeypatch.setenv('PATH', str(tmp_path) + ':' + os.environ['PATH'])
     argv = ['flux', 'submit', '--env=TESSERA_SERVE_EXPECTED_SPEC_ID=expected', '--', 'reviewed-wrapper']
     for control in ['positive', case]:
         out = tmp_path / control
+        monkeypatch.setenv('CONTROL_CASE', control)
         monkeypatch.setattr(_flux_gpu_jobspec, 'flux_client', lambda: (
             str(client), {**os.environ, 'CONTROL_OUT': str(out), 'CONTROL_CASE': control}))
         if control == 'positive':
@@ -421,6 +436,9 @@ else: sys.exit(92)
         else:
             with pytest.raises(m.Refused, match=reason):
                 m.submit_and_collect(argv, str(out))
+        if control == 'external':
+            assert not (out / 'calls').exists(), 'external load must refuse before submission'
+            continue
         calls = [json.loads(line) for line in (out / 'calls').read_text().splitlines()]
         assert [call[0] for call in calls].count('submit') == 1
         assert [call[:2] for call in calls[1:]] == [

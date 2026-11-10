@@ -249,6 +249,9 @@ class Serve:
                 # Existing sources are required: Docker must never create root-owned directories.
                 require(source.exists(), 'CONTAINER_MOUNT_MISSING: ' + str(source))
                 readonly = len(parts) == 3 and 'ro' in parts[2].split(',')
+                model_source = Path(request['model']).resolve()
+                if source.is_relative_to(model_source) or model_source.is_relative_to(source):
+                    require(readonly, 'MODEL_MOUNT_READ_ONLY')
                 plugin = Path(request['plugin']).resolve() if request.get('plugin') else None
                 if plugin and (source.is_relative_to(plugin) or plugin.is_relative_to(source)):
                     require(readonly, 'PLUGIN_MOUNT_READ_ONLY')
@@ -509,6 +512,16 @@ def submit_and_collect(argv, out):
         (directory / (name + '.stdout')).write_text(result.stdout)
         (directory / (name + '.stderr')).write_text(result.stderr)
         return result
+    # Flux cannot see external serves or the BuildBuddy GPU executor. Check
+    # every eligible Spark without pinning an otherwise portable request.
+    hosts = [arg.split(':', 1)[1] for arg in argv if arg.startswith('--requires=host:')]
+    for host in hosts or ['sparky', 'sparklina']:
+        load = subprocess.run(['ssh', '-o', 'BatchMode=yes', host, 'nvidia-smi',
+                               '--query-compute-apps=process_name', '--format=csv,noheader'],
+                              capture_output=True, text=True, timeout=30)
+        (directory / (host + '.external-gpu.stdout')).write_text(load.stdout)
+        (directory / (host + '.external-gpu.stderr')).write_text(load.stderr)
+        require(load.returncode == 0 and not load.stdout.strip(), 'EXTERNAL_GPU_LOAD: ' + host)
     (directory / 'submission.json').write_bytes(canonical({'state': 'unknown'}))
     result = native(argv[1:], 'submit')
     job = result.stdout.strip()
