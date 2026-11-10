@@ -274,13 +274,8 @@ def test_every_shard_runs_under_the_interpreter_the_run_names(tmp_path, monkeypa
     assert all("/opt/venv/bin/python -s -m pytest" in line for line in lines)
 
 
-def test_no_more_than_eight_native_clients_run_at_once(tmp_path, monkeypatch):
-    """D21 caps one agent at eight PrismaBuild clients; the shard count is a separate number.
-
-    Twelve shards queue behind eight clients.  The fake client holds until
-    eight are in flight, so a runner that starts all twelve at once shows a
-    peak of twelve and one that starts eight shows exactly eight.
-    """
+def test_no_more_than_two_native_clients_run_at_once(tmp_path, monkeypatch):
+    """Twelve shards queue behind the two reserved Flux job slots."""
 
     shards = {f"shard-{i:02d}": [f"tests/test_{i}.py"] for i in range(12)}
     selection = {"shards": shards, "source_identity": {"sha256": "a" * 64}}
@@ -291,9 +286,9 @@ def test_no_more_than_eight_native_clients_run_at_once(tmp_path, monkeypatch):
         with lock:
             state["now"] += 1
             state["peak"] = max(state["peak"], state["now"])
-            if state["now"] >= 8:
+            if state["now"] >= 2:
                 release.set()
-        release.wait(5)
+        assert release.wait(20), "second client never arrived"
         with lock:
             state["now"] -= 1
         return {"arm": name, "returncode": 0}
@@ -303,8 +298,8 @@ def test_no_more_than_eight_native_clients_run_at_once(tmp_path, monkeypatch):
                            checkout=tmp_path, dry_run=True, artifact_root=[])
     results = sp.submit_all(selection, args, tmp_path)
     assert sorted(results) == sorted(shards)
-    assert sp.MAX_CLIENTS == 8
-    assert state["peak"] == 8
+    assert sp.MAX_CLIENTS == 2
+    assert state["peak"] == 2
 
 
 def test_a_nonzero_client_result_survives_a_resume(tmp_path, monkeypatch, capsys):
@@ -541,3 +536,9 @@ def test_explicit_scope_preserves_full_selector_verdict_and_source(tmp_path, mon
     assert result["shards"] == {"shard-00": ["tests/test_a.py"]}
     with pytest.raises(ValueError, match="selected"):
         sp.choose(checkout, "HEAD~1", 2, targets=["tests/not_selected.py"])
+
+
+def test_concurrency_above_tessera_cap_is_refused(tmp_path):
+    args = SimpleNamespace(max_jobs=3)
+    with pytest.raises(ValueError, match='max-jobs.*2'):
+        sp.submit_all({'shards': {}}, args, tmp_path)
