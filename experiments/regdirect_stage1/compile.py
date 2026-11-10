@@ -16,13 +16,13 @@ import shutil
 import subprocess
 import sysconfig
 
-import torch
-
 
 def main():
     refusal = subprocess.run(["bash", str(Path(__file__).parent / "../flux_docker_guard.sh")])
     if refusal.returncode:
         return refusal.returncode
+    import torch
+
     ap = argparse.ArgumentParser()
     ap.add_argument("--out", type=Path, required=True)
     ap.add_argument("--toolkit", type=Path, default=Path("/tmp/eng-rung-aligned-toolkit"))

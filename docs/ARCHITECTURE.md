@@ -7,7 +7,7 @@ calls `experiments/flux_docker_guard.sh` before that use. This includes shell
 cleanup commands, not just `docker run`. Read-only `ps`, `inspect`, `image inspect`,
 `images`, `info` and `version` queries need no guard; `--gpus` still does. Python cleanup-only
 helpers are outside this tree check. The guard refuses when `FLUX_JOB_ID` is present,
-including an empty value. No reviewed serving wrapper exists yet;
+including an empty value. No reviewed serving wrapper exists yet.
 Mutating root-Docker use inside Flux needs the lead's reviewed path. Every
 subcommand outside the allow-list is guarded, including unknown subcommands.
 All remaining direct-Docker serving entries refuse, as do
@@ -39,7 +39,8 @@ same function or run at entry to `main`, and explicitly return a nonzero guard
 status. Discarded results and branch-local calls do not qualify. A source-derived
 Python entry sweep checks exit 2, the guard's message, and no traceback before
 runtime access. GLM construction and regdirect compilation also guard before
-argument processing. The serving-image CLI calls the guard
+argument processing. Regdirect imports Torch only after that refusal check.
+The serving-image CLI calls the guard
 at entry too; inside Flux rendering refuses. Both `--run` and `--submit` refuse
 on every host with the root-store reason, and historical `--collect` remains available.
 
