@@ -184,7 +184,7 @@ def test_numeric_provenance_cannot_be_relabelled_or_omitted(tmp_path,defect):
 
 def test_native_acceptor_consumes_real_callback_record(tmp_path, monkeypatch):
     from experiments.t8r_speed.ab_stageprev_accept import validate_native_record
-    from test_routed_gate_native_artifact import owner_fixture
+    from routed_native_support import owner_fixture
     owner, reader, staged, rf, original, calls = owner_fixture(tmp_path, monkeypatch)
     try:
         rf.build_library(owner.MODULE, owner.MODULE, lambda *a: pytest.fail('JIT'))

@@ -11,7 +11,7 @@ import time
 
 import pytest
 
-from test_graph_attest_d30_memory_guard import FakeClock, alive
+from managed_window_support import FakeClock, alive
 
 ROOT = Path(__file__).resolve().parents[1]
 spec = importlib.util.spec_from_file_location('live_envelope', ROOT / 'experiments/graph_attest_702/managed_window.py')
