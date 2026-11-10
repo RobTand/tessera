@@ -123,6 +123,7 @@ def test_submit_environment_and_runtime_budget_are_explicit(suite, tmp_path, mon
     monkeypatch.setattr(flux, "require_capacity", lambda *a, **kw: None)
     monkeypatch.setenv("FLUX_URI", "local:///test-instance")
     monkeypatch.setenv("FLUX_CLIENT", "/usr/bin/python3")
+    monkeypatch.setattr(flux, "instance_settings", lambda: tmp_path)
     budgets, calls = [], []
     def runtime(python, checkout, *, timeout=None):
         budgets.append(timeout)
@@ -195,17 +196,20 @@ def test_nonadjacent_target_overlap_refuses(suite, targets):
 
 def test_gpu_jobspec_is_rendered_in_the_stock_shape_and_never_run():
     spec = load("flux_gpu_jobspec", ROOT / "tools/_flux_gpu_jobspec.py")
-    argv = spec.render(["bash", "x.sh", "a b"], cores=8, memory_gib=16, walltime="45m", env=["PROFILE=0"])
+    argv = spec.render(["bash", "x.sh", "a b"], cores=8, memory_gib=16, walltime="45m", env=["PROFILE=0"], directory="/mnt/shared/render-fixture")
     assert argv[:3] == ["flux", "submit", "--env=-*"]
     assert "--env=PATH=/usr/bin:/bin" in argv and "--env=PROFILE=0" in argv
     assert "--resources-shape=slot/[core=8;memory=16;gpu=1]" in argv
-    assert "--requires=aarch64" in argv
-    assert not any("host:" in token for token in argv)
+    assert not any(token.startswith("--requires=") for token in argv)
+    assert "--input=/dev/null" in argv
+    assert "--output=/mnt/shared/render-fixture/stdout" in argv
+    assert "--error=/mnt/shared/render-fixture/stderr" in argv
+    assert "--cwd" in argv
     assert argv[argv.index("-t") + 1] == "45m"
     assert argv[argv.index("--") + 1:] == ["bash", "x.sh", "a b"]
     assert not any("perf" in part or "core-type" in part for part in argv)
     for bad in ({"command": []}, {"walltime": ""}, {"cores": 0}, {"memory_gib": 0}, {"env": ["NOVALUE"]}):
-        kwargs = dict(command=["x"], cores=1, memory_gib=1, walltime="1m", env=[], **{})
+        kwargs = dict(command=["x"], cores=1, memory_gib=1, walltime="1m", env=[], directory="/mnt/shared/render-fixture", **{})
         kwargs.update(bad)
         with pytest.raises(ValueError):
             spec.render(kwargs.pop("command"), **kwargs)

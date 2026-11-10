@@ -480,7 +480,7 @@ serving/           vLLM plugin, CUDA sources, and runtime contract
 - [Wire specification](https://github.com/RobTand/tessera/blob/v0.1.0/docs/schema/prismaquant.tessera.v1.md): container layout and decoding rules.
 - [Measurement records](https://github.com/RobTand/tessera/blob/v0.1.0/docs/measurements): workloads, controls, results, and limitations.
 - [Suite population ledger](https://github.com/RobTand/tessera/blob/v0.1.0/docs/status/suite-populations.md): validation by commit, device, run mode, and skips.
-- [Working rules](https://github.com/RobTand/tessera/blob/v0.1.0/AGENTS.md): contribution and test requirements. Scoped CPU suite transport resolves the caller-selected native Flux instance and checks its live resource shape. GPU and container suite transport still require separate qualification.
+- [Working rules](https://github.com/RobTand/tessera/blob/v0.1.0/AGENTS.md): contribution and test requirements. Scoped CPU suite transport resolves the operator-selected native Flux instance at runtime, accepts an explicit FLUX_URI override, and checks its live resource shape. GPU and container suite transport still require separate qualification.
 
 Hosted CI checks the bytes-only boundary and built-package contents. GPU
 serving coverage requires its own measured population; read the GPU and

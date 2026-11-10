@@ -1,7 +1,9 @@
 # Tessera plan-to-serve architecture
 
-Re-stamped 2026-11-10 for runtime Flux instance resolution. `FLUX_URI`
-selects the instance, and its live resource shape decides admission. Config,
+Re-stamped 2026-11-10 for SHAPE v1 runtime Flux instance resolution. The
+operator-owned `INSTANCE` manifest supplies the client prefix and run;
+`flux-uri.sh` resolves the local broker, with an explicit `FLUX_URI` override.
+The live resource shape decides admission. Config,
 resource-model and version observations are receipt evidence. Saved job IDs
 bind the rank-zero broker starttime observed at submission. Source, runtime,
 allocation, affinity, execution and publication gates remain enforced. CPU
@@ -4026,8 +4028,12 @@ is unit3; G01 adds native rootless container authority. Full-suite, CUDA and
 production qualification remain separate.
 
 `tools/merge_suite.py` submits its CPU population through native Flux. The
-caller selects the instance with `FLUX_URI` and the client with `FLUX_CLIENT`
-or `flux` on `PATH`. Missing connection settings refuse by variable name.
+operator-owned `/mnt/shared/flux-migration/INSTANCE` supplies the client prefix
+and run. `/mnt/shared/flux-migration/flux-uri.sh` resolves the URI at runtime;
+an explicit caller `FLUX_URI` overrides it. Client PATH and library paths come
+from the current manifest prefix, with an explicit client argument or
+`FLUX_CLIENT` override. Manifest and resolver failures refuse by name,
+including resolver stderr. No local rank table reconstructs a socket.
 No run name, socket, deployment config path, client version path or digest
 constant selects or qualifies the instance. Before submission, the live
 `resource.R` graph, execution rank resources and architecture properties,
@@ -4035,10 +4041,15 @@ and online ranks must contain one eligible host with the requested cores,
 GiB memory leaves and GPUs. The stock `slot/[core=N;memory=M]` shape adds
 `gpu=1` inside the slot for GPU work. Neither startup nor allocation reads
 core class. The allocation check still counts cores, memory leaves, GPUs,
-node architecture, explicit image host and affinity.
+node architecture, explicit image host and affinity. It also checks distinct
+`R_lite.children.core` IDs, their graph rank and nodelist agreement, and
+`children.gpu=0` for a GPU request. Efficiency cores remain valid, including
+on a Spark GPU allocation, as SHAPE section 6 requires. No fixed CPU number
+or core class decides acceptance; the observed affinity remains preserved.
 
-`launch.json` records the selected URI and client, canonical JSON SHA256 of
-the observed config, scheduling model and full R, rank-zero broker starttime,
+`launch.json` records the selected URI and client, SHA256 of the exact
+`flux config get` and `resource.R` query bytes, canonical JSON SHA256 of the
+scheduling model, rank-zero broker starttime,
 and broker Flux version in `qualification`. These digests are evidence, not
 admission gates. Saved-ID collection, waiting and container entry compare the
 rank-zero `broker_starttime` with the value recorded at submission before
@@ -4051,8 +4062,12 @@ environment and an explicit allowlist, with native math/build threads bounded
 to one. The native original jobspec explicitly limits CMake, Make and Ninja
 as well as OMP/MKL/OpenBLAS/Torch/NumExpr/MAX_JOBS; it relies on no inherited
 build limits. The x86 interpreter capability selects x86, without a host pin.
-The native container intention now renders one whole GPU and the installed
-`aarch64` resource property, with the same bounded cores and memory.
+The native container intention renders one whole GPU, which selects a Spark
+without an added host constraint. Arm-only CPU requests use `aarch64`.
+GPU render-only wrappers also require an owned shared output directory and
+render explicit cwd, stdin, stdout and stderr paths; they never submit.
+The same bounded cores and memory apply to native suite submissions, inside
+SHAPE sections 3-4 and CAPS v2 limits of 10 cores and 24 GiB on dl380g10.
 Public GPU execution requires an immutable local image and scoped dependency
 seal. This G01 slice qualifies only internal no-GPU container transport; the
 CUDA branch still requires a separately approved device canary. Strict-CUDA

@@ -209,9 +209,11 @@ def test_original_native_wrapper_authenticates_launch_bytes():
 
 
 def _allocation(core_properties):
-    core = {"type": "core", "properties": {"os-pus": "2,42", **core_properties}}
-    return {"scheduling": {"graph": {"nodes": [{"metadata": item} for item in [
-        core, {"type": "memory"}, {"type": "node", "name": "dl380g10", "properties": {"arch": "x86_64"}}]]}}}
+    core = {"type": "core", "rank": 0, "id": 2, "properties": {"os-pus": "2,42", **core_properties}}
+    return {"execution": {"R_lite": [{"rank": "0", "children": {"core": "2"}}], "nodelist": ["dl380g10"]},
+            "scheduling": {"graph": {"nodes": [{"metadata": item} for item in [
+        core, {"type": "memory", "rank": 0, "id": 0},
+        {"type": "node", "rank": 0, "name": "dl380g10", "properties": {"arch": "x86_64"}}]]}}}
 
 
 @pytest.mark.parametrize("fact", ["cores", "memory_gib", "gpus", "architecture", "affinity", "host"])
@@ -306,10 +308,7 @@ def test_cid_registration_precedes_creation_and_errors_survive(tmp_path, monkeyp
 def _mock_native_admission(monkeypatch, directory, intent, digest):
     import _suite_flux as flux
     original = {'tasks': [{'command': ['/usr/bin/python3', '-s', 'tools/_suite_flux.py', 'payload', str(directory), digest]}]}
-    core = {'type': 'core', 'properties': {'os-pus': '2,42', 'core-type': 'perf'}}
-    allocation = {'scheduling': {'graph': {'nodes': [{'metadata': item} for item in [
-        core, {'type': 'memory'},
-        {'type': 'node', 'name': 'dl380g10', 'properties': {'arch': 'x86_64'}}]]}}}
+    allocation = _allocation({"core-type": "perf"})
     state = {'original': original, 'allocation': allocation, 'events': [{'name': 'start'}],
              'qualification': {'profile': 'fixture', 'broker_starttime': 'generation-A'},
              'cgroup': '0::/user.slice/user-1000.slice/user@1000.service/flux.slice/flux-jobs.slice/shell-f123:sys.service\n'}
@@ -515,6 +514,7 @@ def test_generated_native_wrapper_and_original_authentication_require_no_user_si
     monkeypatch.setattr(flux, 'require_capacity', lambda *a, **kw: None)
     monkeypatch.setenv('FLUX_URI', 'local:///test-instance')
     monkeypatch.setenv('FLUX_CLIENT', sys.executable)
+    monkeypatch.setattr(flux, 'instance_settings', lambda: tmp_path)
     monkeypatch.setattr(flux, 'runtime_identity', lambda *args, **kwargs: {'schema': 'tessera.suite_runtime.v1'})
     monkeypatch.setattr(flux, 'collect', lambda directory: {'state': 'running'})
     calls = []

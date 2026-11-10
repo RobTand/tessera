@@ -155,7 +155,7 @@ def test_caller_preserves_selectors_in_all_submissions(tmp_path):
     scales = tmp_path / "input scales.safetensors"
     scales.write_bytes(b"CPU control fixture")
     env = _caller_env(
-        tmp_path, TESSERA_PRODUCER_PYTHON=producer,
+        tmp_path, TESSERA_PRODUCER_PYTHON=producer, FLUX_OUT="/mnt/shared/producer-render-fixture",
         TESSERA_PRODUCER_SOURCE=source, SUBMIT=1,
         INPUT_SCALES=scales, CALLER_CAPTURE=capture)
     done = _run_caller(tmp_path, env)
@@ -171,7 +171,10 @@ def test_caller_preserves_selectors_in_all_submissions(tmp_path):
     assert len(lines) == 3, done.stdout
     for argv, command in zip(lines, expected_commands):
         assert argv[argv.index("--") + 1:] == command
-        assert "--env=-*" in argv and "--requires=host:sparky,sparklina" in argv
+        assert "--env=-*" in argv and not any(token.startswith("--requires=") for token in argv)
+        assert "--cwd" in argv and "--input=/dev/null" in argv
+        assert any(token.startswith("--output=/mnt/shared/producer-render-fixture/") for token in argv)
+        assert any(token.startswith("--error=/mnt/shared/producer-render-fixture/") for token in argv)
         assert any(part.startswith("--resources-shape=slot/[core=") and part.endswith(";gpu=1]") for part in argv)
         assert argv[argv.index("-t") + 1] == "45m"
         assert argv.count(f"--env=TESSERA_PRODUCER_PYTHON={producer}") == 1
@@ -180,14 +183,17 @@ def test_caller_preserves_selectors_in_all_submissions(tmp_path):
 
 def test_ts91_chain_renders_a_stock_shape_flux_gpu_line_and_runs_nothing(tmp_path):
     """The chain's former pbrun --gpu exec is a rendered, never-run flux submit line."""
-    env = {"PATH": os.environ["PATH"], "IMG": "inert-image", "RUNS": str(tmp_path / "runs")}
+    env = {"PATH": os.environ["PATH"], "IMG": "inert-image", "RUNS": str(tmp_path / "runs"), "FLUX_OUT": "/mnt/shared/chain-render-fixture"}
     done = subprocess.run(["bash", str(CHECKOUT / "experiments/ts91_chain.sh"), "before"], env=env,
                           cwd=CHECKOUT, capture_output=True, text=True, timeout=120)
     assert done.returncode == 0, done.stdout + done.stderr
     (line,) = [x for x in done.stdout.splitlines() if x.startswith("flux submit ")]
     argv = shlex.split(line)
     assert "--resources-shape=slot/[core=4;memory=32;gpu=1]" in argv
-    assert "--requires=host:sparky,sparklina" in argv and "--env=-*" in argv
+    assert "--env=-*" in argv and not any(token.startswith("--requires=") for token in argv)
+    assert "--input=/dev/null" in argv and "--cwd" in argv
+    assert "--output=/mnt/shared/chain-render-fixture/stdout" in argv
+    assert "--error=/mnt/shared/chain-render-fixture/stderr" in argv
     assert argv[argv.index("-t") + 1] == "60m"
     command = argv[argv.index("--") + 1:]
     assert command[0] == "bash" and command[1].endswith("experiments/ts91_chain_body.sh")

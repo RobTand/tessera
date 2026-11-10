@@ -113,11 +113,12 @@ PY
 fi
 
 [ -f "$SCALES" ] || refuse "INPUT_SCALES=$SCALES is not a file"
-# GPU on Flux needs the owner's per-run approval: these are RENDERED lines (stock GPU shape, eligible aarch64
+# GPU on Flux needs the owner's per-run approval: these are RENDERED lines (stock GPU shape, GPU-eligible
 # hosts, closed environment, explicit walltime) for review. This script never submits or runs them.
 for spec in "GB 3" "GB 4"; do
   set -- $spec
   python3 "$RENDER" --cores 8 --memory-gib 16 --walltime 45m \
+    --out "${FLUX_OUT:?set FLUX_OUT to a unique owned output directory under /mnt/shared}/gb-$2" \
     --env CENSUS_ROOT="$R" \
     --env PRODUCER_AUTHORITY="$AUTH" \
     --env PART_IMAGE="$IMAGE" --env TESSERA_HEAD="$TESSERA_HEAD_HISTORICAL" --env PROFILE="$PROFILE" \
@@ -127,6 +128,7 @@ for spec in "GB 3" "GB 4"; do
     -- bash experiments/t8_census/export_routed_part.sh "$1" "$2" 8
 done
 python3 "$RENDER" --cores 4 --memory-gib 48 --walltime 45m \
+  --out "${FLUX_OUT:?set FLUX_OUT to a unique owned output directory under /mnt/shared}/d1" \
   --env CENSUS_ROOT="$R" \
   --env PRODUCER_AUTHORITY="$AUTH" \
   --env ROUTED_CACHE="$ROUTED_CACHE" \

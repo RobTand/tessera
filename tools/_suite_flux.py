@@ -31,22 +31,42 @@ def save(path, value):
     temporary.replace(path)
 
 
+def instance_settings():
+    path = Path("/mnt/shared/flux-migration/INSTANCE")
+    try:
+        fields = path.read_text().split()
+    except OSError as exc:
+        raise ValueError(f"Flux INSTANCE cannot be read: {exc}") from exc
+    if len(fields) != 2 or not Path(fields[0]).is_absolute():
+        raise ValueError("Flux INSTANCE must contain one absolute PREFIX and RUN")
+    return Path(fields[0])
+
+
 def connection(*, client=None, library_path=None):
-    """Resolve the caller's standard Flux connection without instance defaults."""
+    """Resolve SHAPE section 2's operator-owned instance and client settings."""
+    prefix = instance_settings()
+    env = {"PATH": f"{prefix}/install/bin:{prefix}/deps/bin:/usr/bin:/bin",
+           "LD_LIBRARY_PATH": f"{prefix}/install/lib:{prefix}/deps/lib",
+           "HOME": os.environ.get("HOME", "/home/rob"), "PYTHONNOUSERSITE": "1"}
     uri = os.environ.get("FLUX_URI")
+    if not uri:
+        resolver = "/mnt/shared/flux-migration/flux-uri.sh"
+        try:
+            result = subprocess.run([resolver], env=env, capture_output=True, text=True, timeout=30)
+        except (OSError, subprocess.SubprocessError) as exc:
+            raise ValueError(f"Flux resolver {resolver} failed: {exc}") from exc
+        if result.returncode:
+            raise ValueError(f"Flux resolver {resolver} failed: {result.stderr.strip()!r}")
+        uri = result.stdout.strip()
     if not uri or any(character.isspace() or character == "\0" for character in uri):
-        raise ValueError("FLUX_URI must name the Flux instance")
-    requested = client or os.environ.get("FLUX_CLIENT") or "flux"
-    executable = shutil.which(requested)
+        raise ValueError("FLUX_URI or flux-uri.sh must name the Flux instance")
+    env["FLUX_URI"] = uri
+    requested = client or os.environ.get("FLUX_CLIENT") or str(prefix / "install/bin/flux")
+    executable = shutil.which(requested, path=env["PATH"])
     if executable is None:
-        raise ValueError("FLUX_CLIENT or flux on PATH must name an executable Flux client")
-    executable = str(Path(executable).absolute())
-    env = {"PATH": str(Path(executable).parent) + os.pathsep + os.environ.get("PATH", ""),
-           "FLUX_URI": uri, "HOME": os.environ.get("HOME", "/home/rob"), "PYTHONNOUSERSITE": "1"}
-    libraries = library_path if library_path is not None else os.environ.get("LD_LIBRARY_PATH")
-    if libraries:
-        env["LD_LIBRARY_PATH"] = libraries
-    return executable, env
+        raise ValueError("FLUX_CLIENT or INSTANCE client on PATH must name an executable Flux client")
+    # Historical library_path is evidence; the current INSTANCE owns client libraries.
+    return str(Path(executable).absolute()), env
 
 
 def native(argv, timeout=30, *, client=None, library_path=None):
@@ -77,27 +97,22 @@ def broker_starttime(**options):
 def instance_identity(**options):
     """Observe the live deployment. Digests are evidence, never admission pins."""
     generation = broker_starttime(**options)
-    config = json.loads(checked(["config", "get"], **options))
-    model = json.loads(checked(["kvs", "get", "resource.R"], **options))
+    config_raw = checked(["config", "get"], **options)
+    model_raw = checked(["kvs", "get", "resource.R"], **options)
+    json.loads(config_raw)
+    model = json.loads(model_raw)
     version = checked(["getattr", "version"], **options).strip()
     if broker_starttime(**options) != generation:
         raise ValueError("Flux broker_starttime changed during observation")
-    return {"config_sha256": hashlib.sha256(encoded(config)).hexdigest(),
+    return {"config_sha256": hashlib.sha256(config_raw.encode()).hexdigest(),
             "model_sha256": hashlib.sha256(encoded(model["scheduling"])).hexdigest(),
-            "r_sha256": hashlib.sha256(encoded(model)).hexdigest(),
+            "r_sha256": hashlib.sha256(model_raw.encode()).hexdigest(),
             "broker_starttime": generation, "flux_version": version}
 
 
 def client_options(intent):
-    # A saved client locates the transport inside the closed payload environment.
-    # Reconnecting callers may select a newly installed client without rewriting receipts.
-    options = {key: intent[key] for key in ("client", "library_path") if key in intent}
-    current = os.environ.get("FLUX_CLIENT") or shutil.which("flux")
-    if current:
-        options["client"] = current
-    if "LD_LIBRARY_PATH" in os.environ:
-        options["library_path"] = os.environ["LD_LIBRARY_PATH"]
-    return options
+    # Recorded client paths do not select a deployment on reconnect or entry.
+    return {"client": os.environ["FLUX_CLIENT"]} if os.environ.get("FLUX_CLIENT") else {}
 
 
 def require_instance(intent, **options):
@@ -227,6 +242,21 @@ def require_allocation(allocation, demand, affinity, mapped):
     metadata = [node["metadata"] for node in allocation["scheduling"]["graph"]["nodes"]]
     kinds = {kind: [item for item in metadata if item["type"] == kind]
              for kind in ("core", "memory", "gpu", "node")}
+    rows = allocation["execution"]["R_lite"]
+    nodes = kinds["node"]
+    if len(rows) != 1 or len(nodes) != 1:
+        raise ValueError("actual native allocation must contain one rank and host")
+    ranks = idset(rows[0]["rank"])
+    core_ids = idset(rows[0]["children"]["core"])
+    gpu_ids = idset(rows[0]["children"].get("gpu", ""))
+    if (ranks != {nodes[0]["rank"]}
+            or allocation["execution"]["nodelist"] != [nodes[0]["name"]]
+            or len(core_ids) != demand["cores"]
+            or core_ids != {item["id"] for item in kinds["core"]}
+            or gpu_ids != ({0} if demand["gpus"] else set())
+            or any(item["rank"] != nodes[0]["rank"]
+                   for kind in ("core", "memory", "gpu") for item in kinds[kind])):
+        raise ValueError("actual native allocation core IDs/GPU/rank/nodelist differ")
     pus = sorted({int(pu) for core in kinds["core"] for pu in core["properties"]["os-pus"].split(",")})
     if (len(kinds["node"]) != 1 or kinds["node"][0]["properties"]["arch"] != demand["architecture"]
             or len(kinds["core"]) != demand["cores"]
@@ -288,7 +318,8 @@ def submit(directory, checkout, command, cores, memory, timeout, environment, *,
     wrapper = [command[0], "-s", "tools/_suite_flux.py", "payload", str(directory), digest]
     args = ["submit", "--env=-*", *[f"--env={k}={v}" for k, v in sorted(env.items())],
             f"--resources-shape={resource_shape(cores, memory, gpus)}",
-            "--requires=" + architecture + (" and host:" + host if host is not None else ""),
+            *(["--requires=" + architecture + (" and host:" + host if host is not None else "")] if not gpus
+              else ["--requires=host:" + host] if host is not None else []),
             "-t", f"{timeout + 10}s", "--cwd", str(checkout),
             "--input=/dev/null", f"--output={directory}/stdout", f"--error={directory}/stderr",
             "--job-name=tessera-" + digest[:16], *wrapper]

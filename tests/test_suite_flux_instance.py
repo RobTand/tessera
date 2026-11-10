@@ -1,5 +1,4 @@
 """Live-instance policy through a controlled native CLI boundary."""
-import copy
 import hashlib
 import json
 from pathlib import Path
@@ -32,6 +31,7 @@ def instance(suite, monkeypatch, tmp_path):
                             model=resource_set(), generation='instance-A', online='4,9', calls=[])
     monkeypatch.setenv('FLUX_URI', 'local:///operator/selected-instance')
     monkeypatch.setenv('FLUX_CLIENT', sys.executable)
+    monkeypatch.setattr(flux, 'instance_settings', lambda: tmp_path)
     monkeypatch.setattr(flux, 'source', lambda path: {'sha256': 'a' * 64})
     monkeypatch.setattr(flux, 'runtime_identity', lambda *a, **kw: {'schema': 'tessera.suite_runtime.v1'})
     monkeypatch.setattr(flux, 'collect', lambda directory: {'state': 'running'})
@@ -78,7 +78,7 @@ def test_changed_config_with_same_shape_submits_and_records_observation(instance
     second = json.loads((tmp_path / 'second/launch.json').read_bytes())
     assert len([a for a in instance.calls if a[:2] == ['job', 'submit']]) == 2
     assert first['qualification']['config_sha256'] != second['qualification']['config_sha256']
-    assert second['qualification']['config_sha256'] == hashlib.sha256(instance.flux.encoded(instance.config)).hexdigest()
+    assert second['qualification']['config_sha256'] == hashlib.sha256(json.dumps(instance.config).encode()).hexdigest()
     assert second['qualification']['flux_version'] == 'test-flux-version'
     assert second['qualification']['broker_starttime'] == 'instance-A'
     assert second['qualification']['model_sha256'] == hashlib.sha256(instance.flux.encoded(instance.model['scheduling'])).hexdigest()
@@ -142,14 +142,11 @@ def test_resume_restart_names_broker_starttime_before_reading_job(suite, tmp_pat
     assert jobs.calls == []
 
 
-def test_connection_requires_named_uri_and_client(suite, monkeypatch):
+def test_connection_requires_named_client(suite, monkeypatch):
     flux = suite.suite_flux
-    monkeypatch.delenv('FLUX_URI', raising=False)
-    with pytest.raises(ValueError, match='FLUX_URI'):
-        flux.native(['getattr', 'version'])
     monkeypatch.setenv('FLUX_URI', 'local:///selected')
-    monkeypatch.delenv('FLUX_CLIENT', raising=False)
-    monkeypatch.setenv('PATH', '')
+    monkeypatch.setenv('FLUX_CLIENT', '/missing/operator-client')
+    monkeypatch.setattr(flux, 'instance_settings', lambda: Path('/operator/prefix'))
     with pytest.raises(ValueError, match='FLUX_CLIENT.*PATH'):
         flux.native(['getattr', 'version'])
 
@@ -188,6 +185,7 @@ def test_broker_generation_uses_rank_zero_rpc_from_any_client(suite, monkeypatch
 
 def test_native_uses_caller_connection_without_inheriting_credentials(suite, monkeypatch):
     flux = suite.suite_flux
+    monkeypatch.setattr(flux, 'instance_settings', lambda: Path('/operator/prefix'))
     monkeypatch.setenv('FLUX_URI', 'local:///operator/other-instance')
     monkeypatch.setenv('FLUX_CLIENT', sys.executable)
     monkeypatch.setenv('UNRELATED_SECRET', 'must-not-travel')
@@ -203,7 +201,7 @@ def test_native_uses_caller_connection_without_inheriting_credentials(suite, mon
     assert 'UNRELATED_SECRET' not in kw['env']
     monkeypatch.delenv('FLUX_CLIENT')
     monkeypatch.setenv('PATH', str(Path(sys.executable).parent))
-    monkeypatch.setattr(flux.shutil, 'which', lambda command: sys.executable if command == 'flux' else None)
+    monkeypatch.setattr(flux.shutil, 'which', lambda command, **kw: sys.executable if command.endswith('/install/bin/flux') else None)
     flux.native(['getattr', 'version'])
     assert calls[-1][0] == argv
 
@@ -211,8 +209,7 @@ def test_native_uses_caller_connection_without_inheriting_credentials(suite, mon
 def test_gpu_renderer_has_no_implicit_host_roster(suite):
     from test_suite_flux import load, ROOT
     spec = load('portable_gpu_render', ROOT / 'tools/_flux_gpu_jobspec.py')
-    argv = spec.render(['payload'], cores=1, memory_gib=1, walltime='30s')
-    assert '--requires=aarch64' in argv
-    assert not any('host:' in token for token in argv)
-    explicit = spec.render(['payload'], cores=1, memory_gib=1, walltime='30s', hosts='image-owner')
-    assert '--requires=aarch64 and host:image-owner' in explicit
+    argv = spec.render(['payload'], cores=1, memory_gib=1, walltime='30s', directory='/mnt/shared/render-fixture')
+    assert not any(token.startswith('--requires=') for token in argv)
+    explicit = spec.render(['payload'], cores=1, memory_gib=1, walltime='30s', hosts='image-owner', directory='/mnt/shared/render-fixture')
+    assert '--requires=host:image-owner' in explicit
