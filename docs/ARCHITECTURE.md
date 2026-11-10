@@ -6,12 +6,12 @@ calls `experiments/flux_docker_guard.sh` before that use. This includes shell
 cleanup commands, not just `docker run`. Read-only `ps`, `inspect`, `image inspect`,
 `images`, `info` and `version` queries need no guard; `--gpus` still does. Python cleanup-only
 helpers are outside this tree check. The guard refuses when `FLUX_JOB_ID` is present,
-including an empty value. No reviewed serving wrapper exists on this branch;
+including an empty value. No reviewed serving wrapper exists yet;
 the only route for a root-Docker use inside Flux is the lead's decision.
 All remaining direct-Docker serving entries refuse, as do
 `tools/build_serving_image.py --run` and every stage of
 `experiments/run_glm_native_construction.py`, including `encode`: its declared
-`--shm-size 1g` is unsupported by the rootless launcher's contract. Do not drop
+`--shm-size 1g` is unsupported by the rootless launcher's contract, tracked in #1670. Do not drop
 that bound to migrate it. `experiments/t8r_speed/build_ext.sh` now runs through
 the rootless launcher in CPU-only mode, with the consumer's source and extension
 mounts, persistent HOME and launcher-owned TMPDIR and single-thread build bounds.
@@ -28,8 +28,8 @@ The source-derived guard test checks call order before literal Docker launch
 argv, and runs every guarded shell entry with empty and nonempty Flux job IDs
 against a recording fake Docker. Python guards must precede the argv in the
 same function or run at entry to `main`. The serving-image CLI calls the guard
-at entry too; inside Flux its render/run paths refuse, `--submit` gives the
-root-store reason, and historical `--collect` remains available.
+at entry too; inside Flux rendering refuses. Both `--run` and `--submit` refuse
+on every host with the root-store reason, and historical `--collect` remains available.
 
 Re-stamped 2026-11-10 for the owned GPU container launcher. The `run` entry
 in `tools/_flux_gpu_jobspec.py` accepts a digest-pinned container request
@@ -109,9 +109,10 @@ the enclosing Flux job's broker URI and job identity are not test inputs.
 
 Re-stamped 2026-11-10 for the Flux migration at `d6b30853`.
 `tools/build_serving_image.py` prints a CPU build job, but `--submit` refuses
-before submission because its output targets the root Docker store. The lead
-must choose an outside-Flux build or a reviewed exemption. `--run` refuses inside
-Flux too. Use `--collect DIR` to read a
+before submission because its output targets the root Docker store. No reviewed
+build path exists yet. The lead must choose a rootless Podman build in a Flux
+job plus one reviewed `docker load` of a pinned-digest tarball, or one reviewed
+root-Docker entry. `--run` always refuses too. Use `--collect DIR` to read a
 saved launch. Collection exits zero only for a terminal record with
 `returncode == 0` and no `evidence_errors`; a running submission is only an
 acknowledgement. `experiments/ts91_chain.sh` and

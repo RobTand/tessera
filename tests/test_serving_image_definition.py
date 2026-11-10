@@ -2,10 +2,10 @@
 import ast
 import importlib.util
 import json
+import os
 from pathlib import Path
 import subprocess
 import sys
-from types import SimpleNamespace
 
 import pytest
 
@@ -119,42 +119,25 @@ def test_container_name_derivation_needs_no_flux_process(identity, expected):
     assert _builder().container_name(identity) == 'tessera-image-build-' + expected
 
 
-class _Docker:
-    """Controlled process model: the builder container announces its id, then ends as told."""
-    def __init__(self, code, cid="a" * 12, remove_error=""):
-        self.code, self.cid, self.remove_error, self.calls = code, cid, remove_error, []
-
-    def __call__(self, command, **kwargs):
-        self.calls.append(command)
-        if command[:3] == ["docker", "run", "--rm"]:
-            Path(command[command.index("--cidfile") + 1]).write_text(self.cid)
-            return SimpleNamespace(returncode=self.code, stderr="")
-        assert command[:3] == ["docker", "rm", "-f"]
-        return SimpleNamespace(returncode=1 if self.remove_error else 0, stderr=self.remove_error)
-
-
-@pytest.mark.parametrize("code,remove_error,expected", [
-    (0, "", 0), (7, "", 7), (0, "Error: No such container: " + "a" * 12, 0), (7, "daemon refused", 7), (0, "daemon refused", 1)])
-def test_the_owned_container_is_removed_whatever_the_build_does(tmp_path, monkeypatch, code, remove_error, expected):
-    docker = _Docker(code, remove_error=remove_error)
-    manifest = _manifest()
-    module = _builder()
-    monkeypatch.setattr(module.os, 'getpid', lambda: 123)
-    status = module.run_build(manifest, "t:1", str(tmp_path / "out"), "source:x", runner=docker,
-                             environ={"TMPDIR": str(tmp_path)})
-    assert status == expected
-    assert docker.calls[-1] == ["docker", "rm", "-f", "a" * 12]
-    run = docker.calls[0]
-    assert run[run.index("--name") + 1] == "tessera-image-build-123"
-    assert (tmp_path / "out").is_dir()
-
-
-def test_a_build_that_never_announced_a_container_removes_nothing(tmp_path):
-    calls = []
-    runner = lambda command, **kwargs: calls.append(command) or SimpleNamespace(returncode=5, stderr="")
-    status = _builder().run_build(_manifest(), "t:1", str(tmp_path / "out"), "source:x", runner=runner,
-                                  environ={"TMPDIR": str(tmp_path)})
-    assert status == 5 and len(calls) == 1 and calls[0][:2] == ["docker", "run"]
+@pytest.mark.parametrize('job_value', [None, '', 'f123'])
+def test_run_refuses_without_a_reviewed_build_path(tmp_path, job_value):
+    docker = tmp_path / 'docker'
+    docker.write_text('#!/bin/sh\ntouch "$CONTROL/docker-reached"\nexit 0\n')
+    docker.chmod(0o755)
+    env = {**os.environ, 'PATH': f'{tmp_path}:{os.environ["PATH"]}',
+           'TMPDIR': str(tmp_path), 'CONTROL': str(tmp_path)}
+    env.pop('FLUX_JOB_ID', None)
+    if job_value is not None:
+        env['FLUX_JOB_ID'] = job_value
+    result = subprocess.run([sys.executable, str(ROOT / 'tools/build_serving_image.py'),
+                             '--run', '--manifest-json', json.dumps(_manifest()),
+                             '--image-tag', 't:1', '--output-directory', str(tmp_path / 'out')],
+                            env=env, capture_output=True, text=True)
+    assert result.returncode == 2, result.stdout + result.stderr
+    assert 'root Docker store' in result.stderr and 'reviewed' in result.stderr
+    assert not (tmp_path / 'docker-reached').exists()
+    assert not (tmp_path / 'out').exists()
+    assert 'Traceback' not in result.stderr
 
 
 def test_imported_patch_licenses_reach_the_image():
@@ -212,45 +195,6 @@ def test_extracted_patch_refuses_a_missing_target(tmp_path):
     result = subprocess.run([sys.executable, "-c", source], capture_output=True, text=True)
     assert result.returncode != 0 and "expected exactly one patch target" in result.stderr
     assert target.read_text() == original
-
-
-def _term_build_child(directory, connection):
-    import signal
-    class WaitingDocker(_Docker):
-        def __call__(self, command, **kwargs):
-            result = super().__call__(command, **kwargs)
-            if command[:2] == ['docker', 'run']:
-                connection.send('ready')
-                signal.pause()
-            else:
-                connection.send(command)
-            return result
-    _builder().run_build(_manifest(), 't:1', str(Path(directory) / 'out'), 'source:x',
-                         runner=WaitingDocker(0), environ={'TMPDIR': directory})
-
-
-def test_real_term_removes_the_owned_container(tmp_path):
-    import multiprocessing
-    import signal
-    context = multiprocessing.get_context('spawn')
-    parent, child = context.Pipe()
-    process = context.Process(target=_term_build_child, args=(str(tmp_path), child))
-    process.start()
-    try:
-        assert parent.poll(20), 'builder never became ready'
-        assert parent.recv() == 'ready'
-        __import__('os').kill(process.pid, signal.SIGTERM)
-        process.join(20)
-        assert not process.is_alive()
-        assert parent.poll(2), 'TERM bypassed owned-container cleanup'
-        assert parent.recv() == ['docker', 'rm', '-f', 'a' * 12]
-        assert process.exitcode == 128 + signal.SIGTERM
-    finally:
-        if process.is_alive():
-            process.kill()
-        process.join(5)
-        parent.close()
-        child.close()
 
 
 @pytest.mark.parametrize('record,expected', [

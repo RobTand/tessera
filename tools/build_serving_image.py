@@ -1,17 +1,16 @@
-"""Print or run an owned serving-image build. No graphics processor is requested.
+"""Preview a serving-image build. No graphics processor is requested.
 
-``--submit`` refuses before submission: the root-Docker-store output needs the
-lead's decision on an outside-Flux build or a reviewed exemption. ``--run`` is
-also refused inside Flux. Saved historical launches remain collectable.
+``--submit`` and ``--run`` refuse because no reviewed build path exists yet.
+The lead must choose a rootless Podman build in Flux plus one reviewed load of
+a pinned-digest tarball, or one reviewed root-Docker entry. Saved historical
+launches remain collectable.
 """
 from __future__ import annotations
 import argparse
 import hashlib
 import json
-import os
 from pathlib import Path
 import re
-import signal
 import subprocess
 import sys
 
@@ -22,12 +21,9 @@ import _suite_flux  # noqa: E402
 ARCHITECTURES = {"x86": "x86_64", "aarch64": "aarch64"}
 #: The suite transport's ceiling (``_suite_flux.validate``); a full build that needs more is a held decision.
 TIMEOUT_S = 1790
-SUBMIT_REFUSAL = ("--submit: the serving image targets the root Docker store; no reviewed serving wrapper "
-                  "exists on this branch. Ask the lead to choose an outside-Flux build or a reviewed exemption.")
-
-
-def _terminate(signum, frame):
-    raise SystemExit(128 + signum)
+SUBMIT_REFUSAL = ("The serving image targets the root Docker store; no reviewed serving wrapper exists yet. "
+                  "The lead must choose a rootless Podman build in a Flux job plus one reviewed docker load "
+                  "of a pinned-digest tarball, or one reviewed root-Docker entry. --run and --submit are refused.")
 
 
 def _kernel_build():
@@ -93,39 +89,6 @@ def container_name(identity):
     return "tessera-image-build-" + re.sub(r"[^A-Za-z0-9]", "", identity)
 
 
-def remove_owned_container(cidfile, runner=subprocess.run):
-    """Remove the container this job started. True when none it owns remains."""
-    path = Path(cidfile)
-    if not path.is_file():
-        return True
-    container = path.read_text().strip()
-    if not re.fullmatch(r"[0-9a-f]{12,64}", container):
-        return False
-    result = runner(["docker", "rm", "-f", container], check=False, capture_output=True, text=True)
-    return result.returncode == 0 or "No such container" in (result.stderr or "")
-
-
-def run_build(manifest, tag, output_directory, kernel_build, *, runner=subprocess.run, environ=os.environ):
-    """Outside Flux, run BuildKit and remove the container whatever the outcome."""
-    refusal = subprocess.run(['/bin/bash', str(ROOT / 'experiments/flux_docker_guard.sh')], env=environ)
-    if refusal.returncode:
-        return refusal.returncode
-    scratch = Path(environ["TMPDIR"])
-    owner = {"name": container_name(environ.get("FLUX_JOB_ID", str(os.getpid()))),
-             "cidfile": str(scratch / "builder.cid")}
-    Path(output_directory).mkdir(parents=True, exist_ok=True)
-    previous = signal.signal(signal.SIGTERM, _terminate)
-    try:
-        code = runner(builder_command(manifest, tag, output_directory, kernel_build, owner=owner),
-                      check=False).returncode
-    finally:
-        try:
-            removed = remove_owned_container(owner["cidfile"], runner)
-        finally:
-            signal.signal(signal.SIGTERM, previous)
-    return code or (0 if removed else 1)
-
-
 def main(argv=None):
     refusal = subprocess.run(['/bin/bash', str(ROOT / 'experiments/flux_docker_guard.sh')],
                              capture_output=True, text=True)
@@ -142,11 +105,11 @@ def main(argv=None):
     parser.add_argument("--python", default=sys.executable, help="Interpreter the Flux job runs (--submit).")
     mode = parser.add_mutually_exclusive_group()
     mode.add_argument("--submit", action="store_true", help="Refused pending the lead's root-Docker-store decision.")
-    mode.add_argument("--run", action="store_true", help="Run the build in this process outside Flux.")
+    mode.add_argument("--run", action="store_true", help="Refused until a reviewed build path exists.")
     mode.add_argument("--dry-run", action="store_true", help="Print the job without a build.")
     mode.add_argument("--collect", metavar="DIR", help="Collect a saved Flux launch; only verified terminal success exits zero.")
     args = parser.parse_args(argv)
-    if args.submit:
+    if args.submit or args.run:
         print(SUBMIT_REFUSAL, file=sys.stderr)
         return 2
     if args.collect:
@@ -162,8 +125,6 @@ def main(argv=None):
     manifest = json.loads(args.manifest_json if args.manifest_json is not None else Path(args.manifest).read_text())
     job = build_job(manifest, args.image_tag, args.output_directory, cpus=args.cpus, memory_gb=args.memory_gb)
     print(json.dumps(job, sort_keys=True))
-    if args.run:
-        return run_build(manifest, args.image_tag, str(Path(args.output_directory).resolve()), job["kernel_build"])
     return 0
 
 

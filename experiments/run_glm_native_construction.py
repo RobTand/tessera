@@ -1,7 +1,7 @@
 """Legacy direct finite vLLM qualification; every stage refuses inside Flux.
 
 Even encode requires --shm-size 1g, which the rootless launcher does not accept.
-Keep it refused pending the lead's shared-memory contract decision; do not drop
+Keep it refused pending the lead's shared-memory contract decision in #1670; do not drop
 that bound or substitute a root-Docker-store image to make migration pass.
 """
 from __future__ import annotations
