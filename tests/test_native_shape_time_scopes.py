@@ -19,6 +19,8 @@ from tools import tessera_shape_time_worker as worker
 from tessera.serving import census_plan, contract, scheme
 from tessera.serving import timing_panel as tp
 
+ROOT = Path(__file__).resolve().parents[1]
+
 
 def _save(root, name, value, raw=False):
     path = Path(root) / name
