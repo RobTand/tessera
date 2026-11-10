@@ -12,6 +12,7 @@ ROOT = Path(__file__).resolve().parents[1]
 
 @pytest.mark.parametrize("container_evidence", ["none", "malformed"])
 def test_payload_exception_stops_owned_group_and_preserves_cleanup_error(tmp_path, monkeypatch, container_evidence):
+    monkeypatch.syspath_prepend(str(ROOT / "tools"))
     spec = importlib.util.spec_from_file_location("payload_flux", ROOT / "tools/_suite_flux.py")
     flux = importlib.util.module_from_spec(spec); spec.loader.exec_module(flux)
     directory = tmp_path / "record"; directory.mkdir()
@@ -65,6 +66,7 @@ def test_payload_exception_stops_owned_group_and_preserves_cleanup_error(tmp_pat
 
 @pytest.mark.parametrize("interrupt_at", ["wait", "source", "runtime"])
 def test_interrupt_publishes_cleanup_without_waiting_for_an_exit_seal(tmp_path, monkeypatch, interrupt_at):
+    monkeypatch.syspath_prepend(str(ROOT / "tools"))
     spec = importlib.util.spec_from_file_location("interrupt_flux", ROOT / "tools/_suite_flux.py")
     flux = importlib.util.module_from_spec(spec); spec.loader.exec_module(flux)
     directory = tmp_path / "record"; directory.mkdir()
