@@ -15,6 +15,10 @@ _CONSTRUCTION_REASON = "experiments/t8r_speed/bench_dense_module.py reads this c
 _PRISMAQUANT = "it reads PrismaQuant, pinned in tools/ci/gate_prismaquant_requirements.txt; its own dependencies are heavy, so only the tests that read it carry it."
 
 TEST_INPUTS = {
+    "//tests:test_gpu_foreground_wrappers": struct(
+        data = ["//experiments:routed_fused_tests.sh"],
+        reason = "regdirect_stage1/run_pytest.sh launches routed_fused_tests.sh through the checkout argument passed by the test.",
+    ),
     "//tests:test_gpu_podman_launcher": struct(
         data = ["//experiments:t4_code/fp4_arithmetic_attest.py"],
         reason = "run_in_image.sh checks the script named by the test's bare filename under the checkout argument; the controlled container does not execute it.",
