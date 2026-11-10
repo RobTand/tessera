@@ -2,7 +2,10 @@
 
 Re-stamped 2026-11-10 for the Flux migration at `d6b30853`.
 `tools/build_serving_image.py` prints a CPU build job and submits it through
-`tools/_suite_flux.py` only with `--submit`. GPU wrappers use
+`tools/_suite_flux.py` only with `--submit`. Use `--collect DIR` to read a
+saved launch. Collection exits zero only for a terminal record with
+`returncode == 0` and no `evidence_errors`; a running submission is only an
+acknowledgement. GPU wrappers use
 `tools/_flux_gpu_jobspec.py` to print Flux submission commands without running
 them. Those GPU paths are not yet qualified.
 The gate writes `tessera.gate_result.v2` and `tessera.gate_aggregate.v2`.
@@ -184,7 +187,7 @@ The 5400-second bound, caps, guards, image and numerical rules stay unchanged.
 
 Re-stamped 2026-10-08 for the explicit A8S graph MNBT matrix (issue #1057).
 
-**Archived driver.** The PrismaBuild-admitted graph-attest window driver (rank, window, queue-watcher, submit and recipe modules, their plans and gate tests) moved to `archive/flux-migration/R-CONTESTED/`; the passages below describe that archived driver as history. Only `experiments/graph_attest_702/managed_window.py` (the process-group `Envelope` and the D30 memory policy) and `receipt.py` stay live. A Flux GPU window path belongs to the GPU-qualification work (4E).
+**Archived driver.** The PrismaBuild-admitted graph-attest window driver (rank, window, queue-watcher, submit and recipe modules, their plans and gate tests) moved to `archive/flux-migration/R-CONTESTED/`; the passages below describe that archived driver as history. Only `experiments/graph_attest_702/managed_window.py` (the process-group `Envelope` with `TERM_GRACE_SECONDS = 10.0`) and `receipt.py` stay live. The D30 memory policy is archived with the driver; its TERM grace remains live. A Flux GPU window path belongs to the GPU-qualification work (4E).
 
 The opt-in mode `WINDOW_MODE=ship-graph-mnbt-matrix` selects `archive/flux-migration/R-CONTESTED/experiments/graph_attest_702/plan-graph-mnbt-matrix.txt`.
 The arms compare maximum batched tokens 2048 and 4096.
@@ -1471,8 +1474,10 @@ Re-stamped 2026-10-02 (Refs #856): external shape-panel replay preserves
 the original request, producer, worker job and GPU evidence while creating
 a separate CPU replay job bound to the current checker worker. The existing
 installed preflight and full panel validator own both joins. The current worker
-uses `tools/_install_identity.verify_install` for installed-distribution proof;
-the published verifier path and `record_verifier` binding are removed. No fleet alias,
+uses `tools/_install_identity.verify_install` for installed-distribution proof.
+`runtime_origins.install_verifier` binds that implementation's path, byte count
+and SHA256, validated by preflight and panel. The old published verifier path
+and `record_verifier` request field are removed. No fleet alias,
 original input rewrite, serving pin change or new GPU measurement is involved.
 
 Re-stamped 2026-10-09 for tessera#1136: the #688 panel admits dense TP1/TP2
@@ -1501,14 +1506,18 @@ reports committed progress only after durable artifact publication. The
 application has one qualified execution/replay at q896/M512/N=K256/TP1 under
 b40/raw0869/f8; no full-menu, quality, compiled, serving or cell qualification
 follows. See `measurements/2026-10-02-native-dense-first-receipt.md`.
-Re-stamped 2026-11-09 (Flux migration 4C-11b): the installed-distribution proof is
+Re-stamped 2026-11-10 for the review fixes to Flux migration 4C-11b: the installed-distribution proof is
 `tools/_install_identity.verify_install`, stdlib-only repository code in the producer
 source-tree and tool identities (one owning distribution, non-editable Git install at the
 reviewed commit, RECORD byte equality, imported module owned by the RECORD, no unrecorded
-file); the PB-published verifier and the `record_verifier` request binding are gone. The
+file). The worker records `install_verifier {path, bytes, sha256}` in
+`runtime_origins`; both preflight and panel validate it. The PB-published
+verifier and the `record_verifier` request field are gone. The
 panel is `tessera.shape_time_panel.v2`, the request `...dense_shape_time_request.v2`, the
 worker job `...native_shape_worker_job.v2` and the preflight
-`...installed_contract_preflight.v2`; earlier documents are history. Committed progress is
+`...installed_contract_preflight.v2`. These schema IDs did not change when
+`install_verifier` became required. Older v2 panels and preflights without that
+binding are refused by the current validators. Committed progress is
 the `tessera.durable_progress.v1` line.
 The installed runtime first runs a CPU-only, CUDA-disabled contract preflight.
 Its own unchanged strict validator checks the same owned contract bytes after

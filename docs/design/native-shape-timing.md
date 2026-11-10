@@ -85,6 +85,9 @@ The installed-distribution proof is `tools/_install_identity.verify_install`, st
 repository code covered by the producer source-tree and tool identities: one owning
 distribution, a non-editable Git install at the reviewed commit, RECORD byte equality, the
 imported module owned by the RECORD, and no unrecorded package file. The
+worker records `install_verifier {path, bytes, sha256}` in `runtime_origins`
+to bind the verifier implementation. Both preflight and panel validate that
+binding. The
 contract and runtime interpreter are absolute bound files; the contract is
 the pinned runtime's raw bytes. The timeout is an explicit positive integer. `scope` uses the existing native census request fields;
 `scheme` is the existing dense wire declaration and `wire` is a bound file.
@@ -190,6 +193,10 @@ Requests, worker jobs and CPU preflights written before 2026-11-09 (`...request.
 `native_shape_worker_job.v1`, `installed_contract_preflight.v1`) named a published PB
 verifier in `record_verifier`; they and `tessera.shape_time_panel.v1` panels are history
 and are not accepted by the v2 validators.
+The current `tessera.shape_time_panel.v2` and
+`tessera.installed_contract_preflight.v2` validators also require
+`runtime_origins.install_verifier`. Their schema IDs did not change when this
+binding was added. Older v2 panels and preflights without it are refused.
 
 The #685 acceptance consumer is a separate stdlib module,
 `tessera.serving.panel_baseline` (schema
