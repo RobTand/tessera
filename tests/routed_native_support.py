@@ -37,5 +37,3 @@ def owner_fixture(tmp_path,monkeypatch,*,expected=None,exec_hook=None,owner_args
         expected_sha256=expected or hashlib.sha256(b'owned-wire').hexdigest(),
         source_sha256=hashlib.sha256(source.read_bytes()).hexdigest(), **(owner_args or {}))
     return owner,reader,staged,rf,build,calls
-
-
