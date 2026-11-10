@@ -66,7 +66,6 @@ def await_dead(pids, deadline):
         time.sleep(.05)
 
 
-# --- the deterministic 107 GiB start boundary -------------------------------
 
 
 # --- real Envelope children: TERM, the ten-second grace, and the SIGKILL -----
