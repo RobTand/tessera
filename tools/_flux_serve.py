@@ -414,7 +414,7 @@ def supervise(spec, receipt, command):
             raise Interrupted
     for signum in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP):
         handlers[signum] = signal.signal(signum, on_signal)
-    # The socket lives on owned local scratch; nothing persistent in /tmp.
+    # An abstract Unix socket avoids filesystem path limits and leaves no file.
     require(re.fullmatch(r'(?:[fƒ][1-9A-HJ-NP-Za-km-z]+|[0-9]+)', os.environ['FLUX_JOB_ID']), 'FLUX_JOB_ID_INVALID')
     scratch = Path(os.environ.get('FLUX_SCRATCH', '/tmp/flux-vanilla')) / os.environ['FLUX_JOB_ID']
     scratch.mkdir(parents=True, exist_ok=False)

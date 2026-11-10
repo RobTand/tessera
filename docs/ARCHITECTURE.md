@@ -10756,6 +10756,8 @@ The decimal id comes from `flux job id --to=dec`; the f58 id does not match
 housekeeping. Docker receives the job's `Cpus_allowed_list`, equal memory and
 memory-swap bounds, the allocated `CUDA_VISIBLE_DEVICES` as its GPU device,
 and a port published only on `127.0.0.1`. Model and plugin inputs are read-only.
+Until F-6, Spark allocations may include efficiency cores; the receipt records
+the actual CPU mask without claiming performance-core placement.
 Writable host mounts must already exist and belong to the launching user.
 Plugin installs use fresh container-local temporary directories with no writes
 to the plugin source. Installation failure stops startup before vLLM can use
