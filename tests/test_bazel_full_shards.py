@@ -91,6 +91,17 @@ def test_six_shards_balance_counts_when_no_timings_exist(tmp_path):
     assert [len(part['tests']) for part in parts] == [2] * SHARDS
 
 
+def test_new_targets_use_the_measured_inventory_p90(tmp_path, duration_inventory):
+    shards = load('full_shards')
+    duration_inventory.write_text(json.dumps({'seconds': {'//tests:a': 10, '//tests:b': 20}}))
+    labels = ['//tests:a', '//tests:b', '//tests:new_a', '//tests:new_b']
+    xml = '<query>' + ''.join(f'<rule name="{label}" class="py_test"/>' for label in labels) + '</query>'
+    shards.generate(tmp_path, xml)
+    parts = [shards.validate(tmp_path, xml, 'amd64', index) for index in range(SHARDS)]
+    assert [part['estimated_seconds'] for part in parts] == [20, 20, 20, 10, 0, 0]
+    assert sorted(label for part in parts for label in part['tests']) == labels
+
+
 @pytest.mark.parametrize('arch', ['amd64', 'arm64'])
 def test_real_target_population_balances_measured_bazel_runtime(arch):
     shards = load('full_shards')
@@ -105,12 +116,16 @@ def test_real_target_population_balances_measured_bazel_runtime(arch):
     _, planned = shards.planned(ROOT, xml)
     parts = planned['architectures'][arch]
     assert len(parts) == SHARDS
-    assert set(tests) <= timings.keys(), 'real targets must have measured runtimes'
     assert sorted(label for part in parts for label in part['tests']) == tests
-    loads = [sum(timings[label] for label in part['tests']) for part in parts]
+    # New targets use the documented nearest-rank p90 until measured. Keep
+    # estimates separate from measured inventory values, which must not be invented.
+    measured = sorted(timings.values())
+    unknown = (measured[(9 * len(measured) + 9) // 10 - 1] or 1) if measured else 1
+    costs = {label: timings.get(label, unknown) for label in tests}
+    loads = [sum(costs[label] for label in part['tests']) for part in parts]
     # With this real population, even the final six shortest targets suffice
     # to fill the remaining difference between longest-first shard loads.
-    assert max(loads) - min(loads) <= sum(sorted(timings[label] for label in tests)[:SHARDS])
+    assert max(loads) - min(loads) <= sum(sorted(costs.values())[:SHARDS])
     assert [part['estimated_seconds'] for part in parts] == pytest.approx(loads)
 
 
