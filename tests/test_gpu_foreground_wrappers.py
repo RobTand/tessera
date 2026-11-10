@@ -45,6 +45,6 @@ def test_foreground_wrapper_owns_its_container(tmp_path, family):
     assert record['name'] == name
     assert record['removed'] and record['scratch_removed']
     assert any('--probe-marker' in a for a in create)
-    assert '--network=none' in create and 'nvidia.com/gpu=all' in create
+    assert '--network=none' in create and 'nvidia.com/gpu=0' in create
     if family == 'regdirect-pytest':
         assert not any('pip install' in a for a in create)

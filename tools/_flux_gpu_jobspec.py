@@ -154,8 +154,8 @@ trap finish EXIT
 "$@"
 ''')
     split = argv.index('--')
-    args = [*argv[2:split], '--env=XDG_RUNTIME_DIR=/run/user/1000',
-            '--env=CUDA_VISIBLE_DEVICES=0', f'--env=FLUX_MEMORY_GIB={memory_gib}',
+    args = [*argv[2:split], f'--env=XDG_RUNTIME_DIR=/run/user/{os.getuid()}',
+            f'--env=FLUX_MEMORY_GIB={memory_gib}',
             '--', '/bin/bash', str(payload), str(directory), str(memory_gib), str(Path(__file__).resolve()),
             *argv[split + 1:]]
     (directory / 'submission.json').write_text(json.dumps({'state': 'unknown'}))
@@ -255,8 +255,9 @@ def run_container(arguments, directory, scratch_root, *, gpu=True):
         raise ValueError('GPU container requires Flux job context')
     job = plain_job_id(os.environ['FLUX_JOB_ID'])
     job_decimal = decimal_job_id(job)
-    if gpu and not os.environ.get('CUDA_VISIBLE_DEVICES'):
-        raise ValueError('GPU container requires Flux job and allocated CUDA_VISIBLE_DEVICES context')
+    device = os.environ.get('CUDA_VISIBLE_DEVICES', '')
+    if gpu and not re.fullmatch(r'[0-9]+|(?:GPU|MIG)-[A-Za-z0-9/-]+', device):
+        raise ValueError('CUDA_VISIBLE_DEVICES must name exactly one allocated device')
     directory = Path(directory).resolve()
     directory.mkdir(parents=True, exist_ok=True)
     root = Path(scratch_root).resolve() / job
@@ -293,7 +294,7 @@ def run_container(arguments, directory, scratch_root, *, gpu=True):
         identity = ['--userns=keep-id'] if '--user' in options and options[options.index('--user') + 1] != '0:0' else []
         create = ['podman', 'create', '--pull=never', '--cgroups=disabled', '--network=none', '--init',
                   '--name', name, '--cidfile', str(cidfile),
-                  *(['--device', 'nvidia.com/gpu=all'] if gpu else []),
+                  *(['--device', 'nvidia.com/gpu=' + device] if gpu else []),
                   '--cpuset-cpus', ','.join(map(str, affinity)), '--volume', str(scratch) + ':/tessera-scratch',
                   *identity, *options,
                   '--label', 'flux.jobid=' + job_decimal,

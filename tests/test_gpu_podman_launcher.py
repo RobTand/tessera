@@ -62,7 +62,7 @@ def test_real_term_removes_only_owned_container(tmp_path, signum):
         create = next(call for call in calls if call[0] == 'create')
         assert next(call for call in calls if call[0] == 'rm')[-1] == create[create.index('--name') + 1]
         assert '--cgroups=disabled' in create and '--network=none' in create
-        assert create[create.index('--device') + 1] == 'nvidia.com/gpu=all'
+        assert create[create.index('--device') + 1] == 'nvidia.com/gpu=0'
         assert create[create.index('--cpuset-cpus') + 1] == ','.join(map(str, sorted(os.sched_getaffinity(0))))
         assert '--read-only' not in create
     finally:
@@ -127,7 +127,7 @@ def test_oracle_wrapper_runs_owned_podman_policy(tmp_path, wrapper):
     create = next(call for call in calls if call[0] == 'create')
     assert '--probe-marker' in create
     assert str(ROOT) + ':/work:ro' in create
-    assert 'nvidia.com/gpu=all' in create
+    assert 'nvidia.com/gpu=0' in create
     if wrapper == 'routed_fused_tests.sh':
         assert (out / 'runner-sp/pygments').is_dir()
 
@@ -383,3 +383,34 @@ def test_created_container_has_decimal_flux_job_label(tmp_path):
     calls = [json.loads(line) for line in (tmp_path / 'calls').read_text().splitlines()]
     create = next(call for call in calls if call[0] == 'create')
     assert create[create.index('--label') + 1] == 'flux.jobid=123'
+
+
+@pytest.mark.parametrize('devices', ['', '0,1', 'all', '-1', '0 1'])
+def test_gpu_requires_exactly_one_allocated_device(tmp_path, devices):
+    command, env, out = controlled_runtime(tmp_path)
+    env['CUDA_VISIBLE_DEVICES'] = devices
+    result = subprocess.run(command, env=env, capture_output=True, text=True, timeout=30)
+    assert result.returncode == 2
+    assert 'CUDA_VISIBLE_DEVICES' in result.stderr and 'exactly one' in result.stderr
+    assert not (tmp_path / 'calls').exists()
+
+
+def test_cdi_device_matches_the_single_allocation(tmp_path):
+    command, env, out = controlled_runtime(tmp_path)
+    env['CUDA_VISIBLE_DEVICES'] = '3'
+    result = subprocess.run(command, env=env, capture_output=True, text=True, timeout=30)
+    assert result.returncode == 0, result.stderr
+    create = next(json.loads(line) for line in (tmp_path / 'calls').read_text().splitlines()
+                  if json.loads(line)[0] == 'create')
+    assert create[create.index('--device') + 1] == 'nvidia.com/gpu=3'
+    assert 'CUDA_VISIBLE_DEVICES=3' in create
+
+
+def test_submit_runtime_uid_is_current_and_cuda_is_left_to_flux(tmp_path, monkeypatch):
+    module, argv, out = controlled_submission(tmp_path, monkeypatch)
+    monkeypatch.setattr(module['os'], 'getuid', lambda: 1234)
+    assert module['submit_and_collect'](argv, out, cores=1, memory_gib=8, walltime='10m') == 0
+    submit = next(json.loads(line) for line in (tmp_path / 'flux-calls').read_text().splitlines()
+                  if json.loads(line)[0] == 'submit')
+    assert '--env=XDG_RUNTIME_DIR=/run/user/1234' in submit
+    assert not any(arg.startswith('--env=CUDA_VISIBLE_DEVICES=') for arg in submit)

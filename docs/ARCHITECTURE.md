@@ -10,7 +10,10 @@ in `tools/_flux_gpu_jobspec.py` accepts a digest-pinned container request
 inside a Flux GPU job. `runtime_image.sh` selects the executing image store
 with `TESSERA_CONTAINER_ENGINE`; the resolver CLI accepts `--engine podman`
 and checks that store's RepoDigests with the existing digest rule.
-The launcher uses rootless Podman with CDI. Payload `-e` and `--env` cannot set launcher-owned `TMPDIR`,
+The launcher requires exactly one `CUDA_VISIBLE_DEVICES` index or device UUID
+and passes that device to rootless Podman through CDI. Submission leaves CUDA
+selection to Flux and derives `XDG_RUNTIME_DIR` from the current uid.
+Payload `-e` and `--env` cannot set launcher-owned `TMPDIR`,
 `CUDA_VISIBLE_DEVICES`, or any thread-bound name in `_flux_shape.THREADS`.
 Temporary files use owned scratch; output, HOME and persistent cache mounts
 remain the wrappers' explicit locations. The launcher uses disabled nested
