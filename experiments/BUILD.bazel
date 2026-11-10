@@ -3681,8 +3681,13 @@ ts_py_library(
     srcs = [
         "t8r_speed/rung_quality.py",
     ],
+    data = [
+        "t4_code/bench_geometry_e2m1.py",
+    ],
     deps = [
         "//src/tessera:__init___cycle",
+        "//src/tessera:_dev/__init__",
+        "//src/tessera:_dev/suite_source",
         "//src/tessera:bf16_route_cycle",
         "//src/tessera:calculator",
         "//src/tessera:dev_mode",
