@@ -25,6 +25,7 @@ from pathlib import Path
 import sys
 
 root = Path.cwd()
+sys.path.insert(0, str(root / "experiments" / "t8r_speed"))
 if sys.argv[1] == "True":
     import vllm.config
 else:
