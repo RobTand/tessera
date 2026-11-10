@@ -7,6 +7,8 @@
 # it through ``importlib.metadata.entry_points(group="vllm.general_plugins")``.
 # The source tree is bind-mounted read-only at /work and copied to owned scratch
 # for an offline install. Metadata and build writes stay in that scratch.
+# The install is non-editable and uses --no-index. Set RUNS or TESSERA_GPU_OUT
+# to the unique output directory; /ext retains the persistent JIT caches.
 #
 # Usage: tessera_plugin_run.sh [container-payload-options...] -- <bash command>
 set -eu

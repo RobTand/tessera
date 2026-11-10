@@ -6,6 +6,7 @@
 # BENCH_NCU=1 wraps the process in Nsight Compute (both kernels, one call per cell).
 # EXTRA_RO=<dir> mounts that directory read-only at the same path (the real_stack.py planes).
 # D30: a host watchdog kills the container if MemAvailable falls below 2 GiB.
+# The launcher fixes MAX_JOBS=1 for native builds.
 set -euo pipefail
 export TESSERA_CONTAINER_ENGINE=podman
 CHECKOUT=$(realpath "$1"); OUT=$(realpath -m "$2"); shift 2

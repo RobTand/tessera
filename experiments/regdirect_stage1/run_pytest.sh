@@ -2,6 +2,8 @@
 # eng-regdirect-build: run pytest inside the serving image on one GB10 (vLLM's quantizer ops are
 # there, not in the plain cu130 venv). The shared fused-test wrapper stages an offline runner.  run_pytest.sh <checkout> <out_dir> [pytest args...]
 # D30: a host watchdog kills the container if MemAvailable falls below 2 GiB.
+# TEST_RUNNER_SP is required. The offline runner uses -q -rA, JUnit and basetemp;
+# PYTHONPATH includes /work/tests and /work/experiments. TEST_XDIST=1 enables xdist.
 set -euo pipefail
 CHECKOUT=$(realpath "$1"); OUT=$(realpath -m "$2"); shift 2
 mkdir -p "$OUT/home" "$OUT/tmp"
