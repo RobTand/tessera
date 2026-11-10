@@ -57,7 +57,7 @@ def wrapper_environment(tmp_path):
     extensions = tmp_path / 'retained-extensions'
     packages = tmp_path / 'packages'
     packages.mkdir()
-    for name in ('pytest', '_pytest', 'pluggy', 'iniconfig', 'packaging', 'xdist', 'execnet'):
+    for name in ('pytest', '_pytest', 'pluggy', 'iniconfig', 'packaging', 'pygments', 'xdist', 'execnet'):
         (packages / name).mkdir()
     (packages / 'py.py').write_text('')
     binaries = tmp_path / 'bin'

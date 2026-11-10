@@ -110,7 +110,7 @@ def test_oracle_wrapper_runs_owned_podman_policy(tmp_path, wrapper):
     (model / 'model.safetensors.index.json').write_text('{}')
     packages = tmp_path / 'packages'
     packages.mkdir()
-    for package in ('pytest', '_pytest', 'pluggy', 'iniconfig', 'packaging'):
+    for package in ('pytest', '_pytest', 'pluggy', 'iniconfig', 'packaging', 'pygments'):
         (packages / package).mkdir()
     (packages / 'py.py').touch()
     env.update(ORACLE_IMAGE=IMAGE, FLUX_SCRATCH=str(tmp_path / 'scratch'),
@@ -130,3 +130,5 @@ def test_oracle_wrapper_runs_owned_podman_policy(tmp_path, wrapper):
     assert '--probe-marker' in create
     assert str(ROOT) + ':/work:ro' in create
     assert 'nvidia.com/gpu=all' in create
+    if wrapper == 'routed_fused_tests.sh':
+        assert (out / 'runner-sp/pygments').is_dir()

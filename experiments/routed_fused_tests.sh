@@ -5,7 +5,7 @@
 #
 # The image ships no pytest.  The runner is borrowed, pure Python, from a host
 # venv of the SAME interpreter minor (3.12): only pytest, _pytest, pluggy,
-# iniconfig, packaging and the py.py shim are copied under <out_dir>/runner-sp and appended to
+# iniconfig, packaging, pygments and the py.py shim are copied under <out_dir>/runner-sp and appended to
 # PYTHONPATH, so the image's torch, triton and vLLM are the ones imported.
 #   routed_fused_tests.sh <checkout> <out_dir> [pytest args...]
 # Environment:
@@ -39,7 +39,7 @@ fi
 mkdir -p "$OUT/home" "$OUT/tmp" "$OUT/triton" "$EXT" "$OUT/runner-sp"
 # py.py is the one-file shim _pytest/compat.py imports (the retired ``py``
 # library's name); a runner copy without it fails at import.
-for pkg in pytest _pytest pluggy iniconfig packaging py.py; do
+for pkg in pytest _pytest pluggy iniconfig packaging pygments py.py; do
   [[ -e "$SP/$pkg" ]] || { echo "missing $SP/$pkg" >&2; exit 2; }
   rm -rf "$OUT/runner-sp/$pkg"
   cp -r "$SP/$pkg" "$OUT/runner-sp/$pkg"
