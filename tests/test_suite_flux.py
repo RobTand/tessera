@@ -117,7 +117,7 @@ def test_submit_environment_and_runtime_budget_are_explicit(suite, tmp_path, mon
     assert "--resources-shape=slot/[core=2;memory=8]" in render
     assert "--requires=x86_64" in render
     environment = dict(token.removeprefix("--env=").split("=", 1) for token in render[3:] if token.startswith("--env="))
-    assert set(environment) == {"PATH", "HOME", "PYTHONPATH", "PYTHONDONTWRITEBYTECODE", "PYTHONNOUSERSITE", "PRISMAQUANT_DEV_MODE",
+    assert set(environment) == {"PATH", "HOME", "FLUX_F58_FORCE_ASCII", "PYTHONPATH", "PYTHONDONTWRITEBYTECODE", "PYTHONNOUSERSITE", "PRISMAQUANT_DEV_MODE",
                                 "OMP_NUM_THREADS", "MKL_NUM_THREADS", "OPENBLAS_NUM_THREADS", "TORCH_NUM_THREADS",
                                 "NUMEXPR_NUM_THREADS", "MAX_JOBS", "CMAKE_BUILD_PARALLEL_LEVEL",
                                 "MAKEFLAGS", "NINJAFLAGS", "KL_TOOL_DIR"}

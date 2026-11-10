@@ -40,6 +40,9 @@ elif a[0]=='rm': (p/'created').unlink(missing_ok=True)
 elif a[:2]==['container','exists']: sys.exit(int(not (p/'created').exists()))
 ''')
     podman.chmod(0o755)
+    flux = binary / 'flux'
+    flux.write_text('#!/bin/sh\nprintf \"%s\\n\" \"$*\" > \"$CONTROL/flux-id-call\"\necho f123\n')
+    flux.chmod(0o755)
     findmnt = binary / 'findmnt'
     findmnt.write_text('#!/bin/sh\nprintf "%s\\n" "${FILESYSTEM:-ext4}"\n')
     findmnt.chmod(0o755)
@@ -217,3 +220,13 @@ def test_submit_refuses_caps_before_any_native_boundary(tmp_path):
         module['submit_and_collect'](['flux', 'submit'], tmp_path / 'out', cores=4,
                                      memory_gib=8, walltime='45m')
     assert not (tmp_path / 'out').exists()
+
+
+def test_launcher_converts_the_native_job_id_at_one_boundary(tmp_path):
+    command, env, out = controlled_runtime(tmp_path)
+    env['FLUX_JOB_ID'] = 'ƒ123'
+    result = subprocess.run(command, env=env, capture_output=True, text=True, timeout=30)
+    assert result.returncode == 0, result.stderr
+    record, = [json.loads(p.read_text()) for p in out.glob('container-*.json')]
+    assert Path(record['scratch']).parent.name == 'f123'
+    assert (tmp_path / 'flux-id-call').read_text().strip() == 'job id --to=f58plain ƒ123'

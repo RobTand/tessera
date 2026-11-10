@@ -9,7 +9,11 @@ The launcher uses rootless Podman with CDI, disabled nested
 cgroups, no network and a writable container root for NVIDIA hooks. A unique
 name is registered before creation; TERM and exit remove only that container.
 Scratch lives on ext4 under `/tmp/flux-vanilla/<ASCII job ID>` and is removed
-on exit. The receipt records host and container affinity, status and cleanup.
+on exit. Submitted environments set `FLUX_F58_FORCE_ASCII=1`. The launcher
+and suite payload convert incoming IDs once with `flux job id --to=f58plain`
+and use that exact scratch leaf. Receipt IDs retain their original spelling. Suite and wrapper payloads sample their own cgroup `memory.peak`
+after cleanup and record `memory_peak_bytes` beside declared memory. Read
+failures are recorded and do not change the numerical verdict. The receipt records host and container affinity, status and cleanup.
 The routed and dense oracles, mHC probe, routed census, fused census and
 fused-test wrapper now call this launcher. The T8R benchmark also uses this route. Its closed direct comparison mode
 refuses the legacy per-container memory/CPU flags because disabled nested

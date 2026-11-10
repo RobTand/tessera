@@ -68,6 +68,9 @@ def wrapper_environment(tmp_path):
     podman = binaries / 'podman'
     podman.write_text("#!/usr/bin/env python3\nimport json, os, pathlib, sys\nargs=sys.argv[1:]\np=pathlib.Path(os.environ['DOCKER_ARGV_PATH'])\nif args[0]=='info': print('true')\nelif args[0]=='create':\n p.write_bytes(('\\0'.join(args)+'\\0').encode())\n pathlib.Path(args[args.index('--cidfile')+1]).write_text('b'*64)\nelif args[0]=='start':\n a=p.read_bytes().decode().rstrip('\\0').split('\\0')\n scratch=a[a.index('--volume')+1].split(':')[0]\n pathlib.Path(scratch,'container-status').write_text('Cpus_allowed_list:\\t'+','.join(map(str,sorted(os.sched_getaffinity(0))))+'\\n')\nelif args[:2]==['container','exists']: sys.exit(1)\n")
     podman.chmod(0o755)
+    flux = binaries / 'flux'
+    flux.write_text('#!/bin/sh\necho f123\n')
+    flux.chmod(0o755)
     findmnt = binaries / 'findmnt'
     findmnt.write_text('#!/bin/sh\necho ext4\n')
     findmnt.chmod(0o755)

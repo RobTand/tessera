@@ -24,7 +24,7 @@ def test_payload_exception_stops_owned_group_and_preserves_cleanup_error(
     scratch_root = tmp_path / "scratch"; scratch_root.mkdir()
     monkeypatch.setattr(flux, "payload_scratch_root", lambda: scratch_root)
     monkeypatch.chdir(tmp_path)
-    monkeypatch.setenv("FLUX_JOB_ID", "123")
+    monkeypatch.setenv("FLUX_JOB_ID", "f123")
     identity = {"snapshot_commit": "a" * 40, "sha256": "b" * 64}
     intent = {"directory": str(directory), "checkout": str(tmp_path), "source": identity, "application": None,
               "command": ["python", "payload"], "timeout_s": 60, "runtime": {"sha256": "c" * 64},
@@ -34,10 +34,10 @@ def test_payload_exception_stops_owned_group_and_preserves_cleanup_error(
         (directory / "container.json").write_text("invalid container evidence")
     flux.save(directory / "launch.json", intent)
     digest = flux.hashlib.sha256((directory / "launch.json").read_bytes()).hexdigest()
-    flux.save(directory / "submission.json", {"state": "submitted", "job_id": "123", "launch_sha256": digest})
+    flux.save(directory / "submission.json", {"state": "submitted", "job_id": "f123", "launch_sha256": digest})
     original = {"tasks": [{"command": ["/usr/bin/python3", "-s", "tools/_suite_flux.py", "payload", str(directory), digest]}]}
     flux.save(directory / "jobspec.json", original)
-    monkeypatch.setattr(flux, "checked", lambda args: json.dumps(original))
+    monkeypatch.setattr(flux, "checked", lambda args: "f123" if args[:2] == ["job", "id"] else json.dumps(original))
     monkeypatch.setattr(flux, "broker_starttime", lambda **kw: "fixture-instance")
     monkeypatch.setattr(flux, "source", lambda path: identity)
     monkeypatch.setattr(flux, "runtime_identity", lambda *args, **kwargs: intent["runtime"])
@@ -66,7 +66,7 @@ def test_payload_exception_stops_owned_group_and_preserves_cleanup_error(
         with pytest.raises(ValueError, match="unqualified local scratch filesystem"):
             flux.payload(str(directory), digest)
         assert not signals
-        assert not (scratch_root / "123").exists()
+        assert not (scratch_root / "f123").exists()
         assert not (directory / "payload.json").exists()
         return
     with pytest.raises(OSError, match="payload wait failed"):
@@ -77,10 +77,11 @@ def test_payload_exception_stops_owned_group_and_preserves_cleanup_error(
     assert "owned scratch cleanup failed" in record["cleanup_error"]
 
 
+@pytest.mark.parametrize("native_id,ascii_id", [("f123", "f123"), ("ƒ123", "f123")])
 @pytest.mark.parametrize("interrupt_at", ["wait", "source", "runtime"])
 @pytest.mark.parametrize("machine,filesystem", [("x86_64", "xfs"), ("aarch64", "ext4")])
 def test_interrupt_publishes_cleanup_without_waiting_for_an_exit_seal(
-        tmp_path, monkeypatch, interrupt_at, machine, filesystem):
+        tmp_path, monkeypatch, interrupt_at, machine, filesystem, native_id, ascii_id):
     monkeypatch.syspath_prepend(str(ROOT / "tools"))
     spec = importlib.util.spec_from_file_location("interrupt_flux", ROOT / "tools/_suite_flux.py")
     flux = importlib.util.module_from_spec(spec); spec.loader.exec_module(flux)
@@ -88,17 +89,17 @@ def test_interrupt_publishes_cleanup_without_waiting_for_an_exit_seal(
     scratch_root = tmp_path / "scratch"; scratch_root.mkdir()
     monkeypatch.setattr(flux, "payload_scratch_root", lambda: scratch_root)
     monkeypatch.chdir(tmp_path)
-    monkeypatch.setenv("FLUX_JOB_ID", "123")
+    monkeypatch.setenv("FLUX_JOB_ID", native_id)
     identity = {"snapshot_commit": "a" * 40, "sha256": "b" * 64}
     intent = {"directory": str(directory), "checkout": str(tmp_path), "source": identity, "application": None,
               "command": ["python", "payload"], "timeout_s": 60, "runtime": {"sha256": "c" * 64},
               "qualification": {"broker_starttime": "fixture-instance"}}
     flux.save(directory / "launch.json", intent)
     digest = flux.hashlib.sha256((directory / "launch.json").read_bytes()).hexdigest()
-    flux.save(directory / "submission.json", {"state": "submitted", "job_id": "123", "launch_sha256": digest})
+    flux.save(directory / "submission.json", {"state": "submitted", "job_id": ascii_id, "launch_sha256": digest})
     original = {"tasks": [{"command": ["/usr/bin/python3", "-s", "tools/_suite_flux.py", "payload", str(directory), digest]}]}
     flux.save(directory / "jobspec.json", original)
-    monkeypatch.setattr(flux, "checked", lambda args: json.dumps(original))
+    monkeypatch.setattr(flux, "checked", lambda args: "f123" if args[:2] == ["job", "id"] else json.dumps(original))
     monkeypatch.setattr(flux, "broker_starttime", lambda **kw: "fixture-instance")
     observations = []
     def source(path):
@@ -135,5 +136,6 @@ def test_interrupt_publishes_cleanup_without_waiting_for_an_exit_seal(
     record = json.loads((directory / "payload.json").read_bytes())
     assert signals == ([signal.SIGTERM] if interrupt_at == "wait" else [])
     assert record["interrupted_signal"] == signal.SIGTERM
-    assert record["scratch_removed"] and not (scratch_root / "123").exists()
+    assert record["scratch_removed"] and not (scratch_root / ascii_id).exists()
     assert record["runtime_verified"] is False
+    assert record["scratch"] == str(scratch_root / ascii_id)

@@ -20,7 +20,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from _flux_shape import THREADS, duration_seconds, resource_shape  # noqa: E402
 
-BASE_ENV = {"PATH": "/usr/bin:/bin", "HOME": "/home/rob", **THREADS}
+BASE_ENV = {"PATH": "/usr/bin:/bin", "HOME": "/home/rob", "FLUX_F58_FORCE_ASCII": "1", **THREADS}
 
 
 def render(command, *, cores, memory_gib, walltime, env=(), hosts=None, directory=None, cwd=None, fleet_master_approved=None):
@@ -74,14 +74,7 @@ def main(argv=None):
     print(shlex.join(rendered))
     print("RENDERED, NOT SUBMITTED", file=sys.stderr)
     return 0
-def submit_and_collect(argv, directory, *, cores, memory_gib, walltime):
-    """Submit one request and wait for its native terminal records, never retry."""
-    if duration_seconds(walltime) > 600:
-        raise ValueError('GPU runs over 10 minutes need a fleet-master duration decision; not submitted')
-    if cores > 10 or memory_gib > 32:
-        raise ValueError('GPU request exceeds 10 cores / 32 GiB; needs a size decision; not submitted')
-    directory = Path(directory)
-    directory.mkdir(parents=True, exist_ok=False)
+def flux_client():
     client = shutil.which('flux')
     client_environment = None
     if client is None:
@@ -92,6 +85,27 @@ def submit_and_collect(argv, directory, *, cores, memory_gib, walltime):
                               'HOME': '/home/rob'}
         client_environment['FLUX_URI'] = subprocess.check_output(
             ['/mnt/shared/flux-migration/flux-uri.sh'], env=client_environment, text=True).strip()
+    return client, client_environment
+
+
+def plain_job_id(value):
+    client, environment = flux_client()
+    plain = subprocess.check_output([client, 'job', 'id', '--to=f58plain', value],
+                                    env=environment, text=True).strip()
+    if not re.fullmatch(r'f[1-9A-HJ-NP-Za-km-z]+', plain):
+        raise ValueError('Flux did not return a plain f58 job ID')
+    return plain
+
+
+def submit_and_collect(argv, directory, *, cores, memory_gib, walltime):
+    """Submit one request and wait for its native terminal records, never retry."""
+    if duration_seconds(walltime) > 600:
+        raise ValueError('GPU runs over 10 minutes need a fleet-master duration decision; not submitted')
+    if cores > 10 or memory_gib > 32:
+        raise ValueError('GPU request exceeds 10 cores / 32 GiB; needs a size decision; not submitted')
+    directory = Path(directory)
+    directory.mkdir(parents=True, exist_ok=False)
+    client, client_environment = flux_client()
     def native(arguments, name):
         result = subprocess.run([client, *arguments], env=client_environment, capture_output=True, text=True)
         (directory / (name + '.stdout')).write_text(result.stdout)
@@ -217,8 +231,10 @@ def run_container(arguments, directory, scratch_root, *, gpu=True):
     """Own a foreground rootless container inside the calling Flux job unit."""
     options, entrypoint, image, command, external_cid = container_options(arguments)
     # Flux injects these values. They are context, not an admission token.
-    job = os.environ.get('FLUX_JOB_ID', '').replace('ƒ', 'f')
-    if not re.fullmatch(r'f[1-9A-HJ-NP-Za-km-z]+|[0-9]+', job) or (gpu and not os.environ.get('CUDA_VISIBLE_DEVICES')):
+    if not os.environ.get('FLUX_JOB_ID'):
+        raise ValueError('GPU container requires Flux job context')
+    job = plain_job_id(os.environ['FLUX_JOB_ID'])
+    if gpu and not os.environ.get('CUDA_VISIBLE_DEVICES'):
         raise ValueError('GPU container requires Flux job and allocated CUDA_VISIBLE_DEVICES context')
     directory = Path(directory).resolve()
     directory.mkdir(parents=True, exist_ok=True)
