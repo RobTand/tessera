@@ -1,5 +1,9 @@
 # GLM-5.3 Tessera export: drain → merge runbook (2026-09-01)
 
+Historical runbook for the 2026-09-01 drain. The PrismaBuild commands below
+are retained as the record of that run, not current operating instructions.
+For current test routes, see [Bazel](bazel.md) and [the CPU gate](ci_gate.md).
+
 Written mid-run so the sequence survives a context reset. Steps are ordered
 because two of them are irreversible.
 

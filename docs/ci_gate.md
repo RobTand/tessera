@@ -24,7 +24,17 @@ The merge gate runs on Bazel through BuildBuddy (#1589); [docs/bazel.md](bazel.m
 
 **Secrets.** No child the gate starts on the runner, other than Bazel, gets `BUILDBUDDY_API_KEY`, `MERGIFY_TOKEN`, `GITHUB_TOKEN` or any `*_API_KEY` or `*_TOKEN`. `tools/ci/check_no_secret_leak.py` must pass before any artifact upload.
 
-CUDA-gated tests are not covered: every Bazel test runs with `CUDA_VISIBLE_DEVICES` empty, and the 30 files whose every node needs CUDA are tagged `gpu` and left out. Their run stays on PrismaBuild with `--strict-cuda`.
+CUDA-gated tests are not covered: every Bazel test runs with `CUDA_VISIBLE_DEVICES` empty, and the 30 files whose every node needs CUDA are tagged `gpu` and left out. Their route is `tools/merge_suite.py`'s GPU arm on Flux, with `--strict-cuda`, aarch64, one whole GPU and rootless Podman. The transport has the canary evidence below, and the lane is not yet qualified. Until it is, the CUDA-gated surface has no qualified route.
+
+The strict-CUDA transport canary's coordinator is `ƒGTy24paUP`, child
+`fGU3RLzvBq`. Its record directory is
+`/mnt/shared/flux-migration/pq-tessera/jobs/unit4-tessera-strict-cuda-canary-01/`.
+`population/receipt.json` records strict-CUDA mode on one NVIDIA GB10 with
+torch 2.11.0+cu130: 1 passed, 0 failed, 0 skipped, no skip reasons and no
+uncollected modules. `strict-cuda-proof.json` records one allocating CUDA test,
+container removal and no cleanup errors. `fresh-resume.stdout` reports a green
+GPU population and names `resumed.receipt.json`. This is a one-test transport
+canary, not qualification of the CUDA-gated surface.
 
 The sections below describe the hosted gate this replaced. Its populations, budgets and quarantine rules carry over into the Bazel runner (`tools/bazel/python_runner.py`); its scheduling does not.
 
@@ -52,8 +62,8 @@ live in the ignored `.pytest_cache` directory so source-identity tests still
 measure a clean checkout. The population
 reports device presence, CUDA allocations, uncollected modules, and verbatim
 skip reasons. CUDA-gated tests skip on these runners. A CPU pass does not prove
-the CUDA population. The coordinator's PrismaBuild GPU run with `--strict-cuda`
-remains the CUDA qualification, as described in `AGENTS.md`.
+the CUDA population. The Flux GPU arm described above is not yet qualified;
+until it is, the CUDA-gated surface has no qualified route.
 
 ## Scheduling and verdicts
 
@@ -90,7 +100,7 @@ the previous 20-second default failed otherwise passing qualification attempts.
 The retained observations name each consumer, architecture, run, and attempt.
 Exceptions for cases above the default use twice the largest
 observed case duration, rounded up. The default and exception list cannot
-grow against the event's base commit. Enforcement uses PB's 1.5 tolerance.
+grow against the event's base commit. Enforcement uses the runner's 1.5 tolerance.
 An unavailable base commit gives no verdict. These are hang limits, not a
 fine-grained cost ratchet. The tolerance is a runner constant. The default pytest timeout is 300 seconds;
 when a measured slow-node budget times 1.5 exceeds that cap, the collector
@@ -138,8 +148,10 @@ the consumer tests remain active. One shape accounting node depends on a host-lo
 PrismaQuant checkout, owned by [the portable accounting test issue](https://github.com/RobTand/tessera/issues/1567).
 Six A4 CPU wire nodes depend on unpublished archived artifacts, owned by
 [the portable A4 fixtures issue](https://github.com/RobTand/tessera/issues/1568).
-One Stageprev receiver-name proof also requires the published PB source tree,
-owned by [the observer contract issue](https://github.com/RobTand/tessera/issues/1562).
+The historical Stageprev receiver-name proof required the published PB source
+tree, recorded under [the observer contract issue](https://github.com/RobTand/tessera/issues/1562).
+That operative scenario and its dedicated tests are now archived under
+`archive/flux-migration/4C-7/`.
 All matched-reach tests remain active. A worker group derived from fixture scopes builds
 their shared grid fixture once. The fixture also reuses standard-normal inverse-CDF
 samples across sigma searches, then applies the original scalar multiplication.
@@ -169,8 +181,10 @@ head and batch checks. This PR does not change repository protection or queue ru
 ## Qualification
 
 The fixed-master inventory, hosted canaries, measured durations, budget
-exceptions, and quarantine owners are recorded with their source SHAs and
-PrismaBuild action keys during rollout. Initial hosted measurements enable
+exceptions, and quarantine owners retain their source SHAs and historical
+PrismaBuild action keys from rollout. New evidence identifies its Flux job,
+BuildBuddy invocation or GitHub-hosted run and includes the terminal verdict
+and logs. Initial hosted measurements enable
 budget enforcement; three passing full canaries are still required before
 qualification is complete.
 
@@ -189,7 +203,8 @@ the per-lane median file times. `--budget-default-seconds` sets the measured
 bootstrap default; `--budget-output` builds a bootstrap exception
 list from hosted observations, using twice each measured maximum rounded up.
 Every source JUnit digest is retained. The manifest records lane, repeat,
-JUnit path, surface path, and the PB action key or hosted run and artifact.
+JUnit path, surface path, and the job or hosted run and artifact. Historical
+manifests retain their PB action keys.
 
 Each xdist worker publishes a collection receipt. Every assigned file must
 appear in that receipt or in the population's explicit missing-dependency

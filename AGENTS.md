@@ -239,7 +239,7 @@ Treat as constraints. Violate slogans when judgment says so.
   `tools/impacted_tests.py --ref master...HEAD` computes which tests those
   are rather than leaving it to judgement: it walks the import graph, inverts
   the edges, and returns everything reverse-reachable from what you changed.
-  A PrismaBuild snapshot is parentless, so give it the exact fetched base as
+  A remote run's source snapshot can be parentless, so give it the exact fetched base as
   the left endpoint; when no merge base exists the selector records and uses a
   direct `BASE..HEAD` tree comparison instead.
   Run it **in your own worktree** -- it reads the tree it is standing in, and
@@ -290,8 +290,11 @@ Treat as constraints. Violate slogans when judgment says so.
   native Flux profile. It starts from an empty environment with explicit
   artifact roots, `PYTHONPATH=src`, and bounded math/build threads. Containers
   use native rootless Podman with immutable local images and scoped dependencies.
-  GPU intent reserves one whole GPU on aarch64; execution still needs separate
-  device qualification. A CPU result cannot establish a CUDA population.
+  The CUDA-gated route is `tools/merge_suite.py`'s GPU arm on Flux, on aarch64
+  with one whole GPU and rootless Podman. The [CPU gate documentation](docs/ci_gate.md)
+  cites its one-test strict-CUDA transport canary receipt. The lane is not yet
+  qualified. Until it is, the CUDA-gated surface has no qualified
+  route. A CPU result cannot establish a CUDA population.
   `--record` appends each arm to the ledger,
   including arms not submitted. Read the mode, device, skip reasons and
   uncollected modules beside every count.
