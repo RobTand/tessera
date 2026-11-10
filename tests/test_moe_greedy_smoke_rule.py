@@ -308,6 +308,8 @@ def test_the_wrapper_refuses_a_missing_aggregation_before_it_serves_anything(tmp
 
     checkout = tmp_path / "checkout"          # experiments/, deliberately no src/
     shutil.copytree(CHECKOUT / "experiments", checkout / "experiments")
+    (checkout / 'tools').mkdir()
+    shutil.copyfile(CHECKOUT / 'tools/_flux_docker_guard.py', checkout / 'tools/_flux_docker_guard.py')
     assert not (checkout / "src").exists()
 
     bin_dir = tmp_path / "bin"
