@@ -15,6 +15,10 @@ _CONSTRUCTION_REASON = "experiments/t8r_speed/bench_dense_module.py reads this c
 _PRISMAQUANT = "it reads PrismaQuant, pinned in tools/ci/gate_prismaquant_requirements.txt; its own dependencies are heavy, so only the tests that read it carry it."
 
 TEST_INPUTS = {
+    "//tests:test_regdirect_run_sh": struct(
+        data = ["//experiments:runtime_image.sh", "//tools:_flux_gpu_jobspec"],
+        reason = "regdirect_stage1/run.sh sources runtime_image.sh and executes the GPU launcher through the checkout argument; the launcher library includes its Python dependencies.",
+    ),
     "//tests:test_gpu_foreground_wrappers": struct(
         data = ["//experiments:routed_fused_tests.sh"],
         reason = "regdirect_stage1/run_pytest.sh launches routed_fused_tests.sh through the checkout argument passed by the test.",
