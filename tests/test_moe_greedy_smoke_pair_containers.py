@@ -293,12 +293,14 @@ def test_parent_collects_both_arms_before_comparing(tmp_path):
     driver.write_text('''#!/bin/bash
 set -euo pipefail
 ONLY_ARM=
-SOURCE=source; ARTIFACT=artifact; SEAL=seal; OUT=out
+SOURCE=source; ARTIFACT=artifact; SEAL=seal; OUT=$PARENT_OUT
+mkdir -p "$OUT"
 flux_serve_score() { echo "${3}:collected" >> "$CALLS"; }
 score() { echo compared >> "$CALLS"; }
 PY=score; TS=tree
 ''' + text[start:])
-    result = subprocess.run(['bash', str(driver)], env=os.environ | {'CALLS': str(calls)},
+    result = subprocess.run(['bash', str(driver)],
+                            env=os.environ | {'CALLS': str(calls), 'PARENT_OUT': str(tmp_path / 'out')},
                             capture_output=True, text=True)
     assert result.returncode == 0, result.stderr
     assert calls.read_text().splitlines() == ['bf16:collected', 'tessera:collected', 'compared']
