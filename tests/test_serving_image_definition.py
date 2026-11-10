@@ -90,17 +90,33 @@ def test_the_request_is_the_suite_transports_stock_demand_and_refuses_more(tmp_p
             builder.build_job(_manifest(), "t:1", tmp_path, **demand)
 
 
-def test_submit_goes_through_the_suite_transport_with_that_demand(tmp_path, monkeypatch):
+def test_submit_refuses_before_the_suite_transport(tmp_path, monkeypatch):
     builder = _builder()
     job = builder.build_job(_manifest(), "t:1", tmp_path)
     seen = {}
     import _suite_flux
     monkeypatch.setattr(_suite_flux, "submit", lambda *a, **k: seen.update(args=a, kwargs=k) or {"state": "running"})
-    record = builder.submit(job, tmp_path / "launch", tmp_path / "checkout", "/named/python")
-    directory, checkout, command, cores, memory, timeout, environment = seen["args"]
-    assert record == {"state": "running"} and seen["kwargs"] == {"architecture": "aarch64"}
-    assert command[:3] == ["/named/python", "-s", "tools/build_serving_image.py"] and command[3] == "--run"
-    assert (cores, memory, timeout, environment) == (4, 8, 1790, {})
+    with pytest.raises(ValueError, match="root Docker store.*lead"):
+        builder.submit(job, tmp_path / "launch", tmp_path / "checkout", "/named/python")
+    assert seen == {}
+    assert not (tmp_path / "launch").exists()
+
+
+def test_submit_cli_refuses_before_staging_or_transport(tmp_path, monkeypatch, capsys):
+    builder = _builder()
+    calls = []
+    monkeypatch.setattr(builder._suite_flux, 'submit', lambda *a, **k: calls.append(a))
+    code = builder.main(['--submit', '--manifest-json', json.dumps(_manifest()),
+                         '--image-tag', 't:1', '--output-directory', str(tmp_path / 'out'),
+                         '--launch-directory', str(tmp_path / 'launch'), '--checkout', str(ROOT)])
+    assert code == 2
+    assert 'root Docker store' in capsys.readouterr().err
+    assert calls == [] and not (tmp_path / 'launch').exists() and not (tmp_path / 'out').exists()
+
+
+@pytest.mark.parametrize('identity,expected', [('fAbc-123', 'fAbc123'), ('', '')])
+def test_container_name_derivation_needs_no_flux_process(identity, expected):
+    assert _builder().container_name(identity) == 'tessera-image-build-' + expected
 
 
 class _Docker:

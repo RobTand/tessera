@@ -108,7 +108,7 @@ def test_gpu_test_wrapper_reuses_native_namespace_and_xdist(tmp_path, canonical)
 
 
 @pytest.mark.parametrize('canonical', [False, True])
-def test_build_wrapper_refuses_flux_before_native_staging(tmp_path, canonical):
+def test_build_wrapper_matches_the_consumer_namespace(tmp_path, canonical):
     wrapper = Path(__file__).resolve().parents[1] / 'experiments/t8r_speed/build_ext.sh'
     checkout, source, extensions, argv_path, env = wrapper_environment(tmp_path)
     container_source = '/tessera/src' if canonical else '/work/src'
@@ -119,9 +119,18 @@ def test_build_wrapper_refuses_flux_before_native_staging(tmp_path, canonical):
         env.update(NATIVE_CONTAINER_SRC=container_source, NATIVE_CONTAINER_EXT=container_extensions)
     result = subprocess.run(['bash', str(wrapper), str(checkout), str(extensions), 'e4m3mma'],
                             env=env, capture_output=True, text=True)
-    assert result.returncode == 2 and 'FLUX_JOB_ID' in result.stderr
-    assert 'reviewed serving wrapper' in result.stderr
-    assert not argv_path.exists() and not work.exists() and not extensions.exists()
+    assert result.returncode == 0, result.stdout + result.stderr
+    args = argv_path.read_bytes().decode().rstrip('\0').split('\0')
+    assert args[0] == 'create'
+    assert str(source) + ':' + container_source + ':ro' in args
+    assert str(extensions) + ':' + container_extensions in args
+    assert 'TORCH_EXTENSIONS_DIR=' + container_extensions in args
+    assert 'PYTHONPATH=' + container_source in args
+    assert 'HOME=' + str(work / 'home') in args
+    assert args.count('TMPDIR=/tessera-scratch/tmp') == 1
+    assert not any(value.startswith('TMPDIR=' + str(work)) for value in args)
+    assert not any(value.startswith('nvidia.com/gpu=') for value in args)
+    assert 'CUDA_VISIBLE_DEVICES=' in args
 
 
 @pytest.mark.parametrize('selection', ['0', '1'])
@@ -209,11 +218,6 @@ def test_native_build_choice_wrapper_preserves_declared_value(tmp_path, kind, se
         command = ['bash', str(wrapper), str(checkout), str(tmp_path / 'out'),
                    '--artifact', str(artifact), '--groups', 'experts.R1024.L10']
     result = subprocess.run(command, env=env, capture_output=True, text=True)
-    if kind == 'build':
-        assert result.returncode == 2 and 'FLUX_JOB_ID' in result.stderr
-        assert 'reviewed serving wrapper' in result.stderr
-        assert not argv_path.exists() and not extensions.exists()
-        return
     assert result.returncode == 0, result.stdout + result.stderr
     args = argv_path.read_bytes().decode().rstrip('\0').split('\0')
     forwarded = [args[i + 1] for i, arg in enumerate(args[:-1]) if arg == '-e']

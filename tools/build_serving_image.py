@@ -1,8 +1,8 @@
-"""Print, submit or run an owned serving-image build job. No graphics processor is requested.
+"""Print or run an owned serving-image build. No graphics processor is requested.
 
-``--submit`` hands the job to the native Flux suite transport (``_suite_flux.submit``);
-the Flux job's payload is this tool's ``--run`` mode, which executes the BuildKit
-container and removes the container it owns.
+``--submit`` refuses before submission: the root-Docker-store output needs the
+lead's decision on an outside-Flux build or a reviewed exemption. ``--run`` is
+also refused inside Flux. Saved historical launches remain collectable.
 """
 from __future__ import annotations
 import argparse
@@ -22,6 +22,8 @@ import _suite_flux  # noqa: E402
 ARCHITECTURES = {"x86": "x86_64", "aarch64": "aarch64"}
 #: The suite transport's ceiling (``_suite_flux.validate``); a full build that needs more is a held decision.
 TIMEOUT_S = 1790
+SUBMIT_REFUSAL = ("--submit: the serving image targets the root Docker store; no reviewed serving wrapper "
+                  "exists on this branch. Ask the lead to choose an outside-Flux build or a reviewed exemption.")
 
 
 def _terminate(signum, frame):
@@ -83,11 +85,12 @@ def build_job(manifest, tag, output_directory, *, cpus=4, memory_gb=8):
 
 
 def submit(job, launch_directory, checkout, python):
-    """Hand the job to the native Flux suite transport and return its saved record."""
-    request = job["request"]
-    return _suite_flux.submit(launch_directory, checkout, [str(python), "-s", *job["payload"]],
-                              request["cores"], request["memory_gib"], request["timeout_s"], {},
-                              architecture=request["architecture"])
+    """Refuse before creating a Flux job whose payload would itself refuse."""
+    raise ValueError(SUBMIT_REFUSAL)
+
+
+def container_name(identity):
+    return "tessera-image-build-" + re.sub(r"[^A-Za-z0-9]", "", identity)
 
 
 def remove_owned_container(cidfile, runner=subprocess.run):
@@ -103,12 +106,12 @@ def remove_owned_container(cidfile, runner=subprocess.run):
 
 
 def run_build(manifest, tag, output_directory, kernel_build, *, runner=subprocess.run, environ=os.environ):
-    """Flux job payload: run BuildKit, then remove the container whatever the outcome."""
+    """Outside Flux, run BuildKit and remove the container whatever the outcome."""
     refusal = subprocess.run(['/bin/bash', str(ROOT / 'experiments/flux_docker_guard.sh')], env=environ)
     if refusal.returncode:
         return refusal.returncode
     scratch = Path(environ["TMPDIR"])
-    owner = {"name": "tessera-image-build-" + re.sub(r"[^A-Za-z0-9]", "", environ.get("FLUX_JOB_ID", str(os.getpid()))),
+    owner = {"name": container_name(environ.get("FLUX_JOB_ID", str(os.getpid()))),
              "cidfile": str(scratch / "builder.cid")}
     Path(output_directory).mkdir(parents=True, exist_ok=True)
     previous = signal.signal(signal.SIGTERM, _terminate)
@@ -136,11 +139,14 @@ def main(argv=None):
     parser.add_argument("--checkout", help="Detached clean shared checkout to run in (--submit).")
     parser.add_argument("--python", default=sys.executable, help="Interpreter the Flux job runs (--submit).")
     mode = parser.add_mutually_exclusive_group()
-    mode.add_argument("--submit", action="store_true", help="Submit the image job through the native Flux transport.")
-    mode.add_argument("--run", action="store_true", help="Run the build in this process (the Flux job payload).")
+    mode.add_argument("--submit", action="store_true", help="Refused pending the lead's root-Docker-store decision.")
+    mode.add_argument("--run", action="store_true", help="Run the build in this process outside Flux.")
     mode.add_argument("--dry-run", action="store_true", help="Print the job without a build.")
     mode.add_argument("--collect", metavar="DIR", help="Collect a saved Flux launch; only verified terminal success exits zero.")
     args = parser.parse_args(argv)
+    if args.submit:
+        print(SUBMIT_REFUSAL, file=sys.stderr)
+        return 2
     if args.collect:
         record = _suite_flux.collect(Path(args.collect))
         print(json.dumps(record, sort_keys=True))
@@ -153,14 +159,6 @@ def main(argv=None):
     print(json.dumps(job, sort_keys=True))
     if args.run:
         return run_build(manifest, args.image_tag, str(Path(args.output_directory).resolve()), job["kernel_build"])
-    if args.submit:
-        if args.launch_directory is None or args.checkout is None:
-            parser.error("--submit requires --launch-directory and --checkout")
-        record = submit(job, args.launch_directory, args.checkout, args.python)
-        print(json.dumps(record, sort_keys=True))
-        if record.get("state") == "terminal":
-            return 0 if record.get("returncode") == 0 and not record.get("evidence_errors") else 1
-        return 0 if record.get("state") == "running" else 3
     return 0
 
 

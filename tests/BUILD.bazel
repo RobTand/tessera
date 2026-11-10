@@ -1528,7 +1528,6 @@ ts_py_test(
     library = ":test_bench_kda_geometry_lib",
     data = [
         "//:pyproject.toml",
-        "//experiments:flux_docker_guard.sh",
         "//experiments:t8r_speed/bench_t8r.sh",
         "//experiments:t8r_speed/build_ext.sh",
     ],
@@ -1553,7 +1552,6 @@ ts_py_test(
     library = ":test_bench_kda_geometry_lib",
     data = [
         "//:pyproject.toml",
-        "//experiments:flux_docker_guard.sh",
         "//experiments:t8r_speed/bench_t8r.sh",
         "//experiments:t8r_speed/build_ext.sh",
     ],
@@ -1588,7 +1586,6 @@ ts_py_test(
     library = ":test_bench_kda_timing_scope_lib",
     data = [
         "//:pyproject.toml",
-        "//experiments:flux_docker_guard.sh",
         "//experiments:t8r_speed/bench_t8r.sh",
         "//experiments:t8r_speed/build_ext.sh",
     ],
@@ -1614,7 +1611,6 @@ ts_py_test(
     library = ":test_bench_kda_timing_scope_lib",
     data = [
         "//:pyproject.toml",
-        "//experiments:flux_docker_guard.sh",
         "//experiments:t8r_speed/bench_t8r.sh",
         "//experiments:t8r_speed/build_ext.sh",
     ],
@@ -1728,7 +1724,6 @@ ts_py_test(
     library = ":test_bench_t8r_routed_builder_lib",
     data = [
         "//:pyproject.toml",
-        "//experiments:flux_docker_guard.sh",
         "//experiments:t8r_speed/bench_t8r.sh",
         "//experiments:t8r_speed/build_ext.sh",
     ],
@@ -1753,7 +1748,6 @@ ts_py_test(
     library = ":test_bench_t8r_routed_builder_lib",
     data = [
         "//:pyproject.toml",
-        "//experiments:flux_docker_guard.sh",
         "//experiments:t8r_speed/bench_t8r.sh",
         "//experiments:t8r_speed/build_ext.sh",
     ],
@@ -3927,7 +3921,6 @@ ts_py_test(
     library = ":test_class_dispatch_measurement_residency_lib",
     data = [
         "//:pyproject.toml",
-        "//experiments:flux_docker_guard.sh",
         "//experiments:t8r_speed/bench_t8r.sh",
         "//experiments:t8r_speed/build_ext.sh",
     ],
@@ -3950,7 +3943,6 @@ ts_py_test(
     library = ":test_class_dispatch_measurement_residency_lib",
     data = [
         "//:pyproject.toml",
-        "//experiments:flux_docker_guard.sh",
         "//experiments:t8r_speed/bench_t8r.sh",
         "//experiments:t8r_speed/build_ext.sh",
     ],
@@ -4508,7 +4500,6 @@ ts_py_test(
     library = ":test_d41_e2m1_geometry_lib",
     data = [
         "//:pyproject.toml",
-        "//experiments:flux_docker_guard.sh",
         "//experiments:t8r_speed/bench_t8r.sh",
         "//experiments:t8r_speed/build_ext.sh",
     ],
@@ -4533,7 +4524,6 @@ ts_py_test(
     library = ":test_d41_e2m1_geometry_lib",
     data = [
         "//:pyproject.toml",
-        "//experiments:flux_docker_guard.sh",
         "//experiments:t8r_speed/bench_t8r.sh",
         "//experiments:t8r_speed/build_ext.sh",
     ],
@@ -4574,7 +4564,6 @@ ts_py_test(
     library = ":test_d41_e2m1_quality_scope_lib",
     data = [
         "//:pyproject.toml",
-        "//experiments:flux_docker_guard.sh",
         "//experiments:t8r_speed/bench_t8r.sh",
         "//experiments:t8r_speed/build_ext.sh",
     ],
@@ -4598,7 +4587,6 @@ ts_py_test(
     library = ":test_d41_e2m1_quality_scope_lib",
     data = [
         "//:pyproject.toml",
-        "//experiments:flux_docker_guard.sh",
         "//experiments:t8r_speed/bench_t8r.sh",
         "//experiments:t8r_speed/build_ext.sh",
     ],
@@ -5682,7 +5670,6 @@ ts_py_test(
         "//:pyproject.toml",
         "//experiments:cuda_home_shadow.sh",
         "//experiments:extents_cpu_python.sh",
-        "//experiments:flux_docker_guard.sh",
         "//experiments:regdirect_stage1/run.sh",
         "//experiments:runtime_image.sh",
         "//experiments:t4_code/fp4_arithmetic_action.sh",
@@ -5722,7 +5709,6 @@ ts_py_test(
         "//:pyproject.toml",
         "//experiments:cuda_home_shadow.sh",
         "//experiments:extents_cpu_python.sh",
-        "//experiments:flux_docker_guard.sh",
         "//experiments:regdirect_stage1/run.sh",
         "//experiments:runtime_image.sh",
         "//experiments:t4_code/fp4_arithmetic_action.sh",
@@ -7140,7 +7126,6 @@ ts_py_test(
     library = ":test_fp4_arithmetic_attestation_lib",
     data = [
         "//:pyproject.toml",
-        "//experiments:flux_docker_guard.sh",
         "//experiments:t8r_speed/bench_t8r.sh",
         "//experiments:t8r_speed/build_ext.sh",
     ],
@@ -7165,7 +7150,6 @@ ts_py_test(
     library = ":test_fp4_arithmetic_attestation_lib",
     data = [
         "//:pyproject.toml",
-        "//experiments:flux_docker_guard.sh",
         "//experiments:t8r_speed/bench_t8r.sh",
         "//experiments:t8r_speed/build_ext.sh",
     ],
@@ -9398,7 +9382,6 @@ ts_py_test(
     data = [
         "//:pyproject.toml",
         "//experiments:cuda_home_shadow.sh",
-        "//experiments:flux_docker_guard.sh",
         "//experiments:regdirect_stage1/run.sh",
         "//experiments:regdirect_stage1/run_pytest.sh",
         "//experiments:runtime_image.sh",
@@ -9436,7 +9419,6 @@ ts_py_test(
     data = [
         "//:pyproject.toml",
         "//experiments:cuda_home_shadow.sh",
-        "//experiments:flux_docker_guard.sh",
         "//experiments:regdirect_stage1/run.sh",
         "//experiments:regdirect_stage1/run_pytest.sh",
         "//experiments:runtime_image.sh",
@@ -14087,7 +14069,6 @@ ts_py_test(
     library = ":test_mma8_dual_b_numeric_protocol_lib",
     data = [
         "//:pyproject.toml",
-        "//experiments:flux_docker_guard.sh",
         "//experiments:t8r_speed/bench_t8r.sh",
         "//experiments:t8r_speed/build_ext.sh",
     ],
@@ -14112,7 +14093,6 @@ ts_py_test(
     library = ":test_mma8_dual_b_numeric_protocol_lib",
     data = [
         "//:pyproject.toml",
-        "//experiments:flux_docker_guard.sh",
         "//experiments:t8r_speed/bench_t8r.sh",
         "//experiments:t8r_speed/build_ext.sh",
     ],
@@ -15982,7 +15962,6 @@ ts_py_test(
     library = ":test_packed_stock_fixed_tolerance_lib",
     data = [
         "//:pyproject.toml",
-        "//experiments:flux_docker_guard.sh",
         "//experiments:t8r_speed/bench_t8r.sh",
         "//experiments:t8r_speed/build_ext.sh",
     ],
@@ -16007,7 +15986,6 @@ ts_py_test(
     library = ":test_packed_stock_fixed_tolerance_lib",
     data = [
         "//:pyproject.toml",
-        "//experiments:flux_docker_guard.sh",
         "//experiments:t8r_speed/bench_t8r.sh",
         "//experiments:t8r_speed/build_ext.sh",
     ],
@@ -16147,7 +16125,6 @@ ts_py_test(
     library = ":test_paired_k32_action_lib",
     data = [
         "//:pyproject.toml",
-        "//experiments:flux_docker_guard.sh",
         "//experiments:t8r_speed/bench_t8r.sh",
         "//experiments:t8r_speed/build_ext.sh",
     ],
@@ -16175,7 +16152,6 @@ ts_py_test(
     library = ":test_paired_k32_action_lib",
     data = [
         "//:pyproject.toml",
-        "//experiments:flux_docker_guard.sh",
         "//experiments:t8r_speed/bench_t8r.sh",
         "//experiments:t8r_speed/build_ext.sh",
     ],
@@ -16214,7 +16190,6 @@ ts_py_test(
     library = ":test_paired_k32_qualification_lib",
     data = [
         "//:pyproject.toml",
-        "//experiments:flux_docker_guard.sh",
         "//experiments:t8r_speed/bench_t8r.sh",
         "//experiments:t8r_speed/build_ext.sh",
     ],
@@ -16239,7 +16214,6 @@ ts_py_test(
     library = ":test_paired_k32_qualification_lib",
     data = [
         "//:pyproject.toml",
-        "//experiments:flux_docker_guard.sh",
         "//experiments:t8r_speed/bench_t8r.sh",
         "//experiments:t8r_speed/build_ext.sh",
     ],
@@ -16515,7 +16489,6 @@ ts_py_test(
     library = ":test_piece_major_comparison_protocol_lib",
     data = [
         "//:pyproject.toml",
-        "//experiments:flux_docker_guard.sh",
         "//experiments:t8r_speed/bench_t8r.sh",
         "//experiments:t8r_speed/build_ext.sh",
     ],
@@ -16540,7 +16513,6 @@ ts_py_test(
     library = ":test_piece_major_comparison_protocol_lib",
     data = [
         "//:pyproject.toml",
-        "//experiments:flux_docker_guard.sh",
         "//experiments:t8r_speed/bench_t8r.sh",
         "//experiments:t8r_speed/build_ext.sh",
     ],
@@ -16582,7 +16554,6 @@ ts_py_test(
     library = ":test_piece_major_frozen_observer_lib",
     data = [
         "//:pyproject.toml",
-        "//experiments:flux_docker_guard.sh",
         "//experiments:t8r_speed/bench_t8r.sh",
         "//experiments:t8r_speed/build_ext.sh",
     ],
@@ -16607,7 +16578,6 @@ ts_py_test(
     library = ":test_piece_major_frozen_observer_lib",
     data = [
         "//:pyproject.toml",
-        "//experiments:flux_docker_guard.sh",
         "//experiments:t8r_speed/bench_t8r.sh",
         "//experiments:t8r_speed/build_ext.sh",
     ],
@@ -16686,7 +16656,6 @@ ts_py_test(
     library = ":test_piece_major_pb_action_lib",
     data = [
         "//:pyproject.toml",
-        "//experiments:flux_docker_guard.sh",
         "//experiments:t8r_speed/bench_t8r.sh",
         "//experiments:t8r_speed/build_ext.sh",
     ],
@@ -16714,7 +16683,6 @@ ts_py_test(
     library = ":test_piece_major_pb_action_lib",
     data = [
         "//:pyproject.toml",
-        "//experiments:flux_docker_guard.sh",
         "//experiments:t8r_speed/bench_t8r.sh",
         "//experiments:t8r_speed/build_ext.sh",
     ],
@@ -16752,7 +16720,6 @@ ts_py_test(
     library = ":test_piece_major_preparation_lib",
     data = [
         "//:pyproject.toml",
-        "//experiments:flux_docker_guard.sh",
         "//experiments:t8r_speed/bench_t8r.sh",
         "//experiments:t8r_speed/build_ext.sh",
     ],
@@ -16779,7 +16746,6 @@ ts_py_test(
     library = ":test_piece_major_preparation_lib",
     data = [
         "//:pyproject.toml",
-        "//experiments:flux_docker_guard.sh",
         "//experiments:t8r_speed/bench_t8r.sh",
         "//experiments:t8r_speed/build_ext.sh",
     ],
@@ -16862,7 +16828,6 @@ ts_py_test(
     library = ":test_piece_major_real_bytes_lib",
     data = [
         "//:pyproject.toml",
-        "//experiments:flux_docker_guard.sh",
         "//experiments:t8r_speed/bench_t8r.sh",
         "//experiments:t8r_speed/build_ext.sh",
     ],
@@ -16889,7 +16854,6 @@ ts_py_test(
     library = ":test_piece_major_real_bytes_lib",
     data = [
         "//:pyproject.toml",
-        "//experiments:flux_docker_guard.sh",
         "//experiments:t8r_speed/bench_t8r.sh",
         "//experiments:t8r_speed/build_ext.sh",
     ],
@@ -18444,7 +18408,6 @@ ts_py_test(
     library = ":test_regdirect_run_sh_lib",
     data = [
         "//:pyproject.toml",
-        "//experiments:flux_docker_guard.sh",
         "//experiments:regdirect_stage1/run.sh",
         "//experiments:t8r_speed/bench_t8r.sh",
         "//experiments:t8r_speed/build_ext.sh",
@@ -18472,7 +18435,6 @@ ts_py_test(
     library = ":test_regdirect_run_sh_lib",
     data = [
         "//:pyproject.toml",
-        "//experiments:flux_docker_guard.sh",
         "//experiments:regdirect_stage1/run.sh",
         "//experiments:t8r_speed/bench_t8r.sh",
         "//experiments:t8r_speed/build_ext.sh",
@@ -20024,7 +19986,6 @@ ts_py_test(
     library = ":test_routed_gate_direct_vllm_lib",
     data = [
         "//:pyproject.toml",
-        "//experiments:flux_docker_guard.sh",
         "//experiments:t8r_speed/bench_t8r.sh",
         "//experiments:t8r_speed/build_ext.sh",
     ],
@@ -20049,7 +20010,6 @@ ts_py_test(
     library = ":test_routed_gate_direct_vllm_lib",
     data = [
         "//:pyproject.toml",
-        "//experiments:flux_docker_guard.sh",
         "//experiments:t8r_speed/bench_t8r.sh",
         "//experiments:t8r_speed/build_ext.sh",
     ],
@@ -20121,7 +20081,6 @@ ts_py_test(
     library = ":test_routed_gate_native_artifact_lib",
     data = [
         "//:pyproject.toml",
-        "//experiments:flux_docker_guard.sh",
         "//experiments:t8r_speed/bench_t8r.sh",
         "//experiments:t8r_speed/build_ext.sh",
     ],
@@ -20146,7 +20105,6 @@ ts_py_test(
     library = ":test_routed_gate_native_artifact_lib",
     data = [
         "//:pyproject.toml",
-        "//experiments:flux_docker_guard.sh",
         "//experiments:t8r_speed/bench_t8r.sh",
         "//experiments:t8r_speed/build_ext.sh",
     ],
@@ -20222,7 +20180,6 @@ ts_py_test(
     library = ":test_routed_gate_staged_store_lib",
     data = [
         "//:pyproject.toml",
-        "//experiments:flux_docker_guard.sh",
         "//experiments:t8r_speed/bench_t8r.sh",
         "//experiments:t8r_speed/build_ext.sh",
     ],
@@ -20247,7 +20204,6 @@ ts_py_test(
     library = ":test_routed_gate_staged_store_lib",
     data = [
         "//:pyproject.toml",
-        "//experiments:flux_docker_guard.sh",
         "//experiments:t8r_speed/bench_t8r.sh",
         "//experiments:t8r_speed/build_ext.sh",
     ],
@@ -20643,7 +20599,6 @@ ts_py_test(
     library = ":test_rung_allowability_lib_cycle",
     data = [
         "//:pyproject.toml",
-        "//experiments:flux_docker_guard.sh",
         "//experiments:t8r_speed/bench_t8r.sh",
         "//experiments:t8r_speed/build_ext.sh",
     ],
@@ -20668,7 +20623,6 @@ ts_py_test(
     library = ":test_rung_allowability_lib_cycle",
     data = [
         "//:pyproject.toml",
-        "//experiments:flux_docker_guard.sh",
         "//experiments:t8r_speed/bench_t8r.sh",
         "//experiments:t8r_speed/build_ext.sh",
     ],
@@ -20751,7 +20705,6 @@ ts_py_test(
     library = ":test_rung_allowability_lib_cycle",
     data = [
         "//:pyproject.toml",
-        "//experiments:flux_docker_guard.sh",
         "//experiments:t8r_speed/bench_t8r.sh",
         "//experiments:t8r_speed/build_ext.sh",
     ],
@@ -20776,7 +20729,6 @@ ts_py_test(
     library = ":test_rung_allowability_lib_cycle",
     data = [
         "//:pyproject.toml",
-        "//experiments:flux_docker_guard.sh",
         "//experiments:t8r_speed/bench_t8r.sh",
         "//experiments:t8r_speed/build_ext.sh",
     ],
@@ -26471,7 +26423,6 @@ ts_py_test(
     library = ":test_stageprev_acceptance_lib",
     data = [
         "//:pyproject.toml",
-        "//experiments:flux_docker_guard.sh",
         "//experiments:t8r_speed/ab_arms.sh",
         "//experiments:t8r_speed/bench_t8r.sh",
         "//experiments:t8r_speed/build_ext.sh",
@@ -26497,7 +26448,6 @@ ts_py_test(
     library = ":test_stageprev_acceptance_lib",
     data = [
         "//:pyproject.toml",
-        "//experiments:flux_docker_guard.sh",
         "//experiments:t8r_speed/ab_arms.sh",
         "//experiments:t8r_speed/bench_t8r.sh",
         "//experiments:t8r_speed/build_ext.sh",
@@ -28161,7 +28111,6 @@ ts_py_test(
     library = ":test_t8r_output_screen_options_lib",
     data = [
         "//:pyproject.toml",
-        "//experiments:flux_docker_guard.sh",
         "//experiments:t8r_speed/bench_t8r.sh",
         "//experiments:t8r_speed/build_ext.sh",
     ],
@@ -28184,7 +28133,6 @@ ts_py_test(
     library = ":test_t8r_output_screen_options_lib",
     data = [
         "//:pyproject.toml",
-        "//experiments:flux_docker_guard.sh",
         "//experiments:t8r_speed/bench_t8r.sh",
         "//experiments:t8r_speed/build_ext.sh",
     ],
@@ -28219,7 +28167,6 @@ ts_py_test(
     library = ":test_t8r_timing_statistics_lib",
     data = [
         "//:pyproject.toml",
-        "//experiments:flux_docker_guard.sh",
         "//experiments:t8r_speed/bench_t8r.sh",
         "//experiments:t8r_speed/build_ext.sh",
     ],
@@ -28244,7 +28191,6 @@ ts_py_test(
     library = ":test_t8r_timing_statistics_lib",
     data = [
         "//:pyproject.toml",
-        "//experiments:flux_docker_guard.sh",
         "//experiments:t8r_speed/bench_t8r.sh",
         "//experiments:t8r_speed/build_ext.sh",
     ],
@@ -28279,7 +28225,6 @@ ts_py_test(
     library = ":test_t8r_wrapper_extensions_lib",
     data = [
         "//:pyproject.toml",
-        "//experiments:flux_docker_guard.sh",
         "//experiments:routed_census.sh",
         "//experiments:routed_fused_tests.sh",
         "//experiments:routed_pair_oracle.sh",
@@ -28313,7 +28258,6 @@ ts_py_test(
     library = ":test_t8r_wrapper_extensions_lib",
     data = [
         "//:pyproject.toml",
-        "//experiments:flux_docker_guard.sh",
         "//experiments:routed_census.sh",
         "//experiments:routed_fused_tests.sh",
         "//experiments:routed_pair_oracle.sh",

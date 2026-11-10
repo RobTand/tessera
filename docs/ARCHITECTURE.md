@@ -2,8 +2,15 @@
 
 Every live direct-Docker entry under `experiments/` and `tools/` calls
 `experiments/flux_docker_guard.sh`. It refuses when `FLUX_JOB_ID` is present,
-including an empty value. Root Docker in a Flux job belongs only to the reviewed
-serving wrapper; all other uses go to the lead. This branch has no serving exemption.
+including an empty value. No reviewed serving wrapper exists on this branch;
+the only route for a root-Docker use inside Flux is the lead's decision.
+All remaining direct-Docker serving entries refuse, as do
+`tools/build_serving_image.py --run` and every stage of
+`experiments/run_glm_native_construction.py`, including `encode`: its declared
+`--shm-size 1g` is unsupported by the rootless launcher's contract. Do not drop
+that bound to migrate it. `experiments/t8r_speed/build_ext.sh` now runs through
+the rootless launcher in CPU-only mode, with the consumer's source and extension
+mounts, persistent HOME and launcher-owned TMPDIR and single-thread build bounds.
 
 Re-stamped 2026-11-10 for the owned GPU container launcher. The `run` entry
 in `tools/_flux_gpu_jobspec.py` accepts a digest-pinned container request
@@ -78,8 +85,10 @@ autouse fixture. Tests set their own connection and admission variables;
 the enclosing Flux job's broker URI and job identity are not test inputs.
 
 Re-stamped 2026-11-10 for the Flux migration at `d6b30853`.
-`tools/build_serving_image.py` prints a CPU build job and submits it through
-`tools/_suite_flux.py` only with `--submit`. Use `--collect DIR` to read a
+`tools/build_serving_image.py` prints a CPU build job, but `--submit` refuses
+before submission because its output targets the root Docker store. The lead
+must choose an outside-Flux build or a reviewed exemption. `--run` refuses inside
+Flux too. Use `--collect DIR` to read a
 saved launch. Collection exits zero only for a terminal record with
 `returncode == 0` and no `evidence_errors`; a running submission is only an
 acknowledgement. `experiments/ts91_chain.sh` and

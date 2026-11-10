@@ -1,10 +1,9 @@
 #!/usr/bin/env bash
 
-source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/../flux_docker_guard.sh"
-refuse_flux_docker || exit 2
 # Build the fused window libraries of one A/B arm's source into a torch-extension
 # directory, on a CPU and without a GPU, so the timed action only loads them.
-# This legacy Docker entry refuses Flux jobs until migrated to rootless Podman.
+# Run in an admitted Flux CPU job through the rootless-Podman launcher.
+# TMPDIR and native/build threads (one) are launcher-owned; HOME stays in BUILD_WORK.
 #   build_ext.sh <checkout> <ext_dir> [library ...]   (default: value e4m3 e4m3mma)
 # BENCH_SRC: the arm's Tessera source tree, mounted over the checkout's src at
 # the path the timing row mounts it (/work/src), so the build's source paths,
@@ -16,6 +15,7 @@ refuse_flux_docker || exit 2
 # paths; defaults remain /work/src and the absolute host extension directory.
 # NATIVE_BUILD_WORK_DIR isolates temporary build state for independent libraries.
 set -euo pipefail
+export TESSERA_CONTAINER_ENGINE=podman
 CHECKOUT=$(realpath "$1"); EXT=$(realpath -m "$2"); shift 2
 LIBS=("$@"); (( ${#LIBS[@]} )) || LIBS=(value e4m3 e4m3mma)
 IMAGE_REF=${ORACLE_IMAGE:?set ORACLE_IMAGE to the immutable digest-pinned measurement image}
@@ -40,16 +40,16 @@ if [[ "$CONTAINER_SRC" != /work/src ]]; then
   [[ -f "$PROJECT_FILE" ]] || { echo "missing source version metadata: $PROJECT_FILE" >&2; exit 2; }
   SRC_MOUNT+=(-v "$PROJECT_FILE":"$(dirname "$CONTAINER_SRC")/pyproject.toml":ro)
 fi
-mkdir -p "$EXT" "$BUILD_WORK/home" "$BUILD_WORK/tmp"
+mkdir -p "$EXT" "$BUILD_WORK/home"
 CPUS=$(python3 -c 'import os; s=sorted(os.sched_getaffinity(0)); print(",".join(map(str,s)))')
-NCPU=$(python3 -c 'import os; print(len(os.sched_getaffinity(0)))')
 echo "host=$(hostname) cpus=$CPUS image=$IMAGE_REF libs=${LIBS[*]} ext=$EXT start=$(date -u +%FT%TZ)"
 echo "arm src=$KSRC kernel_sha=$(sha256sum "$KSRC/tessera/serving/csrc/routed_fused_window.cu" | cut -d' ' -f1)"
-docker run --rm -i --network=none --cpuset-cpus "$CPUS" --user "$(id -u):$(id -g)" \
+python3 "$CHECKOUT/tools/_flux_gpu_jobspec.py" run --cpu-only --out "$BUILD_WORK" --scratch-root "${FLUX_SCRATCH:-/var/tmp/flux-vanilla}" -- \
+  --user "$(id -u):$(id -g)" \
   -v "$CHECKOUT":/work:ro "${SRC_MOUNT[@]}" -v "$EXT":"$CONTAINER_EXT" -v "$BUILD_WORK":"$BUILD_WORK" \
-  -e HOME="$BUILD_WORK/home" -e TMPDIR="$BUILD_WORK/tmp" -e XDG_CACHE_HOME="$BUILD_WORK/home/.cache" \
+  -e HOME="$BUILD_WORK/home" -e XDG_CACHE_HOME="$BUILD_WORK/home/.cache" \
   -e TORCH_EXTENSIONS_DIR="$CONTAINER_EXT" \
-  -e TESSERA_PLATFORM_TOKEN="${BUILD_TOKEN:-sm_121}" -e MAX_JOBS="$NCPU" \
+  -e TESSERA_PLATFORM_TOKEN="${BUILD_TOKEN:-sm_121}" \
   -e PYTHONPATH="$CONTAINER_SRC" -e PYTHONUNBUFFERED=1 -e PYTHONDONTWRITEBYTECODE=1 -e TESSERA_SERVE_MODE=resident \
   -e FLUX_JOB_ID="${FLUX_JOB_ID:?Flux job required}" \
   -e NATIVE_BUILD_IMAGE_RECORD="$RUNTIME_IMAGE_JSON" \
@@ -58,7 +58,7 @@ docker run --rm -i --network=none --cpuset-cpus "$CPUS" --user "$(id -u):$(id -g
   -e TESSERA_ROUTED_FUSED_MMA8_GATE_UP_B_PREFETCH="${TESSERA_ROUTED_FUSED_MMA8_GATE_UP_B_PREFETCH-0}" \
   -e TESSERA_ROUTED_FUSED_PAIRED_K32="${TESSERA_ROUTED_FUSED_PAIRED_K32-0}" \
   -e TESSERA_ROUTED_FUSED_MMA8_A_RING="${TESSERA_ROUTED_FUSED_MMA8_A_RING-0}" \
-  "${IMAGE_ENV[@]}" --entrypoint python3 -w /work "$IMAGE_REF" - "${LIBS[@]}" <<'PY'
+  "${IMAGE_ENV[@]}" --entrypoint python3 -w /work "$IMAGE_REF" -c "$(cat <<'PY'
 import glob, hashlib, json, os, sys, time
 from pathlib import Path
 from experiments.t8r_speed.finalize_native_build import finalize
@@ -105,4 +105,5 @@ record = dict(schema="tessera.native_build_cohort.v2", flux_job_id=os.environ["F
 with (Path(root) / "native-build-record.json").open("x") as stream:
     json.dump(record, stream, indent=2); stream.write("\n")
 PY
+)" "${LIBS[@]}"
 echo "end=$(date -u +%FT%TZ)"
