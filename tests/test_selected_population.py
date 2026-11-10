@@ -19,6 +19,7 @@ from types import SimpleNamespace
 import pytest
 
 from tessera._dev.suite_source import measured_source
+from tests.merge_suite_support import _master_history, _population
 
 TESTS = Path(__file__).resolve().parent
 ROOT = TESTS.parent
@@ -191,7 +192,7 @@ def test_submit_time_master_is_unknown_for_a_legacy_resume(tmp_path, monkeypatch
 
     _dev_mode(monkeypatch)
     world = _world(tmp_path, monkeypatch)
-    _, _, submitted, _ = helpers._master_history(world.checkout, "master")
+    _, _, submitted, _ = _master_history(world.checkout, "master")
     expected = _receipt(world)
     if old_receipt:
         prior = {**expected, "population": {**expected["population"],
@@ -418,7 +419,7 @@ def _world(tmp_path, monkeypatch, *, shards=None, ran=None, state=None, source=N
         "tests": sorted(selected or {path for files in shards.values() for path in files})}
     jobs = helpers._native_jobs(sp.merge_suite, monkeypatch)
     for name, files in shards.items():
-        surface = helpers._population("x86", source=(sources or {}).get(name, source or identity["sha256"]),
+        surface = _population("x86", source=(sources or {}).get(name, source or identity["sha256"]),
                                      commit=identity["snapshot_commit"])["surface"]
         surface["skip_reasons"] = (skip_reasons or {}).get(name, {})
         surface["not_collected"] = (not_collected or {}).get(name, [])
