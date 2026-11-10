@@ -17,6 +17,7 @@ import sys
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "tools"))
+import _suite_flux  # noqa: E402
 #: Image manifest architecture to the Flux resource architecture.
 ARCHITECTURES = {"x86": "x86_64", "aarch64": "aarch64"}
 #: The suite transport's ceiling (``_suite_flux.validate``); a full build that needs more is a held decision.
@@ -67,7 +68,6 @@ def build_job(manifest, tag, output_directory, *, cpus=4, memory_gb=8):
             raise ValueError(f"The patch file is absent: {name}")
     if manifest["architecture"] not in ARCHITECTURES:
         raise ValueError("The image architecture is not supported.")
-    import _suite_flux
     _suite_flux.validate(cpus, memory_gb, TIMEOUT_S, {})
     output_directory = str(Path(output_directory).resolve())
     kernel_build = _kernel_build()
@@ -84,7 +84,6 @@ def build_job(manifest, tag, output_directory, *, cpus=4, memory_gb=8):
 
 def submit(job, launch_directory, checkout, python):
     """Hand the job to the native Flux suite transport and return its saved record."""
-    import _suite_flux
     request = job["request"]
     return _suite_flux.submit(launch_directory, checkout, [str(python), "-s", *job["payload"]],
                               request["cores"], request["memory_gib"], request["timeout_s"], {},
@@ -140,7 +139,6 @@ def main(argv=None):
     mode.add_argument("--collect", metavar="DIR", help="Collect a saved Flux launch; only verified terminal success exits zero.")
     args = parser.parse_args(argv)
     if args.collect:
-        import _suite_flux
         record = _suite_flux.collect(Path(args.collect))
         print(json.dumps(record, sort_keys=True))
         return 0 if (record.get("state") == "terminal" and record.get("returncode") == 0
