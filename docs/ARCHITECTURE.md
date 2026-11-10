@@ -10549,8 +10549,12 @@ progress is one `tessera.durable_progress.v1` JSON line per unit, printed by
 fsynced; no external progress helper is read. The command renderer only emits a
 reviewable Flux jobspec (`prismaquant.reviewable_cpu_export_submission.v2`: stock
 `slot/[core=8;memory=48]` shape, host, environment allowlist and command). It
-cannot submit a job, and the 8-core / 48 GiB full export stays held until it is
-sized.
+cannot submit a job. Rendering requires `--walltime` with a positive explicit
+unit and `--fleet-master-approved <approval reference>` for requests above
+10 cores or above 24 GiB on dl380g10, including this 48 GiB row. The approval
+reference is retained in the jobspec. The renderer keeps the plain shape until
+SHAPE section 5 publishes the qualified export shape; rendering does not
+establish topology compatibility or authorize submission.
 The launcher forbids encoding, retains all exporter gates, requires fresh output
 and journals cumulative PB progress only after verified source digests or output
 shards are durable. Its 8-CPU/48-GiB proposal is a geometric admission ceiling,

@@ -16,7 +16,7 @@ result records the derived path as a precondition to check there.
 """
 import argparse, hashlib, json, re, subprocess
 from pathlib import Path
-from _suite_flux import resource_shape
+from _suite_flux import duration_seconds, resource_shape
 from run_glm_cached_cpu_export import INPUTS, complete_inputs, read_bound
 
 SCHEMA = 'prismaquant.reviewable_cpu_export_submission.v2'
@@ -44,7 +44,10 @@ def pinned_python(commit: str) -> Path:
     return VENV_ROOT / f'pq-cpu312-tessera-{commit[:8]}' / 'bin' / 'python'
 
 
-def render(bindings, bindings_sha256, checkout) -> dict:
+def render(bindings, bindings_sha256, checkout, *, walltime, fleet_master_approved=None) -> dict:
+    walltime_s = duration_seconds(walltime)
+    if (CORES > 10 or (PLACEMENT_TAG == 'dl380g10' and MEMORY_GIB > 24)) and not (fleet_master_approved or '').strip():
+        raise ValueError('CPU export above plain limits requires --fleet-master-approved naming the approval')
     bound = {'path': bindings, 'sha256': bindings_sha256}
     doc = json.loads(read_bound(bound))
     if doc.get('schema') != 'prismaquant.glm_cached_cpu_export_bindings.v1' or not complete_inputs(doc.get('inputs', {})):
@@ -64,7 +67,7 @@ def render(bindings, bindings_sha256, checkout) -> dict:
                'cwd': str(checkout), 'environment_policy': '--env=-* then exactly the variables below',
                'environment': {'OMP_NUM_THREADS': '1', 'MKL_NUM_THREADS': '1', 'OPENBLAS_NUM_THREADS': '1',
                                'PYTHONPATH': 'src', 'PYTHONDONTWRITEBYTECODE': '1'},
-               'walltime_s': None,
+               'walltime_s': walltime_s, 'fleet_master_approved': fleet_master_approved,
                'command': [str(python), 'tools/run_glm_cached_cpu_export.py',
                            '--bindings', bindings, '--bindings-sha256', bindings_sha256]}
     return {'schema': SCHEMA, 'submitted': False, 'jobspec': jobspec,
@@ -74,15 +77,18 @@ def render(bindings, bindings_sha256, checkout) -> dict:
             'source': doc['source'], 'output': doc['output'], 'selected_wire_bytes': wire_bytes,
             'required_free_bytes': doc['required_free_bytes'], 'binding': bound,
             'remaining_gate': 'root review of actual PACT result, selected assignment and complete scientific scope; '
-                              'walltime and the 8-core / 48 GiB admission are unsized (HELD)'}
+                              '8-core / 48 GiB admission and topology must be reviewed before submission (HELD)'}
 
 
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--bindings', required=True); parser.add_argument('--bindings-sha256', required=True)
     parser.add_argument('--checkout', required=True); parser.add_argument('--out', required=True)
+    parser.add_argument('--walltime', required=True, help='positive explicit-unit duration, e.g. 20m')
+    parser.add_argument('--fleet-master-approved', help='fleet master approval reference for an oversized request')
     args = parser.parse_args(argv)
-    result = render(args.bindings, args.bindings_sha256, args.checkout)
+    result = render(args.bindings, args.bindings_sha256, args.checkout, walltime=args.walltime,
+                    fleet_master_approved=args.fleet_master_approved)
     with Path(args.out).open('x') as handle:
         handle.write(json.dumps(result, indent=2) + '\n')
     print(json.dumps(result, sort_keys=True))
