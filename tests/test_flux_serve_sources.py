@@ -77,12 +77,15 @@ def test_supporting_plugin_writable_mount_refuses_before_run(tmp_path, monkeypat
     assert not any(call[0] == 'run' for call in calls)
 
 
-@pytest.mark.parametrize('wrapper', ['tessera_plugin_served.sh', 'decode_regime_kl.sh',
-                                     'window_gemv_latency.sh', 'gridbook_lane_served.sh'])
-def test_actual_plugin_startup_never_falls_back_after_install_failure(tmp_path, wrapper):
+@pytest.mark.parametrize('source', [ROOT / 'experiments/tessera_plugin_served.sh',
+                                   ROOT / 'experiments/decode_regime_kl.sh',
+                                   ROOT / 'experiments/window_gemv_latency.sh',
+                                   ROOT / 'experiments/gridbook_lane_served.sh'])
+def test_actual_plugin_startup_never_falls_back_after_install_failure(tmp_path, source):
+    wrapper = source.name
     scripts = tmp_path / 'scripts'
     scripts.mkdir()
-    shutil.copyfile(ROOT / 'experiments' / wrapper, scripts / wrapper)
+    shutil.copyfile(source, scripts / wrapper)
     (scripts / 'runtime_image.sh').write_text('runtime_image_pin() { echo "$IMAGE"; }\nruntime_image_require() { :; }\n')
     (scripts / 'build_identity.sh').write_text('build_identity_docker_env() { :; }\n')
     (scripts / 'flux_serve.sh').write_text('''flux_serve_start() {

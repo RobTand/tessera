@@ -26,9 +26,10 @@ def test_lfm_stage_has_a_reviewed_renderer_and_refuses_on_a_bare_host(tmp_path, 
     assert 'OUTSIDE_FLUX_JOB' in result.stderr
 
 
-@pytest.mark.parametrize('name', ['ts5_lfm_teacher_bound.py', 'ts5_lfm_served_bound.py'])
-def test_lfm_serve_does_not_override_the_reviewed_memory_bound(name):
-    tree = ast.parse((ROOT / 'experiments' / name).read_text())
+@pytest.mark.parametrize('source', [ROOT / 'experiments/ts5_lfm_teacher_bound.py',
+                                   ROOT / 'experiments/ts5_lfm_served_bound.py'])
+def test_lfm_serve_does_not_override_the_reviewed_memory_bound(source):
+    tree = ast.parse(source.read_text())
     found = []
     for node in ast.walk(tree):
         if isinstance(node, ast.Dict):
