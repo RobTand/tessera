@@ -1041,7 +1041,7 @@ def test_decode_wrapper_delegates_cleanup_to_flux_supervisor(tmp_path):
     assert 'source "$(dirname "$0")/flux_serve.sh"' in body
     assert 'NAME=$(flux_serve_start ' in body
     assert 'serve_lock_acquire' not in body
-    from test_serve_wrapper_cleanup import _run_wrapper
+    from serve_wrapper_fakes import _run_wrapper
     result, events = _run_wrapper(tmp_path)
     assert result.returncode == 2
     assert events == ['logs', 'remove']

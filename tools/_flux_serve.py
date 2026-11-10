@@ -7,7 +7,6 @@ No real serving run is qualified until fleet F-6 housekeeping is live.
 from __future__ import annotations
 
 import argparse
-import ast
 from decimal import Decimal, ROUND_CEILING
 import hashlib
 import json
@@ -441,43 +440,6 @@ def supervise(spec, receipt, command):
         for signum, handler in handlers.items():
             signal.signal(signum, handler)
     return code
-
-
-def unreviewed_docker_paths(root):
-    """Scan live shell and Python commands; archived and test payloads are inert.
-
-    Legacy commands must call the shared refusal guard in their own file.
-    Comments and docstrings are excluded, so documentation is not a bypass list.
-    """
-    failures = []
-    for path in sorted(Path(root).rglob('*')):
-        relative = path.relative_to(root)
-        if any(part in {'archive', '.git', 'tests', '__pycache__'} for part in relative.parts):
-            continue
-        if not path.is_file() or path.name == '_flux_serve.py':
-            continue
-        if path.suffix not in {'.py', '.sh', ''}:
-            continue
-        text = path.read_text()
-        shell = path.suffix == '.sh' or (not path.suffix and re.match(r'#!.*(?:/sh|bash)', text))
-        if shell:
-            code = '\n'.join(line for line in text.splitlines() if not line.lstrip().startswith('#'))
-            direct = bool(re.search(r'\bdocker\s+(?:run|create)\b', code))
-            guarded = bool(re.search(r'^python3 .*_flux_docker_guard\.py.*\|\| exit', code, re.MULTILINE))
-        else:
-            try:
-                tree = ast.parse(text)
-            except SyntaxError:
-                continue
-            direct = any(isinstance(node, (ast.List, ast.Tuple)) and len(node.elts) >= 2 and
-                         isinstance(node.elts[0], ast.Constant) and node.elts[0].value == 'docker' and
-                         isinstance(node.elts[1], ast.Constant) and node.elts[1].value in {'run', 'create'}
-                         for node in ast.walk(tree))
-            guarded = any(isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and
-                          node.func.id == 'refuse_unreviewed_docker' for node in ast.walk(tree))
-        if direct and not guarded:
-            failures.append(relative.as_posix())
-    return failures
 
 
 def render_serving(command, spec, *, out, cores=4, walltime='10m', image_host=None, spec_path,

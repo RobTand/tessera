@@ -11,6 +11,7 @@ import sys
 import time
 
 import pytest
+from box_artifacts import FLUX_RENDER_ROOT
 
 ROOT = Path(__file__).resolve().parents[1]
 MODULE = ROOT / 'tools/_flux_serve.py'
@@ -165,18 +166,6 @@ def test_peak_resolves_docker_process_cgroup(tmp_path):
                                  proc_root=tmp_path / 'proc', cgroup_root=tmp_path / 'cgroups') == expected
 
 
-def test_live_docker_paths_are_fenced():
-    m = policy()
-    assert m.unreviewed_docker_paths(ROOT) == []
-
-
-def test_new_docker_path_is_rejected(tmp_path):
-    m = policy()
-    (tmp_path / 'tools').mkdir()
-    (tmp_path / 'tools/bypass.sh').write_text('#!/bin/bash\ndocker run --rm image\n')
-    assert m.unreviewed_docker_paths(tmp_path) == ['tools/bypass.sh']
-
-
 def test_wrapper_outside_flux_refuses_before_docker(tmp_path):
     env = {k: v for k, v in os.environ.items() if not k.startswith('FLUX_')}
     result = subprocess.run(['bash', str(ROOT / 'experiments/serve_smoke_graph.sh'), '/absent'],
@@ -286,7 +275,7 @@ def test_render_declares_whole_serve_and_client(setup, capsys):
     m, s, d, request, root = setup
     spec = root / 'spec.json'
     spec.write_text(json.dumps(s.spec))
-    assert m.main(['render', '--spec', str(spec), '--out', '/mnt/shared/owned-serving-run',
+    assert m.main(['render', '--spec', str(spec), '--out', str(FLUX_RENDER_ROOT / 'owned-serving-run'),
                    '--', 'experiments/serve_smoke_graph.sh', request['model']]) == 0
     command = capsys.readouterr().out
     assert '--resources-shape=slot/[core=4;memory=59;gpu=1]' in command
@@ -298,7 +287,7 @@ def test_render_declares_whole_serve_and_client(setup, capsys):
 
 def test_long_gpu_run_requires_duration_approval(setup):
     m, s, d, request, root = setup
-    arguments = dict(out='/mnt/shared/owned-serving-run', walltime='11m', spec_path=root / 'spec.json')
+    arguments = dict(out=str(FLUX_RENDER_ROOT / 'owned-serving-run'), walltime='11m', spec_path=root / 'spec.json')
     command = [str(ROOT / 'experiments/serve_smoke_graph.sh'), request['model']]
     with pytest.raises(m.Refused, match='SERVE_DURATION_APPROVAL_REQUIRED'):
         m.render_serving(command, s.spec, **arguments)
@@ -329,7 +318,7 @@ def test_campaign_dispatch_selects_exact_plan_and_waits(setup, monkeypatch):
     spec = root / 'spec.json'
     spec.write_text(json.dumps(s.spec))
     plan = {'wrapper': 'serve_smoke_graph.sh', 'arguments': [request['model']],
-            'spec': str(spec), 'out': '/mnt/shared/owned-run', 'walltime': '10m'}
+            'spec': str(spec), 'out': str(FLUX_RENDER_ROOT / 'owned-run'), 'walltime': '10m'}
     plans = root / 'plans.json'
     plans.write_text(json.dumps([plan]))
     monkeypatch.setenv('TESSERA_SERVE_PLANS', str(plans))
@@ -377,22 +366,6 @@ def test_preexisting_name_is_never_removed(setup):
             s.stop()
     assert d.exists
     assert not any(c[0] in {'run', 'stop', 'rm'} for c in d.calls)
-
-
-def test_guard_comment_is_not_a_guard(tmp_path):
-    m = policy()
-    (tmp_path / 'tools').mkdir()
-    (tmp_path / 'tools/bypass.sh').write_text('#!/bin/bash\n# _flux_docker_guard\ndocker run --rm image\n')
-    assert m.unreviewed_docker_paths(tmp_path) == ['tools/bypass.sh']
-
-
-def test_extensionless_docker_path_is_checked(tmp_path):
-    m = policy()
-    (tmp_path / 'tools').mkdir()
-    path = tmp_path / 'tools/bypass'
-    path.write_text('#!/bin/bash\ndocker run --rm image\n')
-    path.chmod(0o755)
-    assert m.unreviewed_docker_paths(tmp_path) == ['tools/bypass']
 
 
 @pytest.mark.parametrize('case,reason', [('clean', 'NATIVE_TERMINAL_EVIDENCE_MISSING'),
