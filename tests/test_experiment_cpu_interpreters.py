@@ -10,11 +10,11 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 @pytest.mark.parametrize('adapter,variable', [
-    ('extents_cpu_python.sh', 'TESSERA_CPU_PYTHON'),
-    ('glm_control_pytest_python.py', 'TESSERA_CPU_PYTHON'),
-    ('regdirect_stage1/run.sh', 'CPU_PY'),
-    ('t4_code/fp4_arithmetic_action.sh', 'TESSERA_CPU_PYTHON'),
-    ('t8r_speed/bench_t8r.sh', 'BENCH_CPU_PYTHON'),
+    ('experiments/extents_cpu_python.sh', 'TESSERA_CPU_PYTHON'),
+    ('experiments/glm_control_pytest_python.py', 'TESSERA_CPU_PYTHON'),
+    ('experiments/regdirect_stage1/run.sh', 'CPU_PY'),
+    ('experiments/t4_code/fp4_arithmetic_action.sh', 'TESSERA_CPU_PYTHON'),
+    ('experiments/t8r_speed/bench_t8r.sh', 'BENCH_CPU_PYTHON'),
 ])
 @pytest.mark.parametrize('provided', [False, True])
 def test_cpu_adapter_requires_and_executes_its_explicit_interpreter(tmp_path, adapter, variable, provided):
@@ -32,10 +32,10 @@ def test_cpu_adapter_requires_and_executes_its_explicit_interpreter(tmp_path, ad
            'PYTHONNOUSERSITE': '1', 'PYTHONDONTWRITEBYTECODE': '1'}
     if provided:
         env[variable] = str(interpreter)
-    command = [sys.executable if adapter.endswith('.py') else 'bash', str(ROOT / 'experiments' / adapter)]
-    if adapter in ('regdirect_stage1/run.sh', 't8r_speed/bench_t8r.sh'):
+    command = [sys.executable if adapter.endswith('.py') else 'bash', str(ROOT / adapter)]
+    if adapter in ('experiments/regdirect_stage1/run.sh', 'experiments/t8r_speed/bench_t8r.sh'):
         command += [str(ROOT), str(tmp_path / 'out'), '--cpu-preflight']
-    elif adapter == 't4_code/fp4_arithmetic_action.sh':
+    elif adapter == 'experiments/t4_code/fp4_arithmetic_action.sh':
         command += [str(tmp_path / 'out'), '--cpu-preflight']
     else:
         command += ['-c', ':', 'tests/example.py']
