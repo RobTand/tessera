@@ -1,4 +1,4 @@
-// CUDA 13 CUPTI Memory4 observer. Build and execute only through PrismaBuild.
+// CUDA 13 CUPTI Memory4 observer. Build and execute only in a Flux job.
 // One collection per fresh process; no CUDA initialization or allocation here.
 #include <cupti.h>
 #include <unistd.h>

@@ -39,7 +39,7 @@ ROOT = Path(__file__).resolve().parents[2]
 SCHEMA = 'tessera.bazel-gate.v1'
 RESULT = 'gate-result.json'
 
-# The one bazel-diff pin TL3, PrismaBuild, PrismaQuant and Tessera share.
+# The one bazel-diff pin TL3, PrismaQuant and Tessera share.
 BAZEL_DIFF_URL = 'https://github.com/Tinder/bazel-diff/releases/download/v70.0.2/bazel-diff-rust-linux-amd64'
 BAZEL_DIFF_SHA256 = '44226a1d1d5239abc8bc6158de1f886fcbbf58e44479ec178df8c01e7e32102e'
 

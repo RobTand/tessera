@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# Take a construction census inside the pinned serving image, as a PrismaBuild
-# action run from a snapshot of this tree (the snapshot is $PWD).
+# Take a construction census inside the pinned serving image, from a snapshot
+# of this tree (the snapshot is $PWD).
 #
 # Usage: tools/tessera_construction_census_run.sh <model-or-config-dir> <out-dir> <receipt-name.json> <image>
 #
