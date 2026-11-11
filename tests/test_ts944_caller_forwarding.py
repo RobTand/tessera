@@ -132,7 +132,8 @@ def test_caller_refuses_real_unqualified_interpreter(tmp_path):
 
 
 @pytest.mark.parametrize("approved", [False, True])
-def test_caller_preserves_selectors_in_all_submissions(tmp_path, approved):
+@pytest.mark.parametrize("submit", [False, True])
+def test_caller_preserves_selectors_in_all_submissions(tmp_path, approved, submit):
     """Capture the real caller's three actions without GPU work."""
     capture = tmp_path / "events.jsonl"
     producer = tmp_path / "selected producer"
@@ -159,7 +160,7 @@ def test_caller_preserves_selectors_in_all_submissions(tmp_path, approved):
     scales.write_bytes(b"CPU control fixture")
     env = _caller_env(
         tmp_path, TESSERA_PRODUCER_PYTHON=producer, FLUX_OUT=str(FLUX_RENDER_ROOT / "producer-render-fixture"),
-        TESSERA_PRODUCER_SOURCE=source, SUBMIT=1,
+        TESSERA_PRODUCER_SOURCE=source, SUBMIT="1" if submit else "render",
         INPUT_SCALES=scales, CALLER_CAPTURE=capture)
     if approved:
         # Exercise forwarding through the real renderer with a named test approval.
@@ -177,6 +178,11 @@ def test_caller_preserves_selectors_in_all_submissions(tmp_path, approved):
         client.chmod(0o755)
         env['PATH'] = str(client_bin) + os.pathsep + env['PATH']
     done = _run_caller(tmp_path, env)
+    if submit:
+        assert done.returncode == 2, done.stdout + done.stderr
+        assert '10 minutes' in done.stderr
+        assert not any(line.startswith('flux submit ') for line in done.stdout.splitlines())
+        return
     assert (done.returncode == 0) == approved, done.stdout + done.stderr
     if not approved:
         assert '--fleet-master-approved' in done.stderr
@@ -203,7 +209,7 @@ def test_caller_preserves_selectors_in_all_submissions(tmp_path, approved):
 
 def test_ts91_chain_renders_a_stock_shape_flux_gpu_line_and_runs_nothing(tmp_path):
     """The chain's former pbrun --gpu exec is a rendered, never-run flux submit line."""
-    env = {"PATH": os.environ["PATH"], "IMG": "inert-image", "RUNS": str(tmp_path / "runs"), "FLUX_OUT": str(FLUX_RENDER_ROOT / "chain-render-fixture")}
+    env = {"PATH": os.environ["PATH"], "IMG": "inert-image", "RUNS": str(tmp_path / "runs"), "FLUX_OUT": str(FLUX_RENDER_ROOT / "chain-render-fixture"), "FLUX_SUBMIT": "0"}
     done = subprocess.run(["bash", str(CHECKOUT / "experiments/ts91_chain.sh"), "before"], env=env,
                           cwd=CHECKOUT, capture_output=True, text=True, timeout=120)
     assert done.returncode == 0, done.stdout + done.stderr
@@ -222,3 +228,14 @@ def test_ts91_chain_renders_a_stock_shape_flux_gpu_line_and_runs_nothing(tmp_pat
     assert command[0] == "bash" and command[1].endswith("experiments/ts91_chain_body.sh")
     assert command[-1] == "inert-image"
     assert not (tmp_path / "runs").exists(), "rendering must not create run directories"
+
+
+def test_ts91_default_refuses_unapproved_hour_before_submission(tmp_path):
+    result = subprocess.run(['bash', str(CHECKOUT / 'experiments/ts91_chain.sh')],
+                            env={**os.environ, 'IMG': 'inert-image',
+                                 'FLUX_OUT': str(FLUX_RENDER_ROOT / 'duration-refusal'),
+                                 'FLUX_SUBMIT': '1'}, cwd=CHECKOUT,
+                            capture_output=True, text=True, timeout=30)
+    assert result.returncode == 2
+    assert '10 minutes' in result.stderr
+    assert 'flux submit ' not in result.stdout

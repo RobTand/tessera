@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+
 # Serve one checkpoint, dump its per-position logprobs, stop the serve.
 #
 # The two arms of a KL must not be resident at once: model weights, caches

@@ -44,72 +44,62 @@ def _replay():
     return module
 
 
+def _plugin_runtime(tmp_path, reference=IMAGE, resolved=IMAGE):
+    binary = tmp_path / 'bin'; binary.mkdir()
+    podman = binary / 'podman'
+    podman.write_text(f"#!{sys.executable}\n" + r'''
+import json, os, pathlib, sys
+args=sys.argv[1:]; root=pathlib.Path(os.environ['CONTROL'])
+if args[:2]==['image','inspect']: print('sha256:'+'0'*64+'\t'+json.dumps([os.environ['RESOLVED']]))
+elif args[0]=='info': print('true')
+elif args[0]=='create':
+ env={}
+ for i,value in enumerate(args[:-1]):
+  if value in ('-e','--env'):
+   key,_,val=args[i+1].partition('=');env[key]=val
+ (root/'env.json').write_text(json.dumps({'container_env':env}))
+ pathlib.Path(args[args.index('--cidfile')+1]).write_text('b'*64)
+ scratch=pathlib.Path(args[args.index('--volume')+1].split(':')[0])
+ (scratch/'container-status').write_text(pathlib.Path('/proc/self/status').read_text())
+ (root/'owned').touch()
+elif args[0]=='start': print((root/'env.json').read_text())
+elif args[0]=='rm': (root/'owned').unlink()
+elif args[:2]==['container','exists']: sys.exit(int(not (root/'owned').exists()))
+''')
+    podman.chmod(0o755)
+    for name, value in [('flux', 'f123'), ('findmnt', 'ext4')]:
+        p=binary/name
+        p.write_text('#!/bin/sh\nif [ "$3" = --to=dec ]; then echo 123; else echo '+value+'; fi\n')
+        p.chmod(0o755)
+    return dict(os.environ, PATH=f"{binary}:{os.environ['PATH']}", CONTROL=str(tmp_path),
+                RUNTIME_IMAGE_PY=sys.executable, IMG=reference, RESOLVED=resolved, TS=str(ROOT),
+                EXT=str(tmp_path/'ext'), RUNS=str(tmp_path/'runs'),
+                FLUX_JOB_ID='f123', CUDA_VISIBLE_DEVICES='0', FLUX_SCRATCH=str(tmp_path/'scratch'))
+
+
 def test_plugin_wrapper_injects_selected_image_after_caller_environment(tmp_path):
-    fake = tmp_path / "bin"
-    fake.mkdir()
-    docker = fake / "docker"
-    docker.write_text(
-        f"#!{sys.executable}\n"
-        "import json, os, sys\n"
-        "if sys.argv[1:3] == ['image', 'inspect']:\n"
-        "    print('sha256:' + '0' * 64 + '\\t' + json.dumps([os.environ['IMG']]))\n"
-        "else:\n"
-        "    env = {}\n"
-        "    for i, value in enumerate(sys.argv[:-1]):\n"
-        "        if value == '-e':\n"
-        "            key, _, val = sys.argv[i+1].partition('=')\n"
-        "            env[key] = val\n"
-        "    print(json.dumps({'container_env': env}))\n"
-    )
-    docker.chmod(0o755)
-    env = dict(os.environ, PATH=f"{fake}:{os.environ['PATH']}",
-               RUNTIME_IMAGE_PY=sys.executable, IMG=IMAGE, TS=str(ROOT),
-               EXT=str(tmp_path / "ext"), RUNS=str(tmp_path / "runs"),
-               **{CENSUS_IMAGE_ENV: "forged-host-value",
-                  CENSUS_DECLARATION_ENV: "forged-host-declaration"})
+    env = _plugin_runtime(tmp_path)
+    env.update({CENSUS_IMAGE_ENV: 'forged-host-value', CENSUS_DECLARATION_ENV: 'forged-host-declaration'})
     proc = subprocess.run(
-        ["bash", str(ROOT / "experiments" / "tessera_plugin_run.sh"),
-         "-e", f"{CENSUS_IMAGE_ENV}=forged-caller-value",
-         "-e", f"{CENSUS_DECLARATION_ENV}=forged-caller-declaration", "--", "true"],
-        env=env, text=True, capture_output=True)
+        ['bash', str(ROOT/'experiments/tessera_plugin_run.sh'),
+         '-e', f'{CENSUS_IMAGE_ENV}=forged-caller-value',
+         '-e', f'{CENSUS_DECLARATION_ENV}=forged-caller-declaration', '--', 'true'],
+        env=env, text=True, capture_output=True, timeout=30)
     assert proc.returncode == 0, proc.stdout + proc.stderr
     payload = json.loads(proc.stdout.splitlines()[-1])
-    assert payload["container_env"][CENSUS_IMAGE_ENV] == IMAGE
-    # The daemon's own record travels beside the name, so the process inside
-    # can check its claim against a table instead of trusting one string.
-    record = json.loads(payload["container_env"][CENSUS_DECLARATION_ENV])
-    assert record["resolved_reference"] == IMAGE and record["repo_digests"] == [IMAGE]
+    assert payload['container_env'][CENSUS_IMAGE_ENV] == IMAGE
+    record = json.loads(payload['container_env'][CENSUS_DECLARATION_ENV])
+    assert record['resolved_reference'] == IMAGE and record['repo_digests'] == [IMAGE]
 
 
 def test_the_wrapper_exports_the_resolved_digest_not_the_tag_it_was_asked_for(tmp_path):
-    """A tag identifies no runtime; what the census must receive is the bytes."""
-    fake = tmp_path / "bin"
-    fake.mkdir()
-    docker = fake / "docker"
-    docker.write_text(
-        f"#!{sys.executable}\n"
-        "import json, os, sys\n"
-        "if sys.argv[1:3] == ['image', 'inspect']:\n"
-        "    print('sha256:' + '0' * 64 + '\\t' + json.dumps([os.environ['RESOLVED']]))\n"
-        "else:\n"
-        "    env = {}\n"
-        "    for i, value in enumerate(sys.argv[:-1]):\n"
-        "        if value == '-e':\n"
-        "            key, _, val = sys.argv[i+1].partition('=')\n"
-        "            env[key] = val\n"
-        "    print(json.dumps({'container_env': env}))\n"
-    )
-    docker.chmod(0o755)
-    env = dict(os.environ, PATH=f"{fake}:{os.environ['PATH']}",
-               RUNTIME_IMAGE_PY=sys.executable, IMG="example/runtime:latest",
-               RESOLVED=IMAGE, TS=str(ROOT), EXT=str(tmp_path / "ext"),
-               RUNS=str(tmp_path / "runs"))
+    env = _plugin_runtime(tmp_path, reference='example/runtime:latest')
     proc = subprocess.run(
-        ["bash", str(ROOT / "experiments" / "tessera_plugin_run.sh"), "--", "true"],
-        env=env, text=True, capture_output=True)
+        ['bash', str(ROOT/'experiments/tessera_plugin_run.sh'), '--', 'true'],
+        env=env, text=True, capture_output=True, timeout=30)
     assert proc.returncode == 0, proc.stdout + proc.stderr
     payload = json.loads(proc.stdout.splitlines()[-1])
-    assert payload["container_env"][CENSUS_IMAGE_ENV] == IMAGE
+    assert payload['container_env'][CENSUS_IMAGE_ENV] == IMAGE
 
 
 # --------------------------------------- the census checks its own claim ---

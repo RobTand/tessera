@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+
 # A served KL in the DECODE regime, on Tessera's own vLLM plugin (issue #102).
 #
 # WHY THIS WRAPPER EXISTS.  ``tessera_plugin_served.sh`` takes one prefill-

@@ -24,8 +24,3 @@ filegroup(
     name = "files/docs/measurements/construction",
     srcs = glob(["docs/measurements/construction/**"], exclude = ["**/BUILD.bazel", "bazel-*/**", "*bazel-remote-grpc.log", "*execution_log.binpb.zst", ".pytest_cache/**", "**/__pycache__/**", "**/*.pyc"]),
 )
-
-filegroup(
-    name = "files/images/serving/patches",
-    srcs = glob(["images/serving/patches/**"], exclude = ["**/BUILD.bazel", "bazel-*/**", "*bazel-remote-grpc.log", "*execution_log.binpb.zst", ".pytest_cache/**", "**/__pycache__/**", "**/*.pyc"]),
-)

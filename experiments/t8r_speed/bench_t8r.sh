@@ -1,14 +1,19 @@
 #!/usr/bin/env bash
+# TMPDIR and thread bounds are launcher-owned; temporary writes use removable job scratch.
 # Run experiments/t8r_speed/bench_t8r.py inside the serving image on one GB10.
 # Batch benchmarks use Flux, including stock vLLM custom ops. The
-# closed comparison retains its qualified held-original-FD transport. Usage:
+# closed direct comparison awaits containment qualification. Usage:
 #   bench_t8r.sh <checkout> <out_dir> <bench_t8r.py args...>
 # BENCH_NCU=1 wraps the process in Nsight Compute (routed_fused_kernel and the
 # dense window kernels; one profiled call per (group, M) via --profile-from-start off).
-# The container mounts the checkout and the artifact read-only and writes only
-# under <out_dir> (HOME/TMPDIR/Triton and torch-extension caches included).
+# The container mounts the checkout and the artifact read-only. Persistent writes
+# stay under <out_dir> (HOME/Triton and torch-extension caches included).
 set -euo pipefail
 CHECKOUT=$(realpath "$1"); OUT=$(realpath -m "$2"); shift 2
+if [[ "${BENCH_DIRECT_VLLM:-0}" == 1 ]]; then
+  echo "BENCH_DIRECT_VLLM=1 requires a qualified containment contract; closed direct modes are not admitted" >&2
+  exit 2
+fi
 BENCH_PY=${BENCH_PY:-bench_t8r.py}
 DOCKER_IDENTITY=(--user "$(id -u):$(id -g)")
 mkdir -p "$OUT/home" "$OUT/tmp" "$OUT/triton"
@@ -26,6 +31,7 @@ if [[ ( "$BENCH_PY" == bench_geometry.py || "$BENCH_PY" == bench_class_dispatch.
   PYTHONPATH="$PREFLIGHT_SRC:${PYTHONPATH:-}" exec "${BENCH_CPU_PYTHON:?set BENCH_CPU_PYTHON to the scoped CPU interpreter}" \
     "$CHECKOUT/experiments/t8r_speed/$BENCH_PY" --out "$OUT" "$@"
 fi
+export TESSERA_CONTAINER_ENGINE=podman
 IMAGE_REF=${ORACLE_IMAGE:?set ORACLE_IMAGE to the immutable digest-pinned measurement image}
 source "$CHECKOUT/experiments/runtime_image.sh"
 runtime_image_require "$IMAGE_REF"
@@ -75,38 +81,7 @@ fi
 KERNEL_SHA=$(sha256sum "$KSRC/tessera/serving/csrc/routed_fused_window.cu" | cut -d' ' -f1)
 echo "arm src=$KSRC kernel_sha=$KERNEL_SHA"
 EXTRA_MOUNTS=()
-DIRECT_OPTS=()
-RUN_PREFIX=()
 [[ -z "${BENCH_EXPECT_LIBRARY_SHA256:-}" ]] || IMAGE_ENV+=(-e "BENCH_EXPECT_LIBRARY_SHA256=$BENCH_EXPECT_LIBRARY_SHA256")
-# Reuse the qualified direct benchmark containment contract. Numeric phase
-# and separately reviewed finite timing/repeatability resource windows.
-if [[ "${BENCH_DIRECT_VLLM:-0}" == 1 ]]; then
-  if [[ " $* " == *" --paired-k32-numerics "* ]]; then
-    # Closed paired batch uses held FDs, but always stays inside a Flux job.
-    [[ -n "${FLUX_JOB_ID:-}" ]] || { echo "paired batch requires FLUX_JOB_ID environment value; context only, not GPU approval or an admission token" >&2; exit 2; }
-    [[ " $* " != *" --comparison-protocol "* ]] || { echo "paired numeric mode excludes a PM comparison protocol" >&2; exit 2; }
-    DIRECT_TIMEOUT=240
-  else
-    [[ " $* " == *" --comparison-protocol "* ]] || { echo "direct transport requires a closed PM protocol or the closed paired numeric mode" >&2; exit 2; }
-    if [[ " $* " == *" --comparison-phase numeric "* ]]; then DIRECT_TIMEOUT=240
-    elif [[ " $* " == *" --comparison-phase timing "* || " $* " == *" --comparison-phase repeatability "* ]]; then DIRECT_TIMEOUT=600
-    else echo "held-original-FD transport requires closed numeric, timing or repeatability phase" >&2; exit 2; fi
-  fi
-  [[ "${BENCH_OWNER_TOKEN:-}" =~ ^[0-9a-f]{32}$ ]] || { echo "missing owned-container token" >&2; exit 2; }
-  [[ ! -e "$OUT/owned.cid" && ! -e "$OUT/owner-token.txt" ]] || { echo "owned container evidence already exists" >&2; exit 2; }
-  printf '%s\n' "$BENCH_OWNER_TOKEN" > "$OUT/owner-token.txt"
-  # The existing containment owner reads this same label key and a unique token.
-  DIRECT_OPTS=(--cidfile "$OUT/owned.cid" --label "tessera.paired_numeric_owner=$BENCH_OWNER_TOKEN"
-               --memory 16g --memory-swap 16g --pids-limit 512 --cpus 2)
-  RUN_PREFIX=(timeout --signal=TERM --kill-after=15s "${DIRECT_TIMEOUT}s")
-  # Reuse the qualified pure-Python fixture runner; image torch/vLLM stay first.
-  FIXTURE_SP=${BENCH_FIXTURE_RUNNER_SP:?closed numeric fixtures require the qualified pure-Python runner}
-  for pkg in pytest _pytest pluggy iniconfig packaging py.py; do
-    [[ -e "$FIXTURE_SP/$pkg" ]] || { echo "missing fixture dependency $FIXTURE_SP/$pkg" >&2; exit 2; }
-  done
-  EXTRA_MOUNTS+=(-v "$FIXTURE_SP":"$FIXTURE_SP":ro)
-  IMAGE_ENV+=(-e "PYTHONPATH=$CONTAINER_SRC:/work/tests:$FIXTURE_SP")
-fi
 # BENCH_RO_MOUNTS: space-separated host directories a script reads (a source
 # model, recorded activations), mounted read-only at the same path.
 for d in ${BENCH_RO_MOUNTS:-}; do
@@ -163,15 +138,14 @@ ext_libs() {
 EXT_BEFORE=$(ext_libs)
 echo "ext_dir=$EXT_DIR prebuilt=[$(echo "$EXT_BEFORE" | tr '\n' ';')]"
 rc=0
-"${RUN_PREFIX[@]}" docker run --rm --gpus all --ipc=host --network=host --cpuset-cpus "$CPUS" "${DIRECT_OPTS[@]}" \
+python3 "$CHECKOUT/tools/_flux_gpu_jobspec.py" run --out "$OUT" --scratch-root "${FLUX_SCRATCH:-/tmp/flux-vanilla}" -- \
   "${DOCKER_IDENTITY[@]}" \
   -v "$CHECKOUT":/work:ro "${SRC_MOUNT[@]}" "${ART_MOUNT[@]}" -v "$OUT":"$OUT" \
   -e KERNEL_SHA="$KERNEL_SHA" \
-  -e HOME="$OUT/home" -e TMPDIR="$OUT/tmp" -e TRITON_CACHE_DIR="$OUT/triton" \
+  -e HOME="$OUT/home" -e TRITON_CACHE_DIR="$OUT/triton" \
   -e TORCH_EXTENSIONS_DIR="$CONTAINER_EXT" \
   -e PYTHONPATH="$CONTAINER_SRC":/work/tests -e HOST_NAME="$(hostname)" \
-  -e OMP_NUM_THREADS=1 -e MKL_NUM_THREADS=1 -e OPENBLAS_NUM_THREADS=1 \
-  -e NUMEXPR_NUM_THREADS=1 -e MAX_JOBS=1 -e PYTHONUNBUFFERED=1 -e TESSERA_SERVE_MODE=resident \
+  -e PYTHONUNBUFFERED=1 -e TESSERA_SERVE_MODE=resident \
   -e ORACLE_IMAGE="$IMAGE_REF" -e TESSERA_HEAD="$HEAD" -e TESSERA_STATE="$STATE" \
   -e FLUX_JOB_ID="${FLUX_JOB_ID:-}" \
   "${IMAGE_ENV[@]}" "${EXTRA_MOUNTS[@]}" --entrypoint "${COMMAND[0]}" -w /work "$IMAGE_REF" \

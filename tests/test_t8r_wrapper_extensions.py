@@ -3,6 +3,8 @@ from pathlib import Path
 import json
 import os
 import subprocess
+import shutil
+import sys
 
 import pytest
 
@@ -44,6 +46,11 @@ def wrapper_environment(tmp_path):
     (checkout / 'experiments/runtime_image.sh').write_text(
         'runtime_image_require() { RUNTIME_IMAGE_CONTAINER_ENV=""; RUNTIME_IMAGE_JSON="{}"; }\n')
     (checkout / 'pyproject.toml').write_text('[project]\nname="tessera-quant"\nversion="0.0.0"\n')
+    tools = checkout / 'tools'
+    tools.mkdir()
+    root = Path(__file__).resolve().parents[1]
+    shutil.copyfile(root / 'tools/_flux_gpu_jobspec.py', tools / '_flux_gpu_jobspec.py')
+    shutil.copyfile(root / 'tools/_flux_shape.py', tools / '_flux_shape.py')
     source = tmp_path / 'frozen-src'
     kernel = source / 'tessera/serving/csrc/routed_fused_window.cu'
     kernel.parent.mkdir(parents=True)
@@ -51,7 +58,7 @@ def wrapper_environment(tmp_path):
     extensions = tmp_path / 'retained-extensions'
     packages = tmp_path / 'packages'
     packages.mkdir()
-    for name in ('pytest', '_pytest', 'pluggy', 'iniconfig', 'packaging', 'xdist', 'execnet'):
+    for name in ('pytest', '_pytest', 'pluggy', 'iniconfig', 'packaging', 'pygments', 'xdist', 'execnet'):
         (packages / name).mkdir()
     (packages / 'py.py').write_text('')
     binaries = tmp_path / 'bin'
@@ -59,12 +66,22 @@ def wrapper_environment(tmp_path):
     docker = binaries / 'docker'
     docker.write_text('#!/bin/bash\nprintf "%s\\0" "$@" > "$DOCKER_ARGV_PATH"\n')
     docker.chmod(0o755)
+    podman = binaries / 'podman'
+    podman.write_text("#!/usr/bin/env python3\nimport json, os, pathlib, sys\nargs=sys.argv[1:]\np=pathlib.Path(os.environ['DOCKER_ARGV_PATH'])\nif args[0]=='info': print('true')\nelif args[0]=='create':\n p.write_bytes(('\\0'.join(args)+'\\0').encode())\n pathlib.Path(args[args.index('--cidfile')+1]).write_text('b'*64)\nelif args[0]=='start':\n a=p.read_bytes().decode().rstrip('\\0').split('\\0')\n scratch=a[a.index('--volume')+1].split(':')[0]\n pathlib.Path(scratch,'container-status').write_text('Cpus_allowed_list:\\t'+','.join(map(str,sorted(os.sched_getaffinity(0))))+'\\n')\nelif args[:2]==['container','exists']: sys.exit(1)\n")
+    podman.chmod(0o755)
+    flux = binaries / 'flux'
+    flux.write_text('#!/bin/sh\nif [ "$3" = --to=dec ]; then echo 123; else echo f123; fi\n')
+    flux.chmod(0o755)
+    findmnt = binaries / 'findmnt'
+    findmnt.write_text('#!/bin/sh\necho ext4\n')
+    findmnt.chmod(0o755)
     argv_path = tmp_path / 'argv'
     env = {k: v for k, v in os.environ.items() if not k.startswith(('BENCH_', 'NATIVE_', 'TEST_'))}
     env.update(PATH=str(binaries) + os.pathsep + os.environ['PATH'],
-               ORACLE_IMAGE='inert-image', TEST_RUNNER_SP=str(packages),
+               ORACLE_IMAGE='example.invalid/cuda@sha256:' + 'a' * 64, TEST_RUNNER_SP=str(packages),
                BENCH_SRC=str(source), BENCH_EXT_DIR=str(extensions), TEST_XDIST='1',
-               DOCKER_ARGV_PATH=str(argv_path), FLUX_JOB_ID="fTESTJOBID")
+               DOCKER_ARGV_PATH=str(argv_path), FLUX_JOB_ID="f123",
+               CUDA_VISIBLE_DEVICES="0", FLUX_SCRATCH=str(tmp_path / "scratch"))
     return checkout, source, extensions, argv_path, env
 
 
@@ -101,17 +118,81 @@ def test_build_wrapper_matches_the_consumer_namespace(tmp_path, canonical):
     env['NATIVE_BUILD_WORK_DIR'] = str(work)
     if canonical:
         env.update(NATIVE_CONTAINER_SRC=container_source, NATIVE_CONTAINER_EXT=container_extensions)
-    subprocess.run(['bash', str(wrapper), str(checkout), str(extensions), 'e4m3mma'],
-                   env=env, check=True, capture_output=True, text=True)
+    result = subprocess.run(['bash', str(wrapper), str(checkout), str(extensions), 'e4m3mma'],
+                            env=env, capture_output=True, text=True)
+    assert result.returncode == 0, result.stdout + result.stderr
     args = argv_path.read_bytes().decode().rstrip('\0').split('\0')
+    assert args[0] == 'create'
     assert str(source) + ':' + container_source + ':ro' in args
     assert str(extensions) + ':' + container_extensions in args
     assert 'TORCH_EXTENSIONS_DIR=' + container_extensions in args
     assert 'PYTHONPATH=' + container_source in args
     assert 'HOME=' + str(work / 'home') in args
-    assert 'TMPDIR=' + str(work / 'tmp') in args
-    if canonical:
-        assert str(checkout / 'pyproject.toml') + ':/tessera/pyproject.toml:ro' in args
+    assert args.count('TMPDIR=/tessera-scratch/tmp') == 1
+    assert not any(value.startswith('TMPDIR=' + str(work)) for value in args)
+    assert not any(value.startswith('nvidia.com/gpu=') for value in args)
+    assert 'CUDA_VISIBLE_DEVICES=' in args
+    image_index = args.index(env['ORACLE_IMAGE'])
+    assert args[image_index - 2:image_index] == ['--entrypoint', '/bin/sh']
+    assert args[args.index('-w') + 1] == '/work'
+    assert args[image_index + 1:image_index + 6] == [
+        '-ec', 'cat /proc/self/status > /tessera-scratch/container-status; exec "$@"',
+        'tessera-gpu', 'python3', '-c']
+    program = args[image_index + 6]
+    assert program.startswith('import glob, hashlib, json, os, sys, time\n')
+    assert 'for lib in sys.argv[1:]:' in program
+    assert 'finalize(Path(so).parent, source)' in program
+    compile(program, '<build_ext python3 -c>', 'exec')
+    assert args[image_index + 7:] == ['e4m3mma']
+
+
+def test_build_program_refuses_an_empty_library_record(tmp_path):
+    root = Path(__file__).resolve().parents[1]
+    checkout, source, extensions, argv_path, env = wrapper_environment(tmp_path)
+    result = subprocess.run(['bash', str(root / 'experiments/t8r_speed/build_ext.sh'),
+                             str(checkout), str(extensions), 'e4m3mma'],
+                            env=env, capture_output=True, text=True)
+    assert result.returncode == 0, result.stdout + result.stderr
+    args = argv_path.read_bytes().decode().rstrip('\0').split('\0')
+    program = args[args.index('-c') + 1]
+    empty = subprocess.run([sys.executable, '-c', program], cwd=root,
+                           env={**env, 'TORCH_EXTENSIONS_DIR': str(extensions),
+                                'NATIVE_BUILD_IMAGE_RECORD': '{}', 'PYTHONPATH': str(root / 'src')},
+                           capture_output=True, text=True, timeout=30)
+    assert empty.returncode != 0, empty.stdout + empty.stderr
+    assert 'at least one library' in empty.stderr
+    assert not (extensions / 'native-build-record.json').exists()
+
+
+def test_build_wrapper_preserves_container_failure(tmp_path):
+    root = Path(__file__).resolve().parents[1]
+    checkout, source, extensions, argv_path, env = wrapper_environment(tmp_path)
+    podman = Path(env['PATH'].split(os.pathsep)[0]) / 'podman'
+    podman.write_text(podman.read_text().replace("elif args[:2]==['container','exists']:",
+                                               " sys.exit(7)\nelif args[:2]==['container','exists']:"))
+    result = subprocess.run(['bash', str(root / 'experiments/t8r_speed/build_ext.sh'),
+                             str(checkout), str(extensions), 'e4m3mma'],
+                            env=env, capture_output=True, text=True)
+    assert result.returncode == 7, result.stdout + result.stderr
+    assert 'end=' not in result.stdout
+
+
+@pytest.mark.parametrize('override', [False, True])
+def test_native_build_scratch_root_uses_wrapper_convention(tmp_path, override):
+    root = Path(__file__).resolve().parents[1]
+    checkout, source, extensions, argv_path, env = wrapper_environment(tmp_path)
+    (checkout / 'tools/_flux_gpu_jobspec.py').write_text(
+        'import json, os, pathlib, sys\n'
+        'pathlib.Path(os.environ["DOCKER_ARGV_PATH"]).write_text(json.dumps(sys.argv[1:]))\n')
+    expected = env['FLUX_SCRATCH'] if override else '/tmp/flux-vanilla'
+    if not override:
+        env.pop('FLUX_SCRATCH')
+    result = subprocess.run(['bash', str(root / 'experiments/t8r_speed/build_ext.sh'),
+                             str(checkout), str(extensions), 'e4m3mma'],
+                            env=env, capture_output=True, text=True)
+    assert result.returncode == 0, result.stdout + result.stderr
+    args = json.loads(argv_path.read_text())
+    assert args[args.index('--scratch-root') + 1] == expected
 
 
 @pytest.mark.parametrize('selection', ['0', '1'])
@@ -134,6 +215,7 @@ def test_actual_wrapper_forwards_resident_layout_selection(tmp_path, selection, 
                    env=env, check=True, capture_output=True, text=True)
     args = argv_path.read_bytes().decode().rstrip('\0').split('\0')
     forwarded = [args[i + 1] for i, value in enumerate(args[:-1]) if value == '-e']
+    assert args[0] == 'create'
     assert 'TESSERA_ROUTED_PIECE_MAJOR=' + selection in forwarded
     assert str(source) + ':' + container_source + ':ro' in args
     assert str(extensions) + ':' + container_extensions in args
@@ -143,8 +225,8 @@ def test_actual_wrapper_forwards_resident_layout_selection(tmp_path, selection, 
         assert str(checkout / 'pyproject.toml') + ':/tessera/pyproject.toml:ro' in args
 
 
-@pytest.mark.parametrize('phase,deadline', [('numeric', '240s'), ('timing', '600s'), ('repeatability', '600s')])
-def test_direct_pm_numeric_reuses_owned_container_and_canonical_namespace(tmp_path, phase, deadline):
+@pytest.mark.parametrize('phase', ['numeric', 'timing', 'repeatability'])
+def test_direct_pm_requires_qualification_of_legacy_container_limits(tmp_path, phase):
     wrapper = Path(__file__).resolve().parents[1] / 'experiments/t8r_speed/bench_t8r.sh'
     checkout, source, extensions, argv_path, env = wrapper_environment(tmp_path)
     artifact = tmp_path / 'artifact'; artifact.mkdir()
@@ -158,19 +240,15 @@ def test_direct_pm_numeric_reuses_owned_container_and_canonical_namespace(tmp_pa
                BENCH_FIXTURE_RUNNER_SP=env['TEST_RUNNER_SP'],
                NATIVE_CONTAINER_SRC='/tessera/src',
                NATIVE_CONTAINER_EXT='/ext')
-    subprocess.run(['bash', str(wrapper), str(checkout), str(tmp_path / 'out'),
+    result = subprocess.run(['bash', str(wrapper), str(checkout), str(tmp_path / 'out'),
                     '--artifact', str(artifact), '--comparison-protocol', '/owned/protocol.json',
-                    '--comparison-phase', phase],
-                   env=env, check=True, capture_output=True, text=True)
-    args = argv_path.read_bytes().decode().rstrip('\0').split('\0')
-    timeout_args = Path(env['TIMEOUT_ARGV_PATH']).read_bytes().decode().rstrip('\0').split('\0')
-    assert timeout_args[:3] == ['--signal=TERM', '--kill-after=15s', deadline]
-    assert args[args.index('--label') + 1] == 'tessera.paired_numeric_owner=' + 'e' * 32
-    assert args[args.index('--memory') + 1] == args[args.index('--memory-swap') + 1] == '16g'
-    assert args[args.index('--cpus') + 1] == '2'
-    assert 'PYTHONPATH=/tessera/src:/work/tests:' + env['TEST_RUNNER_SP'] in args
-    assert env['TEST_RUNNER_SP'] + ':' + env['TEST_RUNNER_SP'] + ':ro' in args
-    assert (tmp_path / 'out/owner-token.txt').read_text().strip() == 'e' * 32
+                    '--comparison-phase', phase], env=env, capture_output=True, text=True)
+    assert result.returncode == 2
+    assert 'BENCH_DIRECT_VLLM=1' in result.stderr and 'containment' in result.stderr
+    assert not argv_path.exists(), 'unqualified legacy limits must not create a container'
+    assert not (tmp_path / 'out').exists(), 'refusal must precede output staging'
+    assert not Path(env['TIMEOUT_ARGV_PATH']).exists()
+
 
 
 @pytest.mark.parametrize("key,on,library", [
@@ -201,7 +279,8 @@ def test_native_build_choice_wrapper_preserves_declared_value(tmp_path, kind, se
         extensions.mkdir()
         command = ['bash', str(wrapper), str(checkout), str(tmp_path / 'out'),
                    '--artifact', str(artifact), '--groups', 'experts.R1024.L10']
-    subprocess.run(command, env=env, check=True, capture_output=True, text=True)
+    result = subprocess.run(command, env=env, capture_output=True, text=True)
+    assert result.returncode == 0, result.stdout + result.stderr
     args = argv_path.read_bytes().decode().rstrip('\0').split('\0')
     forwarded = [args[i + 1] for i, arg in enumerate(args[:-1]) if arg == '-e']
     choices = [value for value in forwarded if value.startswith(key + '=')]
@@ -211,14 +290,13 @@ def test_native_build_choice_wrapper_preserves_declared_value(tmp_path, kind, se
         assert choices == [key + '=' + selection]
 
 
-@pytest.mark.parametrize('extra,expected_rc,message', [
-    (['--paired-k32-numerics'], 0, None),
-    (['--paired-k32-numerics', '--comparison-protocol', '/owned/protocol.json'],
-     2, 'paired numeric mode excludes a PM comparison protocol'),
-    ([], 2, 'direct transport requires a closed PM protocol or the closed paired numeric mode'),
+@pytest.mark.parametrize('extra', [
+    ['--paired-k32-numerics'],
+    ['--paired-k32-numerics', '--comparison-protocol', '/owned/protocol.json'],
+    [],
 ])
-def test_direct_paired_numeric_reuses_owned_container_and_deadline(tmp_path, extra, expected_rc, message):
-    """The closed paired numeric mode rides the same owned-container contract."""
+def test_direct_paired_numeric_refuses_unqualified_container_limits(tmp_path, extra):
+    """Every closed direct variant refuses before any output staging."""
     wrapper = Path(__file__).resolve().parents[1] / 'experiments/t8r_speed/bench_t8r.sh'
     checkout, source, extensions, argv_path, env = wrapper_environment(tmp_path)
     artifact = tmp_path / 'artifact'; artifact.mkdir()
@@ -237,18 +315,6 @@ def test_direct_paired_numeric_reuses_owned_container_and_deadline(tmp_path, ext
     result = subprocess.run(['bash', str(wrapper), str(checkout), str(tmp_path / 'out'),
                              '--artifact', str(artifact), *extra],
                             env=env, capture_output=True, text=True)
-    assert result.returncode == expected_rc, result.stderr
-    if expected_rc:
-        assert message in result.stderr
-        return
-    args = argv_path.read_bytes().decode().rstrip('\0').split('\0')
-    timeout_args = Path(env['TIMEOUT_ARGV_PATH']).read_bytes().decode().rstrip('\0').split('\0')
-    assert timeout_args[:3] == ['--signal=TERM', '--kill-after=15s', '240s']
-    assert args[args.index('--label') + 1] == 'tessera.paired_numeric_owner=' + 'a' * 32
-    assert args[args.index('--memory') + 1] == args[args.index('--memory-swap') + 1] == '16g'
-    assert args[args.index('--pids-limit') + 1] == '512' and args[args.index('--cpus') + 1] == '2'
-    assert args[args.index('--cidfile') + 1] == str(tmp_path / 'out/owned.cid')
-    assert str(fixture_sp) + ':' + str(fixture_sp) + ':ro' in args
-    assert 'PYTHONPATH=/work/src:/work/tests:' + str(fixture_sp) in args
-    assert (tmp_path / 'out/owner-token.txt').read_text().strip() == 'a' * 32
-    assert not any(x.startswith('PRISMABUILD_') for x in args)
+    assert result.returncode == 2, result.stderr
+    assert 'BENCH_DIRECT_VLLM=1' in result.stderr and 'containment' in result.stderr
+    assert not (tmp_path / 'out').exists(), 'refusal must precede output staging'

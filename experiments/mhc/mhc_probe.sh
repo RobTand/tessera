@@ -1,14 +1,16 @@
 #!/usr/bin/env bash
+# TMPDIR and thread bounds are launcher-owned; temporary writes use removable job scratch.
+# MAX_JOBS now ignores caller overrides (previous default 2); the launcher fixes it at 1.
 # Run experiments/mhc/mhc_probe.py inside the serving image (the mHC and
-# elementwise before-measurements).  Run as a Flux GPU job (see the rendered
-# tools/_flux_gpu_jobspec.py line; Flux GPU path rendered, not qualified); this
+# elementwise before-measurements).  Run inside an admitted Flux GPU job; this
 # script is the job's command.  Usage:
 #   mhc_probe.sh <checkout> <out_dir> <mhc_probe.py args...>
 # The container mounts the checkout and the served checkpoint read-only and
-# writes only under <out_dir>.  ORACLE_NCU=1 runs the NCU-gated mHC calls under
+# keeps persistent writes under <out_dir>.  ORACLE_NCU=1 runs the NCU-gated mHC calls under
 # Nsight Compute instead, filtered to the three stock mHC kernels (ORACLE_NCU_KERNELS
 # overrides the filter, e.g. 'regex:_flash_kda_fwd' with --ncu-part kda).
 set -euo pipefail
+export TESSERA_CONTAINER_ENGINE=podman
 CHECKOUT=$(realpath "$1"); OUT=$(realpath -m "$2"); shift 2
 IMAGE_REF=${ORACLE_IMAGE:?set ORACLE_IMAGE to the immutable digest-pinned measurement image}
 source "$CHECKOUT/experiments/runtime_image.sh"
@@ -57,15 +59,13 @@ if [[ "${ORACLE_NCU:-0}" == 1 ]]; then
     --export "$OUT/mhc" --force-overwrite
     python3 /work/experiments/mhc/mhc_probe.py --ncu)
 fi
-exec docker run --rm --gpus all --ipc=host --network=host --cpuset-cpus "$CPUS" \
+exec python3 "$CHECKOUT/tools/_flux_gpu_jobspec.py" run --out "$OUT" --scratch-root "${FLUX_SCRATCH:-/tmp/flux-vanilla}" -- \
   --user "$(id -u):$(id -g)" \
   -v "$CHECKOUT":/work:ro -v "$MODEL":"$MODEL":ro -v "$OUT":"$OUT" \
-  -e HOME="$OUT/home" -e TMPDIR="$OUT/tmp" -e TRITON_CACHE_DIR="$OUT/triton" \
+  -e HOME="$OUT/home" -e TRITON_CACHE_DIR="$OUT/triton" \
   -e TORCH_EXTENSIONS_DIR="$OUT/torch-ext" -e PYTHONDONTWRITEBYTECODE=1 \
   -e PYTHONPATH=/work/src:/work/tests:/work/experiments -e HOST_NAME="$(hostname)" \
-  -e OMP_NUM_THREADS=1 -e MKL_NUM_THREADS=1 -e OPENBLAS_NUM_THREADS=1 \
-  -e NUMEXPR_NUM_THREADS=1 -e PYTHONUNBUFFERED=1 \
-  -e MAX_JOBS="${MAX_JOBS:-2}" \
+  -e PYTHONUNBUFFERED=1 \
   -e ORACLE_IMAGE="$IMAGE_REF" -e TESSERA_HEAD="$HEAD" -e TESSERA_STATE="$STATE" \
   -e FLUX_JOB_ID="${FLUX_JOB_ID:-}" \
   "${IMAGE_ENV[@]}" "${OBS_ENV[@]}" "${EXTRA_MOUNTS[@]}" --entrypoint "${PREFIX[0]}" -w /work "$IMAGE_REF" \

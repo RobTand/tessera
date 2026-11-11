@@ -95,16 +95,6 @@ ts_py_library(
 )
 
 ts_py_library(
-    name = "build_serving_image",
-    srcs = [
-        "build_serving_image.py",
-    ],
-    deps = [
-        ":_suite_flux",
-    ],
-)
-
-ts_py_library(
     name = "check_wheel",
     srcs = [
         "check_wheel.py",

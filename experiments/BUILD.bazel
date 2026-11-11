@@ -2621,16 +2621,6 @@ ts_py_library(
 )
 
 ts_py_library(
-    name = "regdirect_stage1/compile",
-    srcs = [
-        "regdirect_stage1/compile.py",
-    ],
-    data = [
-        "//src/tessera:serving/csrc/regdirect_routed.cu",
-    ],
-)
-
-ts_py_library(
     name = "regdirect_stage1/fragment_synth",
     srcs = [
         "regdirect_stage1/fragment_synth.py",
@@ -2854,13 +2844,6 @@ ts_py_library(
         "//src/tessera:decode",
         "//src/tessera:fused",
         "//src/tessera:serving/native_a4",
-    ],
-)
-
-ts_py_library(
-    name = "run_glm_native_construction",
-    srcs = [
-        "run_glm_native_construction.py",
     ],
 )
 
@@ -3651,6 +3634,11 @@ ts_py_library(
         "t8r_speed/bench_t8r.py",
         "t8r_speed/bench_t8r.sh",
         "t8r_speed/declared_inputs.py",
+    ],
+    deps = [
+        "//src/tessera:__init___cycle",
+        "//src/tessera:_dev/__init__",
+        "//src/tessera:_dev/native_identity",
     ],
 )
 

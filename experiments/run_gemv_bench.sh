@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+
 # Hold the box's serve lock through a GEMV measurement, and record what else
 # was on the GPU when it ran.  Usage (from the repo root on the GPU box):
 #

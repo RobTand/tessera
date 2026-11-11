@@ -52,9 +52,11 @@ PY
 FAILED=()
 for arm in "${ARMS[@]}"; do
   [[ -f "$OUT/src-$arm/src/tessera/serving/csrc/routed_fused_window.cu" ]] || { echo "missing snapshot: $OUT/src-$arm" >&2; exit 2; }
-  # the libraries are built off the measurement host (build_ext.sh, a separate
-  # non-measurement row); this action only loads them
-  [[ -d "$OUT/ext-$arm" || ${AB_ALLOW_BUILD:-0} == 1 ]] || { echo "REFUSED: $OUT/ext-$arm is missing; build it off the measurement host first (build_ext.sh)" >&2; exit 2; }
+  # Build libraries first in a separate admitted Flux CPU row with build_ext.sh;
+  # this measurement action only loads them. A single-thread build needs a longer
+  # admitted walltime than a parallel build. Duration is unmeasured; size that row
+  # from a measured build rather than borrowing the timing action's walltime.
+  [[ -d "$OUT/ext-$arm" || ${AB_ALLOW_BUILD:-0} == 1 ]] || { echo "REFUSED: $OUT/ext-$arm is missing; run build_ext.sh in an admitted Flux CPU job first" >&2; exit 2; }
 done
 sha256sum "$OUT"/src-*/src/tessera/serving/csrc/routed_fused_window.cu
 ROUTED=${AB_ROUTED:-experts.R1024.L10,experts.R1088.L11,experts.R832.L42}

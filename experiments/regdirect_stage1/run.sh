@@ -1,11 +1,14 @@
 #!/usr/bin/env bash
+# TMPDIR and thread bounds are launcher-owned; temporary writes use removable job scratch.
 # eng-regdirect-build stage 1: run bench_stage1.py in the serving image on one GB10, or
 # (--cpu-preflight) on the CPU interpreter.
 #   run.sh <checkout> <out_dir> [bench args...]
 # BENCH_NCU=1 wraps the process in Nsight Compute (both kernels, one call per cell).
 # EXTRA_RO=<dir> mounts that directory read-only at the same path (the real_stack.py planes).
 # D30: a host watchdog kills the container if MemAvailable falls below 2 GiB.
+# The launcher fixes MAX_JOBS=1 for native builds.
 set -euo pipefail
+export TESSERA_CONTAINER_ENGINE=podman
 CHECKOUT=$(realpath "$1"); OUT=$(realpath -m "$2"); shift 2
 mkdir -p "$OUT/home" "$OUT/tmp"
 if [[ " $* " == *" --cpu-preflight "* ]]; then
@@ -13,6 +16,8 @@ if [[ " $* " == *" --cpu-preflight "* ]]; then
     "$CHECKOUT/experiments/regdirect_stage1/bench_stage1.py" --out "$OUT" "$@"
 fi
 IMAGE=${ORACLE_IMAGE:?set ORACLE_IMAGE}
+source "$CHECKOUT/experiments/runtime_image.sh"
+runtime_image_require "$IMAGE"
 CPUS=$(python3 -c 'import os; print(",".join(map(str, sorted(os.sched_getaffinity(0)))))')
 HEAD=$(git -C "$CHECKOUT" rev-parse HEAD 2>/dev/null || echo unknown)
 echo "host=$(hostname) cpus=$CPUS head=$HEAD image=$IMAGE start=$(date -u +%FT%TZ)"
@@ -40,17 +45,17 @@ CID="$OUT/container.cid"; rm -f "$CID" "$OUT/.done"     # a stale .done would st
     a=$(awk '/MemAvailable/ {print $2}' /proc/meminfo)
     if (( a < 2097152 )); then
       echo "D30 WATCHDOG: MemAvailable ${a} kB < 2 GiB; killing the container" >&2
-      [[ -f "$CID" ]] && docker kill --signal TERM "$(cat "$CID")" >/dev/null 2>&1
-      sleep 5; [[ -f "$CID" ]] && docker kill "$(cat "$CID")" >/dev/null 2>&1; exit 0
+      [[ -f "$CID" ]] && podman kill --signal TERM "$(cat "$CID")" >/dev/null 2>&1
+      sleep 5; [[ -f "$CID" ]] && podman kill "$(cat "$CID")" >/dev/null 2>&1; exit 0
     fi
   done ) &
 WD=$!
 rc=0
-docker run --rm --cidfile "$CID" --gpus all --ipc=host --network=host --cpuset-cpus "$CPUS" \
+python3 "$CHECKOUT/tools/_flux_gpu_jobspec.py" run --out "$OUT" --scratch-root "${FLUX_SCRATCH:-/tmp/flux-vanilla}" -- --cidfile "$CID" \
   --user "$(id -u):$(id -g)" -v "$CHECKOUT":/work:ro -v "$OUT":"$OUT" "${MOUNTS[@]}" \
-  -e HOME="$OUT/home" -e TMPDIR="$OUT/tmp" -e TORCH_EXTENSIONS_DIR="$OUT/home/torch_extensions" \
+  -e HOME="$OUT/home" -e TORCH_EXTENSIONS_DIR="$OUT/home/torch_extensions" \
   -e PYTHONPATH=/work/src -e HOST_NAME="$(hostname)" -e TESSERA_HEAD="$HEAD" -e ORACLE_IMAGE="$IMAGE" \
-  -e OMP_NUM_THREADS=1 -e MKL_NUM_THREADS=1 -e MAX_JOBS=2 -e PYTHONUNBUFFERED=1 -e TESSERA_SERVE_MODE=resident \
+  -e PYTHONUNBUFFERED=1 -e TESSERA_SERVE_MODE=resident \
   -e FLUX_JOB_ID="${FLUX_JOB_ID:-}" \
   --entrypoint "${COMMAND[0]}" -w /work "$IMAGE" "${COMMAND[@]:1}" --out "$OUT" "$@" || rc=$?
 touch "$OUT/.done"; kill $WD 2>/dev/null || true

@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# TMPDIR and thread bounds are launcher-owned; temporary writes use removable job scratch.
 # D1 row: time and profile FlashInfer's SM120 sparse MLA prefill kernel
 # (sparse_mla_prefill_mg_kernel<GLM53_NOPE, FP8, 32, 64, 2>) inside the serving
 # image, at the GLM-5.3 served shape. One Flux GPU job, exclusive GPU.
@@ -11,13 +12,14 @@
 #   ncu_pools      Nsight Compute --set full, one launch per shape
 # Exit status: 1 if any leg failed (all legs always run), 2 on a launch error.
 set -uo pipefail
+export TESSERA_CONTAINER_ENGINE=podman
 OUT=$(realpath -m "${1:?out_dir}")
 mkdir -p "$OUT/home" "$OUT/tmp"
 export TMPDIR="$OUT/tmp"
 IMAGE=${MLA_IMAGE:?set MLA_IMAGE to the digest-pinned serving image}
 HERE=$(dirname "$(realpath "$0")")
 CHECKOUT=$(realpath "$HERE/../..")
-NCU_ROOT=/opt/nvidia/nsight-compute/2025.3.1
+NCU_ROOT=${NCU_ROOT:-/opt/nvidia/nsight-compute/2025.3.1}
 [[ -x "$NCU_ROOT/ncu" ]] || { echo "missing profiler: $NCU_ROOT/ncu" >&2; exit 2; }
 # Refuse a floating image and pass its declared identity into the container
 # (experiments/runtime_image.sh; issues #100, #132).
@@ -32,10 +34,10 @@ echo "host=$(hostname) cpus=$CPUS head=$(git -C "$CHECKOUT" rev-parse HEAD 2>/de
      "image=$IMAGE start=$(date -u +%FT%TZ)"
 sha256sum "$CHECKOUT/experiments/mla_prefill/d1_bench.py"
 
-DOCKER=(docker run --rm --gpus all --ipc=host --network=host --cpuset-cpus "$CPUS"
+DOCKER=(python3 "$CHECKOUT/tools/_flux_gpu_jobspec.py" run --out "$OUT" --scratch-root "${FLUX_SCRATCH:-/tmp/flux-vanilla}" --
   --user "$(id -u):$(id -g)" -v "$CHECKOUT":/work:ro -v "$OUT":"$OUT"
-  -e HOME="$OUT/home" -e TMPDIR="$OUT/tmp" -e HOST_NAME="$(hostname)"
-  -e OMP_NUM_THREADS=1 -e MKL_NUM_THREADS=1 -e OPENBLAS_NUM_THREADS=1 -e PYTHONUNBUFFERED=1
+  -e HOME="$OUT/home" -e HOST_NAME="$(hostname)"
+  -e PYTHONUNBUFFERED=1
   "${IMAGE_ENV[@]}" -w /work)
 BENCH=/work/experiments/mla_prefill/d1_bench.py
 FAILED=()

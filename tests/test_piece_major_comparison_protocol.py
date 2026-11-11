@@ -3,6 +3,7 @@ import copy
 import hashlib
 import importlib.util
 import json
+import os
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -12,6 +13,47 @@ PATH = Path(__file__).resolve().parents[1] / "experiments/t8r_speed/piece_major_
 SPEC = importlib.util.spec_from_file_location("piece_major_protocol", PATH)
 pp = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(pp)
+
+
+@pytest.mark.parametrize('fault', ['none', 'device', 'inode', 'path', 'nonexecuting'])
+def test_mapped_native_uses_the_held_fd_mount_device(tmp_path, monkeypatch, fault):
+    native = tmp_path / 'fixture.so'
+    raw = b'inert ELF identity fixture'
+    native.write_bytes(raw)
+    digest = hashlib.sha256(raw).hexdigest()
+    expected = {'path': str(native), 'origin_path': str(native), 'sha256': digest,
+                'files': {native.name: {'sha256': digest, 'bytes': len(raw),
+                                       'mtime_ns': native.stat().st_mtime_ns}}}
+    inode = 7654321
+    mapped_inode = inode + (fault == 'inode')
+    minor = 3 if fault == 'device' else 2
+    mapped_path = '/foreign.so' if fault == 'path' else str(native)
+    permissions = 'r--p' if fault == 'nonexecuting' else 'r-xp'
+    maps = f'1000-2000 {permissions} 00000000 08:{minor:02x} {mapped_inode} {mapped_path}\n'
+    original_read = Path.read_text
+    def read_text(path, *args, **kwargs):
+        if path == Path('/proc/self/maps'):
+            return maps
+        if path == Path('/proc/self/mountinfo'):
+            return '73 1 8:2 /subvolume /fixture rw - btrfs /dev/backing rw\n'
+        if path.parent == Path('/proc/self/fdinfo'):
+            return 'pos:\t0\nflags:\t02100000\nmnt_id:\t73\n'
+        return original_read(path, *args, **kwargs)
+    monkeypatch.setattr(Path, 'read_text', read_text)
+    monkeypatch.setattr(pp.os, 'fstat', lambda fd: SimpleNamespace(
+        st_dev=os.makedev(0, 42), st_ino=inode, st_size=len(raw),
+        st_mtime_ns=expected['files'][native.name]['mtime_ns']))
+    with native.open('rb') as held:
+        filename = f'/proc/self/fd/{held.fileno()}'
+        lib = SimpleNamespace(__file__=filename, __spec__=SimpleNamespace(origin=filename))
+        if fault == 'none':
+            observed = pp.mapped_native_identity(lib, expected)
+            assert observed['executable_mappings'] == [maps.strip()]
+            assert observed['sha256'] == digest
+            assert observed['files'] == expected['files']
+        else:
+            with pytest.raises(ValueError, match='not executable-mapped'):
+                pp.mapped_native_identity(lib, expected)
 
 
 def protocol(tmp_path):
