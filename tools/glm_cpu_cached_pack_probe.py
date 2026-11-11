@@ -66,7 +66,7 @@ def main(argv=None):
     results.append(run(tasks[0]));results.append(run(tasks[2]))
     with concurrent.futures.ThreadPoolExecutor(max_workers=7) as pool:
      results.extend(pool.map(run,[tasks[1],*tasks[3:]]))
-    fs={p:dict(zip(('total','used','free'),shutil.disk_usage(p))) for p in ('/stage','/stage/prewarm','/mnt/shared') if Path(p).exists()}
+    fs={p:dict(zip(('total','used','free'),shutil.disk_usage(p))) for p in ('/stage','/mnt/shared') if Path(p).exists()}
     result={'schema':'prismaquant.real_glm_cpu_cached_pack_probe.v1','hostname':platform.node(),'torch':torch.__version__,'cuda_available':torch.cuda.is_available(),'affinity':sorted(os.sched_getaffinity(0)),
      'status':'passed','units':results,'total_wire_bytes':sum(r['wire_bytes'] for r in results),'wall_s':time.monotonic()-start,'cpu_s':time.process_time()-cpu,'max_rss_kib':resource.getrusage(resource.RUSAGE_SELF).ru_maxrss,
      'hessian_identity':{key:value.record() for key,value in identities.items()},'storage':fs,'full_model_exported':False,'encoded_units':0}
