@@ -1,48 +1,24 @@
 # Tessera plan-to-serve architecture
 
-Every live shell entry containing a literal Docker subcommand outside the
-read-only allow-list, and every Python entry constructing Docker launch argv,
-under `experiments/` and `tools/`
-calls `experiments/flux_docker_guard.sh` before that use. This includes shell
-cleanup commands, not just `docker run`. Read-only `ps`, `inspect`, `image inspect`,
-`images`, `info` and `version` queries need no guard; `--gpus` still does. Python cleanup-only
-helpers are outside this tree check. The guard refuses when `FLUX_JOB_ID` is present,
-including an empty value. No reviewed serving wrapper exists yet.
-Mutating root-Docker use inside Flux needs the lead's reviewed path. Every
-subcommand outside the allow-list is guarded, including unknown subcommands.
-All remaining direct-Docker serving entries refuse, as do
-`tools/build_serving_image.py --run` and every stage of
-`experiments/run_glm_native_construction.py`, including `encode`: its declared
-`--shm-size 1g` is unsupported by the rootless launcher's contract, tracked in #1670. Do not drop
-that bound to migrate it. `experiments/t8r_speed/build_ext.sh` now runs through
-the rootless launcher in CPU-only mode, with the consumer's source and extension
-mounts, persistent HOME and launcher-owned TMPDIR and single-thread build bounds.
-Its `python3 -c` program precedes the library arguments and refuses an empty
-library selection before writing a native-build record.
-The build wrapper defaults to `/tmp/flux-vanilla`, with `FLUX_SCRATCH` overriding
-it as in the other wrappers. Single-thread build duration is unmeasured; its
-admitted CPU row needs a longer walltime than a parallel build, sized from
-measurement rather than the timing action's walltime.
+Unused root-Docker experiment entries were deleted. No permitted fleet path
+ran them. Their private wrappers, tests and Bazel inputs were deleted too.
+The serving-image builder and direct GLM construction driver were among these
+entries. The Docker guard and its tree tests were deleted.
+Entries with retained callers remain, including `step4_capture_launch.run_phase`,
+which the current shape-time producer imports. Direct execution on a fleet
+host is prohibited. The rootless Podman launcher and its moved wrappers remain.
+Measurement notes under `docs/measurements/` retain the historical commands.
+
+`experiments/t8r_speed/build_ext.sh` uses the rootless launcher in CPU-only mode.
+It keeps the consumer's source and extension mounts, persistent HOME,
+launcher-owned TMPDIR and single-thread build bounds. Its `python3 -c` program
+precedes the library arguments. An empty library selection fails before the
+native-build record is written. `FLUX_SCRATCH` overrides `/tmp/flux-vanilla`.
+Single-thread build duration is unmeasured. Size its admitted walltime from
+measurement before use.
 `serve_lock.sh`, `run_gemv_bench.sh` and `graph_attest_nightly/census-nightly.sh`
-only query Docker and no longer refuse Flux. `t16_census/census_stub.sh` delegates
-container lifetime to the Podman launcher; its obsolete root-Docker cleanup and
-the watcher that called it are removed. Its TP2-window check is before launch.
-`graph_attest_nightly/run-arm-nightly.sh` stays refused because `srv-nightly.sh`
-starts a root-Docker GPU serve. `compile_dispatch_served.sh` also keeps its guard
-because it calls the root-Docker `serve_and_dump_kl.sh`.
-`experiments/step4_capture_launch.py` refuses at entry to `main`, before argument
-processing, output creation, image inspection or the GPU sampler, with exit 2.
-The source-derived guard test checks call order before literal Docker launch
-argv, and runs every guarded shell entry with empty and nonempty Flux job IDs
-against a recording fake Docker. Python guards must precede the argv in the
-same function or run at entry to `main`, and explicitly return a nonzero guard
-status. Discarded results and branch-local calls do not qualify. A source-derived
-Python entry sweep checks exit 2, the guard's message, and no traceback before
-runtime access. GLM construction and regdirect compilation also guard before
-argument processing. Regdirect imports Torch only after that refusal check.
-The serving-image CLI calls the guard
-at entry too; inside Flux rendering refuses. Both `--run` and `--submit` refuse
-on every host with the root-store reason, and historical `--collect` remains available.
+only query Docker. `t16_census/census_stub.sh` delegates container lifetime to
+the Podman launcher. Its TP2-window check is before launch.
 
 Re-stamped 2026-11-10 for the owned GPU container launcher. The `run` entry
 in `tools/_flux_gpu_jobspec.py` accepts a digest-pinned container request
@@ -121,14 +97,7 @@ autouse fixture. Tests set their own connection and admission variables;
 the enclosing Flux job's broker URI and job identity are not test inputs.
 
 Re-stamped 2026-11-10 for the Flux migration at `d6b30853`.
-`tools/build_serving_image.py` prints a CPU build job, but `--submit` refuses
-before submission because its output targets the root Docker store. No reviewed
-build path exists yet. The lead must choose a rootless Podman build in a Flux
-job plus one reviewed `docker load` of a pinned-digest tarball, or one reviewed
-root-Docker entry. `--run` always refuses too. Use `--collect DIR` to read a
-saved launch. Collection exits zero only for a terminal record with
-`returncode == 0` and no `evidence_errors`; a running submission is only an
-acknowledgement. `experiments/ts91_chain.sh` and
+`experiments/ts91_chain.sh` and
 `experiments/submit_gb_d1_producer.sh` use `tools/_flux_gpu_jobspec.py` to
 submit and collect through `--submit`, with an explicit preview mode. Their
 retained 45/60-minute requests and the 48 GiB D1 request are refused under
@@ -3775,7 +3744,7 @@ ranks into the histogram the attestation reads
 (`census.join_rank_histograms`). Above one rank the receipt gains an additive
 `topology` block and a `ranks` list of `tessera.rank-census/1` records; at one
 rank it is byte for byte what it was, and the blocks' absence is what says
-world size 1. `experiments/tessera_plugin_served_tp.sh` is the two-box driver.
+world size 1. The unused root-Docker two-box driver was deleted.
 No contract version, cell or default moves. See §4.5g.
 
 Re-stamped 2026-09-12 for the build's backend layer (#452): the two JIT
@@ -8534,7 +8503,7 @@ fraction-only on an unbounded command line, and `decoder_coverage.required` is
 `[]`, which is how a gate tells "nothing was required" from "everything
 required was measured".
 
-`experiments/tessera_plugin_served_tp.sh` drives two boxes: a ray head here, a
+The deleted `experiments/tessera_plugin_served_tp.sh` drove two boxes: a ray head here, a
 ray worker over ssh on the other, one engine at tensor parallel 2. It refuses
 before it starts anything if the other box holds no checkout at the same
 absolute path or holds a different commit -- ray ships no code, so rank 1

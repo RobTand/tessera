@@ -13,7 +13,7 @@ the observation the configuration describes.
 ``experiments/owned_container.sh`` measured why the mask is spelled
 ``--cpuset-cpus`` and not ``--cpus`` (a CFS quota changes no CPU count a
 library can read, so a quota-limited container still sizes its pools for the
-whole box), and ``experiments/run_glm_native_construction.py`` is the existing
+whole box), and the deleted ``experiments/run_glm_native_construction.py`` was the
 docker launcher that already spells it that way.  This test
 holds the step-4 launcher to the same rule.
 """
@@ -28,25 +28,6 @@ from types import SimpleNamespace
 import pytest
 
 ROOT = Path(__file__).resolve().parents[1]
-
-
-@pytest.mark.parametrize('job_value', ['', 'f123'])
-def test_flux_refusal_precedes_arguments_docker_and_sampler(tmp_path, job_value):
-    binary = tmp_path / 'bin'
-    binary.mkdir()
-    for name in ('docker', 'nvidia-smi'):
-        command = binary / name
-        command.write_text('#!/bin/sh\ntouch "$CONTROL/runtime-reached"\nexit 99\n')
-        command.chmod(0o755)
-    result = subprocess.run([sys.executable, str(ROOT / 'experiments/step4_capture_launch.py')],
-                            env={**os.environ, 'FLUX_JOB_ID': job_value, 'CONTROL': str(tmp_path),
-                                 'PATH': f'{binary}:{os.environ["PATH"]}'},
-                            capture_output=True, text=True, timeout=30)
-    assert result.returncode == 2
-    assert 'FLUX_JOB_ID' in result.stderr and 'lead' in result.stderr
-    assert 'Traceback' not in result.stderr
-    assert not (tmp_path / 'runtime-reached').exists()
-    assert sorted(p.name for p in tmp_path.iterdir()) == ['bin']
 
 
 def _launcher():

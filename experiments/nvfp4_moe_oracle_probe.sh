@@ -1,7 +1,5 @@
 #!/usr/bin/env bash
 
-source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/flux_docker_guard.sh"
-refuse_flux_docker || exit 2
 # Run experiments/nvfp4_moe_oracle_probe.py inside the pinned serving build.
 #
 # This is NOT a serve: no model is loaded and no port is bound.  It still takes

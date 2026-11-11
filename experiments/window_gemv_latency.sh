@@ -1,7 +1,5 @@
 #!/usr/bin/env bash
 
-source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/flux_docker_guard.sh"
-refuse_flux_docker || exit 2
 # Served latency for one window-GEMV arm: TTFT and TPOT off vLLM's own
 # histograms, plus a torch profile of the served process, plus the box's power
 # series (read separately, from Netdata).

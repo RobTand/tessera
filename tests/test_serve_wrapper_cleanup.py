@@ -70,7 +70,6 @@ def _run_wrapper(tmp_path, *, fail_remove=False, ready=False, metrics="clean"):
     scripts.mkdir()
     wrapper = scripts / WRAPPER.name
     shutil.copyfile(WRAPPER, wrapper)
-    shutil.copyfile(WRAPPER.parent / "flux_docker_guard.sh", scripts / "flux_docker_guard.sh")
     shutil.copyfile(WRAPPER.parent / "serve_metrics.sh", scripts / "serve_metrics.sh")
     (scripts / "runtime_image.sh").write_text("runtime_image_require() { :; }\n")
     (scripts / "build_identity.sh").write_text(

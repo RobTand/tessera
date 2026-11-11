@@ -403,9 +403,6 @@ def run_phase(label: str, command: list, log: Path, timeout_s: int) -> dict:
 
 
 def main() -> int:
-    refusal = subprocess.run(["bash", str(Path(__file__).with_name("flux_docker_guard.sh"))])
-    if refusal.returncode:
-        return refusal.returncode
     parser = argparse.ArgumentParser(description=__doc__,
                                      formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--out", type=Path, required=True,

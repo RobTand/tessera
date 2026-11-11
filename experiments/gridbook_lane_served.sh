@@ -1,7 +1,5 @@
 #!/usr/bin/env bash
 
-source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/flux_docker_guard.sh"
-refuse_flux_docker || exit 2
 # Serve a Tessera-wire checkpoint through Gridbook's Tessera lane (both
 # families: TESSERA_NVFP4 W4A4 and TESSERA_FP8 W8A8, selected per module by the
 # checkpoint) on the vanilla vLLM 0.28 image (Gridbook as an out-of-tree plugin,

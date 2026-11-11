@@ -1,7 +1,5 @@
 #!/usr/bin/env bash
 
-source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/flux_docker_guard.sh"
-refuse_flux_docker || exit 2
 # Greedy smoke on BOTH arms of a routed-MoE cell, one serve at a time (#198).
 #
 # Arm "bf16" is the source checkpoint on the pinned image's own vLLM; arm

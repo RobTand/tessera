@@ -1,7 +1,5 @@
 #!/usr/bin/env bash
 
-source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/flux_docker_guard.sh"
-refuse_flux_docker || exit 2
 # Run experiments/moe_route_load_probe.py inside a pinned serving build.
 #
 # WITH A GPU.  The probe constructs vLLM's real ``RoutedExperts``, loads

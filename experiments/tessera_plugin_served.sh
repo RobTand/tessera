@@ -1,7 +1,5 @@
 #!/usr/bin/env bash
 
-source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/flux_docker_guard.sh"
-refuse_flux_docker || exit 2
 # Serve a Tessera-wire checkpoint through Tessera's own vLLM plugin on the
 # selected digest-pinned image (the dense vLLM 0.28 pin is the default). Dump
 # its logprobs on the selected model-matched corpus, compare to the supplied

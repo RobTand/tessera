@@ -2621,17 +2621,6 @@ ts_py_library(
 )
 
 ts_py_library(
-    name = "regdirect_stage1/compile",
-    srcs = [
-        "regdirect_stage1/compile.py",
-    ],
-    data = [
-        "//src/tessera:serving/csrc/regdirect_routed.cu",
-        "flux_docker_guard.sh",
-    ],
-)
-
-ts_py_library(
     name = "regdirect_stage1/fragment_synth",
     srcs = [
         "regdirect_stage1/fragment_synth.py",
@@ -2859,16 +2848,6 @@ ts_py_library(
 )
 
 ts_py_library(
-    name = "run_glm_native_construction",
-    srcs = [
-        "run_glm_native_construction.py",
-    ],
-    data = [
-        "flux_docker_guard.sh",
-    ],
-)
-
-ts_py_library(
     name = "rung_rd_curves_2026-09-03/aura_rungs",
     srcs = [
         "rung_rd_curves_2026-09-03/aura_rungs.py",
@@ -2973,7 +2952,6 @@ ts_py_library(
     ],
     data = [
         "//src/tessera:serving/runtime_contract.json",
-        "flux_docker_guard.sh",
     ],
     deps = [
         ":capture_full_engine_resources",
