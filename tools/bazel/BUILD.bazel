@@ -11,7 +11,7 @@ filegroup(
 )
 
 # One pinned rbe-ubuntu24-04 index: these are its amd64 and arm64 manifests,
-# the same images TL3's and PrismaBuild's gates use, so BuildBuddy's executors
+# the same images TL3's gates use, so BuildBuddy's executors
 # keep them warm. MODULE.bazel pins the cc toolchain to the same image.
 platform(
     name = "linux_amd64",
