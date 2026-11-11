@@ -1,13 +1,12 @@
 #!/usr/bin/env bash
+# TMPDIR and thread bounds are launcher-owned; temporary writes use removable job scratch.
 # Run the fused routed window lane's GPU tests (tests/test_routed_fused_window.py,
-# tessera#640) inside the pinned serving image.  Run as a Flux GPU job (see the
-# rendered tools/_flux_gpu_jobspec.py line; Flux GPU path rendered, not qualified)
-# as the job's command; same container discipline as
-# routed_census.sh (checkout read-only at /work, every write under <out_dir>).
+# tessera#640) inside the pinned serving image.  Run inside an admitted Flux GPU job as its command; same container discipline as
+# routed_census.sh (checkout read-only at /work, persistent writes under <out_dir>).
 #
 # The image ships no pytest.  The runner is borrowed, pure Python, from a host
 # venv of the SAME interpreter minor (3.12): only pytest, _pytest, pluggy,
-# iniconfig, packaging and the py.py shim are copied under <out_dir>/runner-sp and appended to
+# iniconfig, packaging, pygments and the py.py shim are copied under <out_dir>/runner-sp and appended to
 # PYTHONPATH, so the image's torch, triton and vLLM are the ones imported.
 #   routed_fused_tests.sh <checkout> <out_dir> [pytest args...]
 # Environment:
@@ -15,9 +14,10 @@
 #   TEST_RUNNER_SP    site-packages holding the pure-Python runner (required)
 #   TEST_RO_MOUNTS    host directories mounted read-only at the same path
 #   TEST_CPU_ONLY    1: admitted CPU controls, no GPU request inside the container
-#   TEST_LOCAL_TMP    1: TMPDIR and pytest's basetemp on a container tmpfs
+#   TEST_LOCAL_TMP    1: pytest basetemp on a container tmpfs
 #   NATIVE_CONTAINER_SRC / NATIVE_CONTAINER_EXT: match retained build paths
 set -euo pipefail
+export TESSERA_CONTAINER_ENGINE=podman
 CHECKOUT=$(realpath "$1"); OUT=$(realpath -m "$2"); shift 2
 IMAGE_REF=${ORACLE_IMAGE:?set ORACLE_IMAGE to the immutable digest-pinned measurement image}
 SP=${TEST_RUNNER_SP:?set TEST_RUNNER_SP to a python3.12 site-packages holding the test runner}
@@ -40,7 +40,7 @@ fi
 mkdir -p "$OUT/home" "$OUT/tmp" "$OUT/triton" "$EXT" "$OUT/runner-sp"
 # py.py is the one-file shim _pytest/compat.py imports (the retired ``py``
 # library's name); a runner copy without it fails at import.
-for pkg in pytest _pytest pluggy iniconfig packaging py.py; do
+for pkg in pytest _pytest pluggy iniconfig packaging pygments py.py; do
   [[ -e "$SP/$pkg" ]] || { echo "missing $SP/$pkg" >&2; exit 2; }
   rm -rf "$OUT/runner-sp/$pkg"
   cp -r "$SP/$pkg" "$OUT/runner-sp/$pkg"
@@ -59,9 +59,10 @@ HEAD=${TESSERA_HEAD:-$(git -C "$CHECKOUT" rev-parse HEAD 2>/dev/null || echo unk
 STATE=${TESSERA_STATE:-$(git -C "$CHECKOUT" status --short 2>/dev/null | tr '\n' ';' || echo unknown)}
 echo "host=$(hostname) cpus=$CPUS head=$HEAD state=[$STATE] image=$IMAGE_REF"
 # TEST_RO_MOUNTS: host directories tests read (fixtures such as the A4 wires),
-# mounted read-only at the same path.  TEST_LOCAL_TMP=1 puts TMPDIR and pytest's
+# mounted read-only at the same path.  TEST_LOCAL_TMP=1 puts pytest's
 # basetemp on a container tmpfs: flock on an NFS out directory fails with EBADF.
 EXTRA=()
+if [[ -n "${TEST_CONTAINER_CIDFILE:-}" ]]; then EXTRA+=(--cidfile "$TEST_CONTAINER_CIDFILE"); fi
 if [[ -n "${BENCH_SRC:-}" || "$CONTAINER_SRC" != /work/src ]]; then
   SOURCE_HOST=${BENCH_SRC:-$CHECKOUT/src}
   [[ -f "$SOURCE_HOST/tessera/serving/csrc/routed_fused_window.cu" ]] || { echo "not a tessera src tree: $SOURCE_HOST" >&2; exit 2; }
@@ -74,20 +75,20 @@ if [[ "$CONTAINER_SRC" != /work/src ]]; then
   EXTRA+=(-v "$PROJECT_FILE":"$(dirname "$CONTAINER_SRC")/pyproject.toml":ro)
 fi
 for d in ${TEST_RO_MOUNTS:-}; do [[ -d "$d" ]] || { echo "missing $d" >&2; exit 2; }; EXTRA+=(-v "$d":"$d":ro); done
-BT="$OUT/tmp/pytest-tmp"; TD="$OUT/tmp"
-if [[ "${TEST_LOCAL_TMP:-0}" == 1 ]]; then EXTRA+=(--tmpfs /pbtmp:rw,exec,size=8g); BT=/pbtmp/pytest-tmp; TD=/pbtmp; fi
-GPU_ARGS=(--gpus all)
-if [[ "${TEST_CPU_ONLY:-0}" == 1 ]]; then GPU_ARGS=(); fi
-docker run --rm "${GPU_ARGS[@]}" --ipc=host --network=host --cpuset-cpus "$CPUS" \
+BT="$OUT/tmp/pytest-tmp"
+if [[ "${TEST_LOCAL_TMP:-0}" == 1 ]]; then EXTRA+=(--tmpfs /pbtmp:rw,exec,size=8g); BT=/pbtmp/pytest-tmp; fi
+GPU_ARGS=()
+if [[ "${TEST_CPU_ONLY:-0}" == 1 ]]; then GPU_ARGS=(--cpu-only); fi
+python3 "$CHECKOUT/tools/_flux_gpu_jobspec.py" run --out "$OUT" --scratch-root "${FLUX_SCRATCH:-/tmp/flux-vanilla}" "${GPU_ARGS[@]}" -- \
   --user "$(id -u):$(id -g)" \
   -v "$CHECKOUT":/work:ro -v "$OUT":"$OUT" \
-  -e HOME="$OUT/home" -e TMPDIR="$TD" -e TRITON_CACHE_DIR="$OUT/triton" \
+  -e HOME="$OUT/home" -e TRITON_CACHE_DIR="$OUT/triton" \
   -e TORCH_EXTENSIONS_DIR="$CONTAINER_EXT" -e PYTHONDONTWRITEBYTECODE=1 \
   -e NATIVE_CONTAINER_SRC="$CONTAINER_SRC" \
   -e TERMINAL_NATIVE_IDENTITY_DIR="$OUT/native-identities" \
   -e PYTHONPATH="$CONTAINER_SRC":/work/tests:/work/experiments:"$OUT/runner-sp" \
-  -e HOST_NAME="$(hostname)" -e OMP_NUM_THREADS=1 -e MKL_NUM_THREADS=1 \
-  -e OPENBLAS_NUM_THREADS=1 -e NUMEXPR_NUM_THREADS=1 -e PYTHONUNBUFFERED=1 \
+  -e HOST_NAME="$(hostname)" \
+  -e PYTHONUNBUFFERED=1 \
   -e ORACLE_IMAGE="$IMAGE_REF" -e TESSERA_HEAD="$HEAD" -e TESSERA_STATE="$STATE" \
   -e TESSERA_ROUTED_FUSED_VERBOSE="${TESSERA_ROUTED_FUSED_VERBOSE:-}" \
   -e FLUX_JOB_ID="${FLUX_JOB_ID:-}" \

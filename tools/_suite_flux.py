@@ -14,7 +14,7 @@ import time
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 from tessera._dev.suite_source import measured_source
-from _flux_shape import THREADS, duration_seconds, resource_shape
+from _flux_shape import THREADS, duration_seconds, resource_shape, memory_peak_receipt
 
 
 def encoded(value):
@@ -297,7 +297,7 @@ def submit(directory, checkout, command, cores, memory, timeout, environment, *,
     save(directory / "submission.json", {"state": "unknown", "launch_sha256": digest})
     env = {"PATH": "/usr/local/bin:/usr/bin:/bin", "HOME": "/home/rob",
            "PYTHONPATH": "src", "PYTHONDONTWRITEBYTECODE": "1", "PYTHONNOUSERSITE": "1",
-           "PRISMAQUANT_DEV_MODE": "0", **THREADS, **environment}
+           "PRISMAQUANT_DEV_MODE": "0", "FLUX_F58_FORCE_ASCII": "1", **THREADS, **environment}
     if container is not None:
         env["XDG_RUNTIME_DIR"] = "/run/user/1000"
     wrapper = [command[0], "-s", "tools/_suite_flux.py", "payload", str(directory), digest]
@@ -457,7 +457,8 @@ def payload(directory, digest):
         raise ValueError("interpreter/dependencies changed before payload")
     actual_job_id = os.environ["FLUX_JOB_ID"]
     scratch_root = payload_scratch_root()
-    scratch = scratch_root / actual_job_id
+    plain_job_id = checked(["job", "id", "--to=f58plain", actual_job_id]).strip()
+    scratch = scratch_root / plain_job_id
     filesystem = subprocess.check_output(["findmnt", "-n", "-o", "FSTYPE", "-T", str(scratch_root)], text=True).strip()
     if filesystem != ("xfs" if os.uname().machine == "x86_64" else "ext4"):
         raise ValueError("unqualified local scratch filesystem")
@@ -490,7 +491,7 @@ def payload(directory, digest):
             signal.signal(sig, forward)
         signal.signal(signal.SIGCHLD, signal.SIG_DFL)
         save(directory / "payload.json", record)
-        env = {**os.environ, "TMPDIR": str(scratch), "TMP": str(scratch), "TEMP": str(scratch),
+        env = {**os.environ, "FLUX_JOB_ID": plain_job_id, "TMPDIR": str(scratch), "TMP": str(scratch), "TEMP": str(scratch),
                "TESSERA_SUITE_DIRECTORY": str(directory), "TESSERA_SUITE_LAUNCH_SHA256": digest}
         child = subprocess.Popen(intent["command"], env=env, start_new_session=True)
         for sig in interrupted:
@@ -543,6 +544,7 @@ def payload(directory, digest):
                 record["scratch_removed"] = not scratch.exists()
             except OSError as exc:
                 record["cleanup_error"] = str(exc)
+            record.update(memory_peak_receipt(intent.get('memory_gib')))
             save(directory / "payload.json", record)
         finally:
             for sig, handler in previous.items():

@@ -7,7 +7,7 @@ exists to avoid: it would pass while the pin was wrong, and it would have to be
 edited every time the runtime is re-pinned.  These tests pin the RULE (the
 shape of the value, the membership check, the refusal) and read the value.
 
-No test here shells out to ``docker``.  The daemon's answer is injected, which
+Docker calls use controlled fakes. The daemon's answer is injected, which
 is what lets the cross-box case -- identical bytes, different local ``.Id`` --
 be tested at all: there is no second box inside a test run.
 """
@@ -530,3 +530,57 @@ def test_the_shell_helper_refuses_and_prints_json_a_program_can_read(tmp_path, m
     payload = json.loads(proc.stdout.strip().splitlines()[-1])
     assert "REFUSED" in proc.stderr
     assert payload["refused"] is True and payload["reason"] == "image_pin_mismatch"
+
+
+def test_shell_helper_resolves_the_selected_podman_store(tmp_path):
+    """The runtime's RepoDigests, rather than another daemon's store, decide."""
+    binary = tmp_path / 'podman'
+    image = 'example.invalid/cuda@sha256:' + 'a' * 64
+    binary.write_text('#!/bin/sh\nprintf \'sha256:%s\\t["%s"]\\n\' ' + 'b' * 64 + ' ' + image + '\n')
+    binary.chmod(0o755)
+    command = ['bash', '-c', f'source "{ROOT}/experiments/runtime_image.sh"; runtime_image_require "$1"', '_', image]
+    result = subprocess.run(command, env={**os.environ, 'PATH': f'{tmp_path}:{os.environ["PATH"]}',
+                                         'TESSERA_CONTAINER_ENGINE': 'podman'}, capture_output=True, text=True)
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert image.split('@')[1] in result.stdout
+    assert 'b' * 64 in result.stdout
+
+
+@pytest.mark.parametrize('job_value', ['', 'f123'])
+def test_sourcing_serve_lock_in_flux_returns_to_caller(job_value):
+    result = subprocess.run(['bash', '-c', 'source "$1"; echo caller-continued',
+                             '_', str(ROOT / 'experiments/serve_lock.sh')],
+                            env={**os.environ, 'FLUX_JOB_ID': job_value}, capture_output=True, text=True)
+    assert result.returncode == 0, result.stderr
+    assert result.stdout == 'caller-continued\n'
+
+
+@pytest.mark.parametrize('entry', ['t16_census/census_stub.sh', 'graph_attest_nightly/census-nightly.sh'])
+def test_podman_census_reaches_launcher_in_flux(tmp_path, entry):
+    checkout = tmp_path / 'checkout'
+    experiments = checkout / 'experiments'
+    (experiments / Path(entry).parent).mkdir(parents=True)
+    (experiments / entry).write_text((ROOT / 'experiments' / entry).read_text())
+    (experiments / 'serve_lock.sh').write_text('serve_lock_acquire() { :; }\nserve_lock_release() { :; }\n')
+    launcher = experiments / 'routed_fused_census.sh'
+    launcher.write_text('#!/bin/sh\nprintf "%s\\n" "$@" > "$CONTROL/launcher-argv"\nexit 7\n')
+    launcher.chmod(0o755)
+    model = tmp_path / 'stubs/stub-probe'
+    model.mkdir(parents=True)
+    (model / 'config.json').write_text('{}')
+    binaries = tmp_path / 'bin'
+    binaries.mkdir()
+    for name, body in {'hostname': 'echo sparky', 'awk': 'echo 200',
+                       'docker': '[ "$1" = ps ] || exit 99', 'nvidia-smi': 'exit 0',
+                       'git': 'echo controlled'}.items():
+        path = binaries / name
+        path.write_text('#!/bin/sh\n' + body + '\n')
+        path.chmod(0o755)
+    result = subprocess.run(['bash', str(experiments / entry), 'probe', str(checkout), str(model)],
+                            env={**os.environ, 'FLUX_JOB_ID': 'f123', 'CONTROL': str(tmp_path),
+                                 'PATH': f'{binaries}:{os.environ["PATH"]}', 'CENSUS_ROOT': str(tmp_path),
+                                 'CENSUS_OUT': str(tmp_path / 'out')},
+                            capture_output=True, text=True, timeout=30)
+    assert result.returncode == 7, result.stdout + result.stderr
+    assert (tmp_path / 'launcher-argv').read_text().splitlines()[:1] == [str(checkout)]
+    assert 'root Docker inside a Flux job is refused' not in result.stderr

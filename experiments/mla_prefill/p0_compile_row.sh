@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+
 # CPU-only compile gate for the MLA pass-buffer schedule, run INSIDE the pinned
 # serving image with no GPU. One Flux CPU job selects baseline,
 # candidate or mutant and retains its final DSO plus resource/SASS evidence.

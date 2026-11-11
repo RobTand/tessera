@@ -687,7 +687,6 @@ filegroup(
         "//experiments:fused_member_rung_identity.py",
         "//experiments:glm_routed_owner_inputs.py",
         "//experiments:moe_greedy_smoke.py",
-        "//experiments:nvfp4_moe_route_full_domain_probe.sh",
         "//experiments:results/glm53_a4_stub_tp2_kl_arm_route_trace_rank0.json",
         "//experiments:results/glm53_a4_stub_tp2_kl_arm_route_trace_rank1.json",
         "//experiments:results/glm53_a4_stub_tp2_route_trace_rank0.json",

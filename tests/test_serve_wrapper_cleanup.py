@@ -116,6 +116,8 @@ esac
         # not there so a run that gets past the gate fails there, fast.
         "TESSERA_KL_CORPUS": str(tmp_path / "no-such-corpus.json"),
     }
+    # Cleanup policy is exercised outside a job; in-job refusal has its own test.
+    env.pop("FLUX_JOB_ID", None)
     result = subprocess.run(
         ["bash", str(wrapper), str(tmp_path / "model"),
          str(tmp_path / "dump.json"), "teacher"],

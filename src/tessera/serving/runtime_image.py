@@ -160,7 +160,7 @@ def parse_reference(reference: str) -> tuple[str, str | None, str | None]:
 
 # ------------------------------------------------------------ inspection ---
 
-def docker_inspector(reference: str) -> dict[str, Any]:
+def docker_inspector(reference: str, *, engine: str = "docker") -> dict[str, Any]:
     """What the local daemon holds for ``reference``, or ``present: False``.
 
     Two fields, and the asymmetry between them is the point: ``repo_digests``
@@ -168,7 +168,7 @@ def docker_inspector(reference: str) -> dict[str, Any]:
     daemon's image store happens to call them and is comparable with nothing.
     """
     proc = subprocess.run(
-        ["docker", "image", "inspect", reference,
+        [engine, "image", "inspect", reference,
          "--format", "{{.Id}}\t{{json .RepoDigests}}"],
         capture_output=True, text=True)
     if proc.returncode != 0:
@@ -413,6 +413,8 @@ def main(argv: list[str] | None = None) -> int:
     sub.add_parser("pin", help="print the pinned pull reference")
     res = sub.add_parser("resolve", help="resolve an image; exit 2 if refused")
     res.add_argument("--image", required=True)
+    res.add_argument("--engine", choices=("docker", "podman"), default="docker",
+                     help="local image store that will execute the container")
     res.add_argument("--allow-unpinned", action="store_true",
                      help="do not exit 2 for an image outside the pinned "
                           "repository (the default already permits it)")
@@ -433,7 +435,7 @@ def main(argv: list[str] | None = None) -> int:
             for key, value in sorted(container_env(json.load(sys.stdin)).items()):
                 print(f"{key}={value}")
             return 0
-        record = resolve(args.image)
+        record = resolve(args.image, inspector=lambda ref: docker_inspector(ref, engine=args.engine))
     except RuntimeImageError as exc:
         print(json.dumps(exc.payload, sort_keys=True), flush=True)
         print(exc, file=sys.stderr)

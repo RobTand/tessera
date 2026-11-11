@@ -80,10 +80,8 @@ usage::
         [--tensor-parallel-size N] [--distributed-executor-backend {mp,ray}] \
         [--nnodes N] [--node-rank 0] [--master-addr HOST] [--master-port PORT]
 
-Above one box, ``experiments/tessera_plugin_served_tp.sh`` is the driver: it
-starts a ray head here and a ray worker on the other box, checks both hold the
-same checkout and the same pinned image, and runs this tool at ``--tensor-
-parallel-size 2 --distributed-executor-backend ray``.
+The unused root-Docker two-box driver was deleted. A replacement must bind
+both checkouts and pinned images before it runs this tool with Ray and TP2.
 
 The two forwards it drives are the two regimes ``lane_eligibility`` declares.
 The census calls them by the shape it drove (``prefill``, ``decode``) because

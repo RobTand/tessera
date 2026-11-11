@@ -2,6 +2,7 @@
 from pathlib import Path
 import re
 import shutil
+import subprocess
 
 
 def test_census_only_watches_guards_it_can_evaluate():
@@ -18,5 +19,7 @@ def test_census_command_substitutions_resolve_to_functions_or_tools():
     text = (root / 'experiments/t16_census/census_stub.sh').read_text()
     definitions = set(re.findall(r'^([A-Za-z_]\w*)\s*\(\)\s*\{', text, re.MULTILINE))
     commands = set(re.findall(r'\$\(([A-Za-z_]\w*)\b', text))
-    unresolved = {command for command in commands if command not in definitions and shutil.which(command) is None}
+    builtins = set(subprocess.check_output(['bash', '-c', 'compgen -b'], text=True).split())
+    unresolved = {command for command in commands
+                  if command not in definitions | builtins and shutil.which(command) is None}
     assert not unresolved, f'undefined census command substitutions: {sorted(unresolved)}'

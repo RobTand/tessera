@@ -117,11 +117,12 @@ def test_submit_environment_and_runtime_budget_are_explicit(suite, tmp_path, mon
     assert "--resources-shape=slot/[core=2;memory=8]" in render
     assert "--requires=x86_64" in render
     environment = dict(token.removeprefix("--env=").split("=", 1) for token in render[3:] if token.startswith("--env="))
-    assert set(environment) == {"PATH", "HOME", "PYTHONPATH", "PYTHONDONTWRITEBYTECODE", "PYTHONNOUSERSITE", "PRISMAQUANT_DEV_MODE",
+    assert set(environment) == {"PATH", "HOME", "FLUX_F58_FORCE_ASCII", "PYTHONPATH", "PYTHONDONTWRITEBYTECODE", "PYTHONNOUSERSITE", "PRISMAQUANT_DEV_MODE",
                                 "OMP_NUM_THREADS", "MKL_NUM_THREADS", "OPENBLAS_NUM_THREADS", "TORCH_NUM_THREADS",
                                 "NUMEXPR_NUM_THREADS", "MAX_JOBS", "CMAKE_BUILD_PARALLEL_LEVEL",
                                 "MAKEFLAGS", "NINJAFLAGS", "KL_TOOL_DIR"}
     assert environment["PYTHONPATH"] == "src"
+    assert environment["FLUX_F58_FORCE_ASCII"] == "1"
     assert all(environment[name] == "1" for name in ("OMP_NUM_THREADS", "MKL_NUM_THREADS",
                "OPENBLAS_NUM_THREADS", "TORCH_NUM_THREADS", "NUMEXPR_NUM_THREADS",
                "MAX_JOBS", "CMAKE_BUILD_PARALLEL_LEVEL"))
@@ -185,8 +186,16 @@ def test_gpu_jobspec_is_rendered_in_the_stock_shape_and_never_run():
         kwargs.update(bad)
         with pytest.raises(ValueError):
             spec.render(kwargs.pop("command"), **kwargs)
-    source = (ROOT / "tools/_flux_gpu_jobspec.py").read_text()
-    assert "subprocess" not in source and "os.exec" not in source and "os.system" not in source
+    # Render is pure even though the explicit run entry owns processes.
+    def unexpected(*args, **kwargs):
+        raise AssertionError("render crossed a process boundary")
+    original = spec.subprocess.run
+    spec.subprocess.run = unexpected
+    try:
+        assert spec.render(["true"], cores=1, memory_gib=1, walltime="1m",
+                           directory=str(FLUX_RENDER_ROOT / "render-fixture"))[1] == "submit"
+    finally:
+        spec.subprocess.run = original
 
 
 @pytest.mark.parametrize("walltime", ["0", "12", "0s", "-1m", "nanm", "infh"])
@@ -236,3 +245,32 @@ def test_gpu_renderer_cli_marks_no_submission_and_bounds_threads(capsys, tmp_pat
 
 def suite_flux_threads():
     return load("suite_flux_thread_table", ROOT / "tools/_suite_flux.py").THREADS
+
+
+@pytest.mark.parametrize("state", ["present", "missing_peak", "missing_proc", "malformed", "invalid_peak"])
+def test_memory_peak_receipt_is_observational(suite, tmp_path, state):
+    from _flux_shape import memory_peak_receipt
+
+    proc = tmp_path / "cgroup"
+    root = tmp_path / "sys"
+    peak = root / "user.slice/job:scope/memory.peak"
+    peak.parent.mkdir(parents=True)
+    proc.write_text("0::/user.slice/job:scope\n")
+    peak.write_text("123456789\n")
+    assert memory_peak_receipt(8, proc=proc, root=root) == {
+        "declared_memory_gib": 8, "memory_peak_bytes": 123456789}
+    if state == "missing_peak":
+        peak.unlink()
+    elif state == "missing_proc":
+        proc.unlink()
+    elif state == "malformed":
+        proc.write_text("not a cgroup entry\n")
+    elif state == "invalid_peak":
+        peak.write_text("invalid\n")
+    receipt = memory_peak_receipt(8, proc=proc, root=root)
+    assert receipt["declared_memory_gib"] == 8
+    if state == "present":
+        assert receipt["memory_peak_bytes"] == 123456789
+    else:
+        assert receipt["memory_peak_bytes"] is None
+        assert receipt["memory_peak_read_error"]

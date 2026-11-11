@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+
 # Served latency for one window-GEMV arm: TTFT and TPOT off vLLM's own
 # histograms, plus a torch profile of the served process, plus the box's power
 # series (read separately, from Netdata).

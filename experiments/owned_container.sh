@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+
 # Containers this wrapper owns, and the CPU budget it hands them (#375).
 #
 # Two rules, and both are about a name being the wrong handle for a container.

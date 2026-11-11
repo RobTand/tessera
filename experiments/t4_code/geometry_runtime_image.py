@@ -11,7 +11,7 @@ from tessera.serving.runtime_image import RuntimeImageError, _message, docker_in
 
 
 def measurement_image(image, *, inspector=docker_inspector, contract=None):
-    """Resolve actual Docker facts; identity drift stamps, absence still refuses."""
+    """Resolve actual selected-store facts; identity drift stamps, absence still refuses."""
     record = resolve(image, inspector=inspector, contract=contract)
     if record["refused"]:
         refusal = RuntimeImageError(_message(record), record)
@@ -34,11 +34,12 @@ def measurement_image(image, *, inspector=docker_inspector, contract=None):
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--image", required=True)
+    parser.add_argument("--engine", choices=("docker", "podman"), default="docker")
     args = parser.parse_args(argv)
     try:
         # Keep stdout one machine-readable JSON record; stamps remain in logs.
         with redirect_stdout(sys.stderr):
-            record = measurement_image(args.image)
+            record = measurement_image(args.image, inspector=lambda ref: docker_inspector(ref, engine=args.engine))
     except RuntimeImageError as exc:
         print(json.dumps(exc.payload))
         print(str(exc), file=sys.stderr)

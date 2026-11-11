@@ -11,8 +11,9 @@
 #        [SUBMIT=0] submit_gb_d1_producer.sh
 # Run with cwd = the Tessera checkout. Optional overrides: CENSUS_ROOT,
 # PRODUCER_AUTHORITY, PART_IMAGE, ROUTED_CACHE, INPUT_SCALES, PROFILE.
-# Any SUBMIT value other than 0 RENDERS the three Flux GPU submission lines (never runs them; GPU on
-# Flux needs the owner's per-run approval; Flux GPU path rendered, not qualified). The preflight imports
+# SUBMIT=render previews three Flux GPU commands; SUBMIT=1 submits and
+# collects each bounded job. Current requests need size/duration decisions.
+# The preflight imports
 # torch and hashes the installed package. Run SUBMIT=0 as a Flux CPU job for processor proof.
 #
 # The producer (#944): TESSERA_PRODUCER_PYTHON names the interpreter that
@@ -30,7 +31,7 @@
 # SUBMIT=0 is the explicit processor entry: it checks the inputs and runs
 # the actual authentication only, then prints the receipt identity and
 # stops. No submission, no graphics work, no encode. Use it for processor
-# proof. Any other value renders the three graphics submission lines.
+# proof. SUBMIT=render previews the three GPU submission lines.
 #
 # Every refusal here is a correctness refusal: it holds in development
 # mode and in certified mode alike (D32). No recorded-against-running
@@ -112,12 +113,14 @@ PY
   exit 0
 fi
 
+SUBMIT_ARGS=(--submit)
+[ "$SUBMIT" != render ] || SUBMIT_ARGS=()
 [ -f "$SCALES" ] || refuse "INPUT_SCALES=$SCALES is not a file"
-# GPU on Flux needs the owner's per-run approval: these are RENDERED lines (stock GPU shape, GPU-eligible
-# hosts, closed environment, explicit walltime) for review. This script never submits or runs them.
+# SUBMIT=render previews the requests. Submission refuses the retained
+# 45-minute duration and 48 GiB D1 size until the fleet master decides.
 for spec in "GB 3" "GB 4"; do
   set -- $spec
-  python3 "$RENDER" --cores 8 --memory-gib 16 --walltime 45m \
+  python3 "$RENDER" "${SUBMIT_ARGS[@]}" --cores 8 --memory-gib 16 --walltime 45m \
     --out "${FLUX_OUT:?set FLUX_OUT to a unique owned output directory under /mnt/shared}/gb-$2" \
     --env CENSUS_ROOT="$R" \
     --env PRODUCER_AUTHORITY="$AUTH" \
@@ -127,7 +130,7 @@ for spec in "GB 3" "GB 4"; do
     --env TESSERA_PRODUCER_SOURCE="$SOURCE" \
     -- bash experiments/t8_census/export_routed_part.sh "$1" "$2" 8
 done
-python3 "$RENDER" --cores 4 --memory-gib 48 --walltime 45m \
+python3 "$RENDER" "${SUBMIT_ARGS[@]}" --cores 4 --memory-gib 48 --walltime 45m \
   --out "${FLUX_OUT:?set FLUX_OUT to a unique owned output directory under /mnt/shared}/d1" \
   --env CENSUS_ROOT="$R" \
   --env PRODUCER_AUTHORITY="$AUTH" \
