@@ -6,7 +6,8 @@ The serving-image builder and direct GLM construction driver were among these
 entries. The Docker guard and its tree tests were deleted.
 Entries with retained callers remain, including `step4_capture_launch.run_phase`,
 which the current shape-time producer imports. Direct execution on a fleet
-host is prohibited. The rootless Podman launcher and its moved wrappers remain.
+host is prohibited. Do not run a kept `docker run` wrapper in a Flux job until
+the serving work deletes it or moves it behind the one reviewed wrapper. The rootless Podman launcher and its moved wrappers remain.
 Measurement notes under `docs/measurements/` retain the historical commands.
 
 `experiments/t8r_speed/build_ext.sh` uses the rootless launcher in CPU-only mode.
