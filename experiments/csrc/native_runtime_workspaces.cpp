@@ -1,6 +1,5 @@
-// Read existing Torch BLAS workspace maps after Torch/CUDA initialization.
-// Build and execute only through PrismaBuild. This observer never creates,
-// clears, resizes or substitutes a serving workspace.
+// Read existing Torch BLAS workspace maps without changes after Torch/CUDA initialization.
+// Submit it as a Flux job (see the flux skill).
 #include <ATen/cuda/CUDAContextLight.h>
 #include <shared_mutex>
 #include <sstream>
