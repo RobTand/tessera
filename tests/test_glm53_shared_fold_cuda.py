@@ -13,8 +13,8 @@ overflow, exact cancellation, a double-rounding tie, subnormals, NaN and
 infinities. The adapter cases fold through ``FusedRoutedWindowMoE.__call__``
 eagerly and under CUDA-graph replay.
 
-The lane is a CUDA kernel JIT-built on first use. These tests run through
-PrismaBuild inside the pinned serving image (``experiments/routed_fused_tests.sh``).
+Submit it as a Flux job (see the flux skill).
+Use the pinned serving image (``experiments/routed_fused_tests.sh``).
 """
 import sys
 from pathlib import Path
