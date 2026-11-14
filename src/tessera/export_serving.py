@@ -176,8 +176,9 @@ from tessera.fused import pack_fused, shared_input_global_scale  # noqa: E402
 from tessera.serving.contract import (  # noqa: E402
     PAYLOAD_FAMILY_BY_ROUTE, cell_covers_rung, classify_construction, construction_entry,
     format_entry, load_serving_contract, output_partitions)
+from tessera.metadata import FUSED, fused_module  # noqa: E402
 from tessera.serving.dense_ownership import (  # noqa: E402
-    FUSED, fused_module as _fused_module, partition_members, source_padding_rows)
+    partition_members, source_padding_rows)
 from tessera.serving.scheme import (  # noqa: E402
     MOE_GROUP_PROJECTIONS, MOE_GROUPS,
     MOE_SHARD_PROJECTIONS as SHARD_PROJECTION, STRUCTURE_DENSE,
@@ -1011,11 +1012,6 @@ def check_lanes(lanes, grid, q256: int, where: "str | None" = None,
 
 def module_of(tensor_name: str) -> str:
     return tensor_name[: -len(".weight")]
-
-
-def fused_module(tensor_name: str, architecture: str | None = None, *, config=None, tensor_names=None):
-    """Use the shared member rule for every export declaration."""
-    return _fused_module(tensor_name, architecture, config=config, tensor_names=tensor_names)
 
 
 def ignored_modules(tensor_name: str, shape, architecture: str | None = None, *,
@@ -2934,7 +2930,7 @@ def main():
         partitions[module] = parts
         if module.endswith((".indexer.wk_weights_proj", ".kv_b_proj")):
             try:
-                from tessera.serving.projection_routes import direct_consumer_resident_bytes
+                from tessera.metadata import direct_consumer_resident_bytes
             except ImportError as exc:
                 raise SystemExit(f"{module}: the direct weight consumer needs its runtime adapter") from exc
             direct_consumer_costs[module] = direct_consumer_resident_bytes(

@@ -94,6 +94,7 @@ ts_py_library(
         "kernel_window.py",
         "kernel_window_gemv.py",
         "lane_planes.py",
+        "metadata.py",
         "moe_execution.py",
         "moe_layout.py",
         "native_window_moe.py",
@@ -156,6 +157,7 @@ ts_py_library(
         ":errors",
         ":fixture_build",
         ":fused",
+        ":image_metadata",
         ":jit_build_lock",
         ":kernel_a4",
         ":kernel_a4_wire",
@@ -454,6 +456,13 @@ ts_py_library(
 )
 
 ts_py_library(
+    name = "image_metadata",
+    srcs = [
+        "image_metadata.py",
+    ],
+)
+
+ts_py_library(
     name = "jit_build_lock",
     srcs = [
         "jit_build_lock.py",
@@ -569,6 +578,18 @@ ts_py_library(
         ":bf16_route_cycle",
         ":export_serving",
         ":source_digest_cache",
+    ],
+)
+
+ts_py_library(
+    name = "projection",
+    srcs = [
+        "projection.py",
+    ],
+    deps = [
+        ":__init___cycle",
+        ":bf16_route_cycle",
+        ":decode",
     ],
 )
 
@@ -794,6 +815,10 @@ ts_py_library(
     name = "serving/dense_ownership",
     srcs = [
         "serving/dense_ownership.py",
+    ],
+    deps = [
+        ":__init___cycle",
+        ":bf16_route_cycle",
     ],
 )
 

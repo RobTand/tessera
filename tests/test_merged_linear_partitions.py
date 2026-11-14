@@ -2,7 +2,7 @@
 
 RED FIRST.  LFM2.5-8B-A1B's ``short_conv.in_proj`` is ONE checkpoint tensor
 that vLLM builds as ``MergedColumnParallelLinear(output_sizes=[dim] * 3)``.
-The exporter's name rule (``dense_ownership.fused_module``) sees one tensor and
+The exporter's name rule (``tessera.metadata.fused_module``) sees one tensor and
 declared one role; ``sharding.plan_shard`` pairs the declared roles with
 ``output_partition_sizes`` by position and refused the load::
 

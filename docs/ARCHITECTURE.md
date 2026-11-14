@@ -370,6 +370,50 @@ The T4 path requires span one and the LUT plane; the shared accountant retains n
 The source manifest and safetensors bytes remain unchanged. This metadata refresh does not attest serving.
 
 
+Re-stamped 2026-11-14 for the merged public producer metadata boundary.
+`tessera.metadata` owns the smoke record grammar, smoke status and attribution
+rules, and lane requirement decisions. `METADATA_API_VERSION` is
+`tessera.producer-metadata.v1`. The module imports only the standard library
+and the pure `tessera.structure` names. It imports no serving, encoder, kernel,
+Torch or vLLM module. `serving.contract` and `serving.scheme` import these same
+function objects; producer consumers can use them without importing serving.
+`parse_smoke_record(record, *, control, where)` preserves null records and
+returns independent record, row-list and row-dictionary objects. Refusals retain
+the existing field paths and diagnostics. A null record leaves the smoke's
+asserted status unchanged. The API marker identifies callables and grants no
+serving admission. This extraction changes no runtime contract bytes, wire,
+default, qualification, scope or gate decision. Consumer pins still require
+an explicit reviewed producer commit and packaged contract digest.
+
+Re-stamped 2026-10-16 for the additional pure producer route queries.
+`metadata` owns the complete ordered route declarations used by `serving.scheme`,
+plus the direct-consumer activation and resident-byte rules used by the runtime
+adapter. `route_family_for_grid` returns the first declared family for a grid and
+refuses an unknown grid by name. Serving retains its separate ambiguous-grid
+refusal in `route_for_grid`; both queries read the same table. The route table,
+family order, direct buffer sizes and activation contracts are unchanged.
+
+`tessera.image_metadata` owns launcher declaration replay, its environment
+field names and `RuntimeImageError`. Replay reads the supplied environment
+without consulting Docker or a live pin. The live launcher and CLI in
+`serving.runtime_image` import the same parser and exception class. The five
+refusal reasons, their ordering and copied exception payload are unchanged.
+
+Dense checkpoint naming also lives in `metadata`: `fused_module` returns an
+owner and ordered source members, `role_name` names a source leaf, and
+`glm_fused_groups` projects the ordered GLM leaf groups without exposing regexes.
+The explicit-config and source-name fallback rules retain their existing order.
+`serving.dense_ownership` retains output partition geometry and reads the same
+public role-name owner; the exporter and construction census use the public
+naming functions directly.
+
+`tessera.projection.direct_consumer_weight` owns the encoded-unit decoder for
+direct indexer and MLA weights. Importing the module loads only metadata; a
+decode call imports Torch and the producer codecs, never serving. FP8 and BF16 decoding retain master's canonical FP32 products and final cache dtype. Runtime bundle decoding, cache construction and vLLM callbacks
+remain in `serving.projection_routes`. The adapter reads its actual pure rules
+from `metadata`; producer callers import the decoder and byte rules directly
+from their public owners. No serving compatibility decoder is retained.
+
 Re-stamped 2026-10-07 for dec-1007-074543-94b8 (D41 schema for the register-direct kernel).
 The v2 and v3 tables accept decoder kind `register_direct`, owned by `tessera.regdirect_routed`.
 Its execution scope is `register_direct_fragment` and its word ring is `register`.
@@ -4758,7 +4802,7 @@ constructed `feed_forward.w13`, for both quantized targets and explicit BF16
 passthroughs. Routed `feed_forward.experts.N.w1/w3` remain projection leaves
 owned by the MoE stack; no dense alias applies to them. This naming comes from
 the pinned LFM construction receipt, not a fallback in the serving plugin.
-`tessera.export_serving.fused_module` is the one statement of that roster --
+`tessera.metadata.fused_module` is the one statement of that roster --
 q/k/v, every non-routed gate/up including `mlp.shared_experts`, and `w13` --
 and the converter's `fused_key` delegates to it rather than restating two of
 its rows (tessera#211), so the plan-time fused check and the export-time one
@@ -10734,7 +10778,7 @@ BF16 passthrough keeps every original tensor and bias unchanged.
 An explicit plan can select the router and vision Linear units without a default change.
 The selected vision qkv target keeps the stock prefix.
 
-The direct consumer byte rule belongs to serving.projection_routes.
+The direct consumer byte rule belongs to tessera.metadata.
 The DSA head tail uses its stock FP32 cache.
 The MLA absorbed path uses one decoded BF16 matrix and the stock split helper.
 Their decoded buffers increase resident prices; they do not become compressed BMM routes.
@@ -10749,7 +10793,8 @@ It does not infer replication from a shape total.
 The direct consumer contract separates the head operation from its unused dense output.
 The indexer head uses FP32 inputs and weights without activation quantization.
 The MLA split helper uses a BF16 matrix; the dense prefill path keeps its family contract.
-The producer reads direct_consumer_activation_contract and direct_consumer_weight from the runtime owner.
+The producer reads direct_consumer_activation_contract from tessera.metadata.
+The producer decodes direct weights through tessera.projection.direct_consumer_weight.
 T-16 direct weights use canonical FP32 value-scale products. The direct consumer selects its final cache dtype.
 
 The projection diagnostic uses raw BF16 values and separate FP32 row scales for its FP64 dense reference.

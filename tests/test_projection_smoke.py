@@ -133,7 +133,7 @@ def test_fp64_reference_keeps_raw_bf16_and_fp32_scale_precision(bf16_pair):
 
 
 def test_indexer_reference_matches_the_exact_fp32_direct_consumer(bf16_pair):
-    from tessera.serving.projection_routes import direct_consumer_weight
+    from tessera.projection import direct_consumer_weight
 
     blob, parsed, _values, _scale = bf16_pair
     prefix = next(prefix for prefix, kind, _columns, _roles in smoke.CASES if kind == "indexer")

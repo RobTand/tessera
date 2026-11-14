@@ -181,6 +181,7 @@ ts_py_library(
         "//src/tessera:export_serving",
         "//src/tessera:fragment_wire",
         "//src/tessera:fused",
+        "//src/tessera:projection",
         "//src/tessera:serving/dense_ownership",
         "//src/tessera:structure",
         "//src/tessera:trellis",
@@ -225,6 +226,7 @@ ts_py_library(
         "//src/tessera:__init___cycle",
         "//src/tessera:bf16_route_cycle",
         "//src/tessera:fused",
+        "//src/tessera:image_metadata",
         ":native_operator_resources",
     ],
 )
