@@ -71,13 +71,14 @@ from ..metadata import (
 )
 
 
-ROUTES = {family: {**PRODUCER_ROUTES[family], "builder": builder, "gemm_symbol": symbol}
-          for family, builder, symbol in (
-              (TESSERA_NVFP4, ("tessera.serving.nvfp4_route", "build_tessera_nvfp4_method"),
-               "tessera.routed_fused_e2m1.dense_forward_quantized"),
-              (TESSERA_FP8, ("tessera.serving.fp8_route", "build_tessera_fp8_method"), "torch._scaled_mm"),
-              (TESSERA_BF16, ("tessera.serving.bf16_route", "build_tessera_bf16_method"), "torch.mm"),
-          )}
+ROUTES = PRODUCER_ROUTES
+for family, builder, symbol in (
+    (TESSERA_NVFP4, ("tessera.serving.nvfp4_route", "build_tessera_nvfp4_method"),
+     "tessera.routed_fused_e2m1.dense_forward_quantized"),
+    (TESSERA_FP8, ("tessera.serving.fp8_route", "build_tessera_fp8_method"), "torch._scaled_mm"),
+    (TESSERA_BF16, ("tessera.serving.bf16_route", "build_tessera_bf16_method"), "torch.mm"),
+):
+    ROUTES[family].update(builder=builder, gemm_symbol=symbol)
 
 __all__ = [
     "NVFP4_ACTIVATION_CONTRACT",
