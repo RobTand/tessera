@@ -40,7 +40,7 @@ This preparation does not replace actual calibrated T16 release acceptance.
 The two-arm diagnostic holds every loaded native FD through experiment teardown
 to prevent `/proc/self/fd` pathname reuse in CPython/dlopen caches. Resolved
 prefetch distance, executable mapped inode and held-ELF digest are recorded per
-arm. `archive/flux-migration/4C-6/experiments/configs/value_prefetch_874_protocol.json` freezes staging,
+arm. [archive/flux-migration/4C-6/experiments/configs/value_prefetch_874_protocol.json](https://github.com/RobTand/tessera/blob/62c88591a92516002cbcc0e3e81918be2c0b22a9/archive/flux-migration/4C-6/experiments/configs/value_prefetch_874_protocol.json) freezes staging,
 single-attempt admission, finite numeric/sanitizer deadlines and cleanup;
 it is an authorization proposal, not permission to execute GPU work.
 Readset publication validates `tessera.declared_inputs.v1` and the whole-bank staging
