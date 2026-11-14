@@ -181,6 +181,7 @@ ts_py_library(
         "//src/tessera:export_serving",
         "//src/tessera:fragment_wire",
         "//src/tessera:fused",
+        "//src/tessera:metadata",
         "//src/tessera:projection",
         "//src/tessera:serving/dense_ownership",
         "//src/tessera:structure",
@@ -2359,6 +2360,7 @@ ts_py_library(
         "//src/tessera:__init___cycle",
         "//src/tessera:bf16_route_cycle",
         "//src/tessera:errors",
+        "//src/tessera:metadata",
         "//tools:_accounting_source",
         ":export_tessera_serving",
     ],
@@ -4617,6 +4619,7 @@ ts_py_library(
     deps = [
         "//src/tessera:__init___cycle",
         "//src/tessera:bf16_route_cycle",
+        "//src/tessera:metadata",
         "//src/tessera:serving/dense_ownership",
         "//tools:__init__",
         "//tools:tessera_route_census",

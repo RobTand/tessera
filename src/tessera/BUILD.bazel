@@ -94,7 +94,6 @@ ts_py_library(
         "kernel_window.py",
         "kernel_window_gemv.py",
         "lane_planes.py",
-        "metadata.py",
         "moe_execution.py",
         "moe_layout.py",
         "native_window_moe.py",
@@ -165,6 +164,7 @@ ts_py_library(
         ":kernel_roster",
         ":kernel_wire",
         ":layout",
+        ":metadata",
         ":routed_class_dispatch",
         ":scale_channel",
         ":serving/activation_attestation",
@@ -335,6 +335,7 @@ ts_py_library(
         ":errors",
         ":fused",
         ":historical_producer",
+        ":metadata",
         ":producer_authority",
         ":serving/dense_ownership",
         ":source_digest_cache",
@@ -558,6 +559,17 @@ ts_py_library(
 )
 
 ts_py_library(
+    name = "metadata",
+    srcs = [
+        "metadata.py",
+    ],
+    deps = [
+        ":__init___cycle",
+        ":structure",
+    ],
+)
+
+ts_py_library(
     name = "producer_authority",
     srcs = [
         "producer_authority.py",
@@ -590,6 +602,7 @@ ts_py_library(
         ":__init___cycle",
         ":bf16_route_cycle",
         ":decode",
+        ":metadata",
     ],
 )
 
@@ -818,7 +831,7 @@ ts_py_library(
     ],
     deps = [
         ":__init___cycle",
-        ":bf16_route_cycle",
+        ":metadata",
     ],
 )
 

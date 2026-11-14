@@ -2204,6 +2204,7 @@ ts_py_library(
         "test_producer_route_metadata.py",
         "test_profile_reach.py",
         "test_projection.py",
+        "test_projection_import.py",
         "test_projection_smoke.py",
         "test_provenance.py",
         "test_r768_tp2_census.py",
@@ -6201,6 +6202,7 @@ ts_py_library(
         "//src/tessera:decode",
         "//src/tessera:export_serving",
         "//src/tessera:fused",
+        "//src/tessera:metadata",
         "//src/tessera:serving/dense_ownership",
     ],
 )
@@ -7936,8 +7938,8 @@ ts_py_library(
     ],
     deps = [
         "//src/tessera:__init___cycle",
-        "//src/tessera:bf16_route_cycle",
         "//src/tessera:export_serving",
+        "//src/tessera:metadata",
     ],
 )
 
@@ -10634,6 +10636,7 @@ ts_py_library(
         "test_producer_route_metadata.py",
         "test_profile_reach.py",
         "test_projection.py",
+        "test_projection_import.py",
         "test_projection_smoke.py",
         "test_provenance.py",
         "test_r768_tp2_census.py",
@@ -11402,6 +11405,7 @@ ts_py_library(
         "test_producer_route_metadata.py",
         "test_profile_reach.py",
         "test_projection.py",
+        "test_projection_import.py",
         "test_projection_smoke.py",
         "test_provenance.py",
         "test_r768_tp2_census.py",
@@ -13712,6 +13716,7 @@ ts_py_library(
         "//experiments:moe_greedy_smoke",
         "//src/tessera:__init___cycle",
         "//src/tessera:bf16_route_cycle",
+        "//src/tessera:metadata",
     ],
 )
 
@@ -17352,9 +17357,6 @@ ts_py_test(
     name = "test_producer_ownership_metadata",
     path = "tests/test_producer_ownership_metadata.py",
     library = ":test_producer_ownership_metadata_lib",
-    deps = [
-        "//src/tessera:identity",
-    ],
     lane = "torch",
     args = [
         "--budget='{\"enforce\":true,\"seconds\":80,\"slow\":{}}'",
@@ -17366,9 +17368,6 @@ ts_py_test(
     name = "test_producer_ownership_metadata.bytes",
     path = "tests/test_producer_ownership_metadata.py",
     library = ":test_producer_ownership_metadata_lib",
-    deps = [
-        "//src/tessera:identity",
-    ],
     lane = "bytes",
     args = [
         "--budget='{\"enforce\":true,\"seconds\":80,\"slow\":{}}'",
@@ -17383,7 +17382,7 @@ ts_py_library(
     ],
     deps = [
         "//src/tessera:__init___cycle",
-        "//src/tessera:bf16_route_cycle",
+        "//src/tessera:metadata",
     ],
 )
 
@@ -17469,6 +17468,7 @@ ts_py_library(
     deps = [
         "//src/tessera:__init___cycle",
         "//src/tessera:bf16_route_cycle",
+        "//src/tessera:metadata",
     ],
 )
 
@@ -17545,6 +17545,45 @@ ts_py_test(
     timeout = "moderate",
 )
 
+ts_py_test(
+    name = "test_projection_import",
+    path = "tests/test_projection_import.py",
+    library = ":test_projection_import_lib",
+    deps = [
+        "//src/tessera:identity",
+    ],
+    lane = "torch",
+    args = [
+        "--budget='{\"enforce\":true,\"seconds\":80,\"slow\":{}}'",
+    ],
+    timeout = "moderate",
+)
+
+ts_py_test(
+    name = "test_projection_import.bytes",
+    path = "tests/test_projection_import.py",
+    library = ":test_projection_import_lib",
+    deps = [
+        "//src/tessera:identity",
+    ],
+    lane = "bytes",
+    args = [
+        "--budget='{\"enforce\":true,\"seconds\":80,\"slow\":{}}'",
+    ],
+    timeout = "moderate",
+)
+
+ts_py_library(
+    name = "test_projection_import_lib",
+    srcs = [
+        "test_projection_import.py",
+    ],
+    deps = [
+        "//src/tessera:__init___cycle",
+        "//src/tessera:projection",
+    ],
+)
+
 ts_py_library(
     name = "test_projection_lib",
     srcs = [
@@ -17557,6 +17596,7 @@ ts_py_library(
         "//src/tessera:__init___cycle",
         "//src/tessera:bf16_route_cycle",
         "//src/tessera:decode",
+        "//src/tessera:metadata",
         "//src/tessera:projection",
     ],
 )
@@ -24843,6 +24883,7 @@ ts_py_library(
     deps = [
         "//src/tessera:__init___cycle",
         "//src/tessera:bf16_route_cycle",
+        "//src/tessera:metadata",
     ],
 )
 

@@ -1,6 +1,7 @@
 # Tessera plan-to-serve architecture
 
 Re-stamped 2026-11-14 for archive deletion. No kept file reaches the 132 deleted archive files.
+Producer metadata holds wire facts. Serving owns loader builders and GEMM symbols.
 Git retains their source and receipts at commit `62c88591a92516002cbcc0e3e81918be2c0b22a9`.
 
 Unused root-Docker experiment entries were deleted. No permitted fleet path

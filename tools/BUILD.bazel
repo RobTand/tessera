@@ -546,7 +546,7 @@ ts_py_library(
     ],
     deps = [
         "//src/tessera:__init___cycle",
-        "//src/tessera:bf16_route_cycle",
+        "//src/tessera:metadata",
     ],
 )
 
@@ -670,6 +670,7 @@ ts_py_library(
         "//src/tessera:bf16_route_cycle",
         "//src/tessera:encode_cycle",
         "//src/tessera:fused",
+        "//src/tessera:metadata",
         "//src/tessera:serving/dense_ownership",
         "//src/tessera:serving/weights_mapper",
         "//tests:fused_bound",

@@ -66,9 +66,18 @@ from typing import Any, Mapping
 
 from ..metadata import (
     BF16_ACTIVATION_CONTRACT, FP8_ACTIVATION_CONTRACT, NVFP4_ACTIVATION_CONTRACT,
-    ROUTES, TESSERA_BF16, TESSERA_FAMILIES, TESSERA_FP8, TESSERA_NVFP4,
+    ROUTES as PRODUCER_ROUTES, TESSERA_BF16, TESSERA_FAMILIES, TESSERA_FP8, TESSERA_NVFP4,
     decide_lane_requirements,
 )
+
+
+ROUTES = {family: {**PRODUCER_ROUTES[family], "builder": builder, "gemm_symbol": symbol}
+          for family, builder, symbol in (
+              (TESSERA_NVFP4, ("tessera.serving.nvfp4_route", "build_tessera_nvfp4_method"),
+               "tessera.routed_fused_e2m1.dense_forward_quantized"),
+              (TESSERA_FP8, ("tessera.serving.fp8_route", "build_tessera_fp8_method"), "torch._scaled_mm"),
+              (TESSERA_BF16, ("tessera.serving.bf16_route", "build_tessera_bf16_method"), "torch.mm"),
+          )}
 
 __all__ = [
     "NVFP4_ACTIVATION_CONTRACT",

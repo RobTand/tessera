@@ -7,6 +7,7 @@ import subprocess
 import sys
 
 import pytest
+import torch
 
 ROOT = Path(__file__).resolve().parents[1]
 INDEXER = "model.layers.3.self_attn.indexer.wk_weights_proj"
@@ -17,29 +18,10 @@ def api():
     return importlib.import_module("tessera.projection")
 
 
-def test_projection_cold_import_has_no_runtime_dependencies():
-    script = '''
-import importlib.abc, sys
-sys.path.insert(0, sys.argv[1] + "/src")
-class Block(importlib.abc.MetaPathFinder):
-    def find_spec(self, fullname, path=None, target=None):
-        if any(fullname == prefix or fullname.startswith(prefix + ".") for prefix in
-               ("tessera.serving", "torch", "transformers", "triton", "vllm")):
-            raise ImportError("projection crossed dependency boundary: " + fullname)
-sys.meta_path.insert(0, Block())
-from tessera.projection import direct_consumer_weight
-assert callable(direct_consumer_weight)
-'''
-    result = subprocess.run([sys.executable, "-I", "-c", script, str(ROOT)],
-                            capture_output=True, text=True)
-    assert result.returncode == 0, result.stderr
-
-
 @pytest.fixture(scope="module", params=[("E4M3", 1024, "TESSERA_FP8"),
                                          ("BF16", 1792, "TESSERA_BF16")])
 def encoded(request):
     api()
-    import torch
     from tessera.alphabet import BF16_GRID, E4M3_GRID
     from tessera.export import encode_linear_planes
 
@@ -59,7 +41,6 @@ def test_direct_decoder_cache_and_output_mse_match_core_codec(encoded, tmp_path,
                                                              dtype_name):
     decoder = api().direct_consumer_weight
     assert decoder.__module__ == "tessera.projection"
-    import torch
     from tessera.decode import reconstruct_unit
     from tessera.unit_artifact import parse_unit_artifact
 
@@ -96,8 +77,9 @@ sys.meta_path.insert(0, Block())
 from tessera.projection import direct_consumer_weight
 import torch
 root = pathlib.Path(sys.argv[1]) / "tests/data/legacy"
-for label, family in (("e4m3", "TESSERA_FP8"), ("bf16", "TESSERA_BF16")):
-    blob = (root / (label + "-1024-window-channel-256c.tessera")).read_bytes()
+for filename, family in (("e4m3-1024-window-channel-256c.tessera", "TESSERA_FP8"),
+                         ("bf16-1024-window-channel-256c.tessera", "TESSERA_BF16")):
+    blob = (root / filename).read_bytes()
     for module, role, dtype in (("model.layers.3.self_attn.indexer.wk_weights_proj", "weights_proj", torch.float32),
                                 ("model.layers.3.self_attn.kv_b_proj", "kv_b_proj", torch.bfloat16)):
         weight = direct_consumer_weight(blob, module, role, family)

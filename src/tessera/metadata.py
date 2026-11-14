@@ -541,22 +541,18 @@ ROUTES: dict[str, dict] = {
         "body": "WINDOW", "span": 1, "window_bits": 14,
         "short": "NVFP4",
         "grid_kind": "the paired E2M1",
-        "builder": ("tessera.serving.nvfp4_route", "build_tessera_nvfp4_method"),
         "tile": "native E2M1x2 window words, LUT16 group-16 scales and per-role global",
         "columns_multiple": 64,
         "activation_contract": NVFP4_ACTIVATION_CONTRACT,
-        "gemm_symbol": "tessera.routed_fused_e2m1.dense_forward_quantized",
     },
     TESSERA_FP8: {
         "grids": ("E4M3",), "plane": "CHANNEL",
         "body": "WINDOW", "span": 1,
         "short": "FP8",
         "grid_kind": "the scalar E4M3",
-        "builder": ("tessera.serving.fp8_route", "build_tessera_fp8_method"),
         "tile": "fp8 per-channel (E4M3 bytes, one fp32 scale per row)",
         "columns_multiple": 16,
         "activation_contract": FP8_ACTIVATION_CONTRACT,
-        "gemm_symbol": "torch._scaled_mm",
     },
     TESSERA_BF16: {
         "grids": ("BF16",), "plane": "CHANNEL",
@@ -570,7 +566,6 @@ ROUTES: dict[str, dict] = {
         "body": "WINDOW", "span": 1,
         "short": "BF16",
         "grid_kind": "the scalar BF16",
-        "builder": ("tessera.serving.bf16_route", "build_tessera_bf16_method"),
         "tile": "bf16 (the raw table values, one fp32 scale per row applied on the GEMM output)",
         # No K quantum.  The other two routes decode to a PACKED tile whose
         # mainloop reads groups -- a nibble pair, a group-16 block scale -- and
@@ -579,10 +574,6 @@ ROUTES: dict[str, dict] = {
         # this route serves.
         "columns_multiple": 1,
         "activation_contract": BF16_ACTIVATION_CONTRACT,
-        # NOT ``torch._scaled_mm``: there is no scale to hand a scaled GEMM.
-        # The row scale is an fp32 epilogue, so this route calls the stock
-        # matmul and says so.
-        "gemm_symbol": "torch.mm",
     },
 }
 
