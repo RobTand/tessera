@@ -20,7 +20,7 @@ def api():
 
 
 def legacy():
-    """Answers captured from the exact base owners in an admitted action."""
+    """Captured base answers with the recorded master diagnostic rename."""
     reference = json.loads((ROOT / "tests/fixtures/metadata_reference_v1.json").read_text())
     namespace = dict(reference["constants"])
     calls = {}
