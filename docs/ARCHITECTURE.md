@@ -115,6 +115,10 @@ cites its one-test strict-CUDA transport canary receipt. The lane is not yet
 qualified. Until it is, the CUDA-gated surface has no qualified route.
 
 
+Re-stamped 2026-11-14 for the queue conditions.
+Both queues require `queue`, `branch rule` and `pr-gate` on the original PR.
+The batch draft requires `gate`. The retired TL3 approval path is removed.
+
 The hosted `branch rule` check enforces branch rule 12 for pull requests.
 `pure` retains the same step during the required-check transition.
 The branch must match `tessera-<issue>` or `tessera-<issue>-<word>` and link that issue in the body.
@@ -10481,7 +10485,6 @@ on Bazel, lock or gate-workflow changes. Excess demand queues on executors.
 Six shards (Rob, 2026-11-06) aim for at most 25 minutes per shard inside the 30-minute queue timeout. If six shards exceed 45 minutes, report completed/total targets, wall time and
 scheduling-wait share per shard; do not raise the timeout or rerun. Agent/development admission stays
 operationally limited to one run per repo. No shared GitHub job group is added.
-TL3 retains BuildBuddy priority when its queue is backed up; no scheduler is added.
 Live-query and timing-inventory validation and complete, disjoint six-shard result unions
 fail closed on drift or missing shards. The combined post-merge record keeps
 all invocation IDs and per-architecture budget warnings. Post-merge detection
