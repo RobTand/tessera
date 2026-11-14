@@ -15,8 +15,8 @@ the new serving owner.
   temporaries are never retained and ``finish`` copies nothing;
 * reusing a scratch buffer never mutates an expert already written.
 
-These are device tests (CUDA paths).  Run them in the pinned image through
-PrismaBuild, not on a CPU-only host.
+Submit it as a Flux job (see the flux skill).
+Use the pinned image for these CUDA tests.
 """
 from __future__ import annotations
 
