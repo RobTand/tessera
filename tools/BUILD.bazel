@@ -182,13 +182,6 @@ ts_py_library(
 )
 
 ts_py_library(
-    name = "ci/gate_doc_readers",
-    srcs = [
-        "ci/gate_doc_readers.py",
-    ],
-)
-
-ts_py_library(
     name = "ci/gate_evidence",
     srcs = [
         "ci/gate_evidence.py",
@@ -267,13 +260,7 @@ ts_py_library(
         "ci/gate_select.py",
     ],
     data = [
-        "ci/gate_durations.json",
         "ci/gate_quarantine.json",
-    ],
-    deps = [
-        ":ci/gate_doc_readers",
-        ":ci/gate_flaky",
-        ":ci/gate_partition",
     ],
 )
 
@@ -370,18 +357,6 @@ ts_py_library(
     name = "ig790_verify",
     srcs = [
         "ig790_verify.py",
-    ],
-)
-
-ts_py_library(
-    name = "impacted_tests",
-    srcs = [
-        "impacted_tests.py",
-    ],
-    deps = [
-        "//src/tessera:__init___cycle",
-        "//src/tessera:_dev/__init__",
-        "//src/tessera:_dev/source_dependencies",
     ],
 )
 
@@ -557,20 +532,6 @@ ts_py_library(
         "//src/tessera:_dev/durable_progress",
         "//src/tessera:export_serving",
         "//src/tessera:source_digest_cache",
-    ],
-)
-
-ts_py_library(
-    name = "selected_population",
-    srcs = [
-        "selected_population.py",
-    ],
-    deps = [
-        "//src/tessera:__init___cycle",
-        "//src/tessera:_dev/__init__",
-        "//src/tessera:_dev/suite_source",
-        "//src/tessera:dev_mode",
-        ":merge_suite",
     ],
 )
 
