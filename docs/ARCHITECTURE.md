@@ -2,6 +2,9 @@
 
 Re-stamped 2026-11-15 for hosted arm64 actions.
 
+Re-stamped 2026-11-15 for deletion plan PR 4. This change deletes 41 unused files.
+Linked deleted sources below are historical. Git retains their contents.
+
 Re-stamped 2026-11-15 for deletion plan PR 3. This change deletes 49 unused files.
 Linked deleted sources below are historical. Git retains their contents.
 
@@ -4217,7 +4220,7 @@ interpreter path. `tools/selected_population.py` requires the same explicit
 input and records it in the selection. Resume needs no new interpreter input
 because it reads saved command evidence. Experiment CPU preflight adapters also
 require an explicit interpreter: `bench_t8r.sh` reads `BENCH_CPU_PYTHON`,
-`regdirect_stage1/run.sh` reads `CPU_PY`, and `extents_cpu_python.sh`,
+`regdirect_stage1/run.sh` reads `CPU_PY`, and [extents_cpu_python.sh](https://github.com/RobTand/tessera/blob/62c88591a92516002cbcc0e3e81918be2c0b22a9/experiments/extents_cpu_python.sh),
 `glm_control_pytest_python.py` and `t4_code/fp4_arithmetic_action.sh` read
 `TESSERA_CPU_PYTHON`. The
 operator-owned `/mnt/shared/flux-migration/INSTANCE` supplies the client prefix
