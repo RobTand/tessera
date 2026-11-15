@@ -2,6 +2,9 @@
 
 Re-stamped 2026-11-15 for hosted arm64 actions.
 
+Re-stamped 2026-11-15 for deletion plan PR 3. This change deletes 49 unused files.
+Linked deleted sources below are historical. Git retains their contents.
+
 Re-stamped 2026-11-15 for deletion plan PR 2. This change deletes 5 unused files.
 Linked deleted sources below are historical. Git retains their contents.
 Keep the construction census, its launcher, and the construction-block updater for Rob's PR 8 decision.

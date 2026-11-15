@@ -57,16 +57,6 @@ ts_py_library(
 )
 
 ts_py_library(
-    name = "allocated_serve_2026-09-02/find_uniform",
-    srcs = [
-        "allocated_serve_2026-09-02/find_uniform.py",
-    ],
-    deps = [
-        ":plan_from_layer_config",
-    ],
-)
-
-ts_py_library(
     name = "allocated_serve_2026-09-02/hist",
     srcs = [
         "allocated_serve_2026-09-02/hist.py",
@@ -102,30 +92,9 @@ ts_py_library(
 )
 
 ts_py_library(
-    name = "allocated_serve_2026-09-02/make_probe_plans",
-    srcs = [
-        "allocated_serve_2026-09-02/make_probe_plans.py",
-    ],
-)
-
-ts_py_library(
-    name = "allocated_serve_2026-09-02/price_uniform",
-    srcs = [
-        "allocated_serve_2026-09-02/price_uniform.py",
-    ],
-)
-
-ts_py_library(
     name = "allocated_serve_2026-09-02/probe_depth",
     srcs = [
         "allocated_serve_2026-09-02/probe_depth.py",
-    ],
-)
-
-ts_py_library(
-    name = "allocated_serve_2026-09-02/verify_uniform",
-    srcs = [
-        "allocated_serve_2026-09-02/verify_uniform.py",
     ],
 )
 
@@ -1128,54 +1097,9 @@ ts_py_library(
 )
 
 ts_py_library(
-    name = "glm53_508_graph_qual/compare-508",
-    srcs = [
-        "glm53_508_graph_qual/compare-508.py",
-    ],
-)
-
-ts_py_library(
-    name = "glm53_508_graph_qual/compare-dump-508",
-    srcs = [
-        "glm53_508_graph_qual/compare-dump-508.py",
-    ],
-)
-
-ts_py_library(
     name = "glm53_508_graph_qual/compare-pad-508",
     srcs = [
         "glm53_508_graph_qual/compare-pad-508.py",
-    ],
-)
-
-ts_py_library(
-    name = "glm53_508_graph_qual/digest-compare-508",
-    srcs = [
-        "glm53_508_graph_qual/digest-compare-508.py",
-    ],
-)
-
-ts_py_library(
-    name = "glm53_508_graph_qual/digest-prefill-compare-508",
-    srcs = [
-        "glm53_508_graph_qual/digest-prefill-compare-508.py",
-    ],
-)
-
-ts_py_library(
-    name = "glm53_508_graph_qual/digest-rep-compare-508",
-    srcs = [
-        "glm53_508_graph_qual/digest-rep-compare-508.py",
-    ],
-)
-
-ts_py_library(
-    name = "glm53_508_graph_qual/digest/selftest_digest",
-    srcs = [
-        "glm53_508_graph_qual/digest/selftest_digest.py",
-    ],
-    deps = [
-        ":glm53_508_graph_qual/digest/usercustomize",
     ],
 )
 
@@ -1209,27 +1133,6 @@ ts_py_library(
 )
 
 ts_py_library(
-    name = "glm53_508_graph_qual/equal-compare-508",
-    srcs = [
-        "glm53_508_graph_qual/equal-compare-508.py",
-    ],
-)
-
-ts_py_library(
-    name = "glm53_508_graph_qual/kpool_tail_slotmap_repro",
-    srcs = [
-        "glm53_508_graph_qual/kpool_tail_slotmap_repro.py",
-    ],
-)
-
-ts_py_library(
-    name = "glm53_508_graph_qual/lat-508",
-    srcs = [
-        "glm53_508_graph_qual/lat-508.py",
-    ],
-)
-
-ts_py_library(
     name = "glm53_508_graph_qual/matrix-508",
     srcs = [
         "glm53_508_graph_qual/matrix-508.py",
@@ -1251,13 +1154,6 @@ ts_py_library(
 )
 
 ts_py_library(
-    name = "glm53_508_graph_qual/probe-long-508",
-    srcs = [
-        "glm53_508_graph_qual/probe-long-508.py",
-    ],
-)
-
-ts_py_library(
     name = "glm53_508_graph_qual/probe-pad-508",
     srcs = [
         "glm53_508_graph_qual/probe-pad-508.py",
@@ -1265,37 +1161,9 @@ ts_py_library(
 )
 
 ts_py_library(
-    name = "glm53_508_graph_qual/probe-rep-508",
-    srcs = [
-        "glm53_508_graph_qual/probe-rep-508.py",
-    ],
-)
-
-ts_py_library(
-    name = "glm53_508_graph_qual/prof-508",
-    srcs = [
-        "glm53_508_graph_qual/prof-508.py",
-    ],
-)
-
-ts_py_library(
     name = "glm53_508_graph_qual/prof-summary-508",
     srcs = [
         "glm53_508_graph_qual/prof-summary-508.py",
-    ],
-)
-
-ts_py_library(
-    name = "glm53_508_graph_qual/smoke-508",
-    srcs = [
-        "glm53_508_graph_qual/smoke-508.py",
-    ],
-)
-
-ts_py_library(
-    name = "glm53_508_graph_qual/tput-probe-508",
-    srcs = [
-        "glm53_508_graph_qual/tput-probe-508.py",
     ],
 )
 
@@ -1692,20 +1560,6 @@ ts_py_library(
 )
 
 ts_py_library(
-    name = "lane_numerics/layer_compare",
-    srcs = [
-        "lane_numerics/layer_compare.py",
-    ],
-)
-
-ts_py_library(
-    name = "lane_numerics/layer_dump",
-    srcs = [
-        "lane_numerics/layer_dump.py",
-    ],
-)
-
-ts_py_library(
     name = "lane_numerics/noise_control",
     srcs = [
         "lane_numerics/noise_control.py",
@@ -1950,13 +1804,6 @@ ts_py_library(
         "//src/tessera:container",
         "//src/tessera:errors",
         "//src/tessera:source_digest_cache",
-    ],
-)
-
-ts_py_library(
-    name = "mhc/empty_like_strides",
-    srcs = [
-        "mhc/empty_like_strides.py",
     ],
 )
 
@@ -2604,13 +2451,6 @@ ts_py_library(
 )
 
 ts_py_library(
-    name = "regdirect_stage1/_fragment_wire_numpy_58e59caf0",
-    srcs = [
-        "regdirect_stage1/_fragment_wire_numpy_58e59caf0.py",
-    ],
-)
-
-ts_py_library(
     name = "regdirect_stage1/bench_stage1",
     srcs = [
         "regdirect_stage1/bench_stage1.py",
@@ -2628,39 +2468,6 @@ ts_py_library(
     name = "regdirect_stage1/fragment_synth",
     srcs = [
         "regdirect_stage1/fragment_synth.py",
-    ],
-)
-
-ts_py_library(
-    name = "regdirect_stage1/fragment_wire_equivalence",
-    srcs = [
-        "regdirect_stage1/fragment_wire_equivalence.py",
-    ],
-    deps = [
-        "//src/tessera:__init___cycle",
-        "//src/tessera:fragment_wire",
-        "//src/tessera:wire",
-    ],
-)
-
-ts_py_library(
-    name = "regdirect_stage1/ncu_summary",
-    srcs = [
-        "regdirect_stage1/ncu_summary.py",
-    ],
-)
-
-ts_py_library(
-    name = "regdirect_stage1/real_layer_hook",
-    srcs = [
-        "regdirect_stage1/real_layer_hook.py",
-    ],
-    deps = [
-        "//src/tessera:__init___cycle",
-        "//src/tessera:bf16_route_cycle",
-        "//src/tessera:regdirect_routed",
-        "//src/tessera:routed_class_dispatch",
-        ":regdirect_stage1/real_units",
     ],
 )
 
@@ -2687,18 +2494,6 @@ ts_py_library(
         "//src/tessera:bf16_route_cycle",
         "//src/tessera:fused_frame",
         "//src/tessera:wire",
-    ],
-)
-
-ts_py_library(
-    name = "regdirect_stage1/real_units_check",
-    srcs = [
-        "regdirect_stage1/real_units_check.py",
-    ],
-    deps = [
-        "//src/tessera:__init___cycle",
-        "//src/tessera:bf16_route_cycle",
-        ":regdirect_stage1/real_units",
     ],
 )
 
@@ -3017,17 +2812,6 @@ ts_py_library(
 )
 
 ts_py_library(
-    name = "t4_code/aside_cost",
-    srcs = [
-        "t4_code/aside_cost.py",
-    ],
-    deps = [
-        "//src/tessera:__init___cycle",
-        "//src/tessera:kernel_a4",
-    ],
-)
-
-ts_py_library(
     name = "t4_code/bench_geometry_e2m1",
     srcs = [
         "t4_code/bench_geometry_e2m1.py",
@@ -3046,16 +2830,6 @@ ts_py_library(
         ":t8r_speed/bench_t8r",
         ":t8r_speed/declared_inputs",
         ":t8r_speed/rung_quality",
-    ],
-)
-
-ts_py_library(
-    name = "t4_code/decode_cost_run",
-    srcs = [
-        "t4_code/decode_cost_run.py",
-    ],
-    data = [
-        "t4_code/decode_cost.cu",
     ],
 )
 
@@ -3537,20 +3311,6 @@ ts_py_library(
 )
 
 ts_py_library(
-    name = "t8r_speed/gemm_algo_bitwise",
-    srcs = [
-        "t8r_speed/gemm_algo_bitwise.py",
-    ],
-    data = [
-        "t8r_speed/pinned_gemm.cpp",
-    ],
-    deps = [
-        ":t8r_speed/bench_t8r",
-        ":t8r_speed/gemm_sweep_decisions",
-    ],
-)
-
-ts_py_library(
     name = "t8r_speed/gemm_sweep_decisions",
     srcs = [
         "t8r_speed/gemm_sweep_decisions.py",
@@ -3712,26 +3472,9 @@ ts_py_library(
 )
 
 ts_py_library(
-    name = "t8r_speed/sustained_peaks",
-    srcs = [
-        "t8r_speed/sustained_peaks.py",
-    ],
-    deps = [
-        ":t8r_speed/fp8_roofline",
-    ],
-)
-
-ts_py_library(
     name = "t8r_speed/t16_scale_check",
     srcs = [
         "t8r_speed/t16_scale_check.py",
-    ],
-)
-
-ts_py_library(
-    name = "t8r_speed/terminal_barrier_probe",
-    srcs = [
-        "t8r_speed/terminal_barrier_probe.py",
     ],
 )
 
