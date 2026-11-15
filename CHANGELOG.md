@@ -4,7 +4,10 @@
 
 Mint E2M1 R896 on IMG-G and BF16 on IMG-N for TP1 eager resident decode and batch.
 Use scoped execution receipts for the measured current pairs. Historical receipts retain their identities.
-No kernel, pin, default, quality, smoke or TP2 claim changes. R4 activation data follows on the same branch.
+No kernel, pin, default, quality, smoke or TP2 claim changes.
+R4 job `ƒ2j483KUNKZ` adds the exact 11-vector IMG-G activation receipt.
+Receipt: `experiments/results/glm53_requal_v68_activation_quantizers.json`.
+SHA-256: `fb2904a0397db6c6a5e1213ea8982a01f6fae1a715800043f1cf34be4f0bc987`.
 Evidence: [measurement](docs/measurements/2026-11-15-cell-requalification-v68.md).
 ## 2026-10-22 — keep PQ2459 preflight tests dependency-aware (issue #1124)
 

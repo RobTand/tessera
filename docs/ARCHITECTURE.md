@@ -344,7 +344,8 @@ Four E2M1 cells on IMG-G cover R896 with the native fused E2M1 dense and routed 
 Option S scopes those pairs to the measured images, eager resident execution and census rungs.
 The global experimental execution registry is unchanged. Old folded and TCQ receipts do not qualify these pairs.
 The receipts prove TP1 stub dispatch in decode and batch, not quality, speed, compiled execution or TP2.
-The E2M1 activation quantizer entry remains absent until R4 runs on the mint commit.
+R4 at mint commit `3d5799c7` supplies the IMG-G E2M1 activation quantizer entry.
+Its 11 native operator vectors are committed without value edits.
 Re-stamped 2026-11-15 for tessera#1683. See `docs/measurements/2026-11-15-cell-requalification-v68.md`.
 The projection byte audit selects `served_recipe` before native resident accounting.
 Its 256-column fixture satisfies the native T4 input-width rule and also covers T8 and T16.

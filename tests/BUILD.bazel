@@ -630,6 +630,7 @@ ts_py_library(
         "test_activation_attestation.py",
     ],
     data = [
+        "//experiments:results/glm53_requal_v68_activation_quantizers.json",
         "//experiments:results/t4_activation_quantizers_historical_20261007.json",
     ],
     deps = [

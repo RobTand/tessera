@@ -21,6 +21,7 @@ E2M1 and E4M3 formats themselves decide must be checkable there.
 from __future__ import annotations
 
 import copy
+import hashlib
 from pathlib import Path
 
 import pytest
@@ -191,8 +192,12 @@ def test_current_fp4_cells_do_not_borrow_the_historical_activation_receipt(contr
     fp4 = {cell["runtime"]["image"] for cell in contract["lane_eligibility"]["cells"]
            if cell["platform"] == "sm_121" and cell["activation_contract"] == CONTRACT_NAME}
     current = contract["activation_quantizers"]["platforms"]
-    assert not fp4
-    assert current == {}
+    receipt = Path(__file__).resolve().parents[1] / "experiments/results/glm53_requal_v68_activation_quantizers.json"
+    assert hashlib.sha256(receipt.read_bytes()).hexdigest() == "fb2904a0397db6c6a5e1213ea8982a01f6fae1a715800043f1cf34be4f0bc987"
+    fresh = json.loads(receipt.read_text())["platforms"]["sm_121"]
+    assert fp4 == {E2M1_IMAGE}
+    assert current["sm_121"] == [fresh]
+    assert len(fresh["contracts"][CONTRACT_NAME]["vectors"]) == 11
 
 
 def test_every_sm121_table_is_byte_identical(block):

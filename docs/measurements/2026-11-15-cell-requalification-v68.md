@@ -65,10 +65,17 @@ Smoke stays `not_recorded`. Decode cells retain the required open graph-gap reco
 batch cells carry no KL record. No full-model quality, timing, compiled execution,
 TP2, streamed residency, pin or default change is claimed.
 
-The E2M1 activation quantizer entry is deliberately absent from this commit.
-R4 must run on this pushed mint commit. Its output belongs in a follow-up commit
-on this branch before publication. A consumer that requires the activation entry
-must still refuse until that output exists. This branch is not ready to publish yet.
+The initial mint left the E2M1 activation quantizer entry absent.
+R4 job `ƒ2j483KUNKZ` then ran at mint commit `3d5799c7156fc7d780d25b2e142f98474a8d5228`.
+Its tool exit status was0 and its verdict was `attested`.
+Receipt: `/mnt/shared/flux-jobs/tessera-option-c-r4-v68-3d5799c7-20261115T230414Z/flux/activation-quantizers-3d5799c7.json`.
+File SHA-256: `fb2904a0397db6c6a5e1213ea8982a01f6fae1a715800043f1cf34be4f0bc987`.
+The exact bytes are committed as `experiments/results/glm53_requal_v68_activation_quantizers.json`.
+The follow-up puts the unchanged generated entry in the schema's sm_121 image list.
+It records IMG-G, NVIDIA GB10, native `torch.ops._C.scaled_fp4_quant`, and11 vectors.
+No probe value, scale, code, generator digest or runtime field was edited.
+The v39-pattern test now requires this exact receipt for the current E2M1 cells.
+Publication still requires the prepared CPU and remote validation jobs.
 
 ## Validation state
 
