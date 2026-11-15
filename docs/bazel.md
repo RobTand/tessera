@@ -15,7 +15,7 @@ The hosted gate's own files stay the sources of truth:
 
 ## Running tests
 
-Run Bazel through the approved shared `bbrun.py` client. It keeps credentials in request headers and routes Tessera actions to `selfhosted-amd64` on dl380g10 or `selfhosted-arm64` on the Sparks, with no cloud fallback. Use a pushed commit on an approved scratch ref that triggers no workflow; delete the ref after the run is terminal.
+Run Bazel through the approved shared `bbrun.py` client. It keeps credentials in request headers and routes amd64 actions to `selfhosted-amd64` and arm64 actions to BuildBuddy hosted executors, with no fallback. Use a pushed commit on an approved scratch ref that triggers no workflow; delete the ref after the run is terminal.
 
 ```sh
 python3 -I /home/rob/tmp/bazel-wave2/tools/bbrun.py test \
@@ -83,8 +83,7 @@ gate measurement.
 
 Only the fail-closed gate `//...` fallback may execute its six shard Runs in
 parallel, at most six concurrent Remote Bazel runs per gate controller with
-`--jobs=16` each. Actions use the self-hosted pools only, without cloud
-fallback. Selected gates and post-merge controllers each run one invocation at
+`--jobs=16` each. Actions use the amd64 pool or hosted arm64 executors. Selected gates and post-merge controllers each run one invocation at
 a time. Agent/development runs stay at one per repository, enforced
 operationally by the migration leads. Mergify's 30-minute `checks_timeout` and merge conditions
 are unchanged. The controller encodes the fallback-only bound; it adds no
@@ -92,7 +91,7 @@ scheduler.
 
 Mergify's existing `max_parallel_checks: 2` bounds batch-draft gates. Two
 batch-draft fallbacks can therefore overlap twelve Remote Bazel shard Runs,
-self-hosted only, when Bazel, lock or gate-workflow inputs change. Existing
+when Bazel, lock or gate-workflow inputs change. Existing
 per-PR/per-SHA workflow concurrency stays in place. A shared GitHub job
 concurrency group would let newer pending jobs cancel older required checks,
 so this cutover adds no such group or scheduler.

@@ -1,5 +1,7 @@
 # Tessera plan-to-serve architecture
 
+Re-stamped 2026-11-15 for hosted arm64 actions, issue #1684.
+
 Unused root-Docker experiment entries were deleted. No permitted fleet path
 ran them. Their private wrappers, tests and Bazel inputs were deleted too.
 The serving-image builder and direct GLM construction driver were among these
@@ -135,7 +137,7 @@ Documentation-only gate changes run the fast standalone, packaging and provenanc
 
 The workflow executes the tested Python event-identity decision before planning and uses its output for both final check names. Torch lanes require a CPU torch installation and zero uncollected modules at both runner and aggregate boundaries.
 
-The Bazel build described in `docs/bazel.md` derives one target per test file and CPU lane from dependency evidence (#1589). It shares the hosted pins and collection policy, including file inputs validated by the flaky-node table. Repository-wide Git checks use the uncached amd64 runner lane; hermetic actions use self-hosted BuildBuddy pools. The hosted gate remains active until the separate cutover.
+The Bazel build described in `docs/bazel.md` derives one target per test file and CPU lane from dependency evidence (#1589). It shares the hosted pins and collection policy, including file inputs validated by the flaky-node table. Repository-wide Git checks use the uncached amd64 runner lane; hermetic actions use the amd64 pool or BuildBuddy hosted arm64 executors. The hosted gate remains active until the separate cutover.
 
 Final gate summaries report each CPU lane’s pass, failure, skip and uncollected counts, verbatim skip reasons, device details and zero CUDA allocation. CPU passes do not cover CUDA.
 
@@ -10478,9 +10480,9 @@ the smallest rule populations by count. The manifest records estimated test seco
 each with `--target_pattern_file` in a separate Remote Bazel run. The PR gate
 uses its 45-minute default; the post-merge workflow explicitly requests 55 minutes.
 Only gate fallback permits six concurrent shard runs per controller,
-each with `--jobs=16` on self-hosted action pools; all other paths stay serial.
+each with `--jobs=16`; all other paths stay serial.
 Mergify's 30-minute checks timeout and merge conditions are unchanged. Its two
-parallel batch checks can overlap twelve self-hosted shard Runs for two fallbacks
+parallel batch checks can overlap twelve shard Runs for two fallbacks
 on Bazel, lock or gate-workflow changes. Excess demand queues on executors.
 Six shards (Rob, 2026-11-06) aim for at most 25 minutes per shard inside the 30-minute queue timeout. If six shards exceed 45 minutes, report completed/total targets, wall time and
 scheduling-wait share per shard; do not raise the timeout or rerun. Agent/development admission stays

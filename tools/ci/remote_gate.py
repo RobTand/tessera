@@ -2,8 +2,8 @@
 """Start the Bazel gate on a BuildBuddy Remote Bazel runner and report its result.
 
 Runs in the GitHub job. The runner executes tools/ci/bazel_gate.py and leaves
-gate-result.json as a BuildBuddy artifact; this script fetches it. A failed,
-timed-out or disconnected run, or a missing or malformed result, fails here.
+gate-result.json. Actions use the amd64 pool or hosted arm64 executors.
+This script fetches the result and fails if the run or result is not valid.
 """
 import argparse
 from concurrent.futures import ThreadPoolExecutor
