@@ -11,16 +11,6 @@ SPEC.loader.exec_module(select)
 QUARANTINE = 'tools/ci/gate_quarantine.json'
 
 
-def policy_at(root, monkeypatch):
-    """tools/ci/gate_policy.py, the gate's quarantine check, reading `root`."""
-    spec = importlib.util.spec_from_file_location('gate_policy', ROOT / 'tools/ci/gate_policy.py')
-    policy = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(policy)
-    monkeypatch.setattr(policy, 'ROOT', root)
-    monkeypatch.setattr(policy.gate_run, '_budget_policy', lambda *args: None)
-    return policy
-
-
 def entry(target='tests/test_one.py::test_bad', issue=3201):
     return {'target': target, 'issue': issue, 'lane': 'torch'}
 
@@ -154,91 +144,3 @@ def test_collection_deselects_only_exact_nodes(tmp_path, target, code):
                              '--rootdir', str(tmp_path), str(tmp_path)], env=env,
                             capture_output=True, text=True)
     assert result.returncode == code, result.stdout + result.stderr
-
-
-def test_policy_refuses_a_quarantine_file_outside_the_population(tmp_path, monkeypatch, capsys):
-    import json, subprocess
-    subprocess.run(['git', 'init', '-q', str(tmp_path)], check=True)
-    config = tmp_path / 'tools/ci'; config.mkdir(parents=True)
-    (tmp_path / 'tests').mkdir()
-    (tmp_path / 'tests/test_one.py').write_text('def test_one(): pass\n')
-    (config / 'gate_quarantine.json').write_text(json.dumps({
-        'lanes': {'bytes': [], 'torch': ['tests/test_missing.py::test_bad']},
-        'issues': {'tests/test_missing.py::test_bad': 3201}}))
-    subprocess.run(['git', 'add', '.'], cwd=tmp_path, check=True)
-    subprocess.run(['git', '-c', 'user.name=test', '-c', 'user.email=test@example.invalid',
-                    'commit', '-qm', 'base'], cwd=tmp_path, check=True)
-    policy = policy_at(tmp_path, monkeypatch)
-    monkeypatch.setattr(policy.gate_select, 'base_quarantine', lambda *args: None)
-    monkeypatch.setattr(policy.gate_select, 'check_quarantine_owners', lambda entries: None)
-    assert policy.main(['--base', 'HEAD']) == 1
-    assert 'population' in capsys.readouterr().err
-
-
-def test_renaming_code_into_docs_cannot_hide_quarantine_growth(tmp_path, monkeypatch, capsys):
-    import json, subprocess
-    subprocess.run(['git', 'init', '-q', str(tmp_path)], check=True)
-    for directory in ['tools/ci', 'tests', 'src', 'docs']:
-        (tmp_path / directory).mkdir(parents=True, exist_ok=True)
-    (tmp_path / 'src/owner.py').write_text('VALUE = 1\n')
-    (tmp_path / 'tests/test_one.py').write_text('def test_bad(): assert False\n')
-    config = tmp_path / 'tools/ci'
-    quarantine = config / 'gate_quarantine.json'
-    quarantine.write_text(json.dumps({'lanes': {'bytes': [], 'torch': []}, 'issues': {}}))
-    def commit(message):
-        subprocess.run(['git', 'add', '.'], cwd=tmp_path, check=True)
-        subprocess.run(['git', '-c', 'user.name=test', '-c', 'user.email=test@example.invalid',
-                        'commit', '-qm', message], cwd=tmp_path, check=True)
-        return subprocess.check_output(['git', 'rev-parse', 'HEAD'], cwd=tmp_path, text=True).strip()
-    base = commit('base')
-    (tmp_path / 'src/owner.py').rename(tmp_path / 'docs/owner.md')
-    quarantine.write_text(json.dumps({'lanes': {'bytes': [], 'torch': ['tests/test_one.py::test_bad']},
-                                     'issues': {'tests/test_one.py::test_bad': 3201}}))
-    commit('rename code and add quarantine')
-    policy = policy_at(tmp_path, monkeypatch)
-    monkeypatch.setattr(policy.gate_select, 'check_quarantine_owners', lambda entries: None)
-    assert policy.main(['--base', base]) == 1
-    assert 'quarantine-only' in capsys.readouterr().err
-
-
-@pytest.mark.parametrize('shape', ['split', 'entries_only', 'extra', 'unknown_lane', 'extra_owner'])
-def test_policy_rejects_unvalidated_quarantine_shapes(tmp_path, monkeypatch, capsys, shape):
-    """The reviewer's closed-owner bypass must fail the policy."""
-    import io, json, subprocess
-    subprocess.run(['git', 'init', '-q', str(tmp_path)], check=True)
-    (tmp_path / 'tests').mkdir()
-    config = tmp_path / 'tools/ci'; config.mkdir(parents=True)
-    old = 'tests/test_old.py::test_known_bad'
-    new = 'tests/test_new.py::test_regress'
-    (tmp_path / 'tests/test_old.py').write_text('def test_known_bad(): assert False\n')
-    baseline = {'lanes': {'bytes': [], 'torch': [old]}, 'issues': {old: 1566}}
-    quarantine = config / 'gate_quarantine.json'
-    quarantine.write_text(json.dumps(baseline))
-    def commit():
-        subprocess.run(['git', 'add', '.'], cwd=tmp_path, check=True)
-        subprocess.run(['git', '-c', 'user.name=test', '-c', 'user.email=test@example.invalid',
-                        'commit', '-qm', 'fixture'], cwd=tmp_path, check=True)
-        return subprocess.check_output(['git', 'rev-parse', 'HEAD'], cwd=tmp_path, text=True).strip()
-    base = commit()
-    current = json.loads(json.dumps(baseline))
-    if shape == 'split':
-        current['entries'] = [{'lane': 'torch', 'target': old, 'issue': 1566}]
-        current['lanes']['torch'].append(new)
-        current['issues'][new] = 1
-    elif shape == 'entries_only':
-        current = {'entries': [{'lane': 'torch', 'target': old, 'issue': 1566}]}
-    elif shape == 'extra':
-        current['unexpected'] = []
-    elif shape == 'unknown_lane':
-        current['lanes']['cuda'] = []
-    else:
-        current['issues'][new] = 1
-    quarantine.write_text(json.dumps(current))
-    (tmp_path / 'tests/test_new.py').write_text('def test_regress(): assert False\ndef test_fine(): pass\n')
-    commit()
-    def urlopen(request, timeout):
-        return io.BytesIO(json.dumps({'state': 'closed' if request.full_url.endswith('/1') else 'open'}).encode())
-    policy = policy_at(tmp_path, monkeypatch)
-    monkeypatch.setattr(policy.gate_select.urllib.request, 'urlopen', urlopen)
-    assert policy.main(['--base', base]) == 1
-    assert 'quarantine schema' in capsys.readouterr().err

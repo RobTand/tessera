@@ -4503,7 +4503,7 @@ declared inputs, so an input that the evidence misses fails the test; it does
 not pass it. The hosted-gate test selector, its shard runner and their tests
 are deleted. The module docstring of the resolver and
 `tests/test_source_dependencies.py` keep its boundary rules (#325, #338, #339,
-#353, #354, #923, #1010, #1011).
+#353, #923, #1010, #1011).
 A delegated runner-fix task records
 its targeted regression evidence while the coordinator owns the final full
 dual-population integration run.
