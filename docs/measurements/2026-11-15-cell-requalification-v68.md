@@ -6,7 +6,7 @@ The complete `src/tessera` trees at those two commits are identical,
 Git tree `ea9f9073412a56868305cca1d72cc3591a08f736`.
 Issue #1383 requires affected requalification when executable behavior changes.
 This mint changes qualification rows, not dispatch or kernel behavior.
-The cells retain the measured identity. They do not claim a new GPU measurement of publication HEAD.
+The receipts and scope file retain the measured source identity. They do not claim a new GPU measurement of publication HEAD.
 
 ## Measured scope
 
@@ -51,10 +51,10 @@ Each binds platform, family, structure, both regimes, resident mode, exact image
 eager execution, census rungs and one observed pair.
 The v66 precedent is `06f53994`; its source receipt predates the mint.
 The selector does not open the receipt or verify its commit or kernel build.
-The replay supplies byte and config checks; runtime fields retain measured source provenance.
+The replay supplies byte and config checks; the receipts and scope file retain measured source provenance.
 
 Mint four E2M1 cells on IMG-G and four BF16 cells on IMG-N,
-dense and routed, decode and batch. BF16 run tables are derived from the census rungs.
+dense and routed, decode and batch. BF16 dense has 5 measured rungs (832, 880, 960, 1024, 1088); 769-1279 admitted by the run-table rule (v52).
 Historical folded and TCQ records retain their old identities and cannot qualify current pairs.
 Historical E4M3 replay tests retain their original scopes. Current BF16 replay has its own test.
 The current experimental execution registry is unchanged.
@@ -67,22 +67,18 @@ TP2, streamed residency, pin or default change is claimed.
 
 The initial mint left the E2M1 activation quantizer entry absent.
 R4 job `ƒ2j483KUNKZ` then ran at mint commit `3d5799c7156fc7d780d25b2e142f98474a8d5228`.
-Its tool exit status was0 and its verdict was `attested`.
+Its tool exit status was 0 and its verdict was `attested`.
 Receipt: `/mnt/shared/flux-jobs/tessera-option-c-r4-v68-3d5799c7-20261115T230414Z/flux/activation-quantizers-3d5799c7.json`.
 File SHA-256: `fb2904a0397db6c6a5e1213ea8982a01f6fae1a715800043f1cf34be4f0bc987`.
 The exact bytes are committed as `experiments/results/glm53_requal_v68_activation_quantizers.json`.
 The follow-up puts the unchanged generated entry in the schema's sm_121 image list.
-It records IMG-G, NVIDIA GB10, native `torch.ops._C.scaled_fp4_quant`, and11 vectors.
+It records IMG-G, NVIDIA GB10, native `torch.ops._C.scaled_fp4_quant`, and 11 vectors.
 No probe value, scale, code, generator digest or runtime field was edited.
 The v39-pattern test now requires this exact receipt for the current E2M1 cells.
 Publication still requires the prepared CPU and remote validation jobs.
 
 ## Validation state
 
-No test, Bazel build or BuildBuddy run was executed for this mint.
-BUILD files were regenerated as source metadata only.
-The lead receives prepared Flux CPU pre-queue commands for the BUILD check,
-the edited replay tests with `-p no:xdist`, self-hosted bbrun, and key-match count0.
-The new tests include a positive replay, removed-cell negative control,
-wrong image and decoder checks, and malformed or unmeasured scope refusal.
-The pre-fix failure and post-mint results remain pending those jobs.
+CPU jobs ƒ2j76ARLESj and ƒ2jBAYELkxP passed BUILD --check, but pytest failed
+5 and 6 cases, respectively. A dependency-scoped CPU run is pending this fix.
+Self-hosted bbrun follows under the lead's control. No GPU measurement is added.

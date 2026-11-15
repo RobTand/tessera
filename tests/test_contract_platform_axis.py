@@ -227,11 +227,11 @@ def test_the_packaged_contract_validates_at_v33(contract):
     fused = "tessera.routed_fused.FusedRoutedWindowMoE.__call__"
     for cell in contract["lane_eligibility"]["cells"]:
         window_routed = (cell["structure"] == "routed_moe"
-                         and cell["family"] == "TESSERA_E4M3_K1")
+                         and cell["family"] in {"TESSERA_E4M3_K1", "TESSERA_BF16_K1"})
         assert "TESSERA_ROUTED_FUSED=0" not in cell["requires_serve_flags"], cell["id"]
         assert any(e["symbol"] == fused for e in cell["executes"]) == window_routed, cell["id"]
-    assert not any(set(cell["runtime"]) & {"tessera_commit", "serving_source_sha256"}
-                   for cell in contract["lane_eligibility"]["cells"])
+    assert all(not (set(cell["runtime"]) & {"tessera_commit", "serving_source_sha256"})
+               for cell in contract["lane_eligibility"]["cells"])
     assert "activation_quantizers" in contract
     assert "producer_interface" in contract
     assert all("structures" in entry for entry in contract["formats"])

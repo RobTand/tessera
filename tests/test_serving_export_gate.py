@@ -368,18 +368,6 @@ def test_a_structure_no_cell_attests_is_refused_by_name(monkeypatch):
                                     family="TESSERA_BF16", span=recipe.span,
                                     target="bf16.stack", structure=STRUCTURE_ROUTED_MOE)
     assert "MOE_BUILDERS" in str(caught.value), str(caught.value)
-    # With its builder, a BF16 stack reaches the cell check. Contract v62
-    # withdraws every BF16 cell, so no rung is admitted: 1024 and 1792 are
-    # both refused as unattested, by the structure's name.
-    for rung in (1024, 1792):
-        probe = wire_recipe(GRIDS["BF16"], rung)
-        with pytest.raises(ValueError) as caught:
-            refuse_unserveable_wire("BF16", rung, probe.body.name, probe.scale_plane.name,
-                                    family="TESSERA_BF16", span=probe.span,
-                                    target="bf16.stack", structure=STRUCTURE_ROUTED_MOE)
-        assert "no lane_eligibility cell" in str(caught.value), str(caught.value)
-        assert "routed_moe" in str(caught.value), str(caught.value)
-
     without = copy.deepcopy(load_serving_contract())
     without["lane_eligibility"]["cells"] = [
         cell for cell in without["lane_eligibility"]["cells"]
@@ -434,7 +422,8 @@ def _with_the_weaker_fact(contract: dict, *, structure: str) -> dict:
 
 def _routed_cell_plan(cell: dict) -> tuple[str, int]:
     """``(grid, q256)`` a stack of this cell's family is planned on."""
-    grid = {"TESSERA_E2M1_K2": "E2M1x2", "TESSERA_E4M3_K1": "E4M3"}[cell["family"]]
+    grid = {"TESSERA_E2M1_K2": "E2M1x2", "TESSERA_E4M3_K1": "E4M3",
+            "TESSERA_BF16_K1": "BF16"}[cell["family"]]
     return grid, int(cell["rungs_q256"][0])
 
 
@@ -469,7 +458,14 @@ def test_a_compile_only_cell_is_not_a_serve_the_export_gate_can_read(monkeypatch
     for cell in routed:
         assert attested_cells(cell["family"], STRUCTURE_ROUTED_MOE, downgraded) == []
         grid_name, rung = _routed_cell_plan(cell)
-        recipe = wire_recipe(GRIDS[grid_name], rung)
+        recipe = served_recipe(GRIDS[grid_name], rung, STRUCTURE_ROUTED_MOE)
+        if cell["family"] == "TESSERA_E2M1_K2":
+            # Native E2M1 reader support does not grant device qualification.
+            assert refuse_unserveable_wire(
+                grid_name, rung, recipe.body.name, recipe.scale_plane.name,
+                family=route_for_grid(grid_name), span=recipe.span, target="stack.probe",
+                structure=STRUCTURE_ROUTED_MOE, contract=downgraded) == "TESSERA_NVFP4"
+            continue
         with pytest.raises(ValueError) as caught:
             refuse_unserveable_wire(grid_name, rung, recipe.body.name, recipe.scale_plane.name,
                                     family=route_for_grid(grid_name), span=recipe.span,

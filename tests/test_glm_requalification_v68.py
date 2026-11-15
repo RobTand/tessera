@@ -59,8 +59,6 @@ def test_receipt_identity_and_complete_replay(key, count):
     assert all(len(records) == count for records in receipt['records'].values())
     for cell_id in joined:
         cell = cells[cell_id]
-        assert cell['runtime']['tessera_commit'] == SCOPE['commit']
-        assert cell['runtime']['serving_source_sha256'] == row['source_sha256']
         assert cell['runtime']['image'] == receipt['runtime']['image']
         assert cell['runtime']['vllm'] == receipt['versions']['vllm']
         assert cell['runtime']['torch'] == receipt['versions']['torch']
@@ -80,10 +78,29 @@ def test_receipt_identity_and_complete_replay(key, count):
     assert all(r['covered_by_cell'] == 0 for p in unseen['structures'].values() for r in p['phases'].values())
 
 
-@pytest.mark.parametrize('field,value', [('regime', 'prefill'), ('executes', []), ('rungs_q256', [640])])
+@pytest.mark.parametrize('field,value', [('regime', 'prefill'), ('executes', []), ('rungs_q256', [640]),
+                                         ('executes', [{'symbol': 'torch.mm', 'decoder': 'torch_window'}]),
+                                         ('execution_modes', ['eager', 'compiled'])])
 def test_malformed_or_unmeasured_scope_refuses(field, value):
     contract = load_serving_contract()
     cell = next(c for c in contract['lane_eligibility']['cells'] if c['id'] == 'tessera_e2m1_k2_dense_sm121_decode_resident')
-    cell[field] = value
+    if field == 'execution_modes':
+        cell['runtime'][field] = value
+    elif field == 'executes' and value:
+        cell[field] += value
+    else:
+        cell[field] = value
     with pytest.raises(ValueError):
         validate_serving_contract(contract)
+
+
+def test_img_n_cells_refuse_old_folded_records_on_the_same_image():
+    _, receipt, _, rungs = inputs('bf16')
+    old = json.loads((ROOT / 'experiments/results/glm53_u1_stub_b_nightly_tp1_eager_census.json').read_text())
+    assert old['runtime']['image'] == receipt['runtime']['image']
+    records = {phase: {name: record for name, record in rows.items()
+                        if record['policy'].startswith('TESSERA_BF16:')}
+               for phase, rows in old['records'].items()}
+    assert all(records.values())
+    old['records'] = records
+    assert agreement(old, rungs, load_serving_contract())[1]

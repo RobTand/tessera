@@ -221,9 +221,7 @@ for _family, _runtime, _activation, _dense, _routed in (
                     "rungs_q256": ([1024] if _structure == "routed_moe" else _FAMILY_RUNGS[_family])
                                   if _family == "TESSERA_BF16_K1" else [896],
                     "executes": [{"symbol": _pair[0], "decoder": _pair[1]}],
-                    "runtime": {**_runtime,
-                        "tessera_commit": "5c2ef6deec3e354236f83616935faa7c14028737",
-                        "serving_source_sha256": "826984285ef1deeb78e786861c3c2306d9477b07a5fa20d7644fb87b92a8e3c4"}}
+                    "runtime": _runtime}
             if _family == "TESSERA_BF16_K1":
                 _law["run_tables"] = [[4]] if _structure == "routed_moe" else [[3, 4], [4], [4, 5]]
             _V68_LAWS[_id] = _law
@@ -595,8 +593,14 @@ def test_historical_tcq_receipts_do_not_attest_current_window_bytes(contract):
     receipt = json.loads((ROOT / "experiments/results/glm53_u1_stub_d_tp1_eager_census.json")
                          .read_text(encoding="utf-8"))
     assert receipt["records"]
-    assert not any(cell["family"] == "TESSERA_E2M1_K2"
-                   for cell in contract["lane_eligibility"]["cells"])
+    from tessera.serving.contract import cell_executes
+
+    # v68 re-mints IDs from WINDOW receipts; the old TCQ launch pairs stay withdrawn.
+    old = {(r["symbol"], r["decoder"]) for records in receipt["records"].values()
+           for r in records.values() if r["policy"].startswith("TESSERA_NVFP4:")}
+    assert old
+    assert all(old.isdisjoint(cell_executes(c)) for c in contract["lane_eligibility"]["cells"]
+               if c["family"] == "TESSERA_E2M1_K2")
 
 
 def test_every_cell_is_backed_with_a_serve_flag_and_plugin_gated(contract):
@@ -620,11 +624,7 @@ def test_every_cell_is_backed_with_a_serve_flag_and_plugin_gated(contract):
 
 
 def test_the_table_adds_only_the_measured_moe_scope_without_expert_parallelism(contract):
-    """The base and nightly E4M3 scopes remain resident and eager.
-
-    Contract v66 adds R768 only on the base image.
-    Historical BF16 and E2M1 cells remain withdrawn.
-    """
+    """Receipt-backed v66 and v68 scopes remain resident, eager and without EP."""
     block = contract["lane_eligibility"]
     assert block["structures"] == ["dense", "routed_moe"]
     moe = [cell for cell in block["cells"] if cell["structure"] == "routed_moe"]
@@ -637,7 +637,14 @@ def test_the_table_adds_only_the_measured_moe_scope_without_expert_parallelism(c
     assert sorted((family, rungs, image) for family, rungs, image in by_family) == sorted([
         ("TESSERA_E4M3_K1", (768, 832, 864, 896, 928, 944, 960, 1024, 1088),
          _GLM_X_RUNTIME["image"]),
-        ("TESSERA_E4M3_K1", (896, 928, 1024, 1088), NIGHTLY_RUNTIME["image"])])
+        ("TESSERA_E4M3_K1", (896, 928, 1024, 1088), NIGHTLY_RUNTIME["image"]),
+        ("TESSERA_E2M1_K2", (896,), _GLM_X_RUNTIME["image"]),
+        ("TESSERA_BF16_K1", (1024,), NIGHTLY_RUNTIME["image"])])
+    scope = json.loads((ROOT / "experiments/results/glm53_requal_v68_scope.json").read_text())
+    for row in scope["receipts"].values():
+        receipt = json.loads((ROOT / row["receipt"]).read_text())
+        assert receipt["verdict"] == "served" and receipt["problems"] == []
+        assert receipt["runtime"]["image"] in {image for _, _, image in by_family}
     assert all(regimes == {"decode", "batch"} for regimes in by_family.values())
     assert contract["expert_parallel"]["units"] == []
 

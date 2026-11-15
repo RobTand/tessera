@@ -339,7 +339,8 @@ Its consumer passes that owner explicitly. Each class reports its real tables, w
 Contract v62 withdraws eight historical folded BF16 cells, their wire/rung
 attestations and the BF16 TP2 qualification. It does not relabel receipts.
 Contract v68 re-qualifies four BF16 cells on IMG-N from the current BF16-only stub census.
-Dense census rungs are 832/880/960/1024/1088. Routed R1024 uses the current class decoder.
+BF16 dense has 5 measured rungs (832, 880, 960, 1024, 1088); 769-1279 admitted by the run-table rule (v52). Routed R1024 uses the current class decoder.
+The changed T16 D41 classes need new measurements on the merged build before the next allocation uses them.
 Four E2M1 cells on IMG-G cover R896 with the native fused E2M1 dense and routed pairs.
 Option S scopes those pairs to the measured images, eager resident execution and census rungs.
 The global experimental execution registry is unchanged. Old folded and TCQ receipts do not qualify these pairs.
@@ -6343,7 +6344,7 @@ for BF16, with the `tessera.native_window_moe.NativeWindowMoE.__call__` symbol.
 Contract v38 qualified the older compact pairs on a TP1 eager census.
 Contract v59 withdraws the BF16 cells and their rung stamps after the
 epilogue cutover. The E4M3 receipts remain unchanged. The new BF16 identity
-has no served census or TP2 qualification. The shared-expert combination
+has a TP1 census in v68 on IMG-N, but no TP2 qualification. The shared-expert combination
 remains the runner responsibility (`SharedExpertsOrder.NO_OVERLAP`).
 
 **Since 2026-09-28 the routed window stack has a SECOND adapter behind the
@@ -6435,7 +6436,7 @@ stride, but their column permutations can differ. Each projection has one
 expert stride; the down projection can use an independent rate.
 
 The extension and launch rows publish the actual Python entry points.
-Old TCQ cells and current T4 attestations are withdrawn, not transferred.
+Old TCQ cells and T4 attestations remain withdrawn. Contract v68 adds one new IMG-G T4 attestation.
 Dispatch support does not prove a serving cell, D41 eligibility, performance,
 or end-to-end quality. The shared qualification harness owns independent
 numerical references, required populations, raw timings, and graph checks.

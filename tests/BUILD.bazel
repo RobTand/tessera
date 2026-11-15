@@ -614,6 +614,7 @@ ts_py_library(
         "test_activation_attestation_empty.py",
     ],
     data = [
+        "//experiments:results/glm53_requal_v68_activation_quantizers.json",
         "//experiments:results/t4_activation_quantizers_historical_20261007.json",
     ],
     deps = [
@@ -8636,6 +8637,7 @@ ts_py_library(
     ],
     data = [
         "//experiments:results/glm53_requal_v68_scope.json",
+        "//experiments:results/glm53_u1_stub_b_nightly_tp1_eager_census.json",
     ],
     deps = [
         "//src/tessera:__init___cycle",
@@ -23002,6 +23004,7 @@ ts_py_library(
         "//:docs/measurements/tessera-glm-x-census-2026-09-26.md",
         "//:docs/measurements/tessera-window-gemm-census-2026-09-21.md",
         "//experiments:results/glm53_requal_v68_e2m1_census.json",
+        "//experiments:results/glm53_requal_v68_scope.json",
         "//experiments:results/glm53_u1_stub_d_tp1_eager_census.json",
     ],
     deps = [
