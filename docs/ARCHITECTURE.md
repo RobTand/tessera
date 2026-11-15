@@ -2,6 +2,10 @@
 
 Re-stamped 2026-11-15 for hosted arm64 actions.
 
+Re-stamped 2026-11-15 for deletion plan PR 2. This change deletes 5 unused files.
+Linked deleted sources below are historical. Git retains their contents.
+Keep the construction census, its launcher, and the construction-block updater for Rob's PR 8 decision.
+
 Re-stamped 2026-11-14 for archive deletion. No kept code, test, BUILD file or workflow reads them.
 Producer metadata owns the shared route table. Serving adds loader builders and GEMM symbols when it imports that table.
 Git retains their source and receipts at commit `62c88591a92516002cbcc0e3e81918be2c0b22a9`.

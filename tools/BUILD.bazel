@@ -83,18 +83,6 @@ ts_py_library(
 )
 
 ts_py_library(
-    name = "a4_measure",
-    srcs = [
-        "a4_measure.py",
-    ],
-    deps = [
-        "//src/tessera:__init___cycle",
-        "//src/tessera:bf16_route_cycle",
-        "//src/tessera:kernel_a4",
-    ],
-)
-
-ts_py_library(
     name = "check_wheel",
     srcs = [
         "check_wheel.py",
@@ -261,13 +249,6 @@ ts_py_library(
 )
 
 ts_py_library(
-    name = "ci/gate_replay",
-    srcs = [
-        "ci/gate_replay.py",
-    ],
-)
-
-ts_py_library(
     name = "ci/gate_run",
     srcs = [
         "ci/gate_run.py",
@@ -335,18 +316,6 @@ ts_py_library(
     ],
     deps = [
         ":ci/bazel_gate",
-    ],
-)
-
-ts_py_library(
-    name = "compact_prep_probe",
-    srcs = [
-        "compact_prep_probe.py",
-    ],
-    deps = [
-        "//src/tessera:__init___cycle",
-        "//src/tessera:bf16_route_cycle",
-        "//src/tessera:fused",
     ],
 )
 
@@ -536,17 +505,6 @@ ts_py_library(
         "//src/tessera:__init___cycle",
         "//src/tessera:endpoint_observer",
         "//src/tessera:endpoint_witness",
-    ],
-)
-
-ts_py_library(
-    name = "proofs/producer_ownership_metadata",
-    srcs = [
-        "proofs/producer_ownership_metadata.py",
-    ],
-    deps = [
-        "//src/tessera:__init___cycle",
-        "//src/tessera:metadata",
     ],
 )
 
