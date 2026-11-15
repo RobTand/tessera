@@ -2,6 +2,10 @@
 
 Re-stamped 2026-11-15 for hosted arm64 actions.
 
+Re-stamped 2026-11-14 for archive deletion. No kept code, test, BUILD file or workflow reads them.
+Producer metadata owns the shared route table. Serving adds loader builders and GEMM symbols when it imports that table.
+Git retains their source and receipts at commit `62c88591a92516002cbcc0e3e81918be2c0b22a9`.
+
 Unused root-Docker experiment entries were deleted. No permitted fleet path
 ran them. Their private wrappers, tests and Bazel inputs were deleted too.
 The serving-image builder and direct GLM construction driver were among these
@@ -281,9 +285,9 @@ The 5400-second bound, caps, guards, image and numerical rules stay unchanged.
 
 Re-stamped 2026-10-08 for the explicit A8S graph MNBT matrix (issue #1057).
 
-**Archived driver.** The PrismaBuild-admitted graph-attest window driver (rank, window, queue-watcher, submit and recipe modules, their plans and gate tests) moved to `archive/flux-migration/R-CONTESTED/`; the passages below describe that archived driver as history. Only `experiments/graph_attest_702/managed_window.py` (the process-group `Envelope` with `TERM_GRACE_SECONDS = 10.0`) and `receipt.py` stay live. The D30 memory policy is archived with the driver; its TERM grace remains live. A Flux GPU window path belongs to the GPU-qualification work (4E).
+**Archived driver.** The PrismaBuild-admitted graph-attest window driver (rank, window, queue-watcher, submit and recipe modules, their plans and gate tests) moved to [archive/flux-migration/R-CONTESTED/](https://github.com/RobTand/tessera/tree/62c88591a92516002cbcc0e3e81918be2c0b22a9/archive/flux-migration/R-CONTESTED); the passages below describe that archived driver as history. Only `experiments/graph_attest_702/managed_window.py` (the process-group `Envelope` with `TERM_GRACE_SECONDS = 10.0`) and `receipt.py` stay live. The D30 memory policy is archived with the driver; its TERM grace remains live. A Flux GPU window path belongs to the GPU-qualification work (4E).
 
-The opt-in mode `WINDOW_MODE=ship-graph-mnbt-matrix` selects `archive/flux-migration/R-CONTESTED/experiments/graph_attest_702/plan-graph-mnbt-matrix.txt`.
+The opt-in mode `WINDOW_MODE=ship-graph-mnbt-matrix` selects [archive/flux-migration/R-CONTESTED/experiments/graph_attest_702/plan-graph-mnbt-matrix.txt](https://github.com/RobTand/tessera/blob/62c88591a92516002cbcc0e3e81918be2c0b22a9/archive/flux-migration/R-CONTESTED/experiments/graph_attest_702/plan-graph-mnbt-matrix.txt).
 The arms compare maximum batched tokens 2048 and 4096.
 Both arms use the accepted A8S artifact, resident service, socket transport and tensor parallel size two.
 They use graph decode without speculative tokens and retain the existing graph compilation flags.
@@ -375,6 +379,50 @@ The manifest refresh verifies the encoded WINDOW roles before it updates native 
 The T4 path requires span one and the LUT plane; the shared accountant retains native shape checks.
 The source manifest and safetensors bytes remain unchanged. This metadata refresh does not attest serving.
 
+
+Re-stamped 2026-11-14 for the merged public producer metadata boundary.
+`tessera.metadata` owns the smoke record grammar, smoke status and attribution
+rules, and lane requirement decisions. `METADATA_API_VERSION` is
+`tessera.producer-metadata.v1`. The module imports only the standard library
+and the pure `tessera.structure` names. It imports no serving, encoder, kernel,
+Torch or vLLM module. `serving.contract` and `serving.scheme` import these same
+function objects; producer consumers can use them without importing serving.
+`parse_smoke_record(record, *, control, where)` preserves null records and
+returns independent record, row-list and row-dictionary objects. Refusals retain
+the existing field paths and diagnostics. A null record leaves the smoke's
+asserted status unchanged. The API marker identifies callables and grants no
+serving admission. This extraction changes no runtime contract bytes, wire,
+default, qualification, scope or gate decision. Consumer pins still require
+an explicit reviewed producer commit and packaged contract digest.
+
+Re-stamped 2026-10-16 for the additional pure producer route queries.
+`metadata` owns the complete ordered route declarations used by `serving.scheme`,
+plus the direct-consumer activation and resident-byte rules used by the runtime
+adapter. `route_family_for_grid` returns the first declared family for a grid and
+refuses an unknown grid by name. Serving retains its separate ambiguous-grid
+refusal in `route_for_grid`; both queries read the same table. The route table,
+family order, direct buffer sizes and activation contracts are unchanged.
+
+`tessera.image_metadata` owns launcher declaration replay, its environment
+field names and `RuntimeImageError`. Replay reads the supplied environment
+without consulting Docker or a live pin. The live launcher and CLI in
+`serving.runtime_image` import the same parser and exception class. The five
+refusal reasons, their ordering and copied exception payload are unchanged.
+
+Dense checkpoint naming also lives in `metadata`: `fused_module` returns an
+owner and ordered source members, `role_name` names a source leaf, and
+`glm_fused_groups` projects the ordered GLM leaf groups without exposing regexes.
+The explicit-config and source-name fallback rules retain their existing order.
+`serving.dense_ownership` retains output partition geometry and reads the same
+public role-name owner; the exporter and construction census use the public
+naming functions directly.
+
+`tessera.projection.direct_consumer_weight` owns the encoded-unit decoder for
+direct indexer and MLA weights. Importing the module loads only metadata; a
+decode call imports Torch and the producer codecs, never serving. FP8 and BF16 decoding retain master's canonical FP32 products and final cache dtype. Runtime bundle decoding, cache construction and vLLM callbacks
+remain in `serving.projection_routes`. The adapter reads its actual pure rules
+from `metadata`; producer callers import the decoder and byte rules directly
+from their public owners. No serving compatibility decoder is retained.
 
 Re-stamped 2026-10-07 for dec-1007-074543-94b8 (D41 schema for the register-direct kernel).
 The v2 and v3 tables accept decoder kind `register_direct`, owned by `tessera.regdirect_routed`.
@@ -620,7 +668,7 @@ subset caps, strict one-Hertz below-two-GiB guard, exact owned cleanup, byte
 integrity and paired-rank comparability remain unchanged. The same entry
 point must pass a fresh CPU PrismaBuild preflight after source/argument
 changes. The existing full 33-output ship gate, quality gates, defaults and
-serving pin do not change. See `archive/flux-migration/R-CONTESTED/experiments/graph_attest_702/RUNPLAN-artifact.md`.
+serving pin do not change. See [archive/flux-migration/R-CONTESTED/experiments/graph_attest_702/RUNPLAN-artifact.md](https://github.com/RobTand/tessera/blob/62c88591a92516002cbcc0e3e81918be2c0b22a9/archive/flux-migration/R-CONTESTED/experiments/graph_attest_702/RUNPLAN-artifact.md).
 
 Historical v1/v2 policy, re-stamped 2026-10-06 for issue #989: `tessera.rung_allowability` is the
 pure-standard-library, non-serving owner of measured-rung table and index
@@ -743,11 +791,11 @@ nor a KL/quality/ship gate. Frozen 2db flag-reader CPU controls establish
 selector reachability, not executed CUDA kernels or served activation;
 actual ON profiles must still demonstrate the selected paths.
 Parent Sol and D5 exact-head review precede any served gang.
-See `archive/flux-migration/R-CONTESTED/experiments/graph_attest_702/RUNPLAN-artifact.md`.
+See [archive/flux-migration/R-CONTESTED/experiments/graph_attest_702/RUNPLAN-artifact.md](https://github.com/RobTand/tessera/blob/62c88591a92516002cbcc0e3e81918be2c0b22a9/archive/flux-migration/R-CONTESTED/experiments/graph_attest_702/RUNPLAN-artifact.md).
 
 
 Re-stamped 2026-10-05 for issue980: opt-in `WINDOW_MODE=ship-graph-2048`
-selects `archive/flux-migration/R-CONTESTED/experiments/graph_attest_702/plan-graph-ship.txt`: graph2048_off
+selects [archive/flux-migration/R-CONTESTED/experiments/graph_attest_702/plan-graph-ship.txt](https://github.com/RobTand/tessera/blob/62c88591a92516002cbcc0e3e81918be2c0b22a9/archive/flux-migration/R-CONTESTED/experiments/graph_attest_702/plan-graph-ship.txt): graph2048_off
 then graph2048_on at the SAME MNBT2048, A8S/socket/TP2/resident/c1 and the
 unchanged release graph compilation flags. Each row explicitly declares
 decode-once, KDA-split and piece-major env; the first disables all three,
@@ -763,11 +811,11 @@ equality/replay receipt. Graph-control, Window4, ship-eager and all D30
 Exact producer parent/D5 and runtime reviews still precede any gang.
 CPU selector qualification grants no graph compatibility, lever publication,
 performance, quality, ship or serving-pin claim; runtime route refusals remain.
-See `archive/flux-migration/R-CONTESTED/experiments/graph_attest_702/RUNPLAN-artifact.md`.
+See [archive/flux-migration/R-CONTESTED/experiments/graph_attest_702/RUNPLAN-artifact.md](https://github.com/RobTand/tessera/blob/62c88591a92516002cbcc0e3e81918be2c0b22a9/archive/flux-migration/R-CONTESTED/experiments/graph_attest_702/RUNPLAN-artifact.md).
 
 Re-stamped 2026-10-05 for issue968: the separate opt-in
 `WINDOW_MODE=ship-eager-4096-8192` selects only
-`archive/flux-migration/R-CONTESTED/experiments/graph_attest_702/plan-eager-ship-8192.txt`, eager4096 then eager8192.
+[archive/flux-migration/R-CONTESTED/experiments/graph_attest_702/plan-eager-ship-8192.txt](https://github.com/RobTand/tessera/blob/62c88591a92516002cbcc0e3e81918be2c0b22a9/archive/flux-migration/R-CONTESTED/experiments/graph_attest_702/plan-eager-ship-8192.txt), eager4096 then eager8192.
 It reuses the existing A8S/socket/TP2/resident/c1 timing/profile lifecycle,
 rank1 client, artifact/client controls and exact executing-code parent/D5 reviews.
 The graph-control default and Window4's eager2048/4096 pair remain unchanged.
@@ -776,7 +824,7 @@ dual-rank abort, 10-second kill grace, 104 GiB host and 102 GiB GPU-subset caps
 are unchanged. CPU selector/protocol qualification is not 8192 fit, throughput,
 quality, ship admission or a serving-pin claim; only a later admitted leg can
 measure those. The independent merged-code 4096 leg need not wait for this selector.
-See `archive/flux-migration/R-CONTESTED/experiments/graph_attest_702/RUNPLAN-artifact.md`.
+See [archive/flux-migration/R-CONTESTED/experiments/graph_attest_702/RUNPLAN-artifact.md](https://github.com/RobTand/tessera/blob/62c88591a92516002cbcc0e3e81918be2c0b22a9/archive/flux-migration/R-CONTESTED/experiments/graph_attest_702/RUNPLAN-artifact.md).
 
 ## Routed expert-class storage and execution
 
@@ -911,9 +959,9 @@ scope, the OOM floor and disk admission, the manifest resource/safety fields
 and every format gate. Dev mode adds no release gate: no recompute, archive,
 re-seal, re-pin or identity-proof packet is required or performed for
 identity drift, and no format pin or serving default moves. Regressions:
-`archive/flux-migration/R-CONTESTED/tests/test_graph_attest_producer_identity.py` and
-`archive/flux-migration/R-CONTESTED/tests/test_graph_attest_headroom_preflight.py`. See
-`archive/flux-migration/R-CONTESTED/experiments/graph_attest_702/RUNPLAN-artifact.md`.
+[archive/flux-migration/R-CONTESTED/tests/test_graph_attest_producer_identity.py](https://github.com/RobTand/tessera/blob/62c88591a92516002cbcc0e3e81918be2c0b22a9/archive/flux-migration/R-CONTESTED/tests/test_graph_attest_producer_identity.py) and
+[archive/flux-migration/R-CONTESTED/tests/test_graph_attest_headroom_preflight.py](https://github.com/RobTand/tessera/blob/62c88591a92516002cbcc0e3e81918be2c0b22a9/archive/flux-migration/R-CONTESTED/tests/test_graph_attest_headroom_preflight.py). See
+[archive/flux-migration/R-CONTESTED/experiments/graph_attest_702/RUNPLAN-artifact.md](https://github.com/RobTand/tessera/blob/62c88591a92516002cbcc0e3e81918be2c0b22a9/archive/flux-migration/R-CONTESTED/experiments/graph_attest_702/RUNPLAN-artifact.md).
 
 The optional graph-control `BATCH_KL` recipe declaration is retained in window
 inputs and forwarded to both native action environments for rank startup's
@@ -925,24 +973,24 @@ collection currently refuses: no owner-supported live TP2/MTP1 target-model
 attachment handoff is available.
 It does not invoke an isolated scorer, launch another serve or disable MTP.
 Collector exceptions use the native coupled-abort and owned-cleanup lifecycle.
-After graph-receipt creation, `archive/flux-migration/R-CONTESTED/experiments/graph_attest_702/window_driver.py --bind-batch-kl ROOT
+After graph-receipt creation, [archive/flux-migration/R-CONTESTED/experiments/graph_attest_702/window_driver.py](https://github.com/RobTand/tessera/blob/62c88591a92516002cbcc0e3e81918be2c0b22a9/archive/flux-migration/R-CONTESTED/experiments/graph_attest_702/window_driver.py) `--bind-batch-kl ROOT
 --graph-receipt PATH` (with the existing plan argument) writes a separate
 `batch-kl-manifest.json`. The binder rehashes retained raw/result bytes, compares
 all three arms against prepared inputs and both native members, and requires
 replay managers for both native ranks before rerunning the existing
 equality/per-rank replay gate. A completely omitted rank cannot evade that gate
 at this binding boundary. Regressions reuse the normalized fixture in
-`archive/flux-migration/R-CONTESTED/tests/test_graph_attest_batch_kl_binding.py`. This is binding validity, not
+[archive/flux-migration/R-CONTESTED/tests/test_graph_attest_batch_kl_binding.py](https://github.com/RobTand/tessera/blob/62c88591a92516002cbcc0e3e81918be2c0b22a9/archive/flux-migration/R-CONTESTED/tests/test_graph_attest_batch_kl_binding.py). This is binding validity, not
 scientific KL qualification; the graph receipt and its exclusions remain unchanged.
 Production remains unqualified until the existing scorer owner supplies the
 missing capability. The reconciled handoff disposition, configuration and
-normal workflow are in `archive/flux-migration/R-CONTESTED/experiments/graph_attest_702/RUNPLAN-artifact.md`.
+normal workflow are in [archive/flux-migration/R-CONTESTED/experiments/graph_attest_702/RUNPLAN-artifact.md](https://github.com/RobTand/tessera/blob/62c88591a92516002cbcc0e3e81918be2c0b22a9/archive/flux-migration/R-CONTESTED/experiments/graph_attest_702/RUNPLAN-artifact.md).
 
 Both live TP2 ranks must agree on image, source digest and config digest before
 either local launch, in dev and certified modes alike. This is execution
 comparability, not recorded-versus-running identity; mismatched gang halves
 fail both ranks without starting a server or emitting probes. Regression:
-`archive/flux-migration/R-CONTESTED/tests/test_graph_attest_window_scenarios.py::test_mismatched_rank_preflight_refuses_before_either_launch`.
+[archive/flux-migration/R-CONTESTED/tests/test_graph_attest_window_scenarios.py::test_mismatched_rank_preflight_refuses_before_either_launch](https://github.com/RobTand/tessera/blob/62c88591a92516002cbcc0e3e81918be2c0b22a9/archive/flux-migration/R-CONTESTED/tests/test_graph_attest_window_scenarios.py).
 
 Re-stamped 2026-10-05 for issue959 (D30 Window4 107 GiB admission and dual-rank
 memory abort). The Window4 per-host `MemAvailable` admission predicate moves
@@ -975,7 +1023,7 @@ failed-rank exit cannot cause a native withdrawal that shortens the peer's
 10-second grace. A sampled guard is not continuous immunity.
 The acknowledgement loop rechecks the peer claim, exits on peer death and keeps
 a five-second broker-stop margin. Missing physical custody remains explicit.
-`archive/flux-migration/R-CONTESTED/experiments/graph_attest_702/window_driver.py --prepare` emits `rdv/memory-policy.json` once and binds its
+[archive/flux-migration/R-CONTESTED/experiments/graph_attest_702/window_driver.py](https://github.com/RobTand/tessera/blob/62c88591a92516002cbcc0e3e81918be2c0b22a9/archive/flux-migration/R-CONTESTED/experiments/graph_attest_702/window_driver.py) `--prepare` emits `rdv/memory-policy.json` once and binds its
 SHA into the submitted inputs; each rank emits
 `rdv/memory-samples-rank<N>.jsonl` and `rdv/memory-summary-rank<N>.json` —
 baseline, minimum, raw samples and counters kept so a future window can measure
@@ -997,7 +1045,7 @@ Protected sysctl, ARC, cache and service settings are untouched. This mints no
 performance, fit or pin claim; old producer approvals do not transfer, and pool
 review must check both the derivation and the guard against the exact new
 producer head before one fresh native gang. See
-`archive/flux-migration/R-CONTESTED/experiments/graph_attest_702/RUNPLAN-artifact.md`.
+[archive/flux-migration/R-CONTESTED/experiments/graph_attest_702/RUNPLAN-artifact.md](https://github.com/RobTand/tessera/blob/62c88591a92516002cbcc0e3e81918be2c0b22a9/archive/flux-migration/R-CONTESTED/experiments/graph_attest_702/RUNPLAN-artifact.md).
 
 Re-stamped 2026-10-05 for worker surface-share publication before completion.
 The ordinary session-finish hook writes the named worker share after finalizing
@@ -1027,9 +1075,9 @@ admission predicate stay exactly as they were: this wait is a bounded
 predicate-satisfaction wait, not a new admission mechanism, and it mints no
 114 GiB admission, no performance or fit evidence, and no transfer of the
 historical frozen producer's source approval. Deterministic regressions live
-in `archive/flux-migration/R-CONTESTED/tests/test_graph_attest_headroom_preflight.py`; the below-to-ready
+in [archive/flux-migration/R-CONTESTED/tests/test_graph_attest_headroom_preflight.py](https://github.com/RobTand/tessera/blob/62c88591a92516002cbcc0e3e81918be2c0b22a9/archive/flux-migration/R-CONTESTED/tests/test_graph_attest_headroom_preflight.py); the below-to-ready
 regression fails before the change, which refused below threshold instantly
-with no wait report. See `archive/flux-migration/R-CONTESTED/experiments/graph_attest_702/RUNPLAN-artifact.md`.
+with no wait report. See [archive/flux-migration/R-CONTESTED/experiments/graph_attest_702/RUNPLAN-artifact.md](https://github.com/RobTand/tessera/blob/62c88591a92516002cbcc0e3e81918be2c0b22a9/archive/flux-migration/R-CONTESTED/experiments/graph_attest_702/RUNPLAN-artifact.md).
 
 Re-stamped 2026-10-05 for issue946: the merged PR943 finite local-rank recipe
 adds only the distinct `window4-eager-2048-4096` A8S/socket/TP2/c1 benchmark mode.
@@ -1046,7 +1094,7 @@ verification precede actual fit/speed evidence. Those require served requests,
 per-rank memory, matching
 profiles and both-Spark Netdata coverage. No default, serving pin, format,
 scientific gate, graph receipt, ship artifact or performance claim is promoted
-by this source change. See `archive/flux-migration/R-CONTESTED/experiments/graph_attest_702/RUNPLAN-artifact.md`.
+by this source change. See [archive/flux-migration/R-CONTESTED/experiments/graph_attest_702/RUNPLAN-artifact.md](https://github.com/RobTand/tessera/blob/62c88591a92516002cbcc0e3e81918be2c0b22a9/archive/flux-migration/R-CONTESTED/experiments/graph_attest_702/RUNPLAN-artifact.md).
 
 Re-stamped 2026-10-05 for local disk admission of the container suite cache.
 The shared container owner refuses known network filesystem types before
@@ -1114,7 +1162,7 @@ Only the numeric phase is admitted: no old numericV4 receipt, timing/profile,
 NCU or repeated720-event population can stand for changed-source proof. These
 CPU schema/refusal controls are not CUDA numerical/performance/energy authority.
 
-Re-stamped 2026-11-09 (Flux migration 4C-7): the stageprev 793 operative approval scenario (claim contract, prerequisites, preparation, its packets and dedicated tests) moved to `archive/flux-migration/4C-7/` and is not executed. The kept `stageprev_probe`, `ab_stageprev_accept` and `stageprev_793_expected.json` with their independent tests keep the numeric acceptance obligations; the PB claim-method introspection is not ported.
+Re-stamped 2026-11-09 (Flux migration 4C-7): the stageprev 793 operative approval scenario (claim contract, prerequisites, preparation, its packets and dedicated tests) moved to [archive/flux-migration/4C-7/](https://github.com/RobTand/tessera/tree/62c88591a92516002cbcc0e3e81918be2c0b22a9/archive/flux-migration/4C-7) and is not executed. The kept `stageprev_probe`, `ab_stageprev_accept` and `stageprev_793_expected.json` with their independent tests keep the numeric acceptance obligations; the PB claim-method introspection is not ported.
 
 Re-stamped 2026-10-04 (`v6/ts696-stock-runner-guard-20261004`, #696):
 the GLM53 NoPE runner-identity owner rejects the known stock V2 runner in
@@ -1312,7 +1360,7 @@ and the original unapproved GPU numeric/sanitizer proposal are retained in
 `5aba4096` source48a6 identity remains historical; it does not authorize the
 corrected source. The same54-cell corrected-source successor, composing the
 parent-accepted4392 T4 prerequisite lineage and the actual #902 release proof,
-is `archive/flux-migration/4C-6/experiments/configs/value_prefetch_874_combined_safety_protocol_v3.json`.
+is [archive/flux-migration/4C-6/experiments/configs/value_prefetch_874_combined_safety_protocol_v3.json](https://github.com/RobTand/tessera/blob/62c88591a92516002cbcc0e3e81918be2c0b22a9/archive/flux-migration/4C-6/experiments/configs/value_prefetch_874_combined_safety_protocol_v3.json).
 It preserves the exact bank/ELF/image/readset and numeric16/GPU8/600 plus
 memcheck32/GPU24/1800 bounds. Parent901/normal/all-used-filesystem/scientific
 authorization gates remain held; no old protocol or ELF is restamped.
@@ -1501,7 +1549,7 @@ their ABI, layout and accumulation order; dense/two-run and other families
 are controls. Source `849b039b` has accepted 54-pair synthetic-only exact
 numeric and full-matrix memcheck evidence, not calibrated original-model
 performance, serving, energy or PACT evidence. Frozen protocol/native/readset
-identities remain in `archive/flux-migration/4C-6/experiments/configs/value_prefetch_874_protocol.json`.
+identities remain in [archive/flux-migration/4C-6/experiments/configs/value_prefetch_874_protocol.json](https://github.com/RobTand/tessera/blob/62c88591a92516002cbcc0e3e81918be2c0b22a9/archive/flux-migration/4C-6/experiments/configs/value_prefetch_874_protocol.json).
 Current-base CPU owner controls `75e8d128`:43 passed, one explicit retained-bank
 skip, zero uncollected modules/CUDA allocations. The synthetic-readset fixture
 now uses its temporary root, not an undeclared box path. Issue874 remains open.
@@ -2174,11 +2222,11 @@ T4 activation-prefetch experiment (2026-10-02, #875):
   exactly24 FP4 one-run routed instantiations (modes0/1/2, rates1..8), leaves
   all53 FP4 dense/mixed/utility and345 other-family controls exact, and reports
   zero STACK/LOCAL allocation (FP4 maximum128 registers).
-* Persisted actions (archived 2026-11-09, 4C-6) are `archive/flux-migration/4C-6/experiments/t4_code/pb_875_composed_cpu_prepare.json`,
-  `archive/flux-migration/4C-6/experiments/t4_code/pb_875_composed_cpu_stage.json` and the complete15-row
-  `archive/flux-migration/4C-6/experiments/t4_code/pb_875_composed_finite_campaign.json`. The source/image/cohort/readset,
+* Persisted actions (archived 2026-11-09, 4C-6) are [archive/flux-migration/4C-6/experiments/t4_code/pb_875_composed_cpu_prepare.json](https://github.com/RobTand/tessera/blob/62c88591a92516002cbcc0e3e81918be2c0b22a9/archive/flux-migration/4C-6/experiments/t4_code/pb_875_composed_cpu_prepare.json),
+  [archive/flux-migration/4C-6/experiments/t4_code/pb_875_composed_cpu_stage.json](https://github.com/RobTand/tessera/blob/62c88591a92516002cbcc0e3e81918be2c0b22a9/archive/flux-migration/4C-6/experiments/t4_code/pb_875_composed_cpu_stage.json) and the complete15-row
+  [archive/flux-migration/4C-6/experiments/t4_code/pb_875_composed_finite_campaign.json](https://github.com/RobTand/tessera/blob/62c88591a92516002cbcc0e3e81918be2c0b22a9/archive/flux-migration/4C-6/experiments/t4_code/pb_875_composed_finite_campaign.json). The source/image/cohort/readset,
   full numeric/native/sanitizer population and real local-scratch contract
-  is `archive/flux-migration/4C-6/experiments/t4_code/pb_875_composed_qualification_contract.json`. The GPU packet stays
+  is [archive/flux-migration/4C-6/experiments/t4_code/pb_875_composed_qualification_contract.json](https://github.com/RobTand/tessera/blob/62c88591a92516002cbcc0e3e81918be2c0b22a9/archive/flux-migration/4C-6/experiments/t4_code/pb_875_composed_qualification_contract.json). The GPU packet stays
   unpublished until the exact current source/SDK-stage/parent/admission
   tuple is accepted; no old source4e/image61 allowance or CPU pass transfers.
   Old packet bytes remain available in commit `5bbd050e` and the old NAS
@@ -4764,7 +4812,7 @@ constructed `feed_forward.w13`, for both quantized targets and explicit BF16
 passthroughs. Routed `feed_forward.experts.N.w1/w3` remain projection leaves
 owned by the MoE stack; no dense alias applies to them. This naming comes from
 the pinned LFM construction receipt, not a fallback in the serving plugin.
-`tessera.export_serving.fused_module` is the one statement of that roster --
+`tessera.metadata.fused_module` is the one statement of that roster --
 q/k/v, every non-routed gate/up including `mlp.shared_experts`, and `w13` --
 and the converter's `fused_key` delegates to it rather than restating two of
 its rows (tessera#211), so the plan-time fused check and the export-time one
@@ -5684,7 +5732,7 @@ tensors across ranks is what makes that checkable rather than asserted.
 the serving document's cut, the distributed declaration, a real two-rank
 `bind_owner_rank` on gloo, and the frozen panel's route are all exercised on
 CPU (`tests/test_native_moe_tp_owner_runtime.py`). The historical binding driver
-is archived at `archive/flux-migration/R-MIXED/_pb_native_moe_tp_owner/binding_arms.py`.
+is archived at [archive/flux-migration/R-MIXED/_pb_native_moe_tp_owner/binding_arms.py](https://github.com/RobTand/tessera/blob/62c88591a92516002cbcc0e3e81918be2c0b22a9/archive/flux-migration/R-MIXED/_pb_native_moe_tp_owner/binding_arms.py).
 The CUDA layer construction, the
 native decode, and the measured whole-operator apply are NOT: they need the
 pinned sm_121 image and a two-box `tcp://` rendezvous, and they are the GPU
@@ -9839,7 +9887,7 @@ capture outcomes; dirty evidence is retried by the publisher.
 
 Owner keys and generations are local joins, not identity seals. Rank association
 continues through the configured rank-specific `GA_DISPATCH_LOG` prefixes in
-`archive/flux-migration/R-CONTESTED/experiments/graph_attest_702/tp2_recipe.py` and existing rank/PID filename handling
+[archive/flux-migration/R-CONTESTED/experiments/graph_attest_702/tp2_recipe.py](https://github.com/RobTand/tessera/blob/62c88591a92516002cbcc0e3e81918be2c0b22a9/archive/flux-migration/R-CONTESTED/experiments/graph_attest_702/tp2_recipe.py) and existing rank/PID filename handling
 in `receipt.py`; no rank count or deployment identity is introduced here.
 Main's producer still aggregates legacy diagnostics unchanged. Strict admission
 of every rank/process/owner's successful descriptor coverage belongs to W3;
@@ -10739,7 +10787,7 @@ BF16 passthrough keeps every original tensor and bias unchanged.
 An explicit plan can select the router and vision Linear units without a default change.
 The selected vision qkv target keeps the stock prefix.
 
-The direct consumer byte rule belongs to serving.projection_routes.
+The direct consumer byte rule belongs to tessera.metadata.
 The DSA head tail uses its stock FP32 cache.
 The MLA absorbed path uses one decoded BF16 matrix and the stock split helper.
 Their decoded buffers increase resident prices; they do not become compressed BMM routes.
@@ -10754,7 +10802,8 @@ It does not infer replication from a shape total.
 The direct consumer contract separates the head operation from its unused dense output.
 The indexer head uses FP32 inputs and weights without activation quantization.
 The MLA split helper uses a BF16 matrix; the dense prefill path keeps its family contract.
-The producer reads direct_consumer_activation_contract and direct_consumer_weight from the runtime owner.
+The producer reads direct_consumer_activation_contract from tessera.metadata.
+The producer decodes direct weights through tessera.projection.direct_consumer_weight.
 T-16 direct weights use canonical FP32 value-scale products. The direct consumer selects its final cache dtype.
 
 The projection diagnostic uses raw BF16 values and separate FP32 row scales for its FP64 dense reference.

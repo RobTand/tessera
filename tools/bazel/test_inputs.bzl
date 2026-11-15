@@ -15,6 +15,10 @@ _CONSTRUCTION_REASON = "experiments/t8r_speed/bench_dense_module.py reads this c
 _PRISMAQUANT = "it reads PrismaQuant, pinned in tools/ci/gate_prismaquant_requirements.txt; its own dependencies are heavy, so only the tests that read it carry it."
 
 TEST_INPUTS = {
+    "//tests:test_projection": struct(
+        data = ["//tests:data/legacy/bf16-1024-window-channel-256c.tessera"],
+        reason = "the child decoder reads this fixture through its computed legacy directory.",
+    ),
     "//tests:test_regdirect_run_sh": struct(
         data = ["//experiments:runtime_image.sh", "//tools:_flux_gpu_jobspec"],
         reason = "regdirect_stage1/run.sh sources runtime_image.sh and executes the GPU launcher through the checkout argument; the launcher library includes its Python dependencies.",

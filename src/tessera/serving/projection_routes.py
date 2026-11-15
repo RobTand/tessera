@@ -4,7 +4,7 @@ A BF16 module keeps its stock constructor and method. An explicit Tessera
 selection can supply the quantization config that the model omits.
 
 The indexer retains only its FP32 head-weight cache. MLA retains a BF16 matrix
-for the stock split helper. The byte rule below prices those same tensors.
+for the stock split helper. The producer metadata owner prices those same tensors.
 This module imports neither torch nor vLLM when a producer reads that rule.
 """
 from __future__ import annotations
@@ -14,58 +14,7 @@ import importlib
 import inspect
 from types import MethodType
 
-
-def _consumer(module: str) -> str | None:
-    if module.endswith(".indexer.wk_weights_proj"):
-        return "indexer"
-    if module.endswith(".kv_b_proj"):
-        return "mla"
-    return None
-
-
-def direct_consumer_resident_bytes(module, family, rows, columns, roles):
-    """Return the extra resident bytes that the selected direct consumer needs."""
-    from .scheme import TESSERA_FAMILIES
-
-    if family not in TESSERA_FAMILIES:
-        raise ValueError(f"{module}: no projection decoder exists for {family!r}")
-    consumer = _consumer(module)
-    extra = 0
-    if consumer == "indexer":
-        tail = [int(size) for name, size in roles if name == "weights_proj"]
-        if len(tail) != 1:
-            raise ValueError(f"{module}: the direct consumer needs one weights_proj role")
-        extra = tail[0] * int(columns) * 4
-    elif consumer == "mla":
-        extra = int(rows) * int(columns) * 2
-    return {"resident_bytes_resident_mode": extra, "resident_bytes_stock": extra}
-
-
-def direct_consumer_activation_contract(module, role):
-    """Return the direct role's arithmetic, not its unused dense output."""
-    consumer = _consumer(module)
-    if consumer == "indexer" and role == "weights_proj":
-        return "a32"
-    if consumer == "mla" and role == "kv_b_proj":
-        return "a16"
-    return None
-
-
-def direct_consumer_weight(blob, module, role, family, *, device="cpu"):
-    """Decode a priced unit with the exact arithmetic of its direct consumer."""
-    import torch
-    from ..decode import reconstruct_unit
-    from ..unit_artifact import parse_unit_artifact
-    from .scheme import ROUTES
-
-    contract = direct_consumer_activation_contract(module, role)
-    if contract is None:
-        raise ValueError(f"{module}: role {role!r} has no direct weight consumer")
-    parsed = parse_unit_artifact(blob, device=device)
-    if family not in ROUTES or parsed.grid.name not in ROUTES[family]["grids"]:
-        raise ValueError(f"{module}: {family!r} does not decode grid {parsed.grid.name!r}")
-    weight = reconstruct_unit(parsed.unit, parsed.forests, parsed.code)
-    return weight.to(torch.float32 if contract == "a32" else torch.bfloat16)
+from .. import metadata
 
 
 def _selected_config(prefix):
@@ -213,11 +162,11 @@ def _install_mla() -> None:
 
 def adapt_method(method, scheme, prefix, layer):
     """Compose a dense method with the adapter its direct consumer requires."""
-    consumer = _consumer(prefix)
+    consumer = metadata._direct_consumer_kind(prefix)
     if consumer is None:
         return method
     roles = tuple((name, int(size)) for name, size in scheme["roles"])
-    direct_consumer_resident_bytes(prefix, scheme["family"], scheme["rows"],
+    metadata.direct_consumer_resident_bytes(prefix, scheme["family"], scheme["rows"],
                                    scheme["columns"], roles)
     if consumer == "indexer":
         _install_indexer()

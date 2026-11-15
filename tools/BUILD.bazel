@@ -540,6 +540,17 @@ ts_py_library(
 )
 
 ts_py_library(
+    name = "proofs/producer_ownership_metadata",
+    srcs = [
+        "proofs/producer_ownership_metadata.py",
+    ],
+    deps = [
+        "//src/tessera:__init___cycle",
+        "//src/tessera:metadata",
+    ],
+)
+
+ts_py_library(
     name = "provision_producer_env",
     srcs = [
         "provision_producer_env.py",
@@ -659,6 +670,7 @@ ts_py_library(
         "//src/tessera:bf16_route_cycle",
         "//src/tessera:encode_cycle",
         "//src/tessera:fused",
+        "//src/tessera:metadata",
         "//src/tessera:serving/dense_ownership",
         "//src/tessera:serving/weights_mapper",
         "//tests:fused_bound",
