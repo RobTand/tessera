@@ -1,4 +1,11 @@
 # Changelog
+
+## 2026-11-15: re-qualify eight stub route cells, contract v68, issue #1683
+
+Mint E2M1 R896 on IMG-G and BF16 on IMG-N for TP1 eager resident decode and batch.
+Use scoped execution receipts for the measured current pairs. Historical receipts retain their identities.
+No kernel, pin, default, quality, smoke or TP2 claim changes. R4 activation data follows on the same branch.
+Evidence: [measurement](docs/measurements/2026-11-15-cell-requalification-v68.md).
 ## 2026-10-22 — keep PQ2459 preflight tests dependency-aware (issue #1124)
 
 Skip only the sealed-parser preflight cases when tensor dependencies are absent.

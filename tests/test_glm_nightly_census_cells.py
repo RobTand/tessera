@@ -78,7 +78,7 @@ def _load(path: Path) -> dict:
 
 def _nightly_cells(contract) -> dict:
     return {c["id"]: c for c in contract["lane_eligibility"]["cells"]
-            if c["runtime"]["image"] == IMAGE}
+            if c["runtime"]["image"] == IMAGE and c["family"] == "TESSERA_E4M3_K1"}
 
 
 def _declared_rungs(tool, receipt, config_path=CONFIG) -> dict:
@@ -90,8 +90,10 @@ def _declared_rungs(tool, receipt, config_path=CONFIG) -> dict:
 
 
 def _agreement(tool, contract, receipt):
+    """Replay v48 E4M3 qualification; folded BF16 remains historical."""
     return tool.all_structure_agreement(
-        receipt["records"], cells=contract["lane_eligibility"]["cells"],
+        receipt["records"], cells=[c for c in contract["lane_eligibility"]["cells"]
+                                  if c["family"] != "TESSERA_BF16_K1"],
         phase_regimes=CENSUS_PHASE_REGIMES, platform="sm_121",
         declared_rungs=_declared_rungs(tool, receipt),
         record_owners=receipt["record_owner"],

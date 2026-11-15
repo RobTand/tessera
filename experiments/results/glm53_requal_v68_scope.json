@@ -1,0 +1,22 @@
+{
+ "commit": "5c2ef6deec3e354236f83616935faa7c14028737",
+ "publication_base": "937eaeccf1c76103142db48d60466ff97a620413",
+ "receipts": {
+  "e2m1": {
+   "receipt": "experiments/results/glm53_requal_v68_e2m1_census.json",
+   "config": "experiments/results/glm53_requal_v68_e2m1_config.json",
+   "sha256": "4b81ea19e436f16cac836e0fa4ca09bc84190822f786b0a4a1e5b3a2bb3f033c",
+   "config_sha256": "15c1066f243c4573d1e4f2592790a03b109f87d42aa26906580c2b11a651bb2a",
+   "source_sha256": "826984285ef1deeb78e786861c3c2306d9477b07a5fa20d7644fb87b92a8e3c4",
+   "units": 867
+  },
+  "bf16": {
+   "receipt": "experiments/results/glm53_requal_v68_bf16_census.json",
+   "config": "experiments/results/glm53_requal_v68_bf16_config.json",
+   "sha256": "bb409f5fb9182f86d257f26f488038e96afe810a2d8fb9fda2f918b2b2de951f",
+   "config_sha256": "d7056a45ed8b5461235d376be335c9ec411d163ed007550322fcf557d3666412",
+   "source_sha256": "826984285ef1deeb78e786861c3c2306d9477b07a5fa20d7644fb87b92a8e3c4",
+   "units": 876
+  }
+ }
+}

@@ -159,8 +159,6 @@ FUSED_MIXED_RECEIPT_ROUTED = {
 #: The v38 receipt the six widened cells were first minted on; its rungs are
 #: part of what each cell must cover.
 V38 = ("glm53_x_stub_tp1_eager_census.json", "glm53_x_stub_config.json")
-WITHDRAWN_T4 = sorted(f"tessera_e2m1_k2_{structure}_sm121_{regime}_resident"
-                       for structure in ("dense", "routed_moe") for regime in ("decode", "batch"))
 GLM_CELLS = sorted(
     [f"tessera_e4m3_k1_{structure}_sm121_{regime}_resident"
      for structure in ("dense", "routed_moe")
@@ -195,8 +193,10 @@ def _declared_rungs(tool, receipt, config_path) -> dict:
 
 
 def _agreement(tool, contract, receipt, config_path):
+    """Replay historical E4M3 qualification; v68 tests cover current BF16."""
     return tool.all_structure_agreement(
-        receipt["records"], cells=contract["lane_eligibility"]["cells"],
+        receipt["records"], cells=[c for c in contract["lane_eligibility"]["cells"]
+                                  if c["family"] != "TESSERA_BF16_K1"],
         phase_regimes=CENSUS_PHASE_REGIMES, platform="sm_121",
         declared_rungs=_declared_rungs(tool, receipt, config_path),
         record_owners=receipt["record_owner"],
@@ -280,17 +280,13 @@ def test_every_served_module_joins_a_cell_in_both_phases(stub):
                 stub, structure, phase, row)
 
 
-def test_the_historical_tcq_stub_is_unattested_by_the_current_reader():
+def test_the_historical_tcq_stub_is_refused_by_the_window_cells():
     tool = _tool()
     contract = load_serving_contract()
-    assert all(cell["id"] not in WITHDRAWN_T4
-               for cell in contract["lane_eligibility"]["cells"])
     receipt_path, config_path = _paths("d")
-    block, _problems = _agreement(tool, contract, _load(receipt_path), config_path)
-    for per in block["structures"].values():
-        for row in per["phases"].values():
-            assert row["covered_by_cell"] == 0
-            assert row["unattested"] == row["modules"] > 0
+    block, problems = _agreement(tool, contract, _load(receipt_path), config_path)
+    assert problems  # The WINDOW cells refuse historical TCQ execution pairs.
+    assert block["agrees"] is False
 
 
 def test_the_e2m1_modules_ran_the_native_a4_launches():
@@ -301,8 +297,8 @@ def test_the_e2m1_modules_ran_the_native_a4_launches():
             structure = "routed_moe" if record["kind"] == "moe" else "dense"
             assert (record["symbol"], record["decoder"]) == A4_LAUNCH[structure], (phase, name)
             assert record["contract"] == "e2m1_group16_ue4m3_static", (phase, name)
-    cells = {c["id"] for c in load_serving_contract()["lane_eligibility"]["cells"]}
-    assert cells.isdisjoint(WITHDRAWN_T4)
+    cells = load_serving_contract()["lane_eligibility"]["cells"]
+    assert not set(A4_LAUNCH.values()) & {pair for c in cells for pair in cell_executes(c)}
 
 
 def test_the_rate_4_window_stacks_ran_the_fused_lane_and_the_cells_name_it():
