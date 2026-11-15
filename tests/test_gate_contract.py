@@ -17,7 +17,6 @@ ROOT = Path(__file__).resolve().parents[1]
 MODULES = {
     'gate_actions': ROOT / 'tools/ci/gate_actions.py',
     'gate_evidence': ROOT / 'tools/ci/gate_evidence.py',
-    'gate_partition': ROOT / 'tools/ci/gate_partition.py',
     'gate_run': ROOT / 'tools/ci/gate_run.py',
 }
 
@@ -27,18 +26,6 @@ def load(name):
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module
-
-
-def test_partition_covers_both_lanes_once_and_uses_both_architectures():
-    partition = load('gate_partition')
-    files = ['tests/test_a.py', 'tests/test_b.py', 'tests/test_c.py']
-    matrix = partition.lane_matrix(files, {'torch': {files[0]: 100}, 'bytes': {}}, 2,
-                                   ['ubuntu-24.04', 'ubuntu-24.04-arm'])
-    for lane in ('bytes', 'torch'):
-        rows = [r for r in matrix['include'] if r['lane'] == lane]
-        assert sorted(p for row in rows for p in row['files']) == files
-        assert {r['runner'] for r in rows} == {'ubuntu-24.04', 'ubuntu-24.04-arm'}
-    assert len({r['index'] for r in matrix['include']}) == len(matrix['include'])
 
 
 def fixture_plan():

@@ -2,11 +2,8 @@
 """Deterministic duration-balanced shards shared by gate and nightly CI."""
 from __future__ import annotations
 
-import argparse
 from collections.abc import Mapping, Sequence
-import json
 import math
-from pathlib import Path, PurePosixPath
 
 
 def _cost(value: float) -> float:
@@ -42,34 +39,3 @@ def shards(files: Sequence[str], durations: Mapping[str, float], count: int,
         row['files'].sort()
         row['unknown_files'].sort()
     return result
-
-
-
-
-def selection_shard_count(files: Sequence[str], durations: Mapping[str, float], maximum: int,
-                          *, workers: int, single_shard_seconds: float) -> int:
-    """Keep small PRs on one slot; larger selections share the full gate matrix."""
-    unknown = default_unknown_seconds(durations)
-    # Reuse partition validation so an unknown file or invalid cost cannot be free.
-    packed = shards(files, durations, workers, unknown_seconds=unknown)
-    wall = max(row['estimated_seconds'] for row in packed)
-    useful = sum(durations.get(path, unknown) > 0 for path in files)
-    if isinstance(workers, bool) or not isinstance(workers, int) or workers < 1:
-        raise ValueError('workers must be a positive integer')
-    if isinstance(maximum, bool) or not isinstance(maximum, int) or maximum < 1:
-        raise ValueError('maximum must be a positive integer')
-    threshold = _cost(single_shard_seconds)
-    return 1 if wall <= threshold else min(maximum, max(1, useful))
-
-
-def lane_matrix(files, durations, count, runners):
-    """Each lane covers every candidate file; missing dependencies are reported."""
-    if not runners:
-        raise ValueError('runners cannot be empty')
-    result = []
-    for lane in ('bytes', 'torch'):
-        costs = durations.get(lane, {})
-        for row in shards(files, costs, count, unknown_seconds=default_unknown_seconds(costs)):
-            row.update(index=len(result), lane=lane, runner=runners[row['index'] % len(runners)])
-            result.append(row)
-    return {'shards': count, 'include': result}

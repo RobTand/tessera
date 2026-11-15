@@ -36,6 +36,7 @@ with placeholder planes is not this file's business.
 from collections import defaultdict
 import importlib.util
 import inspect
+import os
 import sys
 from pathlib import Path
 
@@ -252,25 +253,32 @@ def test_a_legal_shape_is_not_refused(name):
 # The one guard this lane deliberately does NOT have, and the premise it rests on
 # ---------------------------------------------------------------------------
 
-def _modules_reaching(target):
-    """Every module that imports, launches or loads ``target``, transitively.
+def _modules_reaching(target, root=ROOT):
+    """Every Python file under ``root`` that imports, launches or loads ``target``, transitively.
 
     ``tools/bazel/evidence.py`` reads every import, launch and path load in
     the tree so that Bazel gives each test its inputs; the same evidence
     answers who reaches ``tessera.kernel``.  Reading it from there rather
     than restating a list of the module's importers is the point: a list is
     right on the day it is written and silent the day a route grows an import.
+    Every Python file counts here, ``tools/bazel/`` included, and so does
+    every Python file a module loads by a resolved path, whatever the loader
+    is called.
     """
     spec = importlib.util.spec_from_file_location("evidence", ROOT / "tools" / "bazel" / "evidence.py")
     evidence = sys.modules[spec.name] = importlib.util.module_from_spec(spec)  # for its dataclasses
     spec.loader.exec_module(evidence)
-    found = evidence.Evidence(ROOT, sorted(
-        path.relative_to(ROOT).as_posix() for package in evidence.PACKAGES
-        for path in (ROOT / package).rglob("*") if path.is_file() and "__pycache__" not in path.parts))
+    evidence.is_module = lambda path: path.endswith(".py")
+    files = []
+    for directory, subdirectories, names in os.walk(root):
+        subdirectories[:] = [name for name in subdirectories if not name.startswith((".", "bazel-", "__pycache__"))]
+        files += [os.path.relpath(os.path.join(directory, name), root) for name in names]
+    found = evidence.Evidence(root, sorted(files))
     assert target in found.modules, target
     importers = defaultdict(set)
     for module in found.modules:
-        for imported in found.edges(module) | found.programs(module):
+        loaded = {path for path in found.facts[module].paths if path.endswith(".py")}
+        for imported in found.edges(module) | found.programs(module) | loaded:
             importers[imported].add(module)
     seen, pending = {target}, [target]
     while pending:
@@ -278,6 +286,26 @@ def _modules_reaching(target):
             seen.add(importer)
             pending.append(importer)
     return seen - {target}
+
+
+def test_the_reach_walk_sees_tools_bazel_and_an_aliased_path_load(tmp_path):
+    """The two routes the evidence alone misses: a module under tools/bazel/,
+    and a path load through a renamed loader."""
+    files = {
+        "pyproject.toml": "",
+        "src/tessera/__init__.py": "",
+        "src/tessera/kernel.py": "",
+        "tools/bazel/route.py": "import tessera.kernel\n",
+        "tools/loader.py": ("from importlib.util import spec_from_file_location as load_spec\n"
+                            "from pathlib import Path\n"
+                            "KERNEL = Path(__file__).resolve().parents[1] / 'src' / 'tessera' / 'kernel.py'\n"
+                            "load_spec('kernel', KERNEL)\n"),
+    }
+    for path, text in files.items():
+        (tmp_path / path).parent.mkdir(parents=True, exist_ok=True)
+        (tmp_path / path).write_text(text)
+    reaching = _modules_reaching("src/tessera/kernel.py", tmp_path)
+    assert {"tools/bazel/route.py", "tools/loader.py"} <= reaching, reaching
 
 
 def test_the_prefill_gemm_copies_a_strided_activation_and_is_off_the_served_path():

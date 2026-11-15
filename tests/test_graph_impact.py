@@ -111,6 +111,21 @@ def test_strict_mode_refuses_a_new_test_edge_and_accepts_a_removed_one(tessera):
     assert 'new test_to_test edge: tests/test_a.py -> tests/test_b.py' in core.compare(
         base, graph(('tests/test_a.py', 'tests/test_b.py')), stored)
 
+
+def test_fanout_is_judged_as_a_count_of_test_to_source_pairs(tessera):
+    """A test that gains a source while a removed test drops it is no growth."""
+    core = tessera.core
+    def graph(tests):
+        return core.measure(tests, {(test, source) for test, sources in tests.items() for source in sources},
+                            {'tools/hub.py': 1, 'tools/old.py': 1})
+    base = graph({'tests/test_a.py': {'tools/old.py'}, 'tests/test_b.py': set(), 'tests/test_gone.py': {'tools/hub.py'}})
+    stored = {'schema': core.SCHEMA, 'figures': {}, 'tolerances': {}, 'reach_budget': 10}
+    def fanout(tests):
+        return [error for error in core.compare(base, graph(tests), stored) if 'fanout' in error]
+    assert fanout({'tests/test_a.py': {'tools/old.py'}, 'tests/test_b.py': {'tools/hub.py'}}) == []
+    assert 'tools/hub.py +1' in ' '.join(fanout({'tests/test_a.py': {'tools/old.py'}, 'tests/test_b.py': {'tools/hub.py'},
+                                                 'tests/test_gone.py': {'tools/hub.py'}}))
+
 _LOADS_A_TOOL = '''import importlib.util
 from pathlib import Path
 

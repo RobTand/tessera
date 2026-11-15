@@ -4500,8 +4500,9 @@ each target come from `tools/bazel/evidence.py`, which reads imports, launches
 and path loads through the non-executing resolver
 `tessera._dev.source_dependencies`. A remote test action holds only its
 declared inputs, so an input that the evidence misses fails the test; it does
-not pass it. The hosted-gate test selector, its shard runner and their tests
-are deleted. The module docstring of the resolver and
+not pass it. The hosted-gate test selector `tools/impacted_tests.py`, its
+shard runner `tools/selected_population.py` and their tests are deleted; Git
+history keeps them. The module docstring of the resolver and
 `tests/test_source_dependencies.py` keep its boundary rules (#325, #338, #339,
 #353, #923, #1010, #1011).
 A delegated runner-fix task records
