@@ -1,6 +1,6 @@
 # Tessera plan-to-serve architecture
 
-Re-stamped 2026-11-15 for hosted arm64 actions, issue #1684.
+Re-stamped 2026-11-15 for hosted arm64 actions.
 
 Unused root-Docker experiment entries were deleted. No permitted fleet path
 ran them. Their private wrappers, tests and Bazel inputs were deleted too.
