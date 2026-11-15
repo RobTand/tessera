@@ -1,21 +1,8 @@
-# Mergify merge queue for Tessera. Tracking: #1559.
-#
-# Two steps keep per-PR feedback separate from testing the integrated SHA
-# (docs/ci_gate.md; Bazel on BuildBuddy, #1589):
-# - "pr-gate" runs the tests Bazel's impact analysis selects for the pull
-#   request merged into master, before queueing.
-# - "gate" runs the tests the batch impacts on Mergify's temporary draft batch
-#   pull request, against the queue-aware base, before the original pull
-#   requests merge into master. Every push to master then runs every test on
-#   amd64 and arm64 and records any detection miss.
-# The gate uploads each pull request's impacted Bazel packages as its scopes.
-#
-# Two batch drafts can run checks concurrently. Each original PR requires
-# "queue", "branch rule" and "pr-gate". The batch requires "gate".
-# Default batches contain one to seven PRs. Release batches contain one PR.
-# A failed batch splits. Mergify does not retry failed checks automatically.
-# Add "queue" to queue. Remove it to dequeue. Never merge outside the queue.
-# After a failure, comment "@mergifyio queue" to requeue the PR.
+# FIFO queue: check one PR at a time, in queue-label order.
+# Each draft contains the newest master and requires a passing "gate".
+# No batches, parallel checks, priority lanes, splits or automatic retries.
+# Add "queue" to queue. Remove it to dequeue. After failure, use "@mergifyio queue".
+# Keep the issue check on original PRs and the TL3b App command allowance.
 scopes:
   source:
     manual:
@@ -34,7 +21,7 @@ commands_restrictions:
 
 merge_queue:
   mode: serial
-  max_parallel_checks: 2
+  max_parallel_checks: 1
   reset_on_external_merge: always
   status_comments: outcomes
   queue_controls_comment: false
@@ -42,20 +29,6 @@ merge_queue:
   dequeued_label: dequeued
 
 queue_rules:
-  - name: release
-    queue_conditions:
-      - base = master
-      - label = queue
-      - label = release
-      - -draft
-      - check-success = branch rule
-      - check-success = pr-gate
-    merge_conditions:
-      - check-success = gate
-    merge_method: merge
-    batch_size: 1
-    max_checks_retries: 0
-    checks_timeout: 30 minutes
   - name: default
     queue_conditions:
       - base = master
@@ -66,18 +39,9 @@ queue_rules:
     merge_conditions:
       - check-success = gate
     merge_method: merge
-    batch_size:
-      min: 1
-      max: 7
-    batch_max_wait_time: 2 minutes
+    batch_size: 1
     max_checks_retries: 0
     checks_timeout: 30 minutes
-
-priority_rules:
-  - name: release changes first
-    conditions:
-      - label = release
-    priority: high
 
 pull_request_rules:
   - name: queue pull requests labelled "queue"
