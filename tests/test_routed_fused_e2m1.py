@@ -23,9 +23,8 @@ dequantised ``scaled_fp4_quant`` output the kernel consumes.  Held here:
   Serving-owner tests validate the native WINDOW intake and retained tensors.
 
 GPU cases need sm_121 (the instruction exists on the architecture-specific
-target only) and the runtime's ``scaled_fp4_quant``; they run through
-PrismaBuild inside the pinned serving image
-(``experiments/routed_fused_tests.sh``).
+target only) and the runtime's ``scaled_fp4_quant``; they run inside the
+pinned serving image (``experiments/routed_fused_tests.sh``).
 """
 from __future__ import annotations
 
