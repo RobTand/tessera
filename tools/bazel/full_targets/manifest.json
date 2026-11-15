@@ -354,15 +354,15 @@
           "//tests:withdrawn_cells",
           "//tools:_accounting_source",
           "//tools:_suite_runtime",
-          "//tools:ci/full_shards",
-          "//tools:ci/gate_flaky",
-          "//tools:ci/gate_run",
-          "//tools:compact_prep_probe",
-          "//tools:ig790_verify",
-          "//tools:pq2459_fixture_packet",
-          "//tools:provision_producer_env",
-          "//tools:suite_container",
-          "//tools:tessera_route_census"
+          "//tools:ci/gate_actions",
+          "//tools:ci/gate_junit",
+          "//tools:ci/graph_impact",
+          "//tools:files",
+          "//tools:plan_native_census",
+          "//tools:pq2459_source",
+          "//tools:selected_population",
+          "//tools:tessera_lane_preflight",
+          "//tools:verify_endpoint_witness"
         ],
         "tests": [
           "//tests:test_accounting_source.bytes",
@@ -530,7 +530,7 @@
         "estimated_seconds": 2018.9999999999986,
         "index": 0,
         "file": "tools/bazel/full_targets/amd64-0.targets",
-        "sha256": "17a750ffb437d37c83607beee29e0dadea68552eb65f8dc4965fbb5b74092eb4"
+        "sha256": "9e6373abe9ce10f15c2bc21959477a3c6461713677bca92bdf390924899f3d10"
       },
       {
         "rules": [
@@ -883,16 +883,15 @@
           "//tests:test_wire_packed_uniform_lib",
           "//tools/bazel:files",
           "//tools:_flux_gpu_jobspec",
-          "//tools:a4_measure",
-          "//tools:ci/gate_actions",
-          "//tools:ci/gate_junit",
-          "//tools:ci/gate_select",
-          "//tools:comparison_arm_identity",
-          "//tools:impacted_tests",
-          "//tools:pq2459_fixture_workloads",
-          "//tools:refresh_issues",
-          "//tools:suite_deadline",
-          "//tools:tessera_shape_time_panel"
+          "//tools:check_wheel",
+          "//tools:ci/gate_boundary",
+          "//tools:ci/gate_partition",
+          "//tools:ci/graph_impact_tessera",
+          "//tools:glm_cpu_cached_pack_probe",
+          "//tools:pq2459_export_progress",
+          "//tools:probe_endpoint_witness",
+          "//tools:served_generation_client",
+          "//tools:tessera_panel_baseline"
         ],
         "tests": [
           "//tests:test_activation_attestation_empty.bytes",
@@ -1064,7 +1063,7 @@
         "estimated_seconds": 2018.9000000000005,
         "index": 1,
         "file": "tools/bazel/full_targets/amd64-1.targets",
-        "sha256": "7071b5f0c71cc2fa4a42606be1a0ceefc4859ee4c2a44610f376fbb76a1a7b3a"
+        "sha256": "679bf689ef70e67c3d35b148fe3a3aee3591a378e67b1c1b49123d5dc32852cb"
       },
       {
         "rules": [
@@ -1417,16 +1416,15 @@
           "//tests:test_wire_unpack_memory_lib",
           "//tools/bazel:linux_amd64",
           "//tools:_flux_shape",
-          "//tools:check_wheel",
-          "//tools:ci/gate_boundary",
-          "//tools:ci/gate_partition",
-          "//tools:ci/graph_impact",
-          "//tools:comparison_input_intake",
-          "//tools:merge_suite",
-          "//tools:pq2459_scorer_source",
-          "//tools:render_glm_cpu_export_command",
-          "//tools:tessera_attest",
-          "//tools:tessera_shape_time_worker"
+          "//tools:ci/bazel_gate",
+          "//tools:ci/gate_collect",
+          "//tools:ci/gate_policy",
+          "//tools:ci/remote_gate",
+          "//tools:glm_cpu_export_inventory",
+          "//tools:pq2459_fixture_export",
+          "//tools:provision_producer_env",
+          "//tools:suite_container",
+          "//tools:tessera_route_census"
         ],
         "tests": [
           "//tests:test_activation_attestation",
@@ -1599,7 +1597,7 @@
         "estimated_seconds": 2018.8999999999992,
         "index": 2,
         "file": "tools/bazel/full_targets/amd64-2.targets",
-        "sha256": "d6e41399c4674c66c5382649a9e2178b0809622d9a308c680c719fe4c8ce48b6"
+        "sha256": "b049da95d9221dc305ea1eb3cc718ceb0ca337c36185f5c699fe16181580dacd"
       },
       {
         "rules": [
@@ -1952,16 +1950,15 @@
           "//tests:window_gemm_grouped_support",
           "//tools/bazel:linux_arm64",
           "//tools:_install_identity",
-          "//tools:ci/bazel_gate",
-          "//tools:ci/gate_collect",
-          "//tools:ci/gate_policy",
-          "//tools:ci/graph_impact_tessera",
-          "//tools:files",
-          "//tools:plan_native_census",
-          "//tools:pq2459_source",
-          "//tools:run_glm_cached_cpu_export",
-          "//tools:tessera_construction_census_cycle",
-          "//tools:tessera_update_construction_block"
+          "//tools:ci/bazel_parity",
+          "//tools:ci/gate_doc_readers",
+          "//tools:ci/gate_refresh",
+          "//tools:ci/seeded_breaks",
+          "//tools:ig790_verify",
+          "//tools:pq2459_fixture_packet",
+          "//tools:refresh_issues",
+          "//tools:suite_deadline",
+          "//tools:tessera_shape_time_panel"
         ],
         "tests": [
           "//tests:test_activation_attestation_empty",
@@ -2135,7 +2132,7 @@
         "estimated_seconds": 2018.900000000001,
         "index": 3,
         "file": "tools/bazel/full_targets/amd64-3.targets",
-        "sha256": "eb0818c80642145b3aa9a90a7f4eb73fa53f20c685b5af63be73ca9f6431c4f1"
+        "sha256": "6391ebfacb68e9e308c6be493cf78c08d1ebe86e9f7efed203d3005ccea36b26"
       },
       {
         "rules": [
@@ -2488,16 +2485,15 @@
           "//tests:window_lut_reference",
           "//tools/bazel:runner",
           "//tools:_suite_container",
-          "//tools:ci/bazel_parity",
-          "//tools:ci/gate_doc_readers",
-          "//tools:ci/gate_refresh",
-          "//tools:ci/remote_gate",
-          "//tools:glm_cpu_cached_pack_probe",
-          "//tools:pq2459_export_progress",
-          "//tools:probe_endpoint_witness",
-          "//tools:selected_population",
-          "//tools:tessera_lane_preflight",
-          "//tools:verify_endpoint_witness"
+          "//tools:ci/check_no_secret_leak",
+          "//tools:ci/gate_evidence",
+          "//tools:ci/gate_run",
+          "//tools:comparison_arm_identity",
+          "//tools:impacted_tests",
+          "//tools:pq2459_fixture_workloads",
+          "//tools:render_glm_cpu_export_command",
+          "//tools:tessera_attest",
+          "//tools:tessera_shape_time_worker"
         ],
         "tests": [
           "//tests:test_1146_routed_880_912_admission",
@@ -2670,7 +2666,7 @@
         "estimated_seconds": 2016.7999999999988,
         "index": 4,
         "file": "tools/bazel/full_targets/amd64-4.targets",
-        "sha256": "b06305dc8ef19588c2a1371346c81e67969150ead6b7901e31b6d606a858c652"
+        "sha256": "018c3cc22f03008b9c25052b25025b7eaa31b470212ed261abf04c4b213993de"
       },
       {
         "rules": [
@@ -3023,15 +3019,15 @@
           "//tests:window_pack_reference",
           "//tools:__init__",
           "//tools:_suite_flux",
-          "//tools:ci/check_no_secret_leak",
-          "//tools:ci/gate_evidence",
-          "//tools:ci/gate_replay",
-          "//tools:ci/seeded_breaks",
-          "//tools:glm_cpu_export_inventory",
-          "//tools:pq2459_fixture_export",
-          "//tools:proofs/producer_ownership_metadata",
-          "//tools:served_generation_client",
-          "//tools:tessera_panel_baseline"
+          "//tools:ci/full_shards",
+          "//tools:ci/gate_flaky",
+          "//tools:ci/gate_select",
+          "//tools:comparison_input_intake",
+          "//tools:merge_suite",
+          "//tools:pq2459_scorer_source",
+          "//tools:run_glm_cached_cpu_export",
+          "//tools:tessera_construction_census_cycle",
+          "//tools:tessera_update_construction_block"
         ],
         "tests": [
           "//tests:test_1146_routed_880_912_admission.bytes",
@@ -3205,7 +3201,7 @@
         "estimated_seconds": 2018.899999999999,
         "index": 5,
         "file": "tools/bazel/full_targets/amd64-5.targets",
-        "sha256": "0e19850a5ad3608f2142bce89fc81b19fccbb987ee3d4e143cc1a3751b0f1f8d"
+        "sha256": "b612f7d4eacbc1a48c807aa8cb42b63a6d3ed291df0c6351775e61578ee0b050"
       }
     ],
     "arm64": [
@@ -3557,15 +3553,15 @@
           "//tests:withdrawn_cells",
           "//tools:_accounting_source",
           "//tools:_suite_runtime",
-          "//tools:ci/full_shards",
-          "//tools:ci/gate_flaky",
-          "//tools:ci/gate_run",
-          "//tools:compact_prep_probe",
-          "//tools:ig790_verify",
-          "//tools:pq2459_fixture_packet",
-          "//tools:provision_producer_env",
-          "//tools:suite_container",
-          "//tools:tessera_route_census"
+          "//tools:ci/gate_actions",
+          "//tools:ci/gate_junit",
+          "//tools:ci/graph_impact",
+          "//tools:files",
+          "//tools:plan_native_census",
+          "//tools:pq2459_source",
+          "//tools:selected_population",
+          "//tools:tessera_lane_preflight",
+          "//tools:verify_endpoint_witness"
         ],
         "tests": [
           "//tests:test_accounting_source",
@@ -3728,7 +3724,7 @@
         "estimated_seconds": 1910.4000000000005,
         "index": 0,
         "file": "tools/bazel/full_targets/arm64-0.targets",
-        "sha256": "1ed754cdb0f00d954dd8b2225addfdc203044ef0cc06baafdf570b7fd7985b7a"
+        "sha256": "3fe342fec7d25ac329418071ca8e28bb99167f97111993101309257294e309bd"
       },
       {
         "rules": [
@@ -4077,16 +4073,15 @@
           "//tests:test_wire_unpack_memory.bytes",
           "//tools/bazel:files",
           "//tools:_flux_gpu_jobspec",
-          "//tools:a4_measure",
-          "//tools:ci/gate_actions",
-          "//tools:ci/gate_junit",
-          "//tools:ci/gate_select",
-          "//tools:comparison_arm_identity",
-          "//tools:impacted_tests",
-          "//tools:pq2459_fixture_workloads",
-          "//tools:refresh_issues",
-          "//tools:suite_deadline",
-          "//tools:tessera_shape_time_panel"
+          "//tools:check_wheel",
+          "//tools:ci/gate_boundary",
+          "//tools:ci/gate_partition",
+          "//tools:ci/graph_impact_tessera",
+          "//tools:glm_cpu_cached_pack_probe",
+          "//tools:pq2459_export_progress",
+          "//tools:probe_endpoint_witness",
+          "//tools:served_generation_client",
+          "//tools:tessera_panel_baseline"
         ],
         "tests": [
           "//tests:test_activation_attestation_empty",
@@ -4254,7 +4249,7 @@
         "estimated_seconds": 1910.399999999999,
         "index": 1,
         "file": "tools/bazel/full_targets/arm64-1.targets",
-        "sha256": "831029c2dc86c85a00588fc1d89bc50e1b3342cb699c8a1c5c73e9c5642fcb98"
+        "sha256": "98f2c88daf5f0d816c51710820961201fb6a811bca262b74a4d8792cca9d6c34"
       },
       {
         "rules": [
@@ -4603,16 +4598,15 @@
           "//tests:test_wire_unpack_memory_lib",
           "//tools/bazel:linux_amd64",
           "//tools:_flux_shape",
-          "//tools:check_wheel",
-          "//tools:ci/gate_boundary",
-          "//tools:ci/gate_partition",
-          "//tools:ci/graph_impact",
-          "//tools:comparison_input_intake",
-          "//tools:merge_suite",
-          "//tools:pq2459_scorer_source",
-          "//tools:render_glm_cpu_export_command",
-          "//tools:tessera_attest",
-          "//tools:tessera_shape_time_worker"
+          "//tools:ci/bazel_gate",
+          "//tools:ci/gate_collect",
+          "//tools:ci/gate_policy",
+          "//tools:ci/remote_gate",
+          "//tools:glm_cpu_export_inventory",
+          "//tools:pq2459_fixture_export",
+          "//tools:provision_producer_env",
+          "//tools:suite_container",
+          "//tools:tessera_route_census"
         ],
         "tests": [
           "//tests:test_1146_routed_880_912_admission",
@@ -4781,7 +4775,7 @@
         "estimated_seconds": 1910.3999999999992,
         "index": 2,
         "file": "tools/bazel/full_targets/arm64-2.targets",
-        "sha256": "d650f7dc1a14de798796c1d12c31e63d0c10a0ed0e0cb7950f9f9fc0a670ef8f"
+        "sha256": "bd71c083cd6e0ccff5134f3fc29931ecde437a473642792abc16d71d8138a784"
       },
       {
         "rules": [
@@ -5130,16 +5124,15 @@
           "//tests:window_gemm_grouped_support",
           "//tools/bazel:linux_arm64",
           "//tools:_install_identity",
-          "//tools:ci/bazel_gate",
-          "//tools:ci/gate_collect",
-          "//tools:ci/gate_policy",
-          "//tools:ci/graph_impact_tessera",
-          "//tools:files",
-          "//tools:plan_native_census",
-          "//tools:pq2459_source",
-          "//tools:run_glm_cached_cpu_export",
-          "//tools:tessera_construction_census_cycle",
-          "//tools:tessera_update_construction_block"
+          "//tools:ci/bazel_parity",
+          "//tools:ci/gate_doc_readers",
+          "//tools:ci/gate_refresh",
+          "//tools:ci/seeded_breaks",
+          "//tools:ig790_verify",
+          "//tools:pq2459_fixture_packet",
+          "//tools:refresh_issues",
+          "//tools:suite_deadline",
+          "//tools:tessera_shape_time_panel"
         ],
         "tests": [
           "//tests:test_allowable_rungs.bytes",
@@ -5309,7 +5302,7 @@
         "estimated_seconds": 1910.4000000000005,
         "index": 3,
         "file": "tools/bazel/full_targets/arm64-3.targets",
-        "sha256": "f105a0ae278351131cdee33c43994a9670dcf6e16dd77e249914be6f25d12904"
+        "sha256": "11165c37b7cf547f9b753f6d8df6d74e8686bb42242b40e1bf0d6f141484fc19"
       },
       {
         "rules": [
@@ -5658,16 +5651,15 @@
           "//tests:window_lut_reference",
           "//tools/bazel:runner",
           "//tools:_suite_container",
-          "//tools:ci/bazel_parity",
-          "//tools:ci/gate_doc_readers",
-          "//tools:ci/gate_refresh",
-          "//tools:ci/remote_gate",
-          "//tools:glm_cpu_cached_pack_probe",
-          "//tools:pq2459_export_progress",
-          "//tools:probe_endpoint_witness",
-          "//tools:selected_population",
-          "//tools:tessera_lane_preflight",
-          "//tools:verify_endpoint_witness"
+          "//tools:ci/check_no_secret_leak",
+          "//tools:ci/gate_evidence",
+          "//tools:ci/gate_run",
+          "//tools:comparison_arm_identity",
+          "//tools:impacted_tests",
+          "//tools:pq2459_fixture_workloads",
+          "//tools:render_glm_cpu_export_command",
+          "//tools:tessera_attest",
+          "//tools:tessera_shape_time_worker"
         ],
         "tests": [
           "//tests:test_1146_routed_880_912_admission.bytes",
@@ -5837,7 +5829,7 @@
         "estimated_seconds": 1910.3999999999999,
         "index": 4,
         "file": "tools/bazel/full_targets/arm64-4.targets",
-        "sha256": "1c5aca065848f25ae0d70b9dba633a3748bff6f8e3c3aff58a202d0d8d193448"
+        "sha256": "9be73fc8898d2c2c373844d0b7adf5aa55aacda088bd80bb4a643bff7e9e7e7a"
       },
       {
         "rules": [
@@ -6186,15 +6178,15 @@
           "//tests:window_pack_reference",
           "//tools:__init__",
           "//tools:_suite_flux",
-          "//tools:ci/check_no_secret_leak",
-          "//tools:ci/gate_evidence",
-          "//tools:ci/gate_replay",
-          "//tools:ci/seeded_breaks",
-          "//tools:glm_cpu_export_inventory",
-          "//tools:pq2459_fixture_export",
-          "//tools:proofs/producer_ownership_metadata",
-          "//tools:served_generation_client",
-          "//tools:tessera_panel_baseline"
+          "//tools:ci/full_shards",
+          "//tools:ci/gate_flaky",
+          "//tools:ci/gate_select",
+          "//tools:comparison_input_intake",
+          "//tools:merge_suite",
+          "//tools:pq2459_scorer_source",
+          "//tools:run_glm_cached_cpu_export",
+          "//tools:tessera_construction_census_cycle",
+          "//tools:tessera_update_construction_block"
         ],
         "tests": [
           "//tests:test_activation_attestation.bytes",
@@ -6364,7 +6356,7 @@
         "estimated_seconds": 1910.4000000000003,
         "index": 5,
         "file": "tools/bazel/full_targets/arm64-5.targets",
-        "sha256": "a60c5089273ec76e706d5ab2b698638a601eab3caadf284a7b7628f134373828"
+        "sha256": "bb5d4dcb48d26e993fcaa80adafad3bac8330785cb0e123f9e44db8d2b0b7b04"
       }
     ]
   }
