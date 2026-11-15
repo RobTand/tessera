@@ -32,23 +32,6 @@ branch rule 12 on an authenticated Mergify draft, so the draft is judged by
   use the comment commands `@mergifyio queue` and `@mergifyio requeue`.
   Put the command at the start of the comment.
 
-## TL3's pull requests
-
-TL3 uses branches named `tessera-<issue>-tl3-<node>` and starts each
-pull request body with `Refs #<issue>.`, so `branch rule` passes as it
-does for every pull request. TL3 tests each change through admitted Flux jobs,
-BuildBuddy or GitHub-hosted CI and
-reviews it, then posts its `TL3 approval` check on the reviewed head and adds
-the `tl3-queue` label. That pair queues the pull request in the default queue
-in place of `queue` and `pr-gate`; `branch rule` stays required. TL3
-follows Mergify's queue check on the PR head and never reads `pr-gate`, so a
-`pr-gate` condition would leave a failing TL3 PR unqueued without TL3 noticing.
-The batch's full `gate` still decides every merge. A TL3 change that would
-fail `pr-gate` can enter a batch, fail `gate`, and delay other pull requests
-while the batch splits. Don't push to a TL3 branch: TL3 approved that exact
-head. The rule name `Queue TL3-approved PRs` is fixed because TL3 follows its
-`Rule: Queue TL3-approved PRs (queue)` check.
-
 ## What happens to a batch
 
 Mergify groups queued PRs into batches. The default queue batches one to seven
@@ -58,8 +41,7 @@ follow queue order.
 
 For each batch, Mergify opens a temporary draft PR on a
 `mergify/merge-queue/` branch. It contains `master`, the batches ahead of it,
-and the current batch. Draft checks preserve each original PR's head, which
-TL3's approval names. The batch's `gate` check tests the full gate population
+and the current batch. Draft checks preserve each original PR's head. The batch's `gate` check tests the full gate population
 on that integrated SHA. A green `pr-gate` on each original PR alone does not
 allow the batch to merge.
 

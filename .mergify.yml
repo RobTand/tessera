@@ -10,33 +10,12 @@
 #   amd64 and arm64 and records any detection miss.
 # The gate uploads each pull request's impacted Bazel packages as its scopes.
 #
-# max_parallel_checks: 2 forces draft batch PRs. In-place checks could rewrite
-# the original branch and invalidate the head TL3 approved. Serial mode keeps
-# merge order while two batches run checks concurrently. Default batches grow
-# from one PR to seven; release batches contain one PR and are served first.
-# A failed batch is split to isolate the failing PR. Mergify never retries a
-# failed check automatically. Never merge outside the queue.
-#
-# Add "queue" to queue and remove it to dequeue. After a failure, comment
-# "@mergifyio queue"; toggling the label does not reset a dequeued PR.
-# TL3 tests and reviews each change, posts its "TL3 approval" check on the
-# reviewed head, then adds "tl3-queue". TL3 follows
-# Mergify's queue check on the PR head and never reads pr-gate, so a pr-gate
-# condition would leave a failing TL3 PR unqueued without TL3 noticing. The
-# batch's full "gate" still decides every merge. The "branch rule" check stays:
-# TL3's branch names and "Refs #<issue>." bodies pass it. TL3 finds its rule's
-# check by name, so keep "Queue TL3-approved PRs".
-# TL3's App needs an explicit command allowance because installation does not
-# grant a human collaborator's write permission.
-# Mergify's default injection adds classic branch protection's required checks
-# to both queue and merge conditions, and merge conditions are judged on the
-# batch draft. "pure" and "branch rule" both skip branch rule 12 on an
-# authenticated mergify/merge-queue/ draft, so either passes there. Once the
-# gate has run on a real batch, classic protection requires only "branch rule"
-# (also named below). Keep test checks out of classic protection: one on the
-# PR head would hold a pull request outside the queue, and one the draft
-# can't pass would stall every batch. (branch_protection_injection_mode: none
-# would need a merge_bot_account, which this repository does not use.)
+# Two batch drafts can run checks concurrently. Each original PR requires
+# "queue", "branch rule" and "pr-gate". The batch requires "gate".
+# Default batches contain one to seven PRs. Release batches contain one PR.
+# A failed batch splits. Mergify does not retry failed checks automatically.
+# Add "queue" to queue. Remove it to dequeue. Never merge outside the queue.
+# After a failure, comment "@mergifyio queue" to requeue the PR.
 scopes:
   source:
     manual:
@@ -81,15 +60,9 @@ queue_rules:
     queue_conditions:
       - base = master
       - -draft
-      - or:
-          - and:
-              - label = queue
-              - check-success = branch rule
-              - check-success = pr-gate
-          - and:
-              - label = tl3-queue
-              - check-success = @tl3-robtand/TL3 approval
-              - check-success = branch rule
+      - label = queue
+      - check-success = branch rule
+      - check-success = pr-gate
     merge_conditions:
       - check-success = gate
     merge_method: merge
@@ -114,12 +87,3 @@ pull_request_rules:
       - -draft
     actions:
       queue:
-  - name: Queue TL3-approved PRs
-    conditions:
-      - base = master
-      - label = tl3-queue
-      - -draft
-      - check-success = @tl3-robtand/TL3 approval
-    actions:
-      queue:
-        name: default

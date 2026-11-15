@@ -547,15 +547,14 @@ def test_the_remote_gate_does_not_defer_its_final_scan():
     assert 'BBRUN_FINAL_SCAN' not in json.dumps(remote_gate.run_request(Args))
 
 
-@pytest.mark.parametrize('architecture,pool', [('amd64', 'selfhosted-amd64'),
-                                               ('arm64', 'selfhosted-arm64')])
-def test_both_action_platforms_use_selfhosted_capacity_without_fallback(architecture, pool):
+@pytest.mark.parametrize('architecture', ['amd64', 'arm64'])
+def test_action_platforms_use_amd64_pool_and_hosted_arm64_without_fallback(architecture):
     import re
     build = (ROOT / 'tools/bazel/BUILD.bazel').read_text()
     blocks = re.findall(r'platform\(.*?\n\)', build, re.S)
     block = next(block for block in blocks if f'name = "linux_{architecture}"' in block)
-    assert f'"Pool": "{pool}"' in block
-    assert '"use-self-hosted-executors": "true"' in block
+    assert ('"Pool": "selfhosted-amd64"' in block if architecture == 'amd64' else '"Pool"' not in block)
+    assert f'"use-self-hosted-executors": "{str(architecture == "amd64").lower()}"' in block
     config = 'remote' if architecture == 'amd64' else 'remote-arm64'
     bazelrc = (ROOT / '.bazelrc').read_text()
     assert f'build:{config} --remote_local_fallback=false' in bazelrc
