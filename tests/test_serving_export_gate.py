@@ -327,7 +327,9 @@ def test_a_routed_stack_is_gated_against_the_routed_moe_cells_not_the_dense_rang
 def test_routed_paired_window_reader_support_is_not_a_serving_attestation(q256):
     from tessera.serving.scheme import STRUCTURE_ROUTED_MOE, attested_cells
 
-    assert attested_cells("TESSERA_E2M1_K2", STRUCTURE_ROUTED_MOE) == []
+    # v68 re-mints IDs from new R896 scope receipts; reader support alone attests no other rung.
+    cells = attested_cells("TESSERA_E2M1_K2", STRUCTURE_ROUTED_MOE)
+    assert cells and all(c["rungs_q256"] == [896] and c["runtime"]["execution_modes"] == ["eager"] for c in cells)
     stamped = []
     recipe = EXPORT.check_recipe(GRIDS["E2M1x2"], q256, where="stack.probe",
                                  structure=STRUCTURE_ROUTED_MOE, overrides=stamped)
@@ -600,8 +602,9 @@ def test_the_packaged_table_still_admits_every_device_qualified_rung():
                 family=route_for_grid(grid_name), span=served.span, target="stack.probe",
                 structure=STRUCTURE_ROUTED_MOE, contract=packaged) == \
                 route_for_grid(grid_name)
-    assert [cell for cell in packaged["lane_eligibility"]["cells"]
-            if cell["family"] == "TESSERA_BF16_K1"] == []
+    # v68 re-mints IDs from new scope receipts; historical folded pairs stay refused.
+    assert all(not e["decoder"].endswith("_folded") for c in packaged["lane_eligibility"]["cells"]
+               if c["family"] == "TESSERA_BF16_K1" for e in c["executes"])
 
 
 def test_a_cell_whose_facts_cannot_be_read_is_refused_not_assumed(monkeypatch):

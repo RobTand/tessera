@@ -33,6 +33,7 @@ from pathlib import Path
 
 from tessera.serving.contract import (
     CENSUS_PHASE_REGIMES,
+    cell_executes,
     PAYLOAD_FAMILY_BY_ROUTE,
     load_serving_contract,
 )
@@ -141,7 +142,10 @@ def test_every_served_module_joins_a_cell_in_both_phases():
             assert row["unattested"] == counts.get("TESSERA_BF16_K1", 0), (
                 structure, phase, row)
     cells = load_serving_contract()["lane_eligibility"]["cells"]
-    assert [c["id"] for c in cells if c["family"] == "TESSERA_BF16_K1"] == []
+    # v68 re-mints IDs from new scope receipts; the old pairs stay refused.
+    old = {(r["symbol"], r["decoder"]) for records in receipt["records"].values()
+           for r in records.values() if r["policy"].startswith("TESSERA_BF16:")}
+    assert old and all(old.isdisjoint(cell_executes(c)) for c in cells if c["family"] == "TESSERA_BF16_K1")
 
 
 def test_the_join_fails_on_the_table_before_these_cells():

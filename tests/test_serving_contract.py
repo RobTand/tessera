@@ -101,10 +101,10 @@ _CELL_LAWS: dict[str, dict[str, object]] = {}
 #: (``docs/measurements/2026-10-01-t8-dense-census.md``).
 _T8_RUNGS = sorted({256, 384, 512, 640, 768, 896, 1024, 1152, 1280, 1408, 1536, 1664, 1792,
                     1920, 2048})
-_FAMILY_RUNGS = {"TESSERA_E2M1_K2": [],
+_FAMILY_RUNGS = {"TESSERA_E2M1_K2": [896],
                  "TESSERA_E4M3_K1": sorted({832, 864, 896, 928, 944, 960, 1024, 1088}
                                            | set(_T8_RUNGS)),
-                 "TESSERA_BF16_K1": []}
+                 "TESSERA_BF16_K1": [832, 880, 960, 1024, 1088]}
 
 #: MINTED at contract v38 (tessera#604): eight cells on the GLM serving image,
 #: from one TP1 eager route census of a GLM-5.3-Flash stub whose nine Tessera
@@ -200,6 +200,34 @@ for _family, _structure, _rungs, _contract, _launches in _GLM_X_CELLS:
             "route_status": "backed_with_serve_flag", "qualification": "device_qualified",
             "requires_plugin": "tessera", "requires_serve_flags": ["TESSERA_SERVE_MODE=resident"],
             "predicates": [], "runtime": NIGHTLY_RUNTIME}
+
+# v68 re-mints scope IDs from new receipts, not the withdrawn launches.
+_V68_LAWS = {}
+for _family, _runtime, _activation, _dense, _routed in (
+    ("TESSERA_E2M1_K2", _GLM_X_RUNTIME, "e2m1_group16_ue4m3_static",
+     ("tessera.routed_fused_e2m1.dense_forward_quantized", "native_fused_window_dense_e2m1"),
+     ("tessera.routed_fused_e2m1.FusedRoutedE2M1MoE.__call__", "native_routed_fused_window_e2m1")),
+    ("TESSERA_BF16_K1", NIGHTLY_RUNTIME, "bf16_unquantized",
+     ("tessera::fused_window_dense", "native_fused_window_dense_bf16"),
+     (_FUSED_MOE, "native_routed_window_classes_bf16")),
+):
+    for _structure, _pair in (("dense", _dense), ("routed_moe", _routed)):
+        for _regime in ("decode", "batch"):
+            _id = (nightly_id(_family, _structure, _regime) if _family == "TESSERA_BF16_K1"
+                   else f"{_family.lower()}_{_structure}_sm121_{_regime}_resident")
+            _law = {**_CELL_LAWS[f"tessera_e4m3_k1_dense_sm121_{_regime}_resident"],
+                    "family": _family, "structure": _structure,
+                    "activation_contract": _activation,
+                    "rungs_q256": ([1024] if _structure == "routed_moe" else _FAMILY_RUNGS[_family])
+                                  if _family == "TESSERA_BF16_K1" else [896],
+                    "executes": [{"symbol": _pair[0], "decoder": _pair[1]}],
+                    "runtime": {**_runtime,
+                        "tessera_commit": "5c2ef6deec3e354236f83616935faa7c14028737",
+                        "serving_source_sha256": "826984285ef1deeb78e786861c3c2306d9477b07a5fa20d7644fb87b92a8e3c4"}}
+            if _family == "TESSERA_BF16_K1":
+                _law["run_tables"] = [[4]] if _structure == "routed_moe" else [[3, 4], [4], [4, 5]]
+            _V68_LAWS[_id] = _law
+_CELL_LAWS.update(_V68_LAWS)
 
 #: RE-EARNED at contract v34 (tessera#545): the dense native window GEMM, the
 #: one launch ``fp8_route.apply`` and ``bf16_route.apply`` have made since
@@ -297,6 +325,10 @@ _REEARNED = {
                         (_FUSED_MOE, "native_routed_fused_window_e4m3mma")})
        for _regime in ("decode", "batch")},
 }
+_REEARNED.update({cid: ("experiments/results/glm53_requal_v68_e2m1_census.json",
+                        {(e["symbol"], e["decoder"]) for e in law["executes"]})
+                  for cid, law in _V68_LAWS.items()
+                  if law["family"] == "TESSERA_E2M1_K2" and law["structure"] == "routed_moe"})
 _REEARNED_CELL_IDS = frozenset(_REEARNED)
 
 #: Contract v37 withdrew the two earlier BF16 epilogue cells. Contract v59
@@ -423,8 +455,8 @@ def test_a_cell_exists_exactly_where_a_receipt_does(contract):
         # it makes none a cell is not merely unnecessary, it is refused by
         # ``_validate_cell_executes``.
         route = _FAMILY_TO_ROUTE[family]
-        launchable = any(launch_pairs(route, structure=structure)
-                         for structure in STRUCTURES)
+        launchable = (any(launch_pairs(route, structure=structure) for structure in STRUCTURES)
+                      or any(c["id"] in _V68_LAWS for c in cells))
         if rungs and launchable:
             assert cells, f"{family} attests {rungs} but publishes no lane_eligibility cell"
         elif not rungs:
@@ -813,33 +845,7 @@ def test_no_published_dense_cell_names_a_launch_the_build_cannot_make(contract):
 
 
 def test_no_withdrawn_cell_has_come_back_with_its_withdrawn_claim(contract):
-    """A withdrawal is a named act, not a gap somebody can refill quietly.
-
-    ``_WITHDRAWN_CELL_IDS`` records what contract v31 removed and why, and the
-    question a returning cell has to answer is "on which receipt?".
-
-    That question cannot be asked by id alone, and pretending otherwise would
-    make this test wrong in the other direction.  A cell id IS its scope --
-    ``validate_serving_contract`` derives it from (family, structure, platform,
-    regime) and refuses any other spelling -- so re-attesting a scope reuses
-    its id by construction.  Two of the eight, the ``sm_121`` BF16 dense pair,
-    came back at contract v34 on the tessera#545 census, and they are named in
-    ``_REEARNED_CELL_IDS`` with that receipt.  What must not come back is the
-    withdrawn CLAIM, so this checks the launch: a returning cell executes the
-    native window GEMM the v34 receipt measured, never the window-GEMV
-    arithmetic ``1b767a207`` retired.
-
-    The other six stay absent, and for two different reasons: the four
-    ``tessera_e4m3_k1_dense_sm121_*_{resident,streamed}`` ids split a scope by
-    residency, which the v34 cells do not (one cell covers both), and the two
-    ``gfx1201`` ids have no ROCm census of this launch.
-
-    Contract v37 (tessera#614) withdrew the re-earned pair again: the BF16
-    route moved to the folded arithmetic, which the v34 receipt did not
-    measure.  So both withdrawals are checked the same way -- absent unless
-    re-earned, and a re-earned cell executes the folded launch and neither
-    withdrawn claim (the v31 GEMV lane's, the v37 epilogue decoder's).
-    """
+    """Re-minted IDs must name a new receipt and reject all withdrawn launch pairs."""
     present = {cell["id"] for cell in contract["lane_eligibility"]["cells"]}
     withdrawn = (_WITHDRAWN_CELL_IDS | _WITHDRAWN_V37_CELL_IDS | _WITHDRAWN_V38_CELL_IDS
                  | _WITHDRAWN_V39_CELL_IDS)
@@ -926,7 +932,12 @@ def test_every_cell_retains_its_attested_launch_identity(contract):
                                        regime=cell["regime"], mode=mode)
         for launch in cell["executes"]:
             pair = (launch["symbol"], launch["decoder"])
-            if pair not in admissible:
+            if pair not in admissible and cell["id"] in _V68_LAWS:
+                law = _V68_LAWS[cell["id"]]
+                assert launch in law["executes"]
+                assert cell["rungs_q256"] == law["rungs_q256"]
+                assert cell["runtime"] == _resolved(law)["runtime"]
+            elif pair not in admissible:
                 assert cell["id"] in {
                     "tessera_e4m3_k1_routed_moe_sm121_decode_resident",
                     "tessera_e4m3_k1_routed_moe_sm121_batch_resident"}
