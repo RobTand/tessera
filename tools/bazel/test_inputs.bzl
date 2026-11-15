@@ -49,6 +49,10 @@ TEST_INPUTS = {
         data = ["//tests:BUILD.bazel"],
         reason = "the exact-label contract reads the generated test target declarations; BUILD files are excluded from inferred source inputs.",
     ),
+    "//tests:test_kernel_shape_guards": struct(
+        data = ["//src/tessera:_dev/source_dependencies"],
+        reason = "it loads tools/bazel/evidence.py by path, and evidence.py imports tessera._dev.source_dependencies.",
+    ),
     "//tests:test_standalone_boundary": struct(
         data = ["//src/tessera:files"],
         reason = "scan() reads every module under src/tessera through the root its caller passes (default the repository root).",

@@ -33,6 +33,7 @@ only that a legal shape gets *past* the guards; what the launch then does
 with placeholder planes is not this file's business.
 """
 
+from collections import defaultdict
 import importlib.util
 import inspect
 import sys
@@ -251,20 +252,32 @@ def test_a_legal_shape_is_not_refused(name):
 # The one guard this lane deliberately does NOT have, and the premise it rests on
 # ---------------------------------------------------------------------------
 
-def _repo_import_graph():
-    """The repository's own import graph, from the tool that owns it.
+def _modules_reaching(target):
+    """Every module that imports, launches or loads ``target``, transitively.
 
-    ``tools/impacted_tests.py`` walks every ``import`` in the tree so a
-    change can find the tests that reach it; the same walk answers who reaches
-    ``tessera.kernel``.  Reading it from there rather than restating a list
-    of the module's importers is the point: a list is right on the day it is
-    written and silent the day a route grows an import.
+    ``tools/bazel/evidence.py`` reads every import, launch and path load in
+    the tree so that Bazel gives each test its inputs; the same evidence
+    answers who reaches ``tessera.kernel``.  Reading it from there rather
+    than restating a list of the module's importers is the point: a list is
+    right on the day it is written and silent the day a route grows an import.
     """
-    spec = importlib.util.spec_from_file_location(
-        "impacted_tests", ROOT / "tools" / "impacted_tests.py")
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    return module, module.build_graph(ROOT)
+    spec = importlib.util.spec_from_file_location("evidence", ROOT / "tools" / "bazel" / "evidence.py")
+    evidence = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(evidence)
+    found = evidence.Evidence(ROOT, sorted(
+        path.relative_to(ROOT).as_posix() for package in evidence.PACKAGES
+        for path in (ROOT / package).rglob("*") if path.is_file() and "__pycache__" not in path.parts))
+    assert target in found.modules, target
+    importers = defaultdict(set)
+    for module in found.modules:
+        for imported in found.edges(module) | found.programs(module):
+            importers[imported].add(module)
+    seen, pending = {target}, [target]
+    while pending:
+        for importer in importers[pending.pop()] - seen:
+            seen.add(importer)
+            pending.append(importer)
+    return seen - {target}
 
 
 def test_the_prefill_gemm_copies_a_strided_activation_and_is_off_the_served_path():
@@ -291,14 +304,8 @@ def test_the_prefill_gemm_copies_a_strided_activation_and_is_off_the_served_path
       own answer is ``tests/test_kernel.py``'s, on a device);
     * the wrapper says so where a caller reads it, in its docstring.
     """
-    tool, (by_name, importers) = _repo_import_graph()
-    seeds = {name for name, path in by_name.items()
-             if path == ROOT / "src" / "tessera" / "kernel.py"}
-    assert seeds == {"tessera.kernel"}, seeds
-    reaching = tool._reverse_reachable(seeds, importers) - seeds
-    on_a_lane = sorted(
-        name for name in reaching
-        if by_name[name].relative_to(ROOT).parts[0] in ("src", "tools"))
+    on_a_lane = sorted(path for path in _modules_reaching("src/tessera/kernel.py")
+                       if path.startswith(("src/", "tools/")))
     assert not on_a_lane, (
         f"{on_a_lane} reach tessera.kernel from the library or its tools: the "
         "prefill GEMM's silent contiguous() copy of a strided activation was "

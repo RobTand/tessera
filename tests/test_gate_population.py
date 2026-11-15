@@ -39,8 +39,7 @@ def test_aggregate_refuses_missing_torch_or_uncollected_modules(surface):
 
 def test_workflow_names_mergify_batch_drafts_exactly():
     """gate runs on Mergify's batch drafts and pr-gate on everything else; the
-    draft is the same repository, a merge-queue branch and Mergify's app user,
-    as tools/ci/gate_select.py's full_gate says."""
+    draft is the same repository, a merge-queue branch and Mergify's app user."""
     workflow = (ROOT / '.github/workflows/gate.yml').read_text()
     identity = ("github.event.pull_request.head.repo.full_name == github.repository && "
                 "startsWith(github.head_ref, 'mergify/merge-queue/') && "

@@ -80,11 +80,6 @@ done
 NEWTESTS="tests/test_lane_reachability.py tests/test_census_engagement.py"
 echo "=== new tests on this branch"
 (cd "$WT" && "$PY" -m pytest -q $NEWTESTS 2>&1 | tail -25)
-echo "=== impacted tests (tools/impacted_tests.py --ref master...HEAD)"
-(cd "$WT" && "$PY" tools/impacted_tests.py --ref master...HEAD 2>&1 | tee "$RUNS/impacted.txt" | tail -20)
-IMPACTED=$(grep -oE 'tests/[A-Za-z0-9_./-]+\.py' "$RUNS/impacted.txt" | sort -u | tr '\n' ' ')
-echo "impacted: $IMPACTED"
-if [ -n "$IMPACTED" ]; then (cd "$WT" && "$PY" -m pytest -q $IMPACTED 2>&1 | tail -25); fi
 echo "=== FAIL-BEFORE: the same two files against master 42615e4 (AGENTS.md rule 8)"
 MASTER=/home/rob/tmp/ts104-master
 cp $NEWTESTS "$MASTER/tests/"

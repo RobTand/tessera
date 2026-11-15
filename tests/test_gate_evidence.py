@@ -3,16 +3,13 @@ from __future__ import annotations
 
 import importlib.util
 import json
-import sys
 from pathlib import Path
-import subprocess
 
 ROOT = Path(__file__).resolve().parents[1]
 
 
 MODULES = {
     'gate_evidence': ROOT / 'tools/ci/gate_evidence.py',
-    'gate_select': ROOT / 'tools/ci/gate_select.py',
 }
 
 
@@ -39,16 +36,6 @@ def test_evidence_distinguishes_always_failures_from_flakes(tmp_path):
     assert lane['always_failing'] == ['tests/test_a.py::test_always']
     assert lane['flaky'] == ['tests/test_a.py::test_flaky']
     assert len(report['runs']) == 3
-
-
-def test_selector_timeout_runs_full_population(tmp_path):
-    gate = load('gate_select')
-    subprocess.run(['git', 'init', '-q', str(tmp_path)], check=True)
-    (tmp_path / 'tests').mkdir()
-    (tmp_path / 'tests/test_a.py').write_text('def test_a(): pass\n')
-    def timeout(*args, **kwargs):
-        raise subprocess.TimeoutExpired('selector', 120)
-    assert gate.select_files(tmp_path, 'base', 'head', execute=timeout)['verdict'] == 'full'
 
 
 def test_canary_timing_uses_final_gate_and_preserves_setup_and_failures():

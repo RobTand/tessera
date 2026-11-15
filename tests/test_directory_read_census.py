@@ -1,16 +1,13 @@
 """Repository-wide directory-read census requires the runner's complete Git checkout."""
-import importlib.util
+import ast
 from pathlib import Path
 import subprocess
 
 import pytest
 
+from tessera._dev.source_dependencies import file_imports
+
 ROOT = Path(__file__).resolve().parents[1]
-
-
-spec = importlib.util.spec_from_file_location('scanner_impacted_tests', ROOT / 'tools/impacted_tests.py')
-impacted = importlib.util.module_from_spec(spec)
-spec.loader.exec_module(impacted)
 
 
 # Issue 1014 classifies every site in docs/reports/unnamed-directory-reads-1014.md.
@@ -30,8 +27,11 @@ spec.loader.exec_module(impacted)
 # for its site-packages, and tools/bazel/python_runner.py lists the trace
 # records each traced process writes to a directory under TEST_TMPDIR. Both
 # directories exist only at run time; neither has a repository base.
-_UNNAMED_DIRECTORY_READ_MODULES = 117
-_UNNAMED_DIRECTORY_READ_SITES = 171
+# tessera#1701 deleted the selector: this census calls file_imports per file,
+# which does not see source execution through an imported helper. Seven
+# modules (nine sites) that the selector counted as wildcards now count here.
+_UNNAMED_DIRECTORY_READ_MODULES = 124
+_UNNAMED_DIRECTORY_READ_SITES = 180
 
 
 def _ratcheted_directory_reads(root, listed):
@@ -73,19 +73,16 @@ def test_this_repository_does_not_gain_an_unnamed_directory_read():
     checkout = subprocess.check_output(
         ['git', 'rev-parse', '--show-toplevel'], cwd=ROOT, text=True).strip()
     assert Path(checkout).resolve() == ROOT.resolve(), 'census must use the repository checkout'
-    tracked = subprocess.check_output(['git', 'ls-files', '-z', '--', '*.py'], cwd=ROOT).decode().split('\0')
-    expected = {path for path in tracked if path and not any(
-        part in impacted.SKIP_DIRS for part in Path(path).parts[:-1])}
-    assert expected, 'the checkout must contain tracked Python sources'
+    tracked = subprocess.check_output(['git', 'ls-files', '-z', '--', '*.py'], cwd=ROOT).decode().split('\0')[:-1]
     unnamed = {}
-    by_name, _, _, _ = impacted.import_graph(ROOT, unnamed_reads=unnamed)
-    observed = {path.relative_to(ROOT).as_posix() for path in by_name.values()}
-    missing = expected - observed
-    assert not missing, f'tracked Python sources missing from directory census: {len(missing)}'
+    for path in tracked:
+        lines = []
+        file_imports(ast.parse((ROOT / path).read_text()), ROOT / path, ROOT, unnamed=lines)
+        if lines:
+            unnamed[path] = lines
     listed = _ratcheted_directory_reads(ROOT, unnamed)
     sites = sum(len(lines) for lines in listed.values())
-    print(f'directory census: tracked_python={len(expected)} observed_python={len(observed)} '
-          f'missing={len(missing)} modules={len(listed)} sites={sites}')
+    print(f'directory census: tracked_python={len(tracked)} modules={len(listed)} sites={sites}')
     assert not _exceeds_unnamed_directory_read_ceiling(len(listed), sites), (
         "a directory read whose base cannot be named was added; name its base, "
         "or raise the ceiling here with the reason", len(listed), sites, sorted(listed))
@@ -122,9 +119,3 @@ def test_the_repository_census_uses_the_full_checkout_runner():
     entry = f'"//tests:{Path(__file__).stem}": struct(tags = ["runner"]'
     assert entry in (ROOT / 'tools/bazel/nonhermetic.bzl').read_text(), (
         'a repository-wide census must run against the complete Git checkout, not partial runfiles')
-
-
-def test_the_census_refuses_a_partial_python_population(monkeypatch):
-    monkeypatch.setattr(impacted, 'import_graph', lambda *args, **kwargs: ({}, {}, set(), {}))
-    with pytest.raises(AssertionError, match='tracked Python sources missing'):
-        test_this_repository_does_not_gain_an_unnamed_directory_read()

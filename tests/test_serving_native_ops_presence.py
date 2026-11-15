@@ -236,8 +236,8 @@ def _module_file(name: str) -> Path | None:
 def _direct_imports(path: Path) -> set[str]:
     """The modules THIS file's import statements name, and only those.
 
-    Deliberately narrower than ``tools/impacted_tests.py``'s graph, and the
-    difference is the point.  That tool must never UNDER-select, so it adds
+    Deliberately narrower than a test selector's graph, and the
+    difference is the point.  A selector must never UNDER-select, so it adds
     every reading an import could have -- the bare package prefix of a
     relative import included.  Through that prefix every module in
     ``tessera.serving`` reaches every other one, because importing any of them

@@ -1275,3 +1275,39 @@ def test_a_source_executing_module_with_an_unnameable_base_is_a_wildcard(
         '    runpy.run_path(path)\n', tmp_path)
     assert found == set() and not unplaced
     assert unknown
+
+
+def test_generic_annotation_shadow_does_not_borrow_or_pollute_outer_paths(tmp_path):
+    from types import SimpleNamespace
+
+    source = '''\
+from importlib.util import spec_from_file_location as load_spec
+from pathlib import Path
+TOOL = Path(__file__).resolve().parents[1] / "tools" / "driver.py"
+def generic(value: load_spec("loaded", TOOL)): pass
+def ordinary(value: load_spec("loaded", TOOL)): pass
+'''
+    for path, text in (("tools/driver.py", "VALUE = 1\n"), ("tests/test_dynamic.py", source)):
+        (tmp_path / path).parent.mkdir(parents=True, exist_ok=True)
+        (tmp_path / path).write_text(text)
+    tree = ast.parse(source)
+    # Exercise the type-parameter name field on every supported Python,
+    # including versions whose parser predates generic-function syntax.
+    tree.body[-2].type_params = [SimpleNamespace(name="TOOL")]
+    found, unknown, _ = file_imports(tree, tmp_path / "tests/test_dynamic.py", tmp_path)
+    assert unknown, "a type parameter is not the shadowed global file path"
+    assert tmp_path / "tools/driver.py" in found, "annotation scope must not leak to a sibling"
+
+
+@pytest.mark.parametrize("binding, call", [
+    pytest.param("from runpy import run_module as run", "run(text)", id="runpy-module-alias"),
+    pytest.param("import runpy as runner\nrun = runner.run_module", "run(text)", id="assigned-runpy-alias"),
+    pytest.param("from builtins import exec as run", "run(text)", id="builtin-exec-alias"),
+    pytest.param("from builtins import compile as build", "build(text, 'input', 'exec')", id="builtin-compile-alias"),
+    pytest.param("import codeop as compiler\nbuild = compiler.compile_command", "build(text)", id="compile-command-alias"),
+    pytest.param("from ast import parse as parse_source", "parse_source(text)", id="qualified-parser-control"),
+])
+def test_an_aliased_source_executor_makes_a_reader_an_unknown_importer(tmp_path, binding, call):
+    source = binding + "\ndef consume(path):\n    text = path.read_text()\n    return " + call + "\n"
+    _, unknown = _scan(source, tmp_path)
+    assert unknown, "a recognized source-execution call classifies the module that reads"

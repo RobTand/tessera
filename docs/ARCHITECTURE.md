@@ -123,8 +123,6 @@ The gate writes `tessera.gate_result.v2` and `tessera.gate_aggregate.v2`.
 Job metadata uses `tessera.job_meta.v2`; graph arms use `tessera.graph_arm.v2`.
 These job and arm records carry `flux_job_id`. Readers use `pb_action` only
 for legacy records; old receipts retain their original meaning.
-`tools/impacted_tests.py` no longer excludes generated source-closure metadata.
-Unknown changed paths still resolve toward running more tests.
 The CUDA-gated route is `tools/merge_suite.py`'s GPU arm on Flux, on aarch64
 with one whole GPU and rootless Podman. The [CPU gate documentation](ci_gate.md)
 cites its one-test strict-CUDA transport canary receipt. The lane is not yet
@@ -762,7 +760,7 @@ The equality-population repair adds one class-2 runtime-base read:
 `graph_equality.load_arm(directory, arm)` enumerates caller-supplied receipt
 evidence to reject extra raw cases as well as missing ones. Its base is not a
 fixed checkout path. The selector continues to report the site without guessing
-a dependency; `tests/test_impacted_tests.py` accounts for this justified increment
+a dependency; the census test accounts for this justified increment
 with ceilings of 115 modules and 169 sites. The census report records the new
 site separately from its historical baseline.
 The merge-base smoke on master `572539ad224c` confirmed the same census and all 35 runtime-module consumer counts.
@@ -2731,7 +2729,7 @@ rather than a computed serving closure: the closure measured 82 of 93 modules,
 computing it means following string-named route builders through
 `import_module`, and a digest that can be short is the defect the field rules
 out. It reads files as bytes and never parses them, so
-`tools/impacted_tests.py` sees a plain read, not a loader. An editable serve
+`tessera._dev.source_dependencies` sees a plain read, not a loader. An editable serve
 records no commit, so the digest is what a consumer compares; the route-trace
 header carries the same digest of the tree the serve started on
 (`serving_source_sha256`, added under `identity_version` 1 because no known
@@ -2871,13 +2869,6 @@ attests. The exporter's cached intake passes `routed_moe` for a projected
 unit. It refuses a historical producer that takes no structure only at a rung
 where the structure changes the wire. No contract cell, serving default or
 route changes.
-
-Re-stamped 2026-09-27 for explicit manual-gate exclusion from impacted pytest
-targets (tessera#647). `tools/impacted_tests.py` retains explicit manual-only
-interfaces in its dependency graph and records configured exclusions under
-`excluded_tests` with their reasons. The A4 gate now has a pytest entry point,
-and the current exclusion map is empty. Selection alone does not execute or
-certify a manual CUDA gate; full-run escalation remains unchanged.
 
 Re-stamped 2026-09-27 for compact serving-manifest serialization (tessera#635).
 New main, stock-twin, merged-part and fresh residency-refresh manifests use
@@ -4180,10 +4171,6 @@ allocator sees is `docs/tessera-one-format.md` §5.
 
 ### 1.1 Integration suite placement
 
-Re-stamped 2026-11-08 for the selector subprocess startup boundary.
-`selected_population.choose` also passes explicit `-s` to the selector child;
-the parent interpreter's startup flag is not inherited by a new Python process.
-
 Re-stamped 2026-11-08 for parent startup-isolation review. Native wrapper,
 deadline, container host/inside launcher and pytest invocations all use Python
 `-s`. The original native argv authenticates that flag. Runtime measurement
@@ -4213,15 +4200,14 @@ only tool-owned `-o addopts=` config clearing and binds distinct JUnit/surface
 outputs inside the declared writable root. Worker, plugin and target shadows
 refuse at the composed command boundary, including nonadjacent overlaps.
 
-Re-stamped 2026-11-08 from `tools/merge_suite.py`, `tools/selected_population.py`,
+Re-stamped 2026-11-08 from `tools/merge_suite.py`,
 `tools/_suite_flux.py` and `tools/_suite_runtime.py`. CPU transport qualification
 is unit3; G01 adds native rootless container authority. Full-suite, CUDA and
 production qualification remain separate.
 
 `tools/merge_suite.py` submits its CPU population through native Flux. New CPU
 submissions require `--python /path/to/scoped/bin/python`, with no default
-interpreter path. `tools/selected_population.py` requires the same explicit
-input and records it in the selection. Resume needs no new interpreter input
+interpreter path. Resume needs no new interpreter input
 because it reads saved command evidence. Experiment CPU preflight adapters also
 require an explicit interpreter: `bench_t8r.sh` reads `BENCH_CPU_PYTHON`,
 `regdirect_stage1/run.sh` reads `CPU_PY`, and [extents_cpu_python.sh](https://github.com/RobTand/tessera/blob/62c88591a92516002cbcc0e3e81918be2c0b22a9/experiments/extents_cpu_python.sh),
@@ -4443,7 +4429,7 @@ is not green. Each arm's own result stays readable in the receipt's
 exit status.
 
 **Submission-time master provenance.** Before dispatching any arm or shard,
-`merge_suite.py` and `selected_population.py` use the shared merge-suite helper
+`merge_suite.py` uses the shared merge-suite helper
 to write `submission-master.json` beside the run artifacts. This records the
 checkout commit, resolved master ref/head and their comparison before any client
 can outlive the submitter. Ref precedence remains `master`, `origin/master`, then
@@ -4488,34 +4474,6 @@ old records as native execution evidence. `tests/test_merge_suite.py` drives one
 `pytest --surface-json` run's stdout through the reader, so the join is
 exercised by output no test wrote.
 
-**A selected population of shards** (tessera#1069). `tools/selected_population.py`
-runs the test files `tools/impacted_tests.py` selects as shards, each one a
-`merge_suite.py` x86 arm that runs named files and publishes its own
-`--surface-json`. It owns no verdict. Each shard is read through `_resume`
-(the published population, its source identity, and the terminal status Flux
-recorded for its saved native ID), and the receipt comes from
-`merge_suite._assemble_receipt`. The set adds four checks that a single arm
-cannot make. The sealed commands must run the selected files exactly, each
-once. Every known native job must have a bound successful terminal result. Each client writes its result to
-`client.<shard>.json` when it exits, and `--resume` reads those files back, so a
-population rejected for a nonzero native ending stays rejected; a shard with no file says
-`not recorded` and the native job's records decide it alone. No shard may leave a
-module uncollected. These checks refuse in both modes. The comparison of the
-shards' effective source with the checkout's own is a seal (D32), so it goes
-through `tessera.dev_mode.seal_check`. In dev mode, the default, it stamps one
-`[DEV-MODE]` line, computes no digest of the checkout and does not refuse. In
-certified mode (`PRISMAQUANT_DEV_MODE=0`) it measures the checkout with no
-verifier, and a population over another tree is not green. At most eight native submission
-clients run at once (D21); more shards queue behind them. The report keeps one
-block per shard and every skip reason verbatim, from the surface's own
-histogram. `--resume` rebuilds the receipt without submitting. `--target` permits a bounded
-explicit subset of the selector's file population. The selection retains the
-original `verdict` and `selector_tests`, and labels its subset `scope`. A full
-selector answer with this scope is never a full-suite result. An aggregate that
-reads a shard's last summary line alone, drops the exit status, or counts a
-missing summary as zero is the defect #1069 records, and this tool is its
-replacement.
-
 **One publication, read once** (tessera#340). A pathname is not a publication:
 it is a name a pool retry can point at different bytes at two instants, and a
 resume read it twice -- `_attach_surface` parsed the population the verdict
@@ -4536,275 +4494,17 @@ else parsed, so the invariant is structural rather than remembered. The record
 publishes `surface_sha256` -- which publication it is about -- and the file is
 free to change afterwards: what the receipt states is a true statement about
 the publication it read, and a later reader can check which one that was.
-`tools/impacted_tests.py` fails open to the full run and never under-selects:
-that is its whole contract, and deciding it never stats outside the
-repository root either -- a path is refused on its spelling before any
-`resolve()` or `stat()`, and every step of the resolution that a surviving
-path does get is bounded to the tree, not merely its destination, so a
-stalled mount under an out-of-tree literal cannot block the selector
-(#325, #339). **Refusing to resolve a path is not a finding that the file it names
-is independent of this repository, and the two must not be spelled the same
-way.** An outside spelling can be a local alias directory pointing straight
-back into the checkout -- environment state nothing here records -- so the
-refusal keeps a dependency it cannot attribute to a file: the reading module
-is seeded for every change, including `.md`, `.txt`, and `.rst`, and its
-consumers are selected (#355). Reading
-the refusal as independence produced `verdict='none'`, no tests and no
-diagnostic for a change that moved the reader's own bytes, which is the one
-outcome this contract forbids (#338). Every gap in what the graph can prove resolves
-towards running more tests -- an ambiguous spelling edges to every file it can
-name, a module whose dependencies cannot be established selects its consumers,
-and an unresolvable scope forces the whole suite. A narrowed list is a claim
-that the graph read everything relevant, so where it did not, the answer is
-`full`. Generated source-closure metadata has no special exclusion.
-A closure-shaped tracked file remains an ordinary changed path.
-`tests/test_native_a4_serving.py` keeps its manual `run_gate`/`__main__` CUDA
-harness and also exposes a pytest entry point that invokes the same gate. The
-wrapper names its CUDA precondition and resolves `a4-config.json` through
-`box_artifacts`; a CPU skip is not native gate qualification. The selector
-includes this pytest target, so a full-suite assignment has a collection and
-outcome record rather than an unexecuted file (tessera#762). Explicit manual-only
-interfaces, when declared, remain in the dependency graph but are removed from
-pytest targets after every selection path, with their path and reason recorded
-in `excluded_tests` and the text receipt (tessera#647). No general
-absence-of-test heuristic drops modules: pytest can collect imported, inherited
-or generated cases. No exclusion weakens uncertainty escalation or the runner's
-requirement that every assigned pytest file have a collection/outcome record.
-Both normal and parentless diffs use Git's NUL-delimited path protocol, so
-display quoting cannot conceal metadata under tab/newline-containing paths.
-A path named in `OPAQUE` -- `docs/schema/`, `pyproject.toml` -- forces the full
-suite whatever its extension: the wire spec is a Markdown file, and filtering
-inert suffixes first meant the rule that names it could never see it.
-An import of `pkg.mod` is an edge to `pkg.mod` **and** to every package
-`__init__` above it, because importing a submodule executes them; a file loaded
-by explicit path gets an edge to that file only, because loading by path does
-not. A relative import in a package's own `__init__.py` climbs from that
-package, not from its parent, so `src/tessera/__init__.py`'s `from .manifest
-import SCHEMA_ID` is the `tessera.manifest -> tessera` edge it looks like. Each
-file is also a node under every name an import root on `sys.path` gives it:
-`tests/` holds no `__init__.py`, so `tests/box_artifacts.py` answers to
-`box_artifacts`, which is how every test in the tree spells it. An ambiguous
-alias edges to every candidate, and owning the canonical name is not
-precedence: a root `helper.py` and a `tests/helper.py` are both `helper`, the
-import root `tests/conftest.py` inserts is the one pytest actually executes for
-`from helper import VALUE`, and the graph models no precedence between them. It
-therefore resolves the union of canonical and alias candidates, deduplicated by
-file, rather than letting the canonical name hide the candidate that runs
-(#292).
-
-A node's identity is its **file**, never its name, because a dotted name is a
-spelling and a spelling can name two files: `_module_name` strips a leading
-`src/`, so `helper.py` and `src/helper.py` are both `helper`, and both are
-importable here because `tests/conftest.py` puts `src/` and `tests/` on
-`sys.path`. Every file therefore gets a node -- under its dotted name, or under
-its repository-relative path when another file already answers to that name,
-the same path-keyed node the graph gives a non-Python data file -- and the
-shared spelling edges to both. Dropping the second file gave it no node, so it
-was never parsed and its own imports were not edges at all: a leaf change whose
-only route to a test ran through the shadowed file selected nothing and said
-`none` (#317). A path load resolves through the file, not through the name it
-spells, for the same reason.
-Explicit Python file loaders also contribute dependency edges: the non-executing
-`tessera._dev.source_dependencies` resolver follows finite `Path` expressions,
-lexical bindings, loader aliases and repository globs, using the file path rather
-than the loader's arbitrary module label. A resolved target inside the tree is
-an exact edge whatever its suffix -- a non-Python file is a node under its own
-repository-relative path. A conservative text fallback also selects tests that
-name a changed non-Python file when a helper hides the read from the resolver.
-This includes Markdown and other documentation suffixes: a named test input is
-not inert merely because it is prose (#358). Directory-wide reads are edges to
-the base directory itself: `Path.glob`/`rglob`/`iterdir`, `os.listdir`/
-`scandir`/`walk` consume the directory's *membership*, not one named file, so
-the graph holds the resolved base under its repository path and the selector
-seeds every changed path's ancestor directories against it -- a changed, added
-or deleted member selects the reader, pattern-agnostically, because matching
-the pattern would trade a sound over-selection for an under-selection any new
-file can trigger (#923; `Path.glob`, including its `**` spelling, joined in
-PB1496, where it had selected nothing for a deleted, renamed or recursively
-matched member). A base given as a string (`os.listdir("docs")`, or `os.walk(DOCS)` with
-`DOCS = "docs"`) is the same base as `Path("docs")`, placed or refused by the same
-boundary guard; before this only the `Path` spelling resolved, so a file added under a
-directory listed by string selected no reader. A string need not be a path (a bare
-`walk("mode")` is recognized by its name), so resolving one adds the edge and a module that
-can execute source keeps the unknown-loader flag it had while the string was unnamed. The
-module function `glob.glob`/`glob.iglob` (also `from glob import glob`) carries its base in the
-pattern: the literal directory in front of the first wildcard is placed like any other base,
-and a module that can execute source keeps its unknown-loader flag. A base outside the tree
-(an absolute box path, a pattern that climbs out) stays unnamed and is listed, not kept as an
-unplaced read, because that would select the readers' consumers on every change (#1010). A
-pattern spelled from the tree's own root names a base inside it, so a refusal there (a link out of
-the tree) or a `..` after a wildcard is kept as an unplaced read, as a `Path` read would be, even
-when a glob metacharacter in the checkout's own name stops the literal prefix early. The
-alternatives of one call are judged one by one: an outside alternative that climbs after a
-wildcard is unnamed on its own, and does not discard another alternative of the same call that
-names a base inside the tree, whatever order the bindings come in. A
-RELATIVE pattern or string base (`glob.glob('docs/*.md')`, `os.listdir('docs')`) depends on the
-process directory, which nothing here proves -- a `chdir`, an alias of it, an imported helper or a
-fixture can move it -- so it is kept as an unplaced read and never resolved against the tree's
-root; one anchored with `__file__` (`str(HERE / 'docs' / '*.md')`) does not depend on it and
-resolves. The `Path` spellings keep the root assumption they always had (#1010). A
-glob called through a name resolves its receiver when the
-name has one lexical binding: a directory-bound alias (`scan = DOCS.glob`) or
-the unbound method, called directly or through an alias
-(`Path.glob(DOCS, ...)`). A pattern that is absolute or
-contains `..` can read another directory and is refused, and a literal
-directory in front of the first wildcard is placed as well, so a link there
-keeps the link and its target. A link reached through a wildcard component (`docs/*/x.md`,
-`**`, `rglob`) is found by reading the directory entries below the base without following
-links, the last component included (so `docs/*/` and a link to a file matched by `docs/*/m.md`
-are covered): each link is resolved by the same boundary guard and a target in the tree becomes a
-node alongside the link, even when it no longer exists, as does where a literal component
-after a wildcard leads. A link the guard declines is never approached and keeps the read as an
-unplaced one, since it may lead straight back in (#338), and so does a scan over its budget
-(20000 entries): select more, never less (#1011).
-Every call named like an enumeration is analysed the same way whatever the file
-defines, so a base it names keeps its edge and a refused base its uncertainty;
-only the `unnamed_directory_reads` warning can be withheld, for a bare call to a
-name the file binds exactly once, with an undecorated `def`, in a module that
-executes nothing and has no star import. Anything else keeps the warning. The
-selector's rule is soundness: over-selection is the accepted cost and a missed
-test is the only defect. An out-of-tree or
-otherwise refused base keeps the #338
-unplaced-read uncertainty; a base assembled from runtime state names nothing
-and follows the named/unnamed rule -- and where nothing executes it states no
-dependency, so the receipt lists it under `unnamed_directory_reads` instead of
-leaving it silent (PB1496); a conftest's enumeration is collection
-machinery and joins the probe exclusion, because pytest imports the conftest
-for every test in its scope whatever changed, and a per-change edge from an
-ancestor listing would close the cycle that holds every verdict at full
-(#148). **What is bounded is the resolution, not only its
-destination**, because a normalized final membership says nothing about the
-steps taken to reach it: `Path.resolve` walks a spelling as written, so
-`outside/../repo/driver.py` -- which normalizes into the tree -- still
-`lstat`s `outside` before `..` collapses, and an in-root symlink is followed
-to its outside target before any membership check runs. The bounded walker
-retains each in-root symlink entry it traverses as a dependency alongside the
-resolved target, including links used by an intermediate `resolve()` or glob
-base. Repointing a tracked link therefore selects the reader and its consumers
-(#346); no lexically collapsed path is used as a substitute for that walk. Both were the #325
-syscall, reachable again through a path a lexical check accepts (#339).
-So a single walk decides the whole question, in `_resolve_within_root`: a
-spelling whose leading components are not root's is refused before any
-filesystem call; after that each component is examined only once the prefix
-it extends is known to be inside root; `..` is applied to a prefix already
-free of symlinks, so it means what the filesystem means by it rather than
-what the string does; a symlink is *read* -- it is in the tree -- but a
-target that leaves the tree ends the walk; and exceeding 40 link traversals
-ends it too, sharing one budget across absolute and relative targets (#353).
-`Path.resolve` raised through the caller instead. A
-directory-only glob (a trailing separator) is refused before enumeration,
-because pathlib would otherwise follow symlinks while filtering directory
-entries before this walk sees a match (#354). Refused named patterns keep
-module or data uncertainty according to their consumer. A path refusal
-is the same unknown a crawling glob already gets at its boundary,
-decided without a syscall out there. An absolute literal outside the tree,
-one that escapes via `..`, and an in-root link pointing out of it are one
-rule with one home, and the three entry points -- a bare loader argument, an
-explicit `.resolve()`, and a glob base -- all call it. A target that
-resolved outside the tree used to be dropped in silence; it is now that same
-refusal, which is the conservative direction. An unresolved recognized loader conservatively seeds its
-importing module and downstream tests for every change, whatever its suffix; an unresolved
-loader reaching a conftest forces the full population. An unresolved *read* is
-an unknown module only for a module that can parse or execute Python source
-(`_SOURCE_BUILTINS`/`_SOURCE_ATTRIBUTES`/`_SOURCE_QUALIFIED`, matched by
-resolved symbol so `re.compile` and `model.eval()` are not it): bytes are a
-Python dependency once something runs them, and treating every unnameable read
-as "any module in the tree" is what held the verdict at `full` for every change
-(#148). A read the resolver *named* and then refused to place is a third state,
-not a case of either: it is no module edge -- the reader executes nothing, so
-it imports nothing and never forces the full run -- but it is not independence
-either, so the reader is seeded for every changed-file suffix and the receipt
-lists it under `unplaced_data_reads` (#338). What separates the two is whether
-a file was named: a filename assembled from runtime state names nothing the
-diff can hold, while an out-of-tree spelling names exactly one file and only
-the boundary guard stands between it and the tree.
-A file that will not parse or read states no dependency, which is not
-the same as having none: it is the same unknown from the other end, so it too
-may import anything, its consumers are selected, and an unreadable conftest
-forces the population it gates. Reading a failed parse as an empty dependency
-set is what let a leaf change select nothing while collecting its unparseable
-importer would have failed (#293). A conftest that execs the `test_*.py` files
-below it is probing its
-collection targets, and that edge is excluded from the walk that forces full --
-as a dependency it closes a cycle that makes one uncertain test file uncertain
-for the whole population. The selector reports those unresolved importers in its
-receipt, and reports every unreadable source beside the parse or read failure
-that named it, because that one is repairable.
-One-directory conftest globs resolve to ordinary edges; recursive, escaping or
-otherwise unresolved path expressions retain the conservative fallback.
-Parameter, return and annotated-assignment expressions retain potential loader
-dependencies even when annotation evaluation is deferred. Function annotations
-use the defining scope (including a method's class scope), not value-parameter
-locals; generic type-parameter names remain unknown in a separate annotation
-scope instead of borrowing an outer file path.
-Explicit `Path.read_text`/`read_bytes`/`open` and builtin/`io.open` source reads
-also create edges, including aliased readers, and for a resolved path this is
-independent of what the reader does with the bytes. Runtime-selected or shadowed
-paths remain conservative unknown edges and propagate to downstream tests when
-the reader can execute Python; a parameterized filename in a source-executing
-module is not silently treated as no dependency. Recognized calls to imported
-source-executing helpers now propagate that capability to their callers via a
-fixed point over top-level helper summaries, preserving relative imports,
-re-exports and ambiguous module spellings. Module and helper seeds use the same
-source-call predicate with enclosing lexical aliases. A single authoritative
-parse/read result supplies both summaries and graph edges: a first-pass failure
-remains diagnosed wildcard uncertainty, never erased by a retry. Callable alias
-recognition uses a finite worklist and per-path cycle guards rather than the
-Python call stack. Importing a helper without calling it does not promote a reader. This capability proves no external origin: a
-generic module parameter and an import missing from the graph remain unknown.
-The frozen `202d1f07` #808 draft failed the three unchanged selectivity ratchets,
-forcing full for the shared conftest. The initial `021f4f2b` receipt banked no predecessor
-path proving which uncertainty seed caused that escalation, so it did not
-establish the asserted GLM53-through-serving.config attribution. Selection now records resolved-file
-`uncertainty_paths` and `uncertainty_collection_probes_skipped` from the same
-reverse walk that decides escalation. These are static predecessor witnesses,
-not proof that a runtime call executes. It is not a completed external-origin contract.
-
-The source-dependency owner now recognizes a narrowly proved module re-export:
-`if name in <literal frozenset>: import module; return getattr(module, name)`,
-followed by a literal `AttributeError`. It accepts no hook decorators, computed
-defaults, extra effects, shadowed builtins, guard rebinding/mutation or hook,
-guard or global-namespace escape. A literal `__all__` directory hook may enumerate
-that immutable set. Every other shape retains the unconditional import union.
-The graph keeps the conservative dependency union for changed files, including
-this guarded import. Only UNKNOWN propagation may exclude its proved conditional
-edge; active attribute demands retain direct dependencies. Explicit
-from-imports used only as direct callees (or unused) request their named
-attributes plus Python's implicit `__path__`. Passing, storing, returning or
-inspecting imported objects, mutable namespace access (including reflective or
-dynamic `getattr`), namespace imports, stars,
-explicit hook or guard access and exact file loads request every branch.
-The proved hook's own forwarding call has a closed literal name domain;
-other reflective accesses retain the union. Unknown namespace demand forwards
-through ordinary re-exports as a finite union.
-Ambiguous
-spellings still resolve to every candidate through the existing module resolver.
-All ordinary imports and package-initialization effects remain dependencies;
-the guard worklist terminates on cycles. Known helper namespace effects
-(including `f_globals` and reflective access) reuse the source-execution
-helper-call fixed point and lexical resolver as a separate effect fact;
-calling such a helper refuses a guarded summary, including through a re-export.
-Star imports cannot prove unshadowed guard bindings and retain the union.
-This is bounded helper recognition, not a general evaluator. The receipt reports
-`uncertainty_guarded_imports_skipped` with provider, literal guard names and
-predecessor witnesses separately from collection-probe exclusions. Changed and
-uncertain seeds traverse the same annotated graph under their respective rules;
-their reached consumers are then combined. Failed source reads cannot publish a
-summary and remain authoritative wildcard uncertainty. The real-tree causal
-probe established that the guarded slicing-to-layout edge was a complete cut
-between all recorded uncertainty seeds and conftests on frozen `202d1f07`;
-it did not prove GLM53 source external. The three real ratchets and the
-source-execution helper/refusal controls remain acceptance criteria.
-
-What this misses is a source
-read the resolver never sees -- `subprocess.run([sys.executable, path])` above
-all -- which was never an edge here.
-A conftest **reached** -- changed, or importing anything changed -- reaches its
-entire test population, because pytest imports it for every test at or below its
-directory and a fixture consumer names the fixture rather than the module the
-conftest built it from; collection-probe edges are excluded from that walk, so
-one changed test file does not select the population through the conftest that
-execs it. A delegated runner-fix task records
+**Test selection is Bazel's.** bazel-diff selects the targets
+that a change reaches ([CPU gate documentation](ci_gate.md)). The inputs of
+each target come from `tools/bazel/evidence.py`, which reads imports, launches
+and path loads through the non-executing resolver
+`tessera._dev.source_dependencies`. A remote test action holds only its
+declared inputs, so an input that the evidence misses fails the test; it does
+not pass it. The hosted-gate test selector, its shard runner and their tests
+are deleted. The module docstring of the resolver and
+`tests/test_source_dependencies.py` keep its boundary rules (#325, #338, #339,
+#353, #354, #923, #1010, #1011).
+A delegated runner-fix task records
 its targeted regression evidence while the coordinator owns the final full
 dual-population integration run.
 
@@ -6909,7 +6609,7 @@ kernel appears on the serving path and nothing there imports it, and the
 repository's own import graph agrees: no module under `src/` or `tools/`
 reaches `tessera.kernel`; its importers are the kernel benchmarks under
 `experiments/` and the tests (`tests/test_kernel_shape_guards.py` pins that
-from `tools/impacted_tests.py`'s graph, not from a list). That placement is
+from the Bazel evidence graph, `tools/bazel/evidence.py`, not from a list). That placement is
 what decides one guard the lane deliberately does not have (tessera#266):
 `tessera_gemm` **copies** a non-contiguous `x` with `contiguous()` rather
 than refusing it, as the GEMVs do through `kernel._dense_activation`. On a
@@ -8907,7 +8607,7 @@ it calls no quantizer, and the plugin can therefore load and serve
 all. That is a static property of the source, pinned by
 `test_the_bf16_route_never_reaches_native_ops`, which walks the imports the
 files actually write. It is deliberately a narrower walk than
-`tools/impacted_tests.py`'s graph: that one must never under-select, so it
+a test selector's graph: a selector must never under-select, so it
 adds every reading an import could carry -- the bare package prefix of a
 relative import included -- and through that prefix every module in
 `tessera.serving` reaches every other one, because importing any of them runs
@@ -10346,8 +10046,8 @@ the publish job runs it on the bytes it is about to upload.
 **What the wheel deliberately does not ship.** `src/tessera/_dev/` is the
 repository's own tooling -- the merge-suite deadline helper
 (`_dev/suite_deadline.py`), the suite source identity, which consults a
-declared source verifier (`_dev/suite_source.py`), and the import-graph analyser behind
-`tools/impacted_tests.py` (`_dev/source_dependencies.py`). It lives under
+declared source verifier (`_dev/suite_source.py`), and the import-graph analyser that
+`tools/bazel/evidence.py` uses (`_dev/source_dependencies.py`). It lives under
 `src/` because `tools/` imports it by module name, and until #151 it
 therefore installed into every consumer's `site-packages`. One line of
 packaging config drops it -- `[tool.setuptools.packages.find] exclude =
