@@ -18,17 +18,6 @@ ts_py_library(
 )
 
 ts_py_library(
-    name = "a4_protocol_check",
-    srcs = [
-        "a4_protocol_check.py",
-    ],
-    deps = [
-        "//src/tessera:__init___cycle",
-        "//src/tessera:bf16_route_cycle",
-    ],
-)
-
-ts_py_library(
     name = "allocated_serve_2026-09-02/assemble",
     srcs = [
         "allocated_serve_2026-09-02/assemble.py",
@@ -619,19 +608,6 @@ ts_py_library(
 )
 
 ts_py_library(
-    name = "dense_h_weighted_unit",
-    srcs = [
-        "dense_h_weighted_unit.py",
-    ],
-    deps = [
-        "//src/tessera:__init___cycle",
-        "//src/tessera:bf16_route_cycle",
-        "//src/tessera:encode_cycle",
-        "//src/tessera:scale_channel",
-    ],
-)
-
-ts_py_library(
     name = "dense_spread_census",
     srcs = [
         "dense_spread_census.py",
@@ -679,17 +655,6 @@ ts_py_library(
         "//src/tessera:bf16_route_cycle",
         "//src/tessera:container",
         "//src/tessera:fused",
-    ],
-)
-
-ts_py_library(
-    name = "encoder_fit_cap_sweep",
-    srcs = [
-        "encoder_fit_cap_sweep.py",
-    ],
-    deps = [
-        "//src/tessera:__init___cycle",
-        "//src/tessera:encode_cycle",
     ],
 )
 
@@ -1456,20 +1421,6 @@ ts_py_library(
 )
 
 ts_py_library(
-    name = "ksliced",
-    srcs = [
-        "ksliced.py",
-    ],
-    deps = [
-        "//src/tessera:__init___cycle",
-        "//src/tessera:decode",
-        "//src/tessera:encode_cycle",
-        "//src/tessera:kernel",
-        "//src/tessera:trellis",
-    ],
-)
-
-ts_py_library(
     name = "ktuple",
     srcs = [
         "ktuple.py",
@@ -1494,34 +1445,6 @@ ts_py_library(
         "//src/tessera:kernel",
         "//src/tessera:trellis",
         "//src/tessera:wire",
-    ],
-)
-
-ts_py_library(
-    name = "kverify",
-    srcs = [
-        "kverify.py",
-    ],
-    deps = [
-        "//src/tessera:__init___cycle",
-        "//src/tessera:decode",
-        "//src/tessera:encode_cycle",
-        "//src/tessera:kernel",
-        "//src/tessera:trellis",
-    ],
-)
-
-ts_py_library(
-    name = "kwide",
-    srcs = [
-        "kwide.py",
-    ],
-    deps = [
-        "//src/tessera:__init___cycle",
-        "//src/tessera:decode",
-        "//src/tessera:encode_cycle",
-        "//src/tessera:kernel",
-        "//src/tessera:trellis",
     ],
 )
 
@@ -1567,32 +1490,6 @@ ts_py_library(
 )
 
 ts_py_library(
-    name = "layout_extent_profile",
-    srcs = [
-        "layout_extent_profile.py",
-    ],
-    data = [
-        "//:pyproject.toml",
-    ],
-    deps = [
-        "//src/tessera:__init___cycle",
-        "//src/tessera:calculator",
-        ":box_power_window",
-    ],
-)
-
-ts_py_library(
-    name = "ldl_block_predictor",
-    srcs = [
-        "ldl_block_predictor.py",
-    ],
-    deps = [
-        "//src/tessera:__init___cycle",
-        "//src/tessera:compensate",
-    ],
-)
-
-ts_py_library(
     name = "ldlq_block_byte_check",
     srcs = [
         "ldlq_block_byte_check.py",
@@ -1615,18 +1512,6 @@ ts_py_library(
     name = "ldlq_cost_profile",
     srcs = [
         "ldlq_cost_profile.py",
-    ],
-    deps = [
-        "//src/tessera:__init___cycle",
-        "//src/tessera:bf16_route_cycle",
-        "//src/tessera:compensate",
-    ],
-)
-
-ts_py_library(
-    name = "ldlq_hcost_bitexact",
-    srcs = [
-        "ldlq_hcost_bitexact.py",
     ],
     deps = [
         "//src/tessera:__init___cycle",
@@ -1713,24 +1598,6 @@ ts_py_library(
     name = "lut_landing_oracle_report",
     srcs = [
         "lut_landing_oracle_report.py",
-    ],
-)
-
-ts_py_library(
-    name = "lut_landing_report",
-    srcs = [
-        "lut_landing_report.py",
-    ],
-    deps = [
-        "//src/tessera:__init___cycle",
-        "//src/tessera:bf16_route_cycle",
-    ],
-)
-
-ts_py_library(
-    name = "lut_landing_split",
-    srcs = [
-        "lut_landing_split.py",
     ],
 )
 
@@ -2033,20 +1900,6 @@ ts_py_library(
 )
 
 ts_py_library(
-    name = "native_a4_serve_probe",
-    srcs = [
-        "native_a4_serve_probe.py",
-    ],
-    deps = [
-        "//src/tessera:__init___cycle",
-        "//src/tessera:bf16_route_cycle",
-        "//src/tessera:errors",
-        "//src/tessera:fused",
-        "//src/tessera:kernel_a4",
-    ],
-)
-
-ts_py_library(
     name = "native_operator_resources",
     srcs = [
         "native_operator_resources.py",
@@ -2186,19 +2039,6 @@ ts_py_library(
 )
 
 ts_py_library(
-    name = "pair_seed",
-    srcs = [
-        "pair_seed.py",
-    ],
-    deps = [
-        "//src/tessera:__init___cycle",
-        "//src/tessera:decode",
-        "//src/tessera:encode_cycle",
-        "//src/tessera:trellis",
-    ],
-)
-
-ts_py_library(
     name = "plan_from_layer_config",
     srcs = [
         "plan_from_layer_config.py",
@@ -2238,20 +2078,6 @@ ts_py_library(
     name = "pq2459/producer_authority",
     srcs = [
         "pq2459/producer_authority.py",
-    ],
-)
-
-ts_py_library(
-    name = "prefill_gemm",
-    srcs = [
-        "prefill_gemm.py",
-    ],
-    deps = [
-        "//src/tessera:__init___cycle",
-        "//src/tessera:decode",
-        "//src/tessera:encode_cycle",
-        "//src/tessera:kernel",
-        "//src/tessera:trellis",
     ],
 )
 
@@ -3590,19 +3416,6 @@ ts_py_library(
 )
 
 ts_py_library(
-    name = "tessera_alphabet_nesting",
-    srcs = [
-        "tessera_alphabet_nesting.py",
-    ],
-    data = [
-        "results/tessera_alphabet_nesting.json",
-    ],
-    deps = [
-        "//src/tessera:__init___cycle",
-    ],
-)
-
-ts_py_library(
     name = "tessera_bitshift_tile",
     srcs = [
         "tessera_bitshift_tile.py",
@@ -3638,54 +3451,6 @@ ts_py_library(
 )
 
 ts_py_library(
-    name = "tessera_claims_replication",
-    srcs = [
-        "tessera_claims_replication.py",
-    ],
-    data = [
-        "results/tessera_claims_replication.json",
-    ],
-    deps = [
-        "//src/tessera:__init___cycle",
-        "//src/tessera:decode",
-        "//src/tessera:encode_cycle",
-        "//src/tessera:trellis",
-    ],
-)
-
-ts_py_library(
-    name = "tessera_codebook_replication",
-    srcs = [
-        "tessera_codebook_replication.py",
-    ],
-    data = [
-        "results/tessera_codebook_replication.json",
-    ],
-    deps = [
-        "//src/tessera:__init___cycle",
-        "//src/tessera:trellis",
-        ":tessera_free_codebook_trellis",
-        ":tessera_memory_and_codebook",
-    ],
-)
-
-ts_py_library(
-    name = "tessera_compensated",
-    srcs = [
-        "tessera_compensated.py",
-    ],
-    data = [
-        "results/tessera_compensated.json",
-    ],
-    deps = [
-        "//src/tessera:__init___cycle",
-        "//src/tessera:trellis",
-        ":tessera_free_codebook_trellis",
-        ":tessera_memory_and_codebook",
-    ],
-)
-
-ts_py_library(
     name = "tessera_compensated_glm_experts",
     srcs = [
         "tessera_compensated_glm_experts.py",
@@ -3696,20 +3461,6 @@ ts_py_library(
         "//src/tessera:decode",
         "//src/tessera:encode_cycle",
         "//src/tessera:trellis",
-    ],
-)
-
-ts_py_library(
-    name = "tessera_compensation_prize",
-    srcs = [
-        "tessera_compensation_prize.py",
-    ],
-    deps = [
-        "//src/tessera:__init___cycle",
-        "//src/tessera:trellis",
-        ":tessera_compensated",
-        ":tessera_free_codebook_trellis",
-        ":tessera_memory_and_codebook",
     ],
 )
 
@@ -3754,17 +3505,6 @@ ts_py_library(
         "//src/tessera:decode",
         "//src/tessera:encode_cycle",
         "//src/tessera:trellis",
-    ],
-)
-
-ts_py_library(
-    name = "tessera_export_witness",
-    srcs = [
-        "tessera_export_witness.py",
-    ],
-    deps = [
-        "//src/tessera:__init___cycle",
-        "//src/tessera:bf16_route_cycle",
     ],
 )
 
@@ -3896,35 +3636,6 @@ ts_py_library(
 )
 
 ts_py_library(
-    name = "tessera_ktuple_ladder",
-    srcs = [
-        "tessera_ktuple_ladder.py",
-    ],
-    data = [
-        "results/tessera_ktuple_ladder.json",
-    ],
-    deps = [
-        "//src/tessera:__init___cycle",
-        "//src/tessera:decode",
-        "//src/tessera:encode_cycle",
-        "//src/tessera:trellis",
-    ],
-)
-
-ts_py_library(
-    name = "tessera_ladder_probe",
-    srcs = [
-        "tessera_ladder_probe.py",
-    ],
-    deps = [
-        "//src/tessera:__init___cycle",
-        "//src/tessera:decode",
-        "//src/tessera:encode_cycle",
-        "//src/tessera:trellis",
-    ],
-)
-
-ts_py_library(
     name = "tessera_ldlq_generalisation",
     srcs = [
         "tessera_ldlq_generalisation.py",
@@ -3959,19 +3670,6 @@ ts_py_library(
         ":tessera_ldlq_generalisation",
         ":tessera_memory_and_codebook",
         ":tessera_plane_alternatives",
-    ],
-)
-
-ts_py_library(
-    name = "tessera_learned_spacing",
-    srcs = [
-        "tessera_learned_spacing.py",
-    ],
-    data = [
-        "results/tessera_learned_spacing.json",
-    ],
-    deps = [
-        "//src/tessera:__init___cycle",
     ],
 )
 
@@ -4121,22 +3819,6 @@ ts_py_library(
 )
 
 ts_py_library(
-    name = "tessera_redundancy_exchange",
-    srcs = [
-        "tessera_redundancy_exchange.py",
-    ],
-    data = [
-        "results/tessera_redundancy_exchange.json",
-    ],
-    deps = [
-        "//src/tessera:__init___cycle",
-        "//src/tessera:decode",
-        "//src/tessera:encode_cycle",
-        "//src/tessera:trellis",
-    ],
-)
-
-ts_py_library(
     name = "tessera_refit_schedule",
     srcs = [
         "tessera_refit_schedule.py",
@@ -4208,21 +3890,6 @@ ts_py_library(
         "//src/tessera:trellis",
         ":tessera_fp4_native_levers",
         ":tessera_memory_and_codebook",
-    ],
-)
-
-ts_py_library(
-    name = "tessera_tree_codebook",
-    srcs = [
-        "tessera_tree_codebook.py",
-    ],
-    data = [
-        "results/tessera_tree_codebook.json",
-    ],
-    deps = [
-        "//src/tessera:__init___cycle",
-        "//src/tessera:trellis",
-        ":tessera_free_codebook_trellis",
     ],
 )
 
@@ -4482,17 +4149,6 @@ ts_py_library(
 )
 
 ts_py_library(
-    name = "ts91_compile_key_states",
-    srcs = [
-        "ts91_compile_key_states.py",
-    ],
-    deps = [
-        "//src/tessera:__init___cycle",
-        "//src/tessera:bf16_route_cycle",
-    ],
-)
-
-ts_py_library(
     name = "vllm_module_name_distance",
     srcs = [
         "vllm_module_name_distance.py",
@@ -4534,13 +4190,6 @@ ts_py_library(
     name = "window_gemv_load",
     srcs = [
         "window_gemv_load.py",
-    ],
-)
-
-ts_py_library(
-    name = "window_gemv_m2_routing",
-    srcs = [
-        "window_gemv_m2_routing.py",
     ],
 )
 
@@ -4602,16 +4251,5 @@ ts_py_library(
     name = "window_viterbi_two_step",
     srcs = [
         "window_viterbi_two_step.py",
-    ],
-)
-
-ts_py_library(
-    name = "window_viterbi_zero_row_repro",
-    srcs = [
-        "window_viterbi_zero_row_repro.py",
-    ],
-    deps = [
-        "//src/tessera:__init___cycle",
-        "//src/tessera:encode_cycle",
     ],
 )
