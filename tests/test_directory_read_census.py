@@ -28,8 +28,10 @@ ROOT = Path(__file__).resolve().parents[1]
 # for its site-packages, and tools/bazel/python_runner.py lists the trace
 # records each traced process writes to a directory under TEST_TMPDIR. Both
 # directories exist only at run time; neither has a repository base.
-_UNNAMED_DIRECTORY_READ_MODULES = 117
-_UNNAMED_DIRECTORY_READ_SITES = 171
+# tessera#1701 deleted guarded_reexport, whose ast.parse call marked the resolver as
+# source-executing: its 12 existing reads with caller-supplied bases now count (no new read).
+_UNNAMED_DIRECTORY_READ_MODULES = 118
+_UNNAMED_DIRECTORY_READ_SITES = 183
 
 
 def _unnamed_directory_reads(root):
