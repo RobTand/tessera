@@ -262,7 +262,7 @@ def _modules_reaching(target):
     right on the day it is written and silent the day a route grows an import.
     """
     spec = importlib.util.spec_from_file_location("evidence", ROOT / "tools" / "bazel" / "evidence.py")
-    evidence = importlib.util.module_from_spec(spec)
+    evidence = sys.modules[spec.name] = importlib.util.module_from_spec(spec)  # for its dataclasses
     spec.loader.exec_module(evidence)
     found = evidence.Evidence(ROOT, sorted(
         path.relative_to(ROOT).as_posix() for package in evidence.PACKAGES
