@@ -151,7 +151,7 @@ Six A4 CPU wire nodes depend on unpublished archived artifacts, owned by
 The historical Stageprev receiver-name proof required the published PB source
 tree, recorded under [the observer contract issue](https://github.com/RobTand/tessera/issues/1562).
 That operative scenario and its dedicated tests are now archived under
-`archive/flux-migration/4C-7/`.
+[archive/flux-migration/4C-7/](https://github.com/RobTand/tessera/tree/62c88591a92516002cbcc0e3e81918be2c0b22a9/archive/flux-migration/4C-7).
 All matched-reach tests remain active. A worker group derived from fixture scopes builds
 their shared grid fixture once. The fixture also reuses standard-normal inverse-CDF
 samples across sigma searches, then applies the original scalar multiplication.
