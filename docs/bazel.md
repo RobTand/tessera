@@ -89,12 +89,8 @@ operationally by the migration leads. Mergify's 30-minute `checks_timeout` and m
 are unchanged. The controller encodes the fallback-only bound; it adds no
 scheduler.
 
-Mergify's existing `max_parallel_checks: 2` bounds batch-draft gates. Two
-batch-draft fallbacks can therefore overlap twelve Remote Bazel shard Runs,
-when Bazel, lock or gate-workflow inputs change. Existing
-per-PR/per-SHA workflow concurrency stays in place. A shared GitHub job
-concurrency group would let newer pending jobs cancel older required checks,
-so this cutover adds no such group or scheduler.
+Mergify's `max_parallel_checks: 1` permits one draft gate at a time.
+One fallback can run six Remote Bazel shards. Per-PR workflow concurrency stays in place.
 
 Excess action demand queues on the executors. Six shards (Rob, 2026-11-06) aim for a slowest shard of at most 25 minutes
 inside the 30-minute queue timeout. If six shards exceed the
