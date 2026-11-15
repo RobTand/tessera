@@ -131,8 +131,9 @@ cites its one-test strict-CUDA transport canary receipt. The lane is not yet
 qualified. Until it is, the CUDA-gated surface has no qualified route.
 
 
-Re-stamped 2026-11-14 for the queue conditions.
-Both queues require `queue`, `branch rule` and `pr-gate` on the original PR.
+Re-stamped 2026-11-15 for the FIFO queue. Source: `.mergify.yml`.
+One serial queue requires `queue`, `branch rule` and `pr-gate` on the original PR.
+Each draft checks one PR on the newest master, in `queue` label order.
 The batch draft requires `gate`. The retired TL3 approval path is removed.
 
 The hosted `branch rule` check enforces branch rule 12 for pull requests.
@@ -10539,9 +10540,8 @@ each with `--target_pattern_file` in a separate Remote Bazel run. The PR gate
 uses its 45-minute default; the post-merge workflow explicitly requests 55 minutes.
 Only gate fallback permits six concurrent shard runs per controller,
 each with `--jobs=16`; all other paths stay serial.
-Mergify's 30-minute checks timeout and merge conditions are unchanged. Its two
-parallel batch checks can overlap twelve shard Runs for two fallbacks
-on Bazel, lock or gate-workflow changes. Excess demand queues on executors.
+Mergify checks one draft at a time, with a 30-minute timeout and unchanged merge conditions.
+A fallback can run six shards. Excess demand queues on executors.
 Six shards (Rob, 2026-11-06) aim for at most 25 minutes per shard inside the 30-minute queue timeout. If six shards exceed 45 minutes, report completed/total targets, wall time and
 scheduling-wait share per shard; do not raise the timeout or rerun. Agent/development admission stays
 operationally limited to one run per repo. No shared GitHub job group is added.
