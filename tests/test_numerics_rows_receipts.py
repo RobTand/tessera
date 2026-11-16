@@ -315,9 +315,11 @@ def test_receipt_aggregates_keep_each_array_and_separation_record():
     separation, scales = unit["exact"]["separation"], unit["exact"]["scale_index"]
     assert separation["elements"] == separation["both"] == 16
     assert separation["by_sign"] == {"positive": [8, 8], "negative": [8, 8]}
-    assert scales["scale"] == ["a_s", "row"] and scales["base"] == [8]
+    assert scales["scales"] == ["a_s", "row"] and scales["bases"] == [8]
     assert scales["reads"] == scales["reads_covered"] == 16 and scales["launches"] == 32
-    assert scales["passes_total"] == scales["passes_per_family"]["plain"] == 4
+    assert scales["passes_total"] == 4 and scales["families"] == ["plain"]
+    assert not {"scale", "base", "passes_per_family"} & scales.keys()
+    assert all(record["passes_per_family"] == 2 for record in scales["arrays"])
 
 
 def test_rule_receipt_requires_decisions_and_records_the_h1_job(tmp_path):

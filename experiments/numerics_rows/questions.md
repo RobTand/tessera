@@ -13,18 +13,15 @@
 
 The freeze record and signed populations remain required inputs.
 
-## Open at the next handoff
-
-- `rows.md:210`: a unit checks several scale arrays, which can use different bases and digit counts.
-  Proposed receipt types: `scale` and `base` are lists, `families` is their union, and `passes_per_family`
-  maps each family to its total. `arrays` retains each array's exact base, families, counts and read coverage.
-  The other counts are sums. The current implementation uses these types. The spec has not been edited.
+- `rows.md:210`, draft 8, accepted at 12:51 UTC: `arrays` keeps each array's exact fields.
+  Unit fields use `scales` and `bases` lists, the union of `families`, and summed counts.
+  `passes_per_family` stays on each array. There are no open spec questions.
 
 ## Inputs that remain pending
 
 - H1-G at `d1f8c7c6` records `runtime.sms: 48` in
   `/mnt/shared/flux-jobs/tessera-1717-H1-G-d1f8c7c6-20261116T113444Z/results/h1.json`.
-  Put that observed count in the populations before review.
+  That observed count is recorded in the population drafts and the prepared population job inputs.
 - Five population arms have completed stamp reads. The next CPU job reads all six with bounded
   metadata reads and compares the five completed outputs. The lead must review and sign the results.
 - H1-N still needs its GPU run. P3 confirmation, the signed populations and the frozen rule remain required.

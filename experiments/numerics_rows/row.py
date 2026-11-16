@@ -66,9 +66,8 @@ def aggregate_exact(unit):
     sep["by_sign"] = {sign: [sum(r.get("by_sign", {}).get(sign, [0, 0])[side] for r in records) for side in (0, 1)]
                       for sign in ("positive", "negative")}
     arrays = scales["arrays"]
-    scales.update(scale=sorted({r.get("scale", "row") for r in arrays}), base=sorted({r["base"] for r in arrays if "base" in r}),
+    scales.update(scales=sorted({r.get("scale", "row") for r in arrays}), bases=sorted({r["base"] for r in arrays if "base" in r}),
                   families=sorted({f for r in arrays for f in r.get("families", [])}))
-    scales["passes_per_family"] = {f: sum(r["passes_per_family"] for r in arrays if f in r.get("families", [])) for f in scales["families"]}
     for field in ("passes_total", "reads", "reads_covered", "mismatches", "launches"):
         scales[field] = sum(r.get(field, 0) for r in arrays)
     scales["uncovered_reads"] = [{"array": index, **read} for index, r in enumerate(arrays) for read in r.get("uncovered_reads", [])]
