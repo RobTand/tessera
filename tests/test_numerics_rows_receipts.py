@@ -308,17 +308,18 @@ def test_profiler_names_resolve_to_exact_sass_symbols():
     symbols, unresolved = row.resolve_symbols(["_Zkernel0", "_Zkernel2"],
         ["void routed_fused_kernel<0>( Params )", "quantizer", "_Zkernel2"],
         ["void routed_fused_kernel<0>(Params)", "void routed_fused_kernel<2>(Params)"])
-    assert symbols == ["_Zkernel0", "_Zkernel2"] and unresolved == []
+    assert symbols == [{"profiler_name": "void routed_fused_kernel<0>( Params )", "symbol": "_Zkernel0"},
+                       {"profiler_name": "_Zkernel2", "symbol": "_Zkernel2"}] and unresolved == []
     assert row.resolve_symbols(["_Zkernel0"], ["void routed_fused_kernel<1>(Params)"],
         ["void routed_fused_kernel<0>(Params)"]) == ([], ["void routed_fused_kernel<1>(Params)"])
 
 
-@pytest.mark.parametrize("different", (None, "symbol", "binary", "rung", "tp", "pair"))
+@pytest.mark.parametrize("different", (None, "symbol", "binary", "rung", "tp", "pair", "unresolved", "source-unresolved", "missing"))
 def test_separation_attaches_only_to_the_same_compiled_function(different):
     import copy
-    scope = {"symbol": "pair", "decoder": "decoder", "rung": 1024, "tp": {"rank": 0, "size": 1}}
+    scope = {"cell": "cell", "symbol": "pair", "decoder": "decoder", "rung": 1024, "tp": {"rank": 0, "size": 1}}
     source, target = row.new_unit(scope), row.new_unit(scope)
-    identity = [{"symbol": "_Zrouted_fused_kernel0", "library_so_sha256": "binary-a"}]
+    identity = [{"profiler_name": "void routed_fused_kernel<0>()", "symbol": "_Zrouted_fused_kernel0", "library_so_sha256": "binary-a"}]
     source.update(outcome="PASS", separation_census_complete=True, m_config={"M": 64, "compiled_kernel_symbols": identity})
     source["exact"]["separation"]["records"] = [{"elements": 10, "both": 10}]
     target.update(needs_separation_transfer=True, m_config={"M": 2, "compiled_kernel_symbols": copy.deepcopy(identity)})
@@ -332,11 +333,18 @@ def test_separation_attaches_only_to_the_same_compiled_function(different):
         target["tp"] = {"rank": 1, "size": 2}
     elif different == "pair":
         target["decoder"] = "other-decoder"
+    elif different in ("unresolved", "source-unresolved"):
+        (source if different == "source-unresolved" else target)["arm"] = {"unresolved_kernel_names": ["routed_unknown"]}
+    elif different == "missing":
+        target["m_config"]["compiled_kernel_symbols"] = []
+    target["m_config"]["compiled_kernel_symbols"] = [{**r, "profiler_name": "a different profiler spelling"} for r in target["m_config"]["compiled_kernel_symbols"]]
     row.attach_separation([source, target])
     if different:
-        assert target["unattested"] and "separation_from" not in target
+        assert target["unattested"] and target["m_config"]["separation_source"] is None
     else:
-        assert target["separation_from"]["M"] == 64 and not target["unattested"]
+        assert target["m_config"]["separation_source"] == {"unit_id": row.unit_identity(source), "symbol": "_Zrouted_fused_kernel0", "library_so_sha256": "binary-a"}
+        assert row.unit_identity(source) == ["cell", "pair", "decoder", 1024, {"M": 64}, {"rank": 0, "size": 1}]
+        assert not target["unattested"]
         assert target["exact"]["separation"] == source["exact"]["separation"]
 
 
@@ -507,3 +515,17 @@ def test_dense_and_routed_widths_are_distinct_at_2048(monkeypatch):
     routed = configurations(128, 128, "e4m3mma", 1, "routed_moe", tile_words=8192, blocks=1)
     assert next(c for c in dense if c["M"] == 2048)["superblock_width"] == 64
     assert next(c for c in routed if c["M"] == 2048)["superblock_width"] == 128
+
+
+def test_uncovered_reads_retain_scale_names_at_unit_and_array_levels():
+    unit = row.new_unit({"role": "unit"})
+    unit["exact"]["scale_index"]["arrays"] = [{"scale": scale, "uncovered_reads": [{"read": [0, 1], "reason": "joint collision"}]} for scale in ("row", "sfa")]
+    row.aggregate_exact(unit)
+    assert unit["exact"]["scale_index"]["uncovered_reads"] == [{"scale": "row", "read": [0, 1]}, {"scale": "sfa", "read": [0, 1]}]
+    assert all(isinstance(r["uncovered_reads"], list) for r in unit["exact"]["scale_index"]["arrays"])
+
+
+def test_own_separation_needs_no_borrowed_symbol_resolution():
+    unit = row.new_unit({"m_config": {"M": 64}, "arm": {"unresolved_kernel_names": ["unknown"]}})
+    row.attach_separation([unit])
+    assert unit["m_config"]["separation_source"] is None and not unit["unattested"]

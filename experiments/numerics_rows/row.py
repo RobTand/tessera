@@ -47,6 +47,10 @@ def missing_cases(unit):
 
 
 def new_unit(scope):
+    scope = copy.deepcopy(scope)
+    if "m_config" in scope:
+        scope["m_config"].setdefault("compiled_kernel_symbols", [])
+        scope["m_config"].setdefault("separation_source", None)
     return {**scope, "findings": [], "invalid": [], "unattested": [], "completed": False,
             "cuda_unattributed": False, "boundaries": [], "cuda_errors": [], "diagnostic": [],
             "first_mismatch": None, "decoder_bit_exact": False, "graph_replay_equal": [],
@@ -71,10 +75,17 @@ def aggregate_exact(unit):
                   families=sorted({f for r in arrays for f in r.get("families", [])}))
     for field in ("passes_total", "reads", "reads_covered", "mismatches", "launches"):
         scales[field] = sum(r.get(field, 0) for r in arrays)
-    scales["uncovered_reads"] = [{"array": index, **read} for index, r in enumerate(arrays) for read in r.get("uncovered_reads", [])]
+    scales["uncovered_reads"] = [{"scale": r["scale"], "read": read["read"]} for r in arrays for read in r.get("uncovered_reads", [])]
+
+
+def unit_identity(unit):
+    config = {k: v for k, v in unit.get("m_config", {}).items() if k not in ("compiled_kernel_symbols", "separation_source")}
+    cut = {k: v for k, v in unit.get("tp", {}).items() if k in ("rank", "size", "cut_axis", "cut_range")}
+    return copy.deepcopy([unit.get(k) for k in ("cell", "symbol", "decoder", "rung")] + [config, cut])
 
 
 def finish_unit(unit):
+    unit["unit_id"] = unit_identity(unit)
     unit["outcome"] = outcome(unit)
     unit["decoder_bit_exact"] = unit["outcome"] == "PASS" and unit["role"] == "unit"
     unit["unattested_reason"] = unit["unattested"]
@@ -689,14 +700,14 @@ def resolve_symbols(functions, names, demangled):
     for symbol, name in zip(functions, demangled, strict=True):
         for alias in (symbol, name):
             aliases.setdefault(normalize(alias), set()).add(symbol)
-    found, unresolved = set(), []
+    found, unresolved = [], []
     for name in names:
         matches = aliases.get(normalize(name), set())
         if len(matches) == 1:
-            found.update(matches)
-        elif "routed_fused" in name or "dense_fused" in name:
+            found.append({"profiler_name": name, "symbol": next(iter(matches))})
+        elif any(part in name for part in ("routed", "dense", "window", "token_sum")):
             unresolved.append(name)
-    return sorted(found), sorted(unresolved)
+    return sorted(found, key=lambda r: (r["symbol"], r["profiler_name"])), sorted(unresolved)
 
 
 def actual_geometry(adapter, routed):
@@ -717,18 +728,23 @@ def actual_geometry(adapter, routed):
 
 
 def attach_separation(units):
+    def identity(unit):
+        if unit.get("arm", {}).get("unresolved_kernel_names"):
+            return ()
+        return tuple(sorted({(r["symbol"], r["library_so_sha256"]) for r in unit["m_config"].get("compiled_kernel_symbols", [])}))
     for unit in units:
+        unit["m_config"]["separation_source"] = None
         if not unit.get("needs_separation_transfer"):
             continue
-        symbols = unit["m_config"].get("compiled_kernel_symbols", [])
+        symbols = identity(unit)
         source = next((other for other in units if other.get("separation_census_complete")
-            and other["outcome"] == "PASS" and symbols and other["m_config"].get("compiled_kernel_symbols") == symbols
+            and other["outcome"] == "PASS" and symbols and identity(other) == symbols
             and all(unit[key] == other[key] for key in ("symbol", "decoder", "rung", "tp"))), None)
         if source is None:
             unit["unattested"].append("incomplete separation: no census with the same compiled kernel symbols and binary")
         else:
             unit["exact"]["separation"] = copy.deepcopy(source["exact"]["separation"])
-            unit["separation_from"] = {"M": source["m_config"]["M"], "compiled_kernel_symbols": symbols}
+            unit["m_config"]["separation_source"] = {"unit_id": unit_identity(source), "symbol": symbols[0][0], "library_so_sha256": symbols[0][1]}
 
 
 def profile_unit(adapter, unit, recorder, *, routed):
@@ -758,10 +774,8 @@ def profile_unit(adapter, unit, recorder, *, routed):
     functions = sorted(parse_sass(Path(library["library"]["sass"]["path"]).read_text()))
     demangled = subprocess.check_output(["c++filt"], input="\n".join(functions) + "\n", text=True).splitlines()
     symbols, unresolved = resolve_symbols(functions, [r["name"] for r in unit["arm"]["profiler_kernels"]], demangled)
-    unit["m_config"]["compiled_kernel_symbols"] = [{"symbol": symbol, "library_so_sha256": library["library"]["sha256"]} for symbol in symbols]
+    unit["m_config"]["compiled_kernel_symbols"] = [{**record, "library_so_sha256": library["library"]["sha256"]} for record in symbols]
     unit["arm"]["unresolved_kernel_names"] = unresolved
-    if routed and (unresolved or not any("routed_fused" in symbol for symbol in symbols)):
-        unit["unattested"].append("profiler did not resolve every routed compiled kernel symbol")
 
 
 def opaque_apply(function, recorder, *args):
@@ -883,8 +897,10 @@ def historical_units(contract, runtime, units):
                 seen.add(key)
                 unit = new_unit({k: source[k] for k in ("cell", "m_config", "tp", "arm")})
                 unit.update(symbol=pair["symbol"], decoder=pair["decoder"], rung=rung, admitted_by_v68=True, role="unit", completed=True)
+                unit["m_config"].update(compiled_kernel_symbols=[], separation_source=None)
                 unit["unattested"].append("NOT_DISPATCHABLE (D1)")
                 unit.update(outcome="UNATTESTED", unattested_reason=unit["unattested"], reasons=unit["unattested"])
+                unit["unit_id"] = unit_identity(unit)
                 result.append(unit)
     return result
 
