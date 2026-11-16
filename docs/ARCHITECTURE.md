@@ -346,7 +346,7 @@ Contract v68 re-qualifies four BF16 cells on IMG-N from the current BF16-only st
 BF16 dense rungs: 5 measured (832, 880, 960, 1024, 1088); 769-1279 admitted by the run-table rule (v52). Routed R1024 uses the current class decoder.
 The changed T16 D41 classes need new measurements on the merged build before the next allocation uses them.
 Four E2M1 cells on IMG-G cover R896 with the native fused E2M1 dense and routed pairs.
-Option S scopes those pairs to the measured images, eager resident execution and census rungs.
+Option S scopes those pairs to the measured images, eager resident execution and census rungs; global lane derivation excludes receipt-bound pairs.
 The global experimental execution registry is unchanged. Old folded and TCQ receipts do not qualify these pairs.
 The receipts prove TP1 stub dispatch in decode and batch, not quality, speed, compiled execution or TP2.
 R4 at mint commit `3d5799c7` supplies the IMG-G E2M1 activation quantizer entry.

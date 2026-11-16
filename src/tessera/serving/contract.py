@@ -2767,7 +2767,7 @@ def _receipt_executes_at_rung(cell: Mapping[str, Any], rung: int) -> set:
 
 def _cell_executes_at_rung(cell: Mapping[str, Any], route: str, entry: Mapping[str, Any],
                           contract: Mapping[str, Any], rung: int, where: str) -> set:
-    """Derive execution identities for one census rung."""
+    """Derive execution identities; receipt-bound pairs require their exact scope."""
     from .scheme import qualification_launch_pairs
     served = _receipt_executes_at_rung(cell, rung)
     if served:
@@ -2794,7 +2794,7 @@ def _cell_executes_at_rung(cell: Mapping[str, Any], route: str, entry: Mapping[s
                                   str(entry["grid"]), str(cell["structure"]))
     return set().union(*(qualification_launch_pairs(
         route, structure=cell["structure"], regime=cell["regime"], mode=mode, lanes=lanes)
-        for mode in modes))
+        for mode in modes)) - {receipt["pair"] for receipt in _SCOPED_EXECUTION_RECEIPTS}
 
 
 def derive_cell_executes(cell: Mapping[str, Any], route: str, entry: Mapping[str, Any],
