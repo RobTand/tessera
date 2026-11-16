@@ -18319,6 +18319,8 @@ ts_py_library(
         "test_route_census_nvfp4_fused.py",
     ],
     data = [
+        "//experiments:results/glm53_img_n_v70_config.json",
+        "//experiments:results/glm53_img_n_v70_tp2_census.json",
         "//experiments:results/glm53_r768_stub_base_config.json",
         "//experiments:results/glm53_r768_stub_base_tp2_eager_census.json",
         "//experiments:results/glm53_requal_v68_bf16_census.json",
