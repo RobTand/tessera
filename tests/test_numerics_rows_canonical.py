@@ -4,6 +4,7 @@ import struct
 import pytest
 
 from experiments.numerics_rows.canonical import canonical_identity, explain, mask, negative_controls
+from experiments.numerics_rows.build import elf_sections
 from tests.test_numerics_rows_receipts import elf_bytes
 
 
@@ -89,3 +90,46 @@ def test_elf_layout_bytes_are_not_discarded():
     changed = bytearray(original)
     changed[18] ^= 1  # e_machine, outside every section payload.
     assert canonical_identity(original)["sha256"] != canonical_identity(bytes(changed))["sha256"]
+
+
+def aliased_elf(*, kind=1, start=0, size=4):
+    data = bytearray(elf_bytes(extra_sections=[(".alias", kind, 6, b"", 0)]))
+    table = struct.unpack_from("<Q", data, 40)[0]
+    offset = struct.unpack_from("<Q", data, table + 2 * 64 + 24)[0]
+    struct.pack_into("<QQ", data, table + 5 * 64 + 24, offset + start, size)
+    return bytes(data)
+
+
+def test_exact_payload_alias_keeps_both_full_headers():
+    result = canonical_identity(aliased_elf())
+    text, alias = result["sections"][2], result["sections"][5]
+    assert text["payload_source_section"] == alias["payload_source_section"] == 2
+    assert result["alias_groups"] == [{"offset": text["offset"], "size": 4, "sections": [
+        {"index": 2, "name": ".text", "sh_type": 1}, {"index": 5, "name": ".alias", "sh_type": 1}]}]
+    for field in ("addr", "link", "info", "align", "entsize"):
+        assert field in text and field in alias
+
+
+def test_partial_payload_overlap_names_both_sections_types_and_ranges():
+    original = aliased_elf(start=1, size=3)
+    text, alias = elf_sections(original)[2][2], elf_sections(original)[2][5]
+    with pytest.raises(ValueError) as error:
+        canonical_identity(original)
+    for record in (text, alias):
+        assert f"{record['name']!r} type=0x1 [{record['offset']:#x}, {record['offset'] + record['sh_size']:#x})" in str(error.value)
+
+
+def test_one_byte_in_an_aliased_payload_changes_identity():
+    original = aliased_elf()
+    changed = bytearray(original)
+    changed[elf_sections(original)[2][2]["offset"]] ^= 1
+    assert canonical_identity(original)["sha256"] != canonical_identity(bytes(changed))["sha256"]
+
+
+@pytest.mark.parametrize("kind,size", [(8, 32), (1, 0)])
+def test_nobits_and_zero_size_have_no_file_payload(kind, size):
+    result = canonical_identity(aliased_elf(kind=kind, start=1, size=size))
+    assert result["alias_groups"] == []
+    section = result["sections"][5]
+    assert section["sh_size"] == size and section["canonical_size"] == 0
+    assert section["payload_source_section"] is None

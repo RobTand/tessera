@@ -53,9 +53,10 @@ def elf_sections(path):
         if end < 0:
             raise ValueError("unterminated ELF section name")
         name = names[name_index:end].decode("utf-8")
-        content = b"" if kind == 8 else payload(start, size)
-        sections.append({"index": index, "name": name, "sh_type": kind, "sh_flags": flags, "sh_size": size,
-                         "offset": start, "link": section[6], "entsize": section[9], "data": content})
+        content = b"" if kind == 8 or not size else payload(start, size)
+        sections.append({"index": index, "name": name, "sh_type": kind, "sh_flags": flags, "addr": section[3],
+                         "offset": start, "sh_size": size, "link": section[6], "info": section[7],
+                         "align": section[8], "entsize": section[9], "data": content})
     return order, wide, sections
 
 
@@ -108,8 +109,9 @@ def library_identity(path, out, *, data=None):
 
     embedded = [canonical_identity(p.read_bytes()) for p in cubins]
     canonical = canonical_identity(data, [(p.name, r["sha256"]) for p, r in zip(cubins, embedded)])
-    identity["canonicalization"] = {"schema": "tessera.nvcc_pid.v1", "pattern": TOKEN.pattern.decode("ascii"), "replacement": "00000000"}
+    identity["canonicalization"] = {"schema": "tessera.nvcc_pid.v2", "pattern": TOKEN.pattern.decode("ascii"), "replacement": "00000000"}
     identity.update(library_canonical_code_sha256=canonical["sha256"], library_canonical_sections=canonical["sections"],
+                    library_canonical_alias_groups=canonical["alias_groups"],
                     cubin_canonical_sha256s=[r["sha256"] for r in embedded],
                     canonical_cubins=[{"path": str(p), **r} for p, r in zip(cubins, embedded)])
     return identity
