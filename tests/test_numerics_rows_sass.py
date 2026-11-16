@@ -151,6 +151,72 @@ def test_constant_instruction_with_a_runtime_register_is_unresolved():
     assert result["status"] == "UNSUPPORTED" and result["unresolved"]
 
 
+@pytest.mark.parametrize("opcode,operands,bits", [
+    ("FFMA", ("R2", "RZ", "2", "1.00000011920928955078125"), 0x3F800001),
+    ("FFMA", ("R2", "-RZ", "2", "-0.0"), 0x80000000),
+    ("FFMA", ("R2", "0x3f800001", "0x3f7ffffe", "-1"), 0xA8800000),
+    ("FADD", ("R2", "-RZ", "-0.0"), 0x80000000),
+    ("FADD", ("R2", "RZ", "-0.0"), 0),
+    ("FMUL", ("R2", "-RZ", "1"), 0x80000000),
+    ("FMUL", ("R2", "0x1", "1"), 1),
+    ("FMUL.FTZ", ("R2", "0x1", "1"), 0),
+    ("HFMA2", ("R2", "0x3c003c00", "0x40004000", "0.5", "-0.5"), 0x41003E00),
+    ("MOV", ("R2", "RZ"), 0),
+    ("LOP3.LUT", ("R2", "0xaaaaaaaa", "0x55555555", "RZ", "0x96", "!PT"), 0xFFFFFFFF),
+    ("SHF.L.U32", ("R2", "0x80000001", "1", "RZ"), 2),
+])
+def test_extended_constant_folding_uses_exact_opcode_semantics(opcode, operands, bits):
+    assert sass_slice.immediate32(Instruction(0, "", opcode, operands)) == bits
+
+
+def test_constant_bank_folding_uses_this_functions_exact_word():
+    library, lelf, probe, pelf = evidence()
+    library = library.replace("FMNMX R11", "FADD R60, RZ, c[0x3][0x0];\n/*0008*/ FMNMX R11")
+    library = library.replace("-R11, c[0x3][0x0]", "-R11, R60")
+    probe = probe.replace("LDG.E R1", "MOV R60, 0x3fb8aa3b;\n/*0008*/ LDG.E R1")
+    probe = probe.replace("-R1, c[0x3][0x0]", "-R1, R60")
+    assert prove(library, lelf, probe, pelf)["matched"]
+    assert prove(library, elf(KERNEL, "3fb8aa3c"), probe, pelf)["status"] == "DIFFERENT"
+
+
+def test_ffma_constant_matches_mov_and_one_ulp_is_different():
+    library, lelf, probe, pelf = constant_evidence()
+    probe = probe.replace("HFMA2 R2, -RZ, RZ, 0.96630859375, -0.0022525787353515625", "FFMA R2, RZ, RZ, 1")
+    library = library.replace("0x3bbb989d", "0x3f800000")
+    result = prove(library, lelf, probe, pelf)
+    assert result["matched"]
+    example, = result["instruction_examples"]["constant_nodes"]
+    assert "FFMA R2, RZ, RZ, 1;" in example["probe_instruction"]
+    assert "MOV R12, 0x3f800000;" in example["library_instruction"]
+    changed = prove(library.replace("0x3f800000", "0x3f800001"), lelf, probe, pelf)
+    assert changed["status"] == "DIFFERENT" and not changed["unresolved"]
+    assert changed["differences"][0]["first_difference"]["probe_instructions"]
+
+
+@pytest.mark.parametrize("shift", [0, 23, 31])
+def test_exact_imad_shift_matches_shf_and_shift_changed_by_one_is_different(shift):
+    library = sass(KERNEL, ["FMNMX R11, R20, c[0x0][0x160], PT", f"SHF.L.U32 R60, R11, {shift}, RZ"]
+                   + expression(11, 12, "R60"))
+    probe = sass("swiglu_probe", ["LDG.E R1, [R40]", f"IMAD.SHL.U32 R60, R1, {2**shift}, RZ"]
+                 + expression(1, 2, "R60"))
+    result = prove(library, "", probe, "")
+    assert result["matched"] and result["instruction_examples"]["left_shifts"]
+    changed = prove(library.replace(f"R11, {shift}, RZ", f"R11, {shift + 1}, RZ"), "", probe, "")
+    assert changed["status"] == "DIFFERENT" and not changed["unresolved"]
+
+
+@pytest.mark.parametrize("opcode,operands", [
+    ("IMAD.SHL.U32", ("R2", "R1", "3", "RZ")),
+    ("IMAD.SHL.U32", ("R2", "R1", "0x100000000", "RZ")),
+    ("IMAD.SHL.U32", ("R2", "R1", "8", "R3")),
+    ("IMAD.U32", ("R2", "R1", "8", "RZ")),
+    ("SHF.L.U32", ("R2", "R1", "32", "RZ")),
+    ("SHF.L.U32.HI", ("R2", "R1", "3", "RZ")),
+])
+def test_shift_equivalence_rejects_every_other_form(opcode, operands):
+    assert sass_slice.left_shift(Instruction(0, "", opcode, operands)) is None
+
+
 def real_slice(key, kind, text=None):
     root = Path(__file__).parent / "data" / "numerics_rows"
     record = json.loads((root / "provenance.json").read_text())[key]

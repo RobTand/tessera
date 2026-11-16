@@ -4,13 +4,16 @@ from __future__ import annotations
 import argparse
 from bisect import bisect_left
 from dataclasses import dataclass
+from fractions import Fraction
 import hashlib
 import json
+import math
 from pathlib import Path
 import re
 import struct
 
 from experiments.numerics_rows.common import sha256, write_json
+from experiments.numerics_rows.reference import f32_value, rn_bits
 from experiments.t4_code.sass_dump import parse_sass
 
 REG = re.compile(r"\b(?:UR|UP|R|P)(?:\d+|Z|T)\b")
@@ -94,6 +97,10 @@ class Instruction:
     def destinations(self):
         return tuple(r for operand in self.operands[:self.destination_count] for r in REG.findall(operand))
 
+    @property
+    def text(self):
+        return f"/*{self.address:04x}*/ {self.predicate + ' ' if self.predicate else ''}{self.opcode} {', '.join(self.operands)};"
+
 
 def instructions(text):
     parsed = parse_sass(text)
@@ -122,32 +129,109 @@ def instructions(text):
     return result
 
 
-def immediate32(ins):
-    """Decode instructions that write fixed bits without a register input."""
+def rounded_float(operation, values, *, half=False, ftz=False):
+    """Evaluate one fused or single IEEE RN operation with exact rational arithmetic."""
+    precision, emin, emax = (11, -14, 15) if half else (24, -126, 127)
+    if ftz:
+        values = [math.copysign(0.0, x) if abs(x) < 2.0**emin else x for x in values]
+    if any(math.isnan(x) for x in values):
+        raise ValueError("NaN payload is not resolved")
+    if not all(math.isfinite(x) for x in values):
+        value = values[0] + values[1] if operation == "FADD" else values[0] * values[1]
+        if operation == "FFMA":
+            value += values[2]
+        if math.isnan(value):
+            raise ValueError("NaN payload is not resolved")
+    else:
+        a, b, *rest = values
+        value = Fraction(a) + Fraction(b) if operation == "FADD" else Fraction(a) * Fraction(b)
+        if rest:
+            value += Fraction(rest[0])
+        if not value:
+            product_sign = math.copysign(1.0, a) * math.copysign(1.0, b)
+            negative = (product_sign < 0 if operation == "FMUL" else
+                        product_sign < 0 and math.copysign(1.0, rest[0]) < 0 if rest else
+                        math.copysign(1.0, a) < 0 and math.copysign(1.0, b) < 0)
+            value = -0.0 if negative else 0.0
+        value = f32_value(rn_bits(value, precision, emin, emax))
+    if ftz and abs(value) < 2.0**emin:
+        value = math.copysign(0.0, value)
+    return int.from_bytes(struct.pack("<e" if half else "<f", value), "little")
+
+
+def immediate32(ins, resolve=lambda text: None):
+    """Fold only immediate, resolved-bank and zero-register inputs to exact bits."""
     operands = ins.operands[ins.destination_count:]
+    opcode = ins.opcode
+    if opcode in ("LOP3.LUT", "ULOP3.LUT") and operands[-1:] == ("!PT",):
+        operands = operands[:-1]
+    if any(REG.search(x) and not re.fullmatch(r"-?(?:RZ|URZ)(?:\.reuse)?", x) for x in operands):
+        return None
     def integer(text):
-        return 0 if re.fullmatch(r"-?RZ(?:\.reuse)?", text) else int(text, 0)
+        if re.fullmatch(r"-?(?:RZ|URZ)(?:\.reuse)?", text):
+            return 0
+        if CONST.fullmatch(text):
+            value = resolve(text)
+            if value is None:
+                raise ValueError("unresolved constant")
+            return value
+        return int(text, 0) & 0xFFFFFFFF
+    def floating(text, *, half=False):
+        if re.fullmatch(r"-?(?:RZ|URZ)(?:\.reuse)?", text):
+            return -0.0 if text.startswith("-") else 0.0
+        if re.fullmatch(r"-0x[0-9a-f]+", text, re.I):
+            return f32_value(int(text[1:], 0) ^ 0x80000000)
+        if CONST.fullmatch(text) or re.fullmatch(r"0x[0-9a-f]+", text, re.I):
+            return f32_value(integer(text))
+        if text.upper() in ("INF", "+INF", "-INF"):
+            return float(text)
+        value = Fraction(text)
+        if not value and text.startswith("-"):
+            value = -0.0
+        return f32_value(rn_bits(value, 11, -14, 15) if half else rn_bits(value))
     try:
-        if ins.opcode in ("MOV", "UMOV") and len(operands) == 1 and not REG.search(operands[0]):
-            return int(operands[0], 0) & 0xFFFFFFFF
-        if ins.opcode == "HFMA2" and len(operands) in (3, 4):
-            if not all(re.fullmatch(r"-?RZ(?:\.reuse)?", x) for x in operands[:2]):
-                return None
-            product = (-0.0 if operands[0].startswith("-") else 0.0) * (-0.0 if operands[1].startswith("-") else 0.0)
-            if len(operands) == 3 and re.fullmatch(r"-?RZ(?:\.reuse)?", operands[2]):
-                halves = (-0.0 if operands[2].startswith("-") else 0.0,) * 2
-            else:
-                halves = tuple(map(float, operands[2:]))
-            if len(halves) == 2:
-                high, low = (product + x for x in halves)
-                return int.from_bytes(struct.pack("<ee", low, high), "little")
-        if ins.opcode in ("IMAD", "IMAD.U32", "IMAD.MOV.U32", "IMAD.SHL.U32", "IADD3") and len(operands) == 3:
-            if any(REG.search(x) and not re.fullmatch(r"-?RZ(?:\.reuse)?", x) for x in operands):
-                return None
+        if opcode in ("MOV", "UMOV") and len(operands) == 1:
+            return integer(operands[0])
+        if opcode in ("HFMA2", "HFMA2.RN") and len(operands) in (3, 4):
+            a, b = map(integer, operands[:2])
+            a = 0x80008000 if re.fullmatch(r"-(?:RZ|URZ)(?:\.reuse)?", operands[0]) else a
+            b = 0x80008000 if re.fullmatch(r"-(?:RZ|URZ)(?:\.reuse)?", operands[1]) else b
+            additions = ([floating(operands[3], half=True), floating(operands[2], half=True)]
+                         if len(operands) == 4 else struct.unpack("<ee", struct.pack("<I", integer(operands[2]))))
+            halves = [rounded_float("FFMA", [struct.unpack("<e", struct.pack("<H", (a >> shift) & 65535))[0],
+                       struct.unpack("<e", struct.pack("<H", (b >> shift) & 65535))[0], additions[i]], half=True)
+                      for i, shift in enumerate((0, 16))]
+            return halves[0] | (halves[1] << 16)
+        operation, *modifiers = opcode.split(".")
+        if operation in ("FFMA", "FADD", "FMUL") and set(modifiers) <= {"RN", "FTZ"}:
+            if len(operands) == (3 if operation == "FFMA" else 2):
+                return rounded_float(operation, list(map(floating, operands)), ftz="FTZ" in modifiers)
+        if opcode in ("IMAD", "IMAD.U32", "IMAD.MOV.U32", "IMAD.SHL.U32", "IADD3", "UIADD3") and len(operands) == 3:
             a, b, c = map(integer, operands)
-            return ((a + b + c) if ins.opcode == "IADD3" else (a * b + c)) & 0xFFFFFFFF
-    except (ValueError, OverflowError):
+            return ((a + b + c) if operation in ("IADD3", "UIADD3") else (a * b + c)) & 0xFFFFFFFF
+        if opcode in ("LOP3.LUT", "ULOP3.LUT") and len(operands) == 4:
+            a, b, c, lut = map(integer, operands)
+            return sum(((lut >> ((((a >> i) & 1) << 2) | (((b >> i) & 1) << 1) | ((c >> i) & 1))) & 1) << i for i in range(32))
+        if opcode == "SHF.L.U32" and len(operands) == 3 and operands[2] in ("RZ", "URZ"):
+            a, shift, _ = map(integer, operands)
+            return (a << min(shift, 32)) & 0xFFFFFFFF
+    except (ValueError, OverflowError, struct.error):
         pass
+    return None
+
+
+def left_shift(ins):
+    """Recognize only the two shift forms permitted by the pass rule."""
+    if ins.destination_count != 1 or len(ins.operands) != 4 or ins.operands[3] != "RZ":
+        return None
+    try:
+        value = int(ins.operands[2], 0)
+    except ValueError:
+        return None
+    if ins.opcode == "IMAD.SHL.U32" and 0 < value <= 2**31 and value & (value - 1) == 0:
+        return ins.operands[1], value.bit_length() - 1
+    if ins.opcode == "SHF.L.U32" and 0 <= value < 32:
+        return ins.operands[1], value
     return None
 
 
@@ -162,6 +246,7 @@ class Slice:
         self.functions, self.const, self.name = functions, const, name
         self.gf, self.gf_after = gf, gf_after
         self.resolved, self.nodes, self.initial, self.facts, self.simplified = {}, {}, {}, {}, {}
+        self.origins = {}
         self.addresses = {name: {ins.address: i for i, ins in enumerate(functions[name])}}
         self.definitions = {}
         for i, ins in enumerate(functions[name]):
@@ -174,6 +259,19 @@ class Slice:
         self.nodes[key] = value
         return key
 
+    def constant_word(self, operand, name, width=4):
+        match = CONST.fullmatch(operand)
+        if not match or int(match[1], 16) == 0:
+            return None
+        bank, offset = (int(x, 16) for x in match.groups())
+        section = self.const.get((bank, name), self.const.get((bank, ""), {}))
+        try:
+            data = bytes(section[offset + i] for i in range(width))
+        except KeyError:
+            return None
+        self.resolved[f"{name}:{operand}"] = data.hex()
+        return int.from_bytes(data, "little")
+
     def operand(self, operand, name, index, state):
         unresolved = []
         def constant(match):
@@ -181,15 +279,12 @@ class Slice:
             if bank == 0:
                 unresolved.append("c[0x0] kernel parameter")
                 return ""
-            section = self.const.get((bank, name), self.const.get((bank, ""), {}))
             width = 8 if self.functions[name][index].opcode.startswith("D") else 4
-            try:
-                data = bytes(section[offset + i] for i in range(width))
-            except KeyError:
+            word = self.constant_word(match[0], name, width)
+            if word is None:
                 unresolved.append(f"constant {match[0]} in {name}")
                 return ""
-            self.resolved[f"{name}:{match[0]}"] = data.hex()
-            return "constant:" + data.hex()
+            return "constant:" + word.to_bytes(width, "little").hex()
         operand = CONST.sub(constant, operand)
         if unresolved:
             return self.node("unresolved", unresolved[0])
@@ -244,6 +339,8 @@ class Slice:
         else:
             result = self.node(kind, *args)
         self.simplified[key] = result
+        if value in self.origins:
+            self.origins.setdefault(result, {}).update(self.origins[value])
         return result
 
     def predicate(self, text, state):
@@ -280,9 +377,18 @@ class Slice:
         return value
 
     def operation(self, ins, name, index, state, slot):
-        constant = immediate32(ins) if slot == 0 else None
+        value = self.operation_value(ins, name, index, state, slot)
+        self.origins.setdefault(value, {})[(name, ins.address)] = ins
+        return value
+
+    def operation_value(self, ins, name, index, state, slot):
+        constant = (immediate32(ins, lambda x: self.constant_word(x, name))
+                    if re.fullmatch(r"U?R\d+", ins.destinations[slot]) else None)
         if constant is not None:
             return self.node("constant", constant)
+        shift = left_shift(ins)
+        if shift is not None:
+            return self.node("shift-left", self.operand(shift[0], name, index, state), shift[1])
         if ins.opcode.startswith(("LD", "ULD", "S2R", "S2UR", "CS2R")):
             if not ins.opcode.startswith(("LDC", "ULDC")) or not any(CONST.search(x) for x in ins.operands[ins.destination_count:]):
                 return self.node("unresolved", f"load: {ins.opcode}")
@@ -471,26 +577,50 @@ def binary_records(sass, elf):
     return [(key, instructions(text), constants(sections[key])) for key, text in assembly.items()]
 
 
-def difference(left, right, left_nodes, right_nodes):
-    pending = [(left, right, [])]
+def difference(left, right, left_nodes, right_nodes, left_origins=None, right_origins=None):
+    pending = [(left, right, [], {}, {})]
     while pending:
-        a, b, path = pending.pop()
+        a, b, path, left_source, right_source = pending.pop()
         if a == b:
             continue
         if isinstance(a, str) and a in left_nodes:
+            left_source = (left_origins or {}).get(a, left_source)
             a = left_nodes[a]
         if isinstance(b, str) and b in right_nodes:
+            right_source = (right_origins or {}).get(b, right_source)
             b = right_nodes[b]
         if isinstance(a, (list, tuple)) and isinstance(b, (list, tuple)) and len(a) == len(b):
-            pending.extend((a[i], b[i], path + [i]) for i in reversed(range(len(a))))
+            pending.extend((a[i], b[i], path + [i], left_source, right_source) for i in reversed(range(len(a))))
         else:
-            return {"path": path, "probe": a, "library": b}
+            return {"path": path, "probe": a, "library": b,
+                    "probe_instructions": [{"function": name, "text": ins.text} for (name, _), ins in left_source.items()],
+                    "library_instructions": [{"function": name, "text": ins.text} for (name, _), ins in right_source.items()]}
+
+
+def instruction_examples(result, probe, library):
+    """Keep three full instruction pairs for each approved instruction selection."""
+    examples = result["instruction_examples"]
+    for key in sorted(probe.used & library.used):
+        if all(len(v) >= 3 for v in examples.values()):
+            break
+        for (pname, _), p in probe.origins.get(key, {}).items():
+            for (lname, _), lib in library.origins.get(key, {}).items():
+                kind = ("constant_nodes" if {p.opcode, lib.opcode} == {"FFMA", "MOV"} else
+                        "left_shifts" if {p.opcode, lib.opcode} == {"IMAD.SHL.U32", "SHF.L.U32"} else None)
+                if kind and len(examples[kind]) < 3:
+                    record = {"probe_function": pname, "probe_instruction": p.text,
+                              "library_function": lname, "library_instruction": lib.text,
+                              "canonical_node": library.nodes[key]}
+                    if record not in examples[kind]:
+                        examples[kind].append(record)
 
 
 def prove(library_sass, library_elf, probe_sass, probe_elf):
     """Require every mode-0 quotient, including all slow paths, to match."""
     result = {"mode0_instantiations": 0, "quotients": 0, "quotients_examined": 0,
-              "constant_operands": {}, "unresolved": [], "differences": [], "matched": False, "status": "UNSUPPORTED"}
+              "constant_operands": {}, "unresolved": [], "differences": [],
+              "instruction_examples": {"constant_nodes": [], "left_shifts": []},
+              "matched": False, "status": "UNSUPPORTED"}
     try:
         libraries = binary_records(library_sass, library_elf)
         probes = binary_records(probe_sass, probe_elf)
@@ -508,7 +638,7 @@ def prove(library_sass, library_elf, probe_sass, probe_elf):
                     graph = sliced.root(stop, reg)
                     opcodes = {sliced.nodes[n][1] for n in sliced.used if sliced.nodes[n][0] == "op"}
                     if "MUFU.EX2" in opcodes and "MUFU.RCP" in opcodes:
-                        candidates.append((graph, sliced.resolved, sliced.nodes))
+                        candidates.append((graph, sliced))
                 if len(candidates) != 1:
                     raise Unmatched(f"{key}: probe quotient candidates: {len(candidates)}")
                 if key[0] in expected and expected[key[0]][0] != candidates[0][0]:
@@ -523,8 +653,8 @@ def prove(library_sass, library_elf, probe_sass, probe_elf):
                 try:
                     if key[0] not in expected:
                         raise Unmatched(f"no probe for {key[0]}")
-                    wanted, resolved, expected_nodes = expected[key[0]]
-                    result["constant_operands"].update(resolved)
+                    wanted, probe = expected[key[0]]
+                    result["constant_operands"].update(probe.resolved)
                     regions = quotient_regions(functions, name)
                     examined = 0
                     boundaries = set()
@@ -545,13 +675,14 @@ def prove(library_sass, library_elf, probe_sass, probe_elf):
                         result["quotients_examined"] += 1
                         boundaries.add(boundary)
                         result["constant_operands"].update(sliced.resolved)
+                        instruction_examples(result, probe, sliced)
                         if graph == wanted:
                             result["quotients"] += 1
                         else:
                             result["differences"].append({"cubin": list(key), "function": name,
                                 "gf_pc": seq[boundary].address, "join_pc": seq[stop].address,
                                 "probe_graph_sha256": wanted[1:], "library_graph_sha256": graph[1:],
-                                "first_difference": difference(wanted, graph, expected_nodes, sliced.nodes)})
+                                "first_difference": difference(wanted, graph, probe.nodes, sliced.nodes, probe.origins, sliced.origins)})
                     exponentials = sum(ins.opcode == "MUFU.EX2" for ins in seq)
                     if examined != exponentials or not examined:
                         raise Unmatched(f"{examined} quotient graphs for {exponentials} exponential regions")
