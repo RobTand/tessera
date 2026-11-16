@@ -118,6 +118,39 @@ def test_barriers_and_uniform_moves_have_known_destination_shapes():
     assert Instruction(0, "", "LOP3.LUT", ("P0", "RZ", "R3", "0x7fffffff", "R0", "0xc8", "!PT")).destination_count == 2
 
 
+@pytest.mark.parametrize("opcode,operands,bits", [
+    ("HFMA2", ("R2", "-RZ", "RZ", "0.96630859375", "-0.0022525787353515625"), 0x3BBB989D),
+    ("HFMA2", ("R2", "RZ", "RZ", "-0.0", "-0.0"), 0),
+    ("HFMA2", ("R2", "-RZ", "RZ", "-0.0", "-0.0"), 0x80008000),
+    ("IMAD.MOV.U32", ("R2", "RZ", "RZ", "0x3bbb989d"), 0x3BBB989D),
+    ("IADD3", ("R2", "PT", "PT", "RZ", "0x3bbb989d", "RZ"), 0x3BBB989D),
+    ("MOV", ("R2", "-0x1"), 0xFFFFFFFF),
+])
+def test_constant_instructions_decode_written_bits(opcode, operands, bits):
+    assert sass_slice.immediate32(Instruction(0, "", opcode, operands)) == bits
+
+
+def constant_evidence():
+    probe = sass("swiglu_probe", ["LDG.E R1, [R40]",
+        "HFMA2 R2, -RZ, RZ, 0.96630859375, -0.0022525787353515625"] + expression(1, 2, "R2"))
+    library = sass(KERNEL, ["MOV R12, 0x3bbb989d", "FMNMX R11, R20, c[0x0][0x160], PT"]
+                   + expression(11, 12, "R12"))
+    return library, "", probe, ""
+
+
+def test_equal_written_constants_match_and_one_ulp_difference_is_different():
+    library, lelf, probe, pelf = constant_evidence()
+    assert prove(library, lelf, probe, pelf)["matched"]
+    result = prove(library.replace("0x3bbb989d", "0x3bbb989e"), lelf, probe, pelf)
+    assert result["status"] == "DIFFERENT" and result["differences"] and not result["unresolved"]
+
+
+def test_constant_instruction_with_a_runtime_register_is_unresolved():
+    library, lelf, probe, pelf = constant_evidence()
+    result = prove(library, lelf, probe.replace("-RZ, RZ", "-R70, RZ"), pelf)
+    assert result["status"] == "UNSUPPORTED" and result["unresolved"]
+
+
 def real_slice(key, kind, text=None):
     root = Path(__file__).parent / "data" / "numerics_rows"
     record = json.loads((root / "provenance.json").read_text())[key]
@@ -148,3 +181,11 @@ def test_real_ieee_division_includes_fchk_call_ret_and_join(key, kind):
     assert {"FCHK", "MUFU.RCP", "MUFU.EX2"} <= {node[1] for node in used if node[0] == "op"}
     changed, _, _ = real_slice(key, kind, text.replace("12582913", "12582912", 1))
     assert graph != changed
+
+
+def test_real_slice_stops_at_the_clamp_result_and_discards_the_old_up_operand():
+    graph, _, text = real_slice("e4m3mma", "library")
+    text = text.replace("/*6a30*/", "/*6a20*/ LDS.128 R105, [R70];\n/*6a30*/")
+    text = text.replace("FMNMX R105, R105, UR6, PT", "FMNMX R105, R70, c[0x0][0x160], PT")
+    changed, _, _ = real_slice("e4m3mma", "library", text)
+    assert graph == changed

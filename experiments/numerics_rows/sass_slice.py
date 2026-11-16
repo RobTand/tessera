@@ -122,6 +122,35 @@ def instructions(text):
     return result
 
 
+def immediate32(ins):
+    """Decode instructions that write fixed bits without a register input."""
+    operands = ins.operands[ins.destination_count:]
+    def integer(text):
+        return 0 if re.fullmatch(r"-?RZ(?:\.reuse)?", text) else int(text, 0)
+    try:
+        if ins.opcode in ("MOV", "UMOV") and len(operands) == 1 and not REG.search(operands[0]):
+            return int(operands[0], 0) & 0xFFFFFFFF
+        if ins.opcode == "HFMA2" and len(operands) in (3, 4):
+            if not all(re.fullmatch(r"-?RZ(?:\.reuse)?", x) for x in operands[:2]):
+                return None
+            product = (-0.0 if operands[0].startswith("-") else 0.0) * (-0.0 if operands[1].startswith("-") else 0.0)
+            if len(operands) == 3 and re.fullmatch(r"-?RZ(?:\.reuse)?", operands[2]):
+                halves = (-0.0 if operands[2].startswith("-") else 0.0,) * 2
+            else:
+                halves = tuple(map(float, operands[2:]))
+            if len(halves) == 2:
+                high, low = (product + x for x in halves)
+                return int.from_bytes(struct.pack("<ee", low, high), "little")
+        if ins.opcode in ("IMAD", "IMAD.U32", "IMAD.MOV.U32", "IMAD.SHL.U32", "IADD3") and len(operands) == 3:
+            if any(REG.search(x) and not re.fullmatch(r"-?RZ(?:\.reuse)?", x) for x in operands):
+                return None
+            a, b, c = map(integer, operands)
+            return ((a + b + c) if ins.opcode == "IADD3" else (a * b + c)) & 0xFFFFFFFF
+    except (ValueError, OverflowError):
+        pass
+    return None
+
+
 class Slice:
     """Symbolically execute the quotient, including its IEEE division slow path.
 
@@ -199,6 +228,19 @@ class Slice:
             result = self.node("boolean", not self.nodes[args[0]][1])
         elif kind == "select" and self.nodes[args[0]][0] == "boolean":
             result = args[1] if self.nodes[args[0]][1] else args[2]
+        elif kind == "select":
+            condition, *arms = args
+            for i, arm in enumerate(arms):
+                while self.nodes[arm][0] == "select":
+                    _, inner, yes, no = self.nodes[arm]
+                    if inner == condition:
+                        arm = yes if i == 0 else no
+                    elif self.nodes[inner] == ("not", condition) or self.nodes[condition] == ("not", inner):
+                        arm = no if i == 0 else yes
+                    else:
+                        break
+                arms[i] = arm
+            result = arms[0] if arms[0] == arms[1] else self.node(kind, condition, *arms)
         else:
             result = self.node(kind, *args)
         self.simplified[key] = result
@@ -212,6 +254,8 @@ class Slice:
         return self.simplify(self.node("not", value)) if text.startswith("!") else value
 
     def before(self, reg, before):
+        if reg == self.gf and before == self.gf_after + 1:
+            return self.node("gf")
         key = reg, before
         if key in self.initial:
             return self.initial[key]
@@ -236,6 +280,9 @@ class Slice:
         return value
 
     def operation(self, ins, name, index, state, slot):
+        constant = immediate32(ins) if slot == 0 else None
+        if constant is not None:
+            return self.node("constant", constant)
         if ins.opcode.startswith(("LD", "ULD", "S2R", "S2UR", "CS2R")):
             if not ins.opcode.startswith(("LDC", "ULDC")) or not any(CONST.search(x) for x in ins.operands[ins.destination_count:]):
                 return self.node("unresolved", f"load: {ins.opcode}")
@@ -257,6 +304,8 @@ class Slice:
     def word(self, value):
         """Resolve the explicit MOV chain used for a CALL's 64-bit return PC."""
         node = self.nodes[value]
+        if node[0] == "constant":
+            return node[1]
         if node == ("fixed", "RZ"):
             return 0
         if node[0] == "operand":
@@ -477,7 +526,7 @@ def prove(library_sass, library_elf, probe_sass, probe_elf):
                     wanted, resolved, expected_nodes = expected[key[0]]
                     result["constant_operands"].update(resolved)
                     regions = quotient_regions(functions, name)
-                    examined, matched = 0, 0
+                    examined = 0
                     boundaries = set()
                     for boundary, gf, stop, reg in regions:
                         if boundary in boundaries:
@@ -493,17 +542,16 @@ def prove(library_sass, library_elf, probe_sass, probe_elf):
                         if "MUFU.EX2" not in opcodes or "MUFU.RCP" not in opcodes:
                             continue
                         examined += 1
+                        result["quotients_examined"] += 1
                         boundaries.add(boundary)
                         result["constant_operands"].update(sliced.resolved)
                         if graph == wanted:
-                            matched += 1
+                            result["quotients"] += 1
                         else:
                             result["differences"].append({"cubin": list(key), "function": name,
                                 "gf_pc": seq[boundary].address, "join_pc": seq[stop].address,
                                 "probe_graph_sha256": wanted[1:], "library_graph_sha256": graph[1:],
                                 "first_difference": difference(wanted, graph, expected_nodes, sliced.nodes)})
-                    result["quotients_examined"] += examined
-                    result["quotients"] += matched
                     exponentials = sum(ins.opcode == "MUFU.EX2" for ins in seq)
                     if examined != exponentials or not examined:
                         raise Unmatched(f"{examined} quotient graphs for {exponentials} exponential regions")
