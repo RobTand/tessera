@@ -11,7 +11,7 @@ def token(pid):
     return b"tmpxft_" + pid + b"_00000000-6_routed_fused_window.cudafe1.cpp"
 
 
-def symbolic(*, pid=b"0000001b", reverse=False, rename=False, value=16, wide=True, order="<", text=b"code"):
+def symbolic(*, pid=b"0000001b", reverse=False, rename=False, value=16, wide=True, order="<", text=b"code", extra_sections=()):
     strings = b"\0alpha\0beta\0" + token(pid) + b"\0"
     rows = [(0, 0, 0, 0, 0, 0), (1, value, 4, 18, 0, 2), (7, 32, 4, 18, 0, 2), (12, 0, 0, 4, 0, 65521)]
     if reverse:
@@ -22,7 +22,7 @@ def symbolic(*, pid=b"0000001b", reverse=False, rename=False, value=16, wide=Tru
     if rename:
         strings = strings.replace(b"alpha", b"alphb")
     return elf_bytes(wide=wide, order=order, text=text, strtab=strings,
-                     extra_sections=[(".symtab", 2, 0, data, len(data))])
+                     extra_sections=[(".symtab", 2, 0, data, len(data)), *extra_sections])
 
 
 def test_exact_token_mask_records_only_the_eight_pid_digits():
@@ -63,9 +63,13 @@ def test_compressed_fatbin_is_bound_to_every_extracted_cubin():
 
 
 def test_each_requested_negative_control_changes_canonical_identity():
-    controls = negative_controls(symbolic(), [elf_bytes()], ["sm_121.cubin"])
+    host = symbolic(extra_sections=[(".nv_fatbin", 1, 2, b"compressed-a", 12)])
+    controls = negative_controls(host, [elf_bytes()], ["sm_121.cubin"])
     assert set(controls) == {"host_text_byte", "non_token_symbol_byte", "cubin_code_byte"}
-    assert all(r["verdict"] == "DIFFERENT" and r["before"] != r["after"] for r in controls.values())
+    for name, record in controls.items():
+        assert record["verdict"] == "DIFFERENT" and record["before"] != record["after"], (name, record)
+    device = controls["cubin_code_byte"]
+    assert device["original_cubin_canonical_sha256"] != device["changed_cubin_canonical_sha256"]
 
 
 def test_raw_file_audit_does_not_explain_an_unmasked_byte(tmp_path):
