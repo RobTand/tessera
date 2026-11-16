@@ -14679,12 +14679,17 @@ ts_py_library(
     srcs = [
         "test_numerics_rows_receipts.py",
     ],
+    data = [
+        ":files/data/legacy",
+    ],
     deps = [
         "//experiments:dense_fused_oracle_cycle",
         "//experiments:numerics_rows/common",
         "//experiments:routed_pair_oracle",
         "//src/tessera:__init___cycle",
         "//src/tessera:bf16_route_cycle",
+        "//src/tessera:container",
+        "//src/tessera:fused",
     ],
 )
 

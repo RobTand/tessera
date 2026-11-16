@@ -2,10 +2,16 @@
 from __future__ import annotations
 
 import argparse
+import cProfile
+from contextlib import contextmanager
+from datetime import datetime, timezone
 import hashlib
 import json
 from pathlib import Path
+import resource
+import pstats
 import sys
+import time
 import traceback
 
 from experiments.numerics_rows.common import check_source, write_json
@@ -119,33 +125,146 @@ def draft(out):
         write_json(out / (population["arm"] + ".json"), population)
 
 
-def inspect(population):
+def read_stamps(read, size, raw_role):
+    """Read framing and manifests. This does not verify payload bytes."""
+    from experiments.numerics_rows.cases import manifest_stamp, rate_layout
+    from tessera import container, fused_frame as frame
+    from tessera.manifest import BodyKind, Manifest
+    from tessera.unit_artifact import _resolve_window_grid
+
+    def take(offset, length):
+        if offset < 0 or length < 0 or offset + length > size:
+            raise ValueError("truncated population wire metadata")
+        data = read(offset, length)
+        if len(data) != length:
+            raise ValueError("short population wire metadata read")
+        return data
+
+    if take(0, 8) == frame.FUSED_MAGIC:
+        magic, version, count = frame._HEADER.unpack(take(0, frame.HEADER_BYTES))
+        if version != frame._VERSION or not count:
+            raise ValueError("invalid fused population header")
+        cursor, heads = frame.HEADER_BYTES, []
+        for _ in range(count):
+            length, rows, blob_len = frame._MEMBER.unpack(take(cursor, frame.MEMBER_ROW_BYTES))
+            cursor += frame.MEMBER_ROW_BYTES
+            role = take(cursor, length).decode("utf-8")
+            cursor += length
+            frame._check_member(role, length, rows, blob_len)
+            heads.append((role, rows, blob_len))
+        members = []
+        for role, rows, length in heads:
+            members.append((role, rows, cursor, length))
+            cursor += length
+        if cursor != size or len({m[0] for m in members}) != len(members):
+            raise ValueError("population fused lengths or role names disagree")
+    else:
+        members = [(raw_role, None, 0, size)]
+    records = []
+    for role, rows, offset, length in members:
+        if length < container.HEADER_BYTES:
+            raise ValueError("population member shorter than its header")
+        magic, major, minor, header, manifest_bytes, region_bytes = container._HEADER.unpack(take(offset, container.HEADER_BYTES))
+        if magic != container.MAGIC or major != container.SCHEMA_MAJOR or minor not in container.SCHEMA_MINORS_READ or header != container.HEADER_BYTES:
+            raise ValueError("invalid population member header")
+        side = header + manifest_bytes
+        if side > length or length - side > region_bytes:
+            raise ValueError("population member lengths disagree")
+        raw = take(offset + header, manifest_bytes)
+        manifest = Manifest.decode(raw, schema_minor=minor)
+        if manifest.schema_minor > minor or not any(t.exact_bytes == length - side for t in manifest.terminals):
+            raise ValueError("population member has no declared terminal")
+        if manifest.body != BodyKind.WINDOW:
+            raise ValueError("numerics population needs a WINDOW wire")
+        if rows is not None and rows != manifest.geometry.rows:
+            raise ValueError("population fused member row count disagrees")
+        grid = _resolve_window_grid(manifest)
+        records.append({"role": role, "manifest_sha256": hashlib.sha256(raw).hexdigest(),
+                        "declared_payload_sha256": manifest.payload_digest.hex(),
+                        "wire_stamp": manifest_stamp(manifest, grid), **rate_layout(manifest.rates)})
+    return records
+
+
+def wire_locations(store, entry):
+    if entry["structure"] != "routed_moe":
+        role = store.schemes[entry.get("scheme_template", entry["name"])]["roles"][0][0]
+        yield 0, "dense", Path(entry["wire_path"]) if "wire_path" in entry else None, entry["name"] + ".wire_bytes", role
+        return
+    from experiments.routed_pair_oracle import wire_path
+
+    for expert in range(int(entry["experts"])):
+        for projection in ("gate_proj", "up_proj", "down_proj"):
+            path = wire_path(entry["wire_root"], entry["layer"], expert, projection, entry["wire_family"]) if "wire_root" in entry else None
+            yield expert, projection, path, f"{entry['name']}.{expert}.{projection}.wire", projection
+
+
+@contextmanager
+def wire_reader(store, path, tensor):
+    """Use range reads; never request the complete safetensors tensor."""
+    if path is not None:
+        with path.open("rb") as stream:
+            def read(offset, length):
+                stream.seek(offset)
+                return stream.read(length)
+            yield read, path.stat().st_size, str(path)
+    else:
+        shard = store.index[tensor]
+        if shard not in store._open:
+            store._open[shard] = store._safe_open(str(Path(store.root) / shard), "pt", device="cpu")
+        view = store._open[shard].get_slice(tensor)
+        shape = view.get_shape()
+        if view.get_dtype() != "U8" or len(shape) != 1:
+            raise ValueError(f"population wire needs a uint8 vector: {tensor}")
+        yield lambda offset, length: view[offset:offset + length].numpy().tobytes(), shape[0], str(Path(store.root) / shard) + ":" + tensor
+
+
+def io_counts():
+    return {name: int(value) for line in Path("/proc/self/io").read_text().splitlines()
+            for name, value in [line.split(":")] if name in ("rchar", "read_bytes")}
+
+
+def inspect(population, checkpoint=None):
     import torch
-    from experiments.numerics_rows.cases import checkpoint_routed, projection_scheme, rate_layout, wire_stamp
-    from tessera.serving.scheme import parse_tessera_blob_for_scheme
+    from experiments.dense_fused_oracle import Store
 
     torch.set_num_threads(1)
     retained, tables = [], {}
     population["duplicate_run_tables"] = []
-    for entry in population["modules"]:
-        store = store_for(entry)
-        records = []
-        if entry["structure"] == "routed_moe":
-            scheme, blobs, _ = checkpoint_routed(store, entry)
-            wires = [(expert, projection, wire, projection_scheme(scheme, projection, wire))
-                     for projection, items in blobs.items() for expert, wire in enumerate(items)]
-        else:
-            wires = [(0, "dense", store.wire(entry["name"]).numpy().tobytes(), store.schemes[entry["name"]])]
-        for expert, projection, wire, declaration in wires:
-            for role, parsed in parse_tessera_blob_for_scheme(wire, declaration, entry["name"], device="cpu"):
-                stamp = wire_stamp(parsed)
-                if stamp["q256"] != entry["q256"]:
+    population["inspection_scope"] = "framing and manifest only; payload verification remains in C1 and the rows"
+    population["wire_stamps_read"] = False
+    for index, entry in enumerate(population["modules"]):
+        start, before = time.perf_counter(), io_counts()
+        path = entry.get("wire_path", entry.get("wire_root", entry["root"]))
+        print(f"module-start arm={population['arm']} module={index + 1} name={entry['name']} path={path}", flush=True)
+        store, records = Store(entry["root"]), []
+        wire_bytes, metadata_bytes = 0, 0
+        last_progress = start
+        for expert, projection, source, tensor, role in wire_locations(store, entry):
+            with wire_reader(store, source, tensor) as (read, size, location):
+                def measured(offset, length):
+                    nonlocal metadata_bytes
+                    data = read(offset, length)
+                    metadata_bytes += len(data)
+                    return data
+                items = read_stamps(measured, size, role)
+            wire_bytes += size
+            for record in items:
+                if record["wire_stamp"]["q256"] != entry["q256"]:
                     raise ValueError(f"wire rung differs from population: {entry['name']}, {expert}, {role}")
-                records.append({"expert": expert, "role": role, "projection": projection,
-                    "wire_sha256": hashlib.sha256(wire).hexdigest(), "wire_stamp": stamp,
-                    **rate_layout(parsed.unit.rates)})
+                records.append({"expert": expert, "projection": projection, "source": location, **record})
+            now = time.perf_counter()
+            if now - last_progress >= 5:
+                print(f"wire-progress path={location} size={size} elapsed_s={now - start:.3f} metadata_bytes={metadata_bytes}", flush=True)
+                last_progress = now
         entry["wire_stamp"] = records
         entry["runs_table"] = [record["runs_table"] for record in records]
+        entry["inspection"] = {"elapsed_s": time.perf_counter() - start, "wire_bytes": wire_bytes,
+            "metadata_bytes": metadata_bytes, "peak_rss_kib": resource.getrusage(resource.RUSAGE_SELF).ru_maxrss,
+            "io_delta": {key: value - before[key] for key, value in io_counts().items()}}
+        print(f"module-done arm={population['arm']} module={index + 1} path={path} "
+              + json.dumps(entry["inspection"], sort_keys=True), flush=True)
+        if checkpoint:
+            checkpoint(population)
         if entry["root"] == str(BASE / "t8-coverage-20260930/stubs/stub-T8D1"):
             key = tuple(sorted({tuple(tuple(run) for run in record["runs_table"]) for record in records}))
             if key in tables:
@@ -158,12 +277,54 @@ def inspect(population):
     return population
 
 
+def profile_wire(population, out):
+    """Measure the metadata path and the prior full-reader work on one wire."""
+    import torch
+    from experiments.dense_fused_oracle import Store
+    from tessera import fused
+    from tessera.unit_artifact import parse_unit_artifact
+
+    torch.set_num_threads(1)
+    entry = population["modules"][0]
+    store = Store(entry["root"])
+    _, _, path, tensor, role = next(wire_locations(store, entry))
+    records = []
+    def stage(name, call):
+        start, before = time.perf_counter(), io_counts()
+        start_utc = datetime.now(timezone.utc).isoformat()
+        print(f"profile-start stage={name}", flush=True)
+        profiler = cProfile.Profile()
+        value = profiler.runcall(call)
+        elapsed = time.perf_counter() - start
+        end_utc = datetime.now(timezone.utc).isoformat()
+        profiler.dump_stats(str(out / (name + ".prof")))
+        with (out / (name + ".profile.txt")).open("w") as stream:
+            pstats.Stats(profiler, stream=stream).sort_stats("cumulative").print_stats(40)
+        records.append({"stage": name, "elapsed_s": elapsed, "start_utc": start_utc, "end_utc": end_utc,
+            "peak_rss_kib": resource.getrusage(resource.RUSAGE_SELF).ru_maxrss,
+            "io_delta": {key: value - before[key] for key, value in io_counts().items()}})
+        write_json(out / "profile.json", {"source": location, "wire_bytes": size, "stages": records})
+        print("profile-done " + json.dumps(records[-1], sort_keys=True), flush=True)
+        return value
+    with wire_reader(store, path, tensor) as (read, size, location):
+        metadata = stage("metadata", lambda: read_stamps(read, size, role))
+        blob = stage("full-read", lambda: read(0, size))
+    stage("full-sha256", lambda: hashlib.sha256(blob).hexdigest())
+    members = [member.blob for member in fused.parse_fused(blob)] if blob[:8] == fused.FUSED_MAGIC else [blob]
+    # Keep only each stamp, so one member's expanded planes can be released.
+    from experiments.numerics_rows.cases import wire_stamp
+    stamps = stage("full-reader", lambda: [wire_stamp(parse_unit_artifact(member, device="cpu")) for member in members])
+    if stamps != [item["wire_stamp"] for item in metadata]:
+        raise ValueError("metadata stamps differ from the full reader")
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("mode", choices=("draft", "inspect"))
+    parser.add_argument("mode", choices=("draft", "inspect", "profile"))
     parser.add_argument("--population-dir", type=Path, required=True)
     parser.add_argument("--out", type=Path, required=True)
     parser.add_argument("--source", type=Path)
+    parser.add_argument("--arm", action="append", help="Inspect only this arm; repeat to select several.")
     args = parser.parse_args()
     if args.mode == "draft":
         draft(args.out)
@@ -174,8 +335,13 @@ def main():
     errors = []
     for path in sorted(args.population_dir.glob("*.json")):
         population = json.loads(path.read_text())
+        if args.arm and population["arm"] not in args.arm:
+            continue
+        if args.mode == "profile":
+            profile_wire(population, args.out)
+            return
         try:
-            inspect(population)
+            inspect(population, lambda value: write_json(args.out / path.name, value))
         except Exception as error:
             errors.append({"arm": population["arm"], "error": str(error), "traceback": traceback.format_exc()})
         write_json(args.out / path.name, population)

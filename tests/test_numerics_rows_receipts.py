@@ -356,6 +356,78 @@ def test_population_metadata_requires_every_named_shard(tmp_path):
     assert entry["wire_stamp"] is None and entry["runs_table"] is None
 
 
+@pytest.fixture(params=["e4m3-1024-window-channel-256c.tessera",
+                        "bf16-1024-window-channel-256c.tessera",
+                        "e2m1x2-640-window-lut-256c.tessera"])
+def population_wire(request):
+    from pathlib import Path
+    from experiments.numerics_rows.cases import rate_layout
+    from tessera.unit_artifact import parse_unit_artifact
+
+    blob = (Path(__file__).parent / "data/legacy" / request.param).read_bytes()
+    parsed = parse_unit_artifact(blob, device="cpu")
+    unit = parsed.unit
+    stamp = {"q256": int(parsed.manifest.branch.root_q256) // int(parsed.grid.arity),
+             "body": parsed.body.name.lower(), "span": unit.span,
+             "plane": "lut16" if "lut" in request.param else "channel",
+             "window_bits": unit.window_bits, "seed": unit.window_seed,
+             "sigma": unit.window_sigma, "channel_sigma": unit.channel_sigma}
+    return blob, parsed.manifest.geometry.rows, stamp, rate_layout(unit.rates)
+
+
+@pytest.mark.parametrize("storage", ["raw", "fused", "safetensors"])
+def test_population_inspection_reads_only_metadata(tmp_path, monkeypatch, population_wire, storage, capsys):
+    import torch
+    from safetensors.torch import save_file
+    from experiments.dense_fused_oracle import Store
+    from experiments.numerics_rows.population import inspect
+    from tessera.fused import pack_fused
+
+    blob, rows, stamp, layout = population_wire
+    role, name = "down_proj", "model.layers.0.mlp.down_proj"
+    fused = pack_fused([(role, rows, blob)])
+    scheme = {"roles": [[role, rows]]}
+    (tmp_path / "config.json").write_text(json.dumps({"quantization_config": {"config_groups": {
+        "one": {"scheme": scheme, "targets": [name]}}}}))
+    (tmp_path / "model.safetensors.index.json").write_text(json.dumps({"weight_map": {name + ".wire_bytes": "w.safetensors"}}))
+    entry = {"root": str(tmp_path), "name": name, "structure": "dense", "q256": stamp["q256"]}
+    if storage == "safetensors":
+        save_file({name + ".wire_bytes": torch.tensor(list(fused), dtype=torch.uint8)}, tmp_path / "w.safetensors")
+    else:
+        path = tmp_path / "wire.tessera"
+        path.write_bytes(blob if storage == "raw" else fused)
+        entry["wire_path"] = str(path)
+    def full_tensor_forbidden(*args):
+        raise AssertionError("population must not read a complete wire tensor")
+    monkeypatch.setattr(Store, "get", full_tensor_forbidden)
+    population = inspect({"arm": "test", "modules": [entry]})
+    record, = entry["wire_stamp"]
+    assert record["wire_stamp"] == stamp
+    assert {key: record[key] for key in layout} == layout
+    assert "wire_sha256" not in record and len(record["manifest_sha256"]) == 64
+    assert 0 < entry["inspection"]["metadata_bytes"] < entry["inspection"]["wire_bytes"]
+    assert population["wire_stamps_read"] and "payload verification remains" in population["inspection_scope"]
+    assert "module-start" in capsys.readouterr().out
+
+
+def test_population_range_reads_never_enter_the_payload(population_wire):
+    from experiments.numerics_rows.population import read_stamps
+    from tessera.container import _HEADER, HEADER_BYTES
+
+    blob, _, stamp, layout = population_wire
+    side = HEADER_BYTES + _HEADER.unpack_from(blob)[4]
+    def read(offset, size):
+        assert offset + size <= side, "population read touched a payload plane"
+        return blob[offset:offset + size]
+    record, = read_stamps(read, len(blob), "down_proj")
+    assert record["wire_stamp"] == stamp
+    assert record["runs_table"] == layout["runs_table"]
+    with pytest.raises(ValueError, match="lengths|terminal|truncated"):
+        read_stamps(read, side - 1, "down_proj")
+    with pytest.raises(ValueError, match="short"):
+        read_stamps(lambda offset, size: b"", len(blob), "down_proj")
+
+
 def test_rate_layout_uses_the_served_word_spans():
     from experiments.numerics_rows.cases import rate_layout
     assert rate_layout([4, 3, 4, 3]) == {"runs_table": [[3, 0, 2, 0], [4, 2, 2, 96]], "tile_words": 224}

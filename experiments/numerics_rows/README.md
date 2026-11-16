@@ -38,6 +38,12 @@ C1 writes separate reader weights and recipes for TP1 and both TP2 cuts.
 The row recomputes separation and joint-read coverage before the native scale tests.
 The population stamp job fills `wire_stamps_read`. The lead supplies the observed SM count as `sms`
 and sets `reviewed` to true after review. C1 and rows refuse drafts.
+`population inspect` reads framing and manifests with bounded file or safetensors slices.
+It records manifest hashes and declared payload hashes. It does not verify payload bytes.
+C1 and the rows still verify and hash the complete wires.
+Each module reports its path, wire size, metadata bytes, time, process I/O and peak memory.
+`population profile --arm ARM` measures one wire through both paths and saves CPU profiles.
+Use `--arm ARM` with `inspect` to split the population into separate jobs.
 
 The frozen rule record has `sha256`, `version`, `frozen_utc`, `reviewer`, `decisions`, and `preconditions`.
 The row checks its hash against the supplied rule file.

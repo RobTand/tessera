@@ -211,15 +211,19 @@ def decode_roles(blob, scheme, target, *, device="cpu", plan=None):
 
 
 def wire_stamp(parsed):
-    from tessera.manifest import BodyKind, ScalePlaneKind
+    return manifest_stamp(parsed.manifest, parsed.grid)
 
-    unit = parsed.unit
-    manifest = parsed.manifest
-    return {"q256": int(manifest.branch.root_q256) // int(parsed.grid.arity),
-            "body": parsed.body.name.lower(), "span": int(unit.span),
+
+def manifest_stamp(manifest, grid):
+    from tessera.manifest import ScalePlaneKind
+    from tessera.unit_artifact import _reach_attrs
+
+    seed, sigma, channel_sigma = _reach_attrs(manifest)
+    return {"q256": int(manifest.branch.root_q256) // int(grid.arity),
+            "body": manifest.body.name.lower(), "span": int(manifest.span),
             "plane": "lut16" if manifest.scale_plane.kind == ScalePlaneKind.LUT else "channel",
-            "window_bits": int(unit.window_bits), "seed": int(unit.window_seed),
-            "sigma": unit.window_sigma, "channel_sigma": unit.channel_sigma}
+            "window_bits": int(manifest.window_bits), "seed": int(seed),
+            "sigma": sigma, "channel_sigma": channel_sigma}
 
 
 def admitted_units(contract, image_digest, family, structure, rung, pair, m):
