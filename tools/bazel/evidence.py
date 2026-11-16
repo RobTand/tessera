@@ -1,13 +1,8 @@
 """Each Python file's dependencies, as Bazel needs them: imports, launches, reads.
 
-The merge gate's selector (``tools/impacted_tests.py``) answers a different
-question. It must never miss a test, so a string that might name a module is
-an import, a read it can't place couples the reader to the whole tree, and
-any module that can run source may import anything. On a hosted runner that
-caution is the only safety net. Under Bazel it isn't: a remote test action
-holds only its declared inputs, so an import or read this evidence misses
-fails the test instead of passing it. That lets the evidence keep only what
-the code does:
+A remote test action holds only its declared inputs, so an import or read
+this evidence misses fails the test instead of passing it. That lets the
+evidence keep only what the code does:
 
 - **Imports** are import statements anywhere in a file (inside functions too),
   ``pytest_plugins`` entries, literal ``import_module``/``__import__``/

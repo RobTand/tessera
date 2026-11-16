@@ -7,7 +7,6 @@ import os
 from pathlib import Path
 import subprocess
 import sys
-import urllib.error
 import xml.etree.ElementTree as ET
 
 import pytest
@@ -18,7 +17,6 @@ NODE = 'tests/test_probe.py::test_probe'
 
 MODULES = {
     'gate_flaky': ROOT / 'tools/ci/gate_flaky.py',
-    'gate_select': ROOT / 'tools/ci/gate_select.py',
 }
 
 
@@ -131,38 +129,6 @@ def test_parameter_mark_does_not_retry_a_prefix_neighbor(tmp_path):
     assert NODE + '[ab]' not in summary
 
 
-@pytest.mark.parametrize('state', ['closed', 'missing', 'pull_request'])
-def test_table_refuses_issue_without_an_open_deflake_owner(tmp_path, state):
-    flaky = load('gate_flaky')
-    select = load('gate_select')
-    config = tmp_path / 'tools/ci'
-    config.mkdir(parents=True)
-    (config / 'gate_flaky.json').write_text(json.dumps(table()))
-    calls = []
-    def fetch(issue):
-        calls.append(issue)
-        if state == 'missing':
-            raise urllib.error.HTTPError('https://api.github.com', 404, 'missing', {}, None)
-        return {'state': 'closed'} if state == 'closed' else {'state': 'open', 'pull_request': {}}
-    def check(entries):
-        select.check_quarantine_owners(entries, fetch=fetch)
-    with pytest.raises(ValueError, match='open issue'):
-        flaky.check_policy(tmp_path, ['tests/test_probe.py'], check)
-    assert calls == [1529]
-
-
-def test_policy_checks_owners_even_outside_the_changed_selection(tmp_path):
-    flaky = load('gate_flaky')
-    config = tmp_path / 'tools/ci'
-    config.mkdir(parents=True)
-    (config / 'gate_flaky.json').write_text(json.dumps(table()))
-    entries = []
-    assert flaky.check_policy(tmp_path, ['tests/test_probe.py'], entries.extend) == ['tests/test_probe.py']
-    assert [row['issue'] for row in entries] == [1529]
-    with pytest.raises(ValueError, match='population'):
-        flaky.check_policy(tmp_path, ['tests/test_other.py'], entries.extend)
-
-
 @pytest.mark.parametrize('entry', [
     {'issue': True, 'reason': 'bad'}, {'issue': 0, 'reason': 'bad'},
     {'issue': 1529, 'reason': ''}, {'issue': 1529},
@@ -173,4 +139,4 @@ def test_table_requires_an_issue_and_reason(tmp_path, entry):
     config.mkdir(parents=True)
     (config / 'gate_flaky.json').write_text(json.dumps({NODE: entry}))
     with pytest.raises(ValueError, match='flaky'):
-        flaky.check_policy(tmp_path, ['tests/test_probe.py'], lambda entries: None)
+        flaky.read_table(tmp_path)

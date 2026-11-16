@@ -56,7 +56,6 @@ NONHERMETIC = {
     "//tests:test_cuda_surface": struct(tags = ["runner"], reason = "the source identity it verifies is measured with git, which a remote executor's runfiles don't have."),
     "//tests:test_merge_suite": struct(tags = ["runner"], reason = "its real producer publication must bind a Git-measured checkout identity to the immutable native launch; partial runfiles cannot attest that source."),
     "//tests:test_bazel_build": struct(tags = ["runner"], reason = "it regenerates every BUILD file, which lists the repository's files with git ls-files."),
-    "//tests:test_gate_selection": struct(tags = ["runner"], reason = _GIT),
     "//tests:test_directory_read_census": struct(tags = ["runner"], reason = "it measures every tracked Python source for the repository directory-read ceiling and verifies that complete Git population; partial runfiles can silently omit readers."),
     "//tests:test_graph_impact": struct(tags = ["runner"], reason = "it measures the tracked checkout with git ls-files and compares the merge-base graph; a declared file subset cannot represent that repository-wide contract."),
     "//tests:test_runtime_image_pin": struct(tags = ["runner"], reason = "it lists every tracked file with git ls-files to find copies of the pin."),
