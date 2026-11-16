@@ -358,6 +358,34 @@ def test_population_metadata_requires_every_named_shard(tmp_path):
     assert entry["wire_stamp"] is None and entry["runs_table"] is None
 
 
+@pytest.mark.parametrize("mutation", ["review", "reviewed", "wire_stamps_read", "sms", "module", "source"])
+def test_signed_population_is_bound_to_the_reviewed_source(tmp_path, mutation):
+    import hashlib
+    from experiments.numerics_rows.population import load_signed_population
+
+    source = tmp_path / "source.json"
+    population = {"reviewed": False, "wire_stamps_read": True, "sms": 48, "modules": [{"name": "module"}]}
+    source.write_text(json.dumps(population))
+    review = {"signed_by": "lead", "signed_utc": "2026-11-16T13:18:32Z", "source_file": str(source),
+              "source_flux_job": "population-job", "source_sha256": hashlib.sha256(source.read_bytes()).hexdigest(), "spec": "rows draft 8"}
+    signed = {**population, "reviewed": True, "review": review}
+    path = tmp_path / "signed.json"
+    path.write_text(json.dumps(signed))
+    result, digest = load_signed_population(path)
+    assert result == signed and digest == hashlib.sha256(path.read_bytes()).hexdigest()
+    if mutation == "module":
+        signed["modules"][0]["name"] = "omitted-or-replaced"
+    elif mutation == "source":
+        source.write_text(source.read_text() + "\n")
+    elif mutation == "review":
+        signed.pop("review")
+    else:
+        signed[mutation] = None
+    path.write_text(json.dumps(signed))
+    with pytest.raises(Invalid, match="signed population"):
+        load_signed_population(path)
+
+
 @pytest.fixture(params=["e4m3-1024-window-channel-256c.tessera",
                         "bf16-1024-window-channel-256c.tessera",
                         "e2m1x2-640-window-lut-256c.tessera"])

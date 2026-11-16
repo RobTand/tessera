@@ -434,18 +434,19 @@ def main():
     sys.path.insert(0, str(args.source / "src"))
     import tessera
     import torch
-    from experiments.numerics_rows.population import store_for
+    from experiments.numerics_rows.population import load_signed_population, store_for
     from tessera.lane_planes import lut_scale_bytes
 
     torch.set_num_threads(1)
     started = time.monotonic()
     args.out.mkdir(parents=True, exist_ok=True)
-    population, q1 = (json.loads(p.read_text()) for p in (args.population, args.q1))
-    if population.get("reviewed") is not True or population.get("wire_stamps_read") is not True or not isinstance(population.get("sms"), int):
-        raise ValueError("C1 requires a reviewed population, read wire stamps, and the observed SM count")
+    population, population_digest = load_signed_population(args.population)
+    q1 = json.loads(args.q1.read_text())
     contract = json.loads((args.source / "src/tessera/serving/runtime_contract.json").read_text())
-    manifest = {"schema": "tessera.numerics_cases.v1", "population_sha256": sha256(args.population),
+    manifest = {"schema": "tessera.numerics_cases.v1", "population_path": str(args.population),
+                "population_sha256": population_digest, "population_review": population["review"],
                 "q1_table_sha256": sha256(args.q1), "modules": [], "complete": True}
+    write_json(args.out / "population-receipt.json", {"path": str(args.population), "sha256": population_digest, "review": population["review"]})
     for entry in population["modules"]:
         store = store_for(entry)
         scheme = store.schemes[entry["name"]]

@@ -14,7 +14,7 @@ import sys
 import time
 import traceback
 
-from experiments.numerics_rows.common import check_source, write_json
+from experiments.numerics_rows.common import Invalid, check_source, write_json
 
 BASE = Path("/mnt/shared/tessera-measurements")
 STUB = Path("/mnt/shared/tessera-runs/moe/u1-stubs-20260926/stub-B")
@@ -22,6 +22,23 @@ CACHE = BASE / "glm-canonical-census-20260908/activation-runtime-allocation-2026
 OPTION_C = Path("/mnt/shared/flux-jobs/tessera-option-c-r1-5c2ef6de-20261115T1023Z/artifact-5c2ef6de")
 BF16 = Path("/mnt/shared/flux-jobs/tessera-bf16-only-5c2ef6de-20261115T2027Z/artifact-5c2ef6de")
 FAMILY = {"TESSERA_FP8": "TESSERA_E4M3_K1", "TESSERA_NVFP4": "TESSERA_E2M1_K2", "TESSERA_BF16": "TESSERA_BF16_K1"}
+
+
+def load_signed_population(path):
+    raw = Path(path).read_bytes()
+    population = json.loads(raw)
+    review = population.get("review", {})
+    fields = ("signed_by", "signed_utc", "source_file", "source_flux_job", "source_sha256", "spec")
+    if (population.get("reviewed") is not True or population.get("wire_stamps_read") is not True
+            or type(population.get("sms")) is not int or population["sms"] <= 0
+            or not isinstance(review, dict) or any(not isinstance(review.get(k), str) or not review[k] for k in fields)):
+        raise Invalid("C1 and rows require a signed population, read wire stamps, and the observed SM count")
+    source = Path(review["source_file"]).read_bytes()
+    if hashlib.sha256(source).hexdigest() != review["source_sha256"]:
+        raise Invalid("signed population source sha256 differs")
+    if population != {**json.loads(source), "reviewed": True, "review": review}:
+        raise Invalid("signed population differs from the reviewed source")
+    return population, hashlib.sha256(raw).hexdigest()
 
 
 def module_key(entry):

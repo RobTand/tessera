@@ -37,7 +37,8 @@ Dense cache entries have `wire_path` and a checkpoint `scheme_template` of the s
 C1 writes separate reader weights and recipes for TP1 and both TP2 cuts.
 The row recomputes separation and joint-read coverage before the native scale tests.
 The population stamp job fills `wire_stamps_read`. The lead supplies the observed SM count as `sms`
-and sets `reviewed` to true after review. C1 and rows refuse drafts.
+and signs the population after review. C1 and rows require the review block, verify its source hash,
+refuse changes to the reviewed content, and record the signed file's SHA-256.
 `population inspect` reads framing and manifests with bounded file or safetensors slices.
 It records manifest hashes and declared payload hashes. It does not verify payload bytes.
 C1 and the rows still verify and hash the complete wires.

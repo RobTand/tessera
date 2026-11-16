@@ -493,6 +493,9 @@ def main():
 
 
 def run(args, receipt):
+    from experiments.numerics_rows.population import load_signed_population
+
+    population, population_digest = load_signed_population(args.population)
     commit, runtime = check_source(args.source), check_runtime(args.image)
     sys.path.insert(0, str(args.source / "src"))
     import tessera
@@ -515,10 +518,8 @@ def run(args, receipt):
     freeze = json.loads(args.freeze.read_text())
     if freeze["sha256"] != sha256(args.rule) or not freeze["frozen_utc"] or not freeze["reviewer"]:
         raise Invalid("rule is not the reviewed, frozen rule")
-    manifest, population, built, h1 = (json.loads(path.read_text()) for path in (args.manifest, args.population, args.build, args.h1))
-    if population.get("reviewed") is not True or population.get("wire_stamps_read") is not True:
-        raise Invalid("row requires the lead's reviewed population with read wire stamps")
-    if manifest["population_sha256"] != sha256(args.population) or manifest["q1_table_sha256"] != sha256(args.q1):
+    manifest, built, h1 = (json.loads(path.read_text()) for path in (args.manifest, args.build, args.h1))
+    if manifest["population_sha256"] != population_digest or manifest["q1_table_sha256"] != sha256(args.q1):
         raise Invalid("case manifest input identity differs")
     if len(manifest["modules"]) != len(population["modules"]):
         raise Invalid("case manifest omitted a population module")
@@ -552,7 +553,8 @@ def run(args, receipt):
                          "so_sha256": library["probe"]["sha256"], "L_bits": d["L_bits"], "dom_size": d["dom_size"],
                          "d_table_sha256": d["d_table_sha256"], "d_nondecreasing_0_L": d["d_nondecreasing_0_L"],
                          "sass_slice": slices[key]},
-               "inputs": {"case_manifest_sha256": sha256(args.manifest), "q1_table_sha256": sha256(args.q1), "reference_selftest": selftest(device="cuda")},
+               "inputs": {"population_sha256": population_digest, "case_manifest_sha256": sha256(args.manifest),
+                          "q1_table_sha256": sha256(args.q1), "reference_selftest": selftest(device="cuda")},
                "negative_controls": negative_controls()})
     exit_status = 0
     try:

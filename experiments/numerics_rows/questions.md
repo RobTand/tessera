@@ -11,7 +11,7 @@
 - The lead runs `/home/rob/tmp/ci-speed/start-when-idle.sh` when the key count is zero.
   The CPU job exports `bazel-targets.txt` and does not run `bbrun`.
 
-The freeze record and signed populations remain required inputs.
+The freeze record remains a required input. The six populations are signed.
 
 - `rows.md:210`, draft 8, accepted at 12:51 UTC: `arrays` keeps each array's exact fields.
   Unit fields use `scales` and `bases` lists, the union of `families`, and summed counts.
@@ -22,6 +22,7 @@ The freeze record and signed populations remain required inputs.
 - H1-G at `d1f8c7c6` records `runtime.sms: 48` in
   `/mnt/shared/flux-jobs/tessera-1717-H1-G-d1f8c7c6-20261116T113444Z/results/h1.json`.
   That observed count is recorded in the population drafts and the prepared population job inputs.
-- Five population arms have completed stamp reads. The next CPU job reads all six with bounded
-  metadata reads and compares the five completed outputs. The lead must review and sign the results.
-- H1-N still needs its GPU run. P3 confirmation, the signed populations and the frozen rule remain required.
+- The lead signed all six population outputs at `numerics-rows/population/signed/N-*.json`.
+  C1 and rows check the review block and source hash, and record the signed file hash.
+- Both H1 GPU arms passed. The remaining P3 difference needs the draft 13 IMAD/LEA equivalence.
+  P3 confirmation and the frozen rule remain required.
