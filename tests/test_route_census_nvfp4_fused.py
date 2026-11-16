@@ -102,7 +102,7 @@ def test_route_census_tool_accepts_the_fused_nvfp4_pairs():
 
 
 def test_experimental_launches_require_their_own_runtime_and_rung_receipt():
-    """Every experimental claim must match a committed v66 or v68 receipt scope."""
+    """Every experimental claim must match a committed v66, v68 or v70 receipt scope."""
     from tessera.serving.contract import (
         CENSUS_PHASE_REGIMES, PAYLOAD_FAMILY_BY_ROUTE, cell_executes,
         cell_residency_modes, format_entry)
@@ -115,6 +115,7 @@ def test_experimental_launches_require_their_own_runtime_and_rung_receipt():
         ("glm53_r768_stub_base_tp2_eager_census.json", "glm53_r768_stub_base_config.json"),
         ("glm53_requal_v68_e2m1_census.json", "glm53_requal_v68_e2m1_config.json"),
         ("glm53_requal_v68_bf16_census.json", "glm53_requal_v68_bf16_config.json"),
+        ("glm53_img_n_v70_tp2_census.json", "glm53_img_n_v70_config.json"),
     ):
         receipt = json.loads((results / receipt_name).read_text())
         config = json.loads((results / config_name).read_text())

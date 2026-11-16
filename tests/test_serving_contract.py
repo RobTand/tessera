@@ -202,6 +202,13 @@ for _family, _structure, _rungs, _contract, _launches in _GLM_X_CELLS:
             "requires_plugin": "tessera", "requires_serve_flags": ["TESSERA_SERVE_MODE=resident"],
             "predicates": [], "runtime": NIGHTLY_RUNTIME}
 
+# V70 scopes the IMG-N routed cells to the current class launch.
+for _regime in ("decode", "batch"):
+    _law = _CELL_LAWS[nightly_id("TESSERA_E4M3_K1", "routed_moe", _regime)]
+    _law["executes"] = [{"symbol": _FUSED_MOE,
+                         "decoder": "native_routed_window_classes_e4m3mma",
+                         "rungs_q256": [896, 928, 1024, 1088]}]
+
 # v68 re-mints scope IDs from new receipts, not the withdrawn launches.
 _V68_LAWS = {}
 for _family, _runtime, _activation, _dense, _routed in (
@@ -969,10 +976,13 @@ def test_every_cell_retains_its_attested_launch_identity(contract):
                 assert cell["runtime"] == _resolved(law)["runtime"]
             elif pair not in admissible:
                 assert cell["id"] in {
+                    nightly_id("TESSERA_E4M3_K1", "routed_moe", "decode"),
+                    nightly_id("TESSERA_E4M3_K1", "routed_moe", "batch"),
                     "tessera_e4m3_k1_routed_moe_sm121_decode_resident",
                     "tessera_e4m3_k1_routed_moe_sm121_batch_resident"}
                 assert pair == (_FUSED_MOE, "native_routed_window_classes_e4m3mma")
-                assert launch["rungs_q256"] == [768]
+                assert launch["rungs_q256"] == ([896, 928, 1024, 1088]
+                    if cell["runtime"]["image"] == NIGHTLY_RUNTIME["image"] else [768])
 
 
 

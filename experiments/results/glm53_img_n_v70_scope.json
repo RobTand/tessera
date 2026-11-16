@@ -1,0 +1,15 @@
+{
+ "status": "served",
+ "receipt": "experiments/results/glm53_img_n_v70_tp2_census.json",
+ "config": "experiments/results/glm53_img_n_v70_config.json",
+ "image": "localhost/prismaquant/spark-vllm-nccl230@sha256:5be13705acaecc7b4aaf342a84f80d67844c9970ff8375bf9fbeecc9c98ce84a",
+ "rungs_q256": [
+  896,
+  928,
+  1024,
+  1088
+ ],
+ "commit": "67c276ed23c5ef7dda0ac2f6607246aa6f9611cf",
+ "sha256": "02446cb19674a23102319b601c0e918f4920bba37f641fad9c7d61c7d0fc2943",
+ "config_sha256": "91f8bd92faa85c15421f13e6f5979bd5b6dcfa4f31814c8bd66234074e3b8172"
+}
