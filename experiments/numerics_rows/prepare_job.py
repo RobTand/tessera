@@ -28,6 +28,19 @@ def prepare(step, image, extra=()):
         shape, minutes, host = "core=4;memory=16", 30, "dl380g10"
     payload = shlex.join(["python3", "-m", f"experiments.numerics_rows.{command}", "--source", str(out / "cell"),
                           "--image", image, "--out", str(out / "results"), *extra])
+    if gpu:
+        parser = argparse.ArgumentParser(add_help=False)
+        parser.add_argument("--build", type=Path, required=True)
+        build = parser.parse_known_args(extra)[0].build
+        (out / "payload.sh").write_text(f'''#!/bin/bash
+set -euo pipefail
+exec > {out}/results/payload.stdout 2> {out}/results/payload.stderr
+rc=0
+{payload} || rc=$?
+printf '%s\\n' "$rc" > {out}/results/payload-exit.txt
+exit "$rc"
+''')
+        payload = f"/bin/bash {out}/payload.sh"
     name = f'tessera-1717-{step.lower()}-"$FLUX_JOB_ID"'
     container = (f"timeout --signal=TERM --kill-after=20s {480 if gpu else minutes * 60 - 60}s "
                  f"podman run --rm --name {name} --pull=never --cgroups=disabled --network=none "
@@ -41,6 +54,14 @@ def prepare(step, image, extra=()):
                  "--env OMP_NUM_THREADS=1 --env MKL_NUM_THREADS=1 --env OPENBLAS_NUM_THREADS=1 "
                  f"--env MAX_JOBS={2 if gpu else 4} --env TESSERA_PLATFORM_TOKEN=sm_121 "
                  f"--entrypoint /bin/bash {IMAGES[image]['local_id']} -euo pipefail -c {shlex.quote(payload)}")
+    if gpu:
+        container = f'''rc=0
+{container} > results/podman.stdout 2> results/podman.stderr || rc=$?
+printf '%s\\n' "$rc" > results/podman-exit.txt
+test "$rc" -eq 0
+test "$(cat results/payload-exit.txt)" = 0
+python3 -m experiments.numerics_rows.job_receipt {step.split('-')[0]} --out {out}/results --build {shlex.quote(str(build))}
+'''
     if command == "cpu_checks":
         container = f"env HOME={out}/home /home/rob/.local/bin/uv run --python 3.12 --no-project --extra-index-url https://download.pytorch.org/whl/cpu --index-strategy unsafe-best-match --with-requirements code/tools/ci/gate_torch_requirements.txt --with-requirements code/tools/ci/gate_requirements.txt {payload}"
     script = f'''#!/bin/bash

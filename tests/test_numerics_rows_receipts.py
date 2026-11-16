@@ -127,6 +127,99 @@ def completed_p3_receipt():
                      "mode0_instantiations": 1, "quotients": 1, "quotients_examined": 1}}
 
 
+@pytest.mark.parametrize("step", ("Q1-N", "H1-N"))
+def test_generated_jobs_refuse_empty_container_success(tmp_path, monkeypatch, step):
+    import os
+    from pathlib import Path
+    import subprocess
+    from experiments.numerics_rows import prepare_job
+
+    with monkeypatch.context() as patch:
+        patch.setattr(prepare_job, "Path", lambda value: tmp_path / Path(value).name
+                      if str(value).startswith("/mnt/shared/flux-jobs/") else Path(value))
+        patch.setattr(prepare_job.subprocess, "check_output", lambda *a, **kw: "a" * 40)
+        patch.setattr(prepare_job.subprocess, "run", lambda *a, **kw: None)
+        out = prepare_job.prepare(step, "N", ("--build", str(tmp_path / "build.json")))
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    for name in ("git", "sha256sum", "podman"):
+        path = bin_dir / name
+        path.write_text("#!/bin/sh\nexit 0\n")
+        path.chmod(0o755)
+    run = subprocess.run(["/bin/bash", str(out / "job.sh")], capture_output=True, text=True,
+                         env={**os.environ, "PATH": f"{bin_dir}:{os.environ['PATH']}", "FLUX_JOB_ID": "test"})
+    assert run.returncode != 0
+    assert int((out / "tool-exit.txt").read_text()) != 0
+    assert not (out / "results" / f"{step.split('-')[0].lower()}.json").exists()
+
+
+@pytest.fixture
+def finished_job(tmp_path):
+    import struct
+    from experiments.numerics_rows.common import sha256
+
+    registration = {"result": "PASS", "registration": "import vllm._custom_ops", "requirements": []}
+    write_json(tmp_path / "native_ops.json", registration)
+    binary = tmp_path / "binary"
+    binary.write_bytes(b"measured binary")
+    identity = {"path": str(binary), "sha256": sha256(binary)}
+    runtime = {**IMAGES["N"], "libraries": ["e4m3"]}
+    build = tmp_path / "build.json"
+    write_json(build, {"runtime": runtime, "libraries": [{"key": "e4m3", "library": identity, "probe": identity}]})
+    table = tmp_path / "table.f32"
+    table.write_bytes(struct.pack("<fff", -1, 0, 1))
+    certificate = {"elements": 3, "finite": True, "magnitude_bounded": True, "held": True}
+    proof = {"key": "e4m3", "library_so_sha256": identity["sha256"], "probe_sha256": identity["sha256"],
+             "dom_size": 3, "d_nondecreasing_0_L": True, "finite_certificate": certificate,
+             **{f"{prefix}_{field}": value for prefix in ("dom", "d_table")
+                for field, value in (("path", str(table)), ("sha256", sha256(table)))}}
+    record = {**identity, "family": "e4m3", "gs": 1.0, "repeat_equal": True, "finite_codes": True,
+              "finite_scales": True, "labels": [{"zero": True}]}
+    q1 = {"native_ops": registration, "runtime": runtime, "tables": [proof], "quantizers": [record],
+          "artifact_scales": {}, "boundaries": [{"kind": "quantizer", "sync_before": True, "sync_after": True}] * 2}
+    gpu = completed_gpu_receipt()
+    gpu.update(runtime=runtime, native_ops=registration, build_sha256=sha256(build))
+    proof = completed_p3_receipt()
+    proof["e4m3"].update(library_so_sha256=identity["sha256"], probe_sha256=identity["sha256"])
+    gpu["P3"] = proof
+    h1.confirm_p3(gpu, proof)
+    write_json(tmp_path / "q1.json", q1)
+    write_json(tmp_path / "h1.json", gpu)
+    return tmp_path, build
+
+
+@pytest.mark.parametrize("step", ("Q1", "H1"))
+@pytest.mark.parametrize("mutation", ("missing_receipt", "registration", "scope", "failed_check", "missing_check", "changed_binary"))
+def test_job_receipt_requires_completed_checks(finished_job, step, mutation):
+    from experiments.numerics_rows import job_receipt
+
+    out, build = finished_job
+    assert job_receipt.check(step, out, build)["verdict"] == "PASS"
+    path = out / f"{step.lower()}.json"
+    record = json.loads(path.read_text())
+    if mutation == "missing_receipt":
+        path.unlink()
+    elif mutation == "registration":
+        (out / "native_ops.json").unlink()
+    elif mutation == "changed_binary":
+        (out / "binary").write_bytes(b"other binary")
+    else:
+        if mutation == "scope":
+            record["runtime"]["libraries"] = ["value"]
+        elif step == "Q1":
+            if mutation == "missing_check":
+                record["tables"].clear()
+            else:
+                record["quantizers"][0]["repeat_equal"] = False
+        elif mutation == "missing_check":
+            record.pop("cuda_controls")
+        else:
+            record["libraries"]["e4m3"]["P4"] = False
+        write_json(path, record)
+    with pytest.raises((ValueError, KeyError, FileNotFoundError)):
+        job_receipt.check(step, out, build)
+
+
 def gpu_receipt_with_inapplicable_checks():
     report = completed_gpu_receipt()
     template = report["libraries"]["e4m3"]

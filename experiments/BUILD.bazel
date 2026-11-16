@@ -2036,6 +2036,18 @@ ts_py_library(
 )
 
 ts_py_library(
+    name = "numerics_rows/job_receipt",
+    srcs = [
+        "numerics_rows/job_receipt.py",
+    ],
+    deps = [
+        ":numerics_rows/cases_cycle",
+        ":numerics_rows/common",
+        ":numerics_rows/quantizers",
+    ],
+)
+
+ts_py_library(
     name = "numerics_rows/prepare_job",
     srcs = [
         "numerics_rows/prepare_job.py",

@@ -15,6 +15,10 @@ PHASES = (1, 1 + 2**-3, 1 + 2**-2, 1 + 3 * 2**-3, 1 + 2**-1,
           1 + 5 * 2**-3, 1 + 3 * 2**-2, 1 + 7 * 2**-3, 1 + 2**-7, 1 + 3 * 2**-7)
 
 
+def families(keys):
+    return {key if key in ("value", "e2m1") else "e4m3" for key in keys}
+
+
 def dom(limit=10.0):
     import numpy as np
 
@@ -176,7 +180,7 @@ def main():
     limit = artifact_limit(args.artifact)
     scales = artifact_scales(args.artifact) if "e2m1" in runtime["libraries"] else {}
     records, boundaries = [], []
-    for family in sorted({key if key in ("value", "e2m1") else "e4m3" for key in runtime["libraries"]}):
+    for family in sorted(families(runtime["libraries"])):
         for gs in sorted(set(scales.values())) if family == "e2m1" else (1.0,):
             records.append(record_quantizer(family, gs, args.out, boundaries))
     write_json(args.out / "q1.json", {"runtime": runtime, "native_ops": registration, "quantizers": records, "artifact_scales": scales,
