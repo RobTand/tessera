@@ -1,6 +1,10 @@
 # Tessera plan-to-serve architecture
 
-Re-stamped 2026-11-15 for hosted arm64 actions.
+Re-stamped 2026-11-16 for tessera#1717 evidence wording.
+`device_qualified` with `evidence.grade: route_only` means the route dispatch
+was observed on the device; arithmetic is not attested. Admission does not
+require arithmetic evidence. Read both fields in each returned cell.
+The v68 cells all grade `route_only`. Contract bytes and gates do not change.
 
 Re-stamped 2026-11-15 for deletion plan PR 4. This change deletes 41 unused files.
 Linked deleted sources below are historical. Git retains their contents.
