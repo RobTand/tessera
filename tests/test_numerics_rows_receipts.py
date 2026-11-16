@@ -418,7 +418,7 @@ def test_adapter_failure_keeps_unrun_units_stopped(tmp_path, monkeypatch):
     receipt = json.loads((tmp_path / "numerics_row.json").read_text())
     assert len(receipt["units"]) == 48
     assert all(unit["outcome"] == "STOPPED" for unit in receipt["units"][1:])
-    assert all(cell["verdict"] == "UNATTESTED" for cell in receipt["cells"])
+    assert all(cell["verdict"] == "UNATTESTED" for cell in receipt.get("diagnostic_cells", receipt.get("cells")))
     assert receipt["row"]["stop_cause"] == "second adapter failed"
 
 
@@ -1206,30 +1206,44 @@ def test_manifest_requires_every_declared_expert_role(kind):
         row.planned_units(contract, "image", population, manifest)
 
 
-def joined_inputs():
-    population = {"modules": [{"name": "a"}, {"name": "b"}]}
+def joined_inputs(monkeypatch):
+    from experiments.numerics_rows import scope
+    from experiments.numerics_rows.common import IMAGES
+
+    contract, population, manifest = population_cases()
+    population["image"] = "N"
+    for entry in population["modules"]:
+        entry.update(structure="dense", q256=1024)
+    for cell in contract["lane_eligibility"]["cells"]:
+        cell["runtime"]["image"] = IMAGES["N"]["image_digest"]
+    geometry = {"rows": 128, "cols": 64, "tile_words": 4096, "blocks": 1, "merged": False}
+    monkeypatch.setattr(scope, "wire_geometries", lambda entry: [({"size": size, "rank": rank}, dict(geometry)) for size, rank in ((1, 0), (2, 0), (2, 1))])
+    monkeypatch.setattr(scope, "contract_document", lambda path=None: (contract, "contract"))
     manifests, receipts = [], []
-    for name in ("a", "b"):
-        manifests.append(("c1-" + name, {"population_sha256": "signed", "selected_modules": [name],
-            "generation_finished": True, "source_commit": "source", "contract_sha256": "contract", "q1_table_sha256": "q1", "modules": [{"name": name}]}))
-        unit = {"cell": "cell", "symbol": "symbol", "decoder": "decoder", "rung": 1024, "m_config": {"M": 1, "k_split": 1, "last_tile_partial": True},
-                "tp": {"size": 1, "rank": 0}, "outcome": "PASS",
-                "unit_id": ["cell", "symbol", "decoder", 1024, {"M": 1, "k_split": 1, "last_tile_partial": True}, {"size": 1, "rank": 0}]}
+    for entry, module in zip(population["modules"], manifest["modules"]):
+        name = entry["name"]
+        case = {"population_sha256": "signed", "selected_modules": [name], "generation_finished": True,
+                "source_commit": "source", "contract_sha256": "contract", "q1_table_sha256": "q1", "modules": [module]}
+        manifests.append(("c1-" + name, case))
+        units = row.planned_units(contract, IMAGES["N"]["image_digest"], {**population, "modules": [entry]}, case)
+        owned = [u for _, _, _, group in units for u in group]
+        for unit in owned:
+            unit.update(outcome="PASS")
         receipts.append(("row-" + name, {"inputs": {"population_sha256": "signed", "selected_modules": [name],
             "case_manifest_sha256": "c1-" + name, "build_sha256": "build", "q1_table_sha256": "q1"},
-            "tool": {"commit": "tool", "tree_sha256": "tree"}, "runtime": {"image_digest": "image"},
+            "tool": {"commit": "tool", "tree_sha256": "tree"}, "runtime": {"image_digest": IMAGES["N"]["image_digest"]},
             "tessera": {"commit": "source", "contract_sha256": "contract"}, "rule": {"h1_sha256": "h1", "sha256": "rule"},
-            "row": {"utc_end": "finished", "exit_status": 0, "finalization_finished": True}, "units": [unit]}))
+            "row": {"utc_end": "finished", "exit_status": 0, "finalization_finished": True}, "units": owned}))
     return population, "signed", manifests, receipts
 
 
 @pytest.mark.parametrize("mutation", ["missing", "repeated", "unfinished"])
-def test_join_refuses_missing_repeated_or_unfinished_signed_modules(mutation):
+def test_join_refuses_missing_repeated_or_unfinished_signed_modules(mutation, monkeypatch):
     from experiments.numerics_rows.join import join
 
-    population, digest, manifests, receipts = joined_inputs()
+    population, digest, manifests, receipts = joined_inputs(monkeypatch)
     result = join(population, digest, manifests, receipts)
-    assert result["verdict"] == "PASS" and len(result["units"]) == 1 and len(result["units"][0]["modules"]) == 2
+    assert result["verdict"] == "PASS" and all(len(u["modules"]) == 2 for u in result["units"])
     if mutation == "missing":
         manifests.pop()
         receipts.pop()
@@ -1238,20 +1252,24 @@ def test_join_refuses_missing_repeated_or_unfinished_signed_modules(mutation):
         receipts.append(receipts[0])
     else:
         manifests[0][1]["generation_finished"] = False
-    with pytest.raises(Invalid):
-        join(population, digest, manifests, receipts)
+    if mutation == "missing":
+        assert join(population, digest, manifests, receipts)["verdict"] == "UNATTESTED"
+    else:
+        with pytest.raises(Invalid):
+            join(population, digest, manifests, receipts)
 
 
 @pytest.mark.parametrize("left,right,expected", [("PASS", "FAIL", "FAIL"), ("STOPPED", "INVALID", "STOPPED"),
     ("PASS", "UNATTESTED", "UNATTESTED"), ("UNATTESTED", "STOPPED", "STOPPED")])
-def test_join_uses_the_worst_module_outcome(left, right, expected):
+def test_join_uses_the_worst_module_outcome(left, right, expected, monkeypatch):
     from experiments.numerics_rows.join import join
 
-    population, digest, manifests, receipts = joined_inputs()
+    population, digest, manifests, receipts = joined_inputs(monkeypatch)
     assert join(population, digest, manifests, receipts)["verdict"] == "PASS"
     receipts[0][1]["units"][0]["outcome"], receipts[1][1]["units"][0]["outcome"] = left, right
     result = join(population, digest, manifests, receipts)
-    assert result["verdict"] == result["units"][0]["outcome"] == expected
+    assert result["verdict"] == expected
+    assert any(u["outcome"] == expected for u in result["units"])
 
 
 @pytest.mark.parametrize("mutation", [None, "dense", "fp4", "many", "negative", "large", "tp"])
@@ -1304,10 +1322,10 @@ def test_unattributed_cuda_error_rechecks_identity_without_dispatch_failure(row_
 
 @pytest.mark.parametrize("path", ["tool.commit", "tool.tree_sha256", "runtime.image_digest", "tessera.commit", "tessera.contract_sha256",
                                   "inputs.build_sha256", "inputs.q1_table_sha256", "rule.h1_sha256", "rule.sha256"])
-def test_join_refuses_mixed_execution_identity(path):
+def test_join_refuses_mixed_execution_identity(path, monkeypatch):
     from experiments.numerics_rows.join import join
 
-    population, digest, manifests, receipts = joined_inputs()
+    population, digest, manifests, receipts = joined_inputs(monkeypatch)
     assert join(population, digest, manifests, receipts)["verdict"] == "PASS"
     owner, field = path.split(".")
     receipts[1][1][owner][field] = "different"
@@ -1316,10 +1334,10 @@ def test_join_refuses_mixed_execution_identity(path):
 
 
 @pytest.mark.parametrize("field", ["source_commit", "contract_sha256", "q1_table_sha256"])
-def test_join_refuses_mixed_manifest_identity(field):
+def test_join_refuses_mixed_manifest_identity(field, monkeypatch):
     from experiments.numerics_rows.join import join
 
-    population, digest, manifests, receipts = joined_inputs()
+    population, digest, manifests, receipts = joined_inputs(monkeypatch)
     assert join(population, digest, manifests, receipts)["verdict"] == "PASS"
     manifests[1][1][field] = "different"
     with pytest.raises(Invalid, match="execution identities"):
@@ -1327,30 +1345,30 @@ def test_join_refuses_mixed_manifest_identity(field):
 
 
 @pytest.mark.parametrize("field", ["utc_end", "exit_status"])
-def test_join_refuses_unfinished_rows(field):
+def test_join_refuses_unfinished_rows(field, monkeypatch):
     from experiments.numerics_rows.join import join
 
-    population, digest, manifests, receipts = joined_inputs()
+    population, digest, manifests, receipts = joined_inputs(monkeypatch)
     assert join(population, digest, manifests, receipts)["verdict"] == "PASS"
     receipts[1][1]["row"][field] = None
     with pytest.raises(Invalid, match="finished row"):
         join(population, digest, manifests, receipts)
 
 
-def test_join_projects_launch_configuration_and_tp_rank_instead_of_tensor_geometry():
+def test_join_projects_launch_configuration_and_tp_rank_instead_of_tensor_geometry(monkeypatch):
     from experiments.numerics_rows.join import join
 
-    population, digest, manifests, receipts = joined_inputs()
-    assert join(population, digest, manifests, receipts)["verdict"] == "PASS"
+    population, digest, manifests, receipts = joined_inputs(monkeypatch)
+    original = join(population, digest, manifests, receipts)
     unit = receipts[1][1]["units"][0]
     unit["tp"].update(cut_axis=1, cut_range=[0, 1024])
-    unit["m_config"].update(M=52, chunk_size=32, superblock_width=64)
     unit["unit_id"], unit["outcome"] = row.unit_identity(unit), "FAIL"
     result = join(population, digest, manifests, receipts)
-    assert len(result["units"]) == 1 and result["units"][0]["outcome"] == "FAIL"
+    assert len(result["units"]) == len(original["units"]) and result["verdict"] == "FAIL"
     unit["m_config"]["k_split"] = 2
     unit["unit_id"] = row.unit_identity(unit)
-    assert len(join(population, digest, manifests, receipts)["units"]) == 2
+    with pytest.raises(Invalid, match="required signed scope"):
+        join(population, digest, manifests, receipts)
 
 
 def test_attributed_cuda_error_survives_a_failed_post_case_identity_read(row_execution, monkeypatch):
@@ -1374,10 +1392,10 @@ def test_attributed_cuda_error_survives_a_failed_post_case_identity_read(row_exe
 
 
 @pytest.mark.parametrize("marker", [False, None, "missing"])
-def test_join_refuses_failed_finalization(marker):
+def test_join_refuses_failed_finalization(marker, monkeypatch):
     from experiments.numerics_rows.join import join
 
-    population, digest, manifests, receipts = joined_inputs()
+    population, digest, manifests, receipts = joined_inputs(monkeypatch)
     assert join(population, digest, manifests, receipts)["verdict"] == "PASS"
     final = receipts[1][1]["row"]
     final.update(exit_status=3, finalization_finished=marker)

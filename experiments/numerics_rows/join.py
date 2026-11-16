@@ -31,50 +31,133 @@ def execution_identity(receipt):
     return fields
 
 
-def join(population, digest, manifests, receipts):
-    from experiments.numerics_rows.row import unit_identity
+def join(population, digest, manifests, receipts, contract=None):
+    """Reject malformed evidence; missing evidence contributes per-key UNATTESTED."""
+    try:
+        return _join(population, digest, manifests, receipts, contract)
+    except Invalid:
+        raise
+    except (KeyError, TypeError, ValueError, IndexError) as error:
+        raise Invalid(f"malformed join input: {error}") from error
 
-    expected = Counter(e["name"] for e in population["modules"])
-    if not expected or any(n != 1 for n in expected.values()):
+
+def _join(population, digest, manifests, receipts, contract):
+    import hashlib
+    from experiments.numerics_rows import scope
+    from experiments.numerics_rows.common import IMAGES
+    from experiments.numerics_rows.population import select_modules
+    from experiments.numerics_rows.row import planned_units, unit_identity
+
+    contract, contract_hash = scope.contract_document(contract)
+    image = IMAGES[population["image"]]["image_digest"]
+    names = [e["name"] for e in population["modules"]]
+    if not names or len(set(names)) != len(names):
         raise Invalid("signed population module names are not unique")
-    for documents, is_case in ((manifests, True), (receipts, False)):
-        selected = Counter()
-        for _, doc in documents:
-            scope = doc if is_case else doc["inputs"]
-            if scope["population_sha256"] != digest:
-                raise Invalid("join input belongs to a different signed population")
-            selected.update(scope["selected_modules"])
-            if is_case and (doc.get("generation_finished") is not True or doc.get("sample") or
-                            Counter(m["name"] for m in doc["modules"]) != Counter(scope["selected_modules"])):
-                raise Invalid("join requires finished, full module manifests")
-        if selected != expected:
-            raise Invalid("join requires every signed module exactly once")
-    cases = dict(manifests)
-    units, execution = {}, None
+    declarations = {m["name"]: m for m in scope.declared_modules(population)}
+    required, allowed = {}, {}
+    pack = lambda value: json.dumps(value, sort_keys=True, separators=(",", ":"))
+    for entry in population["modules"]:
+        for cut in declarations[entry["name"]]["cuts"]:
+            for config in cut["m_configs"]:
+                for unit in scope.unit_scopes(contract, image, entry, config, cut["tp"]):
+                    if unit["role"] != "unit" or unit["admitted_by_v68"] is not True:
+                        continue
+                    key = pack(rule_unit_id(unit))
+                    required.setdefault(key, set()).add(entry["name"])
+                    allowed.setdefault((entry["name"], key), set()).add(pack(unit_identity(unit)))
+    if not required:
+        raise Invalid("signed population has no required attestation keys")
+    cases, case_modules, case_identity = {}, set(), None
+    for case_sha, case in manifests:
+        selection = case["selected_modules"]
+        if case_sha in cases or len(selection) != len(set(selection)) or not selection or set(selection) - set(names) or case_modules.intersection(selection):
+            raise Invalid("duplicate or unknown C1 module selection")
+        if case["population_sha256"] != digest:
+            raise Invalid("join input belongs to a different signed population")
+        binding = tuple(case[k] for k in ("source_commit", "contract_sha256", "q1_table_sha256"))
+        if case["contract_sha256"] != contract_hash or case_identity is not None and binding != case_identity:
+            raise Invalid("joined C1 and row execution identities differ")
+        case_identity = binding
+        # Validate all roles and cuts with the same policy used by the row.
+        planned_units(contract, image, select_modules(population, selection), case)
+        for module in case["modules"]:
+            expected = declarations[module["name"]]
+            if any(module[k] != expected[k] for k in ("structure", "q256")):
+                raise Invalid("C1 geometry differs from signed wires")
+            for cut in module["cuts"]:
+                declared, = [c for c in expected["cuts"] if c["tp"] == cut["tp"]]
+                if any(cut[k] != declared[k] for k in ("launch_geometry", "m_configs")):
+                    raise Invalid("C1 omitted or changed an expected M configuration from signed wires")
+        case_modules.update(selection)
+        cases[case_sha] = case
+    evidence, execution, seen_receipts, seen_full = {}, None, set(), set()
     for receipt_sha, receipt in receipts:
+        if receipt_sha in seen_receipts:
+            raise Invalid("duplicate row receipt")
+        seen_receipts.add(receipt_sha)
+        if receipt.get("canary") is True or receipt["row"].get("canary") is True or receipt["rule"].get("canary") is True:
+            raise Invalid("a canary cannot supply attestation")
         if not receipt["row"].get("utc_end") or type(receipt["row"].get("exit_status")) is not int or receipt["row"].get("finalization_finished") is not True:
             raise Invalid("join requires finished row receipts")
         identity = execution_identity(receipt)
         if execution is not None and execution != identity:
             raise Invalid("joined rows have different execution identities")
-        execution = identity
-        scope = receipt["inputs"]
-        case = cases.get(scope["case_manifest_sha256"])
-        if case is None or case["selected_modules"] != scope["selected_modules"] or not receipt["units"]:
-            raise Invalid("row has no matching C1 manifest or unit receipts")
-        if any(case.get(k) != identity[k] for k in ("source_commit", "contract_sha256", "q1_table_sha256")):
+        if identity["contract_sha256"] != contract_hash or identity["image_digest"] != image:
+            raise Invalid("joined rows have different execution identities from the signed scope")
+        if case_identity is not None and tuple(identity[k] for k in ("source_commit", "contract_sha256", "q1_table_sha256")) != case_identity:
             raise Invalid("joined C1 and row execution identities differ")
+        execution = identity
+        inputs = receipt["inputs"]
+        selection = inputs["selected_modules"]
+        if inputs["population_sha256"] != digest or not selection or len(selection) != len(set(selection)) or set(selection) - set(names):
+            raise Invalid("row population or selected modules differ")
+        case = cases.get(inputs["case_manifest_sha256"])
+        if case is not None:
+            if case["selected_modules"] != selection:
+                raise Invalid("row and C1 selected modules differ")
+            if any(case.get(k) != identity[k] for k in ("source_commit", "contract_sha256", "q1_table_sha256")):
+                raise Invalid("joined C1 and row execution identities differ")
         for unit in receipt["units"]:
-            if unit["unit_id"] != unit_identity(unit) or unit["outcome"] not in OUTCOMES:
+            if unit["unit_id"] != unit_identity(unit) or unit["outcome"] not in OUTCOMES or unit["role"] not in ("unit", "observation") or type(unit["admitted_by_v68"]) is not bool:
                 raise Invalid("row unit key or outcome is invalid")
-            projected = rule_unit_id(unit)
-            key = json.dumps(projected, sort_keys=True, separators=(",", ":"))
-            joined = units.setdefault(key, {"unit_id": projected, "outcome": "PASS", "modules": []})
-            joined["outcome"] = min((joined["outcome"], unit["outcome"]), key=OUTCOMES.index)
-            joined["modules"].append({"modules": scope["selected_modules"], "outcome": unit["outcome"], "receipt_sha256": receipt_sha, "source_unit_id": unit["unit_id"]})
-    return {"schema": "tessera.numerics_join.v1", "population_sha256": digest, "execution": execution, "selected_modules": sorted(expected),
-            "verdict": min((u["outcome"] for u in units.values()), key=OUTCOMES.index),
-            "units": [units[k] for k in sorted(units)]}
+            if unit["role"] != "unit" or unit["admitted_by_v68"] is not True:
+                continue
+            module = unit.get("module")
+            if module is None and len(selection) == 1:
+                module = selection[0]
+            key = pack(rule_unit_id(unit))
+            full = pack(unit_identity({**unit, "tp": {k: unit["tp"][k] for k in ("size", "rank")}}))
+            if module not in selection or full not in allowed.get((module, key), ()):
+                raise Invalid("row unit is outside the required signed scope")
+            marker = (module, full)
+            if marker in seen_full:
+                raise Invalid("duplicate module unit evidence")
+            seen_full.add(marker)
+            pair = (module, key)
+            record = evidence.setdefault(pair, {"outcomes": [], "receipts": set(), "c1_present": True})
+            if record["receipts"] and receipt_sha not in record["receipts"]:
+                raise Invalid("duplicate row for a required module and key")
+            record["outcomes"].append(unit["outcome"])
+            record["receipts"].add(receipt_sha)
+            record["c1_present"] &= case is not None
+    units = []
+    for key, modules in sorted(required.items()):
+        joined = {"unit_id": json.loads(key), "modules": []}
+        for module in sorted(modules):
+            record = evidence.get((module, key))
+            outcomes = list(record["outcomes"]) if record else []
+            if not record or not record["c1_present"]:
+                outcomes.append("UNATTESTED")
+            joined["modules"].append({"module": module, "outcome": min(outcomes, key=OUTCOMES.index),
+                                      "receipt_sha256s": sorted(record["receipts"]) if record else [],
+                                      "missing_evidence": not record or not record["c1_present"]})
+        joined["outcome"] = min((m["outcome"] for m in joined["modules"]), key=OUTCOMES.index)
+        units.append(joined)
+    declared = {"population_sha256": digest, "modules": list(declarations.values()),
+                "contract_sha256": contract_hash, "image_digest": image}
+    return {"schema": "tessera.numerics_join.v2", "population_sha256": digest, "execution": execution,
+            "required_scope": declared, "required_scope_sha256": hashlib.sha256(pack(declared).encode()).hexdigest(),
+            "selected_modules": sorted(names), "verdict": min((u["outcome"] for u in units), key=OUTCOMES.index), "units": units}
 
 
 def sample_rate(first, second):
@@ -100,13 +183,14 @@ def main():
 
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument("--population", type=Path, required=True)
-    p.add_argument("--manifest", type=Path, action="append", required=True)
-    p.add_argument("--row", type=Path, action="append", required=True)
+    p.add_argument("--contract", type=Path, required=True)
+    p.add_argument("--manifest", type=Path, action="append", default=[])
+    p.add_argument("--row", type=Path, action="append", default=[])
     p.add_argument("--out", type=Path, required=True)
     args = p.parse_args()
     population, digest = load_signed_population(args.population)
     load = lambda paths: [(sha256(path), json.loads(path.read_text())) for path in paths]
-    write_json(args.out, join(population, digest, load(args.manifest), load(args.row)))
+    write_json(args.out, join(population, digest, load(args.manifest), load(args.row), args.contract))
 
 
 if __name__ == "__main__":

@@ -2069,6 +2069,7 @@ ts_py_library(
     deps = [
         ":numerics_rows/cases_cycle",
         ":numerics_rows/common",
+        ":numerics_rows/scope",
     ],
 )
 
@@ -2132,6 +2133,19 @@ ts_py_library(
         ":numerics_rows/common",
         ":numerics_rows/reference",
         ":t4_code/sass_dump",
+    ],
+)
+
+ts_py_library(
+    name = "numerics_rows/scope",
+    srcs = [
+        "numerics_rows/scope.py",
+    ],
+    deps = [
+        "//src/tessera:__init___cycle",
+        "//src/tessera:bf16_route_cycle",
+        ":numerics_rows/cases_cycle",
+        ":numerics_rows/common",
     ],
 )
 

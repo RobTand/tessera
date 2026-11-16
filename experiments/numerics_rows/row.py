@@ -484,7 +484,7 @@ def dense_cases(adapter, unit, manifest, recorder):
         run_dense_case(adapter, unit, [(row, columns, [1] * len(columns)) for row in range(m)], recorder)
 
 
-def cell_verdicts(units):
+def diagnostic_cells(units):
     result = []
     for cell in sorted({unit["cell"] for unit in units}):
         owned = [u for u in units if u["cell"] == cell and u["role"] == "unit"]
@@ -529,7 +529,7 @@ def planned_units(contract, image_digest, population, manifest):
                 if not scopes:
                     raise Invalid("population pair has no matching contract unit")
                 for scope in scopes:
-                    unit = new_unit({**scope, "symbol": entry["pair"][0], "decoder": entry["pair"][1], "rung": module["q256"], "structure": module["structure"],
+                    unit = new_unit({**scope, "module": entry["name"], "symbol": entry["pair"][0], "decoder": entry["pair"][1], "rung": module["q256"], "structure": module["structure"],
                                      "m_config": config, "tp": dict(cut),
                                      "arm": {"selector_env": entry.get("selector_env", {}), "profiler_kernels": []}})
                     if cut["size"] > 1 and entry["contract_family"] != "TESSERA_E4M3_K1":
@@ -577,7 +577,7 @@ def main():
                        "utc_start": datetime.now(timezone.utc).isoformat(), "utc_end": None, "exit_status": None, "stop_cause": None,
                        "finalization_finished": False},
                "tool": {}, "rule": {}, "runtime": {}, "tessera": {}, "probe": {}, "inputs": {},
-               "modules": [], "units": [], "negative_controls": [], "cells": [], "findings": []}
+               "modules": [], "units": [], "negative_controls": [], "diagnostic_cells": [], "findings": []}
     try:
         run(args, receipt)
     except Exception as error:
@@ -590,7 +590,7 @@ def main():
         receipt["findings"].append(traceback.format_exc())
         for unit in receipt["units"]:
             finish_unit(unit)
-        receipt["cells"] = cell_verdicts(receipt["units"])
+        receipt["diagnostic_cells"] = diagnostic_cells(receipt["units"])
         write_json(args.out / "numerics_row.json", receipt)
         raise SystemExit(3) from error
 
@@ -752,7 +752,7 @@ def run(args, receipt):
     if any(unit["outcome"] in ("FAIL", "STOPPED", "INVALID") for unit in receipt["units"]):
         exit_status = 3
     receipt["units"].extend(historical_units(contract, runtime, receipt["units"]))
-    receipt["cells"] = cell_verdicts(receipt["units"])
+    receipt["diagnostic_cells"] = diagnostic_cells(receipt["units"])
     receipt["row"].update(utc_end=datetime.now(timezone.utc).isoformat(), exit_status=exit_status, finalization_finished=True)
     write_json(args.out / "numerics_row.json", receipt)
     raise SystemExit(exit_status)
