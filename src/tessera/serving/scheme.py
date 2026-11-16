@@ -733,7 +733,7 @@ ROUTE_LAUNCHES: dict[str, tuple[dict, ...]] = {
 #: (tessera#931), default-off.  It leaves when a served census of a T-8
 #: projection artifact with ``TESSERA_E4M3_DECODE_ONCE=1`` records it.
 #:
-# The current native class and dense BF16 pairs need new serving receipts.
+# v68 scopes BF16 dense and class receipts to TP1, IMG-N and the named rungs.
 EXPERIMENTAL_LAUNCHES: frozenset = frozenset({
     (DECODE_ONCE_DENSE_SYMBOL, _DECODER_NATIVE_WINDOW_DECODE_ONCE_E4M3),
     (WINDOW_GEMM_SYMBOL, _DECODER_NATIVE_WINDOW_GEMM_BF16),

@@ -19,16 +19,22 @@ def _dense(blob, q256, rows=32, cols=256):
 
 
 @pytest.mark.parametrize("q256", [128 * rate for rate in range(1, 9)])
-def test_actual_paired_window_bytes_validate_without_a_fabricated_receipt(q256):
+def test_actual_paired_window_bytes_validate_without_a_fabricated_receipt(q256, monkeypatch):
     blob = pack_fused([("weight", 32, window_blob(q256, rows=32, cols=256))])
     declared = _dense(blob, q256)
     parsed = scheme.parse_compact_blob_for_scheme(blob, declared, "dense", device="cpu")
     name, wire = parsed[0]
     assert name == "weight" and wire.metadata.rows == 32
     assert wire.metadata.columns == 256 and set(wire.metadata.rates) == {q256 // 128}
-    contract = load_serving_contract()
-    assert not any(cell["family"] == "TESSERA_E2M1_K2"
-                   for cell in contract["lane_eligibility"]["cells"])
+    from tessera.serving import contract as contract_module
+
+    current = load_serving_contract()
+    # v68 has real R896 receipts; byte intake must also work without any E2M1 cell.
+    unqualified = {**current, "lane_eligibility": {**current["lane_eligibility"],
+        "cells": [c for c in current["lane_eligibility"]["cells"] if c["family"] != "TESSERA_E2M1_K2"]}}
+    monkeypatch.setattr(contract_module, "load_serving_contract", lambda: unqualified)
+    again = scheme.parse_compact_blob_for_scheme(blob, declared, "dense", device="cpu")
+    assert again[0][0] == "weight" and again[0][1].metadata.rates == wire.metadata.rates
 
 
 @pytest.mark.parametrize("window_bits", [12, 16])

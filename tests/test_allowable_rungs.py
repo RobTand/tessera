@@ -94,12 +94,8 @@ def test_the_bf16_rule_admits_every_rate_the_dense_launch_reads(contract):
         assert {k: v for k, v in item.items() if k != "q256"} == rule["wire"]
 
 
-def test_bf16_rungs_are_admitted_by_the_rule_but_covered_by_no_cell(contract):
-    """The rule admits each supported BF16 rung.
-
-    Contract v62 withdraws every BF16 cell. A rung has no serving coverage
-    until a cell qualifies its structure and run table.
-    """
+def test_bf16_cells_cover_only_their_receipt_run_tables(contract):
+    """v68 covers five dense census rungs through the existing v52 run-table rule."""
     row = _row(contract, BF16)
     by_name = {e["module_name_prefix"]: e for e in contract["native_extensions"]}
     requires = by_name["tessera_routed_fused_value"]["lane"]["requires"]
@@ -109,7 +105,10 @@ def test_bf16_rungs_are_admitted_by_the_rule_but_covered_by_no_cell(contract):
     assert {r for t in row["allowable_rungs"]["run_tables"] for r in t} == dense_rates
     assert [q for q in range(256, 4097) if rung_allowable(row, q)] == list(range(256, 3585))
     cells = [c for c in contract["lane_eligibility"]["cells"] if c["family"] == BF16]
-    assert cells == []
+    assert len(cells) == 4
+    for cell in cells:
+        covered = [q for q in range(256, 4097) if cell_covers_rung(cell, q, row)]
+        assert covered == (list(range(769, 1280)) if cell["structure"] == "dense" else [1024])
 
 
 def test_a_rung_resolves_to_its_run_table():
