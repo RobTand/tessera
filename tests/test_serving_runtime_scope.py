@@ -27,14 +27,7 @@ RUNTIME = {"image": IMAGE, "execution_modes": ["eager", "compiled"],
 
 
 def _scoped_contract():
-    """The packaged table with every runtime rewritten to example digests.
-
-    The pin's cells land on ``IMAGE`` and every other published image on its
-    own example digest.  Since contract v38 one scope (dense E4M3 on sm_121)
-    has cells on two images, one resident-only, so collapsing every image
-    into one would build overlapping scopes the validator rightly refuses --
-    a failure these tests are not about.
-    """
+    """Synthetic images retain global launch claims, never real-image scoped receipts."""
     contract = runtime_contract.load_serving_contract()
     pin = contract["versions"]["default_serve_image"]
     others = sorted({cell["runtime"]["image"] for cell in contract["lane_eligibility"]["cells"]}
@@ -42,6 +35,7 @@ def _scoped_contract():
     mapped = {pin: IMAGE, **{image: "example/runtime@sha256:" + f"{i + 1:x}" * 64
                              for i, image in enumerate(others)}}
     assert IMAGE not in list(mapped.values())[1:] and OTHER_IMAGE not in mapped.values()
+    cells, dropped = [], set()
     for cell in contract["lane_eligibility"]["cells"]:
         cell["runtime"] = {**copy.deepcopy(RUNTIME), "image": mapped[cell["runtime"]["image"]]}
         # A synthetic image cannot retain the base-image class qualification.
@@ -50,6 +44,10 @@ def _scoped_contract():
             {"symbol": symbol, "decoder": decoder}
             for symbol, decoder in sorted(runtime_contract.derive_cell_executes(
                 cell, runtime_contract._FAMILY_TO_ROUTE[cell["family"]], entry, contract))]
+        if not cell["executes"]:
+            dropped.add(cell["id"])
+            continue
+        cells.append(cell)
         # Since contract v48 some cells carry the runtime suffix the validator
         # derives from the scope (tessera#702: the nightly GLM cells share a
         # scope with the f8dbe1a0 cells that hold the bare ids).  A rewritten
@@ -58,6 +56,17 @@ def _scoped_contract():
         base, suffixed, _ = cell["id"].partition("_runtime_")
         if suffixed:
             cell["id"] = base + runtime_contract.cell_runtime_id_suffix(cell)
+    assert dropped == {
+        f"{family}_{structure}_sm121_{regime}_resident{suffix}"
+        for family, suffix in (
+            ("tessera_bf16_k1", "_runtime_"
+             "1bd4e9052e00b217fe52b40a9b9a9e2445b6cdd504bef051d8410d3fbc72a96e"),
+            ("tessera_e2m1_k2", ""),
+        ) for structure in ("dense", "routed_moe") for regime in ("decode", "batch")
+    }
+    contract["lane_eligibility"]["cells"] = cells
+    # Real T4 activation receipts cannot move to synthetic images either.
+    contract["activation_quantizers"]["platforms"] = {}
     contract["versions"]["default_serve_image"] = IMAGE
     # Lane schema v10 (#456): a platform's ``serve_image`` must be an image one
     # of its OWN cells attests.  This helper rewrites every cell's runtime, so
@@ -67,6 +76,7 @@ def _scoped_contract():
     for entry in contract["lane_eligibility"]["platforms"].values():
         if entry.get("serve_image") is not None:
             entry["serve_image"] = IMAGE
+    runtime_contract.validate_serving_contract(contract)
     return contract
 
 

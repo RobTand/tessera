@@ -40,13 +40,15 @@ def test_empty_image_entries_are_still_refused(entries):
                                        cell_contracts={}, require_image=require_runtime_image)
 
 
-def test_public_contract_keeps_required_empty_collection_without_t4_claims():
+def test_public_contract_adds_only_the_new_t4_receipt():
     from tessera.serving.contract import load_serving_contract
 
     current = load_serving_contract()
-    assert current["activation_quantizers"]["platforms"] == {}
-    assert not any(cell["activation_contract"] == "e2m1_group16_ue4m3_static"
-                   for cell in current["lane_eligibility"]["cells"])
+    receipt = json.loads((ARCHIVE.parent / "glm53_requal_v68_activation_quantizers.json").read_text())
+    assert current["activation_quantizers"] == {
+        **receipt, "platforms": {"sm_121": [receipt["platforms"]["sm_121"]]}}
+    assert any(cell["activation_contract"] == "e2m1_group16_ue4m3_static"
+               for cell in current["lane_eligibility"]["cells"])
 
 
 def test_archive_retains_the_exact_previous_receipt_bytes():

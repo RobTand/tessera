@@ -614,6 +614,7 @@ ts_py_library(
         "test_activation_attestation_empty.py",
     ],
     data = [
+        "//experiments:results/glm53_requal_v68_activation_quantizers.json",
         "//experiments:results/t4_activation_quantizers_historical_20261007.json",
     ],
     deps = [
@@ -630,6 +631,7 @@ ts_py_library(
         "test_activation_attestation.py",
     ],
     data = [
+        "//experiments:results/glm53_requal_v68_activation_quantizers.json",
         "//experiments:results/t4_activation_quantizers_historical_20261007.json",
     ],
     deps = [
@@ -2026,6 +2028,7 @@ ts_py_library(
         "test_glm_nightly_census_cells.py",
         "test_glm_packed_intake_observer.py",
         "test_glm_packed_tp2_control.py",
+        "test_glm_requalification_v68.py",
         "test_glm_routed_owner_inputs.py",
         "test_glm_routed_owner_publication.py",
         "test_glm_selected_expert_control.py",
@@ -8600,6 +8603,50 @@ ts_py_library(
 )
 
 ts_py_test(
+    name = "test_glm_requalification_v68",
+    path = "tests/test_glm_requalification_v68.py",
+    library = ":test_glm_requalification_v68_lib",
+    deps = [
+        "//src/tessera:identity",
+    ],
+    lane = "torch",
+    args = [
+        "--budget='{\"enforce\":true,\"seconds\":80,\"slow\":{}}'",
+    ],
+    timeout = "moderate",
+)
+
+ts_py_test(
+    name = "test_glm_requalification_v68.bytes",
+    path = "tests/test_glm_requalification_v68.py",
+    library = ":test_glm_requalification_v68_lib",
+    deps = [
+        "//src/tessera:identity",
+    ],
+    lane = "bytes",
+    args = [
+        "--budget='{\"enforce\":true,\"seconds\":80,\"slow\":{}}'",
+    ],
+    timeout = "moderate",
+)
+
+ts_py_library(
+    name = "test_glm_requalification_v68_lib",
+    srcs = [
+        "test_glm_requalification_v68.py",
+    ],
+    data = [
+        "//experiments:results/glm53_requal_v68_scope.json",
+        "//experiments:results/glm53_u1_stub_b_nightly_tp1_eager_census.json",
+    ],
+    deps = [
+        "//src/tessera:__init___cycle",
+        "//src/tessera:bf16_route_cycle",
+        "//tools:tessera_route_census",
+    ],
+)
+
+ts_py_test(
     name = "test_glm_routed_owner_inputs",
     path = "tests/test_glm_routed_owner_inputs.py",
     library = ":test_glm_routed_owner_inputs_lib",
@@ -10250,6 +10297,7 @@ ts_py_library(
         "test_glm_nightly_census_cells.py",
         "test_glm_packed_intake_observer.py",
         "test_glm_packed_tp2_control.py",
+        "test_glm_requalification_v68.py",
         "test_glm_routed_owner_inputs.py",
         "test_glm_routed_owner_publication.py",
         "test_glm_selected_expert_control.py",
@@ -11018,6 +11066,7 @@ ts_py_library(
         "test_glm_nightly_census_cells.py",
         "test_glm_packed_intake_observer.py",
         "test_glm_packed_tp2_control.py",
+        "test_glm_requalification_v68.py",
         "test_glm_routed_owner_inputs.py",
         "test_glm_routed_owner_publication.py",
         "test_glm_selected_expert_control.py",
@@ -19119,6 +19168,10 @@ ts_py_library(
     data = [
         "//experiments:results/glm53_r768_stub_base_config.json",
         "//experiments:results/glm53_r768_stub_base_tp2_eager_census.json",
+        "//experiments:results/glm53_requal_v68_bf16_census.json",
+        "//experiments:results/glm53_requal_v68_bf16_config.json",
+        "//experiments:results/glm53_requal_v68_e2m1_census.json",
+        "//experiments:results/glm53_requal_v68_e2m1_config.json",
         "//src/tessera:serving/runtime_contract.json",
     ],
     deps = [
@@ -22954,6 +23007,9 @@ ts_py_library(
         "//:docs/measurements/tessera-glm-u1-census-2026-09-26.md",
         "//:docs/measurements/tessera-glm-x-census-2026-09-26.md",
         "//:docs/measurements/tessera-window-gemm-census-2026-09-21.md",
+        "//experiments:results/glm53_requal_v68_bf16_census.json",
+        "//experiments:results/glm53_requal_v68_e2m1_census.json",
+        "//experiments:results/glm53_requal_v68_scope.json",
         "//experiments:results/glm53_u1_stub_d_tp1_eager_census.json",
     ],
     deps = [

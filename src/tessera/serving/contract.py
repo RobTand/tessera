@@ -2702,7 +2702,7 @@ def _lanes_a_rung_reaches(route: str, contract: Mapping[str, Any], wire: Mapping
     return tuple(out)
 
 
-# This receipt qualifies one current decoder, not the global execution registry.
+# These receipts qualify scoped decoders, not the global execution registry.
 # Historical identities remain valid only on their original run tables.
 _SCOPED_EXECUTION_RECEIPTS = ({
     "platform": "sm_121",
@@ -2717,6 +2717,50 @@ _SCOPED_EXECUTION_RECEIPTS = ({
     "pair": ("tessera.routed_fused.FusedRoutedWindowMoE.__call__",
              "native_routed_window_classes_e4m3mma"),
     "receipt": "experiments/results/glm53_r768_stub_base_tp2_eager_census.json",
+}, {
+    "platform": "sm_121",
+    "family": "TESSERA_E2M1_K2",
+    "structure": "dense",
+    "regimes": ("decode", "batch"),
+    "residencies": ("resident",),
+    "image": "localhost/prismaquant/spark-vllm-nccl230@sha256:f8dbe1a02e33ccb7416ab40b72a83e8c725dcb6fed3e90bae4a658cce5e1b7f5",
+    "execution_modes": ("eager",),
+    "rungs_q256": (896,),
+    "pair": ("tessera.routed_fused_e2m1.dense_forward_quantized", "native_fused_window_dense_e2m1"),
+    "receipt": "experiments/results/glm53_requal_v68_e2m1_census.json",
+}, {
+    "platform": "sm_121",
+    "family": "TESSERA_E2M1_K2",
+    "structure": "routed_moe",
+    "regimes": ("decode", "batch"),
+    "residencies": ("resident",),
+    "image": "localhost/prismaquant/spark-vllm-nccl230@sha256:f8dbe1a02e33ccb7416ab40b72a83e8c725dcb6fed3e90bae4a658cce5e1b7f5",
+    "execution_modes": ("eager",),
+    "rungs_q256": (896,),
+    "pair": ("tessera.routed_fused_e2m1.FusedRoutedE2M1MoE.__call__", "native_routed_fused_window_e2m1"),
+    "receipt": "experiments/results/glm53_requal_v68_e2m1_census.json",
+}, {
+    "platform": "sm_121",
+    "family": "TESSERA_BF16_K1",
+    "structure": "dense",
+    "regimes": ("decode", "batch"),
+    "residencies": ("resident",),
+    "image": "localhost/prismaquant/spark-vllm-nccl230@sha256:5be13705acaecc7b4aaf342a84f80d67844c9970ff8375bf9fbeecc9c98ce84a",
+    "execution_modes": ("eager",),
+    "rungs_q256": (832, 880, 960, 1024, 1088),
+    "pair": ("tessera::fused_window_dense", "native_fused_window_dense_bf16"),
+    "receipt": "experiments/results/glm53_requal_v68_bf16_census.json",
+}, {
+    "platform": "sm_121",
+    "family": "TESSERA_BF16_K1",
+    "structure": "routed_moe",
+    "regimes": ("decode", "batch"),
+    "residencies": ("resident",),
+    "image": "localhost/prismaquant/spark-vllm-nccl230@sha256:5be13705acaecc7b4aaf342a84f80d67844c9970ff8375bf9fbeecc9c98ce84a",
+    "execution_modes": ("eager",),
+    "rungs_q256": (1024,),
+    "pair": ("tessera.routed_fused.FusedRoutedWindowMoE.__call__", "native_routed_window_classes_bf16"),
+    "receipt": "experiments/results/glm53_requal_v68_bf16_census.json",
 },)
 
 

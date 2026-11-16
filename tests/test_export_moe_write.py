@@ -380,19 +380,15 @@ def test_planning_a_leaf_is_refused_and_names_the_stack_spelling(tmp_path, monke
 # What is refused before the first encode
 # --------------------------------------------------------------------------
 
-def test_a_bf16_expert_stack_is_refused_for_want_of_a_cell_not_a_builder(tmp_path, monkeypatch):
-    """A 16-bit expert stack HAS a production builder since tessera#609, so the
-    no-builder refusal no longer fires for it.  What refuses it now is the
-    serving gate's next question: contract v59 withdraws every BF16 cell, so
-    a stack at 1792 names a structure no cell attests and cannot ship
-    without an explicit override."""
+def test_a_bf16_expert_stack_is_refused_outside_its_cell_scope_not_for_want_of_a_builder(tmp_path, monkeypatch):
+    """v68 serves BF16 routed R1024; R1792 remains outside its measured scope."""
     with pytest.raises(SystemExit) as caught:
         _export(tmp_path, monkeypatch, _checkpoint(),
                 {STACK: {"grid": "BF16", "q256": 1792}})
 
     message = str(caught.value)
     assert "has no expert route" not in message, message
-    assert "no lane_eligibility cell" in message, message
+    assert "outside the rungs" in message and "1792" in message, message
     assert "TESSERA_BF16_K1" in message, message
     assert "routed_moe" in message, message
 

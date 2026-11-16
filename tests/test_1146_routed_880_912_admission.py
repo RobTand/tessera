@@ -237,7 +237,7 @@ def test_pact_rows_resolve_on_image_x(q):
 
 
 def test_producer_answers_hold_outside_routed_880_912_scope():
-    """Producer answers match pinned base answers for all eight queries."""
+    """Keep the E4M3 answers and admit the new receipt-backed BF16 scope."""
     contract = _contract()
     queries = [
         ("E4M3", 880, "WINDOW", "CHANNEL", "TESSERA_FP8", 1, "stack.probe",
@@ -257,8 +257,7 @@ def test_producer_answers_hold_outside_routed_880_912_scope():
         ("BF16", 1024, "WINDOW", "CHANNEL", "TESSERA_BF16", 1, "stack.probe",
          STRUCTURE_ROUTED_MOE),
     ]
-    # Pinned answers at base 69aae02004. Diff base to head shows no src change.
-    # Head answers must equal these base answers. Scope adds no producer change.
+    # v68 adds BF16 R1024 on its committed IMG-N receipt; E4M3 answers stay fixed.
     expected = [
         "TESSERA_FP8",
         "TESSERA_FP8",
@@ -267,7 +266,7 @@ def test_producer_answers_hold_outside_routed_880_912_scope():
         "TESSERA_FP8",
         "TESSERA_FP8",
         "refused:tessera export 'stack.probe': TESSERA_NVFP4 decodes the LUT scale plane to its n",
-        "refused:tessera export 'stack.probe': no lane_eligibility cell in runtime_contract.json ",
+        "TESSERA_BF16",
     ]
     answers = [_answer(contract, *a) for a in queries]
     assert answers == expected
