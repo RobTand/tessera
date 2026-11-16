@@ -419,8 +419,8 @@ def build_after(fam, scheme, blobs, scales, n_experts, cfg, clamp, prefix):
             "tessera_backend": getattr(layer, "tessera_backend", None),
             "load_seconds": round(time.time() - t0, 3)}
     if fam["family"] == "TESSERA_NVFP4":
-        info["gs13"] = float(layer.tessera_a4_gs13)
-        info["gs2"] = float(layer.tessera_a4_gs2)
+        info["gs13"] = float(layer.tessera_routed_fused.gs13)
+        info["gs2"] = float(layer.tessera_routed_fused.gs2)
     else:
         assert method._native is not None
         info["native_adapter"] = type(method._native).__name__

@@ -106,7 +106,7 @@ def dense_preconditions(key, recorder):
         recorder.call(f"P5:dense:{key}:{rank}", "apply", lambda: method.apply(layer, x))
         results.append({"rank": rank, "build": info, "P4_equal": equal})
     return {"P4": all(r["P4_equal"] for r in results), "P5": len(results) == (1 if key == "value" else 2), "ranks": results,
-            "routed": routed_preconditions(key, recorder) if key != "value" else None}
+            "routed": routed_preconditions(key, recorder)}
 
 
 def routed_preconditions(key, recorder):
@@ -115,15 +115,15 @@ def routed_preconditions(key, recorder):
     from test_dense_fused_window import _encode_module
 
     routed.HIDDEN, routed.INTER, routed.TOP_K = 256, 512, 2
-    blobs = {p: [_encode_module("e4m3", [(p, rows)], cols, q256=1024, seed=e)[0] for e in range(2)]
+    blobs = {p: [_encode_module("value" if key == "value" else "e4m3", [(p, rows)], cols, q256=1024, seed=e)[0] for e in range(2)]
              for p, rows, cols in (("gate_proj", 512, 256), ("up_proj", 512, 256), ("down_proj", 256, 512))}
-    family = {"family": "TESSERA_FP8"}
+    family = {"family": "TESSERA_BF16" if key == "value" else "TESSERA_FP8"}
     scheme, _ = routed.scheme_for(family, blobs, 2)
     builds = []
-    for rank in (0, 1):
+    for rank in ((0,) if key == "value" else (0, 1)):
         cfg = routed.moe_config(2, 10.0)
         parallel = cfg.moe_parallel_config
-        parallel.tp_rank, parallel.tp_size = rank, 2
+        parallel.tp_rank, parallel.tp_size = rank, 1 if key == "value" else 2
         layer, method, info = routed.build_after(family, scheme, blobs, {}, 2, cfg, 10.0, "synthetic.experts")
         native = method._native
         from tessera.fused import parse_fused
@@ -134,11 +134,11 @@ def routed_preconditions(key, recorder):
             for blob in blobs[projection]:
                 unit = parse_unit_artifact(parse_fused(blob)[0].blob, device="cuda").unit
                 value = unit.scale_rows.float() * float(unit.scale_global)
-                expected.append(value if projection == "down_proj" else value[rank * 256:(rank + 1) * 256])
+                expected.append(value if projection == "down_proj" or key == "value" else value[rank * 256:(rank + 1) * 256])
             scale_equal &= torch.equal(getattr(native, field).scale_all.view(torch.int32), torch.stack(expected).view(torch.int32))
         builds.append({"rank": rank, "build": info, "P4_equal": scale_equal, "has_init": bool(native.gate.has_init.any()),
                        "start_state_sha256": __import__("hashlib").sha256(native.gate.init_all.cpu().numpy().tobytes()).hexdigest()})
-    return {"P4": all(b["P4_equal"] for b in builds), "P5": len(builds) == 2, "ranks": builds}
+    return {"P4": all(b["P4_equal"] for b in builds), "P5": len(builds) == (1 if key == "value" else 2), "ranks": builds}
 
 
 def wrong_scale_index(key, recorder):
@@ -219,8 +219,48 @@ def e2m1_preconditions(lib, recorder):
     wrong = dataclasses.replace(role, ratio=role.ratio * 2)
     mutated = recorder.call("H1:e2m1:wrong-scale", "tessera", lambda: dense_forward_quantized(wrong, q, sf))
     return {"P4": torch.equal(role.ratio.view(torch.int32), expected.view(torch.int32)),
-            "wrong_scale_detected": bool((mutated != got).any()), "rung": 896}
+            "wrong_scale_detected": bool((mutated != got).any()), "rung": 896,
+            "routed": e2m1_routed_preconditions(recorder)}
 
+
+
+def e2m1_routed_preconditions(recorder):
+    import torch
+    from experiments import routed_pair_oracle as routed
+    from experiments.t4_code.fused_e2m1_check import encode, ref_weight
+    from tessera.fused import pack_fused, parse_fused
+    from tessera.unit_artifact import parse_unit_artifact
+    from experiments.numerics_rows.quantizers import quantize
+
+    routed.HIDDEN, routed.INTER, routed.TOP_K = 256, 512, 2
+    blobs = {p: [pack_fused([(p, rows, encode(rows, cols, 896, 40 + e, "cuda"))]) for e in range(2)]
+             for p, rows, cols in (("gate_proj", 512, 256), ("up_proj", 512, 256), ("down_proj", 256, 512))}
+    family = {"family": "TESSERA_NVFP4"}
+    scheme, _ = routed.scheme_for(family, blobs, 2)
+    scales = {p: [1.0, 2.0] for p in blobs}
+    layer, method, info = routed.build_after(family, scheme, blobs, scales, 2, routed.moe_config(2, 10.0), 10.0, "synthetic.experts")
+    native = layer.tessera_routed_fused
+    equal = True
+    for projection, field in (("gate_proj", "gate"), ("up_proj", "up"), ("down_proj", "down")):
+        gs = native.gs2 if projection == "down_proj" else native.gs13
+        expected = torch.tensor([parse_unit_artifact(parse_fused(blob)[0].blob, device="cuda").unit.scale_global for blob in blobs[projection]], dtype=torch.float32, device="cuda") / gs
+        equal &= torch.equal(expected.view(torch.int32), getattr(native, "ratio_" + field).view(torch.int32))
+    # Index mutation: exchange two distinct expert ratios in the loaded down copy.
+    ratios = native.ratio_down.clone()
+    ratios[0], ratios[1] = 1.0, 2.0
+    correct = dataclasses.replace(native, ratio_down=ratios)
+    wrong = dataclasses.replace(native, ratio_down=ratios.flip(0))
+    ids = torch.tensor([[0, 1]], device="cuda", dtype=torch.int64)
+    weights = torch.full((1, 2), 0.5, device="cuda")
+    routes = native._routing(ids, weights)
+    x = torch.zeros(2, 512, device="cuda", dtype=torch.bfloat16)
+    x[:, 0] = 1
+    q, sf = recorder.call("H1:e2m1:routed-quantizer", "quantizer", lambda: quantize("e2m1", x, float(native.gs2)))
+    got, changed = (torch.empty(2, 256, device="cuda", dtype=torch.bfloat16) for _ in range(2))
+    for owner, out, name in ((correct, got, "correct"), (wrong, changed, "wrong-index")):
+        recorder.call("H1:e2m1:" + name, "tessera", lambda: owner._launch(2, q, sf, routes, a_row_mode=1, mul_weight=False, limit=float("inf"), out=out, counter=1))
+    control = {"mutation": "expert-ratio-index", "flagged_exactly": bool((got != changed).any())}
+    return {"P4": equal, "P5": True, "build": info, "negative_control": control}
 
 def cuda_control(where):
     """Use a separate process because a device assertion poisons its CUDA context."""
@@ -263,7 +303,7 @@ def main():
 
     torch.set_num_threads(1)
     args.out.mkdir(parents=True, exist_ok=True)
-    report = {"P1": selftest(), "boundaries": [], "libraries": {}, "cuda_controls": [], "negative_controls": negative_controls()}
+    report = {"build_sha256": sha256(args.build), "P1": selftest(), "boundaries": [], "libraries": {}, "cuda_controls": [], "negative_controls": negative_controls()}
     recorder = BoundaryRecorder(torch.cuda.synchronize, report["boundaries"])
     built = json.loads(args.build.read_text())
     loaded = install_libraries(built["libraries"])
@@ -288,7 +328,8 @@ def main():
         and all(p["matched"] for p in report["P3"].values())
         and all(v.get("P4") and v.get("P5", True)
                 and (v.get("routed") is None or v["routed"]["P4"] and v["routed"]["P5"])
-                and v.get("wrong_scale_detected", True) for v in report["libraries"].values())
+                and v.get("wrong_scale_detected", True)
+                and (v.get("routed", {}).get("negative_control", {}).get("flagged_exactly", True) for v in report["libraries"].values())
         and all(c["exit_status"] == 0 for c in report["cuda_controls"])
         and all(v.get("subnormal_operand", {}).get("result") != "FAIL" for v in report["libraries"].values())
         and all(c["flagged_exactly"] for c in report["negative_controls"]))

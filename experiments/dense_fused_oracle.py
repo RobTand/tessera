@@ -203,6 +203,8 @@ def build_served(store, module, *, mode, tp_rank, tp_size, fused, instruction=No
                           input_size=cols, output_size=rows, params_dtype=torch.bfloat16,
                           weight_loader=None)
     layer.wire_bytes.data = store.wire(module).clone()
+    if scheme["family"] == "TESSERA_NVFP4":
+        layer.trellis_input_global_scale.data = store.get(module + ".input_global_scale").clone()
     layer.to("cuda")
     t0 = time.time()
     with dense_lane(fused), e4m3_instruction(instruction), torch.no_grad():
@@ -213,11 +215,11 @@ def build_served(store, module, *, mode, tp_rank, tp_size, fused, instruction=No
             "rows": rows, "columns": cols, "roles": [[n, int(r)] for n, r in scheme["roles"]],
             "wire_bytes": int(scheme["wire_bytes"]), "mode": mode, "tp": [tp_rank, tp_size],
             "local_rows": int(layer.tessera_rows), "local_columns": int(layer.tessera_columns),
-            "lane": layer.tessera_lane, "lane_reason": layer.tessera_lane_reason,
+            "lane": getattr(layer, "tessera_lane", None), "lane_reason": getattr(layer, "tessera_lane_reason", None),
             "launch_pair": [layer.tessera_symbol, layer.tessera_decoder],
             "layout": [dict(rates_hist=_hist(f.rates), rows_p=int(f.rows_p), cols=int(f.cols),
                             row_offset=int(f.row_offset), has_history=bool(f.has_history))
-                       for f in layer.tessera_native.layout_facts()],
+                       for f in layer.tessera_native.layout_facts()] if hasattr(layer, "tessera_native") else [],
             "resident_bytes": sum(t.numel() * t.element_size() for _, t in resident),
             "resident_fused_tables": sum(1 for n, _ in resident if n.endswith("fused_table16")),
             # The E4M3 instruction library keeps the table as E4M3 bytes (uint8),
@@ -246,6 +248,10 @@ def reference_weight(store, module, plan):
     blob = store.wire(module).contiguous().numpy().tobytes()
     parsed = parse_tessera_blob_for_scheme(blob, scheme, module, device="cuda")
     roles = shard_parsed_roles(parsed, plan)
+    if scheme["family"] == "TESSERA_NVFP4":
+        from experiments.numerics_rows.cases import decode_roles
+        weights = [w * scale.double() for _, w, scale, _ in decode_roles(blob, scheme, module, device="cuda", plan=plan)]
+        return torch.cat(weights), {"kind": "e2m1_lut_times_global", "epilogue_mults": 1}
     if scheme["family"] == "TESSERA_FP8":
         prepared = fp8_route.prepare_tessera_fp8_module(roles, device="cuda")
         codes = prepared.decode().view(torch.float8_e4m3fn).double()
@@ -264,25 +270,6 @@ def reference_weight(store, module, plan):
 def make_x(m, cols, seed, sigma):
     g = torch.Generator(device="cuda").manual_seed(seed)
     return (torch.randn(m, cols, device="cuda", generator=g) * sigma).to(torch.bfloat16)
-
-
-def reference_and_bound(family, x, w64, epilogue_mults, k_steps):
-    """``(ref bf16, r fp64, bound fp64)`` for the served function of ``x``."""
-    from tessera.serving.native_ops import native_fp8_quant, require_native_fp8_quant
-
-    if family == "TESSERA_FP8":
-        require_native_fp8_quant("dense fused oracle")
-        a_q, a_s = native_fp8_quant(x.contiguous())
-        a = a_q.double() * a_s.reshape(-1, 1).double()
-        a_abs = a.abs()
-    else:
-        a = x.double()
-        a_abs = a.abs()
-    r = a @ w64.t()
-    sigma = a_abs @ w64.abs().t()
-    bound = rpo.gemm_bound(sigma, r, k_steps, epilogue_mults=epilogue_mults)
-    bound = bound + rpo.U16 * (r.abs() + bound)
-    return r.to(torch.bfloat16), r, bound
 
 
 def route_record(layer):
@@ -314,8 +301,17 @@ def oracle_case(store, module, m, seed, sigma, mode, tp_rank, tp_size, sms):
                  for _n, r in fused_info["roles"]]
     split = max(rf.dense_k_split(m, rows, cols, sms) for rows in role_rows)
     case["k_split"] = int(split)
-    ref, r, bound = reference_and_bound(fused_info["family"], x, w64, ref_facts["epilogue_mults"],
-                                        cols + int(split))
+    if fused_info["family"] == "TESSERA_FP8":
+        from tessera.serving.native_ops import native_fp8_quant
+        aq, a_scale = native_fp8_quant(x.contiguous())
+        a = aq.double() * a_scale.reshape(-1, 1).double()
+    else:
+        a = x.double()
+    r = a @ w64.t()
+    bound = rpo.gemm_bound(a.abs() @ w64.abs().t(), r, cols + int(split),
+                           epilogue_mults=ref_facts["epilogue_mults"])
+    bound += rpo.U16 * (r.abs() + bound)
+    ref = r.to(torch.bfloat16)
     # The E4M3 instruction library (contract v46) against the f16 instruction
     # over the same bytes: two accumulation orders of one exact product sum,
     # so both are held to the same bound and compared bitwise.

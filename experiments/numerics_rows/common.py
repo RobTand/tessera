@@ -47,6 +47,10 @@ def check_runtime(image):
     return {**expected, **actual}
 
 
+class Invalid(ValueError):
+    pass
+
+
 class BoundaryError(RuntimeError):
     def __init__(self, record, error):
         self.record = record
@@ -60,6 +64,7 @@ class BoundaryRecorder:
     def __init__(self, synchronize, records):
         self.synchronize, self.records = synchronize, records
         self.enabled = True
+        self.attribute = True
 
     def call(self, name, kind, function):
         if not self.enabled:
@@ -78,6 +83,7 @@ class BoundaryRecorder:
             result = function()
         except Exception as error:
             failure = error
+        nested = failure if isinstance(failure, BoundaryError) else None
         try:
             self.synchronize()
             record["sync_after"] = True
@@ -86,7 +92,20 @@ class BoundaryRecorder:
             failure = error
         if failure is not None:
             record["message"] = str(failure)
-            if isinstance(failure, BoundaryError):
-                raise failure
-            raise BoundaryError(record, failure) from failure
+            error = nested or BoundaryError(record, failure)
+            if not self.attribute:
+                error.attributed_to = None
+            if nested is not None:
+                raise nested
+            raise error from failure
         return result
+
+
+def source_digest(root):
+    digest = hashlib.sha256()
+    root = Path(root)
+    paths = subprocess.check_output(["git", "ls-files", "-z", "src"], cwd=root).split(b"\0")
+    for name in sorted(p for p in paths if p):
+        data = (root / name.decode()).read_bytes()
+        digest.update(name + b"\0" + len(data).to_bytes(8, "little") + data)
+    return digest.hexdigest()
