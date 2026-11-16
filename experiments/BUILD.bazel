@@ -614,6 +614,7 @@ ts_py_library(
         ":routed_pair_oracle",
         ":t4_code/fp4_arithmetic_attest",
         ":t4_code/fused_e2m1_check",
+        ":t4_code/sass_dump",
     ],
 )
 
