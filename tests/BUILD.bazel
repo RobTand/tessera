@@ -14622,6 +14622,9 @@ ts_py_test(
     name = "test_numerics_rows_sass",
     path = "tests/test_numerics_rows_sass.py",
     library = ":test_numerics_rows_sass_lib",
+    deps = [
+        "//src/tessera:identity",
+    ],
     lane = "torch",
     args = [
         "--budget='{\"enforce\":true,\"seconds\":80,\"slow\":{}}'",
@@ -14633,6 +14636,9 @@ ts_py_test(
     name = "test_numerics_rows_sass.bytes",
     path = "tests/test_numerics_rows_sass.py",
     library = ":test_numerics_rows_sass_lib",
+    deps = [
+        "//src/tessera:identity",
+    ],
     lane = "bytes",
     args = [
         "--budget='{\"enforce\":true,\"seconds\":80,\"slow\":{}}'",

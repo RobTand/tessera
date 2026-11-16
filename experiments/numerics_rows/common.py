@@ -47,6 +47,19 @@ def check_runtime(image):
     return {**expected, **actual}
 
 
+def register_native_ops(image):
+    import vllm._custom_ops  # Registers vLLM's compiled torch.ops._C operators.
+
+    checks = []
+    if image == "G":
+        from tessera.serving.native_ops import require_native_fp8_quant, require_native_fp4_quant
+
+        for require in (require_native_fp8_quant, require_native_fp4_quant):
+            require("numerics rows")
+            checks.append(require.__name__)
+    return {"result": "PASS", "registration": "import vllm._custom_ops", "requirements": checks}
+
+
 class Invalid(ValueError):
     pass
 

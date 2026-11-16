@@ -383,9 +383,12 @@ def run(args, receipt):
     from experiments.numerics_rows import run_routed
     from experiments.numerics_rows.scale_launch import check as scale_index_checks
     from experiments.numerics_rows.sass_slice import match_library
-    from experiments.numerics_rows.common import source_digest
+    from experiments.numerics_rows.common import register_native_ops, source_digest
 
     torch.set_num_threads(1)
+    runtime["native_ops"] = register_native_ops(args.image)
+    receipt["runtime"] = runtime
+    write_json(args.out / "native_ops.json", runtime["native_ops"])
     if torch.cuda.get_device_capability() != (12, 1):
         raise Invalid("device capability differs from the sm_121 cell")
     freeze = json.loads(args.freeze.read_text())

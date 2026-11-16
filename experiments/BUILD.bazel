@@ -1999,6 +1999,10 @@ ts_py_library(
     data = [
         "//src/tessera:serving/csrc/routed_fused_window.cu",
     ],
+    deps = [
+        "//src/tessera:__init___cycle",
+        "//src/tessera:bf16_route_cycle",
+    ],
 )
 
 ts_py_library(
@@ -2008,6 +2012,7 @@ ts_py_library(
     ],
     data = [
         "//tools/bazel:build_files.py",
+        "numerics_rows/bazel-targets.txt",
     ],
     deps = [
         ":numerics_rows/common",

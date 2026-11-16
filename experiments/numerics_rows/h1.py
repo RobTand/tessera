@@ -10,7 +10,7 @@ import subprocess
 import sys
 import traceback
 
-from experiments.numerics_rows.common import BoundaryError, BoundaryRecorder, check_runtime, check_source, sha256, write_json
+from experiments.numerics_rows.common import BoundaryError, BoundaryRecorder, check_runtime, check_source, register_native_ops, sha256, write_json
 from experiments.numerics_rows.reference import compare, selftest
 
 
@@ -285,10 +285,11 @@ def e2m1_routed_preconditions(recorder):
                and compare(changed, reference)["mismatches"] == expected_mismatches}
     return {"P4": equal, "P5": True, "build": info, "negative_control": control}
 
-def cuda_control(where):
+def cuda_control(where, image):
     """Use a separate process because a device assertion poisons its CUDA context."""
     import torch
 
+    registration = register_native_ops(image)
     records = []
     recorder = BoundaryRecorder(torch.cuda.synchronize, records)
     value = torch.ones(1, device="cuda")
@@ -300,7 +301,7 @@ def cuda_control(where):
     try:
         recorder.call("injected-launch", "tessera", fault if where == "inside" else lambda: value.add_(1))
     except BoundaryError as error:
-        print(json.dumps({"where": where, "attributed_to": error.attributed_to, "boundaries": records}))
+        print(json.dumps({"native_ops": registration, "where": where, "attributed_to": error.attributed_to, "boundaries": records}))
         return error.attributed_to == ("injected-launch" if where == "inside" else None)
     return False
 
@@ -314,7 +315,7 @@ def main():
     p.add_argument("--cuda-control", choices=("inside", "outside"))
     args = p.parse_args()
     if args.cuda_control:
-        raise SystemExit(0 if cuda_control(args.cuda_control) else 3)
+        raise SystemExit(0 if cuda_control(args.cuda_control, args.image) else 3)
     check_source(args.source)
     check_runtime(args.image)
     sys.path.insert(0, str(args.source / "src"))
@@ -326,7 +327,9 @@ def main():
 
     torch.set_num_threads(1)
     args.out.mkdir(parents=True, exist_ok=True)
-    report = {"build_sha256": sha256(args.build), "P1": selftest(), "boundaries": [], "libraries": {}, "cuda_controls": [], "negative_controls": negative_controls()}
+    registration = register_native_ops(args.image)
+    write_json(args.out / "native_ops.json", registration)
+    report = {"native_ops": registration, "build_sha256": sha256(args.build), "P1": selftest(), "boundaries": [], "libraries": {}, "cuda_controls": [], "negative_controls": negative_controls()}
     recorder = BoundaryRecorder(torch.cuda.synchronize, report["boundaries"])
     built = json.loads(args.build.read_text())
     loaded = install_libraries(built["libraries"])
@@ -344,7 +347,7 @@ def main():
                 report["libraries"][key] = {"error": str(error), "traceback": traceback.format_exc()}
             write_json(args.out / "h1.json", report)
     for where in ("inside", "outside"):
-        run = subprocess.run([sys.executable, "-m", "experiments.numerics_rows.h1", "--cuda-control", where], capture_output=True, text=True)
+        run = subprocess.run([sys.executable, "-m", "experiments.numerics_rows.h1", "--cuda-control", where, "--image", args.image], capture_output=True, text=True)
         report["cuda_controls"].append({"where": where, "exit_status": run.returncode, "stdout": run.stdout, "stderr": run.stderr,
             "scope": "harness check of CUDA error attribution, not of the cell kernel",
             "injection": "async device assert in a helper kernel; cell binary unchanged"})

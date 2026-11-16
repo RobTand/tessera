@@ -9,7 +9,7 @@ import struct
 import subprocess
 import sys
 
-from experiments.numerics_rows.common import check_runtime, check_source, sha256, write_json
+from experiments.numerics_rows.common import check_runtime, check_source, register_native_ops, sha256, write_json
 
 PHASES = (1, 1 + 2**-3, 1 + 2**-2, 1 + 3 * 2**-3, 1 + 2**-1,
           1 + 5 * 2**-3, 1 + 3 * 2**-2, 1 + 7 * 2**-3, 1 + 2**-7, 1 + 3 * 2**-7)
@@ -147,13 +147,15 @@ def main():
 
     torch.set_num_threads(1)
     args.out.mkdir(parents=True, exist_ok=True)
+    registration = register_native_ops(args.image)
+    write_json(args.out / "native_ops.json", registration)
     built = json.loads(args.build.read_text())
     scales = artifact_scales(args.artifact) if args.image == "G" else {}
     records, boundaries = [], []
     for family in (("e4m3", "e2m1") if args.image == "G" else ("value",)):
         for gs in sorted(set(scales.values())) if family == "e2m1" else (1.0,):
             records.append(record_quantizer(family, gs, args.out, boundaries))
-    write_json(args.out / "q1.json", {"quantizers": records, "artifact_scales": scales,
+    write_json(args.out / "q1.json", {"native_ops": registration, "quantizers": records, "artifact_scales": scales,
                                       "tables": [probe_table(lib, args.out) for lib in built["libraries"]],
                                       "boundaries": boundaries})
 
