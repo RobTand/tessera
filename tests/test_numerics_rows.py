@@ -562,3 +562,42 @@ def test_routed_certificate_keeps_negative_gate_and_router_order():
     down, _, bound = adapter.down_reference(torch.ones(2, 1), None, ids, None, routes)
     assert down.tolist() == [[12], [6]]
     assert bound.token_sum(2).held.item() and bound.token_sum(2).value.item() > 18
+
+
+def test_routed_campaign_lists_every_expert_role_rank_once():
+    from experiments.numerics_rows.c1_campaign import items
+
+    population = {"modules": [{"name": f"module-{m}", "experts": 288, "structure": "routed_moe", "family": "TESSERA_FP8"} for m in range(42)]}
+    listed = list(items(population))
+    assert len(listed) == len({r["job_name"] for r in listed}) == 72576
+    assert {r["module"] for r in listed[:1728]} == {"module-0"}
+    assert listed[1728]["module"] == "module-1"
+    for module in population["modules"]:
+        actual = {(r["expert"], r["role"], r["tp"]["size"], r["tp"]["rank"]) for r in listed if r["module"] == module["name"]}
+        assert actual == {(e, role, 2, rank) for e in range(288) for role in ("gate_proj", "up_proj", "down_proj") for rank in range(2)}
+
+
+def test_routed_profile_cap_keeps_the_profile_and_partial_phases(tmp_path, monkeypatch):
+    import json
+    import signal
+    import sys
+    import experiments.numerics_rows.profile_c1 as profile_c1
+    from experiments.numerics_rows import cases, scale_index
+
+    for module, names in ((cases, ("checkpoint_routed", "decode_roles", "column_coverage", "routed_separation", "exact_chunks", "scale_index_manifest")),
+                          (scale_index, ("scale_values", "evaluate", "make_plan"))):
+        for name in names:
+            monkeypatch.setattr(module, name, getattr(module, name))
+    def cap_inside_phase(*args, **kwargs):
+        signal.getsignal(signal.SIGALRM)(signal.SIGALRM, None)
+    monkeypatch.setattr(cases, "column_coverage", cap_inside_phase)
+    monkeypatch.setattr(cases, "main", lambda: cases.column_coverage())
+    timers = []
+    monkeypatch.setattr(signal, "setitimer", lambda *args: timers.append(args))
+    monkeypatch.setattr(sys, "argv", ["profile_c1", "--out", str(tmp_path), "--seconds", "1", "--", "--sample-expert", "0"])
+    profile_c1.main()
+    record = json.loads((tmp_path / "profile.json").read_text())
+    assert record["status"] == "CAPPED" and record["generation_finished"] is False
+    assert record["phases"][0]["phase"] == "column_coverage" and record["phases"][0]["finished"] is False
+    assert (tmp_path / "c1.pstats").stat().st_size and (tmp_path / "c1-profile.txt").stat().st_size
+    assert timers == [(signal.ITIMER_REAL, 1), (signal.ITIMER_REAL, 0)]

@@ -14657,6 +14657,7 @@ ts_py_library(
     ],
     deps = [
         "//experiments:numerics_rows/build_cycle",
+        "//experiments:numerics_rows/cases_cycle",
         ":test_numerics_rows_receipts_lib",
     ],
 )
@@ -14667,8 +14668,10 @@ ts_py_library(
         "test_numerics_rows.py",
     ],
     deps = [
+        "//experiments:numerics_rows/c1_campaign",
         "//experiments:numerics_rows/cases_cycle",
         "//experiments:numerics_rows/common",
+        "//experiments:numerics_rows/profile_c1",
         "//experiments:numerics_rows/quantizers",
         "//experiments:numerics_rows/reference",
     ],

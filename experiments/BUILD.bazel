@@ -1970,6 +1970,17 @@ ts_py_library(
 )
 
 ts_py_library(
+    name = "numerics_rows/c1_campaign",
+    srcs = [
+        "numerics_rows/c1_campaign.py",
+    ],
+    deps = [
+        ":numerics_rows/cases_cycle",
+        ":numerics_rows/common",
+    ],
+)
+
+ts_py_library(
     name = "numerics_rows/cases_cycle",
     srcs = [
         "numerics_rows/cases.py",
@@ -2068,6 +2079,17 @@ ts_py_library(
     ],
     data = [
         "numerics_rows/README.md",
+    ],
+    deps = [
+        ":numerics_rows/cases_cycle",
+        ":numerics_rows/common",
+    ],
+)
+
+ts_py_library(
+    name = "numerics_rows/profile_c1",
+    srcs = [
+        "numerics_rows/profile_c1.py",
     ],
     deps = [
         ":numerics_rows/cases_cycle",
