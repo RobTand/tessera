@@ -8,7 +8,7 @@ import re
 import struct
 
 # Keep the stage, source basename, extension, sequence and token length exact.
-TOKEN = re.compile(rb"tmpxft_([0-9a-f]{8})_00000000-6_routed_fused_window\.cudafe1\.cpp(?=\x00|$)")
+TOKEN = re.compile(rb"""tmpxft_([0-9a-f]{8})_00000000-6_routed_fused_window\.cudafe1\.cpp(?=[\x00\s"']|$)""")
 CANONICAL_FIELDS = ("library_canonical_code_sha256", "cubin_canonical_sha256s")
 
 

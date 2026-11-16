@@ -30,6 +30,8 @@ def test_exact_token_mask_records_only_the_eight_pid_digits():
     changed, offsets = mask(source)
     assert changed == b"\0" + token(b"00000000") + b"\0"
     assert offsets == [{"offset": 8, "size": 8, "token": token(b"0000001b").decode()}]
+    sass = b'file "' + token(b"0000001b") + b'"\n'
+    assert mask(sass)[0] == b'file "' + token(b"00000000") + b'"\n'
     for unknown in (source.replace(b"-6_", b"-7_"), source.replace(b"window", b"windox"), source.replace(b"0000001b", b"0000001B")):
         assert mask(unknown) == (unknown, [])
 
