@@ -40,7 +40,7 @@ def new_unit(scope):
                       "signed_zero_diffs": 0}}
 
 
-def compare_output(unit, case, got, ref, mask=None):
+def compare_output(unit, case, got, ref, mask=None, operands=None):
     import torch
 
     if got.shape != ref.shape or got.dtype != ref.dtype:
@@ -48,6 +48,7 @@ def compare_output(unit, case, got, ref, mask=None):
         return {"equal": False, "mismatches": max(got.numel(), ref.numel())}
     if not bool(torch.isfinite(ref).all()):
         raise Invalid(f"{case}: reference is not finite")
+    positions = mask.nonzero() if mask is not None else None
     if mask is not None:
         got, ref = got[mask], ref[mask]
     result = compare(got, ref)
@@ -55,7 +56,10 @@ def compare_output(unit, case, got, ref, mask=None):
     if not result["equal"]:
         unit["findings"].append(f"{case}: exact output differs")
         if unit["first_mismatch"] is None:
-            unit["first_mismatch"] = {"case": case, **result["first_mismatch"]}
+            first = dict(result["first_mismatch"])
+            if positions is not None:
+                first["index"] = positions[first["index"][0]].tolist()
+            unit["first_mismatch"] = {"case": case, **first, "operands": operands(first["index"]) if callable(operands) else operands}
     return result
 
 
@@ -294,7 +298,17 @@ def run_dense_case(adapter, unit, recipe, recorder, *, exact=True):
     unit["exact"]["composition"]["equal"] &= composed["equal"]
     if not composed["equal"]:
         unit["findings"].append("apply differs from the same staged launches")
-    return compare_output(unit, str(recipe), got, reference, mask) if exact else (got, reference, a)
+    def actual_operands(index):
+        row, column = index
+        offset = 0
+        for name, w, scale, _ in adapter.roles:
+            if column < offset + w.shape[0]:
+                columns = (a[row] != 0).nonzero().flatten()
+                return {"role": name, "columns": columns.tolist(), "a": a[row, columns].tolist(),
+                        "w": w[column - offset, columns].tolist(), "a_scale": None if a_scale is None else float(a_scale[row]),
+                        "scale": scale.reshape(-1).tolist() if scale.numel() == 1 else float(scale[column - offset])}
+            offset += w.shape[0]
+    return compare_output(unit, str(recipe), got, reference, mask, actual_operands) if exact else (got, reference, a)
 
 
 def dense_cases(adapter, unit, manifest, recorder):
@@ -315,6 +329,7 @@ def dense_cases(adapter, unit, manifest, recorder):
     for pair in chunk_pairs(adapter.cols, unit["m_config"]["chunk_size"]):
         result = run_dense_case(adapter, unit, [(row, list(pair), [1, 1]) for row in range(m)], recorder)
         unit["exact"]["chunk_pairs"]["rows"] += m
+        unit["exact"]["chunk_pairs"]["x_elements"] += result.get("elements", 0)
         unit["exact"]["chunk_pairs"]["mismatches"] += result["mismatches"]
     if unit["m_config"]["k_split"] > 1:
         columns = split_columns(adapter.cols, unit["m_config"]["chunk_size"], unit["m_config"]["k_split"])
@@ -353,6 +368,8 @@ def main():
     from experiments.numerics_rows.common import source_digest
 
     torch.set_num_threads(1)
+    if torch.cuda.get_device_capability() != (12, 1):
+        raise Invalid("device capability differs from the sm_121 cell")
     args.out.mkdir(parents=True, exist_ok=True)
     freeze = json.loads(args.freeze.read_text())
     if freeze["sha256"] != sha256(args.rule) or not freeze["frozen_utc"] or not freeze["reviewer"]:

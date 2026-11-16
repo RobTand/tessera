@@ -97,15 +97,18 @@ def run(adapter, unit, manifest, recorder):
 
     m, width = unit["m_config"]["M"], unit["m_config"]["superblock_width"]
     every_expert = m in (1, 64, 2048)
-    selected = range(adapter.experts) if every_expert else (0,)
+    if not every_expert:
+        unit["unattested"].append("element separation at columns-only M awaits the lead clarification in questions.md")
+    selected = [list(range(start, min(start + 8, adapter.experts))) for start in range(0, adapter.experts, 8)] if every_expert else [[0]]
     graphed = set()
     for count in unit["m_config"]["route_counts"]:
-        for expert in selected:
-            raw_ids, raw_weights = routing(m, adapter.experts, count, expert)
+        for group in selected:
+            raw_ids, raw_weights = routing(m, adapter.experts, count, group)
+            tested = set()
             ids = torch.tensor(raw_ids, device="cuda", dtype=torch.int64)
             weights = torch.tensor(raw_weights, device="cuda", dtype=torch.float32)
             for role in manifest["roles"]:
-                if role["expert"] != expert:
+                if role["expert"] not in group:
                     continue
                 separated = role["separation"]
                 coverage(unit, "separation", separated["complete"], manifest["complete"])
@@ -113,6 +116,10 @@ def run(adapter, unit, manifest, recorder):
                 for recipe in separated["recipes"]:
                     for activation in recipe["values"]:
                         stage = role["name"]
+                        key = stage, recipe["column"], activation
+                        if key in tested:
+                            continue
+                        tested.add(key)
                         first = stage not in graphed
                         result = run_case(adapter, unit, stage, [(recipe["column"], activation)], ids, weights, recorder, graph=first)
                         graphed.add(stage)
@@ -124,6 +131,7 @@ def run(adapter, unit, manifest, recorder):
                 for pair in chunk_pairs(cols, unit["m_config"]["chunk_size"]):
                     result = run_case(adapter, unit, projection, [(column, 1) for column in pair], ids, weights, recorder)
                     unit["exact"]["chunk_pairs"]["rows"] += m
+                    unit["exact"]["chunk_pairs"]["x_elements"] += result.get("elements", 0)
                     unit["exact"]["chunk_pairs"]["mismatches"] += result["mismatches"]
             x = torch.zeros(m, adapter.cols, device="cuda", dtype=torch.bfloat16)
             x[:, 0] = 1

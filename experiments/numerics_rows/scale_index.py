@@ -1,7 +1,7 @@
 """Index-coding passes and the draft-7 joint-read check."""
 from __future__ import annotations
 
-import itertools
+from collections.abc import Sequence
 import math
 
 from experiments.numerics_rows.reference import bf16, multiply
@@ -16,31 +16,55 @@ def digits(n, base):
     return [[(index // base**p) % base for index in range(n)] for p in range(count)]
 
 
-def passes(n, low, high, *, gate=(), up=(), gate_constant=1.0, up_constant=1.0):
+
+class CodingValues(Sequence):
+    def __init__(self, entry):
+        self.entry = entry
+    def __len__(self):
+        return self.entry["n"]
+    def __getitem__(self, index):
+        if isinstance(index, slice):
+            return [self[i] for i in range(*index.indices(len(self))) ]
+        if not 0 <= index < len(self):
+            raise IndexError(index)
+        e = self.entry
+        held = e["up"] if e["family"] == "gate" else e["gate"] if e["family"] == "up" else []
+        if held and held[0] <= index < held[1]:
+            return e["up_constant"] if e["family"] == "gate" else e["gate_constant"]
+        return 2.0**((index // e["base"]**e["digit"]) % e["base"] + e["low"])
+
+
+def scale_values(entry):
+    return entry["values"] if "values" in entry else CodingValues(entry)
+
+def passes(n, low, high, *, gate=(), up=(), gate_constant=1.0, up_constant=1.0, compact=False):
     base = high - low + 1
-    plain = digits(n, base)
+    if not 2 <= base <= 121 or n < 1:
+        raise ValueError("invalid scale coding range")
+    count, capacity = 0, 1
+    while capacity < n:
+        count, capacity = count + 1, capacity * base
     families = ("gate", "up") if gate or up else ("plain",)
     result = []
     for family in families:
-        for position, row in enumerate(plain):
-            values = [2.0**(digit + low) for digit in row]
-            if family == "gate":
-                for index in up:
-                    values[index] = up_constant
-            elif family == "up":
-                for index in gate:
-                    values[index] = gate_constant
-            result.append({"family": family, "digit": position, "values": values})
-    return {"base": base, "families": list(families), "passes_per_family": len(plain), "passes_total": len(result),
+        for position in range(count):
+            entry = {"family": family, "digit": position, "n": n, "base": base, "low": low,
+                     "gate": [gate.start, gate.stop] if gate else [], "up": [up.start, up.stop] if up else [],
+                     "gate_constant": gate_constant, "up_constant": up_constant}
+            if not compact:
+                entry["values"] = list(CodingValues(entry))
+            result.append(entry)
+    return {"base": base, "families": list(families), "passes_per_family": count, "passes_total": len(result),
             "coding": result}
 
 
 def joint_coverage(reads, coding, evaluate, n):
     """Check all tuples. The evaluator depends on indices only through their scale values."""
     groups = []
-    for entry in coding:
+    arrays = [scale_values(entry) for entry in coding]
+    for values in arrays:
         by_value = {}
-        for index, value in enumerate(entry["values"]):
+        for index, value in enumerate(values):
             if value not in by_value:
                 by_value[value] = [index, 0]
             by_value[value][1] |= 1 << index
@@ -50,11 +74,11 @@ def joint_coverage(reads, coding, evaluate, n):
         read = tuple(read)
         if len(read) not in (1, 2) or any(not 0 <= i < n for i in read):
             raise ValueError("scale reads must contain one or two array indices")
-        own = [evaluate(read, read, p["values"]) for p in coding]
+        own = [evaluate(read, read, values) for values in arrays]
         if not all(math.isfinite(v) for v in own):
             raise ValueError("reference is not finite")
         def same(wrong, position):
-            value = evaluate(read, wrong, coding[position]["values"])
+            value = evaluate(read, wrong, arrays[position])
             if not math.isfinite(value):
                 raise ValueError("mutated scale reference is not finite")
             return value == own[position]
@@ -73,12 +97,12 @@ def joint_coverage(reads, coding, evaluate, n):
             for position, group in enumerate(groups):
                 masks = {}
                 for first, _ in group:
-                    masks[coding[position]["values"][first]] = sum(mask for second, mask in group if same((first, second), position))
+                    masks[arrays[position][first]] = sum(mask for second, mask in group if same((first, second), position))
                 allowed.append(masks)
             for first in range(n):
                 possible = (1 << n) - 1
                 for position, masks in enumerate(allowed):
-                    possible &= masks[coding[position]["values"][first]]
+                    possible &= masks[arrays[position][first]]
                     if not possible:
                         break
                 if first == read[0]:
@@ -146,7 +170,7 @@ def make_plan(scale, n, read_cases, *, table=None, gate=(), up=(), ue4m3=False, 
             raise ValueError("a normal constant scale cannot hold this side at L")
         return 2.0**max(-126, exponent)
     plan = passes(n, low, high, gate=gate, up=up,
-                  gate_constant=held(gmin) if mode0 else 1.0, up_constant=held(umin) if mode0 else 1.0)
+                  gate_constant=held(gmin) if mode0 else 1.0, up_constant=held(umin) if mode0 else 1.0, compact=True)
     cases = {tuple(c["read"]): c for c in read_cases}
     result = joint_coverage(list(cases), plan["coding"], lambda read, wrong, values: evaluate(cases[read], wrong, values, table), n)
     return {"scale": scale, **plan, **result, "mismatches": 0, "read_cases": read_cases, "array": metadata or {}}

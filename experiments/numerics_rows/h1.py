@@ -329,7 +329,7 @@ def main():
         and all(v.get("P4") and v.get("P5", True)
                 and (v.get("routed") is None or v["routed"]["P4"] and v["routed"]["P5"])
                 and v.get("wrong_scale_detected", True)
-                and (v.get("routed", {}).get("negative_control", {}).get("flagged_exactly", True) for v in report["libraries"].values())
+                and (v.get("routed", {}).get("negative_control", {}).get("flagged_exactly", True)) for v in report["libraries"].values())
         and all(c["exit_status"] == 0 for c in report["cuda_controls"])
         and all(v.get("subnormal_operand", {}).get("result") != "FAIL" for v in report["libraries"].values())
         and all(c["flagged_exactly"] for c in report["negative_controls"]))

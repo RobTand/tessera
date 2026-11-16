@@ -51,7 +51,7 @@ def artifact_scales(root):
 def inputs(family, gs):
     import torch
 
-    values, labels = [0.0], [{"zero": True}]
+    values, labels = [0.0, 1.0, -1.0], [{"zero": True}, {"chunk": True}, {"chunk": True}]
     exponents = range(-133, 128) if family == "e2m1" else (range(-133, 1) if family == "e4m3" else (0, 64))
     for j in exponents:
         base = 6 * 2.0**j / gs if family == "e2m1" else 2.0**j
@@ -69,13 +69,12 @@ def inputs(family, gs):
 def quantize(family, x, gs=1.0):
     import torch
     from tessera.serving.native_ops import native_fp8_quant
-    from vllm import _custom_ops as ops
 
     if family == "e4m3":
         return native_fp8_quant(x.contiguous())
     if family == "e2m1":
-        return ops.scaled_fp4_quant(x.contiguous(), torch.tensor([gs], device=x.device, dtype=torch.float32),
-                                   is_sf_swizzled_layout=False)
+        from tessera.kernel_a4 import a4_quantize_activation
+        return a4_quantize_activation(x.contiguous(), torch.tensor([gs], device=x.device, dtype=torch.float32))
     return x.clone(), torch.ones((x.shape[0], 1), dtype=torch.float32, device=x.device)
 
 
@@ -102,6 +101,7 @@ def record_quantizer(family, gs, out, boundaries):
                   and x[i, 0] != 0]
     result = {"family": family, "gs": gs, "path": str(path), "sha256": sha256(path), "labels": labels,
               "repeat_equal": repeat, "finite_scales": bool(torch.isfinite(scale_values).all()),
+              "finite_codes": bool(torch.isfinite(codes.float()).all()) if family != "e2m1" else True,
               "saturated_rows": saturation.nonzero().flatten().cpu().tolist(),
               "zero_rows": (x.float().abs().amax(1) == 0).nonzero().flatten().cpu().tolist(),
               "smallest_normal_unsaturated_j": min(candidates) if candidates else None}

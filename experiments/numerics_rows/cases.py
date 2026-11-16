@@ -51,16 +51,16 @@ def route_counts(m, width):
 
 def routing(m, experts, count, selected, top_k=8, seed=0):
     """Give the selected expert exactly count routes, with distinct IDs per token."""
-    if not 0 < count <= m or not 0 <= selected < experts or top_k >= experts:
+    selected = [selected] if isinstance(selected, int) else list(selected)
+    if not 0 < count <= m or not selected or len(set(selected)) != len(selected) or any(not 0 <= e < experts for e in selected) or len(selected) > top_k or top_k >= experts:
         raise ValueError("routing needs 0 < count <= M and top_k < experts")
     rng = random.Random(seed)
-    tokens = set(rng.sample(range(m), count))
-    choices = [e for e in range(experts) if e != selected]
+    tokens = {e: set(rng.sample(range(m), count)) for e in selected}
+    choices = [e for e in range(experts) if e not in selected]
     ids, weights = [], []
     for token in range(m):
-        row = rng.sample(choices, top_k - int(token in tokens))
-        if token in tokens:
-            row.append(selected)
+        row = [e for e in selected if token in tokens[e]]
+        row += rng.sample(choices, top_k - len(row))
         rng.shuffle(row)
         raw = [rng.uniform(0.1, 1.1) for _ in row]
         ids.append(row)
@@ -328,6 +328,22 @@ def column_coverage(weights, scales, family, quantizer, *, peer=None, peer_scale
             "uncovered": np.argwhere(~both)[:512].tolist()}
 
 
+
+def exact_chunks(weight, quantizer, configs, peer=None):
+    import torch
+    from experiments.numerics_rows.row import x_products
+    aq, _ = quantizer(1.0)
+    chunk = configs[0]["chunk_size"]
+    pairs = chunk_pairs(weight.shape[1], chunk)
+    split_cases = [split_columns(weight.shape[1], chunk, s) for s in sorted({c["k_split"] for c in configs}) if s > 1]
+    records = []
+    for columns in [*pairs, *split_cases]:
+        mask = x_products(weight[:, list(columns)].double() * aq)
+        if peer is not None:
+            mask &= x_products(peer[:, list(columns)].double() * aq)
+        records.append({"columns": list(columns), "x_elements": int(mask.sum()), "holds_for_a_row": bool(mask.any())})
+    return records
+
 def checkpoint_routed(store, entry):
     from types import SimpleNamespace
     from experiments.routed_pair_oracle import load_wires, load_input_scales
@@ -384,10 +400,14 @@ def main():
         family = {"TESSERA_FP8": "e4m3", "TESSERA_NVFP4": "e2m1", "TESSERA_BF16": "value"}[scheme["family"]]
         structure = scheme.get("structure", "dense")
         facts = {"name": entry["name"], "root": entry["root"], "family": family, "structure": structure,
-                 "roles": [], "complete": True}
+                 "roles": [n for n, _ in scheme.get("roles", [])], "experts": int(scheme.get("experts", 1)),
+                 "rows": int(scheme["rows"]) if structure == "dense" else int(scheme["groups"]["w13"]["rows"]),
+                 "cols": int(scheme["columns"]) if structure == "dense" else int(scheme["groups"]["w13"]["columns"]),
+                 "complete": True}
         manifest["modules"].append(facts)
         if structure == "routed_moe":
             _, blobs, input_scales = checkpoint_routed(store, entry)
+            facts["wire_sha256"] = {p: [hashlib.sha256(blob).hexdigest() for blob in wires] for p, wires in blobs.items()}
             from tessera.serving.nvfp4_moe_route import _static_input_global
             gs13 = float(_static_input_global(torch.tensor(input_scales["gate_proj"] + input_scales["up_proj"], dtype=torch.float32), "cpu")) if family == "e2m1" else 1.0
             gs2 = float(_static_input_global(torch.tensor(input_scales["down_proj"], dtype=torch.float32), "cpu")) if family == "e2m1" else 1.0
@@ -444,6 +464,7 @@ def main():
                     separated = column_coverage(weight.numpy(), ratio.numpy(), family, quantizer,
                         peer=None if peer is None else peer[0].numpy(), peer_scales=None if peer_scale is None else peer_scale.numpy(),
                         table=table, stage=stage, lut=lut)
+                    chunks = exact_chunks(weight, quantizer, local["m_configs"], None if peer is None else peer[0])
                     stamp = stamps[name]
                     format_entry = next(f for f in contract["formats"] if f["family"] == entry["contract_family"])
                     stamped = stamp in format_entry["attested_wire"]
@@ -458,8 +479,8 @@ def main():
                     local["roles"].append({"name": name, "expert": expert, "gs": gs, "reader_path": str(file), "reader_sha256": sha256(file),
                         "wire_stamp": stamp, "matches_attested_wire": stamped, "rows": weight.shape[0], "cols": weight.shape[1],
                         "runs_table": sorted(set(int(r) for r in parsed.unit.rates)), "lut": lut, **plans[name],
-                        "separation": separated, "scale_index": index})
-                    local["complete"] &= stamped and separated["complete"] and all(i["reads"] == i["reads_covered"] for i in index)
+                        "separation": separated, "scale_index": index, "chunks": chunks})
+                    local["complete"] &= stamped and separated["complete"] and all(i["reads"] == i["reads_covered"] for i in index) and all(c["holds_for_a_row"] for c in chunks)
                     facts["q256"] = stamp["q256"]
                     write_json(args.out / "case_manifest.json", manifest)
             facts["complete"] &= local["complete"]
@@ -523,6 +544,15 @@ def scale_index_manifest(weight, scale, family, stage, table, peer, peer_scale, 
             local_cases = [{**c, "input_row": selected_routes[0], "router_weight": f32_value(f32_bits(router_weights[selected_routes[0]]))} for c in cases]
             plans.append(make_plan(target, n, local_cases, table=table, metadata={**metadata, "M": m}))
         for name in activation_targets:
+            if experts > 1 and (mode0 and expert != 0 or not mode0 and expert >= 8):
+                continue
+            if experts > 1 and not mode0:
+                ids, routing_weights = routing(m, experts, m, list(range(8)))
+                flat = [e for row in ids for e in row]
+                flat_weights = [v for row in routing_weights for v in row]
+                order = sorted(range(len(flat)), key=flat.__getitem__)
+                selected_routes = [i for i, index in enumerate(order) if flat[index] == expert]
+                router_weights = [flat_weights[index] for index in order]
             groups = cols // 16 if name == "sfa" else 1
             selected = selected_routes
             read_cases = []
@@ -547,7 +577,8 @@ def scale_index_manifest(weight, scale, family, stage, table, peer, peer_scale, 
                                        "scale": name, "column": column, "input": source, "output_row": row, "input_row": input_row,
                                        "router_weight": f32_value(f32_bits(router_weights[input_row]))})
             metadata = {"N": routes * groups, "M": m, "target": name, "mode": 0 if mode0 else 2,
-                        "expert": expert, "projection": "gate_proj" if mode0 else "down_proj", "shared": mode0}
+                        "expert": expert, "projection": "gate_proj" if mode0 else "down_proj", "shared": mode0,
+                        **({"route_experts": list(range(8))} if experts > 1 and not mode0 else {})}
             plans.append(make_plan(name, routes * groups, read_cases, table=table, ue4m3=name == "sfa", metadata=metadata))
     return plans
 

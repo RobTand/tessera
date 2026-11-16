@@ -2,11 +2,12 @@
 from __future__ import annotations
 
 import copy
+import math
 from dataclasses import replace
 from fractions import Fraction as F
 
 from experiments.numerics_rows.reference import bf16, exact_input, multiply
-from experiments.numerics_rows.scale_index import evaluate, joint_coverage
+from experiments.numerics_rows.scale_index import evaluate, joint_coverage, scale_values
 
 
 def coded_native(native, target, values, mode):
@@ -52,9 +53,9 @@ def dense_launch(adapter, role, q, sf, target, values, recorder):
         if target == "row":
             bundle = replace(bundle, scale=torch.tensor(values, device=q.device, dtype=torch.float32).reshape_as(bundle.scale))
         if adapter.library == "triton":
-            recorder.call("scale-index:triton", "tessera", lambda: bundle(q, sf, out=out))
+            recorder.call("scale-index:triton", "tessera", lambda: bundle(q, sf if adapter.family == "e4m3" else None, out=out))
         else:
-            rf.dense_forward(rf.prepare_dense_role(bundle), q, sf, out, torch.zeros(1, device=q.device, dtype=torch.int32))
+            rf.dense_forward(rf.prepare_dense_role(bundle), q, sf if adapter.family == "e4m3" else None, out, torch.zeros(1, device=q.device, dtype=torch.int32))
     return out
 
 
@@ -84,7 +85,7 @@ def check(adapter, unit, manifest, recorder):
             mode = meta["mode"]
             down = routed and mode == 2
             if routed:
-                raw_ids, raw_weights = routing(m, adapter.experts, m, role["expert"])
+                raw_ids, raw_weights = routing(m, adapter.experts, m, meta.get("route_experts", role["expert"]))
                 ids, weights = torch.tensor(raw_ids, device="cuda"), torch.tensor(raw_weights, device="cuda", dtype=torch.float32)
                 routes = adapter.route(ids, weights)
             for case in cases.values():
@@ -107,20 +108,27 @@ def check(adapter, unit, manifest, recorder):
                 product = F(aq) * F(float(w[case["output_row"], case["column"]]))
                 if multiply(aq, float(w[case["output_row"], case["column"]])) != case["g"]:
                     raise Invalid("C1 scale case does not match the actual quantizer and reader")
+                if routed and mode == 0:
+                    peer, _ = adapter.weight(role["expert"], "up_proj")
+                    if multiply(aq, float(peer[case["output_row"], case["column"]])) != case["u"]:
+                        raise Invalid("C1 scale case has the wrong up dot")
                 for coding in plan["coding"]:
-                    if not exact_input([product * (F(coding["values"][case["read"][0]]) if plan["scale"] == "sfa" else 1)])["holds"]:
+                    if not exact_input([product * (F(scale_values(coding)[case["read"][0]]) if plan["scale"] == "sfa" else 1)])["holds"]:
                         raise Invalid("X false in a claimed scale-index case")
                     qq, ss = q, None if sf is None else sf.clone()
-                    vals = coding["values"]
+                    vals = scale_values(coding)
+                    expected = evaluate(case, case["read"], vals, table)
+                    if not math.isfinite(expected):
+                        raise Invalid("scale-index reference is not finite")
                     copied = adapter
                     rr = routes if routed else None
                     if plan["scale"] == "a_s":
-                        ss = torch.tensor(vals, device=q.device, dtype=torch.float32)
+                        ss = torch.tensor(list(vals), device=q.device, dtype=torch.float32)
                     elif plan["scale"] == "sfa":
-                        logical = torch.tensor(vals, device=q.device, dtype=torch.float32).to(torch.float8_e4m3fn).view(torch.uint8).reshape(rows, cols // 16)
+                        logical = torch.tensor(list(vals), device=q.device, dtype=torch.float32).to(torch.float8_e4m3fn).view(torch.uint8).reshape(rows, cols // 16)
                         ss.view(torch.uint8).reshape(rows, -1)[:, :cols // 16] = logical
                     elif plan["scale"] == "router":
-                        rr = replace(routes, rw_sorted=torch.tensor(vals, device=q.device, dtype=torch.float32))
+                        rr = replace(routes, rw_sorted=torch.tensor(list(vals), device=q.device, dtype=torch.float32))
                     elif routed:
                         copied = copy.copy(adapter)
                         copied.native = coded_native(adapter.native, plan["scale"], vals, mode)
@@ -139,7 +147,8 @@ def check(adapter, unit, manifest, recorder):
                     else:
                         out = dense_launch(adapter, role, qq, ss, plan["scale"], vals, recorder)
                         output_row = case["input_row"]
-                    ref = torch.tensor([evaluate(case, case["read"], vals, table)], device=q.device, dtype=torch.bfloat16)
+                    ref = torch.tensor([expected], device=q.device, dtype=torch.bfloat16)
                     got = out[output_row, case["output_row"]].reshape(1)
-                    result = compare_output(unit, f"scale-index:{role['name']}:{coding['family']}:{coding['digit']}:{case['read']}", got, ref)
+                    result = compare_output(unit, f"scale-index:{role['name']}:{coding['family']}:{coding['digit']}:{case['read']}", got, ref, operands={"input": case["input"], "column": case["column"], "read": case["read"],
+                        "scales": [vals[i] for i in case["read"]], "g": case["g"], "u": case["u"]})
                     record["mismatches"] += result["mismatches"]

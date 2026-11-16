@@ -18,30 +18,39 @@ def prepare(step, image, extra=()):
     out = Path(f"/mnt/shared/flux-jobs/tessera-1717-{step}-{revision[:8]}-{stamp}")
     out.mkdir()
     subprocess.run(["git", "clone", "--bare", "--no-hardlinks", str(ROOT), str(out / "repository.git")], check=True)
-    command = {"P": "build", "Q1": "quantizers", "H1": "h1", "CPU": "CPU"}[step.split("-")[0]]
+    command = {"P": "build", "Q1": "quantizers", "H1": "h1", "C1": "cases", "CPU": "cpu_checks"}[step.split("-")[0]]
     gpu = step.startswith(("Q1", "H1"))
     shape, minutes = ("core=2;memory=8;gpu=1", 9) if gpu else ("core=4;memory=8", 20)
     host = "sparklina"
-    if command == "CPU":
+    if command == "cases":
+        shape, minutes = "core=4;memory=32", 60
+    if command == "cpu_checks":
         shape, minutes, host = "core=4;memory=16", 30, "dl380g10"
     payload = shlex.join(["python3", "-m", f"experiments.numerics_rows.{command}", "--source", str(out / "cell"),
                           "--image", image, "--out", str(out / "results"), *extra])
     container = (f"podman run --rm --pull=never --cgroups=disabled --network=none "
                  f"{'--device nvidia.com/gpu=all ' if gpu else ''}"
                  f"-v /mnt/shared:/mnt/shared:ro -v {out}:{out}:rw -w {out}/code "
-                 f"--env TMPDIR={out}/scratch --env XDG_CACHE_HOME={out}/cache "
+                 f"--env HOME={out}/home --env TMPDIR={out}/scratch --env XDG_CACHE_HOME={out}/cache "
                  f"--env CUDA_CACHE_PATH={out}/cuda-cache --env VLLM_CACHE_ROOT={out}/vllm-cache "
                  f"--env TORCH_EXTENSIONS_DIR={out}/extensions --env TRITON_CACHE_DIR={out}/triton "
                  "--env OMP_NUM_THREADS=1 --env MKL_NUM_THREADS=1 --env OPENBLAS_NUM_THREADS=1 "
                  f"--env MAX_JOBS={2 if gpu else 4} --env TESSERA_PLATFORM_TOKEN=sm_121 "
                  f"--entrypoint /bin/bash {IMAGES[image]['local_id']} -euo pipefail -c {shlex.quote(payload)}")
+    if command == "cpu_checks":
+        container = f"env HOME={out}/home /home/rob/.local/bin/uv run --python 3.12 --no-project --with-requirements code/tools/ci/gate_torch_requirements.txt --with-requirements code/tools/ci/gate_requirements.txt {payload}"
     script = f'''#!/bin/bash
 set -euo pipefail
 cd {out}
-trap 'rc=$?; printf "%s\\n" "$rc" > tool-exit.txt; exit "$rc"' EXIT
+trap 'rc=$?; rm -rf -- scratch; test ! -e scratch || rc=3; printf "%s\\n" "$rc" > tool-exit.txt; exit "$rc"' EXIT
 export TMPDIR={out}/scratch
+export UV_CACHE_DIR={out}/cache/uv UV_PYTHON_INSTALL_DIR={out}/python
+export XDG_CACHE_HOME={out}/cache
+export PATH=/home/rob/.local/bin:$PATH
+export PYTHONPYCACHEPREFIX={out}/cache/pycache
+export PYTHONPATH={out}/cell/src:{out}/code
 export OMP_NUM_THREADS=1 MKL_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 MAX_JOBS={2 if gpu else 4}
-mkdir -p scratch cache results extensions triton
+mkdir -p scratch cache results extensions triton home cuda-cache vllm-cache
 # The cell source stays separate from the implementation source.
 git clone --shared repository.git code
 git -C code checkout --detach {revision}
@@ -68,7 +77,7 @@ printf '%s  %s\\n' 8a1536dfbc3df70edbdc37001a0db6947e97d9263926bc85a4d4d3ca231ea
 
 if __name__ == "__main__":
     p = argparse.ArgumentParser(description=__doc__)
-    p.add_argument("step", choices=("P-G", "P-N", "Q1-G", "Q1-N", "H1-G", "H1-N", "CPU"))
+    p.add_argument("step", choices=("P-G", "P-N", "Q1-G", "Q1-N", "H1-G", "H1-N", "C1-G", "C1-N", "CPU"))
     p.add_argument("--image", choices=IMAGES, required=True)
     args, extra = p.parse_known_args()
     prepare(args.step, args.image, extra)

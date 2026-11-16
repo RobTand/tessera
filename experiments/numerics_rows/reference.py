@@ -116,5 +116,5 @@ def compare(got, ref):
         index = tuple(indices[0].tolist())
         first = {"index": list(index), "got_bits": int(got.view(torch.int16)[index]) & 65535,
                  "ref_bits": int(ref.view(torch.int16)[index]) & 65535}
-    return {"equal": not bool(unequal.any()), "mismatches": int(unequal.sum()),
+    return {"equal": not bool(unequal.any()), "elements": got.numel(), "mismatches": int(unequal.sum()),
             "signed_zero_diffs": int(signed.sum()), "first_mismatch": first}

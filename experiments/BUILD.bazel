@@ -578,19 +578,42 @@ ts_py_library(
         "dense_fused_ncu.py",
     ],
     deps = [
-        ":dense_fused_oracle",
+        ":dense_fused_oracle_cycle",
     ],
 )
 
 ts_py_library(
-    name = "dense_fused_oracle",
+    name = "dense_fused_oracle_cycle",
     srcs = [
         "dense_fused_oracle.py",
+        "numerics_rows/cases.py",
+        "numerics_rows/h1.py",
+        "numerics_rows/quantizers.py",
+        "numerics_rows/routed.py",
+        "numerics_rows/row.py",
+        "numerics_rows/run_routed.py",
+        "numerics_rows/scale_index.py",
+        "numerics_rows/scale_launch.py",
+    ],
+    data = [
+        "//src/tessera:serving/runtime_contract.json",
     ],
     deps = [
         "//src/tessera:__init___cycle",
+        "//src/tessera:_dev/__init__",
+        "//src/tessera:_dev/native_identity",
         "//src/tessera:bf16_route_cycle",
+        "//src/tessera:decode",
+        "//src/tessera:fused",
+        "//src/tessera:kernel_a4",
+        "//tests:test_dense_fused_window_lib",
+        "//tests:window_gemm_grouped_support",
+        ":numerics_rows/common",
+        ":numerics_rows/reference",
+        ":numerics_rows/sass_slice",
         ":routed_pair_oracle",
+        ":t4_code/fp4_arithmetic_attest",
+        ":t4_code/fused_e2m1_check",
     ],
 )
 
@@ -1950,6 +1973,78 @@ ts_py_library(
     deps = [
         "//src/tessera:__init___cycle",
         "//src/tessera:bf16_route_cycle",
+    ],
+)
+
+ts_py_library(
+    name = "numerics_rows/build",
+    srcs = [
+        "numerics_rows/build.py",
+    ],
+    data = [
+        "numerics_rows/swiglu_probe.cu",
+    ],
+    deps = [
+        "//src/tessera:__init___cycle",
+        "//src/tessera:bf16_route_cycle",
+        ":numerics_rows/common",
+    ],
+)
+
+ts_py_library(
+    name = "numerics_rows/common",
+    srcs = [
+        "numerics_rows/common.py",
+    ],
+    data = [
+        "//src/tessera:serving/csrc/routed_fused_window.cu",
+    ],
+)
+
+ts_py_library(
+    name = "numerics_rows/cpu_checks",
+    srcs = [
+        "numerics_rows/cpu_checks.py",
+    ],
+    data = [
+        "//tools/bazel:build_files.py",
+    ],
+    deps = [
+        ":numerics_rows/common",
+    ],
+)
+
+ts_py_library(
+    name = "numerics_rows/prepare_job",
+    srcs = [
+        "numerics_rows/prepare_job.py",
+    ],
+    data = [
+        "numerics_rows/README.md",
+    ],
+    deps = [
+        ":numerics_rows/common",
+    ],
+)
+
+ts_py_library(
+    name = "numerics_rows/reference",
+    srcs = [
+        "numerics_rows/reference.py",
+    ],
+    deps = [
+        ":t4_code/fp4_arithmetic_attest",
+    ],
+)
+
+ts_py_library(
+    name = "numerics_rows/sass_slice",
+    srcs = [
+        "numerics_rows/sass_slice.py",
+    ],
+    deps = [
+        ":numerics_rows/common",
+        ":t4_code/sass_dump",
     ],
 )
 
