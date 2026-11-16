@@ -14682,6 +14682,8 @@ ts_py_library(
     deps = [
         "//experiments:dense_fused_oracle_cycle",
         "//experiments:numerics_rows/common",
+        "//src/tessera:__init___cycle",
+        "//src/tessera:bf16_route_cycle",
     ],
 )
 
