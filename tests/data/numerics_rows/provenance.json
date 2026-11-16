@@ -8,7 +8,8 @@
     "probe": {
       "path": "/mnt/shared/flux-jobs/tessera-1717-P-G-234d6cef-20261116T085416Z/results/e2m1.probe.sass",
       "sha256": "ce9a421d993c038e37a714bd737eaca0f2ea4b6b59c670c796612ff0e66da0e4",
-      "excerpt_sha256": "d510aa63f7a9d8cd80fe4abf7e5d1ffee96cbd354920f192965ab6582c7424cd"
+      "excerpt_sha256": "d510aa63f7a9d8cd80fe4abf7e5d1ffee96cbd354920f192965ab6582c7424cd",
+      "excerpt": "swiglu.probe.sass"
     },
     "function": "_ZN55_GLOBAL__N__2594e719_22_routed_fused_window_cu_2a20e8a53fp423routed_fused_fp4_kernelILi0ELb0ELb0ELi7ELb1EEEvNS0_6ParamsE",
     "gf_pc": 32768,
@@ -25,7 +26,8 @@
     "probe": {
       "path": "/mnt/shared/flux-jobs/tessera-1717-P-G-234d6cef-20261116T085416Z/results/e4m3mma.probe.sass",
       "sha256": "b3b2b6cc6bd3990a8028a678af6d5ff7e1405cef7bab0657d463190d19ad1c62",
-      "excerpt_sha256": "d510aa63f7a9d8cd80fe4abf7e5d1ffee96cbd354920f192965ab6582c7424cd"
+      "excerpt_sha256": "d510aa63f7a9d8cd80fe4abf7e5d1ffee96cbd354920f192965ab6582c7424cd",
+      "excerpt": "swiglu.probe.sass"
     },
     "function": "_ZN55_GLOBAL__N__2594e719_22_routed_fused_window_cu_60b71ba819routed_fused_kernelILb1ELi0ELb0ELb0ELi7ELb1ELi128ELb0ELb0EEEvNS_6ParamsE",
     "gf_pc": 27184,
@@ -42,7 +44,8 @@
     "probe": {
       "path": "/mnt/shared/flux-jobs/tessera-1717-P-G-234d6cef-20261116T085416Z/results/e4m3.probe.sass",
       "sha256": "b3b2b6cc6bd3990a8028a678af6d5ff7e1405cef7bab0657d463190d19ad1c62",
-      "excerpt_sha256": "d510aa63f7a9d8cd80fe4abf7e5d1ffee96cbd354920f192965ab6582c7424cd"
+      "excerpt_sha256": "d510aa63f7a9d8cd80fe4abf7e5d1ffee96cbd354920f192965ab6582c7424cd",
+      "excerpt": "swiglu.probe.sass"
     },
     "function": "_ZN55_GLOBAL__N__2594e719_22_routed_fused_window_cu_60b71ba819routed_fused_kernelILb1ELi0ELb0ELb0ELi7ELb1ELi64ELb0ELb0EEEvNS_6ParamsE",
     "gf_pc": 24400,
@@ -59,7 +62,8 @@
     "probe": {
       "path": "/mnt/shared/flux-jobs/tessera-1717-P-N-234d6cef-20261116T085427Z/results/value.probe.sass",
       "sha256": "d11f4b5013d4e237b2e8ab537f05d793d72c3e8c8f1a110734bbbe09e666adf6",
-      "excerpt_sha256": "d510aa63f7a9d8cd80fe4abf7e5d1ffee96cbd354920f192965ab6582c7424cd"
+      "excerpt_sha256": "d510aa63f7a9d8cd80fe4abf7e5d1ffee96cbd354920f192965ab6582c7424cd",
+      "excerpt": "swiglu.probe.sass"
     },
     "function": "_ZN55_GLOBAL__N__dc3338cd_22_routed_fused_window_cu_60b71ba819routed_fused_kernelILb0ELi0ELb0ELb0ELi7ELb1ELi64ELb0ELb0EEEvNS_6ParamsE",
     "gf_pc": 23760,

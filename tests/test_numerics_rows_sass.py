@@ -264,7 +264,7 @@ def test_shift_equivalence_rejects_every_other_form(opcode, operands):
 def real_slice(key, kind, text=None):
     root = Path(__file__).parent / "data" / "numerics_rows"
     record = json.loads((root / "provenance.json").read_text())[key]
-    path = root / f"{key}.{kind}.sass"
+    path = root / record[kind].get("excerpt", f"{key}.{kind}.sass")
     assert sha256(path) == record[kind]["excerpt_sha256"]
     functions = instructions(path.read_text() if text is None else text)
     name, = functions
