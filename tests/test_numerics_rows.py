@@ -257,6 +257,33 @@ def test_compact_passes_keep_the_same_joint_coverage():
     assert [list(scale_values(entry)) for entry in compact["coding"]] == [entry["values"] for entry in full["coding"]]
 
 
+@pytest.mark.parametrize("family", ("e4m3", "e2m1"))
+@pytest.mark.parametrize("stage", ("dense", "gate"))
+def test_scale_cases_need_only_the_first_coordinate_per_group(monkeypatch, family, stage):
+    import numpy as np
+    from experiments.numerics_rows.cases import scale_index_manifest
+    class Quantizer:
+        gs, normal_j = 1.0, 0
+        def __call__(self, value):
+            return value, 1.0
+        raw = staticmethod(float)
+    weight = torch.zeros(2, 32, dtype=torch.float64)
+    weight[0, 3], weight[1, 5], weight[0, 18] = 1, 2, 4
+    peer = torch.zeros_like(weight)
+    peer[1, 5], peer[0, 18] = 3, 5
+    def full_coordinates(_):
+        pytest.fail("C1 allocates all nonzero coordinates for each input row")
+    monkeypatch.setattr(np, "argwhere", full_coordinates)
+    gate = stage == "gate"
+    plans = scale_index_manifest(weight, torch.ones(2), family, stage, Table() if gate else None,
+        (peer, torch.ones(2)) if gate else None, torch.ones(2) if gate else None,
+        Quantizer(), 1, 0, [{"M": 1}, {"M": 8}])
+    target = "sfa" if family == "e2m1" else "a_s"
+    expected = ([(1, 5), (0, 18)] if gate else [(0, 3), (0, 18)]) if target == "sfa" else [(0, 18) if gate else (0, 3)]
+    for plan in (p for p in plans if p["scale"] == target):
+        assert [(c["output_row"], c["column"]) for c in plan["read_cases"]] == expected * plan["array"]["M"]
+
+
 def test_generator_reports_a_weight_without_separation():
     import numpy as np
     from experiments.numerics_rows.cases import column_coverage

@@ -5,7 +5,6 @@ import argparse
 from collections import Counter
 from fractions import Fraction as F
 import hashlib
-import itertools
 import json
 import math
 from pathlib import Path
@@ -16,7 +15,7 @@ import time
 
 from experiments.numerics_rows.common import artifact_limit, check_runtime, check_source, sha256, write_json
 from experiments.numerics_rows.quantizers import PHASES
-from experiments.numerics_rows.reference import bf16, bf16_array, exact_input, f32_bits, f32_value, multiply, output
+from experiments.numerics_rows.reference import bf16, bf16_array, f32_bits, f32_value, multiply
 
 D2 = (1, 2, 8, 64, 65, 128, 512, 2048)
 COUNTS = {1: (1,), 2: (1, 2), 8: (1, 5, 8), 64: (1, 37, 64),
@@ -122,36 +121,6 @@ def alphabet(family, lut=()):
         return sorted({sign * float(ue4m3(i)) for i in range(127) for sign in (1, -1)})
     e2 = (0, 0.5, 1, 1.5, 2, 3, 4, 6)
     return sorted({sign * float(v) * float(scale) for v in e2 for scale in lut for sign in (1, -1)})
-
-
-def separation(weight, values, evaluate, *, stage="dense"):
-    """Evaluate adjacent values through the served stage, including its clamp."""
-    import bisect
-
-    pos = bisect.bisect_left(values, weight)
-    if pos == len(values) or values[pos] != weight:
-        raise ValueError("decoded weight is outside the value set")
-    lower, upper = pos == 0, pos == len(values) - 1
-    by_sign = {"positive": [False, False], "negative": [False, False]}
-    cases = []
-    for case, activation in evaluate.inputs:
-        actual = evaluate(weight, activation)
-        if not math.isfinite(actual):
-            raise ValueError("reference is not finite")
-        left = pos == 0 or evaluate(values[pos - 1], activation) != actual
-        right = pos == len(values) - 1 or evaluate(values[pos + 1], activation) != actual
-        if stage == "gate" and actual != 0:
-            gf, uf, limit = evaluate.gate_state(weight, activation)
-            if not (0 < gf < limit and actual * uf > 0):
-                left = right = False
-        lower, upper = lower or left, upper or right
-        sign = "positive" if activation > 0 else "negative"
-        by_sign[sign][0] |= left
-        by_sign[sign][1] |= right
-        cases.append(case)
-        if lower and upper:
-            break
-    return {"lower_excluded": lower, "upper_excluded": upper, "both": lower and upper, "by_sign": by_sign, "cases": cases}
 
 
 class DTable:
@@ -433,7 +402,6 @@ def main():
     check_source(args.source)
     check_runtime(args.image)
     sys.path.insert(0, str(args.source / "src"))
-    import tessera
     import torch
     from experiments.numerics_rows.population import load_signed_population, store_for
     from tessera.lane_planes import lut_scale_bytes
@@ -573,6 +541,9 @@ def scale_index_manifest(weight, scale, family, stage, table, peer, peer_scale, 
     if stage == "up":
         return []  # The gate role owns the joint gate/up array and its read tuples.
     rows, cols = w.shape
+    width = 16 if family == "e2m1" else cols
+    support = (w != 0) & ((other != 0) if mode0 else True)
+    first = [divmod(int(support[:, start:start + width].argmax()), width) for start in range(0, cols, width)]
     target = "ratio" if family == "e2m1" else "row"
     cases = []
     for row in range(rows if target == "row" else 1):
@@ -627,8 +598,7 @@ def scale_index_manifest(weight, scale, family, stage, table, peer, peer_scale, 
             read_cases = []
             for input_row in selected:
                 for group in range(groups):
-                    candidates = np.argwhere((w[:, group*16:(group+1)*16] != 0) & ((other[:, group*16:(group+1)*16] != 0) if mode0 else True)) if name == "sfa" else np.argwhere((w != 0) & ((other != 0) if mode0 else True))
-                    row, column = (int(x) for x in candidates[0]) if len(candidates) else (0, 0)
+                    row, column = first[group] if name == "sfa" else first[0]
                     if name == "sfa":
                         column += group * 16
                     source = sweep_values(family, gs=quantizer.gs, normal_j=quantizer.normal_j)[0]
