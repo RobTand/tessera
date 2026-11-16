@@ -403,7 +403,7 @@ def run(args, receipt):
     if len(keys) != 1:
         raise Invalid("a row must contain one library arm")
     key, = keys
-    if h1["build_sha256"] != sha256(args.build) or h1["P1"]["mismatches"] or any(not v.get("P4") or not v.get("P5", True) for v in h1["libraries"].values()):
+    if h1.get("preconditions_confirmed") is not True or h1["build_sha256"] != sha256(args.build) or h1["P1"]["mismatches"] or any(not v.get("P4") or not v.get("P5", True) for v in h1["libraries"].values()):
         raise Invalid("H1 did not confirm this binary set before the freeze")
     q1 = json.loads(args.q1.read_text())
     loaded = install_libraries(built["libraries"])
@@ -426,7 +426,7 @@ def run(args, receipt):
                          "so_sha256": library["probe"]["sha256"], "L_bits": d["L_bits"], "dom_size": d["dom_size"],
                          "d_table_sha256": d["d_table_sha256"], "d_nondecreasing_0_L": d["d_nondecreasing_0_L"],
                          "sass_slice": slices[key]},
-               "inputs": {"case_manifest_sha256": sha256(args.manifest), "q1_table_sha256": sha256(args.q1), "reference_selftest": selftest()},
+               "inputs": {"case_manifest_sha256": sha256(args.manifest), "q1_table_sha256": sha256(args.q1), "reference_selftest": selftest(device="cuda")},
                "negative_controls": negative_controls()})
     exit_status = 0
     try:

@@ -83,24 +83,67 @@ def output(products, scales):
     return bf16(result)
 
 
-def selftest(samples=1_000_000):
+def bf16_array(values):
+    import numpy as np
+
+    value = np.asarray(values, dtype=np.float32)
+    bits = value.view(np.uint32)
+    rounded = (bits + np.uint32(0x7FFF) + ((bits >> 16) & 1)) & np.uint32(0xFFFF0000)
+    return rounded.view(np.float32)
+
+
+
+def selftest(samples=1_000_000, *, device="cpu"):
+    import numpy as np
+    import torch
     from experiments.t4_code.fp4_arithmetic_attest import round32
 
-    rng, mismatches, ties = random.Random(0), 0, 0
+    rng, mismatches, ties, subnormal_ties, bf16_subnormal_ties = random.Random(0), 0, 0, 0, 0
+    a, b = np.empty(samples, dtype=np.float32), np.empty(samples, dtype=np.float32)
+    products = np.empty(samples, dtype=np.float64)
+    expected_mul, expected_add = np.empty_like(a), np.empty_like(a)
+    bf_inputs, expected_bf = np.empty_like(a), np.empty_like(a)
     for i in range(samples):
-        exponent = rng.randrange(-149, 104)
-        numerator = rng.randrange(1, 2**24)
-        if i % 2 == 0:
-            # Midpoint between adjacent normal FP32 values, including an odd/even lower endpoint.
-            value = F(2 * (2**23 + numerator % 2**23) + 1) * power(rng.randrange(-126, 127) - 24)
+        if i % 4 == 0:
+            # An odd subnormal times 1/2 is an FP32 midpoint, including the zero tie.
+            n = 0 if i == 0 else 2**22 - 1 if i == 4 else rng.randrange(2**22)
+            left, right = f32_value(2 * n + 1), 0.5
+            subnormal_ties += 1
+            ties += 1
+        elif i % 2 == 0:
+            # An odd 24-bit significand times 3/2 gives a normal midpoint.
+            left = math.ldexp(2**23 + 2 * rng.randrange(2**20) + 1, rng.randrange(-120, 121) - 23)
+            right = 1.5
             ties += 1
         else:
-            value = F(rng.randrange(1, 2**40)) * power(exponent - 16)
+            left = rn32(math.ldexp(rng.randrange(2**23, 2**24), rng.randrange(-149, 126) - 23))
+            right = math.ldexp(rng.randrange(2**23, 2**24), -23)
         if i & 2:
-            value = -value
-        actual = rn32(value)
-        mismatches += F(actual) != round32(value)
-    return {"samples": samples, "ties": ties, "mismatches": mismatches}
+            left = -left
+        a[i], b[i] = left, right
+        product, total = F(left) * F(right), F(left) + F(right)
+        products[i] = float(product)
+        expected_mul[i], expected_add[i] = float(round32(product)), float(round32(total))
+        mismatches += rn32(product) != expected_mul[i] or rn32(total) != expected_add[i]
+        if i % 4 == 0:
+            value = math.ldexp(2 * (i // 4 % 128) + 1, -134)
+            bf_inputs[i] = -value if i & 4 else value
+            bf16_subnormal_ties += 1
+        else:
+            bf_inputs[i] = expected_mul[i]
+        expected_bf[i] = bf16(float(bf_inputs[i]))
+    ta, tb = torch.from_numpy(a).to(device), torch.from_numpy(b).to(device)
+    actual = {"numpy.multiply": a * b, "numpy.add": a + b,
+              "numpy.cast": products.astype(np.float32),
+              "numpy.bf16": bf16_array(bf_inputs),
+              "torch.multiply": (ta * tb).cpu().numpy(), "torch.add": (ta + tb).cpu().numpy(),
+              "torch.cast": torch.from_numpy(products).to(device).float().cpu().numpy(),
+              "torch.bf16": torch.from_numpy(bf_inputs).to(device).to(torch.bfloat16).float().cpu().numpy()}
+    counts = {name: int(np.count_nonzero(values != (expected_bf if name.endswith("bf16") else
+               expected_mul if name.endswith(("multiply", "cast")) else expected_add))) for name, values in actual.items()}
+    return {"samples": samples, "ties": ties, "subnormal_ties": subnormal_ties,
+            "bf16_subnormal_ties": bf16_subnormal_ties, "device": device, "backends": counts,
+            "mismatches": mismatches + sum(counts.values())}
 
 
 def compare(got, ref):

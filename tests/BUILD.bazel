@@ -4614,6 +4614,7 @@ ts_py_library(
         "test_dense_fused_window.py",
     ],
     deps = [
+        "//experiments:numerics_rows/synthetic",
         "//src/tessera:__init___cycle",
         "//src/tessera:bf16_route_cycle",
         "//src/tessera:errors",
@@ -23637,6 +23638,7 @@ ts_py_library(
         "//src/tessera:structure.py",
     ],
     deps = [
+        "//experiments:numerics_rows/synthetic",
         "//src/tessera:__init___cycle",
         "//src/tessera:bf16_route_cycle",
     ],

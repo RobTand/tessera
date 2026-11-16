@@ -91,7 +91,7 @@ class Routed:
         codes = torch.stack((packed & 15, packed >> 4), dim=-1).reshape(x.shape[0], cols)
         blocks = sf.view(torch.uint8).reshape(x.shape[0], -1)[:, :cols // 16].contiguous().view(torch.float8_e4m3fn)
         a = e2m1_table(x.device)[codes.long()] * blocks.double().repeat_interleave(16, dim=1)
-        return q, sf.view(torch.uint8), a, None
+        return q.contiguous(), sf.view(torch.uint8).contiguous(), a, None
 
     def route(self, ids, weights):
         return self.native._routing(ids, weights)

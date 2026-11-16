@@ -606,11 +606,11 @@ ts_py_library(
         "//src/tessera:decode",
         "//src/tessera:fused",
         "//src/tessera:kernel_a4",
-        "//tests:test_dense_fused_window_lib",
         "//tests:window_gemm_grouped_support",
         ":numerics_rows/common",
         ":numerics_rows/reference",
         ":numerics_rows/sass_slice",
+        ":numerics_rows/synthetic",
         ":routed_pair_oracle",
         ":t4_code/fp4_arithmetic_attest",
         ":t4_code/fused_e2m1_check",
@@ -2050,6 +2050,19 @@ ts_py_library(
     deps = [
         ":numerics_rows/common",
         ":t4_code/sass_dump",
+    ],
+)
+
+ts_py_library(
+    name = "numerics_rows/synthetic",
+    srcs = [
+        "numerics_rows/synthetic.py",
+    ],
+    deps = [
+        "//src/tessera:__init___cycle",
+        "//src/tessera:bf16_route_cycle",
+        "//src/tessera:decode",
+        "//src/tessera:fused",
     ],
 )
 

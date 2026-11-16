@@ -5,6 +5,7 @@ import argparse
 import dataclasses
 import importlib.util
 import json
+import os
 from pathlib import Path
 import subprocess
 import sys
@@ -77,11 +78,11 @@ def p2_ties(recorder):
 def dense_preconditions(key, recorder):
     import torch
     from experiments import dense_fused_oracle as dense
-    from test_dense_fused_window import _encode_module
+    from experiments.numerics_rows.synthetic import encode_module
     from tessera import routed_fused as rf
 
     family = "value" if key == "value" else "e4m3"
-    blob, scheme, _ = _encode_module(family, [("gate_proj", 512), ("up_proj", 512)], 256, q256=1024)
+    blob, scheme, _ = encode_module(family, [("gate_proj", 512), ("up_proj", 512)], 256, q256=1024)
     class SyntheticStore:
         schemes = {"synthetic.gate_up_proj": scheme}
         def wire(self, name):
@@ -112,10 +113,10 @@ def dense_preconditions(key, recorder):
 def routed_preconditions(key, recorder):
     import torch
     from experiments import routed_pair_oracle as routed
-    from test_dense_fused_window import _encode_module
+    from experiments.numerics_rows.synthetic import encode_module
 
     routed.HIDDEN, routed.INTER, routed.TOP_K = 256, 512, 2
-    blobs = {p: [_encode_module("value" if key == "value" else "e4m3", [(p, rows)], cols, q256=1024, seed=e)[0] for e in range(2)]
+    blobs = {p: [encode_module("value" if key == "value" else "e4m3", [(p, rows)], cols, q256=1024, seed=e)[0] for e in range(2)]
              for p, rows, cols in (("gate_proj", 512, 256), ("up_proj", 512, 256), ("down_proj", 256, 512))}
     family = {"family": "TESSERA_BF16" if key == "value" else "TESSERA_FP8"}
     scheme, _ = routed.scheme_for(family, blobs, 2)
@@ -265,6 +266,7 @@ def e2m1_routed_preconditions(recorder):
     x = torch.zeros(2, 512, device="cuda", dtype=torch.bfloat16)
     x[:, 0] = 1
     q, sf = recorder.call("H1:e2m1:routed-quantizer", "quantizer", lambda: quantize("e2m1", x, float(native.gs2)))
+    q, sf = q.contiguous(), sf.view(torch.uint8).contiguous()
     got, changed = (torch.empty(2, 256, device="cuda", dtype=torch.bfloat16) for _ in range(2))
     for owner, out, name in ((correct, got, "correct"), (wrong, changed, "wrong-index")):
         recorder.call("H1:e2m1:" + name, "tessera", lambda: owner._launch(2, q, sf, routes, a_row_mode=1, mul_weight=False, limit=float("inf"), out=out, counter=1))
@@ -329,7 +331,7 @@ def main():
     args.out.mkdir(parents=True, exist_ok=True)
     registration = register_native_ops(args.image)
     write_json(args.out / "native_ops.json", registration)
-    report = {"native_ops": registration, "build_sha256": sha256(args.build), "P1": selftest(), "boundaries": [], "libraries": {}, "cuda_controls": [], "negative_controls": negative_controls()}
+    report = {"native_ops": registration, "build_sha256": sha256(args.build), "P1": selftest(device="cuda"), "boundaries": [], "libraries": {}, "cuda_controls": [], "negative_controls": negative_controls()}
     recorder = BoundaryRecorder(torch.cuda.synchronize, report["boundaries"])
     built = json.loads(args.build.read_text())
     loaded = install_libraries(built["libraries"])
@@ -347,7 +349,8 @@ def main():
                 report["libraries"][key] = {"error": str(error), "traceback": traceback.format_exc()}
             write_json(args.out / "h1.json", report)
     for where in ("inside", "outside"):
-        run = subprocess.run([sys.executable, "-m", "experiments.numerics_rows.h1", "--cuda-control", where, "--image", args.image], capture_output=True, text=True)
+        env = {**os.environ, "PYTHONPATH": os.pathsep.join((str(args.source.resolve() / "src"), str(Path(__file__).resolve().parents[2])))}
+        run = subprocess.run([sys.executable, "-m", "experiments.numerics_rows.h1", "--cuda-control", where, "--image", args.image], env=env, capture_output=True, text=True)
         report["cuda_controls"].append({"where": where, "exit_status": run.returncode, "stdout": run.stdout, "stderr": run.stderr,
             "scope": "harness check of CUDA error attribution, not of the cell kernel",
             "injection": "async device assert in a helper kernel; cell binary unchanged"})

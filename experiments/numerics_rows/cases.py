@@ -15,7 +15,7 @@ import time
 
 from experiments.numerics_rows.common import check_runtime, check_source, sha256, write_json
 from experiments.numerics_rows.quantizers import PHASES
-from experiments.numerics_rows.reference import bf16, exact_input, f32_bits, f32_value, multiply, output
+from experiments.numerics_rows.reference import bf16, bf16_array, exact_input, f32_bits, f32_value, multiply, output
 
 D2 = (1, 2, 8, 64, 65, 128, 512, 2048)
 COUNTS = {1: (1,), 2: (1, 2), 8: (1, 5, 8), 64: (1, 37, 64),
@@ -248,15 +248,6 @@ class QuantizerTable:
 
     def raw(self, value):
         return self.codes[f32_bits(value) >> 16]
-
-
-def bf16_array(values):
-    import numpy as np
-
-    value = np.asarray(values, dtype=np.float32)
-    bits = value.view(np.uint32)
-    rounded = (bits + np.uint32(0x7FFF) + ((bits >> 16) & 1)) & np.uint32(0xFFFF0000)
-    return rounded.view(np.float32)
 
 
 def column_coverage(weights, scales, family, quantizer, *, peer=None, peer_scales=None, table=None, stage="dense", lut=()):

@@ -216,7 +216,9 @@ def test_rn_ties_and_signed_zero():
     assert bf16(1 + 2**-8) == 1
     assert math.copysign(1, bf16(-0.0)) == -1
     result = selftest(samples=100)
-    assert result == {"samples": 100, "ties": 50, "mismatches": 0}
+    assert result["samples"] == 100 and result["ties"] == 50
+    assert result["subnormal_ties"] == result["bf16_subnormal_ties"] == 25
+    assert result["mismatches"] == 0 and not any(result["backends"].values())
 
 
 def test_compact_passes_keep_the_same_joint_coverage():
