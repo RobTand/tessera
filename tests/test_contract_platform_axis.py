@@ -257,14 +257,11 @@ def test_v46_publishes_the_e4m3_instruction_library(contract):
 
 
 def test_v47_attests_the_e4m3_instruction_pairs_on_every_e4m3_cell(contract):
-    """v47: the two E4M3-instruction pairs leave ``scheme.EXPERIMENTAL_LAUNCHES``.
+    """Keep v47 instruction pairs except for the measured v70 IMG-N class scope.
 
-    The library's lane reaches every rung of every E4M3 cell, so the pairs
-    enter all six E4M3 cells at once -- the dense pair on the four dense
-    cells, the routed pair on the two routed cells -- each on a served census
-    of its own image.  No other cell names either decoder: the BF16 and E2M1
-    families do not dispatch the library.  The 16-bit library's pairs stay
-    beside them (``TESSERA_FUSED_E4M3_MMA=f16``)."""
+    Issue #1699 binds the two IMG-N routed cells to a separate TP2 receipt.
+    All other E4M3 cells retain their historical instruction pairs.
+    """
     from tessera.serving.scheme import EXPERIMENTAL_LAUNCHES
 
     assert int(contract["contract_version"]) >= 47
@@ -282,6 +279,12 @@ def test_v47_attests_the_e4m3_instruction_pairs_on_every_e4m3_cell(contract):
         if cell["structure"] == "dense":
             assert {"native_fused_window_dense", dense_mma} <= decoders, cell["id"]
             assert routed_mma not in decoders, cell["id"]
+        elif cell["runtime"]["image"] == NIGHTLY_IMAGE:
+            # #1699: glm53_img_n_v70_tp2_census.json measures this exact pair.
+            assert cell["id"] in nightly_ids("routed_moe"), cell["id"]
+            assert {(e["symbol"], e["decoder"]) for e in cell["executes"]} == {
+                ("tessera.routed_fused.FusedRoutedWindowMoE.__call__",
+                 "native_routed_window_classes_e4m3mma")}, cell["id"]
         else:
             assert {"native_routed_fused_window", routed_mma} <= decoders, cell["id"]
             assert dense_mma not in decoders, cell["id"]
@@ -293,8 +296,7 @@ def test_v47_attests_the_e4m3_instruction_pairs_on_every_e4m3_cell(contract):
         "tessera_e4m3_k1_dense_sm121_batch_resident": "sha256:f8dbe1a0",
         "tessera_e4m3_k1_routed_moe_sm121_decode_resident": "sha256:f8dbe1a0",
         "tessera_e4m3_k1_routed_moe_sm121_batch_resident": "sha256:f8dbe1a0",
-        # Contract v48 (tessera#702): the same four scopes on the vLLM nightly,
-        # censused there with the instruction as the dispatch.
+        # V48 minted four IMG-N scopes. V70 gives its routed cells a class receipt.
         **{cell_id: "sha256:5be13705" for cell_id in nightly_ids()
            if cell_id.startswith("tessera_e4m3_k1_")},
     }

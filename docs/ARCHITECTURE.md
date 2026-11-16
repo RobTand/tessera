@@ -1,5 +1,10 @@
 # Tessera plan-to-serve architecture
 
+Re-stamped 2026-11-16 for #1699. Contract v70 names the IMG-N routed E4M3 class decoder.
+The two eager resident cells retain R896, R928, R1024 and R1088.
+The TP2 census records both ranks and all four rungs.
+The full 82-file CPU proof passes: 1,887 tests pass and 24 skip. Grade remains `route_only`.
+
 Re-stamped 2026-11-16 for #1717 arithmetic receipt and measured-scope checks.
 `validate_serving_contract(..., require_arithmetic=True)` requires
 `evidence.arithmetic {receipt, sha256, scope}` on each `cell_is_device_backed` cell.

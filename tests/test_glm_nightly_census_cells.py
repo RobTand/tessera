@@ -1,34 +1,11 @@
-"""The four GLM E4M3 cells on the vLLM nightly image rest on committed receipts.
+"""Keep the historical IMG-N census and check its current contract agreement.
 
-Contract v48 (tessera#702) minted the E4M3/BF16 dense and routed GLM-image
-scopes on the image the GLM-5.3 release serves on: the eugr nightly
-155ce16b with the nccl230 layer, vLLM 0.30.1rc1.dev336. Until then every GLM
-cell named ``f8dbe1a0`` (vLLM 0.28.1rc1.dev397, the GLM53 NoPE plugin, vLLM's
-CUSTOM attention), so a serve on the nightly resolved every Tessera module to
-no cell. The first receipt is one TP1 eager route census of u1 stub B on the
-nightly with the NoPE plugin off and the image's own attention
-(``FLASHINFER_MLA_SPARSE_SM120``), committed byte for byte with its serve log
-under ``experiments/results/``. This module replays the census tool's join
-against the packaged table. The additional R768 TP2 receipt remains
-historical evidence. It does not expand the runtime twins (tessera#1080).
-
-What it pins:
-
-1. the stub-B receipt is the one the cells cite: same checkpoint config as
-   the f8dbe1a0 stub-B receipts, the nightly image and toolchain, the NoPE
-   plugin off, no attention override, and the serve log naming the image's
-   backend;
-2. every served E4M3 module joins a nightly cell in both phases, and the BF16
-   records join none in this historical replay. Contract v59 withdrew their
-   folded claims. Contract v68 reuses the four IDs with new scope receipts;
-   those cells refuse the old folded launches. The fail-before drops the E4M3 cells;
-3. every module ran the launch the f8dbe1a0 E4M3-instruction receipt recorded
-   for it, with both required lanes engaged, so the nightly cells name the
-   launches their twins name;
-4. each nightly E4M3 cell covers EXACTLY the rungs the receipts carried.
-
-It pins nothing about CUDA graphs: the cells are eager only (see the
-measurement doc for why no compiled scope is claimed on this image).
+V48 added the IMG-N scopes from a TP1 eager census on nightly 155ce16b with nccl230.
+The receipt records NoPE off and the image's FLASHINFER_MLA_SPARSE_SM120 attention backend.
+This file preserves its config, image, toolchain, lane engagement and rung coverage.
+V70 gives routed E4M3 cells a separate class receipt at the same four rungs.
+The historical routed launches now refuse. Dense E4M3 records still agree.
+V68 BF16 receipts also retain separate scope from the old folded records.
 """
 from __future__ import annotations
 
@@ -110,7 +87,7 @@ def _agreement(tool, contract, receipt):
         execution_mode=receipt["runtime"]["execution_mode"])
 
 
-def test_the_committed_receipt_is_the_one_the_nightly_cells_cite():
+def test_the_historical_nightly_receipt_retains_its_identity():
     assert hashlib.sha256(RECEIPT.read_bytes()).hexdigest() == RECEIPT_SHA256
     receipt = _load(RECEIPT)
     assert receipt["verdict"] == "served" and receipt["problems"] == []
@@ -142,8 +119,8 @@ def test_the_committed_receipt_is_the_one_the_nightly_cells_cite():
     assert (ROOT / MEASUREMENT).is_file()
 
 
-def test_every_served_module_joins_a_nightly_cell_in_both_phases():
-    """Current agreement: the E4M3 records join a nightly cell, the BF16 do not."""
+def test_historical_routed_records_disagree_in_both_phases():
+    """V70 refuses historical E4M3 routed launches on IMG-N."""
     tool = _tool()
     receipt = _load(RECEIPT)
     want = {}
@@ -154,8 +131,8 @@ def test_every_served_module_joins_a_nightly_cell_in_both_phases():
             counts = want.setdefault((structure, phase), {})
             counts[family] = counts.get(family, 0) + 1
     block, problems = _agreement(tool, load_serving_contract(), receipt)
-    assert problems == []
-    assert block["agrees"] is True, json.dumps(block, indent=1)[:2000]
+    assert len(problems) == 8 and all("does not publish" in p for p in problems)
+    assert block["agrees"] is False, json.dumps(block, indent=1)[:2000]
     nightly = _nightly_cells(load_serving_contract())
     for structure, per in block["structures"].items():
         for phase, row in per["phases"].items():
@@ -184,7 +161,7 @@ def test_no_module_is_attested_on_the_nightly_without_the_minted_cells():
             assert row["unattested"] == row["modules"] > 0
 
 
-def test_every_module_ran_its_f8dbe1a0_twins_launch_and_the_cells_name_it():
+def test_historical_twins_keep_their_launches_without_qualifying_img_n_classes():
     receipt, twin = _load(RECEIPT), _load(TWIN)
     for phase, records in receipt["records"].items():
         assert len(records) == 21, phase
@@ -201,8 +178,15 @@ def test_every_module_ran_its_f8dbe1a0_twins_launch_and_the_cells_name_it():
         base = cell["id"][: -len(cell_runtime_id_suffix(cell))]
         entry = format_entry(cell["family"], contract)
         for rung in cell["rungs_q256"]:
-            assert cell_executes(cell, q256=rung, entry=entry) == \
-                cell_executes(shipped[base], q256=rung, entry=entry), (cell["id"], rung)
+            old = cell_executes(shipped[base], q256=rung, entry=entry)
+            current = cell_executes(cell, q256=rung, entry=entry)
+            if cell["structure"] == "routed_moe":
+                assert current == {
+                    ("tessera.routed_fused.FusedRoutedWindowMoE.__call__",
+                     "native_routed_window_classes_e4m3mma")}, (cell["id"], rung)
+                assert current.isdisjoint(old), (cell["id"], rung)
+            else:
+                assert current == old, (cell["id"], rung)
 
 
 def test_the_nightly_cells_cover_exactly_the_rungs_the_receipts_carried():

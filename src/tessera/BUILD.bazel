@@ -140,6 +140,7 @@ ts_py_library(
         "window_gemm_grouped.py",
     ],
     data = [
+        "//experiments:results/glm53_img_n_v70_tp2_census.json",
         "//experiments:results/glm53_r768_stub_base_tp2_eager_census.json",
         "//experiments:results/glm53_requal_v68_bf16_census.json",
         "//experiments:results/glm53_requal_v68_e2m1_census.json",

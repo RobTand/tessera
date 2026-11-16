@@ -2769,6 +2769,17 @@ _SCOPED_EXECUTION_RECEIPTS = ({
     "rungs_q256": (1024,),
     "pair": ("tessera.routed_fused.FusedRoutedWindowMoE.__call__", "native_routed_window_classes_bf16"),
     "receipt": "experiments/results/glm53_requal_v68_bf16_census.json",
+}, {
+    "platform": "sm_121",
+    "family": "TESSERA_E4M3_K1",
+    "structure": "routed_moe",
+    "regimes": ("decode", "batch"),
+    "residencies": ("resident",),
+    "image": "localhost/prismaquant/spark-vllm-nccl230@sha256:5be13705acaecc7b4aaf342a84f80d67844c9970ff8375bf9fbeecc9c98ce84a",
+    "execution_modes": ("eager",),
+    "rungs_q256": (896, 928, 1024, 1088),
+    "pair": ("tessera.routed_fused.FusedRoutedWindowMoE.__call__", "native_routed_window_classes_e4m3mma"),
+    "receipt": "experiments/results/glm53_img_n_v70_tp2_census.json",
 },)
 
 
