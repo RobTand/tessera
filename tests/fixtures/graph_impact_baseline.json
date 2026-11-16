@@ -11,7 +11,6 @@
     "scc_max": 0
   },
   "reach_budget": 130,
-  "test_to_test": "reach",
-  "test_to_test_count": 92,
-  "test_to_test_strict_by": "2026-11-16"
+  "test_to_test": "strict",
+  "test_to_test_count": 92
 }

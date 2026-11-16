@@ -73,26 +73,8 @@ def test_the_change_does_not_deepen_the_graph(tessera, head, capsys):
     assert code == 0
 
 
-#: Coordinator, 2026-11-02: Tessera's test->test edges are judged in the core's
-#: transitional `reach` mode until the helper cleanup (#1588) lands, and switch
-#: to `strict` by this date at the latest. Date only; no count trigger.
-STRICT_BY = '2026-11-16'
-
-
-def test_test_to_test_edges_are_in_reach_mode_until_the_switch_date(tessera):
-    import datetime
-    baseline = json.loads((ROOT / tessera.BASELINE).read_text())
-    if baseline.get('test_to_test', 'strict') == 'strict':
-        return
-    assert baseline['test_to_test'] == 'reach'
-    assert baseline['test_to_test_strict_by'] == STRICT_BY
-    assert datetime.date.today() < datetime.date.fromisoformat(STRICT_BY), (
-        f'test_to_test is still reach after {STRICT_BY}: set it to strict in {tessera.BASELINE}')
-
-
-def test_the_baseline_records_reach_mode_with_its_switch_date(tessera):
-    baseline = json.loads((ROOT / tessera.BASELINE).read_text())
-    assert baseline.get('test_to_test') == 'reach' and baseline.get('test_to_test_strict_by') == STRICT_BY
+def test_test_to_test_edges_are_strict(tessera):
+    assert json.loads((ROOT / tessera.BASELINE).read_text()).get('test_to_test', 'strict') == 'strict'
 
 
 def test_the_baseline_stores_no_edge_list(tessera):
@@ -116,6 +98,18 @@ def test_new_edges_are_judged_against_the_base_revision(tessera):
                                                         'new test_to_test edge: tests/test_b.py -> tests/test_a.py']
     assert core.stale_entries(head, compared) == []
 
+
+
+def test_strict_mode_refuses_a_new_test_edge_and_accepts_a_removed_one(tessera):
+    core = tessera.core
+    def graph(*test_edges):
+        return core.measure({'tests/test_a.py': {'src/x.py'}, 'tests/test_b.py': {'src/x.py'}},
+                            {('tests/test_a.py', 'src/x.py'), ('tests/test_b.py', 'src/x.py'), *test_edges})
+    base = graph(('tests/test_b.py', 'tests/test_a.py'))
+    stored = {'schema': core.SCHEMA, 'figures': {}, 'tolerances': {}, 'reach_budget': 10, 'test_to_test': 'strict'}
+    assert core.compare(base, graph(), stored) == []
+    assert 'new test_to_test edge: tests/test_a.py -> tests/test_b.py' in core.compare(
+        base, graph(('tests/test_a.py', 'tests/test_b.py')), stored)
 
 _LOADS_A_TOOL = '''import importlib.util
 from pathlib import Path
