@@ -42,11 +42,7 @@ GLOB_EXCLUDE = ['**/BUILD.bazel', 'bazel-*/**', '*bazel-remote-grpc.log', '*exec
 # Files longer than this on hosted runners are split across Bazel test shards.
 SHARD_SECONDS = 40.0
 MAX_SHARDS = 8
-# Files whose tests depend on each other within the module, so a Bazel shard
-# that holds only some of them fails. Each names the issue that owns the fix.
-UNSHARDED = {
-    'tests/test_audit_byte_baseline.py': 'its batch-row test counts encode calls the other tests in the module record',
-}
+UNSHARDED = {}
 CONTRACT = 'src/tessera/serving/runtime_contract.json'
 CONTRACT_PATH = re.compile(r'[\w.-]+(?:/[\w.-]+)+')
 LANES = ('torch', 'bytes')

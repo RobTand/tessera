@@ -453,6 +453,7 @@ def test_the_batch_matrix_joins_the_exporter_shape(monkeypatch):
     module = _load()
     observed = []
 
+    export_module.stamped_fixture_id()
     real = export_module.encode_linears_planes
 
     def spy(weights, **kwargs):

@@ -813,6 +813,7 @@ ts_py_test(
     args = [
         "--budget='{\"enforce\":true,\"seconds\":80,\"slow\":{\"tests/test_audit_byte_baseline.py::test_cpu_class_export_read_roundtrip_preserves_source_wire_bytes[False]\":520,\"tests/test_audit_byte_baseline.py::test_cpu_class_export_read_roundtrip_preserves_source_wire_bytes[True]\":522,\"tests/test_audit_byte_baseline.py::test_projection_matrix_reaches_padding_and_all_direct_buffer_dtypes\":290}}'",
     ],
+    shard_count = 8,
     timeout = "eternal",
 )
 
