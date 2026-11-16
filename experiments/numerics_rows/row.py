@@ -377,30 +377,39 @@ class Dense:
             bounds.append(bound)
         return torch.cat(parts, 1), torch.cat(masks, 1), FiniteBound.join(bounds, 1)
 
-    def staged(self, q, sf, recorder):
+    def prepare_staged(self, q, sf, recorder):
+        """Prepare host metadata and output views before a graph captures the launch."""
         import torch
         from tessera import routed_fused as rf
         from tessera.routed_fused_e2m1 import dense_forward_quantized
 
         output = torch.empty(q.shape[0], self.rows, dtype=torch.bfloat16, device=q.device)
         if self.family == "e2m1":
-            offset = 0
-            for role in self.layer.tessera_a4_roles:
-                dense_forward_quantized(role, q, sf, out=output[:, offset:offset + role.rows])
-                offset += role.rows
+            roles = self.layer.tessera_a4_roles
         else:
-            native = self.layer.tessera_native
-            offset = 0
-            for bundle in native.role_bundles:
-                out = output[:, offset:offset + bundle.rows]
-                if self.library == "triton":
-                    part = recorder.call("triton:staged", "tessera", lambda: bundle(q, sf if self.family == "e4m3" else None))
+            bundles = self.layer.tessera_native.role_bundles
+            roles = bundles if self.library == "triton" else [rf.prepare_dense_role(bundle) for bundle in bundles]
+        offset, launches = 0, []
+        for role in roles:
+            out = output[:, offset:offset + role.rows]
+            counter = torch.zeros(1, dtype=torch.int32, device=q.device)
+            launches.append((role, out, counter))
+            offset += role.rows
+
+        def launch():
+            for role, out, counter in launches:
+                if self.family == "e2m1":
+                    dense_forward_quantized(role, q, sf, out=out)
+                elif self.library == "triton":
+                    part = recorder.call("triton:staged", "tessera", lambda: role(q, sf if self.family == "e4m3" else None))
                     out.copy_(part)
                 else:
-                    role = rf.prepare_dense_role(bundle)
-                    counter = torch.zeros(1, dtype=torch.int32, device=q.device)
                     rf.dense_forward(role, q, sf if self.family == "e4m3" else None, out, counter)
-                offset += bundle.rows
+        return launch, output
+
+    def staged(self, q, sf, recorder):
+        launch, output = self.prepare_staged(q, sf, recorder)
+        launch()
         return output
 
     def pairs(self):
@@ -626,6 +635,13 @@ def main():
 
 
 def run(args, receipt):
+    from experiments.numerics_rows.gpu_time import PhaseTimes
+
+    with PhaseTimes(receipt["row"]) as phases:
+        run_row(args, receipt, phases)
+
+
+def run_row(args, receipt, phases):
     from experiments.numerics_rows.population import load_signed_population, select_modules
 
     receipt["row"]["finalization_finished"] = False
@@ -683,12 +699,13 @@ def run(args, receipt):
     write_json(args.out / "numerics_row.json", receipt)
     if built["commit"] != commit or built["runtime"]["image_digest"] != runtime["image_digest"]:
         raise Invalid("library build does not match the cell")
-    slices = {r["key"]: match_library(r, args.out / "binary-identity" / r["key"]) for r in built["libraries"]}
-    for library in built["libraries"]:
-        bind_library_identity(library, slices[library["key"]], h1["P3"][library["key"]])
-        d, = [t for t in q1["tables"] if t["key"] == library["key"]]
-        if d["library_so_sha256"] != library["library"]["sha256"] or d["probe_sha256"] != library["probe"]["sha256"]:
-            raise Invalid("Q1 D table belongs to a different library or probe")
+    with phases.measure("identity_audit"):
+        slices = {r["key"]: match_library(r, args.out / "binary-identity" / r["key"]) for r in built["libraries"]}
+        for library in built["libraries"]:
+            bind_library_identity(library, slices[library["key"]], h1["P3"][library["key"]])
+            d, = [t for t in q1["tables"] if t["key"] == library["key"]]
+            if d["library_so_sha256"] != library["library"]["sha256"] or d["probe_sha256"] != library["probe"]["sha256"]:
+                raise Invalid("Q1 D table belongs to a different library or probe")
     library, = [r for r in built["libraries"] if r["key"] == key]
     d, = [t for t in q1["tables"] if t["key"] == key]
     receipt.update({"rule": rule_receipt(args.rule, freeze, h1, args.h1),
@@ -711,63 +728,92 @@ def run(args, receipt):
     served_cache = {}
     try:
         with dense.init_vllm_world1():
-            for entry, module, cut, units in groups:
-                with dense.e4m3_instruction("f16" if entry["library"] == "e4m3" else "e4m3"), dense.dense_lane(entry["library"] != "triton"):
-                    routed = module["structure"] == "routed_moe"
-                    key = entry["library"] if entry["library"] != "triton" else "e4m3mma"
-                    table = DTable(next(t for t in q1["tables"] if t["key"] == key)) if routed else None
-                    adapter = Routed(entry, cut, module, table) if routed else Dense(entry, cut, module)
-                    receipt["modules"].append(module_receipt(module, adapter, routed))
-                    for unit in units:
-                        adapter.splits = unit["m_config"]["k_split"]
-                        unit["tp"].update(tp_facts(adapter, module, routed))
-                        recorder = BoundaryRecorder(torch.cuda.synchronize, unit["boundaries"])
-                        try:
-                            native_source = Path(next(r for r in compile_paths if r["key"] == key)["native_source_path"])
-                            actual, served = identify_served(adapter, routed, native_source, args.out / "served-binaries", served_cache)
-                            check_served_identity(unit, served, library)
-                            audit_served(unit, served, library, args.out / "served-comparisons", served_cache)
-                            adapter.served_identity = served[0] if served else None
-                            if receipt["inputs"]["reference_selftest"]["mismatches"] or not all(c["flagged_exactly"] for c in receipt["negative_controls"]):
-                                raise Invalid("reference self-test or mutated reference control failed")
-                            if any(not role["matches_attested_wire"] for role in module["roles"]):
-                                raise Invalid("wire stamp differs from attested_wire")
-                            if module["launch_geometry"] != actual_geometry(adapter, routed):
-                                raise Invalid("C1 launch geometry differs from the loaded operands")
-                            unit["scales"] = scale_receipt(adapter, routed)
-                            ready = check_preconditions(unit, scale_equal=unit["scales"]["equal"], routed=routed,
-                                slice_matched=slices[key]["matched"], monotonic=next(t for t in q1["tables"] if t["key"] == key)["d_nondecreasing_0_L"])
-                            if not ready:
-                                unit["completed"] = True
-                            else:
-                                verify_cases(adapter, unit, module, q1, table)
-                                cases_completed = False
-                                try:
-                                    with native_boundaries({key: actual} if actual is not None else {}, recorder):
-                                        if routed:
-                                            run_routed.run(adapter, unit, module, recorder)
-                                        else:
-                                            dense_cases(adapter, unit, module, recorder)
-                                            dense_diagnostics(adapter, unit, recorder)
-                                        scale_index_checks(adapter, unit, module, recorder)
-                                        profile_unit(adapter, unit, recorder, routed=routed)
-                                    cases_completed = True
-                                except BoundaryError as error:
-                                    record_cuda_error(unit, error)
-                                finally:
-                                    _, after = identify_served(adapter, routed, native_source, args.out / "served-binaries", served_cache)
-                                    check_served_after(unit, served, after)
-                                if cases_completed:
-                                    dispatch(unit, entry["pair"], adapter.pairs(),
-                                             after, adapter.info.get("lane_reason"))
+            for phase in ("gate_cases", "diagnostics"):
+                phases.change(phase)
+                for entry, module, cut, units in groups:
+                    if phase == "diagnostics" and not any(u["completed"] and not (u["invalid"] or u["unattested"] or u["cuda_errors"]) for u in units):
+                        continue
+                    with dense.e4m3_instruction("f16" if entry["library"] == "e4m3" else "e4m3"), dense.dense_lane(entry["library"] != "triton"):
+                        routed = module["structure"] == "routed_moe"
+                        key = entry["library"] if entry["library"] != "triton" else "e4m3mma"
+                        table = DTable(next(t for t in q1["tables"] if t["key"] == key)) if routed else None
+                        with phases.measure("setup"):
+                            adapter = Routed(entry, cut, module, table) if routed else Dense(entry, cut, module)
+                        if phase == "gate_cases":
+                            receipt["modules"].append(module_receipt(module, adapter, routed))
+                        for unit in units:
+                            if phase == "diagnostics" and (not unit["completed"] or unit["invalid"] or unit["unattested"] or unit["cuda_errors"]):
+                                continue
+                            adapter.splits = unit["m_config"]["k_split"]
+                            unit["tp"].update(tp_facts(adapter, module, routed))
+                            recorder = BoundaryRecorder(torch.cuda.synchronize, unit["boundaries"])
+                            try:
+                                native_source = Path(next(r for r in compile_paths if r["key"] == key)["native_source_path"])
+                                with phases.measure("identity_audit"):
+                                    actual, served = identify_served(adapter, routed, native_source, args.out / "served-binaries", served_cache)
+                                    check_served_identity(unit, served, library)
+                                    audit_served(unit, served, library, args.out / "served-comparisons", served_cache)
+                                adapter.served_identity = served[0] if served else None
+                                if phase == "diagnostics":
+                                    try:
+                                        with native_boundaries({key: actual} if actual is not None else {}, recorder):
+                                            if routed:
+                                                run_routed.diagnostic_cases(adapter, unit, recorder, module)
+                                            else:
+                                                dense_diagnostics(adapter, unit, recorder)
+                                    except BoundaryError as error:
+                                        record_cuda_error(unit, error)
+                                    except Invalid as error:
+                                        unit["invalid"].append(str(error))
+                                    except Exception as error:
+                                        record_diagnostic_error(receipt, unit, error)
+                                    finally:
+                                        with phases.measure("identity_audit"):
+                                            _, after = identify_served(adapter, routed, native_source, args.out / "served-binaries", served_cache)
+                                            check_served_after(unit, served, after)
+                                    continue
+                                if receipt["inputs"]["reference_selftest"]["mismatches"] or not all(c["flagged_exactly"] for c in receipt["negative_controls"]):
+                                    raise Invalid("reference self-test or mutated reference control failed")
+                                if any(not role["matches_attested_wire"] for role in module["roles"]):
+                                    raise Invalid("wire stamp differs from attested_wire")
+                                if module["launch_geometry"] != actual_geometry(adapter, routed):
+                                    raise Invalid("C1 launch geometry differs from the loaded operands")
+                                unit["scales"] = scale_receipt(adapter, routed)
+                                ready = check_preconditions(unit, scale_equal=unit["scales"]["equal"], routed=routed,
+                                    slice_matched=slices[key]["matched"], monotonic=next(t for t in q1["tables"] if t["key"] == key)["d_nondecreasing_0_L"])
+                                if not ready:
                                     unit["completed"] = True
-                        except BoundaryError as error:
-                            record_cuda_error(unit, error)
-                        except Invalid as error:
-                            unit["invalid"].append(str(error))
-                            unit["completed"] = True
-                        finish_unit(unit)
-                        write_json(args.out / "numerics_row.json", receipt)
+                                else:
+                                    verify_cases(adapter, unit, module, q1, table)
+                                    cases_completed = False
+                                    try:
+                                        with native_boundaries({key: actual} if actual is not None else {}, recorder):
+                                            if routed:
+                                                run_routed.run(adapter, unit, module, recorder)
+                                            else:
+                                                dense_cases(adapter, unit, module, recorder)
+                                            scale_index_checks(adapter, unit, module, recorder)
+                                            profile_unit(adapter, unit, recorder, routed=routed)
+                                        cases_completed = True
+                                    except BoundaryError as error:
+                                        record_cuda_error(unit, error)
+                                    finally:
+                                        with phases.measure("identity_audit"):
+                                            _, after = identify_served(adapter, routed, native_source, args.out / "served-binaries", served_cache)
+                                            check_served_after(unit, served, after)
+                                    if cases_completed:
+                                        dispatch(unit, entry["pair"], adapter.pairs(),
+                                                 after, adapter.info.get("lane_reason"))
+                                        unit["completed"] = True
+                            except BoundaryError as error:
+                                record_cuda_error(unit, error)
+                            except Invalid as error:
+                                unit["invalid"].append(str(error))
+                                unit["completed"] = True
+                            finally:
+                                finish_unit(unit)
+                                write_json(args.out / "numerics_row.json", receipt)
+                        del adapter
     except Exception as error:
         receipt["row"]["stop_cause"] = str(error)
         receipt["findings"].append(traceback.format_exc())
@@ -791,11 +837,18 @@ def run(args, receipt):
 
 
 
+def record_diagnostic_error(receipt, unit, error):
+    message = f"diagnostic {type(error).__name__}: {error}"
+    unit.setdefault("diagnostic_errors", []).append(message)
+    receipt["findings"].append(message)
+
+
 def dense_diagnostics(adapter, unit, recorder):
     import torch
     from experiments.numerics_rows.run_routed import graph_record
 
     m = unit["m_config"]["M"]
+    graph = None
     for seed in (0, 1, 2):
         for distribution in ("gauss", "outlier", "zero"):
             x = torch.randn(m, adapter.cols, device="cuda", generator=torch.Generator(device="cuda").manual_seed(seed)).bfloat16()
@@ -827,8 +880,9 @@ def dense_diagnostics(adapter, unit, recorder):
             unit["diagnostic"].append(diagnostic(got, torch.cat(reference, 1), bound, adapter.cols,
                                                  unit["m_config"]["k_split"], distribution, seed))
             if seed == 0 and distribution == "gauss":
-                buffer = torch.empty_like(got)
-                graph_record(unit, "dense-staged", lambda: buffer.copy_(adapter.staged(q, sf, recorder)), buffer, recorder)
+                graph = adapter.prepare_staged(q, sf, recorder)
+    launch, buffer = graph
+    graph_record(unit, "dense-staged", launch, buffer, recorder)
 
 
 def resolve_symbols(functions, names, demangled):

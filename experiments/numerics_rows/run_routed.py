@@ -106,7 +106,6 @@ def run(adapter, unit, manifest, recorder):
     unit["separation_census_complete"] = every_expert
     unit["needs_separation_transfer"] = not every_expert
     selected = [list(range(start, min(start + 8, adapter.experts))) for start in range(0, adapter.experts, 8)] if every_expert else [[0]]
-    graphed = set()
     for count in unit["m_config"]["route_counts"]:
         for group in selected:
             raw_ids, raw_weights = routing(m, adapter.experts, count, group)
@@ -129,9 +128,7 @@ def run(adapter, unit, manifest, recorder):
                         if key in tested:
                             continue
                         tested.add(key)
-                        first = stage not in graphed
-                        result = run_case(adapter, unit, stage, [(recipe["column"], activation)], ids, weights, recorder, graph=first)
-                        graphed.add(stage)
+                        result = run_case(adapter, unit, stage, [(recipe["column"], activation)], ids, weights, recorder)
                         unit["exact"]["sweep"]["columns"] += 1
                         unit["exact"]["sweep"]["elements"] += result.get("elements", 0)
                         unit["exact"]["sweep"]["mismatches"] += result["mismatches"]
@@ -145,10 +142,9 @@ def run(adapter, unit, manifest, recorder):
             x = torch.zeros(m, adapter.cols, device="cuda", dtype=torch.bfloat16)
             x[:, 0] = 1
             composition(adapter, unit, x, ids, weights, recorder)
-    diagnostic_cases(adapter, unit, recorder)
 
 
-def diagnostic_cases(adapter, unit, recorder):
+def diagnostic_cases(adapter, unit, recorder, manifest):
     import torch
     from experiments.numerics_rows.cases import routing
 
@@ -180,6 +176,18 @@ def diagnostic_cases(adapter, unit, recorder):
             finite_outputs(unit, f"diagnostic:mode-2:{distribution}:{seed}", native, bound)
             record = diagnostic_down(adapter, unit, native, a, a_scale, ids, routes, distribution, seed)
             unit["diagnostic"].append(record)
+
+    graphed = set()
+    for role in manifest["roles"]:
+        if role["name"] in graphed or role["expert"] != 0:
+            continue
+        separation = role["separation"]
+        if "by_m" in separation:
+            separation = next((r for r in separation["by_m"] if r["route"]["M"] == m), separation["by_m"][0])
+        if separation["recipes"]:
+            recipe = separation["recipes"][0]
+            run_case(adapter, unit, role["name"], [(recipe["column"], recipe["values"][0])], ids, weights, recorder, graph=True)
+            graphed.add(role["name"])
 
 
 def diagnostic_down(adapter, unit, got, a, a_scale, ids, routes, distribution, seed):

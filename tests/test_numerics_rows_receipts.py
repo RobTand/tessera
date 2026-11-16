@@ -1087,7 +1087,7 @@ def test_run_checks_identity_before_every_case_and_rechecks_after(row_execution)
     args, receipt, scope, events, _ = row_execution
     with pytest.raises(SystemExit):
         row.run(args, receipt)
-    assert events == ["identity", *(["case"] * 5), "identity"]
+    assert events == ["identity", *(["case"] * 4), "identity", "identity", "case", "identity"]
     assert scope["outcome"] == "PASS"
     assert scope["arm"]["library_identity_verified"] and scope["arm"]["library_identity_unchanged"]
 
@@ -1148,7 +1148,7 @@ def test_run_library_change_after_cases_is_invalid(row_execution, monkeypatch):
     monkeypatch.setattr(row, "unit_libraries", libraries)
     with pytest.raises(SystemExit):
         row.run(args, receipt)
-    assert len(events) == 5 and scope["outcome"] == "INVALID"
+    assert len(events) == 4 and scope["outcome"] == "INVALID"
     assert not scope["arm"]["library_identity_unchanged"] and not receipt["findings"]
 
 
@@ -1458,3 +1458,100 @@ def test_retained_source_checks_the_p_path_tree_and_records_mtime(tmp_path, monk
     monkeypatch.setattr(serving_build.subprocess, "check_output", lambda cmd, **kwargs: "changed\n" if cmd[-1] == "HEAD:src" else "tree\n")
     with pytest.raises(Invalid, match="tree differs"):
         serving_build.check_retained_source(tmp_path, None, None)
+
+
+def test_dense_graph_capture_prepares_metadata_before_capture(monkeypatch):
+    import torch
+    from experiments.numerics_rows.common import BoundaryRecorder
+    from experiments.numerics_rows.reference import FiniteBound
+    from experiments.t4_code import fused_e2m1_check
+    from tessera import routed_fused as rf
+
+    capturing, calls = False, []
+    def host_copy():
+        assert not capturing, "Cannot copy between CPU and CUDA tensors during CUDA graph capture"
+        return torch.tensor([1]).tolist()
+    def prepare(bundle):
+        host_copy()
+        calls.append("prepare")
+        return bundle
+    def launch(role, q, sf, out, counter):
+        calls.append("launch")
+        out.zero_()
+    def capture(function, output):
+        nonlocal capturing
+        function()
+        capturing = True
+        try:
+            function()
+        finally:
+            capturing = False
+        return True
+    monkeypatch.setattr(rf, "prepare_dense_role", prepare)
+    monkeypatch.setattr(rf, "dense_forward", launch)
+    monkeypatch.setattr(fused_e2m1_check, "graph_equal", capture)
+    for name in ("randn", "linspace", "Generator"):
+        function = getattr(torch, name)
+        monkeypatch.setattr(torch, name, lambda *args, _function=function, **kwargs: _function(*args, **{**kwargs, "device": "cpu"}))
+    adapter = row.Dense.__new__(row.Dense)
+    adapter.family, adapter.library, adapter.rows, adapter.cols = "value", "value", 2, 2
+    adapter.layer = SimpleNamespace(tessera_native=SimpleNamespace(role_bundles=[SimpleNamespace(rows=2)]))
+    adapter.roles = [("down", torch.zeros(2, 2, dtype=torch.float64), torch.tensor(1.0), None)]
+    adapter.quantized = lambda x, recorder: (x, None, x.double(), None)
+    adapter.apply = lambda x: torch.zeros_like(x)
+    adapter.reference = lambda *args, **kwargs: (torch.zeros(2, 2, dtype=torch.bfloat16), None, FiniteBound(torch.zeros(2, 2)))
+    monkeypatch.setattr(row, "diagnostic", lambda *args: {})
+    unit = row.new_unit({"m_config": {"M": 2, "k_split": 1}})
+    row.dense_diagnostics(adapter, unit, BoundaryRecorder(lambda: None, []))
+    assert unit["graph_replay_equal"] == [{"call": "dense-staged", "equal": True}]
+    assert calls.count("prepare") == 10 and calls.count("launch") == 11
+    assert unit["exact"]["composition"]["cases"] == 9 and not unit["findings"]
+
+
+def test_all_gate_cases_precede_diagnostics_and_diagnostic_errors_do_not_stop_them(row_execution, monkeypatch):
+    args, receipt, first, events, _ = row_execution
+    from experiments.numerics_rows import scale_launch
+    planned = row.planned_units(None)
+    second = copy.deepcopy(first)
+    second["m_config"]["M"] = 2
+    entry, module, cut, _ = planned[0]
+    monkeypatch.setattr(row, "planned_units", lambda *args: [(entry, module, cut, [first]), (entry, module, cut, [second])])
+    def gate(adapter, unit, *args, **kwargs):
+        assert unit["arm"]["library_identity_verified"]
+        events.append(f"gate-{unit['m_config']['M']}")
+        exact = unit["exact"]
+        exact["sweep"]["elements"] = exact["chunk_pairs"]["x_elements"] = exact["composition"]["cases"] = 1
+        exact["separation"]["records"] = [{"both": 1}]
+        exact["scale_index"]["arrays"] = [{"launches": 1}]
+    def diagnostic(adapter, unit, recorder):
+        events.append("diagnostic")
+        raise RuntimeError("capture diagnostic failed")
+    for name in ("verify_cases", "dense_cases", "profile_unit"):
+        monkeypatch.setattr(row, name, gate)
+    monkeypatch.setattr(scale_launch, "check", gate)
+    monkeypatch.setattr(row, "dense_diagnostics", diagnostic)
+    with pytest.raises(SystemExit) as finished:
+        row.run(args, receipt)
+    assert finished.value.code == 0
+    assert [e for e in events if e != "identity"] == [*(["gate-1"] * 4), *(["gate-2"] * 4), "diagnostic", "diagnostic"]
+    assert all(u["outcome"] == "PASS" and u["completed"] and u["diagnostic_errors"] for u in (first, second))
+    assert len(receipt["findings"]) == 2 and receipt["row"]["stop_cause"] is None
+    assert set(receipt["row"]["phase_wall_seconds"]) == {"setup", "identity_audit", "gate_cases", "diagnostics"}
+
+
+def test_phase_wall_times_are_exclusive_and_survive_errors(monkeypatch):
+    from experiments.numerics_rows import gpu_time
+
+    now, receipt = 0, {}
+    monkeypatch.setattr(gpu_time.time, "monotonic", lambda: now)
+    with pytest.raises(RuntimeError), gpu_time.PhaseTimes(receipt) as phases:
+        now = 3
+        with phases.measure("identity_audit"):
+            now = 8
+        now = 10
+        phases.change("gate_cases")
+        now = 17
+        phases.change("diagnostics")
+        now = 19
+        raise RuntimeError("diagnostic interrupted")
+    assert receipt["phase_wall_seconds"] == {"setup": 5, "identity_audit": 5, "gate_cases": 7, "diagnostics": 2}
