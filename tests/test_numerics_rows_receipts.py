@@ -115,10 +115,18 @@ def test_adapter_failure_keeps_unrun_units_stopped(tmp_path, monkeypatch):
 
 
 def test_observation_cannot_claim_decoder_bit_exact():
-    unit = row.new_unit({"role": "observation"})
+    unit = row.new_unit({"role": "unit"})
     unit["completed"] = True
+    unit["exact"]["sweep"]["elements"] = 1
+    unit["exact"]["separation"]["records"] = [{"both": 1}]
+    unit["exact"]["scale_index"]["arrays"] = [{"launches": 1}]
+    unit["exact"]["chunk_pairs"]["x_elements"] = 1
+    unit["exact"]["composition"]["cases"] = 1
     row.finish_unit(unit)
-    assert not unit["decoder_bit_exact"]
+    assert unit["outcome"] == "PASS" and unit["decoder_bit_exact"]
+    unit["role"] = "observation"
+    row.finish_unit(unit)
+    assert unit["outcome"] == "PASS" and not unit["decoder_bit_exact"]
 
 
 @pytest.mark.parametrize("mutation", (None, "id", "digest", "version", "missing"))

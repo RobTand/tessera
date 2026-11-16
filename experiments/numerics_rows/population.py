@@ -6,6 +6,7 @@ import hashlib
 import json
 from pathlib import Path
 import sys
+import traceback
 
 from experiments.numerics_rows.common import check_source, write_json
 
@@ -170,8 +171,16 @@ def main():
     check_source(args.source)
     sys.path.insert(0, str(args.source / "src"))
     args.out.mkdir(parents=True, exist_ok=True)
+    errors = []
     for path in sorted(args.population_dir.glob("*.json")):
-        write_json(args.out / path.name, inspect(json.loads(path.read_text())))
+        population = json.loads(path.read_text())
+        try:
+            inspect(population)
+        except Exception as error:
+            errors.append({"arm": population["arm"], "error": str(error), "traceback": traceback.format_exc()})
+        write_json(args.out / path.name, population)
+        write_json(args.out / "errors.json", errors)
+    raise SystemExit(3 if errors else 0)
 
 
 if __name__ == "__main__":
