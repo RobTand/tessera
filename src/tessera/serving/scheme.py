@@ -730,7 +730,7 @@ ROUTE_LAUNCHES: dict[str, tuple[dict, ...]] = {
 #:
 #: ONE PAIR ENTERED at contract v56: the E4M3 family's decode-once dense
 #: prefill lane, ``(DECODE_ONCE_DENSE_SYMBOL, _DECODER_NATIVE_WINDOW_DECODE_ONCE_E4M3)``
-#: (tessera#931), default-off.  It leaves when a served census of a T-8
+#: (tessera#931), default-off, restored by tessera#1736. It leaves when a served census of a T-8
 #: projection artifact with ``TESSERA_E4M3_DECODE_ONCE=1`` records it.
 #:
 # v68 scopes BF16 dense and class receipts to TP1, IMG-N and the named rungs.

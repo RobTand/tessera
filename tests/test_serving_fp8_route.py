@@ -273,7 +273,7 @@ def test_streamed_holds_the_packed_wire_and_no_resident_tile(monkeypatch):
 
 
 @requires_cuda
-@pytest.mark.parametrize("decode_once", [None, "0"], ids=["default", "opt-out"])
+@pytest.mark.parametrize("decode_once", [None, "0", "1"], ids=["default", "off", "experiment"])
 def test_resident_drops_the_wire(monkeypatch, decode_once):
     from tessera.serving.e4m3_prefill import FLAG
 
@@ -285,9 +285,9 @@ def test_resident_drops_the_wire(monkeypatch, decode_once):
     assert not hasattr(r, "wire_bytes") and not hasattr(r, "weight_fp8")
     native = r.tessera_native
     assert native is not None
-    # Preserve the packed budget and count the default decoded copy separately.
+    # Preserve the packed budget and count the explicit decoded copy separately.
     decoded = native.decoded
-    assert (decoded is not None) == (decode_once is None)
+    assert (decoded is not None) == (decode_once == "1")
     decoded_bytes = 0 if decoded is None else decoded.nbytes
     if decoded is not None:
         assert decoded_bytes == native.rows * native.columns + 4 * native.rows

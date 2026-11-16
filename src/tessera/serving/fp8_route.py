@@ -6,11 +6,11 @@ The activation uses vLLM's per-token dynamic E4M3 quantizer.
 The executed activation contract remains fp8_per_token_dynamic.
 The route records the symbol and decoder that each forward uses.
 
-Resident modules with an eager forward decode once by default at load.
-Their large-M prefill uses the same E4M3 values and row scales through
-serving.e4m3_prefill. Smaller inputs use the prepared window lane.
-Compiled and streamed modules retain the window lane by default.
-An explicit unsupported decode-once request refuses at load.
+Under TESSERA_E4M3_DECODE_ONCE=1 (default off), each resident module with an
+eager forward decodes once at load and serves large-M prefill through
+serving.e4m3_prefill with the same E4M3 values and row scales. Smaller inputs
+and streamed modules use the prepared window lane. A compiled resident forward
+refuses the flag at load.
 
 Blob parsing reuses scheme.parse_compact_blob_for_scheme and compact_prep.
 Container, role, digest, slack and geometry checks remain unchanged.
@@ -98,8 +98,8 @@ DENSE_LAUNCH = (WINDOW_GEMM_SYMBOL, DECODER_NATIVE_WINDOW_GEMM)
 #: served censuses on both E4M3 cell images earned it the dense cells.
 DENSE_FUSED_LAUNCH = (FUSED_WINDOW_DENSE_SYMBOL, DECODER_NATIVE_FUSED_WINDOW_DENSE)
 DENSE_FUSED_MMA_E4M3_LAUNCH = (FUSED_WINDOW_DENSE_SYMBOL, DECODER_NATIVE_FUSED_WINDOW_DENSE_E4M3MMA)
-#: DENSE_DECODE_ONCE_LAUNCH is the eligibility-scoped default prefill lane.
-#: A resident module with an eager forward holds its weights decoded once
+#: DENSE_DECODE_ONCE_LAUNCH is the default-off experimental prefill lane.
+#: With ``TESSERA_E4M3_DECODE_ONCE=1``, an eager resident module decodes once
 #: to E4M3 and serves M at or above
 #: ``e4m3_prefill.MIN_M`` with ``torch._scaled_mm``; ``apply`` stamps
 #: ``launch_pair_for(M)``, the pair that ran.
@@ -422,20 +422,15 @@ def build_tessera_fp8_method(scheme, prefix: str, mode: str):
                 raise RuntimeError(
                     f"{prefix}: the prepared Tessera FP8 module runs {prepared.launch_pair!r}, "
                     f"the route publishes {DENSE_LAUNCHES!r}")
-            # Decode-once adds a resident copy. Compiled forwards keep the
-            # window lane by default; an explicit unsupported request refuses.
+            # Decode-once (explicit 1) adds a resident copy; a compiled
+            # forward refuses it here, at load.
             if e4m3_prefill.enabled() and layer.tessera_mode == "resident":
-                compiled = declared_forward_is_compiled()
-                if compiled:
-                    from .flags import latched_bool
-
-                    if latched_bool(e4m3_prefill.FLAG):
-                        raise RuntimeError(
-                            f"{prefix}: {e4m3_prefill.FLAG}=1 serves an eager-only lane, and "
-                            "vLLM's compilation mode is not NONE; serve with compilation mode "
-                            f"NONE (--enforce-eager) or set {e4m3_prefill.FLAG}=0")
-                else:
-                    prepared.attach_decoded(e4m3_prefill.decode_e4m3(prepared))
+                if declared_forward_is_compiled():
+                    raise RuntimeError(
+                        f"{prefix}: {e4m3_prefill.FLAG}=1 serves an eager-only lane, and "
+                        "vLLM's compilation mode is not NONE; serve with compilation mode "
+                        f"NONE (--enforce-eager) or set {e4m3_prefill.FLAG}=0")
+                prepared.attach_decoded(e4m3_prefill.decode_e4m3(prepared))
             layer.tessera_native = prepared
             layer.tessera_decoder = prepared.decoder
             layer.tessera_symbol = prepared.symbol

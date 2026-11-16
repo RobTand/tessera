@@ -369,7 +369,7 @@ Every old harness mode stays unchanged.
 The matrix uses priority zero after the PACT band handoff and retains GPU exclusivity.
 
 Re-stamped 2026-10-08 for the approved eligibility-scoped serving defaults.
-Piece-major routed layout and decode-once dense/shared projections are default-on where their existing readers admit them.
+Piece-major routed layout remains default-on where its reader admits it.
 Maximum batched tokens remain 2048. KDA defaults, pins and current measurement source remain unchanged.
 
 Re-stamped 2026-10-07 for native routed prices in the offline planner.
@@ -1916,12 +1916,11 @@ savings (`docs/measurements/2026-10-04-mhc-fused-783.md`).
 No production pin, route cell, default, artifact or ship gate moves. Design:
 `docs/design/mhc-fusion-783.md`.
 
-Re-stamped 2026-10-08 for the default-on decode-once E4M3 dense and shared projection lane.
-Rob approved this default. The route keeps the existing eligibility and correctness guards.
-With TESSERA_E4M3_DECODE_ONCE unset, each resident module with an eager forward receives a decoded copy at load.
-Explicit 0 disables the copy. Explicit 1 retains the load-time refusal for a compiled forward.
+Re-stamped 2026-11-16 for issue #1736: restore default-off decode-once E4M3 dense and shared projections.
+With TESSERA_E4M3_DECODE_ONCE unset, resident modules keep the packed window lane at every M.
+Explicit 1 attaches a decoded copy for an eager resident forward and refuses a compiled forward.
+Explicit 0 disables the copy. The pair remains experimental; no contract cell names it.
 
-A compiled forward with the flag unset keeps the existing window lane.
 The saved construction-time compile mode remains authoritative after the current configuration context exits.
 Streamed modules retain the existing packed path without a decoded copy.
 
@@ -1937,9 +1936,7 @@ Its compile-cache dispatch fact remains <window op>|<decode-once op>.
 Every other module records its fixed launch pair without a token-count read.
 
 The launch remains in EXPERIMENTAL_LAUNCHES under contract v56 (Refs #931).
-This source default does not add a qualified cell or change a serving pin.
-The existing served-census and quality holds remain. No new performance or quality result follows from this default.
-Prior operator evidence: docs/measurements/2026-10-04-e4m3-decode-once-prefill.md.
+The existing served-census and quality holds remain. Prior operator evidence: docs/measurements/2026-10-04-e4m3-decode-once-prefill.md.
 
 Re-stamped 2026-10-02 for the default-off eager sparse-MLA prefill override
 (contract v55, Refs #812). `TESSERA_RESEARCH_MLA_MASK_SKIP=1` registers a
