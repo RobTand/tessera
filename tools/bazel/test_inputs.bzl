@@ -15,6 +15,13 @@ _CONSTRUCTION_REASON = "experiments/t8r_speed/bench_dense_module.py reads this c
 _PRISMAQUANT = "it reads PrismaQuant, pinned in tools/ci/gate_prismaquant_requirements.txt; its own dependencies are heavy, so only the tests that read it carry it."
 
 TEST_INPUTS = {
+    "//tests:test_img_n_v70_census": struct(
+        data = [
+            "//experiments:results/glm53_img_n_v70_scope.json",
+            "//experiments:results/glm53_img_n_v70_config.json",
+        ],
+        reason = "The scope file binds the pending IMG-N census and exact config.",
+    ),
     "//tests:test_glm_requalification_v68": struct(
         data = [
             "//experiments:results/glm53_requal_v68_scope.json",

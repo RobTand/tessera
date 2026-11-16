@@ -1,0 +1,12 @@
+{
+ "status": "pending_census",
+ "receipt": "experiments/results/glm53_img_n_v70_tp2_census.json",
+ "config": "experiments/results/glm53_img_n_v70_config.json",
+ "image": "localhost/prismaquant/spark-vllm-nccl230@sha256:5be13705acaecc7b4aaf342a84f80d67844c9970ff8375bf9fbeecc9c98ce84a",
+ "rungs_q256": [
+  896,
+  928,
+  1024,
+  1088
+ ]
+}

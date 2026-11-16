@@ -18,13 +18,12 @@ What it pins:
    the f8dbe1a0 stub-B receipts, the nightly image and toolchain, the NoPE
    plugin off, no attention override, and the serve log naming the image's
    backend;
-2. every served E4M3 module joins a nightly cell in both phases, and the BF16
+2. V70 refuses historical routed E4M3 launches on the same image. The BF16
    records join none in this historical replay. Contract v59 withdrew their
    folded claims. Contract v68 reuses the four IDs with new scope receipts;
    those cells refuse the old folded launches. The fail-before drops the E4M3 cells;
 3. every module ran the launch the f8dbe1a0 E4M3-instruction receipt recorded
-   for it, with both required lanes engaged, so the nightly cells name the
-   launches their twins name;
+   for it, with both required lanes engaged, while v70 gives the routed cells a separate class receipt;
 4. each nightly E4M3 cell covers EXACTLY the rungs the receipts carried.
 
 It pins nothing about CUDA graphs: the cells are eager only (see the
@@ -143,7 +142,7 @@ def test_the_committed_receipt_is_the_one_the_nightly_cells_cite():
 
 
 def test_every_served_module_joins_a_nightly_cell_in_both_phases():
-    """Current agreement: the E4M3 records join a nightly cell, the BF16 do not."""
+    """V70 refuses historical E4M3 routed launches on IMG-N."""
     tool = _tool()
     receipt = _load(RECEIPT)
     want = {}
@@ -154,8 +153,8 @@ def test_every_served_module_joins_a_nightly_cell_in_both_phases():
             counts = want.setdefault((structure, phase), {})
             counts[family] = counts.get(family, 0) + 1
     block, problems = _agreement(tool, load_serving_contract(), receipt)
-    assert problems == []
-    assert block["agrees"] is True, json.dumps(block, indent=1)[:2000]
+    assert len(problems) == 8 and all("does not publish" in p for p in problems)
+    assert block["agrees"] is False, json.dumps(block, indent=1)[:2000]
     nightly = _nightly_cells(load_serving_contract())
     for structure, per in block["structures"].items():
         for phase, row in per["phases"].items():
@@ -201,8 +200,12 @@ def test_every_module_ran_its_f8dbe1a0_twins_launch_and_the_cells_name_it():
         base = cell["id"][: -len(cell_runtime_id_suffix(cell))]
         entry = format_entry(cell["family"], contract)
         for rung in cell["rungs_q256"]:
-            assert cell_executes(cell, q256=rung, entry=entry) == \
-                cell_executes(shipped[base], q256=rung, entry=entry), (cell["id"], rung)
+            old = cell_executes(shipped[base], q256=rung, entry=entry)
+            current = cell_executes(cell, q256=rung, entry=entry)
+            if cell["structure"] == "routed_moe":
+                assert current.isdisjoint(old), (cell["id"], rung)
+            else:
+                assert current == old, (cell["id"], rung)
 
 
 def test_the_nightly_cells_cover_exactly_the_rungs_the_receipts_carried():
