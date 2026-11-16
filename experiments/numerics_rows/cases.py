@@ -369,13 +369,14 @@ def exact_chunks(weight, quantizer, configs, peer=None):
 
 def checkpoint_routed(store, entry):
     from types import SimpleNamespace
-    from experiments.routed_pair_oracle import load_wires, load_input_scales
+    from experiments.routed_pair_oracle import load_wires, load_input_scales, scheme_for
 
     scheme = store.schemes[entry["name"]]
     experts = int(scheme["experts"])
     if "wire_root" in entry:
         args = SimpleNamespace(wire_root=entry["wire_root"], layer=entry["layer"], scales=entry.get("scales"))
         blobs, _ = load_wires(args, entry["wire_family"], list(range(experts)))
+        scheme, _ = scheme_for({"family": scheme["family"]}, blobs, experts)
         scales = load_input_scales(args, list(range(experts)))[0] if scheme["family"] == "TESSERA_NVFP4" else {}
     else:
         blobs = {p: [store.get(f"{entry['name']}.{e}.{p}.wire").contiguous().numpy().tobytes()
@@ -407,29 +408,32 @@ def main():
     sys.path.insert(0, str(args.source / "src"))
     import tessera
     import torch
-    from experiments.dense_fused_oracle import Store
+    from experiments.numerics_rows.population import store_for
     from tessera.lane_planes import lut_scale_bytes
 
     torch.set_num_threads(1)
     started = time.monotonic()
     args.out.mkdir(parents=True, exist_ok=True)
     population, q1 = (json.loads(p.read_text()) for p in (args.population, args.q1))
+    if population.get("reviewed") is not True or population.get("wire_stamps_read") is not True or not isinstance(population.get("sms"), int):
+        raise ValueError("C1 requires a reviewed population, read wire stamps, and the observed SM count")
     contract = json.loads((args.source / "src/tessera/serving/runtime_contract.json").read_text())
     manifest = {"schema": "tessera.numerics_cases.v1", "population_sha256": sha256(args.population),
                 "q1_table_sha256": sha256(args.q1), "modules": [], "complete": True}
     for entry in population["modules"]:
-        store = Store(entry["root"])
+        store = store_for(entry)
         scheme = store.schemes[entry["name"]]
         family = {"TESSERA_FP8": "e4m3", "TESSERA_NVFP4": "e2m1", "TESSERA_BF16": "value"}[scheme["family"]]
         structure = scheme.get("structure", "dense")
-        facts = {"name": entry["name"], "root": entry["root"], "family": family, "structure": structure,
+        facts = {**{key: entry[key] for key in ("wire_path", "wire_root", "wire_family", "layer") if key in entry},
+                 "name": entry["name"], "root": entry["root"], "family": family, "structure": structure,
                  "roles": [n for n, _ in scheme.get("roles", [])], "experts": int(scheme.get("experts", 1)),
                  "rows": int(scheme["rows"]) if structure == "dense" else int(scheme["groups"]["w13"]["rows"]),
                  "cols": int(scheme["columns"]) if structure == "dense" else int(scheme["groups"]["w13"]["columns"]),
                  "complete": True}
         manifest["modules"].append(facts)
         if structure == "routed_moe":
-            _, blobs, input_scales = checkpoint_routed(store, entry)
+            scheme, blobs, input_scales = checkpoint_routed(store, entry)
             facts["wire_sha256"] = {p: [hashlib.sha256(blob).hexdigest() for blob in wires] for p, wires in blobs.items()}
             from tessera.serving.nvfp4_moe_route import _static_input_global
             gs13 = float(_static_input_global(torch.tensor(input_scales["gate_proj"] + input_scales["up_proj"], dtype=torch.float32), "cpu")) if family == "e2m1" else 1.0
@@ -505,7 +509,7 @@ def main():
                     index = scale_index_manifest(weight, ratio, family, stage, table, peer, peer_scale, quantizer, len(groups), expert, local["m_configs"])
                     local["roles"].append({"name": name, "expert": expert, "gs": gs, "reader_path": str(file), "reader_sha256": sha256(file),
                         "wire_stamp": stamp, "matches_attested_wire": stamped, "rows": weight.shape[0], "cols": weight.shape[1],
-                        "runs_table": sorted(set(int(r) for r in parsed.unit.rates)), "lut": lut, **plans[name],
+                        "runs_table": [int(r) for r in parsed.unit.rates], "lut": lut, **plans[name],
                         "separation": separated, "scale_index": index, "chunks": chunks})
                     local["complete"] &= stamped and separated["complete"] and all(i["reads"] == i["reads_covered"] for i in index) and all(c["holds_for_a_row"] for c in chunks)
                     facts["q256"] = stamp["q256"]

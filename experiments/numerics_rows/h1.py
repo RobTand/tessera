@@ -313,7 +313,7 @@ def run_checks(args, report):
         write_json(args.out / "h1.json", report)
 
     check_source(args.source)
-    check_runtime(args.image)
+    report["runtime"] = check_runtime(args.image)
     sys.path.insert(0, str(args.source / "src"))
     sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "tests"))
     import tessera
@@ -322,6 +322,7 @@ def run_checks(args, report):
     from experiments.numerics_rows.sass_slice import match_library
 
     torch.set_num_threads(1)
+    report["runtime"]["sms"] = torch.cuda.get_device_properties(0).multi_processor_count
     report["native_ops"] = register_native_ops(args.image)
     write_json(args.out / "native_ops.json", report["native_ops"])
     report["build_sha256"] = sha256(args.build)

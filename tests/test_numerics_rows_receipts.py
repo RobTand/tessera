@@ -212,3 +212,27 @@ def test_rule_receipt_requires_decisions_and_records_the_h1_job(tmp_path):
     assert all(result == {"result": "PASS", "h1_job": "test-job"} for result in receipt["preconditions"].values())
     with pytest.raises(Invalid, match="D1 through D8"):
         row.rule_receipt(tmp_path / "rule.md", {}, h1, path)
+
+
+def test_canonical_population_units_keep_distinct_wire_identities():
+    from experiments.numerics_rows.population import module_key
+    base = {"root": "/checkpoint", "name": "module", "wire_root": "/cache", "layer": 3}
+    first = {**base, "wire_family": {"rung": "R832", "payload": "TESSERA_E4M3_K1"}}
+    second = {**base, "wire_family": {"rung": "R960", "payload": "TESSERA_E4M3_K1"}}
+    assert module_key(first) != module_key(second)
+    assert module_key({"root": "/checkpoint", "name": "module", "wire_path": "/cache/a"}) != module_key(
+        {"root": "/checkpoint", "name": "module", "wire_path": "/cache/b"})
+
+
+def test_population_metadata_requires_every_named_shard(tmp_path):
+    from experiments.numerics_rows.population import entries
+    scheme = {"family": "TESSERA_FP8", "q256": 1024, "rows": 128, "columns": 64, "roles": [["down_proj", 128]]}
+    name = "model.language_model.layers.0.mlp.down_proj"
+    (tmp_path / "config.json").write_text(json.dumps({"quantization_config": {"config_groups": {"one": {"scheme": scheme, "targets": [name]}}}}))
+    (tmp_path / "model.safetensors.index.json").write_text(json.dumps({"weight_map": {name + ".wire_bytes": "weights.safetensors"}}))
+    with pytest.raises(ValueError, match="missing wire shard"):
+        entries(tmp_path)
+    (tmp_path / "weights.safetensors").write_bytes(b"metadata-only-path-check")
+    entry, = entries(tmp_path)
+    assert entry["paths_exist"] and entry["q256"] == 1024 and entry["layer"] == 0
+    assert entry["wire_stamp"] is None and entry["runs_table"] is None

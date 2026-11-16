@@ -247,8 +247,9 @@ class Dense:
     def __init__(self, entry, cut, manifest):
         from experiments import dense_fused_oracle as dense
         from experiments.numerics_rows.cases import decode_roles
+        from experiments.numerics_rows.population import store_for
 
-        self.entry, self.cut, self.store = entry, cut, dense.Store(entry["root"])
+        self.entry, self.cut, self.store = entry, cut, store_for(entry)
         self.device = "cuda"
         self.name, self.library = entry["name"], entry["library"]
         self.layer, self.method, self.info = dense.build_served(
@@ -417,14 +418,15 @@ def cell_verdicts(units):
 def planned_units(contract, image_digest, population, manifest):
     """Enumerate every expected unit before a loader or native call can fail."""
     from experiments.numerics_rows.cases import admitted_units
+    from experiments.numerics_rows.population import module_key
 
-    modules = {(m["root"], m["name"]): m for m in manifest["modules"]}
-    names = [(e["root"], e["name"]) for e in population["modules"]]
+    modules = {module_key(m): m for m in manifest["modules"]}
+    names = [module_key(e) for e in population["modules"]]
     if len(modules) != len(manifest["modules"]) or set(names) != set(modules) or len(set(names)) != len(names):
         raise Invalid("case manifest modules differ from the population")
     groups = []
     for entry in population["modules"]:
-        whole = modules[entry["root"], entry["name"]]
+        whole = modules[module_key(entry)]
         for cut in ({"rank": 0, "size": 1}, {"rank": 0, "size": 2}, {"rank": 1, "size": 2}):
             matching = [c for c in whole["cuts"] if c["tp"] == cut]
             if len(matching) != 1 or not matching[0]["m_configs"]:
@@ -510,6 +512,8 @@ def run(args, receipt):
     if freeze["sha256"] != sha256(args.rule) or not freeze["frozen_utc"] or not freeze["reviewer"]:
         raise Invalid("rule is not the reviewed, frozen rule")
     manifest, population, built, h1 = (json.loads(path.read_text()) for path in (args.manifest, args.population, args.build, args.h1))
+    if population.get("reviewed") is not True or population.get("wire_stamps_read") is not True:
+        raise Invalid("row requires the lead's reviewed population with read wire stamps")
     if manifest["population_sha256"] != sha256(args.population) or manifest["q1_table_sha256"] != sha256(args.q1):
         raise Invalid("case manifest input identity differs")
     if len(manifest["modules"]) != len(population["modules"]):

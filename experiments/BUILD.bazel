@@ -588,6 +588,7 @@ ts_py_library(
         "dense_fused_oracle.py",
         "numerics_rows/cases.py",
         "numerics_rows/h1.py",
+        "numerics_rows/population.py",
         "numerics_rows/quantizers.py",
         "numerics_rows/routed.py",
         "numerics_rows/row.py",

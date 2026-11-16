@@ -154,12 +154,13 @@ def main():
     p.add_argument("--artifact", type=Path, required=True)
     args = p.parse_args()
     check_source(args.source)
-    check_runtime(args.image)
+    runtime = check_runtime(args.image)
     sys.path.insert(0, str(args.source / "src"))
     import tessera
     import torch
 
     torch.set_num_threads(1)
+    runtime["sms"] = torch.cuda.get_device_properties(0).multi_processor_count
     args.out.mkdir(parents=True, exist_ok=True)
     registration = register_native_ops(args.image)
     write_json(args.out / "native_ops.json", registration)
@@ -170,7 +171,7 @@ def main():
     for family in (("e4m3", "e2m1") if args.image == "G" else ("value",)):
         for gs in sorted(set(scales.values())) if family == "e2m1" else (1.0,):
             records.append(record_quantizer(family, gs, args.out, boundaries))
-    write_json(args.out / "q1.json", {"native_ops": registration, "quantizers": records, "artifact_scales": scales,
+    write_json(args.out / "q1.json", {"runtime": runtime, "native_ops": registration, "quantizers": records, "artifact_scales": scales,
                                       "tables": [probe_table(lib, args.out, limit) for lib in built["libraries"]],
                                       "boundaries": boundaries})
 
