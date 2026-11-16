@@ -42,7 +42,7 @@ def prepare(step, image, extra=()):
                  f"--env MAX_JOBS={2 if gpu else 4} --env TESSERA_PLATFORM_TOKEN=sm_121 "
                  f"--entrypoint /bin/bash {IMAGES[image]['local_id']} -euo pipefail -c {shlex.quote(payload)}")
     if command == "cpu_checks":
-        container = f"env HOME={out}/home /home/rob/.local/bin/uv run --python 3.12 --no-project --with-requirements code/tools/ci/gate_torch_requirements.txt --with-requirements code/tools/ci/gate_requirements.txt {payload}"
+        container = f"env HOME={out}/home /home/rob/.local/bin/uv run --python 3.12 --no-project --extra-index-url https://download.pytorch.org/whl/cpu --index-strategy unsafe-best-match --with-requirements code/tools/ci/gate_torch_requirements.txt --with-requirements code/tools/ci/gate_requirements.txt {payload}"
     script = f'''#!/bin/bash
 set -euo pipefail
 cd {out}
