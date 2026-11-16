@@ -417,7 +417,7 @@ def cell_verdicts(units):
 
 def planned_units(contract, image_digest, population, manifest):
     """Enumerate every expected unit before a loader or native call can fail."""
-    from experiments.numerics_rows.cases import admitted_units
+    from experiments.numerics_rows.cases import admitted_units, configurations
     from experiments.numerics_rows.population import module_key
 
     modules = {module_key(m): m for m in manifest["modules"]}
@@ -432,6 +432,9 @@ def planned_units(contract, image_digest, population, manifest):
             if len(matching) != 1 or not matching[0]["m_configs"]:
                 raise Invalid("case manifest omitted or repeated a required cut or M configuration")
             module, units = {**whole, **matching[0]}, []
+            expected = configurations(**module["launch_geometry"], library=entry["library"], sms=population["sms"], structure=module["structure"])
+            if module["m_configs"] != expected:
+                raise Invalid("case manifest omitted or changed an expected M configuration")
             for config in module["m_configs"]:
                 scopes = admitted_units(contract, image_digest, entry["contract_family"], module["structure"], module["q256"], entry["pair"], config["M"])
                 if not scopes:
@@ -569,6 +572,8 @@ def run(args, receipt):
                                 raise Invalid("reference self-test or mutated reference control failed")
                             if any(not role["matches_attested_wire"] for role in module["roles"]):
                                 raise Invalid("wire stamp differs from attested_wire")
+                            if module["launch_geometry"] != actual_geometry(adapter, routed):
+                                raise Invalid("C1 launch geometry differs from the loaded operands")
                             unit["scales"] = scale_receipt(adapter, routed)
                             ready = check_preconditions(unit, scale_equal=unit["scales"]["equal"], routed=routed,
                                 slice_matched=slices[key]["matched"], monotonic=next(t for t in q1["tables"] if t["key"] == key)["d_nondecreasing_0_L"])
@@ -671,6 +676,23 @@ def resolve_symbols(functions, names, demangled):
         elif "routed_fused" in name or "dense_fused" in name:
             unresolved.append(name)
     return sorted(found), sorted(unresolved)
+
+
+def actual_geometry(adapter, routed):
+    from tessera.routed_fused import dense_module_launch_enabled
+
+    if routed:
+        roles = [adapter.native.gate]
+    elif adapter.family == "e2m1":
+        roles = adapter.layer.tessera_a4_roles
+    else:
+        roles = adapter.layer.tessera_native.role_bundles
+    merged = not routed and adapter.family == "e4m3" and adapter.library != "triton" and dense_module_launch_enabled()
+    rows = sum(role.rows for role in roles) if merged else roles[0].rows
+    words = roles[0].tile_words
+    words = int(words.reshape(-1)[0]) if hasattr(words, "reshape") else int(words)
+    return {"rows": rows, "cols": roles[0].cols, "tile_words": words,
+            "blocks": sum(-(-role.rows // 128) for role in roles) if merged else -(-rows // 128), "merged": merged}
 
 
 def attach_separation(units):

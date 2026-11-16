@@ -121,7 +121,7 @@ def draft(out):
 
 def inspect(population):
     import torch
-    from experiments.numerics_rows.cases import checkpoint_routed, projection_scheme, wire_stamp
+    from experiments.numerics_rows.cases import checkpoint_routed, projection_scheme, rate_layout, wire_stamp
     from tessera.serving.scheme import parse_tessera_blob_for_scheme
 
     torch.set_num_threads(1)
@@ -143,11 +143,11 @@ def inspect(population):
                     raise ValueError(f"wire rung differs from population: {entry['name']}, {expert}, {role}")
                 records.append({"expert": expert, "role": role, "projection": projection,
                     "wire_sha256": hashlib.sha256(wire).hexdigest(), "wire_stamp": stamp,
-                    "runs_table": [int(value) for value in parsed.unit.rates]})
+                    **rate_layout(parsed.unit.rates)})
         entry["wire_stamp"] = records
         entry["runs_table"] = [record["runs_table"] for record in records]
         if entry["root"] == str(BASE / "t8-coverage-20260930/stubs/stub-T8D1"):
-            key = tuple(sorted({tuple(record["runs_table"]) for record in records}))
+            key = tuple(sorted({tuple(tuple(run) for run in record["runs_table"]) for record in records}))
             if key in tables:
                 population["duplicate_run_tables"].append({"name": entry["name"], "covered_by": tables[key]})
                 continue

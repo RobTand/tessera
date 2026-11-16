@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import argparse
+from collections import Counter
 from fractions import Fraction as F
 import hashlib
 import itertools
@@ -22,18 +23,26 @@ COUNTS = {1: (1,), 2: (1, 2), 8: (1, 5, 8), 64: (1, 37, 64),
           65: (1, 64, 65), 128: (1, 64, 65, 128), 512: (1, 64, 65, 128, 129, 512)}
 
 
-def configurations(rows, cols, library, sms, structure, *, tile_words=None, triton_shape=None):
-    from tessera.routed_fused import dense_k_split, superblock_rows
+def configurations(rows, cols, library, sms, structure, *, tile_words=None, blocks=None, merged=False, triton_shape=None):
+    from tessera.routed_fused import dense_fixup_split_max, dense_k_split, superblock_rows
 
+    if library == "triton" and triton_shape is None:
+        from inspect import signature
+        from tessera.window_gemm import prepare_window_gemm
+
+        parameters = signature(prepare_window_gemm).parameters
+        triton_shape = lambda _: tuple(parameters["block_" + axis].default for axis in ("m", "n", "k"))
     selected, seen = set(D2), set()
     records = {}
     for m in range(1, 2049):
-        width = 64 if library in ("e2m1", "triton") else superblock_rows(library, 0, m)
-        split = 1 if structure == "routed_moe" or library in ("e2m1", "triton") else dense_k_split(m, rows, cols, sms, tile_words=tile_words)
+        width = 64 if library in ("e2m1", "triton") else superblock_rows(library, 0 if structure == "routed_moe" else 2, m, dense=structure == "dense")
+        split = 1 if structure == "routed_moe" or library in ("e2m1", "triton") else dense_k_split(m, rows, cols, sms, tile_words=tile_words, blocks=blocks)
+        if merged:
+            split = min(split, dense_fixup_split_max(cols))
         config = {"k_split": split, "last_tile_partial": m % 64 != 0,
                   "superblock_width": width, "chunk_size": 64 if library in ("e2m1", "triton") else 32}
         if library == "triton":
-            config["triton_shape"] = list(triton_shape(m)) if triton_shape else [64, 64, 64]
+            config["triton_shape"] = list(triton_shape(m))
         key = json.dumps(config, sort_keys=True)
         if m >= 2 and key not in seen:
             selected.add(m)
@@ -41,6 +50,19 @@ def configurations(rows, cols, library, sms, structure, *, tile_words=None, trit
         records[m] = config
     return [{"M": m, **records[m], "route_counts": list(route_counts(m, records[m]["superblock_width"]))
              if structure == "routed_moe" else []} for m in sorted(selected)]
+
+
+def rate_layout(rates):
+    """Build run metadata; use the served pair formula for each word span."""
+    import torch
+    from tessera.routed_fused import pair_tile_words
+
+    runs, column, word = [], 0, 0
+    for rate, count in sorted(Counter(map(int, rates)).items()):
+        runs.append([rate, column, count, word])
+        word += pair_tile_words(torch.tensor([rate, 0, count, 0, 0, count, 0, 0], dtype=torch.int32))
+        column += count
+    return {"runs_table": runs, "tile_words": word}
 
 
 def route_counts(m, width):
@@ -475,9 +497,15 @@ def main():
                         decoded.append((name, w, scale, parsed, gs))
                         plans[name] = {"cut_axis": plan.axis, "cut_range": [plan.role(name).lo, plan.role(name).hi]}
                 if expert == 0:
-                    local_rows = sum(w.shape[0] for _, w, _, _, _ in decoded) if structure == "dense" else next(w.shape[0] for name, w, _, _, _ in decoded if name == "gate_proj")
+                    from tessera.routed_fused import dense_module_launch_enabled
+                    merged = structure == "dense" and family == "e4m3" and entry["library"] != "triton" and dense_module_launch_enabled()
+                    local_rows = sum(w.shape[0] for _, w, _, _, _ in decoded) if merged else decoded[0][1].shape[0]
                     local_cols = decoded[0][1].shape[1]
-                    local["m_configs"] = configurations(local_rows, local_cols, entry["library"], population["sms"], structure)
+                    layout = rate_layout(decoded[0][3].unit.rates)
+                    geometry = {"rows": local_rows, "cols": local_cols, "tile_words": layout["tile_words"],
+                                "blocks": sum(-(-w.shape[0] // 128) for _, w, _, _, _ in decoded) if merged else -(-local_rows // 128), "merged": merged}
+                    local["launch_geometry"] = geometry
+                    local["m_configs"] = configurations(**geometry, library=entry["library"], sms=population["sms"], structure=structure)
                 mapping = {name: (weight, scale) for name, weight, scale, _, _ in decoded}
                 for name, weight, scale, parsed, gs in decoded:
                     quantizer = QuantizerTable(q1, family, gs)
@@ -509,7 +537,7 @@ def main():
                     index = scale_index_manifest(weight, ratio, family, stage, table, peer, peer_scale, quantizer, len(groups), expert, local["m_configs"])
                     local["roles"].append({"name": name, "expert": expert, "gs": gs, "reader_path": str(file), "reader_sha256": sha256(file),
                         "wire_stamp": stamp, "matches_attested_wire": stamped, "rows": weight.shape[0], "cols": weight.shape[1],
-                        "runs_table": [int(r) for r in parsed.unit.rates], "lut": lut, **plans[name],
+                        **rate_layout(parsed.unit.rates), "lut": lut, **plans[name],
                         "separation": separated, "scale_index": index, "chunks": chunks})
                     local["complete"] &= stamped and separated["complete"] and all(i["reads"] == i["reads_covered"] for i in index) and all(c["holds_for_a_row"] for c in chunks)
                     facts["q256"] = stamp["q256"]

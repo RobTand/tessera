@@ -52,11 +52,15 @@ def test_later_h1_error_keeps_finished_sections(tmp_path, monkeypatch):
 
 def population_cases():
     pair = ["tessera::fused_window_dense", "native_fused_window_dense"]
-    population = {"modules": [{"root": "/wires", "name": name, "library": "e4m3",
+    population = {"sms": 1, "modules": [{"root": "/wires", "name": name, "library": "e4m3",
                                "contract_family": "TESSERA_E4M3_K1", "pair": pair}
                               for name in ("module-a", "module-b")]}
     manifest = {"modules": [{"root": "/wires", "name": name, "structure": "dense", "q256": 1024,
-                             "cuts": [{"tp": {"size": size, "rank": rank}, "m_configs": [{"M": 1}, {"M": 2}]}
+                             "cuts": [{"tp": {"size": size, "rank": rank},
+                                       "launch_geometry": {"rows": 128, "cols": 64, "tile_words": 4096, "blocks": 1, "merged": False},
+                                       "m_configs": [{"M": m, "k_split": 1, "last_tile_partial": m % 64 != 0,
+                                                      "superblock_width": 64, "chunk_size": 32, "route_counts": []}
+                                                     for m in (1, 2, 8, 64, 65, 128, 512, 2048)]}
                                       for size, rank in ((1, 0), (2, 0), (2, 1))]}
                             for name in ("module-a", "module-b")]}
     contract = {"lane_eligibility": {"cells": [
@@ -72,11 +76,11 @@ def test_expected_units_exist_before_a_loader_runs():
     groups = row.planned_units(contract, "image", population, manifest)
     assert len(groups) == 6
     units = [unit for _, _, _, group in groups for unit in group]
-    assert len(units) == 12 and all(unit["outcome"] == "STOPPED" for unit in units)
+    assert len(units) == 48 and all(unit["outcome"] == "STOPPED" for unit in units)
     assert {unit["cell"] for unit in units} == {"decode", "batch"}
 
 
-@pytest.mark.parametrize("omitted", ("module", "cut", "configs", "pair"))
+@pytest.mark.parametrize("omitted", ("module", "cut", "configs", "one_config", "pair"))
 def test_manifest_cannot_omit_an_expected_unit(omitted):
     contract, population, manifest = population_cases()
     if omitted == "module":
@@ -85,6 +89,8 @@ def test_manifest_cannot_omit_an_expected_unit(omitted):
         manifest["modules"][0]["cuts"].pop()
     elif omitted == "configs":
         manifest["modules"][0]["cuts"][0]["m_configs"] = []
+    elif omitted == "one_config":
+        manifest["modules"][0]["cuts"][0]["m_configs"].pop()
     else:
         population["modules"][0]["pair"][1] = "wrong-decoder"
     with pytest.raises(Invalid):
@@ -108,7 +114,7 @@ def test_adapter_failure_keeps_unrun_units_stopped(tmp_path, monkeypatch):
         row.main()
     assert stopped.value.code == 3
     receipt = json.loads((tmp_path / "numerics_row.json").read_text())
-    assert len(receipt["units"]) == 12
+    assert len(receipt["units"]) == 48
     assert all(unit["outcome"] == "STOPPED" for unit in receipt["units"][1:])
     assert all(cell["verdict"] == "UNATTESTED" for cell in receipt["cells"])
     assert receipt["row"]["stop_cause"] == "second adapter failed"
@@ -244,3 +250,18 @@ def test_population_metadata_requires_every_named_shard(tmp_path):
     entry, = entries(tmp_path)
     assert entry["paths_exist"] and entry["q256"] == 1024 and entry["layer"] == 0
     assert entry["wire_stamp"] is None and entry["runs_table"] is None
+
+
+def test_rate_layout_uses_the_served_word_spans():
+    from experiments.numerics_rows.cases import rate_layout
+    assert rate_layout([4, 3, 4, 3]) == {"runs_table": [[3, 0, 2, 0], [4, 2, 2, 96]], "tile_words": 224}
+
+
+def test_dense_and_routed_widths_are_distinct_at_2048(monkeypatch):
+    from experiments.numerics_rows.cases import configurations
+    from tessera import routed_fused as rf
+    monkeypatch.setenv(rf.ENV_WIDE, "auto")
+    dense = configurations(128, 128, "e4m3mma", 1, "dense", tile_words=8192, blocks=1)
+    routed = configurations(128, 128, "e4m3mma", 1, "routed_moe", tile_words=8192, blocks=1)
+    assert next(c for c in dense if c["M"] == 2048)["superblock_width"] == 64
+    assert next(c for c in routed if c["M"] == 2048)["superblock_width"] == 128
