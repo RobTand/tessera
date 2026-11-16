@@ -1010,6 +1010,7 @@ def test_arithmetic_receipt_gate(contract, tmp_path, case):
     cell = next(c for c in payload["lane_eligibility"]["cells"]
                 if c["family"] == "TESSERA_E4M3_K1" and len(c["rungs_q256"]) > 15)
     payload["lane_eligibility"]["cells"] = [cell]
+    payload["lane_eligibility"]["structures"] = [cell["structure"]]
     payload["versions"]["default_serve_image"] = cell["runtime"]["image"]
     payload["lane_eligibility"]["platforms"][cell["platform"]]["serve_image"] = cell["runtime"]["image"]
     if case == "census":
@@ -1052,12 +1053,11 @@ def test_arithmetic_receipt_gate(contract, tmp_path, case):
         cell["evidence"]["arithmetic"] = dict(receipt=receipt, sha256=hashlib.sha256(path.read_bytes()).hexdigest())
     if case == "sha256":
         path.write_text(path.read_text() + "\n")
+    reader.validate_serving_contract(payload, require_arithmetic=True)
     if case in ("pass", "by_rule"):
-        reader.validate_serving_contract(payload, require_arithmetic=True)
         reader.check_arithmetic_receipts(payload, tmp_path, rule)
     else:
-        with pytest.raises(ValueError, match="arithmetic|PASS|sha256"):
-            reader.validate_serving_contract(payload, require_arithmetic=True)
+        with pytest.raises(ValueError, match="non-PASS unit" if case == "fail" else "sha256 differs" if case == "sha256" else "missing PASS"):
             reader.check_arithmetic_receipts(payload, tmp_path, rule)
 
 
