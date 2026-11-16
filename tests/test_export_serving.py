@@ -497,31 +497,37 @@ def test_a_joined_batch_reads_each_tensor_once_and_hands_it_back_to_the_loop():
     assert not joined.staged and not joined.done
 
 
+@pytest.fixture(scope="module")
+def joined_reference(tmp_path_factory):
+    hidden, inter, q256 = 128, 192, 896
+    config = _config()
+    config["text_config"].update(hidden_size=hidden, moe_intermediate_size=inter)
+    generator = torch.Generator().manual_seed(11)
+    tensors = {f"{STACK}.{expert}.{projection}.weight": torch.randn(
+        (hidden, inter) if projection == "down_proj" else (inter, hidden), generator=generator)
+        for expert in range(EXPERTS) for projection in ("gate_proj", "up_proj", "down_proj")}
+    inputs = (tensors, {STACK: {"grid": "E4M3", "q256": q256}}, "--device", "cpu", *PART_ARGV)
+    with pytest.MonkeyPatch.context() as patch:
+        out = _export(tmp_path_factory.mktemp("one"), patch, *inputs, config=config)
+    return inputs, config, out
+
+
 @pytest.mark.parametrize("batch", ["2", "5"])
 def test_joined_expert_encodes_group_across_names_and_write_the_one_unit_bytes(
-        tmp_path, monkeypatch, batch):
-    """Real unstacked source: every expert projection is its own tensor name,
-    so ``expert_units[name]`` holds ONE unit and only grouping ACROSS names
-    within the shard ever joins anything.  ``encode_linears_planes`` must
-    observe the requested batch (this asserts the joined call, not a mock of
-    it), and the bytes are the one-unit export's bytes."""
-    config = _config()
-    plan = {STACK: {"grid": "E4M3", "q256": 896}}
-    outs = {}
-    for label, extra in (("one", []), ("joined", ["--encode-batch", batch])):
-        work = tmp_path / label
-        work.mkdir()
-        outs[label] = _export(work, monkeypatch, _checkpoint(), plan,
-                              "--device", "cpu", *PART_ARGV, *extra, config=config)
-        if label == "one":
-            observed = []
-            real = export.encode_linears_planes
+        tmp_path, monkeypatch, batch, joined_reference):
+    """Join nine real expert projections across names and compare their bytes."""
+    inputs, config, one = joined_reference
+    assert json.loads((one.parent / "src/config.json").read_text()) == config
+    assert json.loads((one.parent / "plan.json").read_text()) == inputs[1]
+    observed, real = [], export.encode_linears_planes
 
-            def spy(weights, **kwargs):
-                observed.append((len(weights), tuple(kwargs.get("names") or ())))
-                return real(weights, **kwargs)
+    def spy(weights, **kwargs):
+        observed.append((len(weights), tuple(kwargs.get("names") or ())))
+        return real(weights, **kwargs)
 
-            monkeypatch.setattr(export, "encode_linears_planes", spy)
+    monkeypatch.setattr(export, "encode_linears_planes", spy)
+    outs = {"one": one, "joined": _export(tmp_path, monkeypatch, *inputs,
+            "--encode-batch", batch, config=config)}
     assert (outs["one"] / "model.safetensors").read_bytes() == \
         (outs["joined"] / "model.safetensors").read_bytes()
     joined_sizes = [size for size, _names in observed if size > 1]
@@ -530,9 +536,6 @@ def test_joined_expert_encodes_group_across_names_and_write_the_one_unit_bytes(
     for size, names in observed:
         assert len(names) == size
         if size > 1:
-            # One join key: one stack, and every member a DISTINCT source
-            # name -- cross-name grouping is what a real census needs, and
-            # per-name grouping would never have produced this call.
             assert len({name.split(".experts.")[0] for name in names}) == 1
             assert len(set(names)) == size
     identities = [_part_manifest(out)["export_partition"]["identity"]["options"]
@@ -545,10 +548,6 @@ def test_joined_expert_encodes_group_across_names_and_write_the_one_unit_bytes(
     joined_manifest = _part_manifest(outs["joined"])
     assert joined_manifest["encode_batch"] == int(batch)
     observed = joined_manifest["encode_batch_observed"]
-    # THE EFFECTIVE WIDTHS, as evidence: at least one call ran at the
-    # requested width, every call is at most it, and the histogram accounts
-    # for every joined call the two join keys produced (three projections
-    # x three experts = nine units: gate/up key of six, down key of three).
     assert observed[str(int(batch))] >= 1
     assert max(map(int, observed)) == int(batch)
     assert sum(observed.values()) == (-(-6 // int(batch)) + -(-3 // int(batch)))
