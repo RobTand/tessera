@@ -336,6 +336,52 @@ def test_expected_units_exist_before_a_loader_runs():
     assert {unit["cell"] for unit in units} == {"decode", "batch"}
 
 
+def test_explicit_module_selection_keeps_the_signed_population_and_all_cut_configs():
+    from experiments.numerics_rows.population import select_modules
+
+    contract, population, manifest = population_cases()
+    original = copy.deepcopy(population)
+    selected = select_modules(population, ["module-b"])
+    manifest["modules"] = manifest["modules"][1:]
+    groups = row.planned_units(contract, "image", selected, manifest)
+    assert len(groups) == 3 and sum(len(units) for *_, units in groups) == 24
+    assert population == original
+    with pytest.raises(Invalid, match="modules differ"):
+        row.planned_units(contract, "image", population, manifest)
+
+
+@pytest.mark.parametrize("names", [["missing"], ["module-a", "module-a"]])
+def test_module_selection_refuses_unsigned_or_repeated_names(names):
+    from experiments.numerics_rows.population import select_modules
+
+    with pytest.raises(Invalid, match="module selection"):
+        select_modules(population_cases()[1], names)
+
+
+def test_a_complete_sample_is_still_not_a_row_manifest():
+    contract, population, manifest = population_cases()
+    assert row.planned_units(contract, "image", population, manifest)
+    manifest.update(complete=True, sample={"expert": 0, "tp": {"size": 2, "rank": 0}})
+    with pytest.raises(Invalid, match="sample"):
+        row.planned_units(contract, "image", population, manifest)
+
+
+def test_routed_sample_reads_only_its_expert_and_keeps_the_total_expert_count():
+    from types import SimpleNamespace
+    import torch
+    from experiments.numerics_rows.cases import checkpoint_routed
+
+    requested = []
+    def get(name):
+        requested.append(name)
+        return torch.tensor([17], dtype=torch.uint8)
+    store = SimpleNamespace(schemes={"module": {"experts": 288, "family": "TESSERA_FP8"}}, get=get)
+    scheme, blobs, scales = checkpoint_routed(store, {"name": "module"}, [17])
+    assert scheme["experts"] == 288 and scales == {}
+    assert requested == [f"module.17.{p}.wire" for p in ("gate_proj", "up_proj", "down_proj")]
+    assert all(wires == [b"\x11"] for wires in blobs.values())
+
+
 @pytest.mark.parametrize("omitted", ("module", "cut", "configs", "one_config", "pair"))
 def test_manifest_cannot_omit_an_expected_unit(omitted):
     contract, population, manifest = population_cases()

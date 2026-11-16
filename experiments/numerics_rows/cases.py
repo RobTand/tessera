@@ -13,7 +13,7 @@ import resource
 import sys
 import time
 
-from experiments.numerics_rows.common import artifact_limit, check_runtime, check_source, sha256, write_json
+from experiments.numerics_rows.common import COMMIT, Invalid, artifact_limit, check_runtime, check_source, sha256, write_json
 from experiments.numerics_rows.quantizers import PHASES
 from experiments.numerics_rows.reference import bf16, bf16_array, f32_bits, f32_value, multiply
 
@@ -363,21 +363,22 @@ def exact_chunks(weight, quantizer, configs, peer=None):
         records.append({"columns": list(columns), "x_elements": int(mask.sum()), "holds_for_a_row": bool(mask.any())})
     return records
 
-def checkpoint_routed(store, entry):
+def checkpoint_routed(store, entry, selected=None):
     from types import SimpleNamespace
     from experiments.routed_pair_oracle import load_wires, load_input_scales, scheme_for
 
     scheme = store.schemes[entry["name"]]
     experts = int(scheme["experts"])
+    selected = list(range(experts)) if selected is None else selected
     if "wire_root" in entry:
         args = SimpleNamespace(wire_root=entry["wire_root"], layer=entry["layer"], scales=entry.get("scales"))
-        blobs, _ = load_wires(args, entry["wire_family"], list(range(experts)))
+        blobs, _ = load_wires(args, entry["wire_family"], selected)
         scheme, _ = scheme_for({"family": scheme["family"]}, blobs, experts)
-        scales = load_input_scales(args, list(range(experts)))[0] if scheme["family"] == "TESSERA_NVFP4" else {}
+        scales = load_input_scales(args, selected)[0] if scheme["family"] == "TESSERA_NVFP4" else {}
     else:
         blobs = {p: [store.get(f"{entry['name']}.{e}.{p}.wire").contiguous().numpy().tobytes()
-                     for e in range(experts)] for p in ("gate_proj", "up_proj", "down_proj")}
-        scales = {p: [float(store.get(f"{entry['name']}.{e}.{p}.input_global_scale")) for e in range(experts)]
+                     for e in selected] for p in ("gate_proj", "up_proj", "down_proj")}
+        scales = {p: [float(store.get(f"{entry['name']}.{e}.{p}.input_global_scale")) for e in selected]
                   for p in blobs} if scheme["family"] == "TESSERA_NVFP4" else {}
     return scheme, blobs, scales
 
@@ -398,25 +399,38 @@ def main():
     for name in ("source", "population", "q1", "out"):
         p.add_argument("--" + name, type=Path, required=True)
     p.add_argument("--image", choices=("G", "N"), required=True)
+    p.add_argument("--module", action="append", default=[], help="Explicit signed module name; repeat for a subset")
+    p.add_argument("--source-revision", default=COMMIT)
+    p.add_argument("--sample-expert", type=int, help="Sample all three E4M3 roles of one expert at TP2 rank 0; not a row manifest")
     args = p.parse_args()
-    check_source(args.source)
+    source_revision = check_source(args.source, args.source_revision)
     check_runtime(args.image)
     sys.path.insert(0, str(args.source / "src"))
     import torch
-    from experiments.numerics_rows.population import load_signed_population, store_for
+    from experiments.numerics_rows.population import load_signed_population, select_modules, store_for
     from tessera.lane_planes import lut_scale_bytes
 
     torch.set_num_threads(1)
     started = time.monotonic()
     args.out.mkdir(parents=True, exist_ok=True)
     population, population_digest = load_signed_population(args.population)
+    population = select_modules(population, args.module)
+    if args.sample_expert is not None and (len(population["modules"]) != 1 or any(
+            e["structure"] != "routed_moe" or e["family"] != "TESSERA_FP8" or not 0 <= args.sample_expert < e["experts"]
+            for e in population["modules"])):
+        raise Invalid("a routed sample requires one signed E4M3 module and a valid expert index")
     q1 = json.loads(args.q1.read_text())
     contract = json.loads((args.source / "src/tessera/serving/runtime_contract.json").read_text())
     manifest = {"schema": "tessera.numerics_cases.v1", "population_path": str(args.population),
                 "population_sha256": population_digest, "population_review": population["review"],
-                "q1_table_sha256": sha256(args.q1), "modules": [], "complete": True}
+                "q1_table_sha256": sha256(args.q1), "source_commit": source_revision,
+                "contract_sha256": sha256(args.source / "src/tessera/serving/runtime_contract.json"),
+                "selected_modules": [e["name"] for e in population["modules"]],
+                "sample": None if args.sample_expert is None else {"expert": args.sample_expert, "tp": {"size": 2, "rank": 0}},
+                "modules": [], "complete": True, "generation_finished": False, "items": []}
     write_json(args.out / "population-receipt.json", {"path": str(args.population), "sha256": population_digest, "review": population["review"]})
     for entry in population["modules"]:
+        print(json.dumps({"module_start": entry["name"]}), flush=True)
         store = store_for(entry)
         scheme = store.schemes[entry["name"]]
         family = {"TESSERA_FP8": "e4m3", "TESSERA_NVFP4": "e2m1", "TESSERA_BF16": "value"}[scheme["family"]]
@@ -429,29 +443,31 @@ def main():
                  "complete": True}
         manifest["modules"].append(facts)
         if structure == "routed_moe":
-            scheme, blobs, input_scales = checkpoint_routed(store, entry)
+            selected = list(range(facts["experts"])) if args.sample_expert is None else [args.sample_expert]
+            scheme, blobs, input_scales = checkpoint_routed(store, entry, selected)
             facts["wire_sha256"] = {p: [hashlib.sha256(blob).hexdigest() for blob in wires] for p, wires in blobs.items()}
             from tessera.serving.nvfp4_moe_route import _static_input_global
             gs13 = float(_static_input_global(torch.tensor(input_scales["gate_proj"] + input_scales["up_proj"], dtype=torch.float32), "cpu")) if family == "e2m1" else 1.0
             gs2 = float(_static_input_global(torch.tensor(input_scales["down_proj"], dtype=torch.float32), "cpu")) if family == "e2m1" else 1.0
-            groups = [{p: (blobs[p][e], projection_scheme(scheme, p, blobs[p][e]), gs2 if p == "down_proj" else gs13)
-                       for p in blobs} for e in range(scheme["experts"])]
+            groups = {e: {p: (blobs[p][i], projection_scheme(scheme, p, blobs[p][i]), gs2 if p == "down_proj" else gs13)
+                          for p in blobs} for i, e in enumerate(selected)}
 
         else:
             wire = store.wire(entry["name"]).contiguous().numpy().tobytes()
             gs = float(store.get(entry["name"] + ".input_global_scale")) if family == "e2m1" else 1.0
-            groups = [{"dense": (wire, scheme, gs)}]
+            groups = {0: {"dense": (wire, scheme, gs)}}
 
             facts["wire_sha256"] = hashlib.sha256(wire).hexdigest()
         table = DTable(next(t for t in q1["tables"] if t["key"] == entry["library"])) if structure == "routed_moe" else None
         if table is not None and table.limit != artifact_limit(entry["root"]):
             raise ValueError("artifact swiglu_limit differs from the Q1 D table")
         facts["cuts"] = []
-        for size, rank in ((1, 0), (2, 0), (2, 1)):
+        for size, rank in (((1, 0), (2, 0), (2, 1)) if args.sample_expert is None else ((2, 0),)):
             local = {"structure": structure, "family": family, "tp": {"size": size, "rank": rank}, "roles": [], "complete": True}
             facts["cuts"].append(local)
             # Ask the loader's pure shard planner for each original projection.
-            for expert, group in enumerate(groups):
+            for position, (expert, group) in enumerate(groups.items()):
+                decode_start = time.monotonic()
                 decoded = []
                 stamps = {}
                 plans = {}
@@ -470,7 +486,7 @@ def main():
                     for name, w, scale, parsed in decode_roles(wire, declaration, entry["name"], plan=plan):
                         decoded.append((name, w, scale, parsed, gs))
                         plans[name] = {"cut_axis": plan.axis, "cut_range": [plan.role(name).lo, plan.role(name).hi]}
-                if expert == 0:
+                if position == 0:
                     from tessera.routed_fused import dense_module_launch_enabled
                     merged = structure == "dense" and family == "e4m3" and entry["library"] != "triton" and dense_module_launch_enabled()
                     local_rows = sum(w.shape[0] for _, w, _, _, _ in decoded) if merged else decoded[0][1].shape[0]
@@ -481,7 +497,11 @@ def main():
                     local["launch_geometry"] = geometry
                     local["m_configs"] = configurations(**geometry, library=entry["library"], sms=population["sms"], structure=structure)
                 mapping = {name: (weight, scale) for name, weight, scale, _, _ in decoded}
+                decode_seconds = time.monotonic() - decode_start
                 for name, weight, scale, parsed, gs in decoded:
+                    role_start = time.monotonic()
+                    print(json.dumps({"role_start": name, "module": entry["name"], "expert": expert, "tp": local["tp"],
+                                      "shape": list(weight.shape)}), flush=True)
                     quantizer = QuantizerTable(q1, family, gs)
                     stage = "gate" if structure == "routed_moe" and name == "gate_proj" else "up" if structure == "routed_moe" and name == "up_proj" else "down" if structure == "routed_moe" else "dense"
                     peer = mapping["up_proj" if stage == "gate" else "gate_proj"] if stage in ("gate", "up") else None
@@ -493,7 +513,7 @@ def main():
                         peer_scale = peer_scale.expand(weight.shape[0])
                     lut = lut_scale_bytes(parsed.unit.scale_lut, "cpu").view(torch.float8_e4m3fn).float().tolist() if family == "e2m1" else ()
                     separation_fn = routed_separation if stage == "down" else column_coverage
-                    route_args = {"expert": expert, "experts": len(groups), "configs": local["m_configs"]} if stage == "down" else {}
+                    route_args = {"expert": expert, "experts": facts["experts"], "configs": local["m_configs"]} if stage == "down" else {}
                     separated = separation_fn(weight.numpy(), ratio.numpy(), family, quantizer, **route_args,
                         peer=None if peer is None else peer[0].numpy(), peer_scales=None if peer_scale is None else peer_scale.numpy(),
                         table=table, stage=stage, lut=lut)
@@ -508,13 +528,23 @@ def main():
                         stamped = stamp == expected and lo <= stamp["q256"] <= hi and (stamp["q256"] - lo) % rule["step_q256"] == 0
                     file = args.out / f"{len(manifest['modules'])}-tp{size}-{rank}-{expert}-{name}.pt"
                     torch.save({"weight": weight, "scale": scale}, file)
-                    index = scale_index_manifest(weight, ratio, family, stage, table, peer, peer_scale, quantizer, len(groups), expert, local["m_configs"])
+                    index_start = time.monotonic()
+                    index = scale_index_manifest(weight, ratio, family, stage, table, peer, peer_scale, quantizer, facts["experts"], expert, local["m_configs"])
+                    index_seconds = time.monotonic() - index_start
                     local["roles"].append({"name": name, "expert": expert, "gs": gs, "reader_path": str(file), "reader_sha256": sha256(file),
                         "wire_stamp": stamp, "matches_attested_wire": stamped, "rows": weight.shape[0], "cols": weight.shape[1],
                         **rate_layout(parsed.unit.rates), "lut": lut, **plans[name],
                         "separation": separated, "scale_index": index, "chunks": chunks})
                     local["complete"] &= stamped and separated["complete"] and all(i["reads"] == i["reads_covered"] for i in index) and all(c["holds_for_a_row"] for c in chunks)
                     facts["q256"] = stamp["q256"]
+                    item = {"module": entry["name"], "expert": expert, "role": name, "tp": local["tp"],
+                            "seconds": time.monotonic() - role_start, "decode_seconds": decode_seconds / len(decoded),
+                            "scale_index_seconds": index_seconds, "separation_complete": separated["complete"],
+                            "scale_index_complete": all(i["reads"] == i["reads_covered"] for i in index),
+                            "scale_index_owner": "gate_proj" if stage == "up" else name,
+                            "peak_bytes": resource.getrusage(resource.RUSAGE_SELF).ru_maxrss * 1024}
+                    manifest["items"].append(item)
+                    print(json.dumps(item), flush=True)
                     write_json(args.out / "case_manifest.json", manifest)
             facts["complete"] &= local["complete"]
         manifest["complete"] &= facts["complete"]
@@ -523,7 +553,12 @@ def main():
             "reference_seconds": time.monotonic() - started,
             "host_peak_bytes": resource.getrusage(resource.RUSAGE_SELF).ru_maxrss * 1024})
     manifest.update(reference_seconds=time.monotonic() - started,
-                    host_peak_bytes=resource.getrusage(resource.RUSAGE_SELF).ru_maxrss * 1024)
+                    host_peak_bytes=resource.getrusage(resource.RUSAGE_SELF).ru_maxrss * 1024, generation_finished=True)
+    if args.sample_expert is not None:
+        seconds = sum(i["seconds"] + i["decode_seconds"] for i in manifest["items"])
+        manifest["sample"].update(items=len(manifest["items"]), measured_item_seconds=seconds / len(manifest["items"]),
+                                   measured_wall_seconds=manifest["reference_seconds"],
+                                   tp2_module_items=1728, projected_tp2_module_seconds=seconds / len(manifest["items"]) * 1728)
     write_json(args.out / "case_manifest.json", manifest)
 
 

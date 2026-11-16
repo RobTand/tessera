@@ -47,6 +47,16 @@ def module_key(entry):
                  ("root", "name", "wire_path", "wire_root", "wire_family", "layer"))
 
 
+def select_modules(population, names=()):
+    """Select an explicit row scope without changing the signed population bytes."""
+    if not names:
+        return population
+    entries = {entry["name"]: entry for entry in population["modules"]}
+    if len(entries) != len(population["modules"]) or len(set(names)) != len(names) or set(names) - entries.keys():
+        raise Invalid("module selection is repeated, ambiguous, or absent from the signed population")
+    return {**population, "modules": [entry for entry in population["modules"] if entry["name"] in names]}
+
+
 def store_for(entry):
     """Use the served Store interface for checkpoint and canonical dense wires."""
     from experiments.dense_fused_oracle import Store

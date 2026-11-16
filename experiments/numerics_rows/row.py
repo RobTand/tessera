@@ -462,6 +462,8 @@ def planned_units(contract, image_digest, population, manifest):
     from experiments.numerics_rows.cases import admitted_units, configurations
     from experiments.numerics_rows.population import module_key
 
+    if manifest.get("sample"):
+        raise Invalid("a C1 sample cannot supply a row manifest")
     modules = {module_key(m): m for m in manifest["modules"]}
     names = [module_key(e) for e in population["modules"]]
     if len(modules) != len(manifest["modules"]) or set(names) != set(modules) or len(set(names)) != len(names):
@@ -516,6 +518,7 @@ def main():
         p.add_argument("--" + name, type=Path, required=True)
     p.add_argument("--image", choices=("G", "N"), required=True)
     p.add_argument("--name", required=True)
+    p.add_argument("--module", action="append", default=[], help="Explicit module name in the signed population; repeat for a subset")
     args = p.parse_args()
     args.out.mkdir(parents=True, exist_ok=True)
     receipt = {"schema": "tessera.numerics_row.v2",
@@ -536,9 +539,10 @@ def main():
 
 
 def run(args, receipt):
-    from experiments.numerics_rows.population import load_signed_population
+    from experiments.numerics_rows.population import load_signed_population, select_modules
 
     population, population_digest = load_signed_population(args.population)
+    population = select_modules(population, args.module)
     commit, runtime = check_source(args.source), check_runtime(args.image)
     sys.path.insert(0, str(args.source / "src"))
     import tessera
@@ -600,6 +604,7 @@ def run(args, receipt):
                          "d_table_sha256": d["d_table_sha256"], "d_nondecreasing_0_L": d["d_nondecreasing_0_L"],
                          "sass_slice": slices[key], "finite_certificate": DTable(d).finite_certificate},
                "inputs": {"population_sha256": population_digest, "case_manifest_sha256": sha256(args.manifest),
+                          "selected_modules": [entry["name"] for entry in population["modules"]],
                           "q1_table_sha256": sha256(args.q1), "reference_selftest": selftest(device="cuda")},
                "negative_controls": negative_controls()})
     exit_status = 0
