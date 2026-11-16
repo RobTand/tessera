@@ -326,6 +326,49 @@ def cuda_control_record(where, run):
             "injection": "async device assert in a helper kernel; cell binary unchanged"}
 
 
+def gpu_preconditions(report):
+    libraries = report.get("libraries", {})
+    controls = report.get("cuda_controls", [])
+    return bool(
+        not report.get("error") and libraries
+        and set(libraries) == set(report.get("runtime", {}).get("libraries", []))
+        and report.get("P1", {}).get("samples") == 1_000_000 and report["P1"].get("mismatches") == 0
+        and (set(libraries) == {"value"} or report.get("P2", {}).get("result") == "PASS")
+        and all(not v.get("error") and v.get("P4") and v.get("P5")
+                and (v.get("routed") is None or v["routed"]["P4"] and v["routed"]["P5"])
+                and v.get("wrong_scale_detected", True)
+                and v.get("routed", {}).get("negative_control", {}).get("flagged_exactly", True)
+                and v.get("subnormal_operand", {}).get("result") == ("PASS" if key == "value" else "UNATTESTED")
+                for key, v in libraries.items())
+        and len(controls) == 2 and {c["where"] for c in controls} == {"inside", "outside"}
+        and all(c["exit_status"] == 0 and c.get("attribution_confirmed") is True
+                and c.get("attributed_to") == ("injected-launch" if c["where"] == "inside" else None) for c in controls)
+        and report.get("negative_controls") and all(c["flagged_exactly"] for c in report["negative_controls"]))
+
+
+def confirm_p3(report, records):
+    """Attach a CPU proof only to the binary and probe checked by this H1 run."""
+    report["preconditions_confirmed"] = False
+    report["gpu_preconditions_confirmed"] = gpu_preconditions(report)
+    if not report["gpu_preconditions_confirmed"]:
+        raise ValueError("H1 GPU preconditions are not confirmed")
+    expected = set(report["runtime"]["libraries"])
+    for key in expected:
+        if key not in records or key not in report.get("P3", {}):
+            raise ValueError(f"P3 receipt is missing {key}")
+        for field in ("library_so_sha256", "probe_sha256"):
+            digest = report["P3"][key].get(field)
+            if not digest or records[key].get(field) != digest:
+                raise ValueError(f"P3 {key} {field} differs from the H1 binary")
+    report.setdefault("P3_at_gpu_run", report["P3"])
+    report["P3"] = {key: records[key] for key in sorted(expected)}
+    report["preconditions_confirmed"] = all(
+        r.get("matched") is True and r.get("status") == "MATCHED" and r.get("unresolved") == []
+        and r.get("differences") == [] and r.get("mode0_instantiations", 0) > 0
+        and r.get("quotients", 0) == r.get("quotients_examined") and r.get("quotients", 0) > 0
+        for r in report["P3"].values())
+
+
 def run_checks(args, report):
     def save():
         write_json(args.out / "h1.json", report)
@@ -377,16 +420,8 @@ def run_checks(args, report):
         run = subprocess.run([sys.executable, "-m", "experiments.numerics_rows.h1", "--cuda-control", where, "--image", args.image], env=env, capture_output=True, text=True)
         report["cuda_controls"].append(cuda_control_record(where, run))
         save()
-    report["preconditions_confirmed"] = (
-        not report["P1"]["mismatches"] and (args.image == "N" or report["P2"].get("result") == "PASS")
-        and all(p["matched"] for p in report["P3"].values())
-        and all(not v.get("error") and v.get("P4") and v.get("P5", True)
-                and (v.get("routed") is None or v["routed"]["P4"] and v["routed"]["P5"])
-                and v.get("wrong_scale_detected", True)
-                and (v.get("routed", {}).get("negative_control", {}).get("flagged_exactly", True)) for v in report["libraries"].values())
-        and all(c["exit_status"] == 0 and c["attribution_confirmed"] for c in report["cuda_controls"])
-        and all(v.get("subnormal_operand", {}).get("result") != "FAIL" for v in report["libraries"].values())
-        and all(c["flagged_exactly"] for c in report["negative_controls"]))
+    report["gpu_preconditions_confirmed"] = gpu_preconditions(report)
+    report["preconditions_confirmed"] = report["gpu_preconditions_confirmed"] and all(p["matched"] for p in report["P3"].values())
     save()
 
 
@@ -397,10 +432,26 @@ def main():
     p.add_argument("--image", choices=("G", "N"))
     p.add_argument("--build", type=Path)
     p.add_argument("--cuda-control", choices=("inside", "outside"))
+    p.add_argument("--gpu-receipt", type=Path)
+    p.add_argument("--p3-receipt", type=Path)
     args = p.parse_args()
     if args.cuda_control:
         raise SystemExit(0 if cuda_control(args.cuda_control, args.image) else 3)
     args.out.mkdir(parents=True, exist_ok=True)
+    if args.gpu_receipt:
+        report = json.loads(args.gpu_receipt.read_text())
+        report["preconditions_confirmed"] = False
+        try:
+            confirm_p3(report, json.loads(args.p3_receipt.read_text()))
+            jobid = args.p3_receipt.parent.parent / "jobid"
+            report["p3_receipt"] = {"path": str(args.p3_receipt), "sha256": sha256(args.p3_receipt),
+                                    "flux_job_id": jobid.read_text().strip() if jobid.is_file() else None}
+            report["gpu_receipt"] = {"path": str(args.gpu_receipt), "sha256": sha256(args.gpu_receipt)}
+        except Exception as error:
+            report["error"] = {"type": type(error).__name__, "message": str(error), "traceback": traceback.format_exc()}
+        finally:
+            write_json(args.out / "h1.json", report)
+        raise SystemExit(0 if report["preconditions_confirmed"] else 3)
     report = {"boundaries": [], "libraries": {}, "cuda_controls": [], "negative_controls": [],
               "flux_job_id": os.environ.get("FLUX_JOB_ID"),
               "preconditions_confirmed": False}

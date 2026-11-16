@@ -1,6 +1,7 @@
 """Receipts keep exact NumPy values and completed H1 sections."""
 import json
 import sys
+import copy
 from types import SimpleNamespace
 
 import numpy as np
@@ -85,6 +86,72 @@ def test_cuda_child_attribution_is_present_in_parent_record(where, owner):
     assert record["boundaries"] == child["boundaries"]
     run.stdout = json.dumps({"where": where})
     assert not h1.cuda_control_record(where, run)["attribution_confirmed"]
+
+
+def completed_gpu_receipt():
+    return {"flux_job_id": "gpu-job", "runtime": {"libraries": ["e4m3"]},
+            "P1": {"samples": 1_000_000, "mismatches": 0}, "P2": {"result": "PASS"},
+            "P3": {"e4m3": {"library_so_sha256": "a" * 64, "probe_sha256": "b" * 64,
+                            "matched": False, "status": "DIFFERENT"}},
+            "libraries": {"e4m3": {"P4": True, "P5": True, "routed": {"P4": True, "P5": True},
+                                    "subnormal_operand": {"result": "UNATTESTED"}}},
+            "negative_controls": [{"flagged_exactly": True}],
+            "cuda_controls": [{"where": where, "exit_status": 0, "attribution_confirmed": True,
+                               "attributed_to": "injected-launch" if where == "inside" else None}
+                              for where in ("inside", "outside")], "preconditions_confirmed": False}
+
+
+def completed_p3_receipt():
+    return {"e4m3": {"library_so_sha256": "a" * 64, "probe_sha256": "b" * 64,
+                     "matched": True, "status": "MATCHED", "unresolved": [], "differences": [],
+                     "mode0_instantiations": 1, "quotients": 1, "quotients_examined": 1}}
+
+
+@pytest.mark.parametrize("mutation", ["library_so_sha256", "probe_sha256", "missing", "gpu"])
+def test_cpu_p3_confirmation_requires_the_h1_binary_and_completed_gpu_checks(mutation):
+    report, proof = completed_gpu_receipt(), completed_p3_receipt()
+    h1.confirm_p3(report, proof)
+    assert report["preconditions_confirmed"] and report["gpu_preconditions_confirmed"]
+    assert report["P3_at_gpu_run"]["e4m3"]["status"] == "DIFFERENT"
+    changed, proof = completed_gpu_receipt(), copy.deepcopy(proof)
+    if mutation in ("library_so_sha256", "probe_sha256"):
+        proof["e4m3"][mutation] = "c" * 64
+    elif mutation == "missing":
+        proof.clear()
+    else:
+        changed["libraries"]["e4m3"]["P4"] = False
+    with pytest.raises(ValueError):
+        h1.confirm_p3(changed, proof)
+    assert changed["preconditions_confirmed"] is False
+
+
+@pytest.mark.parametrize("field,value", [("matched", False), ("status", "UNSUPPORTED"),
+    ("unresolved", ["unknown"]), ("differences", [{"changed": True}]), ("mode0_instantiations", 0),
+    ("quotients", 0), ("quotients_examined", 2)])
+def test_cpu_p3_confirmation_refuses_an_incomplete_proof(field, value):
+    report, proof = completed_gpu_receipt(), completed_p3_receipt()
+    h1.confirm_p3(report, proof)
+    assert report["preconditions_confirmed"]
+    proof["e4m3"][field] = value
+    h1.confirm_p3(report, proof)
+    assert report["preconditions_confirmed"] is False
+
+
+def test_h1_can_confirm_cpu_p3_without_loading_cuda(tmp_path, monkeypatch):
+    gpu, proof = tmp_path / "gpu.json", tmp_path / "p3.json"
+    write_json(gpu, completed_gpu_receipt())
+    write_json(proof, completed_p3_receipt())
+    def no_gpu(*args):
+        raise AssertionError("confirmation must not run GPU checks")
+    monkeypatch.setattr(h1, "run_checks", no_gpu)
+    monkeypatch.setattr(sys, "argv", ["h1", "--gpu-receipt", str(gpu), "--p3-receipt", str(proof), "--out", str(tmp_path / "out")])
+    with pytest.raises(SystemExit) as stopped:
+        h1.main()
+    result = json.loads((tmp_path / "out/h1.json").read_text())
+    assert stopped.value.code == 0 and result["preconditions_confirmed"]
+    assert result["gpu_receipt"]["sha256"] and result["p3_receipt"]["sha256"]
+    assert result["flux_job_id"] == "gpu-job"
+    assert not json.loads(gpu.read_text())["preconditions_confirmed"]
 
 
 def population_cases():

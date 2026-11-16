@@ -460,6 +460,8 @@ def rule_receipt(rule, freeze, h1, h1_path):
     if not job or h1.get("preconditions_confirmed") is not True:
         raise Invalid("rule receipt requires a confirmed H1 job")
     preconditions = {name: {"result": "PASS", "h1_job": job} for name in ("P1", "P2", "P3", "P4", "P5")}
+    if "p3_receipt" in h1:
+        preconditions["P3"]["cpu_receipt"] = h1["p3_receipt"]
     if h1["P2"].get("result") != "PASS":
         preconditions["P2"]["result"] = h1["P2"]["result"]
     return {"path": str(rule), **freeze, "preconditions": preconditions,
