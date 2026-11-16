@@ -32,7 +32,7 @@ def code_identity(path):
     hashes only its payload, with no header. Offsets and addresses do not
     enter the digest. ELF32 and ELF64 use the same encoding.
     """
-    data = Path(path).read_bytes()
+    data = path if isinstance(path, bytes) else Path(path).read_bytes()
     if data[:4] != b"\x7fELF" or len(data) < 16 or data[4] not in (1, 2) or data[5] not in (1, 2):
         raise ValueError("unsupported ELF encoding")
     order, wide = "<" if data[5] == 1 else ">", data[4] == 2
@@ -78,13 +78,17 @@ def code_identity(path):
     return {"library_code_sha256": digest.hexdigest(), "library_code_sections": sections}
 
 
-def library_identity(path, out):
-    """Extract cubins in a new job-local directory and record their exact hashes."""
+def library_identity(path, out, *, data=None):
+    """Hash one byte buffer. Extract cubins from its job-local snapshot."""
     path, out = Path(path).resolve(), Path(out)
-    identity = {"library_so_sha256": sha256(path), **code_identity(path)}
+    data = path.read_bytes() if data is None else data
+    identity = {"library_so_sha256": hashlib.sha256(data).hexdigest(), **code_identity(data)}
     out.mkdir(parents=True)
+    snapshot = out.parent / (out.name + ".so")
+    snapshot.write_bytes(data)
+    identity["snapshot_path"] = str(snapshot)
     with (out / "cuobjdump.stdout").open("w") as stdout, (out / "cuobjdump.stderr").open("w") as stderr:
-        subprocess.run(["cuobjdump", "-xelf", "all", str(path)], cwd=out, stdout=stdout, stderr=stderr, check=True)
+        subprocess.run(["cuobjdump", "-xelf", "all", str(snapshot)], cwd=out, stdout=stdout, stderr=stderr, check=True)
     cubins = [p for p in sorted(out.iterdir()) if p.read_bytes()[:4] == b"\x7fELF"]
     if not cubins:
         raise ValueError("cuobjdump extracted no cubins")
