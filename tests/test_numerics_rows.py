@@ -423,7 +423,7 @@ def test_scale_launch_checks_the_loaded_read_on_cpu(monkeypatch, wrong):
     from experiments.numerics_rows import scale_launch
     from experiments.numerics_rows.scale_index import make_plan
     w = torch.ones(2, 1, dtype=torch.float64)
-    adapter = SimpleNamespace(device="cpu", family="value", gs=1.0, cols=1,
+    adapter = SimpleNamespace(device="cpu", family="value", gs=1.0, cols=1, splits=1,
         roles=[("dense", w, torch.ones(2, dtype=torch.float32), None)])
     adapter.quantized = lambda x, recorder: (x, None, x.double(), None)
     cases = [{"read": [index], "g": 1.0, "u": 0.0, "a_scale": 1.0, "g_scale": 1.0, "u_scale": 1.0,
