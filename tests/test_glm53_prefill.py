@@ -368,7 +368,6 @@ class Layer(torch.nn.Module):
             self.mlp = Dense(rnd(2 * H, H), rnd(H, 2 * H), ranks)
         self._mlp_is_moe = moe
 
-    # Per-token stand-ins with the shapes of the real ops.
     def _pre(self, residual, fn, scale, base, norm_weight=None, norm_eps=0.0):
         flat = residual.reshape(residual.shape[0], -1)
         projected = _token_linear(flat, fn)
