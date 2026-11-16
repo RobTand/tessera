@@ -19,8 +19,8 @@ def unit():
     result = new_unit({"decoder": "native_fused_window_dense", "arm": {}, "role": "unit", "structure": "dense"})
     result["completed"] = True
     result["exact"]["sweep"]["elements"] = 1
-    result["exact"]["separation"] = [{"both": 1}]
-    result["exact"]["scale_index"] = [{"launches": 1}]
+    result["exact"]["separation"]["records"] = [{"both": 1}]
+    result["exact"]["scale_index"]["arrays"] = [{"launches": 1}]
     result["exact"]["chunk_pairs"]["x_elements"] = 1
     result["exact"]["composition"]["cases"] = 1
     return result
@@ -198,7 +198,7 @@ def test_pass_requires_each_required_case_family(section):
         scope["exact"][name]["elements"] = 1
     assert outcome(scope) == "PASS"
     if section in ("separation", "scale_index"):
-        scope["exact"][section].clear()
+        scope["exact"][section]["records" if section == "separation" else "arrays"].clear()
     else:
         scope["exact"][section] = {key: 0 for key in scope["exact"][section]}
     assert outcome(scope) == "STOPPED"

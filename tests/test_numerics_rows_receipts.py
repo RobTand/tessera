@@ -166,7 +166,7 @@ def test_separation_attaches_only_to_the_same_compiled_function(different):
     source, target = row.new_unit(scope), row.new_unit(scope)
     identity = [{"symbol": "_Zrouted_fused_kernel0", "library_so_sha256": "binary-a"}]
     source.update(outcome="PASS", separation_census_complete=True, m_config={"M": 64, "compiled_kernel_symbols": identity})
-    source["exact"]["separation"] = [{"elements": 10, "both": 10}]
+    source["exact"]["separation"]["records"] = [{"elements": 10, "both": 10}]
     target.update(needs_separation_transfer=True, m_config={"M": 2, "compiled_kernel_symbols": copy.deepcopy(identity)})
     if different == "symbol":
         target["m_config"]["compiled_kernel_symbols"][0]["symbol"] += "different"
@@ -184,3 +184,31 @@ def test_separation_attaches_only_to_the_same_compiled_function(different):
     else:
         assert target["separation_from"]["M"] == 64 and not target["unattested"]
         assert target["exact"]["separation"] == source["exact"]["separation"]
+
+
+def test_receipt_aggregates_keep_each_array_and_separation_record():
+    unit = row.new_unit({"role": "unit"})
+    unit["exact"]["separation"]["records"] = [{"stage": stage, "elements": 8, "lower_excluded": 8, "upper_excluded": 8, "both": 8,
+        "by_sign": {"positive": [4, 4], "negative": [4, 4]}} for stage in ("gate", "up")]
+    unit["exact"]["scale_index"]["arrays"] = [{"scale": scale, "base": 8, "families": ["plain"], "passes_per_family": 2,
+        "passes_total": 2, "reads": 8, "reads_covered": 8, "uncovered_reads": [], "mismatches": 0, "launches": 16}
+        for scale in ("row", "a_s")]
+    row.finish_unit(unit)
+    separation, scales = unit["exact"]["separation"], unit["exact"]["scale_index"]
+    assert separation["elements"] == separation["both"] == 16
+    assert separation["by_sign"] == {"positive": [8, 8], "negative": [8, 8]}
+    assert scales["scale"] == ["a_s", "row"] and scales["base"] == [8]
+    assert scales["reads"] == scales["reads_covered"] == 16 and scales["launches"] == 32
+    assert scales["passes_total"] == scales["passes_per_family"]["plain"] == 4
+
+
+def test_rule_receipt_requires_decisions_and_records_the_h1_job(tmp_path):
+    path = tmp_path / "h1.json"
+    h1 = {"flux_job_id": "test-job", "preconditions_confirmed": True, "P2": {"result": "PASS"}}
+    path.write_text(json.dumps(h1))
+    freeze = {"decisions": {f"D{i}": "reviewed" for i in range(1, 9)}}
+    receipt = row.rule_receipt(tmp_path / "rule.md", freeze, h1, path)
+    assert set(receipt["preconditions"]) == {"P1", "P2", "P3", "P4", "P5"}
+    assert all(result == {"result": "PASS", "h1_job": "test-job"} for result in receipt["preconditions"].values())
+    with pytest.raises(Invalid, match="D1 through D8"):
+        row.rule_receipt(tmp_path / "rule.md", {}, h1, path)

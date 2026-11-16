@@ -152,7 +152,7 @@ def check(adapter, unit, manifest, recorder):
             coverage(unit, "scale-index", complete, plan["reads"] == plan["reads_covered"])
             record = {k: plan[k] for k in ("scale", "base", "families", "passes_per_family", "passes_total")}
             record.update(verified, mismatches=0, launches=0)
-            unit["exact"]["scale_index"].append(record)
+            unit["exact"]["scale_index"]["arrays"].append(record)
             if not complete:
                 continue
             mode = meta["mode"]

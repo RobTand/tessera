@@ -21,6 +21,7 @@ from experiments.numerics_rows.reference import compare, selftest
 
 
 def outcome(unit):
+    aggregate_exact(unit)
     if unit["findings"]:
         return "FAIL"
     if not unit["completed"] or unit["cuda_unattributed"]:
@@ -37,8 +38,8 @@ def outcome(unit):
 def missing_cases(unit):
     exact = unit["exact"]
     required = {"sweep": exact["sweep"]["elements"],
-                "separation": sum(r["both"] for r in exact["separation"]),
-                "scale_index": sum(r.get("launches", 0) for r in exact["scale_index"]),
+                "separation": sum(r["both"] for r in exact["separation"]["records"]),
+                "scale_index": sum(r.get("launches", 0) for r in exact["scale_index"]["arrays"]),
                 "chunk_pairs": exact["chunk_pairs"]["x_elements"], "composition": exact["composition"]["cases"]}
     if unit.get("structure") == "routed_moe":
         required.update({name: exact[name]["elements"] for name in ("swiglu", "down_input", "token_sum")})
@@ -50,10 +51,27 @@ def new_unit(scope):
             "cuda_unattributed": False, "boundaries": [], "cuda_errors": [], "diagnostic": [],
             "first_mismatch": None, "decoder_bit_exact": False, "graph_replay_equal": [],
             "exact": {"sweep": {"columns": 0, "experts": 0, "elements": 0, "mismatches": 0},
-                      "separation": [], "scale_index": [], "chunk_pairs": {"rows": 0, "x_elements": 0, "mismatches": 0},
+                      "separation": {"records": []}, "scale_index": {"arrays": []}, "chunk_pairs": {"rows": 0, "x_elements": 0, "mismatches": 0},
                       "down_input": {"elements": 0, "mismatches": 0}, "swiglu": {"elements": 0, "mismatches": 0},
                       "token_sum": {"elements": 0, "mismatches": 0}, "composition": {"cases": 0, "equal": True},
                       "signed_zero_diffs": 0}}
+
+
+def aggregate_exact(unit):
+    sep, scales = unit["exact"]["separation"], unit["exact"]["scale_index"]
+    records = sep["records"]
+    sep.update(stage=sorted({r.get("stage", "dense") for r in records}))
+    for field in ("elements", "lower_excluded", "upper_excluded", "both"):
+        sep[field] = sum(r.get(field, 0) for r in records)
+    sep["by_sign"] = {sign: [sum(r.get("by_sign", {}).get(sign, [0, 0])[side] for r in records) for side in (0, 1)]
+                      for sign in ("positive", "negative")}
+    arrays = scales["arrays"]
+    scales.update(scale=sorted({r.get("scale", "row") for r in arrays}), base=sorted({r["base"] for r in arrays if "base" in r}),
+                  families=sorted({f for r in arrays for f in r.get("families", [])}))
+    scales["passes_per_family"] = {f: sum(r["passes_per_family"] for r in arrays if f in r.get("families", [])) for f in scales["families"]}
+    for field in ("passes_total", "reads", "reads_covered", "mismatches", "launches"):
+        scales[field] = sum(r.get(field, 0) for r in arrays)
+    scales["uncovered_reads"] = [{"array": index, **read} for index, r in enumerate(arrays) for read in r.get("uncovered_reads", [])]
 
 
 def finish_unit(unit):
@@ -366,7 +384,7 @@ def dense_cases(adapter, unit, manifest, recorder):
     for role in manifest["roles"]:
         record = role["separation"]
         coverage(unit, "separation", record["complete"], manifest["complete"])
-        unit["exact"]["separation"].append({k: v for k, v in record.items() if k not in ("recipes", "uncovered")})
+        unit["exact"]["separation"]["records"].append({k: v for k, v in record.items() if k not in ("recipes", "uncovered")})
         pending = [(recipe["column"], activation) for recipe in record["recipes"] for activation in recipe["values"]]
         for start in range(0, len(pending), m):
             batch = [(row, [column], [activation]) for row, (column, activation) in enumerate(pending[start:start + m])]
@@ -425,6 +443,21 @@ def planned_units(contract, image_digest, population, manifest):
                     units.append(unit)
             groups.append((entry, module, cut, units))
     return groups
+
+
+def rule_receipt(rule, freeze, h1, h1_path):
+    if set(freeze.get("decisions", {})) != {f"D{i}" for i in range(1, 9)}:
+        raise Invalid("freeze record must include the reviewed decisions D1 through D8")
+    job = h1.get("flux_job_id")
+    if not job:
+        job = (h1_path.parent.parent / "jobid").read_text().strip()
+    if not job or h1.get("preconditions_confirmed") is not True:
+        raise Invalid("rule receipt requires a confirmed H1 job")
+    preconditions = {name: {"result": "PASS", "h1_job": job} for name in ("P1", "P2", "P3", "P4", "P5")}
+    if h1["P2"].get("result") != "PASS":
+        preconditions["P2"]["result"] = h1["P2"]["result"]
+    return {"path": str(rule), **freeze, "preconditions": preconditions,
+            "h1_path": str(h1_path), "h1_sha256": sha256(h1_path)}
 
 
 def main():
@@ -501,7 +534,7 @@ def run(args, receipt):
             raise Invalid("Q1 D table belongs to a different library or probe")
     library, = [r for r in built["libraries"] if r["key"] == key]
     d, = [t for t in q1["tables"] if t["key"] == key]
-    receipt.update({"rule": {"path": str(args.rule), **freeze},
+    receipt.update({"rule": rule_receipt(args.rule, freeze, h1, args.h1),
                "runtime": {**runtime, "device": torch.cuda.get_device_name(), "capability": list(torch.cuda.get_device_capability()),
                            "driver": __import__("subprocess").check_output(["nvidia-smi", "--query-gpu=driver_version", "--format=csv,noheader"], text=True).strip()},
                "tessera": {"commit": commit, "src_tree_sha256": source_digest(args.source), "kernel_source_sha256": KERNEL_SHA256,

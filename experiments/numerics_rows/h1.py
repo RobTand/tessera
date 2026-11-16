@@ -385,6 +385,7 @@ def main():
         raise SystemExit(0 if cuda_control(args.cuda_control, args.image) else 3)
     args.out.mkdir(parents=True, exist_ok=True)
     report = {"boundaries": [], "libraries": {}, "cuda_controls": [], "negative_controls": [],
+              "flux_job_id": os.environ.get("FLUX_JOB_ID"),
               "preconditions_confirmed": False}
     write_json(args.out / "h1.json", report)
     try:
