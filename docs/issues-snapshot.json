@@ -1,6 +1,6 @@
 {
  "default_repo": "RobTand/tessera",
- "generated": "2026-11-02T18:37:59Z",
+ "generated": "2026-11-16T01:24:56Z",
  "repos": {
   "RobTand/prismaquant": {
    "1": {
@@ -7888,15 +7888,15 @@
     "title": "[P1] Reconcile parent acceptance from the existing MTP children and current qualified receipts"
    },
    "2773": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "[P0] Qualify the existing paired-trade repair and retain ranked regression evidence"
    },
    "2774": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "[P0] Apply the authorized interim depth policy and receipt-bound band-price admission"
    },
    "2775": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "[P0] Complete the existing depth-price calibration campaign and matched A8S comparison"
    },
    "2776": {
@@ -9212,7 +9212,7 @@
     "title": "Complete sampled allocations through selected-wire materialization"
    },
    "3070": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "[P2] Make deterministic: tests/test_cluster_campaign_group_lifetime.py::test_recorded_group_teardown_finds_descendants_after_the_leader_exits"
    },
    "3071": {
@@ -9704,39 +9704,39 @@
     "title": "[P1] Prepare PrismaQuant for TL3"
    },
    "3181": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "[P2] Repair hosted CPU failures: g3"
    },
    "3182": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "[P2] Repair hosted CPU failures: checkpoint_staged_readset_1366, g3_launch_read_plan, original_cuda_control_artifacts"
    },
    "3183": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "[P2] Repair hosted CPU failures: campaign_acquisition_d32"
    },
    "3184": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "[P2] Repair hosted CPU failures: dispatch_joint_quanta, dispatch_stage_b_release_gate_2705, spaced_lax_tools_routing_1301"
    },
    "3185": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "[P2] Repair hosted CPU failures: g3_manifest_validator_2699"
    },
    "3186": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "[P2] Repair hosted CPU failures: glm_attention_measurement"
    },
    "3187": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "[P2] Repair hosted CPU failures: lfm_native_launcher_affinity_audit"
    },
    "3188": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "[P2] Repair hosted CPU failures: native_aura_source_binding_audit, native_source_resident_intake_audit"
    },
    "3189": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "[P2] Repair hosted CPU failures: physical_host_foreign_container_audit"
    },
    "319": {
@@ -9748,7 +9748,7 @@
     "title": "[P2] Repair hosted CPU failures: receipt_demo_root_ownership_audit"
    },
    "3191": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "[P2] Repair hosted CPU failures: tessera_calibration_cache"
    },
    "3192": {
@@ -9848,7 +9848,7 @@
     "title": "merge queue: merged #3211: [P3] Growth reserve budget with tests and arch bounds"
    },
    "3213": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "[P2] Route the gold client digest sites to the digest owner"
    },
    "3214": {
@@ -9864,7 +9864,7 @@
     "title": "Move the merge gate to Bazel on BuildBuddy with Mergify scopes"
    },
    "3217": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "Measure and ratchet import fan-out from the dependency graph"
    },
    "3218": {
@@ -9892,7 +9892,7 @@
     "title": "Cut five lazy back imports out of the prismaquant import cycle (wave 1)"
    },
    "3223": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "Install the reviewed PrismaBuild SDK for tests"
    },
    "3224": {
@@ -9904,19 +9904,19 @@
     "title": "merge queue: merged #3222: Cut five lazy back imports out of the prismaquant import cycle (wave 1)"
    },
    "3226": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "Break activation-cache and schema import paths into the export cycle"
    },
    "3227": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "Untangle model profiles from MTP loading and calibration I/O"
    },
    "3228": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "[P2] Read-only sealed IO mappings fail on Linux before 6.7"
    },
    "3229": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "Fix sealed IO read-only mappings on older Linux kernels"
    },
    "323": {
@@ -9924,11 +9924,11 @@
     "title": "Bind native and full-engine measured runtime provenance explicitly"
    },
    "3230": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "Build the pinned PrismaBuild source bundle for hosted tests"
    },
    "3231": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "Scope own-process tests and hooks to tests/own_process"
    },
    "3232": {
@@ -9936,23 +9936,23 @@
     "title": "merge queue: checking #3229 on main (f1335b0)"
    },
    "3233": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "Guard per-PR test reach and dependency graph growth"
    },
    "3234": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "Rank runtime-weighted detangle cuts against the coverage floor"
    },
    "3235": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "Avoid payload pricing in exhaustive Tessera readability assertions"
    },
    "3236": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "Load the directory sync before observing renames in the durability test"
    },
    "3237": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "ci: rerun budget-only overruns once in the hosted gate"
    },
    "3238": {
@@ -9960,32 +9960,272 @@
     "title": "[P2] Preserve singleton hosted gate artifact layout before retry assessment"
    },
    "3239": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "merge queue: checking #3235 on main (f1335b0)"
    },
    "324": {
     "state": "CLOSED",
     "title": "Qualify completed Tessera anchors for exact full-model joint AURA"
    },
+   "3240": {
+    "state": "CLOSED",
+    "title": "Guard CI artifacts and commands against BuildBuddy secret leaks"
+   },
+   "3241": {
+    "state": "CLOSED",
+    "title": "Untangle eight ranked cheap symbol dependencies"
+   },
+   "3242": {
+    "state": "CLOSED",
+    "title": "Avoid repeated runtime reads in native qualification walks"
+   },
+   "3243": {
+    "state": "CLOSED",
+    "title": "Move shared test factories out of four test modules"
+   },
+   "3244": {
+    "state": "CLOSED",
+    "title": "Rank cheaper tests and narrow detangle replay fallback"
+   },
+   "3245": {
+    "state": "CLOSED",
+    "title": "merge queue: merged #3217: Measure and ratchet import fan-out from the dependency graph"
+   },
+   "3246": {
+    "state": "CLOSED",
+    "title": "merge queue: checking #3237 on main (f1335b0), stacked on #3217"
+   },
+   "3247": {
+    "state": "CLOSED",
+    "title": "merge queue: checking #3236 + #3241 + #3240 together on main (69eaea5), stacked on #3237"
+   },
+   "3248": {
+    "state": "CLOSED",
+    "title": "merge queue: checking #3236 + #3240 together on main (69eaea5), stacked on #3237"
+   },
+   "3249": {
+    "state": "CLOSED",
+    "title": "merge queue: checking #3236 on main (69eaea5)"
+   },
    "325": {
     "state": "CLOSED",
     "title": "Keep persistent FP32 buffers unnarrowed through the streaming export"
+   },
+   "3250": {
+    "state": "CLOSED",
+    "title": "merge queue: checking #3240 on main (69eaea5), stacked on #3236"
+   },
+   "3251": {
+    "state": "CLOSED",
+    "title": "merge queue: merged #3240, #3235: Guard CI artifacts and commands against BuildBuddy secret leaks (+1 more)"
+   },
+   "3252": {
+    "state": "CLOSED",
+    "title": "merge queue: checking #3229 on main (69eaea5), stacked on #3240 and #3235"
+   },
+   "3253": {
+    "state": "CLOSED",
+    "title": "merge queue: checking #3237 on main (9c8beeb), stacked on #3229"
+   },
+   "3254": {
+    "state": "CLOSED",
+    "title": "merge queue: checking #3237 on main (9c8beeb)"
+   },
+   "3255": {
+    "state": "CLOSED",
+    "title": "Avoid repeated immutable tuple traversal in runtime verdict copies"
+   },
+   "3256": {
+    "state": "CLOSED",
+    "title": "Avoid repeated format parsing during per-unit allocation"
+   },
+   "3257": {
+    "state": "CLOSED",
+    "title": "merge queue: checking #3237 on main (9c8beeb)"
+   },
+   "3258": {
+    "state": "CLOSED",
+    "title": "Fix stray compression magic blocking artifact secret scans"
+   },
+   "3259": {
+    "state": "CLOSED",
+    "title": "Align uv.lock with the hosted test environment"
    },
    "326": {
     "state": "CLOSED",
     "title": "CI optimization: running only affected tests per PR"
    },
+   "3260": {
+    "state": "CLOSED",
+    "title": "merge queue: checking #3241 on main (9c8beeb)"
+   },
+   "3261": {
+    "state": "CLOSED",
+    "title": "merge queue: checking #3255 + #3242 together on main (9c8beeb), stacked on #3241"
+   },
+   "3262": {
+    "state": "CLOSED",
+    "title": "merge queue: merged #3255: Avoid repeated immutable tuple traversal in runtime verdict copies"
+   },
+   "3263": {
+    "state": "CLOSED",
+    "title": "merge queue: merged #3242: Avoid repeated runtime reads in native qualification walks"
+   },
+   "3264": {
+    "state": "CLOSED",
+    "title": "merge queue: merged #3237: ci: rerun budget-only overruns once in the hosted gate"
+   },
+   "3265": {
+    "state": "CLOSED",
+    "title": "Require secrets before artifact scans and skip fork uploads"
+   },
+   "3266": {
+    "state": "CLOSED",
+    "title": "merge queue: merged #3236: Load the directory sync before observing renames in the durability test"
+   },
+   "3267": {
+    "state": "CLOSED",
+    "title": "merge queue: merged #3229: Fix sealed IO read-only mappings on older Linux kernels"
+   },
+   "3268": {
+    "state": "CLOSED",
+    "title": "Build and test the gate population with Bazel on BuildBuddy"
+   },
+   "3269": {
+    "state": "CLOSED",
+    "title": "merge queue: checking #3241 + #3256 together on main (1a2b09a), stacked on #3229"
+   },
    "327": {
     "state": "CLOSED",
     "title": "Bind original runtime observations through explicit provenance"
+   },
+   "3270": {
+    "state": "CLOSED",
+    "title": "merge queue: checking #3241 on main (1a2b09a), stacked on #3229"
+   },
+   "3271": {
+    "state": "CLOSED",
+    "title": "merge queue: merged #3256: Avoid repeated format parsing during per-unit allocation"
+   },
+   "3272": {
+    "state": "CLOSED",
+    "title": "merge queue: merged #3233: Guard per-PR test reach and dependency graph growth"
+   },
+   "3273": {
+    "state": "CLOSED",
+    "title": "merge queue: merged #3258: Fix stray compression magic blocking artifact secret scans"
+   },
+   "3274": {
+    "state": "CLOSED",
+    "title": "ci: report test budget overruns as warnings without reruns"
+   },
+   "3275": {
+    "state": "CLOSED",
+    "title": "[P2] Bazel generator: preserve annotated pytest_plugins imports"
+   },
+   "3276": {
+    "state": "OPEN",
+    "title": "[P2] Selector: follow literal import_module name keyword"
+   },
+   "3277": {
+    "state": "CLOSED",
+    "title": "merge queue: merged #3274: ci: report test budget overruns as warnings without reruns"
+   },
+   "3278": {
+    "state": "CLOSED",
+    "title": "[P2] Bazel generator: untracked root files must not change BUILD output"
+   },
+   "3279": {
+    "state": "CLOSED",
+    "title": "merge queue: merged #3223: Install the reviewed PrismaBuild SDK for tests"
    },
    "328": {
     "state": "CLOSED",
     "title": "Native MoE receipt reader expects workspace fields absent from producer schema"
    },
+   "3280": {
+    "state": "CLOSED",
+    "title": "merge queue: merged #3259: Align uv.lock with the hosted test environment"
+   },
+   "3281": {
+    "state": "OPEN",
+    "title": "Decide and test Bzlmod paths in third-party modeling-source bindings"
+   },
+   "3282": {
+    "state": "CLOSED",
+    "title": "[P2] Bazel generator: untracked root files must not change BUILD output"
+   },
+   "3283": {
+    "state": "CLOSED",
+    "title": "merge queue: merged #3282: [P2] Bazel generator: untracked root files must not change BUILD output"
+   },
+   "3284": {
+    "state": "CLOSED",
+    "title": "[P2] Move replay-frontier scratch fixture outside the checkout to unblock #2662"
+   },
+   "3285": {
+    "state": "CLOSED",
+    "title": "[P2] Bazel generator: preserve annotated pytest_plugins imports"
+   },
+   "3286": {
+    "state": "CLOSED",
+    "title": "merge queue: merged #3285: [P2] Bazel generator: preserve annotated pytest_plugins imports"
+   },
+   "3287": {
+    "state": "CLOSED",
+    "title": "Fix replay scratch fixture for read-only checkouts"
+   },
+   "3288": {
+    "state": "CLOSED",
+    "title": "merge queue: merged #3287: Fix replay scratch fixture for read-only checkouts"
+   },
+   "3289": {
+    "state": "OPEN",
+    "title": "Keep single-artifact gate verdict downloads in the expected shard directory"
+   },
    "329": {
     "state": "CLOSED",
     "title": "Read native MoE workspace from the published receipt panel"
+   },
+   "3290": {
+    "state": "CLOSED",
+    "title": "merge queue: merged #3268: Build and test the gate population with Bazel on BuildBuddy"
+   },
+   "3291": {
+    "state": "CLOSED",
+    "title": "Fetch full Git history for post-merge graph contracts"
+   },
+   "3292": {
+    "state": "CLOSED",
+    "title": "merge queue: merged #3291: Fetch full Git history for post-merge graph contracts"
+   },
+   "3293": {
+    "state": "CLOSED",
+    "title": "Probe: PR B leaf selection (do not merge)"
+   },
+   "3294": {
+    "state": "CLOSED",
+    "title": "Probe: PR B leaf selection (do not merge)"
+   },
+   "3295": {
+    "state": "CLOSED",
+    "title": "Probe: PR B leaf selection (do not merge)"
+   },
+   "3296": {
+    "state": "CLOSED",
+    "title": "Probe: PR B leaf selection (do not merge)"
+   },
+   "3297": {
+    "state": "CLOSED",
+    "title": "Probe: PR B hub selection (do not merge)"
+   },
+   "3298": {
+    "state": "CLOSED",
+    "title": "Cut over PrismaQuant merge gates to Remote Bazel"
+   },
+   "3299": {
+    "state": "OPEN",
+    "title": "[P2] Migrate PQ continuation readers to PrismaBuild's private machine record"
    },
    "33": {
     "state": "CLOSED",
@@ -9995,41 +10235,441 @@
     "state": "CLOSED",
     "title": "Reuse bound anchor identities and sample joint preparation"
    },
+   "3300": {
+    "state": "OPEN",
+    "title": "[P2] Stage gate receipts on the upload filesystem before atomic publication"
+   },
+   "3301": {
+    "state": "CLOSED",
+    "title": "merge queue: checking #3298 on main (d764d56)"
+   },
+   "3302": {
+    "state": "CLOSED",
+    "title": "merge queue: merged #3298: Cut over PrismaQuant merge gates to Remote Bazel"
+   },
+   "3303": {
+    "state": "CLOSED",
+    "title": "[P2] Keep linked-issue policy strict while admitting authentic Mergify batch drafts"
+   },
+   "3304": {
+    "state": "CLOSED",
+    "title": "[P1] Reuse verified scanner runtime archives and refuse truncated downloads safely"
+   },
+   "3305": {
+    "state": "CLOSED",
+    "title": "Reuse verified scanner archives and bound truncated downloads"
+   },
+   "3306": {
+    "state": "CLOSED",
+    "title": "merge queue: merged #3305: Reuse verified scanner archives and bound truncated downloads"
+   },
+   "3307": {
+    "state": "CLOSED",
+    "title": "Accept authenticated Mergify batch drafts in linked-issue policy"
+   },
+   "3308": {
+    "state": "CLOSED",
+    "title": "merge queue: merged #3307: Accept authenticated Mergify batch drafts in linked-issue policy"
+   },
+   "3309": {
+    "state": "OPEN",
+    "title": "[P2] Bind the actual PB stage beneath remapped container mounts"
+   },
    "331": {
     "state": "CLOSED",
     "title": "Verify anchor render bytes during PWC preparation loads"
+   },
+   "3310": {
+    "state": "OPEN",
+    "title": "[P2] Reject shadowed PB progress mounts before launching containers"
+   },
+   "3311": {
+    "state": "OPEN",
+    "title": "[P2] Retry failed PB export-wait publications without changing the wait"
+   },
+   "3312": {
+    "state": "OPEN",
+    "title": "[P2] Give concurrent PB progress writers separate temporary files"
+   },
+   "3313": {
+    "state": "CLOSED",
+    "title": "[P1] Reuse the SHA-256 grammar in boundary artifact declarations"
+   },
+   "3314": {
+    "state": "CLOSED",
+    "title": "[P1] Reuse the SHA-256 grammar in activation-cache shard stamps"
+   },
+   "3315": {
+    "state": "OPEN",
+    "title": "[P1] Reuse the SHA-256 grammar in resume compatibility declarations"
+   },
+   "3316": {
+    "state": "CLOSED",
+    "title": "[P1] Reuse the SHA-256 grammar for declared reader source checks"
+   },
+   "3317": {
+    "state": "OPEN",
+    "title": "[P1] Reuse the SHA-256 grammar in evaluation draw descriptors"
+   },
+   "3318": {
+    "state": "OPEN",
+    "title": "[P1] Reuse the SHA-256 grammar in streaming initialization metadata"
+   },
+   "3319": {
+    "state": "OPEN",
+    "title": "[P1] Reuse the SHA-256 grammar in streamed model identity validation"
    },
    "332": {
     "state": "CLOSED",
     "title": "Reuse resident NVFP4 codepoints in joint projection QDQ"
    },
+   "3320": {
+    "state": "CLOSED",
+    "title": "[P1] Reuse the SHA-256 grammar in boundary artifact declarations"
+   },
+   "3321": {
+    "state": "CLOSED",
+    "title": "merge queue: merged #3320: [P1] Reuse the SHA-256 grammar in boundary artifact declarations"
+   },
+   "3322": {
+    "state": "CLOSED",
+    "title": "[P1] Reuse the SHA-256 grammar in activation-cache shard stamps"
+   },
+   "3323": {
+    "state": "CLOSED",
+    "title": "merge queue: checking #3322 on main (e4ce6bc)"
+   },
+   "3324": {
+    "state": "CLOSED",
+    "title": "merge queue: merged #3322: [P1] Reuse the SHA-256 grammar in activation-cache shard stamps"
+   },
+   "3325": {
+    "state": "CLOSED",
+    "title": "[P2] Make deterministic: tests/test_cluster_campaign_group_lifetime.py::test_recorded_group_teardown_finds_descendants_after_the_leader_exits"
+   },
+   "3326": {
+    "state": "CLOSED",
+    "title": "merge queue: checking #3325 on main (6215411)"
+   },
+   "3327": {
+    "state": "CLOSED",
+    "title": "merge queue: merged #3325: [P2] Make deterministic: tests/test_cluster_campaign_group_lifetime.py::test_recorded_group_teardown_finds_descendants_after_the_leader_exits"
+   },
+   "3328": {
+    "state": "CLOSED",
+    "title": "[P2] Reject shadowed PB progress mounts before launching containers"
+   },
+   "3329": {
+    "state": "CLOSED",
+    "title": "merge queue: checking #3328 on main (ef817b9)"
+   },
    "333": {
     "state": "CLOSED",
     "title": "Reuse the invariant device codepoint table in served NVFP4 QDQ"
+   },
+   "3330": {
+    "state": "CLOSED",
+    "title": "[P2] Input stamp misses same-size rewrites within one timestamp tick"
+   },
+   "3331": {
+    "state": "CLOSED",
+    "title": "merge queue: checking #3330 on main (ef817b9)"
+   },
+   "3332": {
+    "state": "OPEN",
+    "title": "Generated BUILD check: fail on retired and untracked generated outputs"
+   },
+   "3333": {
+    "state": "CLOSED",
+    "title": "[P2] Bind the actual PB stage beneath remapped container mounts"
+   },
+   "3334": {
+    "state": "CLOSED",
+    "title": "merge queue: checking #3333 on main (ef817b9)"
+   },
+   "3335": {
+    "state": "CLOSED",
+    "title": "[P1] Keep quarantined Bazel impact targets out of runnable manifests"
+   },
+   "3336": {
+    "state": "CLOSED",
+    "title": "Fix Bazel selection and balance four fallback shards"
+   },
+   "3337": {
+    "state": "CLOSED",
+    "title": "merge queue: checking #3333 on main (ef817b9)"
+   },
+   "3338": {
+    "state": "CLOSED",
+    "title": "[P1] Reuse the SHA-256 grammar in streamed model identity validation"
+   },
+   "3339": {
+    "state": "CLOSED",
+    "title": "merge queue: checking #3338 on main (ef817b9)"
    },
    "334": {
     "state": "CLOSED",
     "title": "[P1] Zero automatic prefetch budget is treated as unlimited"
    },
+   "3340": {
+    "state": "CLOSED",
+    "title": "[P1] Reuse the SHA-256 grammar in evaluation draw descriptors"
+   },
+   "3341": {
+    "state": "CLOSED",
+    "title": "merge queue: checking #3340 on main (ef817b9)"
+   },
+   "3342": {
+    "state": "CLOSED",
+    "title": "merge queue: merged #3336: Fix Bazel selection and balance four fallback shards"
+   },
+   "3343": {
+    "state": "CLOSED",
+    "title": "[P1] Reuse the SHA-256 grammar in streaming initialization metadata"
+   },
+   "3344": {
+    "state": "CLOSED",
+    "title": "merge queue: checking #3343 on main (118c4b1)"
+   },
+   "3345": {
+    "state": "CLOSED",
+    "title": "Balance the PR fallback gate across six shards to fit the 30-minute queue timeout"
+   },
+   "3346": {
+    "state": "CLOSED",
+    "title": "Balance the PR fallback gate across six shards"
+   },
+   "3347": {
+    "state": "CLOSED",
+    "title": "merge queue: merged #3346: Balance the PR fallback gate across six shards"
+   },
+   "3348": {
+    "state": "OPEN",
+    "title": "Stable test IDs for test_malformed_inventory_is_an_evidence_failure (xdist collection mismatch)"
+   },
+   "3349": {
+    "state": "CLOSED",
+    "title": "[P1] Reuse the SHA-256 grammar for declared reader source checks"
+   },
    "335": {
     "state": "CLOSED",
     "title": "Respect zero automatic file-prefetch budgets"
+   },
+   "3350": {
+    "state": "CLOSED",
+    "title": "merge queue: checking #3349 on main (7047735)"
+   },
+   "3351": {
+    "state": "CLOSED",
+    "title": "merge queue: merged #3349: [P1] Reuse the SHA-256 grammar for declared reader source checks"
+   },
+   "3352": {
+    "state": "OPEN",
+    "title": "[P2] Make GB10 reclaimer qualification retain device-bound, uncontaminated memory evidence"
+   },
+   "3353": {
+    "state": "CLOSED",
+    "title": "Stabilize malformed-inventory pytest parameter IDs"
+   },
+   "3354": {
+    "state": "CLOSED",
+    "title": "merge queue: merged #3353: Stabilize malformed-inventory pytest parameter IDs"
+   },
+   "3355": {
+    "state": "CLOSED",
+    "title": "Qualify SDK7 for original artifact CAS publication"
+   },
+   "3356": {
+    "state": "CLOSED",
+    "title": "merge queue: merged #3355: Qualify SDK7 for original artifact CAS publication"
+   },
+   "3357": {
+    "state": "CLOSED",
+    "title": "Validate and forward explicit scratch traffic by opt-in"
+   },
+   "3358": {
+    "state": "CLOSED",
+    "title": "merge queue: merged #3357: Validate and forward explicit scratch traffic by opt-in"
+   },
+   "3359": {
+    "state": "CLOSED",
+    "title": "Run PrismaQuant fleet work on Flux and remove PrismaBuild"
    },
    "336": {
     "state": "CLOSED",
     "title": "Add qualified opt-in fused joint projection backend"
    },
+   "3360": {
+    "state": "CLOSED",
+    "title": "Run PrismaQuant fleet work on Flux and remove PrismaBuild"
+   },
+   "3361": {
+    "state": "CLOSED",
+    "title": "[P2] Verified-helper regression leaks staged-reader environment into later container tests"
+   },
+   "3362": {
+    "state": "CLOSED",
+    "title": "merge queue: merged #3360: Run PrismaQuant fleet work on Flux and remove PrismaBuild"
+   },
+   "3363": {
+    "state": "OPEN",
+    "title": "Flux receipts: memory peak, ASCII job ids, health check scoped to eligible ranks"
+   },
+   "3364": {
+    "state": "OPEN",
+    "title": "Test the writer-identity capture in file_identity"
+   },
+   "3365": {
+    "state": "CLOSED",
+    "title": "Flux receipts: memory peak, ASCII job ids, health check scoped to eligible ranks"
+   },
+   "3366": {
+    "state": "OPEN",
+    "title": "[P2] Diagnose mapped Python identity refusal in BuildBuddy native-results test"
+   },
+   "3367": {
+    "state": "OPEN",
+    "title": "[P2] Diagnose impacted BuildBuddy shard exhaustion and 300-second target timeouts"
+   },
+   "3368": {
+    "state": "OPEN",
+    "title": "Runtime and staged-I/O checks misbehave on btrfs subvolumes"
+   },
+   "3369": {
+    "state": "CLOSED",
+    "title": "merge queue: merged #3365: Flux receipts: memory peak, ASCII job ids, health check scoped to eligible ranks"
+   },
    "337": {
     "state": "CLOSED",
     "title": "Avoid materialized products in qualified joint AURA reductions"
+   },
+   "3370": {
+    "state": "OPEN",
+    "title": "[P3] Remove PrismaBuild text that states current behaviour wrongly"
+   },
+   "3371": {
+    "state": "CLOSED",
+    "title": "fix(runtime): check btrfs mapped-file identity through the held descriptor"
+   },
+   "3372": {
+    "state": "CLOSED",
+    "title": "chore(ci): remove PrismaBuild text that states current behaviour wrongly"
+   },
+   "3373": {
+    "state": "CLOSED",
+    "title": "merge queue: merged #3372: chore(ci): remove PrismaBuild text that states current behaviour wrongly"
+   },
+   "3374": {
+    "state": "OPEN",
+    "title": "[P1] P-7: let Stage A/B GPU rows run on plain Flux"
+   },
+   "3375": {
+    "state": "CLOSED",
+    "title": "feat(flux): let Stage A/B GPU rows run on plain Flux"
+   },
+   "3376": {
+    "state": "CLOSED",
+    "title": "merge queue: merged #3375: feat(flux): let Stage A/B GPU rows run on plain Flux"
+   },
+   "3377": {
+    "state": "OPEN",
+    "title": "[P1] In-job Flux verification queries the coordinator's socket and fails off dl380g10"
+   },
+   "3378": {
+    "state": "CLOSED",
+    "title": "fix(flux): verify a running job through its own instance URI"
+   },
+   "3379": {
+    "state": "CLOSED",
+    "title": "merge queue: merged #3378: fix(flux): verify a running job through its own instance URI"
    },
    "338": {
     "state": "CLOSED",
     "title": "PQ237 harness rejects current joint probe source-execution identity"
    },
+   "3380": {
+    "state": "CLOSED",
+    "title": "fix(flux): verify a running job against its saved intent, not a re-run dry-run"
+   },
+   "3381": {
+    "state": "CLOSED",
+    "title": "merge queue: merged #3380: fix(flux): verify a running job against its saved intent, not a re-run dry-run"
+   },
+   "3382": {
+    "state": "OPEN",
+    "title": "[P2] Remove PrismaSnap (Rob's ruling)"
+   },
+   "3383": {
+    "state": "OPEN",
+    "title": "[P1] Batch PRs: run CI only on Mergify batch drafts"
+   },
+   "3384": {
+    "state": "CLOSED",
+    "title": "Run PR gate CI only on Mergify batches"
+   },
+   "3385": {
+    "state": "CLOSED",
+    "title": "Remove PrismaSnap and its unused campaign runner"
+   },
+   "3386": {
+    "state": "CLOSED",
+    "title": "[P2] Stage A GPU row declares 9 cores, not the whole Spark"
+   },
+   "3387": {
+    "state": "CLOSED",
+    "title": "fix(dispatch): declare 9 cores for a Stage A GPU row"
+   },
+   "3388": {
+    "state": "CLOSED",
+    "title": "Run PR gate CI only on Mergify batches"
+   },
+   "3389": {
+    "state": "CLOSED",
+    "title": "Remove PrismaSnap and its unused campaign runner"
+   },
    "339": {
     "state": "CLOSED",
     "title": "fix: bind source execution in joint qualification harness"
+   },
+   "3390": {
+    "state": "OPEN",
+    "title": "[P1] Probe cache headroom ignores the chosen layers_per_shard"
+   },
+   "3391": {
+    "state": "CLOSED",
+    "title": "merge queue: checking #3389 on main (40ac9c5)"
+   },
+   "3392": {
+    "state": "CLOSED",
+    "title": "fix(probe): size the cache headroom from the resolved layers_per_shard"
+   },
+   "3393": {
+    "state": "CLOSED",
+    "title": "merge queue: checking #3392 on main (40ac9c5)"
+   },
+   "3394": {
+    "state": "CLOSED",
+    "title": "merge queue: checking #3389 on main (40ac9c5), stacked on #3392"
+   },
+   "3395": {
+    "state": "CLOSED",
+    "title": "[P2] Remove the cost stage's host-swap watchdog trigger"
+   },
+   "3396": {
+    "state": "CLOSED",
+    "title": "fix(cost): drop the host-swap watchdog trigger"
+   },
+   "3397": {
+    "state": "CLOSED",
+    "title": "merge queue: checking #3389 on main (40ac9c5)"
+   },
+   "3398": {
+    "state": "CLOSED",
+    "title": "merge queue: checking #3396 on main (40ac9c5), stacked on #3389"
+   },
+   "3399": {
+    "state": "OPEN",
+    "title": "[P1] Merge queue checks_timeout is shorter than a full batch gate"
    },
    "34": {
     "state": "CLOSED",
@@ -10039,41 +10679,441 @@
     "state": "CLOSED",
     "title": "P0: standalone export resume cache does not bind source checkpoint identity"
    },
+   "3400": {
+    "state": "CLOSED",
+    "title": "ci(mergify): give a full batch gate 90 minutes"
+   },
+   "3401": {
+    "state": "CLOSED",
+    "title": "[P2] model_walk fake-tensor trace aborts with CUDA illegal memory access on Qwen3.5 (Qwen3.8-27B)"
+   },
+   "3402": {
+    "state": "CLOSED",
+    "title": "merge queue: merged #3389: Remove PrismaSnap and its unused campaign runner"
+   },
+   "3403": {
+    "state": "CLOSED",
+    "title": "merge queue: checking #3396 on main (d7a8c63), stacked on #3389"
+   },
+   "3404": {
+    "state": "CLOSED",
+    "title": "Allocator writes wall-clock solver_seconds into layer_config, so every rerun invalidates the recache digest"
+   },
+   "3405": {
+    "state": "OPEN",
+    "title": "test_native_results: native runtime file changed during measurement in a batch gate (suspected shared-environment race)"
+   },
+   "3406": {
+    "state": "CLOSED",
+    "title": "merge queue: checking #3392 on main (d49e556), stacked on #3396"
+   },
+   "3407": {
+    "state": "CLOSED",
+    "title": "merge queue: merged #3392: fix(probe): size the cache headroom from the resolved layers_per_shard"
+   },
+   "3408": {
+    "state": "CLOSED",
+    "title": "fix(allocator): write no wall time into the allocator outputs"
+   },
+   "3409": {
+    "state": "CLOSED",
+    "title": "merge queue: checking #3408 on main (d49e556), stacked on #3392"
+   },
    "341": {
     "state": "CLOSED",
     "title": "Stream canonical GLM calibration through bounded source residency"
+   },
+   "3410": {
+    "state": "CLOSED",
+    "title": "Shard planner: impacted PR selections get 2 untimed shards run one after the other, which exceed the 55-min remote-run limit"
+   },
+   "3411": {
+    "state": "CLOSED",
+    "title": "fix(ci): plan every PR selection as six timing-balanced shards"
+   },
+   "3412": {
+    "state": "CLOSED",
+    "title": "merge queue: merged #3408: fix(allocator): write no wall time into the allocator outputs"
+   },
+   "3413": {
+    "state": "CLOSED",
+    "title": "merge queue: merged #3396: fix(cost): drop the host-swap watchdog trigger"
+   },
+   "3414": {
+    "state": "CLOSED",
+    "title": "merge queue: checking #3062 on main (401b59a), stacked on #3396"
+   },
+   "3415": {
+    "state": "CLOSED",
+    "title": "[P2] run-pipeline accepts WALK_GATE_EXECUTION=real, which [3d] can never run"
+   },
+   "3416": {
+    "state": "CLOSED",
+    "title": "fix(model_walk): trace the torch reference path under fake execution"
+   },
+   "3417": {
+    "state": "CLOSED",
+    "title": "merge queue: merged #3416: fix(model_walk): trace the torch reference path under fake execution"
+   },
+   "3418": {
+    "state": "CLOSED",
+    "title": "[P2] Run probe and cost once per model: STOP_AFTER=cost and skip the unused [2b] cache"
+   },
+   "3419": {
+    "state": "CLOSED",
+    "title": "fix(pipeline): remove WALK_GATE_EXECUTION; [3d] runs only the fake trace"
    },
    "342": {
     "state": "CLOSED",
     "title": "Preserve persistent buffer bytes in fresh and resumed streaming export"
    },
+   "3420": {
+    "state": "CLOSED",
+    "title": "merge queue: merged #3419: fix(pipeline): remove WALK_GATE_EXECUTION; [3d] runs only the fake trace"
+   },
+   "3421": {
+    "state": "CLOSED",
+    "title": "[P3] Delete the unreachable staged-read branches and the ram tier"
+   },
+   "3422": {
+    "state": "CLOSED",
+    "title": "feat(pipeline): STOP_AFTER=cost, and skip the unused [2b] render cache"
+   },
+   "3423": {
+    "state": "CLOSED",
+    "title": "merge queue: merged #3422: feat(pipeline): STOP_AFTER=cost, and skip the unused [2b] render cache"
+   },
+   "3424": {
+    "state": "OPEN",
+    "title": "[P2] Stream the stages that load the whole model, so a 600 GB model fits a Spark"
+   },
+   "3425": {
+    "state": "OPEN",
+    "title": "[P2] Probe sample slices: exact equality blocked by act/ row draw and global CE mean"
+   },
+   "3426": {
+    "state": "CLOSED",
+    "title": "refactor(staged): delete the unreachable ram tier and dynamic-map branches"
+   },
+   "3427": {
+    "state": "CLOSED",
+    "title": "merge queue: merged #3426: refactor(staged): delete the unreachable ram tier and dynamic-map branches"
+   },
+   "3428": {
+    "state": "CLOSED",
+    "title": "fix(probe): select act/ rows by a keyed rule, and key every act/ reader on it"
+   },
+   "3429": {
+    "state": "CLOSED",
+    "title": "feat(streaming): page probe boundaries from disk and read ahead the next source shards"
+   },
    "343": {
     "state": "CLOSED",
     "title": "Stream canonical GLM calibration through bounded source residency"
+   },
+   "3430": {
+    "state": "CLOSED",
+    "title": "merge queue: checking #3428 on main (60fecea)"
+   },
+   "3431": {
+    "state": "CLOSED",
+    "title": "merge queue: checking #3429 on main (60fecea), stacked on #3428"
+   },
+   "3432": {
+    "state": "CLOSED",
+    "title": "merge queue: checking #3429 on main (60fecea), stacked on #3428"
+   },
+   "3433": {
+    "state": "CLOSED",
+    "title": "merge queue: merged #3429: feat(streaming): page probe boundaries from disk and read ahead the next source shards"
+   },
+   "3434": {
+    "state": "CLOSED",
+    "title": "merge queue: merged #3428: fix(probe): select act/ rows by a keyed rule, and key every act/ reader on it"
+   },
+   "3435": {
+    "state": "CLOSED",
+    "title": "probe: bf16 h_trace for linear_attn.in_proj_a can differ from an fp32 reference (random-weight evidence)"
+   },
+   "3436": {
+    "state": "CLOSED",
+    "title": "build(deps): declare ninja as a runtime dependency"
+   },
+   "3437": {
+    "state": "CLOSED",
+    "title": "refactor(probe): remove the multimodal probe and the code only it fed"
+   },
+   "3438": {
+    "state": "CLOSED",
+    "title": "deps: ninja is a runtime dependency but is not declared"
+   },
+   "3439": {
+    "state": "CLOSED",
+    "title": "probe: remove the unused multimodal probe"
    },
    "344": {
     "state": "CLOSED",
     "title": "Skip empty joint projection leases during checkpoint resume"
    },
+   "3440": {
+    "state": "CLOSED",
+    "title": "build(deps): declare ninja as a runtime dependency"
+   },
+   "3441": {
+    "state": "CLOSED",
+    "title": "refactor(probe): remove the multimodal probe and the code only it fed"
+   },
+   "3442": {
+    "state": "CLOSED",
+    "title": "streaming: remove the unused multimodal=True path of _build_streaming_context"
+   },
+   "3443": {
+    "state": "CLOSED",
+    "title": "merge queue: check one batch at a time (max_parallel_checks 1)"
+   },
+   "3444": {
+    "state": "CLOSED",
+    "title": "ci(mergify): check one batch at a time"
+   },
+   "3445": {
+    "state": "CLOSED",
+    "title": "refactor(streaming): remove the explicit visual-tower load"
+   },
+   "3446": {
+    "state": "CLOSED",
+    "title": "probe: pin fla kernel configs so GPU runs are reproducible"
+   },
+   "3447": {
+    "state": "CLOSED",
+    "title": "probe: capture act/ rows in the phase-1 forward"
+   },
+   "3448": {
+    "state": "CLOSED",
+    "title": "probe: delete phase 2, phase 3 and the Fisher"
+   },
+   "3449": {
+    "state": "CLOSED",
+    "title": "fix(probe): pin the fla kernel configs that GPU stages use"
+   },
    "345": {
     "state": "CLOSED",
     "title": "P1: fused joint resume creates a lease for fully checkpointed layers"
+   },
+   "3450": {
+    "state": "CLOSED",
+    "title": "merge queue: checking #3440 + #3444 together on main (4c457c5)"
+   },
+   "3451": {
+    "state": "CLOSED",
+    "title": "merge queue: checking #3440 on main (4c457c5)"
+   },
+   "3452": {
+    "state": "CLOSED",
+    "title": "refactor(probe): capture act/ rows in the phase-1 forward"
+   },
+   "3453": {
+    "state": "CLOSED",
+    "title": "merge queue: merged #3441, #3445, #3444: refactor(probe): remove the multimodal probe and the code only it fed (+2 more)"
+   },
+   "3454": {
+    "state": "CLOSED",
+    "title": "ci: print the underlying error when the remote gate or the selection planner refuses"
+   },
+   "3455": {
+    "state": "CLOSED",
+    "title": "ci: put refusal detail in a private BuildBuddy artifact"
+   },
+   "3456": {
+    "state": "CLOSED",
+    "title": "merge queue: merged #3455: ci: put refusal detail in a private BuildBuddy artifact"
+   },
+   "3457": {
+    "state": "CLOSED",
+    "title": "remove the modules that read the retired probe Fisher"
+   },
+   "3458": {
+    "state": "CLOSED",
+    "title": "merge queue: checking #3440 on main (82f69c1)"
+   },
+   "3459": {
+    "state": "CLOSED",
+    "title": "merge queue: merged #3440: build(deps): declare ninja as a runtime dependency"
    },
    "346": {
     "state": "CLOSED",
     "title": "Track explicit source provenance for interrupted joint AURA continuation"
    },
+   "3460": {
+    "state": "CLOSED",
+    "title": "merge queue: checking #3449 on main (81fc230)"
+   },
+   "3461": {
+    "state": "CLOSED",
+    "title": "test: build the Flux CPU test venv from the gate requirements"
+   },
+   "3462": {
+    "state": "CLOSED",
+    "title": "test(flux): build the CPU test venv from the gate requirements"
+   },
+   "3463": {
+    "state": "CLOSED",
+    "title": "merge queue: checking #3452 on main (81fc230)"
+   },
+   "3464": {
+    "state": "CLOSED",
+    "title": "merge queue: merged #3462: test(flux): build the CPU test venv from the gate requirements"
+   },
+   "3465": {
+    "state": "CLOSED",
+    "title": "merge queue: merged #3452: refactor(probe): capture act/ rows in the phase-1 forward"
+   },
+   "3466": {
+    "state": "CLOSED",
+    "title": "docs: delete the ARCHITECTURE.md top stamp and the rule that re-stamps it each PR"
+   },
+   "3467": {
+    "state": "CLOSED",
+    "title": "docs: delete the ARCHITECTURE.md top stamp and the rule that re-stamps it"
+   },
+   "3468": {
+    "state": "CLOSED",
+    "title": "merge queue: merged #3467: docs: delete the ARCHITECTURE.md top stamp and the rule that re-stamps it"
+   },
+   "3469": {
+    "state": "CLOSED",
+    "title": "merge queue: merged #3449: fix(probe): pin the fla kernel configs that GPU stages use"
+   },
    "347": {
     "state": "CLOSED",
     "title": "Preserve explicit source provenance across joint AURA resumes"
+   },
+   "3470": {
+    "state": "CLOSED",
+    "title": "test: tear the config fence's own fingerprint, not the second Path.stat"
+   },
+   "3471": {
+    "state": "CLOSED",
+    "title": "merge queue: merged #3470: test: tear the config fence's own fingerprint, not the second Path.stat"
+   },
+   "3472": {
+    "state": "CLOSED",
+    "title": "refactor(probe): one no-grad forward with no Fisher; aura is the only cost mode"
+   },
+   "3473": {
+    "state": "CLOSED",
+    "title": "merge queue: checking #3472 on main (6d7540c)"
+   },
+   "3474": {
+    "state": "CLOSED",
+    "title": "ci: the gate runs bazel_generated.py; a stale BUILD file fails the gate"
+   },
+   "3475": {
+    "state": "CLOSED",
+    "title": "merge queue: merged #3472: refactor(probe): one no-grad forward with no Fisher; aura is the only cost mode"
+   },
+   "3476": {
+    "state": "CLOSED",
+    "title": "ci: the hosted gate lane fails on a stale generated Bazel input"
+   },
+   "3477": {
+    "state": "CLOSED",
+    "title": "merge queue: merged #3476: ci: the hosted gate lane fails on a stale generated Bazel input"
+   },
+   "3478": {
+    "state": "CLOSED",
+    "title": "refactor: remove the modules that read the retired probe Fisher"
+   },
+   "3479": {
+    "state": "CLOSED",
+    "title": "merge queue: merged #3478: refactor: remove the modules that read the retired probe Fisher"
    },
    "348": {
     "state": "CLOSED",
     "title": "Bind the source checkpoint identity into the export resume manifest"
    },
+   "3480": {
+    "state": "CLOSED",
+    "title": "render: delete the h-detail readers of the archived fisher_gptq lever"
+   },
+   "3481": {
+    "state": "CLOSED",
+    "title": "render: delete the h-detail readers of the archived fisher_gptq lever"
+   },
+   "3482": {
+    "state": "CLOSED",
+    "title": "merge queue: checking #3481 on main (aa2883f)"
+   },
+   "3483": {
+    "state": "CLOSED",
+    "title": "test: the 1786 final-write test waits 10 s of wall time for the replay"
+   },
+   "3484": {
+    "state": "CLOSED",
+    "title": "repo: delete 10 unread tracked logs; un-ignore the archived lattices .pt"
+   },
+   "3485": {
+    "state": "CLOSED",
+    "title": "[P1] Read stream: clear the decoded value before the completion is published (part of #3051)"
+   },
+   "3486": {
+    "state": "CLOSED",
+    "title": "merge queue: merged #3481: render: delete the h-detail readers of the archived fisher_gptq lever"
+   },
+   "3487": {
+    "state": "CLOSED",
+    "title": "stage-a: origin_only_lifetimes reads _groups without the publication lock"
+   },
+   "3488": {
+    "state": "CLOSED",
+    "title": "test(stageb): hold the final write on the replay event, not on wall time"
+   },
+   "3489": {
+    "state": "CLOSED",
+    "title": "merge queue: merged #3488: test(stageb): hold the final write on the replay event, not on wall time"
+   },
    "349": {
     "state": "CLOSED",
     "title": "Remove misleading streamed AURA resume ETA"
+   },
+   "3490": {
+    "state": "CLOSED",
+    "title": "fix(stage-a): read the produced groups under the publication lock"
+   },
+   "3491": {
+    "state": "CLOSED",
+    "title": "merge queue: merged #3490: fix(stage-a): read the produced groups under the publication lock"
+   },
+   "3492": {
+    "state": "CLOSED",
+    "title": "fla: pin the plain-autotune kernels at the one runtime init that every GPU stage passes"
+   },
+   "3493": {
+    "state": "CLOSED",
+    "title": "#3485 [P1] Read stream: clear the decoded value before the completion is published (part of #3051)"
+   },
+   "3494": {
+    "state": "CLOSED",
+    "title": "test: container_cache_peak_2463 records the wrong peak sample and a flaky allocated-bytes check"
+   },
+   "3495": {
+    "state": "CLOSED",
+    "title": "test: native_results measured-interpreter test fails with NotADirectoryError on a dist-info"
+   },
+   "3496": {
+    "state": "CLOSED",
+    "title": "[P1] Native-source test fixtures: load the GLM-only modules only in the function that uses them (part of #2805)"
+   },
+   "3497": {
+    "state": "CLOSED",
+    "title": "#3496 [P1] Native-source test fixtures: load the GLM-only modules only in the function that uses them (part of #2805)"
+   },
+   "3498": {
+    "state": "CLOSED",
+    "title": "[P2] Native-source test fixtures: make the streamed cases independent of the host memory (part of #3188)"
+   },
+   "3499": {
+    "state": "CLOSED",
+    "title": "test: container_cache_peak tests assumed st_blocks updates at write time"
    },
    "35": {
     "state": "CLOSED",
@@ -10083,41 +11123,441 @@
     "state": "CLOSED",
     "title": "Report measured AURA progress without misleading resume ETA"
    },
+   "3500": {
+    "state": "CLOSED",
+    "title": "#3498 [P2] Native-source test fixtures: make the streamed cases independent of the host memory (part of #3188)"
+   },
+   "3501": {
+    "state": "CLOSED",
+    "title": "merge queue: merged #3499: test: container_cache_peak tests assumed st_blocks updates at write time"
+   },
+   "3502": {
+    "state": "CLOSED",
+    "title": "[P2] Pass profiler: record the CUDA allocator history of one capture group (part of #2881)"
+   },
+   "3503": {
+    "state": "CLOSED",
+    "title": "#3502 [P2] Pass profiler: record the CUDA allocator history of one capture group (part of #2881)"
+   },
+   "3504": {
+    "state": "CLOSED",
+    "title": "repo: delete 4 unread bounded-hessian logs; un-ignore the archived lattices .pt"
+   },
+   "3505": {
+    "state": "CLOSED",
+    "title": "merge queue: merged #3504: repo: delete 4 unread bounded-hessian logs; un-ignore the archived lattices .pt"
+   },
+   "3506": {
+    "state": "CLOSED",
+    "title": "ci(gate): remove 27 quarantine entries whose cause is gone"
+   },
+   "3507": {
+    "state": "CLOSED",
+    "title": "merge queue: checking #3506 on main (6cb5f6e)"
+   },
+   "3508": {
+    "state": "CLOSED",
+    "title": "merge queue: checking #3506 on main (6cb5f6e)"
+   },
+   "3509": {
+    "state": "CLOSED",
+    "title": "fix(fla): pin the plain-autotune kernels at model runtime init"
+   },
    "351": {
     "state": "CLOSED",
     "title": "Carry verified anchor export identity through joint AURA allocation"
+   },
+   "3510": {
+    "state": "CLOSED",
+    "title": "fix(native): compare mapped devices with the mount device"
+   },
+   "3511": {
+    "state": "CLOSED",
+    "title": "[P2] Pass profiler: record the device identity and the device bytes of the selected capture group (part of #2881)"
+   },
+   "3512": {
+    "state": "CLOSED",
+    "title": "#3511 [P2] Pass profiler: record the device identity and the device bytes of the selected capture group (part of #2881) [skip ci]"
+   },
+   "3513": {
+    "state": "CLOSED",
+    "title": "merge queue: checking #3509 on main (6cb5f6e)"
+   },
+   "3514": {
+    "state": "CLOSED",
+    "title": "merge queue: checking #3512 on main (6cb5f6e)"
+   },
+   "3515": {
+    "state": "CLOSED",
+    "title": "CI: run the arm64 Bazel shards on BuildBuddy-hosted executors"
+   },
+   "3516": {
+    "state": "CLOSED",
+    "title": "flux_jobs refuses every submit while one Flux rank is offline"
+   },
+   "3517": {
+    "state": "CLOSED",
+    "title": "ci(bazel): run arm64 actions on BuildBuddy's hosted executors"
+   },
+   "3518": {
+    "state": "CLOSED",
+    "title": "fix(flux): allow work while another rank is offline"
+   },
+   "3519": {
+    "state": "CLOSED",
+    "title": "Graph impact: a date check fails every PR from 2026-11-17"
    },
    "352": {
     "state": "CLOSED",
     "title": "Honor declared dispatch identity rules and validate runtime prefix maps correctly"
    },
+   "3520": {
+    "state": "CLOSED",
+    "title": "Mergify: delete the dead TL3 queue path"
+   },
+   "3521": {
+    "state": "CLOSED",
+    "title": "test(graph): delete the date check that fails every PR from 2026-11-17"
+   },
+   "3522": {
+    "state": "CLOSED",
+    "title": "ci(mergify): delete the dead TL3 queue path"
+   },
+   "3523": {
+    "state": "CLOSED",
+    "title": "ci(gate): fix or delete the 48 quarantined tests, then delete the quarantine"
+   },
+   "3524": {
+    "state": "CLOSED",
+    "title": "merge queue: merged #3521, #3522: test(graph): delete the date check that fails every PR from 2026-11-17 (+1 more)"
+   },
+   "3525": {
+    "state": "CLOSED",
+    "title": "Streaming: base cost measures only the rows that AURA does not price"
+   },
+   "3526": {
+    "state": "CLOSED",
+    "title": "Streaming: base cost measures only the rows that AURA does not price"
+   },
+   "3527": {
+    "state": "CLOSED",
+    "title": "Gate: a BUILD file change must not select the full test population"
+   },
+   "3528": {
+    "state": "CLOSED",
+    "title": "Bazel requirements: hash the Tessera pin, not the contract file bytes"
+   },
+   "3529": {
+    "state": "CLOSED",
+    "title": "ci(gate): select BUILD changes by bazel-diff, not the full population"
+   },
    "353": {
     "state": "CLOSED",
     "title": "Honor declared dispatch identity rules and repair prefix validation"
+   },
+   "3530": {
+    "state": "CLOSED",
+    "title": "bazel: hash the Tessera pin value, not the contract file bytes"
+   },
+   "3531": {
+    "state": "CLOSED",
+    "title": "test_native_results fails at random: the BuildBuddy executor hard-links inputs, which changes ctime"
+   },
+   "3532": {
+    "state": "CLOSED",
+    "title": "ci(gate): quarantine the native_results interpreter test until the executor uses reflinks"
+   },
+   "3533": {
+    "state": "CLOSED",
+    "title": "Gate: a test failure exits 75 like an infrastructure refusal"
+   },
+   "3534": {
+    "state": "CLOSED",
+    "title": "fix(ci): a test failure exits 1, an infrastructure refusal exits 75"
+   },
+   "3535": {
+    "state": "CLOSED",
+    "title": "Streaming: export per layer range plus a final writer"
+   },
+   "3536": {
+    "state": "CLOSED",
+    "title": "Streaming: export per layer range plus a final writer"
+   },
+   "3537": {
+    "state": "CLOSED",
+    "title": "Delete unused Tessera tools and the last PrismaBuild mechanisms"
+   },
+   "3538": {
+    "state": "CLOSED",
+    "title": "Delete unused Tessera tools and the last PrismaBuild mechanisms"
+   },
+   "3539": {
+    "state": "CLOSED",
+    "title": "Move RetiredFormatError into schemas so schemas does not import format_registry"
    },
    "354": {
     "state": "CLOSED",
     "title": "Carry verified original metadata into completed joint allocation tables"
    },
+   "3540": {
+    "state": "CLOSED",
+    "title": "Share the per-rank route fill in shipcard so tessera_shipcard does not import the shipcard CLI"
+   },
+   "3541": {
+    "state": "CLOSED",
+    "title": "Move bind_joint_served_quantizer into joint_served_activation so Stage A measurement does not import Stage B"
+   },
+   "3542": {
+    "state": "CLOSED",
+    "title": "Move the research-proposal export binding into tessera_export_lane so the export lane does not import the proposal CLI"
+   },
+   "3543": {
+    "state": "OPEN",
+    "title": "Write the selected-wire request in tessera_lane so the lane plugin does not import tessera_materialization"
+   },
+   "3544": {
+    "state": "CLOSED",
+    "title": "Move the producer source digest into file_identity so aura_provenance does not import production_weight_cache"
+   },
+   "3545": {
+    "state": "CLOSED",
+    "title": "Move reference_from_record to exact_activation_contract and ask the profile for stateless hooks"
+   },
+   "3546": {
+    "state": "CLOSED",
+    "title": "Move the three head-walk constants into joint_head_walk_quanta so it does not import tessera_joint_aura"
+   },
+   "3547": {
+    "state": "CLOSED",
+    "title": "Move the runtime-evidence readers into record_fields so full_engine_resource_report does not import runtime_provenance"
+   },
+   "3548": {
+    "state": "CLOSED",
+    "title": "Delete the unused nvfp4_activation_qdq_served wrapper in format_registry"
+   },
+   "3549": {
+    "state": "CLOSED",
+    "title": "Delete the sha256 wrapper in glm_source_derivative and call file_sha256hex"
+   },
    "355": {
     "state": "CLOSED",
     "title": "Bind export resumes to source identity and refuse orphaned layers"
+   },
+   "3550": {
+    "state": "CLOSED",
+    "title": "Delete the canonical_bytes wrapper in joint_layer_quanta and call canonical_json_bytes"
+   },
+   "3551": {
+    "state": "CLOSED",
+    "title": "Import _canon_fmt from streaming_production_cache instead of a copy in mtp_production_cache"
+   },
+   "3552": {
+    "state": "CLOSED",
+    "title": "Import _optional_str from model_profiles.structure instead of a copy in serving_profiles"
+   },
+   "3553": {
+    "state": "CLOSED",
+    "title": "Write the chain-resume record with digests.indent2_json_file_bytes"
+   },
+   "3554": {
+    "state": "CLOSED",
+    "title": "Hash the GLM routing record sources with the digest owners"
+   },
+   "3555": {
+    "state": "CLOSED",
+    "title": "Verify the census dense blob with digests.file_sha256hex"
+   },
+   "3556": {
+    "state": "CLOSED",
+    "title": "Streaming: MoE expert cost [2d] as capture, (format x layer group) units and reduce"
+   },
+   "3557": {
+    "state": "OPEN",
+    "title": "collect_row_netdata refuses whole-second Netdata samples for a fractional row window"
+   },
+   "3558": {
+    "state": "CLOSED",
+    "title": "Streaming: MoE expert cost [2d] as capture, units and reduce"
+   },
+   "3559": {
+    "state": "CLOSED",
+    "title": "Graph impact: keep scc_max gains against the base commit, with no recording step"
    },
    "356": {
     "state": "CLOSED",
     "title": "Avoid repeated source identity validation in joint AURA allocation"
    },
+   "3560": {
+    "state": "CLOSED",
+    "title": "fix(ci): compare scc_max with the live base graph"
+   },
+   "3561": {
+    "state": "CLOSED",
+    "title": "merge queue: merged #3560: fix(ci): compare scc_max with the live base graph"
+   },
+   "3562": {
+    "state": "CLOSED",
+    "title": "Delete unused Tessera campaign tools (deletion plan PRs 1-5)"
+   },
+   "3563": {
+    "state": "CLOSED",
+    "title": "Delete the unused Tessera campaign dispatcher, data manifests and reseal commands (deletion plan PRs 6-7)"
+   },
+   "3564": {
+    "state": "CLOSED",
+    "title": "Delete unused Tessera campaign tools (deletion plan PRs 1-5)"
+   },
+   "3565": {
+    "state": "CLOSED",
+    "title": "Delete the unused Tessera campaign dispatcher, data manifests and reseal commands"
+   },
+   "3566": {
+    "state": "CLOSED",
+    "title": "Duplication ratchet: keep shrinks against the base commit, with no recording step"
+   },
+   "3567": {
+    "state": "CLOSED",
+    "title": "ci: keep duplication gains against the base commit, with no recording step"
+   },
+   "3568": {
+    "state": "CLOSED",
+    "title": "Post-merge CI: run main one at a time, never cancel a running main run (mode B)"
+   },
+   "3569": {
+    "state": "CLOSED",
+    "title": "ci: run main post-merge runs one at a time, never cancel a running one"
+   },
    "357": {
     "state": "CLOSED",
     "title": "Reuse validated joint AURA identities across allocator candidates"
+   },
+   "3570": {
+    "state": "CLOSED",
+    "title": "merge queue: merged #3569: ci: run main post-merge runs one at a time, never cancel a running one"
+   },
+   "3571": {
+    "state": "CLOSED",
+    "title": "Streaming: AURA [2c] on per-layer production anchors, with no [2b] cache"
+   },
+   "3572": {
+    "state": "CLOSED",
+    "title": "Streaming: AURA [2c] on per-layer production anchors, with no [2b] cache"
+   },
+   "3573": {
+    "state": "CLOSED",
+    "title": "Pipeline: record the resolved source model path, not a staging symlink"
+   },
+   "3574": {
+    "state": "CLOSED",
+    "title": "Pipeline: record the resolved source model path, not a staging symlink"
+   },
+   "3575": {
+    "state": "CLOSED",
+    "title": "merge queue: checking #3509 + #3518 + #3510 + #3529 + #3534 + #3517 + #3523 together on main (1e4ba95)"
+   },
+   "3576": {
+    "state": "CLOSED",
+    "title": "merge queue: checking #3509 + #3518 + #3510 together on main (1e4ba95)"
+   },
+   "3577": {
+    "state": "CLOSED",
+    "title": "ci(gate): quarantine the native_results interpreter test while the executor hard-links inputs"
+   },
+   "3578": {
+    "state": "CLOSED",
+    "title": "merge queue: checking #3577 on main (1e4ba95)"
+   },
+   "3579": {
+    "state": "CLOSED",
+    "title": "native_results: runtime file fences fail on executor hard links (ctime)"
    },
    "358": {
     "state": "CLOSED",
     "title": "Preserve feasible minimum-loss endpoint despite allocator bin rounding"
    },
+   "3580": {
+    "state": "CLOSED",
+    "title": "fix(native_results): exclude executor hard-link ctime from runtime file fences"
+   },
+   "3581": {
+    "state": "CLOSED",
+    "title": "merge queue: merged #3580: fix(native_results): exclude executor hard-link ctime from runtime file fences"
+   },
+   "3582": {
+    "state": "CLOSED",
+    "title": "merge queue: merged #3509, #3518, #3510, #3529, #3534, \u2026: fix(fla): pin the plain-autotune kernels at model runtime init (+6 more)"
+   },
+   "3583": {
+    "state": "CLOSED",
+    "title": "merge queue: checking #3530 + #3536 + #3558 + #3567 + #3574 together on main (0ad1bdc)"
+   },
+   "3584": {
+    "state": "CLOSED",
+    "title": "merge queue: checking #3530 + #3536 together on main (0ad1bdc)"
+   },
+   "3585": {
+    "state": "CLOSED",
+    "title": "merge queue: merged #3530, #3526, #3567, #3564: bazel: hash the Tessera pin value, not the contract file bytes (+3 more)"
+   },
+   "3586": {
+    "state": "CLOSED",
+    "title": "merge queue: checking #3536 + #3558 + #3574 together on main (60763b9)"
+   },
+   "3587": {
+    "state": "CLOSED",
+    "title": "#3551 Import _canon_fmt from streaming_production_cache instead of a copy in mtp_production_cache [skip ci]"
+   },
+   "3588": {
+    "state": "CLOSED",
+    "title": "merge queue: merged #3536: Streaming: export per layer range plus a final writer"
+   },
+   "3589": {
+    "state": "CLOSED",
+    "title": "#3543 Write the selected-wire request in tessera_lane so the lane plugin does not import tessera_materialization [skip ci]"
+   },
    "359": {
     "state": "CLOSED",
     "title": "Preserve feasible minimum-loss allocation endpoints"
+   },
+   "3590": {
+    "state": "CLOSED",
+    "title": "merge queue: checking #3574 + #3587 + #3572 + #3538 together on main (aba25af)"
+   },
+   "3591": {
+    "state": "CLOSED",
+    "title": "Finish P4a streamed cache render units and exact export proof"
+   },
+   "3592": {
+    "state": "CLOSED",
+    "title": "Split P4a recache rendering by layer range"
+   },
+   "3593": {
+    "state": "CLOSED",
+    "title": "merge queue: merged #3574, #3587: Pipeline: record the resolved source model path, not a staging symlink (+1 more)"
+   },
+   "3594": {
+    "state": "CLOSED",
+    "title": "merge queue: merged #3565, #3558: Delete the unused Tessera campaign dispatcher, data manifests and reseal commands (+1 more)"
+   },
+   "3595": {
+    "state": "CLOSED",
+    "title": "#3555 Verify the census dense blob with digests.file_sha256hex [skip ci]"
+   },
+   "3596": {
+    "state": "CLOSED",
+    "title": "merge queue: merged #3595: #3555 Verify the census dense blob with digests.file_sha256hex [skip ci]"
+   },
+   "3597": {
+    "state": "OPEN",
+    "title": "[P2] Keep failed post-merge test output in shard logs"
+   },
+   "3598": {
+    "state": "CLOSED",
+    "title": "Name failed-test architecture and remove unused gate code"
+   },
+   "3599": {
+    "state": "CLOSED",
+    "title": "merge queue: merged #3572: Streaming: AURA [2c] on per-layer production anchors, with no [2b] cache"
    },
    "36": {
     "state": "CLOSED",
@@ -10127,33 +11567,321 @@
     "state": "CLOSED",
     "title": "Qualify expandable CUDA segments for the GLM workspace memory failure"
    },
+   "3600": {
+    "state": "CLOSED",
+    "title": "#3548 Delete the unused nvfp4_activation_qdq_served wrapper in format_registry [skip ci]"
+   },
+   "3601": {
+    "state": "CLOSED",
+    "title": "merge queue: merged #3600: #3548 Delete the unused nvfp4_activation_qdq_served wrapper in format_registry [skip ci]"
+   },
+   "3602": {
+    "state": "CLOSED",
+    "title": "merge queue: merged #3538: Delete unused Tessera tools and the last PrismaBuild mechanisms"
+   },
+   "3603": {
+    "state": "CLOSED",
+    "title": "merge queue: merged #3592: Split P4a recache rendering by layer range"
+   },
+   "3604": {
+    "state": "CLOSED",
+    "title": "merge queue: checking #3598 on main (73bbd74)"
+   },
+   "3605": {
+    "state": "CLOSED",
+    "title": "merge queue: merged #3598: Name failed-test architecture and remove unused gate code"
+   },
+   "3606": {
+    "state": "CLOSED",
+    "title": "[P3] Delete PrismaQuant files that only the deleted Tessera dispatcher reached"
+   },
+   "3607": {
+    "state": "CLOSED",
+    "title": "[P3] Remove stale gate timing and budget entries"
+   },
+   "3608": {
+    "state": "CLOSED",
+    "title": "Remove stale gate timing and budget entries"
+   },
+   "3609": {
+    "state": "CLOSED",
+    "title": "merge queue: merged #3608: Remove stale gate timing and budget entries"
+   },
    "361": {
     "state": "CLOSED",
     "title": "experiment(glm): record successful expandable-allocator workspace"
+   },
+   "3610": {
+    "state": "CLOSED",
+    "title": "#3552 Import _optional_str from model_profiles.structure instead of a copy in serving_profiles [skip ci]"
+   },
+   "3611": {
+    "state": "CLOSED",
+    "title": "refactor: delete unused Tessera campaign tools"
+   },
+   "3612": {
+    "state": "CLOSED",
+    "title": "merge queue: merged #3610: #3552 Import _optional_str from model_profiles.structure instead of a copy in serving_profiles [skip ci]"
+   },
+   "3613": {
+    "state": "CLOSED",
+    "title": "merge queue: checking #3611 on main (433b7c1)"
+   },
+   "3614": {
+    "state": "CLOSED",
+    "title": "merge queue: merged #3611: refactor: delete unused Tessera campaign tools"
+   },
+   "3615": {
+    "state": "CLOSED",
+    "title": "#3549 Delete the sha256 wrapper in glm_source_derivative and call file_sha256hex [skip ci]"
+   },
+   "3616": {
+    "state": "CLOSED",
+    "title": "merge queue: merged #3615: #3549 Delete the sha256 wrapper in glm_source_derivative and call file_sha256hex [skip ci]"
+   },
+   "3617": {
+    "state": "CLOSED",
+    "title": "[P3] Delete Tessera helpers with only test callers"
+   },
+   "3618": {
+    "state": "CLOSED",
+    "title": "refactor: delete Tessera helpers with only test callers"
+   },
+   "3619": {
+    "state": "CLOSED",
+    "title": "merge queue: merged #3618: refactor: delete Tessera helpers with only test callers"
    },
    "362": {
     "state": "CLOSED",
     "title": "Expose the existing shared-input source-release policy for streamed capture"
    },
+   "3620": {
+    "state": "CLOSED",
+    "title": "Make tied_embeddings take the profile from its caller so it does not import model_profiles"
+   },
+   "3621": {
+    "state": "CLOSED",
+    "title": "Delete the unused load_prepare_frontier and verify the prepare manifest with digests.bytes_sha256hex"
+   },
+   "3622": {
+    "state": "CLOSED",
+    "title": "Delete the sha copies in the two T4 overlay tools and call digests.bytes_sha256hex"
+   },
+   "3623": {
+    "state": "CLOSED",
+    "title": "#3620 Make tied_embeddings take the profile from its caller so it does not import model_profiles [skip ci]"
+   },
+   "3624": {
+    "state": "CLOSED",
+    "title": "merge queue: merged #3623: #3620 Make tied_embeddings take the profile from its caller so it does not import model_profiles [skip ci]"
+   },
+   "3625": {
+    "state": "CLOSED",
+    "title": "#3621 Delete the unused load_prepare_frontier and verify the prepare manifest with digests.bytes_sha256hex [skip ci]"
+   },
+   "3626": {
+    "state": "CLOSED",
+    "title": "#3622 Delete the sha copies in the two T4 overlay tools and call digests.bytes_sha256hex [skip ci]"
+   },
+   "3627": {
+    "state": "CLOSED",
+    "title": "merge queue: checking #3625 on main (7561102)"
+   },
+   "3628": {
+    "state": "CLOSED",
+    "title": "[P3] Remove old Tessera venv commands from the runtime README"
+   },
+   "3629": {
+    "state": "CLOSED",
+    "title": "merge queue: merged #3626: #3622 Delete the sha copies in the two T4 overlay tools and call digests.bytes_sha256hex [skip ci]"
+   },
    "363": {
     "state": "CLOSED",
     "title": "Expose opt-in shared-input release for streamed capture"
+   },
+   "3630": {
+    "state": "CLOSED",
+    "title": "merge queue: merged #3625: #3621 Delete the unused load_prepare_frontier and verify the prepare manifest with digests.bytes_sha256hex [skip ci]"
+   },
+   "3631": {
+    "state": "CLOSED",
+    "title": "docs: remove retired Tessera venv commands"
+   },
+   "3632": {
+    "state": "CLOSED",
+    "title": "merge queue: merged #3631: docs: remove retired Tessera venv commands"
+   },
+   "3633": {
+    "state": "CLOSED",
+    "title": "[P2] Limit shard history fetches to main and the tested HEAD"
+   },
+   "3634": {
+    "state": "CLOSED",
+    "title": "Fetch only main and tested HEAD for shard history"
+   },
+   "3635": {
+    "state": "CLOSED",
+    "title": "Route the served-gold tool's three private digests through prismaquant.digests"
+   },
+   "3636": {
+    "state": "CLOSED",
+    "title": "Write the chain-resume record with digests.indent2_json_file_bytes and drop the _read_json wrapper"
+   },
+   "3637": {
+    "state": "CLOSED",
+    "title": "Verify the container image archive with digests.file_sha256hex and drop two unused imports"
+   },
+   "3638": {
+    "state": "CLOSED",
+    "title": "Encode the teacher payload digests and metadata with the prismaquant.digests owners"
+   },
+   "3639": {
+    "state": "CLOSED",
+    "title": "#3636 Write the chain-resume record with digests.indent2_json_file_bytes and drop the _read_json wrapper [skip ci]"
    },
    "364": {
     "state": "CLOSED",
     "title": "Add checked phase admission for canonical shared capture"
    },
+   "3640": {
+    "state": "CLOSED",
+    "title": "merge queue: merged #3639: #3636 Write the chain-resume record with digests.indent2_json_file_bytes and drop the _read_json wrapper [skip ci]"
+   },
+   "3641": {
+    "state": "CLOSED",
+    "title": "#3637 Verify the container image archive with digests.file_sha256hex and drop two unused imports [skip ci]"
+   },
+   "3642": {
+    "state": "CLOSED",
+    "title": "[P2] Make the merge queue FIFO"
+   },
+   "3643": {
+    "state": "CLOSED",
+    "title": "Use one FIFO merge queue"
+   },
+   "3644": {
+    "state": "CLOSED",
+    "title": "merge queue: merged #3641: #3637 Verify the container image archive with digests.file_sha256hex and drop two unused imports [skip ci]"
+   },
+   "3645": {
+    "state": "CLOSED",
+    "title": "Start the hosted exception lane with the remote shards, not after them"
+   },
+   "3646": {
+    "state": "CLOSED",
+    "title": "#3645 Start the hosted exception lane with the remote shards"
+   },
+   "3647": {
+    "state": "CLOSED",
+    "title": "merge queue: merged #3643: Use one FIFO merge queue"
+   },
+   "3648": {
+    "state": "CLOSED",
+    "title": "Keep the fixtures tree out of every test's inputs: conftest error text is not a path"
+   },
+   "3649": {
+    "state": "CLOSED",
+    "title": "#3648 Keep the fixtures tree out of every test's inputs"
+   },
    "365": {
     "state": "CLOSED",
     "title": "Add checked phase admission for shared calibration capture"
+   },
+   "3650": {
+    "state": "CLOSED",
+    "title": "merge queue: merged #3646: #3645 Start the hosted exception lane with the remote shards"
+   },
+   "3651": {
+    "state": "OPEN",
+    "title": "Move bind_joint_served_quantizer into joint_served_activation so Stage A measurement does not import Stage B"
+   },
+   "3652": {
+    "state": "CLOSED",
+    "title": "merge queue: merged #3649: #3648 Keep the fixtures tree out of every test's inputs"
+   },
+   "3653": {
+    "state": "CLOSED",
+    "title": "Memoize the Bresenham column schedule: build_inventory spends 60 % in repeated calls"
+   },
+   "3654": {
+    "state": "CLOSED",
+    "title": "#3540 Share the per-rank route fill in shipcard so tessera_shipcard does not import the shipcard CLI [skip ci]"
+   },
+   "3655": {
+    "state": "CLOSED",
+    "title": "#3635 Route the served-gold tool's three private digests through prismaquant.digests [skip ci]"
+   },
+   "3656": {
+    "state": "CLOSED",
+    "title": "merge queue: merged #3655: #3635 Route the served-gold tool's three private digests through prismaquant.digests [skip ci]"
+   },
+   "3657": {
+    "state": "CLOSED",
+    "title": "#3653 Compare the cheap rate before the family name in support_facts"
+   },
+   "3658": {
+    "state": "CLOSED",
+    "title": "merge queue: merged #3654: #3540 Share the per-rank route fill in shipcard so tessera_shipcard does not import the shipcard CLI [skip ci]"
+   },
+   "3659": {
+    "state": "CLOSED",
+    "title": "#3539 Move RetiredFormatError into schemas so schemas does not import format_registry [skip ci]"
    },
    "366": {
     "state": "CLOSED",
     "title": "Bounded capture retains completed CPU memory in the producer allocator"
    },
+   "3660": {
+    "state": "CLOSED",
+    "title": "merge queue: merged #3657: #3653 Compare the cheap rate before the family name in support_facts"
+   },
+   "3661": {
+    "state": "CLOSED",
+    "title": "#3638 Encode the teacher payload digests and metadata with the prismaquant.digests owners [skip ci]"
+   },
+   "3662": {
+    "state": "CLOSED",
+    "title": "merge queue: merged #3661: #3638 Encode the teacher payload digests and metadata with the prismaquant.digests owners [skip ci]"
+   },
+   "3663": {
+    "state": "OPEN",
+    "title": "Take the 146 s PR-A baseline check off the per-PR critical path and run the graph check once"
+   },
+   "3664": {
+    "state": "CLOSED",
+    "title": "#3511 [P2] Pass profiler: record the device identity and the device bytes of the selected capture group (part of #2881) [skip ci]"
+   },
+   "3665": {
+    "state": "CLOSED",
+    "title": "merge queue: merged #3659: #3539 Move RetiredFormatError into schemas so schemas does not import format_registry [skip ci]"
+   },
+   "3666": {
+    "state": "CLOSED",
+    "title": "#3663 Run the graph check directly and delete its pytest wrapper"
+   },
+   "3667": {
+    "state": "CLOSED",
+    "title": "merge queue: merged #3664: #3511 [P2] Pass profiler: record the device identity and the device bytes of the selected capture group (part of #2881) [skip ci]"
+   },
+   "3668": {
+    "state": "OPEN",
+    "title": "#3543 Write the selected-wire request in tessera_lane so the lane plugin does not import tessera_materialization [skip ci]"
+   },
+   "3669": {
+    "state": "CLOSED",
+    "title": "merge queue: merged #3666: #3663 Run the graph check directly and delete its pytest wrapper"
+   },
    "367": {
     "state": "CLOSED",
     "title": "Use Tessera extents for payload-free GLM menu pricing"
+   },
+   "3670": {
+    "state": "OPEN",
+    "title": "Build the graph check's base and head graphs at the same time; delete the unused import_fanout shim"
+   },
+   "3671": {
+    "state": "OPEN",
+    "title": "merge queue: checking #3668 on main (14aa349)"
    },
    "368": {
     "state": "CLOSED",
@@ -15334,7 +17062,7 @@
     "title": "[P1] Make graph eager-window lifecycle tests deterministic"
    },
    "1532": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "[P1] Make graph receipt population tests deterministic"
    },
    "1533": {
@@ -15398,7 +17126,7 @@
     "title": "ci(mergify): configure a serial in-place merge queue and a release queue"
    },
    "1547": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "[P2] Diagnose the intermittent CPU SP exact-equality failure"
    },
    "1548": {
@@ -15502,7 +17230,7 @@
     "title": "Gate a routed-MoE stack's rung against the cells that attest its structure"
    },
    "1570": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "[P2] Refuse a batch-KL window at prepare time when no scorer exists"
    },
    "1571": {
@@ -15590,19 +17318,19 @@
     "title": "Attest the route census's runtime image from inside the container"
    },
    "1590": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "Graph-impact check: does a change deepen the test graph?"
    },
    "1591": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "Import the cutter from tessera.slicing; drop layout's lazy re-export"
    },
    "1592": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "Keep the fixture-build flag apart from the encoder identity"
    },
    "1593": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "Build the hosted gate's population with Bazel on BuildBuddy"
    },
    "1594": {
@@ -15610,12 +17338,24 @@
     "title": "[P2] Encoder-identity tests depend on which tests ran first in their process"
    },
    "1595": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "Quarantine the stageprev observer node in the no-torch lane too"
    },
    "1596": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "Install the in-house libraries the CPU tests read, pinned and hash-locked"
+   },
+   "1597": {
+    "state": "CLOSED",
+    "title": "Extract shared test helpers and remove 19 test-to-test imports"
+   },
+   "1598": {
+    "state": "CLOSED",
+    "title": "merge queue: merged #1591: Import the cutter from tessera.slicing; drop layout's lazy re-export"
+   },
+   "1599": {
+    "state": "CLOSED",
+    "title": "test: move two more batches of shared helpers out of test modules"
    },
    "16": {
     "state": "CLOSED",
@@ -15625,41 +17365,441 @@
     "state": "CLOSED",
     "title": "Validate cell predicates and build the window GEMV from its published source"
    },
+   "1600": {
+    "state": "CLOSED",
+    "title": "[P1] Make graph receipt population tests deterministic"
+   },
+   "1601": {
+    "state": "CLOSED",
+    "title": "merge queue: merged #1600: [P1] Make graph receipt population tests deterministic"
+   },
+   "1602": {
+    "state": "CLOSED",
+    "title": "test: extract shared helpers for issue 1588, batches 5 and 6"
+   },
+   "1603": {
+    "state": "CLOSED",
+    "title": "merge queue: merged #1592: Keep the fixture-build flag apart from the encoder identity"
+   },
+   "1604": {
+    "state": "CLOSED",
+    "title": "merge queue: checking #1597 on master (61d3561), stacked on #1592"
+   },
+   "1605": {
+    "state": "CLOSED",
+    "title": "ci: retry issue-owned flaky gate nodes once"
+   },
+   "1606": {
+    "state": "CLOSED",
+    "title": "merge queue: merged #1605: ci: retry issue-owned flaky gate nodes once"
+   },
+   "1607": {
+    "state": "CLOSED",
+    "title": "Refuse artifact hash mutations hidden by equal stat timestamps"
+   },
+   "1608": {
+    "state": "CLOSED",
+    "title": "merge queue: merged #1597: Extract shared test helpers and remove 19 test-to-test imports"
+   },
+   "1609": {
+    "state": "CLOSED",
+    "title": "merge queue: merged #1599: test: move two more batches of shared helpers out of test modules"
+   },
    "161": {
     "state": "CLOSED",
     "title": "Give the version and the distributions one declaration each"
+   },
+   "1610": {
+    "state": "CLOSED",
+    "title": "merge queue: checking #1607 on master (3b1a64d), stacked on #1599"
+   },
+   "1611": {
+    "state": "OPEN",
+    "title": "ci: report per-test budget overruns as warnings"
+   },
+   "1612": {
+    "state": "OPEN",
+    "title": "[P1] Make batch byte-audit call ownership deterministic without weakening byte proof"
+   },
+   "1613": {
+    "state": "CLOSED",
+    "title": "Isolate suite deadline tests from the shared sleep clock"
+   },
+   "1614": {
+    "state": "CLOSED",
+    "title": "merge queue: merged #1613: Isolate suite deadline tests from the shared sleep clock"
+   },
+   "1615": {
+    "state": "CLOSED",
+    "title": "merge queue: merged #1607: Refuse artifact hash mutations hidden by equal stat timestamps"
+   },
+   "1616": {
+    "state": "CLOSED",
+    "title": "merge queue: merged #1602: test: extract shared helpers for issue 1588, batches 5 and 6"
+   },
+   "1617": {
+    "state": "CLOSED",
+    "title": "merge queue: merged #1590: Graph-impact check: does a change deepen the test graph?"
+   },
+   "1618": {
+    "state": "CLOSED",
+    "title": "[P2] After cutover, keep untracked root files out of Bazel generation"
+   },
+   "1619": {
+    "state": "CLOSED",
+    "title": "merge queue: merged #1593: Build the hosted gate's population with Bazel on BuildBuddy"
    },
    "162": {
     "state": "CLOSED",
     "title": "Hold the NVFP4 decoder to materialize_stock at load, and refuse by tile"
    },
+   "1620": {
+    "state": "CLOSED",
+    "title": "merge queue: merged #1596: Install the in-house libraries the CPU tests read, pinned and hash-locked"
+   },
+   "1621": {
+    "state": "CLOSED",
+    "title": "Probe: docs-only (do not merge)"
+   },
+   "1622": {
+    "state": "CLOSED",
+    "title": "Probe: leaf (do not merge)"
+   },
+   "1623": {
+    "state": "CLOSED",
+    "title": "Probe: leaf (do not merge)"
+   },
+   "1624": {
+    "state": "CLOSED",
+    "title": "Probe: leaf (do not merge)"
+   },
+   "1625": {
+    "state": "CLOSED",
+    "title": "Probe: hub layout (do not merge)"
+   },
+   "1626": {
+    "state": "CLOSED",
+    "title": "Probe: fixture (do not merge)"
+   },
+   "1627": {
+    "state": "CLOSED",
+    "title": "Probe: new test (do not merge)"
+   },
+   "1628": {
+    "state": "CLOSED",
+    "title": "Probe: docs-only requalification (do not merge)"
+   },
+   "1629": {
+    "state": "CLOSED",
+    "title": "ci: cut over the Tessera gate to self-hosted Bazel"
+   },
    "163": {
     "state": "CLOSED",
     "title": "Rank release placement by the unit's own grid, and say what the terminal ladder is"
+   },
+   "1630": {
+    "state": "CLOSED",
+    "title": "merge queue: checking #1629 on master (fdb240e)"
+   },
+   "1631": {
+    "state": "CLOSED",
+    "title": "merge queue: checking #1629 on master (fdb240e)"
+   },
+   "1632": {
+    "state": "CLOSED",
+    "title": "[P2+] test_graph_attest_eager_window fixture hashes the shared runfiles interpreter; executor link churn changes ctime"
+   },
+   "1633": {
+    "state": "CLOSED",
+    "title": "Isolate the sealed census fixture interpreter"
+   },
+   "1634": {
+    "state": "OPEN",
+    "title": "[P1] Fit full-fallback batches within 30 minutes using four balanced shards"
+   },
+   "1635": {
+    "state": "CLOSED",
+    "title": "merge queue: merged #1633: Isolate the sealed census fixture interpreter"
+   },
+   "1636": {
+    "state": "CLOSED",
+    "title": "merge queue: merged #1629: ci: cut over the Tessera gate to self-hosted Bazel"
+   },
+   "1637": {
+    "state": "OPEN",
+    "title": "[P2] Preserve accepted PB keys when the graph-attest journal write fails"
+   },
+   "1638": {
+    "state": "OPEN",
+    "title": "[P2] Refuse duplicate graph-attest arms before publishing PB work"
+   },
+   "1639": {
+    "state": "CLOSED",
+    "title": "[P2] Restrict installed producer commit fallback to Tessera distribution"
    },
    "164": {
     "state": "CLOSED",
     "title": "Read the window-GEMV lane's supported set off the kernel that builds"
    },
+   "1640": {
+    "state": "CLOSED",
+    "title": "[P2] Refuse a batch-KL window at prepare time when no scorer exists"
+   },
+   "1641": {
+    "state": "CLOSED",
+    "title": "merge queue: merged #1640: [P2] Refuse a batch-KL window at prepare time when no scorer exists"
+   },
+   "1642": {
+    "state": "OPEN",
+    "title": "Generated BUILD check: fail on retired and untracked generated outputs"
+   },
+   "1643": {
+    "state": "OPEN",
+    "title": "Reject retired and untracked generated Bazel outputs"
+   },
+   "1644": {
+    "state": "CLOSED",
+    "title": "[P1] Balance full fallback across four shards at 45 minutes"
+   },
+   "1645": {
+    "state": "CLOSED",
+    "title": "ci: balance full fallback across four shards"
+   },
+   "1646": {
+    "state": "CLOSED",
+    "title": "[P2] Verify retained trace bytes and allow sharing between serves"
+   },
+   "1647": {
+    "state": "CLOSED",
+    "title": "merge queue: checking #1645 on master (6589e0b)"
+   },
+   "1648": {
+    "state": "OPEN",
+    "title": "[P2] Cancel a closed pull request's gate and its Remote Bazel runs"
+   },
+   "1649": {
+    "state": "CLOSED",
+    "title": "[P2] Restrict installed producer commit fallback to Tessera distribution"
+   },
    "165": {
     "state": "CLOSED",
     "title": "Route enum decoding through the Tessera taxonomy, and five of the wire/decode/container/fused P3s"
+   },
+   "1650": {
+    "state": "CLOSED",
+    "title": "merge queue: checking #1649 on master (6589e0b)"
+   },
+   "1651": {
+    "state": "CLOSED",
+    "title": "Fail gate verdicts when generated-input checks fail"
+   },
+   "1652": {
+    "state": "CLOSED",
+    "title": "Fail gate verdicts when generated-input checks fail"
+   },
+   "1653": {
+    "state": "CLOSED",
+    "title": "ci: balance full fallback across six bounded shards"
+   },
+   "1654": {
+    "state": "CLOSED",
+    "title": "[P2+] Float64 force-8 prefill equality flake blocks six-shard gate"
+   },
+   "1655": {
+    "state": "CLOSED",
+    "title": "merge queue: merged #1653: ci: balance full fallback across six bounded shards"
+   },
+   "1656": {
+    "state": "CLOSED",
+    "title": "merge queue: merged #1652: Fail gate verdicts when generated-input checks fail"
+   },
+   "1657": {
+    "state": "OPEN",
+    "title": "[P2] Command assertions fail with Unicode temporary paths"
+   },
+   "1658": {
+    "state": "CLOSED",
+    "title": "Make the GLM prefill test fixture batch-invariant"
+   },
+   "1659": {
+    "state": "CLOSED",
+    "title": "merge queue: merged #1658: Make the GLM prefill test fixture batch-invariant"
    },
    "166": {
     "state": "CLOSED",
     "title": "Name the out-of-tree test roots in one module, and give --strict-cuda a coverage leg"
    },
+   "1660": {
+    "state": "OPEN",
+    "title": "[P2+] Move Tessera fleet work from PrismaBuild to stock Flux"
+   },
+   "1661": {
+    "state": "CLOSED",
+    "title": "Run Tessera fleet work on stock Flux instead of PrismaBuild"
+   },
+   "1662": {
+    "state": "OPEN",
+    "title": "[P2] Reduce test reach added by the Flux transport (one-time graph exception in #1661)"
+   },
+   "1663": {
+    "state": "OPEN",
+    "title": "[P2] Resolve one-job serving graph and directory-census residuals before merge"
+   },
+   "1664": {
+    "state": "OPEN",
+    "title": "[P2] Run Tessera GPU wrappers and serving runs inside Flux jobs (T-4)"
+   },
+   "1665": {
+    "state": "CLOSED",
+    "title": "Run Tessera GPU wrappers inside Flux jobs (T-4)"
+   },
+   "1666": {
+    "state": "OPEN",
+    "title": "[P2] Bind native mappings to the held file through /proc/self/map_files, not (device, inode)"
+   },
+   "1667": {
+    "state": "OPEN",
+    "title": "[P2] Measure Flux cancellation through GPU wrappers and cover rootless Podman SIGKILL residue"
+   },
+   "1668": {
+    "state": "OPEN",
+    "title": "[P2] test_glm53_prefill bitwise rebound-vs-stock check failed by 8.9e-16 under an xdist CPU population"
+   },
+   "1669": {
+    "state": "OPEN",
+    "title": "[P3] Validate submit modes and reconcile GPU approval semantics in the Flux GPU wrappers"
+   },
    "167": {
     "state": "CLOSED",
     "title": "Make the impacted-test selector able to narrow, and exact when it does"
+   },
+   "1670": {
+    "state": "OPEN",
+    "title": "[P3] Qualify shared-memory requirements per workload family for the rootless Podman launcher"
+   },
+   "1671": {
+    "state": "OPEN",
+    "title": "[P3] Make a failed plugin installation fatal in tessera_plugin_run.sh"
+   },
+   "1672": {
+    "state": "CLOSED",
+    "title": "merge queue: merged #1665: Run Tessera GPU wrappers inside Flux jobs (T-4)"
+   },
+   "1673": {
+    "state": "CLOSED",
+    "title": "docs: remove stale PrismaBuild text from gate and tool comments"
+   },
+   "1674": {
+    "state": "CLOSED",
+    "title": "merge queue: merged #1673: docs: remove stale PrismaBuild text from gate and tool comments"
+   },
+   "1675": {
+    "state": "CLOSED",
+    "title": "[P1] Bring the PrismaQuant pinned producer API into master"
+   },
+   "1676": {
+    "state": "CLOSED",
+    "title": "[P1] Remove the retired TL3 approval path from the merge queue"
+   },
+   "1677": {
+    "state": "CLOSED",
+    "title": "[P3] Replace four PrismaBuild instructions with Flux instructions"
+   },
+   "1678": {
+    "state": "CLOSED",
+    "title": "Remove the retired TL3 queue path"
+   },
+   "1679": {
+    "state": "CLOSED",
+    "title": "Replace unbound PrismaBuild instructions with Flux"
    },
    "168": {
     "state": "CLOSED",
     "title": "Write every plane a reader reads in the byte-proof matrix"
    },
+   "1680": {
+    "state": "CLOSED",
+    "title": "Merge the pinned PrismaQuant producer API into master"
+   },
+   "1681": {
+    "state": "CLOSED",
+    "title": "merge queue: merged #1678: Remove the retired TL3 queue path"
+   },
+   "1682": {
+    "state": "CLOSED",
+    "title": "merge queue: merged #1679: Replace unbound PrismaBuild instructions with Flux"
+   },
+   "1683": {
+    "state": "OPEN",
+    "title": "Re-qualify the E2M1 and BF16 cells that PrismaQuant uses on master (contract v68)"
+   },
+   "1684": {
+    "state": "CLOSED",
+    "title": "[P2] Run arm64 actions on BuildBuddy hosted executors"
+   },
+   "1685": {
+    "state": "CLOSED",
+    "title": "ci(bazel): run arm64 actions on BuildBuddy hosted executors"
+   },
+   "1686": {
+    "state": "CLOSED",
+    "title": "merge queue: merged #1685: ci(bazel): run arm64 actions on BuildBuddy hosted executors"
+   },
+   "1687": {
+    "state": "CLOSED",
+    "title": "merge queue: merged #1680: Merge the pinned PrismaQuant producer API into master"
+   },
+   "1688": {
+    "state": "CLOSED",
+    "title": "[P3] Delete five unused tools after the pin merge"
+   },
+   "1689": {
+    "state": "CLOSED",
+    "title": "Delete five unused tools and keep re-qualification support"
+   },
    "169": {
     "state": "CLOSED",
     "title": "Make the KL instrument opt-in, and fix the torch-free probe and the deadline's unbounded wait"
+   },
+   "1690": {
+    "state": "CLOSED",
+    "title": "merge queue: merged #1689: Delete five unused tools and keep re-qualification support"
+   },
+   "1691": {
+    "state": "CLOSED",
+    "title": "[P3] Delete 49 unused experiment files and keep re-qualification support"
+   },
+   "1692": {
+    "state": "CLOSED",
+    "title": "Delete unused experiment files and keep re-qualification support"
+   },
+   "1693": {
+    "state": "CLOSED",
+    "title": "merge queue: merged #1692: Delete unused experiment files and keep re-qualification support"
+   },
+   "1694": {
+    "state": "CLOSED",
+    "title": "[P3] Delete 41 unused experiment drivers and keep re-qualification support"
+   },
+   "1695": {
+    "state": "CLOSED",
+    "title": "Delete unused experiment drivers and keep re-qualification support"
+   },
+   "1696": {
+    "state": "CLOSED",
+    "title": "merge queue: merged #1695: Delete unused experiment drivers and keep re-qualification support"
+   },
+   "1697": {
+    "state": "CLOSED",
+    "title": "[P2] Make the merge queue FIFO"
+   },
+   "1698": {
+    "state": "CLOSED",
+    "title": "Use one FIFO merge queue"
+   },
+   "1699": {
+    "state": "OPEN",
+    "title": "[P1] IMG-N routed E4M3 cells do not attest the current class decoder"
    },
    "17": {
     "state": "CLOSED",
@@ -15668,6 +17808,38 @@
    "170": {
     "state": "CLOSED",
     "title": "Gate the publish job behind a protected environment"
+   },
+   "1700": {
+    "state": "CLOSED",
+    "title": "merge queue: merged #1698: Use one FIFO merge queue"
+   },
+   "1701": {
+    "state": "OPEN",
+    "title": "Delete the unused hosted-gate test selector tools/impacted_tests.py"
+   },
+   "1702": {
+    "state": "OPEN",
+    "title": "Delete the unused hosted-gate test selector tools/impacted_tests.py"
+   },
+   "1703": {
+    "state": "CLOSED",
+    "title": "Gate policy pieces with no live caller after the selector deletion"
+   },
+   "1704": {
+    "state": "CLOSED",
+    "title": "Switch the graph-impact test-to-test policy to strict on its recorded date"
+   },
+   "1705": {
+    "state": "CLOSED",
+    "title": "Switch the graph-impact test-to-test policy to strict"
+   },
+   "1706": {
+    "state": "CLOSED",
+    "title": "merge queue: merged #1705: Switch the graph-impact test-to-test policy to strict"
+   },
+   "1707": {
+    "state": "OPEN",
+    "title": "#1683 Mint scoped E2M1 and BF16 stub cells in contract v68"
    },
    "171": {
     "state": "CLOSED",
