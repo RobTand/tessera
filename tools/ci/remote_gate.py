@@ -316,6 +316,14 @@ def outputs(result):
     return values
 
 
+def bisect_verdict(plan, failed):
+    """A red window's verdict for one merge: its own selection (base = the head before it) against the failures."""
+    missed = [] if plan.get('selection_error') else sorted(set(failed) - set(plan['selected']))
+    return dict({key: value for key, value in plan.items() if key != 'full_populations'}, architectures={'amd64': {
+        'verdict': 'fail', 'failed': sorted(failed), 'tests': len(plan['selected']), 'budget_warnings': [],
+        'missed': missed}})
+
+
 def post_merge_record(result, prs, seconds):
     """One machine-readable line per post-merge run."""
     failures = {arch: info['failed'] for arch, info in result.get('architectures', {}).items()}
@@ -424,7 +432,9 @@ def execute(client, args):
 
     plan, initial = run()
     runs = [initial]
-    if 'full_populations' in plan and not plan.get('error') and not plan.get('inputs'):
+    if args.failed and not plan.get('error') and not plan.get('inputs'):
+        result = bisect_verdict(plan, args.failed.split(','))
+    elif 'full_populations' in plan and not plan.get('error') and not plan.get('inputs'):
         arches = ['amd64'] if args.mode == 'pr' else ['amd64', 'arm64']
         coordinates = [(arch, index) for arch in arches for index in range(full_shards.COUNT)]
         if args.mode == 'pr':
@@ -458,6 +468,8 @@ def main(argv=None):
     parser.add_argument('--branch', required=True)
     parser.add_argument('--repo', default=REPOSITORY)
     parser.add_argument('--prs', default='', help='comma-separated merged PR numbers')
+    parser.add_argument('--failed', default='', help='main only: labels a red record failed; run only this '
+                        "merge's selection (--base = the head before the merge) and record its verdict")
     parser.add_argument('--cpu', type=int, default=4)
     parser.add_argument('--memory', default='8GB')
     parser.add_argument('--timeout', type=int, default=45, help='minutes')
