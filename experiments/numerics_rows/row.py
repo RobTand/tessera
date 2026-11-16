@@ -17,6 +17,7 @@ import subprocess
 import traceback
 
 from experiments.numerics_rows.common import BoundaryError, BoundaryRecorder, Invalid, IMAGES, KERNEL_SHA256, check_runtime, check_source, sha256, write_json
+from experiments.numerics_rows.build import IDENTITY_FIELDS
 from experiments.numerics_rows.reference import FiniteBound, compare, selftest
 
 
@@ -113,6 +114,13 @@ def finite_reference(reference):
     import torch
     if not bool(torch.isfinite(reference).all()):
         raise Invalid("reference is not finite before the native call")
+
+
+def bind_library_identity(library, proof, precondition):
+    identity = {k: proof[k] for k in IDENTITY_FIELDS}
+    if identity["library_so_sha256"] != library["library"]["sha256"] or any(precondition.get(k) != v for k, v in identity.items()):
+        raise Invalid("H1 code identity differs from the row's measured library")
+    library.update(identity)
 
 
 def compare_output(unit, case, got, ref, mask=None, operands=None, *, bound=None):
@@ -566,8 +574,9 @@ def run(args, receipt):
     loaded = install_libraries(built["libraries"])
     if built["commit"] != commit or built["runtime"]["image_digest"] != runtime["image_digest"]:
         raise Invalid("library build does not match the cell")
-    slices = {r["key"]: match_library(r) for r in built["libraries"]}
+    slices = {r["key"]: match_library(r, args.out / "binary-identity" / r["key"]) for r in built["libraries"]}
     for library in built["libraries"]:
+        bind_library_identity(library, slices[library["key"]], h1["P3"][library["key"]])
         d, = [t for t in q1["tables"] if t["key"] == library["key"]]
         if d["library_so_sha256"] != library["library"]["sha256"] or d["probe_sha256"] != library["probe"]["sha256"]:
             raise Invalid("Q1 D table belongs to a different library or probe")
@@ -777,7 +786,7 @@ def profile_unit(adapter, unit, recorder, *, routed):
     functions = sorted(parse_sass(Path(library["library"]["sass"]["path"]).read_text()))
     demangled = subprocess.check_output(["c++filt"], input="\n".join(functions) + "\n", text=True).splitlines()
     symbols, unresolved = resolve_symbols(functions, [r["name"] for r in unit["arm"]["profiler_kernels"]], demangled)
-    unit["m_config"]["compiled_kernel_symbols"] = [{**record, "library_so_sha256": library["library"]["sha256"]} for record in symbols]
+    unit["m_config"]["compiled_kernel_symbols"] = [{**record, **{k: library[k] for k in IDENTITY_FIELDS if k != "library_code_sections"}} for record in symbols]
     unit["arm"]["unresolved_kernel_names"] = unresolved
 
 
@@ -799,7 +808,8 @@ def unit_libraries(adapter, routed):
     actual = (adapter.native.uniform.module if routed and key != "e2m1" else
               fe._ext() if key == "e2m1" else rf._ext(key))
     evidence = loaded_native_identity(actual, rf.__file__)
-    return [{"name": actual.__name__, **evidence}]
+    identity = {k: adapter.binary[k] for k in IDENTITY_FIELDS if k != "library_code_sections"} if evidence["sha256"] == adapter.binary["library"]["sha256"] else {}
+    return [{"name": actual.__name__, **evidence, **identity}]
 
 
 def module_receipt(module, adapter, routed):

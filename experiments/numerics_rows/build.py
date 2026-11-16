@@ -10,7 +10,9 @@ import struct
 import subprocess
 import sys
 
-from experiments.numerics_rows.common import IMAGES, KERNEL, check_runtime, check_source, sha256, write_json
+from experiments.numerics_rows.common import IMAGES, KERNEL, check_runtime, check_source, load_build, sha256, write_json
+
+IDENTITY_FIELDS = ("library_so_sha256", "library_code_sha256", "library_code_sections", "cubin_sha256s")
 
 
 def code_identity(path):
@@ -90,6 +92,21 @@ def library_identity(path, out):
     return identity
 
 
+def add_identities(build_path, out):
+    """Write a P receipt with code identities. Keep the original build unchanged."""
+    out = Path(out)
+    out.mkdir(parents=True, exist_ok=True)
+    built = json.loads(Path(build_path).read_text())
+    for record in built["libraries"]:
+        for label in ("library", "probe"):
+            if sha256(record[label]["path"]) != record[label]["sha256"]:
+                raise ValueError(f"changed {label} binary")
+        record.update(library_identity(record["library"]["path"], out / record["key"] / "cubins"))
+    built.update(build_path=str(build_path), build_sha256=sha256(build_path))
+    write_json(out / "p.json", built)
+    return built
+
+
 def main():
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument("--source", type=Path, required=True)
@@ -97,9 +114,14 @@ def main():
     p.add_argument("--image", choices=IMAGES, required=True)
     p.add_argument("--library", action="append", choices=("e2m1", "e4m3mma", "e4m3", "value"))
     p.add_argument("--revision", choices=("8bf496ab", "e89757b9"), default="8bf496ab")
+    p.add_argument("--existing-build", type=Path)
     args = p.parse_args()
     commit = check_source(args.source, args.revision)
     runtime = check_runtime(args.image)
+    if args.existing_build:
+        load_build(args.existing_build, runtime)
+        add_identities(args.existing_build, args.out)
+        return
     selected = args.library or runtime["libraries"]
     if len(set(selected)) != len(selected) or not set(selected) <= set(runtime["libraries"]):
         p.error("libraries must be distinct and available in the cell image")
@@ -131,6 +153,7 @@ def main():
                 dumps[kind] = {"path": str(dump), "sha256": sha256(dump)}
             binaries[label] = {"path": str(path), "sha256": sha256(path), **dumps}
         records.append({"key": key, "name": name, "cflags": flags, **binaries,
+                        **library_identity(binaries["library"]["path"], args.out / key / "cubins"),
                         "probe_source_sha256": sha256(probe_source)})
         write_json(args.out / "build.json", {"commit": commit, "runtime": runtime, "libraries": records})
 

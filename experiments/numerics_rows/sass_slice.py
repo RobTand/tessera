@@ -13,6 +13,7 @@ import re
 import struct
 
 from experiments.numerics_rows.common import sha256, write_json
+from experiments.numerics_rows.build import library_identity
 from experiments.numerics_rows.reference import f32_value, rn_bits
 from experiments.t4_code.sass_dump import parse_sass
 
@@ -707,7 +708,7 @@ def prove(library_sass, library_elf, probe_sass, probe_elf):
     return result
 
 
-def match_library(record):
+def match_library(record, identity_dir):
     for label in ("library", "probe"):
         if sha256(record[label]["path"]) != record[label]["sha256"]:
             raise ValueError(f"changed {label} binary")
@@ -716,7 +717,8 @@ def match_library(record):
                 raise ValueError(f"changed {label} {kind} evidence")
     result = prove(*(Path(record[label][kind]["path"]).read_text() for label, kind in
                      (("library", "sass"), ("library", "elf"), ("probe", "sass"), ("probe", "elf"))))
-    return {"library_so_sha256": record["library"]["sha256"], "probe_sha256": record["probe"]["sha256"], **result}
+    return {**library_identity(record["library"]["path"], identity_dir),
+            "probe_sha256": record["probe"]["sha256"], **result}
 
 
 if __name__ == "__main__":
@@ -724,6 +726,7 @@ if __name__ == "__main__":
     p.add_argument("--build", type=Path, action="append", required=True)
     p.add_argument("--out", type=Path, required=True)
     args = p.parse_args()
-    records = {r["key"]: match_library(r) for path in args.build for r in json.loads(path.read_text())["libraries"]}
+    records = {r["key"]: match_library(r, args.out.parent / "binary-identity" / r["key"])
+               for path in args.build for r in json.loads(path.read_text())["libraries"]}
     write_json(args.out, records)
     raise SystemExit(0 if all(r["matched"] for r in records.values()) else 3)

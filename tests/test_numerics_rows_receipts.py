@@ -721,3 +721,77 @@ def test_code_digest_refuses_invalid_elf(tmp_path, data):
     path.write_bytes(data)
     with pytest.raises(ValueError):
         code_identity(path)
+
+
+@pytest.fixture
+def retained_binary_receipts(tmp_path, monkeypatch):
+    from pathlib import Path
+    from experiments.numerics_rows import build
+    from experiments.numerics_rows.common import sha256
+
+    def extract(command, *, cwd, **kwargs):
+        assert command[:3] == ["cuobjdump", "-xelf", "all"]
+        assert Path(command[3]).is_absolute()
+        for name in ("sm_121.cubin", "sm_121a.cubin"):
+            (cwd / name).write_bytes(elf_bytes(text=name.encode()))
+    monkeypatch.setattr(build.subprocess, "run", extract)
+    library, probe = tmp_path / "library.so", tmp_path / "probe"
+    library.write_bytes(elf_bytes())
+    probe.write_bytes(b"retained probe bytes")
+    record = {"key": "e4m3", "library": {"path": str(library), "sha256": sha256(library)},
+              "probe": {"path": str(probe), "sha256": sha256(probe)}}
+    build_path, h1_path = tmp_path / "build.json", tmp_path / "h1.json"
+    write_json(build_path, {"libraries": [record]})
+    report = completed_gpu_receipt()
+    proof = completed_p3_receipt()
+    proof["e4m3"].update(library_so_sha256=sha256(library), probe_sha256=sha256(probe))
+    report.update(P3=copy.deepcopy(proof), build_sha256=sha256(build_path))
+    h1.confirm_p3(report, proof)
+    assert report["preconditions_confirmed"]
+    write_json(h1_path, report)
+    return build_path, h1_path
+
+
+def test_code_identity_enriches_copies_without_changing_gpu_inputs(retained_binary_receipts, tmp_path):
+    from experiments.numerics_rows import build
+
+    build_path, h1_path = retained_binary_receipts
+    before = [p.read_bytes() for p in (build_path, h1_path)]
+    out = tmp_path / "enriched"
+    record, = build.add_identities(build_path, out)["libraries"]
+    report = json.loads(h1_path.read_text())
+    proof = {**report["P3"]["e4m3"], **{k: record[k] for k in build.IDENTITY_FIELDS}}
+    h1.confirm_p3(report, {"e4m3": proof})
+    assert report["preconditions_confirmed"]
+    assert [p.read_bytes() for p in (build_path, h1_path)] == before
+    assert record["cubin_sha256s"] == [hashlib.sha256(elf_bytes(text=name.encode())).hexdigest()
+                                         for name in ("sm_121.cubin", "sm_121a.cubin")]
+    for field in build.IDENTITY_FIELDS:
+        assert report["P3"]["e4m3"][field] == record[field]
+    assert report["build_sha256"] == hashlib.sha256(before[0]).hexdigest()
+
+
+@pytest.mark.parametrize("mutation", ["library", "probe"])
+def test_code_identity_refuses_changed_binary(retained_binary_receipts, tmp_path, mutation):
+    from pathlib import Path
+    from experiments.numerics_rows import build
+
+    build_path, h1_path = retained_binary_receipts
+    build.add_identities(build_path, tmp_path / "positive")
+    record, = json.loads(build_path.read_text())["libraries"]
+    Path(record[mutation]["path"]).write_bytes(b"changed binary")
+    with pytest.raises(ValueError):
+        build.add_identities(build_path, tmp_path / "negative")
+
+
+@pytest.mark.parametrize("field", ["library_so_sha256", "library_code_sha256", "library_code_sections", "cubin_sha256s"])
+def test_row_requires_h1_code_identity(retained_binary_receipts, tmp_path, field):
+    from experiments.numerics_rows import build
+
+    build_path, h1_path = retained_binary_receipts
+    record, = build.add_identities(build_path, tmp_path / "identity")["libraries"]
+    proof = {k: record[k] for k in build.IDENTITY_FIELDS}
+    row.bind_library_identity(record, record, proof)
+    proof.pop(field)
+    with pytest.raises(Invalid, match="H1 code identity"):
+        row.bind_library_identity(record, record, proof)

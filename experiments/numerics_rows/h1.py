@@ -411,7 +411,7 @@ def run_checks(args, report):
     loaded = install_libraries(built["libraries"])
     report["P3"] = {}
     for record in built["libraries"]:
-        report["P3"][record["key"]] = match_library(record)
+        report["P3"][record["key"]] = match_library(record, args.out / "binary-identity" / record["key"])
         save()
     with init_vllm_world1():
         report["P2"] = p2_ties(recorder) if set(loaded) != {"value"} else {"result": "not applicable to value-only build"}

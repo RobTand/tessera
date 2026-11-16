@@ -1995,6 +1995,7 @@ ts_py_library(
         "//src/tessera:kernel_a4",
         "//tests:window_gemm_grouped_support",
         ":dense_fused_oracle",
+        ":numerics_rows/build",
         ":numerics_rows/common",
         ":numerics_rows/quantizers",
         ":numerics_rows/reference",
@@ -2091,6 +2092,7 @@ ts_py_library(
         "numerics_rows/sass_slice.py",
     ],
     deps = [
+        ":numerics_rows/build",
         ":numerics_rows/common",
         ":numerics_rows/reference",
         ":t4_code/sass_dump",
