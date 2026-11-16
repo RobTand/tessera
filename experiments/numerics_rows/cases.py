@@ -489,6 +489,10 @@ def main():
                     write_json(args.out / "case_manifest.json", manifest)
             facts["complete"] &= local["complete"]
         manifest["complete"] &= facts["complete"]
+        write_json(args.out / "progress.json", {"arm": population.get("arm", args.population.stem),
+            "modules_completed": len(manifest["modules"]), "last_module": entry["name"],
+            "reference_seconds": time.monotonic() - started,
+            "host_peak_bytes": resource.getrusage(resource.RUSAGE_SELF).ru_maxrss * 1024})
     manifest.update(reference_seconds=time.monotonic() - started,
                     host_peak_bytes=resource.getrusage(resource.RUSAGE_SELF).ru_maxrss * 1024)
     write_json(args.out / "case_manifest.json", manifest)

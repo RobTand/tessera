@@ -187,7 +187,7 @@ def subnormal_case(key, recorder):
     from window_gemm_grouped_support import Expert
 
     if key != "value":
-        return {"result": "UNATTESTED", "reason": "BF16 weight 2^-133 is not representable by this library's weight alphabet"}
+        return {"result": "UNATTESTED", "reason": "not representable; this library's FP32 products cannot be subnormal"}
     expert = Expert(256, 256, (4,) * 256, 7)
     expert.unit.table.fill_(2**-133)
     expert.unit.scale.fill_(1)
@@ -345,7 +345,9 @@ def main():
             write_json(args.out / "h1.json", report)
     for where in ("inside", "outside"):
         run = subprocess.run([sys.executable, "-m", "experiments.numerics_rows.h1", "--cuda-control", where], capture_output=True, text=True)
-        report["cuda_controls"].append({"where": where, "exit_status": run.returncode, "stdout": run.stdout, "stderr": run.stderr})
+        report["cuda_controls"].append({"where": where, "exit_status": run.returncode, "stdout": run.stdout, "stderr": run.stderr,
+            "scope": "harness check of CUDA error attribution, not of the cell kernel",
+            "injection": "async device assert in a helper kernel; cell binary unchanged"})
     report["preconditions_confirmed"] = (
         not report["P1"]["mismatches"] and (args.image == "N" or report["P2"].get("result") == "PASS")
         and all(p["matched"] for p in report["P3"].values())
