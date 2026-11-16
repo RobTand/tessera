@@ -293,7 +293,7 @@ def column_coverage(weights, scales, family, quantizer, *, peer=None, peer_scale
     for column in range(weights.shape[1]):
         w, lo, hi = weights[:, column], lower[:, column], upper[:, column]
         small = family == "value" and bool(np.any((np.abs(w) > 0) & (np.abs(w) < 2**-126)))
-        gate_max = float(np.max(np.abs((w if stage == "gate" else peer[:, column]) * scales))) if peer is not None else None
+        gate_max = float(np.max(np.abs((w * scales) if stage == "gate" else peer[:, column] * peer_scales))) if peer is not None else None
         inputs = sweep_values(family, gs=quantizer.gs, normal_j=quantizer.normal_j,
                               small_product=small, gate_max=gate_max)
         tried = []
