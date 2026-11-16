@@ -15,7 +15,7 @@ in the tree" made the whole tree depend on the whole tree.  ``_SOURCE_*`` is
 the recognition set for that -- the standard library's source-execution API,
 which this repository does not own and cannot derive from its own code, and
 which qualifies common attribute names (``re.compile`` and ``model.eval()``
-are not source execution). The selector also propagates this capability over
+are not source execution). ``source_execution_modules`` propagates this capability over
 recognized calls to imported source-executing helpers; import presence alone
 is not execution, and helper capability never proves a read's external origin.
 What it misses is a source read this module never sees at all,
@@ -41,288 +41,6 @@ import os.path
 from collections import defaultdict
 from pathlib import Path, PurePath
 
-#: The node an unknown *module* dependency edges to: this reader can run
-#: Python it cannot name, so it may import anything in the tree.
-WILDCARD = "*"
-#: The node an unplaceable *data* read edges to.  Not the same claim: the
-#: reader executes nothing, so it imports nothing, but it does read a file
-#: this resolver named and refused to place, and that file may be in the
-#: diff.  Kept apart from ``WILDCARD`` so preserving the dependency does not
-#: re-import #148's "every reader depends on every module".
-DATA_WILDCARD = "*data"
-
-
-def statement_import_requests(node, module, *, is_package=False):
-    """Module spellings and requested attributes from one ordinary import.
-
-    A namespace requests unknown attributes (None); a potential submodule has
-    no attribute request until the selector resolves it to an actual module.
-    This does not resolve spellings: the selector owns the ambiguity-preserving
-    resolver and package-initialization edges.
-    """
-    if isinstance(node, ast.Import):
-        return {alias.name: None for alias in node.names}
-    if not isinstance(node, ast.ImportFrom):
-        return {}
-    if node.level:
-        package = module if is_package else module.rpartition(".")[0]
-        parts = package.split(".") if package else []
-        climb = node.level - 1
-        parts = parts[:len(parts) - climb] if climb else parts
-        prefix = ".".join(parts + ([node.module] if node.module else []))
-    else:
-        prefix = node.module or ""
-    if not prefix:
-        return {}
-    names = {alias.name for alias in node.names}
-    requests = {prefix: None if "*" in names else names}
-    # A from-import may import a child module instead of reading an attribute.
-    requests.update({f"{prefix}.{name}": set() for name in names})
-    return requests
-
-
-def module_import_requests(tree, module, *, is_package=False, omit=frozenset(), scanner=None,
-                           forwarding_call=None):
-    """Union requests without choosing between alias candidates or branches."""
-    found = {}
-    for node in ast.walk(tree):
-        if node in omit:
-            continue
-        for spelling, names in statement_import_requests(
-                node, module, is_package=is_package).items():
-            if spelling not in found:
-                found[spelling] = names
-            elif found[spelling] is None or names is None:
-                found[spelling] = None
-            else:
-                found[spelling] = found[spelling] | names
-    named = {spelling for spelling, names in found.items() if names}
-    if not named:
-        return found
-    if scanner is None:
-        scanner = _Scanner(Path("__init__.py" if is_package else "module.py"), module)
-        scanner.visit(tree)
-    if _namespace_access(scanner, tree, forwarding_call=forwarding_call):
-        return {spelling: None if names else names for spelling, names in found.items()}
-    parents = {child: node for node in ast.walk(tree) for child in ast.iter_child_nodes(node)}
-    for reference, scope in scanner.references:
-        parent = parents.get(reference)
-        if isinstance(parent, ast.Call) and parent.func is reference:
-            continue
-        # Passing, storing, returning or inspecting an imported object can
-        # expose its defining globals. Only direct calls retain named demand;
-        # aliases and unsupported uses retain the union.
-        for symbol in _possible_symbols(reference, scope):
-            for spelling in tuple(named):
-                if symbol.startswith(spelling + "."):
-                    found[spelling] = None
-                    named.remove(spelling)
-        if not named:
-            break
-    return found
-
-
-def _namespace_access(scanner, tree, *, forwarding_call=None, calls=None):
-    """Possible access to mutable Python namespaces, including lexical aliases."""
-    if any(isinstance(node, ast.Attribute) and node.attr in
-           {"__dict__", "__globals__", "__getattr__", "__builtins__", "f_globals", "f_locals"}
-           for node in ast.walk(tree)):
-        return True
-    for call, scope in scanner.calls if calls is None else calls:
-        symbols = _possible_symbols(call.func, scope)
-        # A proved module hook forwards only its closed literal name domain.
-        # Other dynamic getattr calls or namespace attributes are unknown,
-        # including a builtin imported under a lexical alias.
-        reflected = ("builtins.getattr" in symbols
-                     or isinstance(call.func, ast.Name) and call.func.id == "getattr")
-        if reflected and call is not forwarding_call:
-            name = call.args[1] if len(call.args) > 1 else None
-            if (not isinstance(name, ast.Constant) or not isinstance(name.value, str)
-                    or name.value in {"__dict__", "__globals__", "__getattr__", "__builtins__",
-                                      "f_globals", "f_locals"}):
-                return True
-        if (_source_call(call, symbols)
-                or isinstance(call.func, ast.Name) and call.func.id in {"globals", "locals"}
-                or symbols & {"builtins.globals", "builtins.locals"}
-                or not call.args and ("builtins.vars" in symbols
-                    or isinstance(call.func, ast.Name) and call.func.id == "vars")):
-            return True
-    return False
-
-
-def _literal_strings(expression):
-    if not isinstance(expression, (ast.Set, ast.List, ast.Tuple)):
-        return None
-    if not all(isinstance(item, ast.Constant) and isinstance(item.value, str)
-               for item in expression.elts):
-        return None
-    return frozenset(item.value for item in expression.elts)
-
-
-def _plain_hook(function, parameters):
-    args = function.args
-    return (isinstance(function, ast.FunctionDef)
-            and not function.decorator_list and not getattr(function, "type_params", ())
-            and len(args.posonlyargs + args.args) == parameters
-            and not args.kwonlyargs and args.vararg is None and args.kwarg is None
-            and not args.defaults and not args.kw_defaults
-            and function.returns is None
-            and all(arg.annotation is None
-                    or isinstance(arg.annotation, ast.Name) and arg.annotation.id == "str"
-                    for arg in args.posonlyargs + args.args))
-
-
-def _body_without_docstring(function):
-    body = function.body
-    if body and isinstance(body[0], ast.Expr) and isinstance(body[0].value, ast.Constant) \
-            and isinstance(body[0].value.value, str):
-        body = body[1:]
-    return body
-
-
-def guarded_reexport(tree):
-    """Prove one finite guarded module hook, or keep the unconditional union.
-
-    Only ``if name in <immutable literal names>: import ...; return
-    getattr(module, name)`` followed by a literal AttributeError is admitted.
-    The hook and guard must not be rebound, mutated or escape. A literal
-    ``__all__`` directory hook may enumerate the immutable guard without
-    invoking it. This proves an import condition, never source provenance or
-    general callable reachability. It uses the selector's authoritative AST.
-    """
-    hooks = [node for node in tree.body
-             if isinstance(node, ast.FunctionDef) and node.name == "__getattr__"]
-    if len(hooks) != 1 or not _plain_hook(hooks[0], 1):
-        return None
-    hook = hooks[0]
-    body = _body_without_docstring(hook)
-    if len(body) != 2 or not isinstance(body[0], ast.If) or not isinstance(body[1], ast.Raise):
-        return None
-    branch, refusal = body
-    parameter = (hook.args.posonlyargs + hook.args.args)[0].arg
-    test = branch.test
-    if (branch.orelse or not isinstance(test, ast.Compare)
-            or not isinstance(test.left, ast.Name) or test.left.id != parameter
-            or len(test.ops) != 1 or not isinstance(test.ops[0], ast.In)
-            or len(test.comparators) != 1 or not isinstance(test.comparators[0], ast.Name)
-            or len(branch.body) != 2):
-        return None
-    guard = test.comparators[0].id
-    imported, returned = branch.body
-    if (not isinstance(imported, (ast.Import, ast.ImportFrom)) or len(imported.names) != 1
-            or imported.names[0].name == "*" or not isinstance(returned, ast.Return)):
-        return None
-    alias = imported.names[0]
-    local = alias.asname or alias.name
-    call = returned.value
-    if (not isinstance(call, ast.Call) or not isinstance(call.func, ast.Name)
-            or call.func.id != "getattr" or call.keywords or len(call.args) != 2
-            or not isinstance(call.args[0], ast.Name) or call.args[0].id != local
-            or not isinstance(call.args[1], ast.Name) or call.args[1].id != parameter):
-        return None
-    exception = refusal.exc
-    if (refusal.cause is not None or not isinstance(exception, ast.Call)
-            or not isinstance(exception.func, ast.Name) or exception.func.id != "AttributeError"
-            or exception.keywords or len(exception.args) > 1):
-        return None
-    for message in exception.args:
-        if isinstance(message, ast.Constant) and isinstance(message.value, str):
-            continue
-        if (not isinstance(message, ast.JoinedStr)
-                or any(not (isinstance(item, ast.Constant) and isinstance(item.value, str)
-                            or isinstance(item, ast.FormattedValue)
-                            and isinstance(item.value, ast.Name)
-                            and item.value.id in {parameter, "__name__"}
-                            and item.format_spec is None)
-                       for item in message.values)):
-            return None
-
-    bindings = defaultdict(list)
-    for node in ast.walk(tree):
-        if isinstance(node, ast.ImportFrom) and any(alias.name == "*" for alias in node.names):
-            # Star imports cannot prove that the guard's builtins or bindings
-            # stayed unshadowed, even if no explicit rebinding is written.
-            return None
-        if isinstance(node, ast.Name) and isinstance(node.ctx, (ast.Store, ast.Del)):
-            bindings[node.id].append(node)
-        elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
-            bindings[node.name].append(node)
-        elif isinstance(node, ast.arg):
-            bindings[node.arg].append(node)
-        elif isinstance(node, (ast.Import, ast.ImportFrom)):
-            for alias in node.names:
-                bindings[alias.asname or (alias.name.split(".")[0]
-                         if isinstance(node, ast.Import) else alias.name)].append(node)
-        elif isinstance(node, (ast.Global, ast.Nonlocal)):
-            for name in node.names:
-                bindings[name].append(node)
-    if bindings["__getattr__"] != [hook] or any(bindings[name] for name in
-            ("frozenset", "getattr", "AttributeError", "str", "set", "sorted")):
-        return None
-    declarations = [node for node in tree.body if isinstance(node, ast.Assign)
-                    and len(node.targets) == 1 and isinstance(node.targets[0], ast.Name)
-                    and node.targets[0].id == guard]
-    if len(declarations) != 1 or bindings[guard] != [declarations[0].targets[0]]:
-        return None
-    declaration = declarations[0]
-    value = declaration.value
-    if (not isinstance(value, ast.Call) or not isinstance(value.func, ast.Name)
-            or value.func.id != "frozenset" or value.keywords or len(value.args) != 1):
-        return None
-    names = _literal_strings(value.args[0])
-    if names is None:
-        return None
-
-    allowed_guard_loads = {test.comparators[0]}
-    # The directory hook in this grammar enumerates names only. Any other
-    # use of the guard is an escape, including calls through an alias.
-    directories = [node for node in tree.body
-                   if isinstance(node, ast.FunctionDef) and node.name == "__dir__"]
-    if directories:
-        if len(directories) != 1 or not _plain_hook(directories[0], 0):
-            return None
-        directory = directories[0]
-        directory_body = _body_without_docstring(directory)
-        if len(directory_body) != 1 or not isinstance(directory_body[0], ast.Return):
-            return None
-        expected = ast.parse(f"sorted(set(__all__) | {guard})", mode="eval").body
-        expression = directory_body[0].value
-        if ast.dump(expression) != ast.dump(expected) or bindings["__dir__"] != [directory]:
-            return None
-        exports = [node for node in tree.body if isinstance(node, ast.Assign)
-                   and len(node.targets) == 1 and isinstance(node.targets[0], ast.Name)
-                   and node.targets[0].id == "__all__"]
-        if (len(exports) != 1 or bindings["__all__"] != [exports[0].targets[0]]
-                or _literal_strings(exports[0].value) is None):
-            return None
-        allowed_guard_loads.update(node for node in ast.walk(expression)
-                                   if isinstance(node, ast.Name) and node.id == guard)
-        export_loads = {node for node in ast.walk(expression)
-                        if isinstance(node, ast.Name) and node.id == "__all__"}
-        if any(isinstance(node, ast.Name) and isinstance(node.ctx, ast.Load)
-               and node.id == "__all__" and node not in export_loads for node in ast.walk(tree)):
-            return None
-    hook_nodes = set(ast.walk(hook))
-    for node in ast.walk(tree):
-        if isinstance(node, ast.Name) and isinstance(node.ctx, ast.Load):
-            if node.id == guard and node not in allowed_guard_loads:
-                return None
-            if node.id in {"__getattr__", "__dict__", "globals", "locals", "eval", "exec"}:
-                return None
-            if node.id == "__name__" and node not in hook_nodes:
-                return None
-        if (isinstance(node, ast.Call) and isinstance(node.func, ast.Name)
-                and node.func.id == "vars" and not node.args):
-            return None
-    # The same lexical alias owner that recognizes source execution must also
-    # retain aliased access to a module's mutable namespace.
-    scanner = _Scanner(Path("__guarded_export__.py"))
-    scanner.visit(tree)
-    if _namespace_access(scanner, tree, forwarding_call=call):
-        return None
-    return names, imported, guard, call
-
-
 _LOADERS = {"spec_from_file_location": (1, "location"),
             "SourceFileLoader": (1, "path"), "run_path": (0, "path_name")}
 _SYMBOLS = {"spec_from_file_location": "importlib.util.spec_from_file_location",
@@ -340,6 +58,10 @@ _READ_METHODS = {"read_text", "read_bytes", "open"}
 #: ``**`` spelling, which that resolver leaves unbounded -- selected nothing.
 _ENUMERATIONS = {"glob", "iglob", "rglob", "iterdir", "listdir", "scandir", "walk"}
 _KINDS = set(_LOADERS) | _READ_METHODS | _ENUMERATIONS
+#: Modules whose enumeration calls read the filesystem.  A call named like an
+#: enumeration whose resolved owners are all elsewhere (``ast.walk``) reads no
+#: directory; an owner nothing resolves still counts.
+_FILESYSTEM_OWNERS = ("os.", "glob.", "pathlib.")
 
 
 class _Scope:
@@ -901,26 +623,21 @@ def _helper_capability(capable, edges):
         capable = expanded
 
 
-def source_execution_modules(trees, modules, targets, *, scanners=None,
-                             namespace_modules=None, forwarding_calls=None):
+def source_execution_modules(trees, modules, targets):
     """Files that call a source executor, including known imported helpers.
 
-    ``targets`` is the selector's authoritative, ambiguity-preserving module
-    spelling resolver. Only top-level functions are exported summaries. Their
+    ``targets`` is the caller's ambiguity-preserving module spelling
+    resolver. Only top-level functions are exported summaries. Their
     source-execution capability grows to a fixed point over helper calls; it
     never depends on import presence alone and never proves read provenance.
     Unknown external origins and generic read parameters remain unknown.
     """
     functions = {}
-    owners = {}
     scopes = {}
     calls = {}
     for path, tree in trees.items():
         scanner = _Scanner(path, modules[path])
         scanner.visit(tree)
-        owners[path] = scanner
-        if scanners is not None:
-            scanners[path] = scanner
         functions[path] = scanner.functions
         scopes[path] = scanner.scope
         calls[path] = {
@@ -958,29 +675,6 @@ def source_execution_modules(trees, modules, targets, *, scanners=None,
         for path, defined in functions.items() for name, alternatives in defined.items()
     }
     capable = _helper_capability(capable, edges)
-    if namespace_modules is not None:
-        forwarding_calls = forwarding_calls or {}
-
-        def namespace_effect(path, subtree):
-            nodes = set(ast.walk(subtree))
-            scoped_calls = ((call, scope) for call, scope in owners[path].calls if call in nodes)
-            return _namespace_access(
-                owners[path], subtree, forwarding_call=forwarding_calls.get(path), calls=scoped_calls)
-
-        # The same function roster, lexical symbols, resolver and call edges
-        # carry this second conservative effect. No returned-callable, runtime
-        # origin or general Python evaluation is inferred.
-        namespace_helpers = _helper_capability({
-            (path, name) for path, defined in functions.items()
-            for name, alternatives in defined.items()
-            if any(namespace_effect(path, function) for function in alternatives)
-        }, edges)
-        namespace_modules.update({
-            path for path, tree in trees.items()
-            if namespace_effect(path, tree)
-            or any(helper in namespace_helpers for symbols in calls[path].values()
-                   for helper in helpers(symbols))
-        })
     return {
         path for path, tree in trees.items()
         if any(_source_call(call, symbols) for call, symbols in calls[path].items())
@@ -1402,6 +1096,9 @@ def file_imports(tree, path, root, *, executes_source=None, unnamed=None):
             continue
         loader = next(iter(loaders))
         if loader in _ENUMERATIONS:
+            owners = _possible_symbols(call.func, scope)
+            if owners and not any(owner.startswith(_FILESYSTEM_OWNERS) for owner in owners):
+                continue
             refused, links, from_string = [], set(), []
             try:
                 targets = _enumeration_bases(

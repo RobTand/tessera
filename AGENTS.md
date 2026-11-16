@@ -235,19 +235,11 @@ Treat as constraints. Violate slogans when judgment says so.
   baseline in the brief; fifteen agents recomputing one number in parallel put
   a 121 GB box into swap on 2026-09-03.
 - **The full suite is the coordinator's, run once on the merge result -- not
-  yours, run in isolation.** A branch owes its own targeted evidence, and
-  `tools/impacted_tests.py --ref master...HEAD` computes which tests those
-  are rather than leaving it to judgement: it walks the import graph, inverts
-  the edges, and returns everything reverse-reachable from what you changed.
-  A remote run's source snapshot can be parentless, so give it the exact fetched base as
-  the left endpoint; when no merge base exists the selector records and uses a
-  direct `BASE..HEAD` tree comparison instead.
-  Run it **in your own worktree** -- it reads the tree it is standing in, and
-  a branch analysed from elsewhere has unreadable edges, which it says. Trust
-  its `verdict`: `narrowed` means run the listed files, `full` means it found
-  a changed path it cannot reason about and you run everything. It fails open
-  by construction, because a selector that silently drops a test is worse
-  than no selector. Add the pre-fix failure line for every test you added. It does not owe a whole-tree run.
+  yours, run in isolation.** A branch owes its own targeted evidence: run the
+  Bazel test targets that your diff touches with `bbrun` on the self-hosted
+  amd64 executor, inside a Flux job (never run a test on a fleet host).
+  Bazel's remote cache skips the tests whose inputs did not change. Add the
+  pre-fix failure line for every test you added. It does not owe a whole-tree run.
   Fifteen branches each proving the whole tree green *in isolation* is
   fifteen runs that cannot see the one risk that matters -- what the branches
   do to each other -- while making every one of them slow enough to matter:

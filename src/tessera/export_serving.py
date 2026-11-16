@@ -3137,9 +3137,8 @@ def main():
             # receipt.  Loading a package by path lives here, with the
             # exporter's other dynamic load, and not in ``tessera.cached_unit``:
             # a src module that imports the path loader puts an unresolvable
-            # read in ``tests/conftest.py``'s import closure, and
-            # ``tools/impacted_tests.py`` then answers ``full`` for every edit
-            # this tree can make.
+            # read in ``tests/conftest.py``'s import closure, which every test
+            # loads.
             producers = {seal: load_historical_producer(Path(bound["path"]), bound["sha256"])
                          for seal, bound in cached_units.producer_packages.items()}
             cached_identity = ProducerCachedUnitIdentities(

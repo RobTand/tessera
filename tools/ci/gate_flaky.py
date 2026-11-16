@@ -26,15 +26,3 @@ def read_table(root):
                 not isinstance(entry['reason'], str) or not entry['reason'].strip()):
             raise ValueError('flaky table needs a positive issue and nonempty reason: ' + node)
     return table
-
-
-def check_policy(root, population, check_owners):
-    table = read_table(root)
-    files = {node.split('::', 1)[0] for node in table}
-    unknown = files - set(population)
-    if unknown:
-        raise ValueError('flaky files outside the test population: ' + ', '.join(sorted(unknown)))
-    check_owners(list(table.values()))
-    # Always collect marked files, including on docs-only/no-tests changes, so
-    # collection checks exact node IDs even outside the changed selection.
-    return sorted(files)

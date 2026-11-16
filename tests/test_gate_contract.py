@@ -17,9 +17,7 @@ ROOT = Path(__file__).resolve().parents[1]
 MODULES = {
     'gate_actions': ROOT / 'tools/ci/gate_actions.py',
     'gate_evidence': ROOT / 'tools/ci/gate_evidence.py',
-    'gate_partition': ROOT / 'tools/ci/gate_partition.py',
     'gate_run': ROOT / 'tools/ci/gate_run.py',
-    'gate_select': ROOT / 'tools/ci/gate_select.py',
 }
 
 
@@ -28,44 +26,6 @@ def load(name):
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module
-
-
-@pytest.mark.parametrize('change', ['fork', 'login', 'id', 'branch'])
-def test_batch_identity_requires_all_fields(change):
-    gate = load('gate_select')
-    pr = {'head': {'ref': 'mergify/merge-queue/master/pr-1', 'repo': {'full_name': 'RobTand/tessera'}},
-          'user': {'login': 'mergify[bot]', 'id': 37929162}, 'labels': []}
-    assert gate.full_gate(pr, 'RobTand/tessera')
-    if change == 'fork':
-        pr['head']['repo']['full_name'] = 'fork/tessera'
-    elif change == 'branch':
-        pr['head']['ref'] = 'tessera-1559-gate'
-    elif change == 'login':
-        pr['user']['login'] = 'someone'
-    else:
-        pr['user']['id'] = 1
-    assert not gate.full_gate(pr, 'RobTand/tessera')
-
-
-def test_canary_is_same_repository_only():
-    gate = load('gate_select')
-    pr = {'head': {'ref': 'tessera-1559-gate', 'repo': {'full_name': 'RobTand/tessera'}},
-          'user': {}, 'labels': [{'name': 'gate-canary'}]}
-    assert gate.full_gate(pr, 'RobTand/tessera')
-    pr['head']['repo']['full_name'] = 'fork/tessera'
-    assert not gate.full_gate(pr, 'RobTand/tessera')
-
-
-def test_partition_covers_both_lanes_once_and_uses_both_architectures():
-    partition = load('gate_partition')
-    files = ['tests/test_a.py', 'tests/test_b.py', 'tests/test_c.py']
-    matrix = partition.lane_matrix(files, {'torch': {files[0]: 100}, 'bytes': {}}, 2,
-                                   ['ubuntu-24.04', 'ubuntu-24.04-arm'])
-    for lane in ('bytes', 'torch'):
-        rows = [r for r in matrix['include'] if r['lane'] == lane]
-        assert sorted(p for row in rows for p in row['files']) == files
-        assert {r['runner'] for r in rows} == {'ubuntu-24.04', 'ubuntu-24.04-arm'}
-    assert len({r['index'] for r in matrix['include']}) == len(matrix['include'])
 
 
 def fixture_plan():
@@ -133,19 +93,6 @@ def test_budget_tolerance_and_measurement_mode(tmp_path):
     assert rows == [{'nodeid': 'tests/test_a.py::test_one', 'seconds': 31, 'budget_seconds': 20}]
 
 
-def test_selector_failure_runs_full_population(tmp_path):
-    gate = load('gate_select')
-    subprocess.run(['git', 'init', '-q', str(tmp_path)], check=True)
-    (tmp_path / 'tests').mkdir()
-    (tmp_path / 'tests/test_a.py').write_text('def test_a(): pass\n')
-    def broken(*args, **kwargs):
-        return SimpleNamespace(returncode=2, stdout='', stderr='graph unavailable')
-    selection = gate.select_files(tmp_path, 'base', 'head', execute=broken)
-    assert selection['verdict'] == 'full'
-    assert selection['tests'] == ['tests/test_a.py']
-    assert 'graph unavailable' in selection['reason']
-
-
 def test_workflow_keeps_boundary_proofs_and_branch_check_separate():
     text = (ROOT / '.github/workflows/ci.yml').read_text()
     assert 'name: branch rule' in text
@@ -190,25 +137,6 @@ def test_fork_prs_skip_artifact_scans_and_uploads_with_a_reason():
             condition = next(line for line in step.splitlines() if line.strip().startswith('if:'))
             assert fork_repo in condition
     assert text.count('fork PR: no secrets, artifact upload skipped') == 2
-
-
-def test_full_gate_refuses_an_empty_cpu_population(tmp_path, monkeypatch):
-    gate = load('gate_select')
-    subprocess.run(['git', 'init', '-q', str(tmp_path)], check=True)
-    (tmp_path / 'README.md').write_text('empty project\n')
-    subprocess.run(['git', 'add', '.'], cwd=tmp_path, check=True)
-    subprocess.run(['git', '-c', 'user.name=test', '-c', 'user.email=test@example.invalid',
-                    'commit', '-qm', 'base'], cwd=tmp_path, check=True)
-    sha = subprocess.check_output(['git', 'rev-parse', 'HEAD'], cwd=tmp_path, text=True).strip()
-    config = tmp_path / 'tools/ci'
-    config.mkdir(parents=True)
-    (config / 'gate_durations.json').write_text('{"lanes": {"bytes": {}, "torch": {}}}')
-    (config / 'gate_quarantine.json').write_text('{"lanes": {"bytes": [], "torch": []}, "issues": {}}')
-    monkeypatch.chdir(tmp_path)
-    monkeypatch.setattr(sys, 'argv', ['gate_select', '--base', sha, '--head', sha,
-        '--mode', 'full', '--shards', '2', '--output', 'plan.json', '--matrix', 'matrix.json'])
-    with pytest.raises(ValueError, match='empty'):
-        gate.main()
 
 
 @pytest.mark.parametrize('grouped', [True, False])
