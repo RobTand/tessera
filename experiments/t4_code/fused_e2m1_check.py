@@ -211,21 +211,26 @@ def compare(got, ref, bound, exact):
             "max_err_over_tol": float(rel.max()) if rel.numel() else 0.0, "ok": bad == 0}
 
 
-def graph_equal(fn, out):
+def graph_equal(fn, out, *, before_call=lambda: None):
     """Capture ``fn`` (which writes ``out``) and replay it: the same bits as eager."""
-    fn()
+    def launch():
+        before_call()
+        fn()
+
+    launch()
     torch.cuda.synchronize()
     eager = out.clone()
     out.zero_()
     s = torch.cuda.Stream()
     s.wait_stream(torch.cuda.current_stream())
     with torch.cuda.stream(s):
-        fn()
+        launch()
     torch.cuda.current_stream().wait_stream(s)
     g = torch.cuda.CUDAGraph()
     with torch.cuda.graph(g):
-        fn()
+        launch()
     out.zero_()
+    before_call()
     g.replay()
     torch.cuda.synchronize()
     return bool(torch.equal(out.view(torch.int16), eager.view(torch.int16)))

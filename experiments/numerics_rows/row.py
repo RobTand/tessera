@@ -83,7 +83,7 @@ def aggregate_exact(unit):
 def unit_identity(unit):
     config = {k: v for k, v in unit.get("m_config", {}).items() if k not in ("compiled_kernel_symbols", "separation_source")}
     cut = {k: v for k, v in unit.get("tp", {}).items() if k in ("rank", "size", "cut_axis", "cut_range")}
-    return copy.deepcopy([unit.get(k) for k in ("cell", "symbol", "decoder", "rung")] + [config, cut])
+    return copy.deepcopy([unit.get(k) for k in ("cell", "symbol", "decoder", "rung")] + [config, cut, unit.get("launch_state_sha256")])
 
 
 def finish_unit(unit):
@@ -333,7 +333,7 @@ class Dense:
         self.name, self.library = entry["name"], entry["library"]
         self.layer, self.method, self.info = dense.build_served(
             self.store, self.name, mode="resident", tp_rank=cut["rank"], tp_size=cut["size"],
-            fused=self.library != "triton", instruction="f16" if self.library == "e4m3" else "e4m3")
+            fused=None, instruction=None)
         self.scheme = self.store.schemes[self.name]
         wire = self.store.wire(self.name).contiguous().numpy().tobytes()
         if hashlib.sha256(wire).hexdigest() != manifest["wire_sha256"]:
@@ -508,6 +508,9 @@ def planned_units(contract, image_digest, population, manifest):
     """Enumerate every expected unit before a loader or native call can fail."""
     from experiments.numerics_rows.cases import admitted_units, configurations
     from experiments.numerics_rows.population import module_key
+    from experiments.numerics_rows.scope import check_population_cells
+
+    check_population_cells(contract, image_digest, population)
 
     if manifest.get("sample"):
         raise Invalid("a C1 sample cannot supply a row manifest")
@@ -520,6 +523,8 @@ def planned_units(contract, image_digest, population, manifest):
     groups = []
     for entry in population["modules"]:
         whole = modules[module_key(entry)]
+        if whole.get("cell_ids") != entry["cell_ids"]:
+            raise Invalid("C1 cell IDs differ from the signed source-contract scope")
         for cut in ({"rank": 0, "size": 1}, {"rank": 0, "size": 2}, {"rank": 1, "size": 2}):
             matching = [c for c in whole["cuts"] if c["tp"] == cut]
             if len(matching) != 1 or not matching[0]["m_configs"]:
@@ -555,8 +560,8 @@ def check_manifest_source(manifest, commit, contract_path):
 
 
 def rule_receipt(rule, freeze, h1, h1_path):
-    if set(freeze.get("decisions", {})) != {f"D{i}" for i in range(1, 9)}:
-        raise Invalid("freeze record must include the reviewed decisions D1 through D8")
+    if set(freeze.get("decisions", {})) != {f"D{i}" for i in range(1, 10)}:
+        raise Invalid("freeze record must include the reviewed decisions D1 through D9")
     job = h1.get("flux_job_id")
     if not job:
         job = (h1_path.parent.parent / "jobid").read_text().strip()
@@ -571,7 +576,9 @@ def rule_receipt(rule, freeze, h1, h1_path):
             "h1_path": str(h1_path), "h1_sha256": sha256(h1_path)}
 
 
-def check_rule_freeze(rule, freeze, *, canary=False):
+def check_rule_freeze(rule, freeze, *, canary=False, launch_levers_sha256=None):
+    if launch_levers_sha256 is not None and freeze.get("launch_levers_sha256") != launch_levers_sha256:
+        raise Invalid("launch lever file is not the frozen file")
     if freeze.get("sha256") != sha256(rule) or not freeze.get("reviewer"):
         raise Invalid("rule is not the reviewed rule")
     if canary:
@@ -599,6 +606,8 @@ def main():
     p.add_argument("--image", choices=("G", "N"), required=True)
     p.add_argument("--name", required=True)
     p.add_argument("--build-provenance", type=Path, required=True)
+    from experiments.numerics_rows.launch_state import LEVERS, LaunchState
+    p.add_argument("--launch-levers", type=Path, default=LEVERS)
     p.add_argument("--module", action="append", default=[], help="Explicit module name in the signed population; repeat for a subset")
     p.add_argument("--canary", action="store_true", help="Uncounted pre-freeze run; its receipt cannot be joined")
     p.add_argument("--tp-size", type=int, choices=(1, 2))
@@ -615,6 +624,10 @@ def main():
 
     meter = RowMeter()
     try:
+        args.launch_state = LaunchState(args.launch_levers, fresh=True)
+        fields = args.launch_state.fields()
+        receipt["runtime"].update({k: v for k, v in fields.items() if k != "launch_levers_sha256"})
+        receipt["inputs"]["launch_levers_sha256"] = fields["launch_levers_sha256"]
         run(args, receipt)
     except Exception as error:
         receipt["row"].update(utc_end=datetime.now(timezone.utc).isoformat(), exit_status=3, stop_cause=str(error), finalization_finished=False)
@@ -645,9 +658,13 @@ def run_row(args, receipt, phases):
     from experiments.numerics_rows.population import load_signed_population, select_modules
 
     receipt["row"]["finalization_finished"] = False
+    from experiments.numerics_rows.launch_state import check_binding
+    launch_state = args.launch_state
+    launch_state.check()
     population, population_digest = load_signed_population(args.population)
     population = select_modules(population, args.module)
     runtime = check_runtime(args.image)
+    runtime.update({k: v for k, v in launch_state.fields().items() if k != "launch_levers_sha256"})
     sys.path.insert(0, str(args.source / "src"))
     from experiments.numerics_rows.serving_build import check_compile_paths, check_retained_source
 
@@ -677,9 +694,10 @@ def run_row(args, receipt, phases):
     if torch.cuda.get_device_capability() != (12, 1):
         raise Invalid("device capability differs from the sm_121 cell")
     freeze = json.loads(args.freeze.read_text())
-    check_rule_freeze(args.rule, freeze, canary=getattr(args, "canary", False))
+    check_rule_freeze(args.rule, freeze, canary=getattr(args, "canary", False), launch_levers_sha256=launch_state.levers_sha256)
     receipt["canary"] = getattr(args, "canary", False)
     manifest, built, h1 = (json.loads(path.read_text()) for path in (args.manifest, args.build, args.h1))
+    check_binding(manifest, launch_state.fields())
     check_manifest_source(manifest, commit, args.source / "src/tessera/serving/runtime_contract.json")
     if manifest["population_sha256"] != population_digest or manifest["q1_table_sha256"] != sha256(args.q1):
         raise Invalid("case manifest input identity differs")
@@ -693,9 +711,13 @@ def run_row(args, receipt, phases):
         raise Invalid("H1 did not confirm this binary set before the freeze")
     q1 = json.loads(args.q1.read_text())
     contract = json.loads((args.source / "src/tessera/serving/runtime_contract.json").read_text())
+    from experiments.numerics_rows.scope import check_selectors
+    check_selectors(contract, population, launch_state.mapping)
     groups = planned_units(contract, runtime["image_digest"], population, manifest)
     groups = selected_groups(groups, getattr(args, "tp_size", None), getattr(args, "tp_rank", None))
     receipt["units"] = [unit for _, _, _, units in groups for unit in units]
+    for unit in receipt["units"]:
+        unit["launch_state_sha256"] = launch_state.sha256
     write_json(args.out / "numerics_row.json", receipt)
     if built["commit"] != commit or built["runtime"]["image_digest"] != runtime["image_digest"]:
         raise Invalid("library build does not match the cell")
@@ -709,7 +731,7 @@ def run_row(args, receipt, phases):
     library, = [r for r in built["libraries"] if r["key"] == key]
     d, = [t for t in q1["tables"] if t["key"] == key]
     receipt.update({"rule": rule_receipt(args.rule, freeze, h1, args.h1),
-               "runtime": {**runtime, "device": torch.cuda.get_device_name(), "capability": list(torch.cuda.get_device_capability()),
+               "runtime": {**runtime, **{k: v for k, v in launch_state.fields().items() if k != "launch_levers_sha256"}, "device": torch.cuda.get_device_name(), "capability": list(torch.cuda.get_device_capability()),
                            "driver": __import__("subprocess").check_output(["nvidia-smi", "--query-gpu=driver_version", "--format=csv,noheader"], text=True).strip()},
                "tessera": {"commit": commit, "contract_sha256": sha256(args.source / "src/tessera/serving/runtime_contract.json"), "src_tree_sha256": source_digest(args.source), "kernel_source_sha256": KERNEL_SHA256,
                            "serving_compile": compile_paths, "retained_source": retained_source, "build_provenance_sha256": sha256(args.build_provenance),
@@ -722,7 +744,7 @@ def run_row(args, receipt, phases):
                "inputs": {"population_sha256": population_digest, "build_sha256": sha256(args.build), "case_manifest_sha256": sha256(args.manifest),
                           "selected_modules": [entry["name"] for entry in population["modules"]],
                           "selected_cuts": [dict(cut) for _, _, cut, _ in groups],
-                          "q1_table_sha256": sha256(args.q1), "reference_selftest": selftest(device="cuda")},
+                          "q1_table_sha256": sha256(args.q1), "launch_levers_sha256": launch_state.levers_sha256, "reference_selftest": selftest(device="cuda")},
                "negative_controls": negative_controls()})
     exit_status = 0
     served_cache = {}
@@ -733,87 +755,99 @@ def run_row(args, receipt, phases):
                 for entry, module, cut, units in groups:
                     if phase == "diagnostics" and not any(u["completed"] and not (u["invalid"] or u["unattested"] or u["cuda_errors"]) for u in units):
                         continue
-                    with dense.e4m3_instruction("f16" if entry["library"] == "e4m3" else "e4m3"), dense.dense_lane(entry["library"] != "triton"):
-                        routed = module["structure"] == "routed_moe"
-                        key = entry["library"] if entry["library"] != "triton" else "e4m3mma"
-                        table = DTable(next(t for t in q1["tables"] if t["key"] == key)) if routed else None
-                        with phases.measure("setup"):
-                            adapter = Routed(entry, cut, module, table) if routed else Dense(entry, cut, module)
-                        if phase == "gate_cases":
-                            receipt["modules"].append(module_receipt(module, adapter, routed))
+                    routed = module["structure"] == "routed_moe"
+                    key = entry["library"] if entry["library"] != "triton" else "e4m3mma"
+                    table = DTable(next(t for t in q1["tables"] if t["key"] == key)) if routed else None
+                    try:
+                        launch_state.check()
+                    except Invalid as error:
                         for unit in units:
-                            if phase == "diagnostics" and (not unit["completed"] or unit["invalid"] or unit["unattested"] or unit["cuda_errors"]):
-                                continue
-                            adapter.splits = unit["m_config"]["k_split"]
+                            unit["invalid"].append(str(error))
+                            unit["completed"] = True
+                            finish_unit(unit)
+                        write_json(args.out / "numerics_row.json", receipt)
+                        continue
+                    with phases.measure("setup"):
+                        adapter = Routed(entry, cut, module, table) if routed else Dense(entry, cut, module)
+                    if phase == "gate_cases":
+                        receipt["modules"].append(module_receipt(module, adapter, routed))
+                    for unit in units:
+                        if phase == "diagnostics" and (not unit["completed"] or unit["invalid"] or unit["unattested"] or unit["cuda_errors"]):
+                            continue
+                        adapter.splits = unit["m_config"]["k_split"]
+                        recorder = BoundaryRecorder(torch.cuda.synchronize, unit["boundaries"])
+                        recorder.before_call = launch_state.check
+                        unit["flags_latched_diagnostic"] = dict(getattr(sys.modules.get("tessera.serving.flags"), "_LATCHED", {}))
+                        try:
+                            launch_state.check()
                             unit["tp"].update(tp_facts(adapter, module, routed))
-                            recorder = BoundaryRecorder(torch.cuda.synchronize, unit["boundaries"])
-                            try:
-                                native_source = Path(next(r for r in compile_paths if r["key"] == key)["native_source_path"])
-                                with phases.measure("identity_audit"):
-                                    actual, served = identify_served(adapter, routed, native_source, args.out / "served-binaries", served_cache)
-                                    check_served_identity(unit, served, library)
-                                    audit_served(unit, served, library, args.out / "served-comparisons", served_cache)
-                                adapter.served_identity = served[0] if served else None
-                                if phase == "diagnostics":
-                                    try:
-                                        with native_boundaries({key: actual} if actual is not None else {}, recorder):
-                                            if routed:
-                                                run_routed.diagnostic_cases(adapter, unit, recorder, module)
-                                            else:
-                                                dense_diagnostics(adapter, unit, recorder)
-                                    except BoundaryError as error:
-                                        record_cuda_error(unit, error)
-                                    except Invalid as error:
-                                        unit["invalid"].append(str(error))
-                                    except Exception as error:
-                                        record_diagnostic_error(receipt, unit, error)
-                                    finally:
-                                        with phases.measure("identity_audit"):
-                                            _, after = identify_served(adapter, routed, native_source, args.out / "served-binaries", served_cache)
-                                            check_served_after(unit, served, after)
-                                    continue
-                                if receipt["inputs"]["reference_selftest"]["mismatches"] or not all(c["flagged_exactly"] for c in receipt["negative_controls"]):
-                                    raise Invalid("reference self-test or mutated reference control failed")
-                                if any(not role["matches_attested_wire"] for role in module["roles"]):
-                                    raise Invalid("wire stamp differs from attested_wire")
-                                if module["launch_geometry"] != actual_geometry(adapter, routed):
-                                    raise Invalid("C1 launch geometry differs from the loaded operands")
-                                unit["scales"] = scale_receipt(adapter, routed)
-                                ready = check_preconditions(unit, scale_equal=unit["scales"]["equal"], routed=routed,
-                                    slice_matched=slices[key]["matched"], monotonic=next(t for t in q1["tables"] if t["key"] == key)["d_nondecreasing_0_L"])
-                                if not ready:
-                                    unit["completed"] = True
-                                else:
-                                    verify_cases(adapter, unit, module, q1, table)
-                                    cases_completed = False
-                                    try:
-                                        with native_boundaries({key: actual} if actual is not None else {}, recorder):
-                                            if routed:
-                                                run_routed.run(adapter, unit, module, recorder)
-                                            else:
-                                                dense_cases(adapter, unit, module, recorder)
-                                            scale_index_checks(adapter, unit, module, recorder)
-                                            profile_unit(adapter, unit, recorder, routed=routed)
-                                        cases_completed = True
-                                    except BoundaryError as error:
-                                        record_cuda_error(unit, error)
-                                    finally:
-                                        with phases.measure("identity_audit"):
-                                            _, after = identify_served(adapter, routed, native_source, args.out / "served-binaries", served_cache)
-                                            check_served_after(unit, served, after)
-                                    if cases_completed:
-                                        dispatch(unit, entry["pair"], adapter.pairs(),
-                                                 after, adapter.info.get("lane_reason"))
-                                        unit["completed"] = True
-                            except BoundaryError as error:
-                                record_cuda_error(unit, error)
-                            except Invalid as error:
-                                unit["invalid"].append(str(error))
+                            native_source = Path(next(r for r in compile_paths if r["key"] == key)["native_source_path"])
+                            with phases.measure("identity_audit"):
+                                actual, served = identify_served(adapter, routed, native_source, args.out / "served-binaries", served_cache)
+                                check_served_identity(unit, served, library)
+                                audit_served(unit, served, library, args.out / "served-comparisons", served_cache)
+                            adapter.served_identity = served[0] if served else None
+                            if phase == "diagnostics":
+                                try:
+                                    with native_boundaries({key: actual} if actual is not None else {}, recorder):
+                                        if routed:
+                                            run_routed.diagnostic_cases(adapter, unit, recorder, module)
+                                        else:
+                                            dense_diagnostics(adapter, unit, recorder)
+                                except BoundaryError as error:
+                                    record_cuda_error(unit, error)
+                                except Invalid as error:
+                                    unit["invalid"].append(str(error))
+                                except Exception as error:
+                                    record_diagnostic_error(receipt, unit, error)
+                                finally:
+                                    with phases.measure("identity_audit"):
+                                        _, after = identify_served(adapter, routed, native_source, args.out / "served-binaries", served_cache)
+                                        check_served_after(unit, served, after)
+                                continue
+                            if receipt["inputs"]["reference_selftest"]["mismatches"] or not all(c["flagged_exactly"] for c in receipt["negative_controls"]):
+                                raise Invalid("reference self-test or mutated reference control failed")
+                            if any(not role["matches_attested_wire"] for role in module["roles"]):
+                                raise Invalid("wire stamp differs from attested_wire")
+                            if module["launch_geometry"] != actual_geometry(adapter, routed):
+                                raise Invalid("C1 launch geometry differs from the loaded operands")
+                            unit["scales"] = scale_receipt(adapter, routed)
+                            ready = check_preconditions(unit, scale_equal=unit["scales"]["equal"], routed=routed,
+                                slice_matched=slices[key]["matched"], monotonic=next(t for t in q1["tables"] if t["key"] == key)["d_nondecreasing_0_L"])
+                            if not ready:
                                 unit["completed"] = True
-                            finally:
-                                finish_unit(unit)
-                                write_json(args.out / "numerics_row.json", receipt)
-                        del adapter
+                            else:
+                                verify_cases(adapter, unit, module, q1, table)
+                                cases_completed = False
+                                try:
+                                    with native_boundaries({key: actual} if actual is not None else {}, recorder):
+                                        if routed:
+                                            run_routed.run(adapter, unit, module, recorder)
+                                        else:
+                                            dense_cases(adapter, unit, module, recorder)
+                                        scale_index_checks(adapter, unit, module, recorder)
+                                        profile_unit(adapter, unit, recorder, routed=routed)
+                                    cases_completed = True
+                                except BoundaryError as error:
+                                    record_cuda_error(unit, error)
+                                finally:
+                                    with phases.measure("identity_audit"):
+                                        _, after = identify_served(adapter, routed, native_source, args.out / "served-binaries", served_cache)
+                                        check_served_after(unit, served, after)
+                                if cases_completed:
+                                    dispatch(unit, entry["pair"], adapter.pairs(),
+                                             after, adapter.info.get("lane_reason"))
+                                    unit["completed"] = True
+                        except BoundaryError as error:
+                            record_cuda_error(unit, error)
+                        except Invalid as error:
+                            unit["invalid"].append(str(error))
+                            unit["completed"] = True
+                        finally:
+                            unit["flags_latched_diagnostic"] = dict(getattr(sys.modules.get("tessera.serving.flags"), "_LATCHED", {}))
+                            finish_unit(unit)
+                            write_json(args.out / "numerics_row.json", receipt)
+                    del adapter
     except Exception as error:
         receipt["row"]["stop_cause"] = str(error)
         receipt["findings"].append(traceback.format_exc())
@@ -885,6 +919,37 @@ def dense_diagnostics(adapter, unit, recorder):
     graph_record(unit, "dense-staged", launch, buffer, recorder)
 
 
+def check_routed_layout(adapter, unit):
+    """Read prepared operands; PM is argument 8 of the resolved CUDA function."""
+    layouts = {name: getattr(getattr(adapter.native, name, None), "word_layout", None) for name in ("gate", "up", "down")}
+    unit["prepared_layouts"] = layouts
+    proof, modes = [], {}
+    unsupported = bool(unit["arm"].get("unresolved_kernel_names"))
+    for record in unit["m_config"]["compiled_kernel_symbols"]:
+        name = record["demangled_symbol"]
+        if "routed_fused_kernel" not in name:
+            continue
+        match = re.search(r"\brouted_fused_kernel<([^<>]+)>", name)
+        args = [v.strip() for v in match[1].split(",")] if match else []
+        if len(args) != 9 or args[7] not in ("true", "false") or args[1] not in ("0", "1", "2"):
+            unsupported = True
+            continue
+        mode = int(args[1])
+        expected = "piece_major" if args[7] == "true" else "legacy"
+        roles = ("gate", "up") if mode in (0, 1) else ("down",)
+        for role in roles:
+            if layouts[role] not in ("legacy", "piece_major"):
+                unsupported = True
+            elif layouts[role] != expected:
+                unit["findings"].append(f"routed {role} layout {layouts[role]} differs from the unit's compiled PM={args[7]} symbol")
+        modes[record["profiler_name"]] = mode
+        proof.append({"profiler_name": record["profiler_name"], "symbol": record["symbol"], "mode": mode, "PM": args[7] == "true", "roles": list(roles), "expected_layout": expected})
+    unit["layout_symbol_proof"] = proof
+    launches = unit["arm"].get("profiler_launches", [])
+    if unsupported or not launches or any(not {0, 2} <= {modes[n] for n in launch["profiler_names"] if n in modes} for launch in launches):
+        unit["unattested"].append("routed layout proof is missing, ambiguous or unsupported")
+
+
 def resolve_symbols(functions, names, demangled):
     """Resolve complete profiler names to exact symbols from this binary's SASS."""
     normalize = lambda name: re.sub(r"\s+", "", name)
@@ -931,7 +996,7 @@ def attach_separation(units):
         symbols = identity(unit)
         source = next((other for other in units if other.get("separation_census_complete")
             and other["outcome"] == "PASS" and symbols and identity(other) == symbols
-            and all(unit[key] == other[key] for key in ("symbol", "decoder", "rung", "tp"))), None)
+            and all(unit.get(key) == other.get(key) for key in ("cell", "symbol", "decoder", "rung", "tp", "launch_state_sha256"))), None)
         if source is None:
             unit["unattested"].append("incomplete separation: no census with the same compiled kernel symbols and binary")
         else:
@@ -946,15 +1011,21 @@ def profile_unit(adapter, unit, recorder, *, routed):
 
     m = unit["m_config"]["M"]
     x = torch.zeros(m, adapter.cols, dtype=torch.bfloat16, device="cuda")
-    if routed:
-        ids, weights = routing(m, adapter.experts, m, 0)
-        ids, weights = torch.tensor(ids, device="cuda"), torch.tensor(weights, device="cuda")
-        call = lambda: adapter.apply(x, ids, weights)
-    else:
-        call = lambda: adapter.apply(x)
-    with torch.profiler.profile(activities=[torch.profiler.ProfilerActivity.CPU, torch.profiler.ProfilerActivity.CUDA]) as profile:
-        recorder.call("dispatch-profiler:apply", "apply", lambda: opaque_apply(call, recorder))
-    unit["arm"]["profiler_kernels"] = kernel_table(profile, limit=100000)
+    kernels, launches = {}, []
+    for count in unit["m_config"]["route_counts"] if routed else [None]:
+        if routed:
+            ids, weights = routing(m, adapter.experts, count, 0)
+            ids, weights = torch.tensor(ids, device="cuda"), torch.tensor(weights, device="cuda")
+            call = lambda: adapter.apply(x, ids, weights)
+        else:
+            call = lambda: adapter.apply(x)
+        with torch.profiler.profile(activities=[torch.profiler.ProfilerActivity.CPU, torch.profiler.ProfilerActivity.CUDA]) as profile:
+            recorder.call("dispatch-profiler:apply", "apply", lambda: opaque_apply(call, recorder))
+        records = kernel_table(profile, limit=100000)
+        launches.append({"route_count": count, "profiler_names": [r["name"] for r in records]})
+        kernels.update({r["name"]: r for r in records})
+    unit["arm"]["profiler_launches"] = launches
+    unit["arm"]["profiler_kernels"] = list(kernels.values())
     unit["m_config"]["compiled_kernel_symbols"] = []
     if not routed and adapter.library == "triton":
         return
@@ -966,8 +1037,11 @@ def profile_unit(adapter, unit, recorder, *, routed):
     functions = sorted(parse_sass(Path(library["sass"]["path"]).read_text()))
     demangled = subprocess.check_output(["c++filt"], input="\n".join(functions) + "\n", text=True).splitlines()
     symbols, unresolved = resolve_symbols(functions, [r["name"] for r in unit["arm"]["profiler_kernels"]], demangled)
-    unit["m_config"]["compiled_kernel_symbols"] = [{**record, **{k: library[k] for k in IDENTITY_FIELDS if k != "library_code_sections"}} for record in symbols]
+    names = dict(zip(functions, demangled, strict=True))
+    unit["m_config"]["compiled_kernel_symbols"] = [{**record, "demangled_symbol": names[record["symbol"]], **{k: library[k] for k in IDENTITY_FIELDS if k != "library_code_sections"}} for record in symbols]
     unit["arm"]["unresolved_kernel_names"] = unresolved
+    if routed:
+        check_routed_layout(adapter, unit)
 
 
 def opaque_apply(function, recorder, *args):
@@ -1123,7 +1197,8 @@ def historical_units(contract, runtime, units):
                     continue
                 seen.add(key)
                 unit = new_unit({k: source[k] for k in ("cell", "m_config", "tp", "arm")})
-                unit.update(symbol=pair["symbol"], decoder=pair["decoder"], rung=rung, admitted_by_v68=True, role="unit", completed=True)
+                unit.update(symbol=pair["symbol"], decoder=pair["decoder"], rung=rung, admitted_by_v68=True, role="unit", completed=True,
+                            launch_state_sha256=source.get("launch_state_sha256"))
                 unit["m_config"].update(compiled_kernel_symbols=[], separation_source=None)
                 unit["unattested"].append("NOT_DISPATCHABLE (D1)")
                 unit.update(outcome="UNATTESTED", unattested_reason=unit["unattested"], reasons=unit["unattested"])

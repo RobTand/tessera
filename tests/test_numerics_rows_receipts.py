@@ -415,9 +415,9 @@ def test_h1_can_confirm_cpu_p3_without_loading_cuda(tmp_path, monkeypatch):
 def population_cases():
     pair = ["tessera::fused_window_dense", "native_fused_window_dense"]
     population = {"sms": 1, "modules": [{"root": "/wires", "name": name, "library": "e4m3", "roles": [["down_proj", 128]], "experts": 1,
-                               "contract_family": "TESSERA_E4M3_K1", "pair": pair}
+                               "contract_family": "TESSERA_E4M3_K1", "pair": pair, "structure": "dense", "q256": 1024, "cell_ids": ["batch", "decode"]}
                               for name in ("module-a", "module-b")]}
-    manifest = {"generation_finished": True, "modules": [{"root": "/wires", "name": name, "structure": "dense", "q256": 1024,
+    manifest = {"generation_finished": True, "modules": [{"root": "/wires", "name": name, "cell_ids": ["batch", "decode"], "structure": "dense", "q256": 1024,
                              "cuts": [{"tp": {"size": size, "rank": rank}, "roles": [{"name": "down_proj", "expert": 0}],
                                        "launch_geometry": {"rows": 128, "cols": 64, "tile_words": 4096, "blocks": 1, "merged": False},
                                        "m_configs": [{"M": m, "k_split": 1, "last_tile_partial": m % 64 != 0,
@@ -506,6 +506,10 @@ def test_manifest_cannot_omit_an_expected_unit(omitted):
 
 
 def test_adapter_failure_keeps_unrun_units_stopped(tmp_path, monkeypatch):
+    from experiments.numerics_rows import launch_state
+
+    captured = launch_state.LaunchState()
+    monkeypatch.setattr(launch_state, "LaunchState", lambda *args, **kwargs: captured)
     contract, population, manifest = population_cases()
     def run(args, receipt):
         groups = row.planned_units(contract, "image", population, manifest)
@@ -611,7 +615,7 @@ def test_separation_attaches_only_to_the_same_compiled_function(different):
         assert target["unattested"] and target["m_config"]["separation_source"] is None
     else:
         assert target["m_config"]["separation_source"] == {"unit_id": row.unit_identity(source), "symbol": "_Zrouted_fused_kernel0", "library_so_sha256": "binary-a"}
-        assert row.unit_identity(source) == ["cell", "pair", "decoder", 1024, {"M": 64}, {"rank": 0, "size": 1}]
+        assert row.unit_identity(source) == ["cell", "pair", "decoder", 1024, {"M": 64}, {"rank": 0, "size": 1}, None]
         assert not target["unattested"]
         assert target["exact"]["separation"] == source["exact"]["separation"]
 
@@ -638,11 +642,11 @@ def test_rule_receipt_requires_decisions_and_records_the_h1_job(tmp_path):
     path = tmp_path / "h1.json"
     h1 = {"flux_job_id": "test-job", "preconditions_confirmed": True, "P2": {"result": "PASS"}}
     path.write_text(json.dumps(h1))
-    freeze = {"decisions": {f"D{i}": "reviewed" for i in range(1, 9)}}
+    freeze = {"decisions": {f"D{i}": "reviewed" for i in range(1, 10)}}
     receipt = row.rule_receipt(tmp_path / "rule.md", freeze, h1, path)
     assert set(receipt["preconditions"]) == {"P1", "P2", "P3", "P4", "P5"}
     assert all(result == {"result": "PASS", "h1_job": "test-job"} for result in receipt["preconditions"].values())
-    with pytest.raises(Invalid, match="D1 through D8"):
+    with pytest.raises(Invalid, match="D1 through D9"):
         row.rule_receipt(tmp_path / "rule.md", {}, h1, path)
 
 
@@ -1105,6 +1109,8 @@ def row_execution(tmp_path, monkeypatch):
 
     args = SimpleNamespace(**{name: tmp_path / name for name in
         ("source", "out", "population", "manifest", "build", "build_provenance", "q1", "h1", "rule", "freeze")}, image="N", module=[])
+    from experiments.numerics_rows.launch_state import LaunchState
+    args.launch_state = LaunchState()
     args.out.mkdir()
     contract, pop, manifest = population_cases()
     pop["modules"] = pop["modules"][:1]
@@ -1120,12 +1126,12 @@ def row_execution(tmp_path, monkeypatch):
     write_json(args.build, {"commit": "cell-commit", "runtime": runtime, "libraries": [library]})
     args.rule.write_text("test rule")
     args.build_provenance.write_text("bound source provenance")
-    write_json(args.freeze, {"sha256": common.sha256(args.rule), "frozen_utc": "now", "reviewer": "reviewer", "decisions": {f"D{i}": "yes" for i in range(1, 9)}})
+    write_json(args.freeze, {"sha256": common.sha256(args.rule), "launch_levers_sha256": args.launch_state.levers_sha256, "frozen_utc": "now", "reviewer": "reviewer", "decisions": {f"D{i}": "yes" for i in range(1, 10)}})
     write_json(args.q1, {"tables": [{"key": "e4m3", "library_so_sha256": "a" * 64, "probe_sha256": "p" * 64,
         "L_bits": 0, "dom_size": 1, "d_table_sha256": "d", "d_nondecreasing_0_L": True}]})
     write_json(args.h1, {"preconditions_confirmed": True, "build_sha256": common.sha256(args.build), "P1": {"mismatches": 0},
         "P2": {"result": "PASS"}, "P3": {"e4m3": identity}, "libraries": {"e4m3": {"P4": True, "P5": True}}, "flux_job_id": "h1-job"})
-    write_json(args.manifest, {"population_sha256": "population-hash", "q1_table_sha256": common.sha256(args.q1), "modules": [module]})
+    write_json(args.manifest, {"population_sha256": "population-hash", "q1_table_sha256": common.sha256(args.q1), **args.launch_state.fields(), "modules": [module]})
     contract_path = args.source / "src/tessera/serving/runtime_contract.json"
     contract_path.parent.mkdir(parents=True)
     write_json(contract_path, contract)
@@ -1293,6 +1299,7 @@ def test_manifest_requires_every_declared_expert_role(kind):
     if kind.startswith("routed"):
         for entry, module in zip(population["modules"], manifest["modules"]):
             entry["experts"] = 2
+            entry["structure"] = "routed_moe"
             module["structure"] = "routed_moe"
             for cut in module["cuts"]:
                 cut["roles"] = [{"expert": e, "name": p} for e in range(2) for p in ("gate_proj", "up_proj", "down_proj")]
@@ -1315,6 +1322,8 @@ def test_manifest_requires_every_declared_expert_role(kind):
 def joined_inputs(monkeypatch):
     from experiments.numerics_rows import scope
     from experiments.numerics_rows.common import IMAGES
+    from experiments.numerics_rows.launch_state import LaunchState
+    state = LaunchState().fields()
 
     contract, population, manifest = population_cases()
     population["image"] = "N"
@@ -1329,16 +1338,17 @@ def joined_inputs(monkeypatch):
     for entry, module in zip(population["modules"], manifest["modules"]):
         name = entry["name"]
         case = {"population_sha256": "signed", "selected_modules": [name], "generation_finished": True,
-                "source_commit": "source", "contract_sha256": "contract", "q1_table_sha256": "q1", "modules": [module]}
+                "source_commit": "source", "contract_sha256": "contract", "q1_table_sha256": "q1", **state, "modules": [module]}
         manifests.append(("c1-" + name, case))
         units = row.planned_units(contract, IMAGES["N"]["image_digest"], {**population, "modules": [entry]}, case)
         owned = [u for _, _, _, group in units for u in group]
         for unit in owned:
-            unit.update(outcome="PASS")
+            unit.update(outcome="PASS", launch_state_sha256=state["launch_state_sha256"])
+            unit["unit_id"] = row.unit_identity(unit)
         receipts.append(("row-" + name, {"inputs": {"population_sha256": "signed", "selected_modules": [name],
-            "case_manifest_sha256": "c1-" + name, "build_sha256": "build", "q1_table_sha256": "q1"},
-            "tool": {"commit": "tool", "tree_sha256": "tree"}, "runtime": {"image_digest": IMAGES["N"]["image_digest"]},
-            "tessera": {"commit": "source", "contract_sha256": "contract"}, "rule": {"h1_sha256": "h1", "sha256": "rule", "frozen_utc": "2026-11-16T20:00:00Z"},
+            "case_manifest_sha256": "c1-" + name, "build_sha256": "build", "q1_table_sha256": "q1", "launch_levers_sha256": state["launch_levers_sha256"]},
+            "tool": {"commit": "tool", "tree_sha256": "tree"}, "runtime": {"image_digest": IMAGES["N"]["image_digest"], **state},
+            "tessera": {"commit": "source", "contract_sha256": "contract"}, "rule": {"h1_sha256": "h1", "sha256": "rule", "launch_levers_sha256": state["launch_levers_sha256"], "frozen_utc": "2026-11-16T20:00:00Z"},
             "row": {"utc_end": "finished", "exit_status": 0, "finalization_finished": True}, "units": owned}))
     return population, "signed", manifests, receipts
 
@@ -1584,7 +1594,7 @@ def test_dense_graph_capture_prepares_metadata_before_capture(monkeypatch):
     def launch(role, q, sf, out, counter):
         calls.append("launch")
         out.zero_()
-    def capture(function, output):
+    def capture(function, output, **kwargs):
         nonlocal capturing
         function()
         capturing = True
@@ -1720,3 +1730,249 @@ def test_missing_gpu_fields_do_not_invent_zero_memory_or_activity():
     assert result["gpu_busy_minutes"] is None and result["peak_device_memory_mib"] is None
     assert result["peak_power_watts"] == 10.7 and compute_memory("[N/A]\n") is None
     assert compute_memory("") == 0
+
+
+def test_worker_launch_state_encoding_and_named_exclusions(monkeypatch):
+    from experiments.numerics_rows.launch_state import LaunchState, digest
+
+    monkeypatch.setenv("TESSERA_SERVE_MODE", "resident")
+    monkeypatch.setenv("TESSERA_UNRECOGNIZED_LEVER", "\u00e9")
+    monkeypatch.setenv("TESSERA_ROUTE_TRACE", "/different/trace")
+    monkeypatch.setenv("PRISMAQUANT_DEV_MODE", "0")
+    state = LaunchState()
+    assert state.mapping["TESSERA_SERVE_MODE"] == "resident"
+    assert state.mapping["TESSERA_UNRECOGNIZED_LEVER"] == "\u00e9"
+    assert state.mapping["PRISMAQUANT_DEV_MODE"] == "0" and "TESSERA_ROUTE_TRACE" not in state.mapping
+    encoded = json.dumps(state.mapping, sort_keys=True, ensure_ascii=True, separators=(",", ":")).encode("ascii")
+    assert state.sha256 == hashlib.sha256(encoded).hexdigest()
+    monkeypatch.setenv("TESSERA_ROUTE_TRACE", "/another/trace")
+    state.check()
+    assert digest({}) != digest({"TESSERA_EMPTY": ""})
+    with pytest.raises(Invalid, match="exact strings"):
+        digest({"TESSERA_BAD": 1})
+
+
+def test_worker_refuses_a_tessera_import_before_capture(tmp_path, monkeypatch):
+    from experiments.numerics_rows import gpu_time
+
+    argv = ["row", "--image", "N", "--name", "fresh", "--out", str(tmp_path)]
+    for name in ("source", "manifest", "population", "build", "build-provenance", "q1", "h1", "rule", "freeze"):
+        argv.extend(("--" + name, str(tmp_path / name)))
+    monkeypatch.setattr(sys, "argv", argv)
+    monkeypatch.setitem(sys.modules, "tessera.already_imported", SimpleNamespace())
+    monkeypatch.setattr(gpu_time, "RowMeter", lambda: SimpleNamespace(finish=lambda: {}))
+    monkeypatch.setattr(row, "run", lambda args, receipt: None)
+    with pytest.raises(SystemExit) as stopped:
+        row.main()
+    assert stopped.value.code == 3
+    assert "before its first Tessera import" in json.loads((tmp_path / "numerics_row.json").read_text())["row"]["stop_cause"]
+
+
+def test_changed_worker_input_refuses_before_the_next_native_call(monkeypatch):
+    from experiments.numerics_rows.launch_state import LaunchState
+    from experiments.numerics_rows.common import BoundaryRecorder
+
+    state, calls = LaunchState(), []
+    recorder = BoundaryRecorder(lambda: None, [])
+    recorder.before_call = state.check
+    recorder.call("native", "tessera", lambda: calls.append("positive"))
+    monkeypatch.setenv("TESSERA_NEW_UNLISTED_INPUT", "1")
+    with pytest.raises(Invalid, match="launch state changed"):
+        recorder.call("native", "tessera", lambda: calls.append("changed"))
+    assert calls == ["positive"]
+
+
+def test_row_refuses_input_changed_during_prepare(row_execution, monkeypatch):
+    args, receipt, unit, events, _ = row_execution
+    with pytest.raises(SystemExit) as positive:
+        row.run(args, receipt)
+    assert positive.value.code == 0 and unit["outcome"] == "PASS"
+    events.clear()
+    build = row.Dense
+    def prepare(*args):
+        adapter = build(*args)
+        monkeypatch.setenv("TESSERA_NEW_UNLISTED_INPUT", "changed during prepare")
+        return adapter
+    monkeypatch.setattr(row, "Dense", prepare)
+    with pytest.raises(SystemExit):
+        row.run(args, receipt)
+    assert unit["outcome"] == "INVALID" and not events
+
+
+@pytest.mark.parametrize("field", ("launch_state", "launch_state_sha256", "launch_levers_sha256"))
+def test_row_refuses_c1_launch_state_or_policy_before_cases(row_execution, field):
+    args, receipt, _, events, _ = row_execution
+    with pytest.raises(SystemExit) as positive:
+        row.run(args, receipt)
+    assert positive.value.code == 0
+    events.clear()
+    manifest = json.loads(args.manifest.read_text())
+    manifest[field] = {"TESSERA_CHANGED": "1"} if field == "launch_state" else "different"
+    write_json(args.manifest, manifest)
+    with pytest.raises(Invalid, match="C1 launch state"):
+        row.run(args, receipt)
+    assert not events
+
+
+@pytest.mark.parametrize("field", ("cell_ids", "manifest_cell_ids"))
+def test_population_and_c1_require_full_source_cell_ids(field):
+    contract, population, manifest = population_cases()
+    assert row.planned_units(contract, "image", population, manifest)
+    target = population["modules"][0] if field == "cell_ids" else manifest["modules"][0]
+    target["cell_ids"] = ["historical-v68-alias"]
+    with pytest.raises(Invalid, match="cell IDs"):
+        row.planned_units(contract, "image", population, manifest)
+
+
+@pytest.mark.parametrize("field", ("cell", "launch_state_sha256"))
+def test_separation_cannot_borrow_across_cell_or_launch_state(field):
+    unit = row.new_unit({"cell": "cell", "symbol": "pair", "decoder": "decoder", "rung": 1024,
+                         "tp": {"size": 2, "rank": 0}, "launch_state_sha256": "a" * 64})
+    unit.update(outcome="PASS", separation_census_complete=True,
+                m_config={"M": 64, "compiled_kernel_symbols": [{"symbol": "_Zsame", "library_so_sha256": "same"}]})
+    target = copy.deepcopy(unit)
+    target.update(needs_separation_transfer=True, separation_census_complete=False)
+    row.attach_separation([unit, target])
+    assert target["m_config"]["separation_source"]
+    target["m_config"]["separation_source"] = None
+    target[field] = "different"
+    row.attach_separation([unit, target])
+    assert target["m_config"]["separation_source"] is None and target["unattested"]
+
+
+@pytest.mark.parametrize("mutation", (None, "gate", "up", "down", "missing", "ambiguous", "unsupported", "missing_count"))
+def test_profile_checks_prepared_layout_against_exact_compiled_symbols(tmp_path, monkeypatch, mutation):
+    import torch
+    from contextlib import nullcontext
+    from experiments import routed_pair_oracle
+    from experiments.t4_code import sass_dump
+    from experiments.numerics_rows.common import BoundaryRecorder
+
+    path = tmp_path / "sass.txt"
+    path.write_text("fixture SASS function roster")
+    modes = (0, 2)
+    names = [f"void routed_fused_kernel<true, {mode}, false, false, 4, false, 64, true, false>(Params)" for mode in modes]
+    functions = ["_Zgate", "_Zdown"]
+    if mutation == "unsupported":
+        names[0] = names[0].replace("64, true, false", "64, unknown, false")
+    profiler_names = names if mutation != "ambiguous" else ["routed_fused_kernel<...>"]
+    monkeypatch.setattr(torch.profiler, "profile", lambda **kwargs: nullcontext())
+    calls = []
+    def kernels(*args, **kwargs):
+        calls.append(True)
+        selected = profiler_names[:1] if mutation == "missing_count" and len(calls) == 2 else profiler_names
+        return [{"name": n} for n in selected]
+    monkeypatch.setattr(routed_pair_oracle, "kernel_table", kernels)
+    monkeypatch.setattr(sass_dump, "parse_sass", lambda text: dict.fromkeys(functions))
+    monkeypatch.setattr(row.subprocess, "check_output", lambda *args, **kwargs: "\n".join(names))
+    for name in ("zeros", "tensor"):
+        function = getattr(torch, name)
+        monkeypatch.setattr(torch, name, lambda *args, _function=function, **kwargs: _function(*args, **{**kwargs, "device": "cpu"}))
+    library = {"sass": {"path": str(path), "sha256": hashlib.sha256(path.read_bytes()).hexdigest()},
+               "library_so_sha256": "a" * 64, "library_code_sha256": "b" * 64, "cubin_sha256s": []}
+    native = SimpleNamespace(**{role: SimpleNamespace(word_layout="piece_major") for role in ("gate", "up", "down")})
+    if mutation in ("gate", "up", "down"):
+        getattr(native, mutation).word_layout = "legacy"
+    elif mutation == "missing":
+        del native.up.word_layout
+    adapter = SimpleNamespace(native=native, cols=2, experts=16, served_identity=library, apply=lambda *args: None)
+    unit = row.new_unit({"m_config": {"M": 2, "route_counts": [1, 2]}, "arm": {}})
+    row.profile_unit(adapter, unit, BoundaryRecorder(lambda: None, []), routed=True)
+    if mutation in ("gate", "up", "down"):
+        assert unit["findings"] and not unit["unattested"]
+    elif mutation:
+        assert unit["unattested"] and not unit["findings"]
+    else:
+        assert unit.get("prepared_layouts") == {r: "piece_major" for r in ("gate", "up", "down")}
+        assert len(unit["layout_symbol_proof"]) == 2 and not unit["findings"] and not unit["unattested"]
+        assert [r["route_count"] for r in unit["arm"]["profiler_launches"]] == [1, 2]
+
+
+def test_unit_key_contains_launch_state():
+    unit = row.new_unit({"cell": "cell", "symbol": "pair", "decoder": "decoder", "rung": 1024,
+                         "m_config": {"M": 1}, "tp": {"size": 2, "rank": 0}, "launch_state_sha256": "a" * 64})
+    before = row.unit_identity(unit)
+    unit["launch_state_sha256"] = "b" * 64
+    assert before != row.unit_identity(unit)
+
+
+def test_row_refuses_a_different_frozen_lever_file(row_execution):
+    args, receipt, _, events, _ = row_execution
+    with pytest.raises(SystemExit) as positive:
+        row.run(args, receipt)
+    assert positive.value.code == 0
+    events.clear()
+    frozen = json.loads(args.freeze.read_text())
+    frozen["launch_levers_sha256"] = "b" * 64
+    write_json(args.freeze, frozen)
+    with pytest.raises(Invalid, match="frozen file"):
+        row.run(args, receipt)
+    assert not events
+
+
+def test_row_refuses_missing_required_residency_selector(row_execution, monkeypatch):
+    args, receipt, _, events, _ = row_execution
+    from experiments.numerics_rows.launch_state import LaunchState
+    monkeypatch.delenv("TESSERA_SERVE_MODE", raising=False)
+    args.launch_state = LaunchState()
+    manifest = json.loads(args.manifest.read_text())
+    manifest.update(args.launch_state.fields())
+    write_json(args.manifest, manifest)
+    with pytest.raises(SystemExit) as positive:
+        row.run(args, receipt)
+    assert positive.value.code == 0
+    events.clear()
+    path = args.source / "src/tessera/serving/runtime_contract.json"
+    contract = json.loads(path.read_text())
+    for cell in contract["lane_eligibility"]["cells"]:
+        cell["requires_serve_flags"] = ["TESSERA_SERVE_MODE=resident"]
+    # This is a selector test, so keep the source-contract binding valid.
+    write_json(path, contract)
+    manifest = json.loads(args.manifest.read_text())
+    manifest["contract_sha256"] = hashlib.sha256(path.read_bytes()).hexdigest()
+    write_json(args.manifest, manifest)
+    with pytest.raises(Invalid, match="required selector"):
+        row.run(args, receipt)
+    assert not events
+
+
+def test_changed_launch_state_inside_a_nested_boundary_stays_invalid(monkeypatch):
+    from experiments.numerics_rows.launch_state import LaunchState
+    from experiments.numerics_rows.common import BoundaryRecorder
+
+    state, calls = LaunchState(), []
+    recorder = BoundaryRecorder(lambda: None, [])
+    recorder.before_call = state.check
+    recorder.call("outer", "apply", lambda: recorder.call("inner", "tessera", lambda: calls.append("positive")))
+    def changed():
+        monkeypatch.setenv("TESSERA_UNKNOWN_NEW_INPUT", "1")
+        recorder.call("inner", "tessera", lambda: calls.append("changed"))
+    with pytest.raises(Invalid, match="launch state changed"):
+        recorder.call("outer", "apply", changed)
+    assert calls == ["positive"]
+
+
+def test_changed_launch_state_refuses_before_graph_replay(monkeypatch):
+    from experiments.numerics_rows.launch_state import LaunchState
+    from experiments.numerics_rows.common import BoundaryRecorder
+    from experiments.numerics_rows.run_routed import graph_record
+    from experiments.t4_code import fused_e2m1_check
+
+    state, calls = LaunchState(), []
+    recorder = BoundaryRecorder(lambda: None, [])
+    recorder.before_call = state.check
+    change = False
+    def graph(function, output, *, before_call=lambda: None):
+        function()
+        if change:
+            monkeypatch.setenv("TESSERA_UNKNOWN_NEW_INPUT", "1")
+        before_call()
+        calls.append("replay")
+        return True
+    monkeypatch.setattr(fused_e2m1_check, "graph_equal", graph)
+    unit = row.new_unit({})
+    graph_record(unit, "graph", lambda: None, None, recorder)
+    change = True
+    with pytest.raises(Invalid, match="launch state changed"):
+        graph_record(unit, "graph", lambda: None, None, recorder)
+    assert calls == ["replay"] and recorder.enabled

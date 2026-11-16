@@ -17,15 +17,22 @@ def rule_unit_id(unit):
     fields = (("triton_shape",) if unit["decoder"] == "native_window_gemm" else
               ("superblock_width",) if unit.get("structure") == "routed_moe" else ("k_split", "last_tile_partial"))
     return [unit[k] for k in ("cell", "symbol", "decoder", "rung")] + [
-        {k: config[k] for k in fields}, {k: unit["tp"][k] for k in ("size", "rank")}]
+        {k: config[k] for k in fields}, {k: unit["tp"][k] for k in ("size", "rank")}, unit.get("launch_state_sha256")]
 
 
 def execution_identity(receipt):
+    from experiments.numerics_rows.launch_state import digest
+    if digest(receipt["runtime"]["launch_state"]) != receipt["runtime"]["launch_state_sha256"]:
+        raise Invalid("row launch state object differs from its digest")
+    if receipt["rule"].get("launch_levers_sha256") != receipt["inputs"]["launch_levers_sha256"]:
+        raise Invalid("row launch lever file differs from its frozen rule")
     fields = {"tool_commit": receipt["tool"]["commit"], "tool_tree_sha256": receipt["tool"]["tree_sha256"],
               "image_digest": receipt["runtime"]["image_digest"], "source_commit": receipt["tessera"]["commit"],
               "contract_sha256": receipt["tessera"]["contract_sha256"], "build_sha256": receipt["inputs"]["build_sha256"],
               "h1_sha256": receipt["rule"]["h1_sha256"], "rule_sha256": receipt["rule"]["sha256"],
-              "q1_table_sha256": receipt["inputs"]["q1_table_sha256"]}
+              "q1_table_sha256": receipt["inputs"]["q1_table_sha256"],
+              "launch_levers_sha256": receipt["inputs"]["launch_levers_sha256"],
+              "launch_state_sha256": receipt["runtime"]["launch_state_sha256"]}
     if any(not isinstance(v, str) or not v for v in fields.values()):
         raise Invalid("join execution identity is incomplete")
     return fields
@@ -47,9 +54,19 @@ def _join(population, digest, manifests, receipts, contract):
     from experiments.numerics_rows.common import IMAGES
     from experiments.numerics_rows.population import select_modules
     from experiments.numerics_rows.row import planned_units, unit_identity
+    from experiments.numerics_rows.launch_state import check_binding, digest as state_digest
 
     contract, contract_hash = scope.contract_document(contract)
     image = IMAGES[population["image"]]["image_digest"]
+    scope.check_population_cells(contract, image, population)
+    launch = ({**{k: receipts[0][1]["runtime"][k] for k in ("launch_state", "launch_state_sha256")},
+               "launch_levers_sha256": receipts[0][1]["inputs"]["launch_levers_sha256"]} if receipts else
+              {k: manifests[0][1][k] for k in ("launch_state", "launch_state_sha256", "launch_levers_sha256")} if manifests else None)
+    if launch is not None and state_digest(launch["launch_state"]) != launch["launch_state_sha256"]:
+        raise Invalid("launch state object differs from its digest")
+    if launch is not None:
+        scope.check_selectors(contract, population, launch["launch_state"])
+    state = launch["launch_state_sha256"] if launch is not None else None
     names = [e["name"] for e in population["modules"]]
     if not names or len(set(names)) != len(names):
         raise Invalid("signed population module names are not unique")
@@ -60,6 +77,7 @@ def _join(population, digest, manifests, receipts, contract):
         for cut in declarations[entry["name"]]["cuts"]:
             for config in cut["m_configs"]:
                 for unit in scope.unit_scopes(contract, image, entry, config, cut["tp"]):
+                    unit["launch_state_sha256"] = state
                     if unit["role"] != "unit" or unit["admitted_by_v68"] is not True:
                         continue
                     key = pack(rule_unit_id(unit))
@@ -69,6 +87,7 @@ def _join(population, digest, manifests, receipts, contract):
         raise Invalid("signed population has no required attestation keys")
     cases, case_modules, case_identity = {}, set(), None
     for case_sha, case in manifests:
+        check_binding(case, launch)
         selection = case["selected_modules"]
         if case_sha in cases or len(selection) != len(set(selection)) or not selection or set(selection) - set(names) or case_modules.intersection(selection):
             raise Invalid("duplicate or unknown C1 module selection")
@@ -82,7 +101,7 @@ def _join(population, digest, manifests, receipts, contract):
         planned_units(contract, image, select_modules(population, selection), case)
         for module in case["modules"]:
             expected = declarations[module["name"]]
-            if any(module[k] != expected[k] for k in ("structure", "q256")):
+            if any(module[k] != expected[k] for k in ("cell_ids", "structure", "q256")):
                 raise Invalid("C1 geometry differs from signed wires")
             for cut in module["cuts"]:
                 declared, = [c for c in expected["cuts"] if c["tp"] == cut["tp"]]
@@ -103,6 +122,7 @@ def _join(population, digest, manifests, receipts, contract):
         if not receipt["row"].get("utc_end") or type(receipt["row"].get("exit_status")) is not int or receipt["row"].get("finalization_finished") is not True:
             raise Invalid("join requires finished row receipts")
         identity = execution_identity(receipt)
+        check_binding({**receipt["runtime"], "launch_levers_sha256": receipt["inputs"]["launch_levers_sha256"]}, launch)
         if execution is not None and execution != identity:
             raise Invalid("joined rows have different execution identities")
         if identity["contract_sha256"] != contract_hash or identity["image_digest"] != image:
@@ -124,6 +144,8 @@ def _join(population, digest, manifests, receipts, contract):
             if any(case.get(k) != identity[k] for k in ("source_commit", "contract_sha256", "q1_table_sha256")):
                 raise Invalid("joined C1 and row execution identities differ")
         for unit in receipt["units"]:
+            if unit.get("launch_state_sha256") != state:
+                raise Invalid("row unit launch state differs from its worker")
             if unit["unit_id"] != unit_identity(unit) or unit["outcome"] not in OUTCOMES or unit["role"] not in ("unit", "observation") or type(unit["admitted_by_v68"]) is not bool:
                 raise Invalid("row unit key or outcome is invalid")
             if unit["role"] != "unit" or unit["admitted_by_v68"] is not True:
@@ -159,7 +181,7 @@ def _join(population, digest, manifests, receipts, contract):
                                       "missing_evidence": bool(missing)})
         joined["outcome"] = min((m["outcome"] for m in joined["modules"]), key=OUTCOMES.index)
         units.append(joined)
-    declared = {"population_sha256": digest, "modules": list(declarations.values()),
+    declared = {"population_sha256": digest, "modules": list(declarations.values()), "launch": launch,
                 "contract_sha256": contract_hash, "image_digest": image}
     return {"schema": "tessera.numerics_join.v2", "population_sha256": digest, "execution": execution,
             "required_scope": declared, "required_scope_sha256": hashlib.sha256(pack(declared).encode()).hexdigest(),

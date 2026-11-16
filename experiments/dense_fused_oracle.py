@@ -207,7 +207,7 @@ def build_served(store, module, *, mode, tp_rank, tp_size, fused, instruction=No
         layer.trellis_input_global_scale.data = store.get(module + ".input_global_scale").clone()
     layer.to("cuda")
     t0 = time.time()
-    with dense_lane(fused), e4m3_instruction(instruction), torch.no_grad():
+    with (dense_lane(fused) if fused is not None else contextlib.nullcontext()), (e4m3_instruction(instruction) if instruction is not None else contextlib.nullcontext()), torch.no_grad():
         method.process_weights_after_loading(layer)
     torch.cuda.synchronize()
     resident = list(method.resident_tensors(layer))

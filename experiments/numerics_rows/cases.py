@@ -412,10 +412,13 @@ def main():
     p.add_argument("--image", choices=("G", "N"), required=True)
     p.add_argument("--module", action="append", default=[], help="Explicit signed module name; repeat for a subset")
     p.add_argument("--source-revision", required=True)
+    from experiments.numerics_rows.launch_state import LEVERS, LaunchState
+    p.add_argument("--launch-levers", type=Path, default=LEVERS)
     p.add_argument("--sample-expert", type=int, help="Sample all three E4M3 roles of one expert; not a row manifest")
     p.add_argument("--sample-tp-size", type=int, choices=(1, 2), default=2)
     p.add_argument("--sample-tp-rank", type=int, choices=(0, 1), default=0)
     args = p.parse_args()
+    launch_state = LaunchState(args.launch_levers, fresh=True)
     source_revision = check_source(args.source, args.source_revision)
     check_runtime(args.image)
     sys.path.insert(0, str(args.source / "src"))
@@ -431,22 +434,28 @@ def main():
     selected_cut = sample_cut(population, args.sample_expert, args.sample_tp_size, args.sample_tp_rank)
     q1 = json.loads(args.q1.read_text())
     contract = json.loads((args.source / "src/tessera/serving/runtime_contract.json").read_text())
+    from experiments.numerics_rows.scope import check_population_cells, check_selectors
+    from experiments.numerics_rows.common import IMAGES
+    check_population_cells(contract, IMAGES[args.image]["image_digest"], population)
+    check_selectors(contract, population, launch_state.mapping)
+    launch_state.check()
     manifest = {"schema": "tessera.numerics_cases.v1", "population_path": str(args.population),
                 "population_sha256": population_digest, "population_review": population["review"],
-                "q1_table_sha256": sha256(args.q1), "source_commit": source_revision,
+                "q1_table_sha256": sha256(args.q1), "source_commit": source_revision, **launch_state.fields(),
                 "contract_sha256": sha256(args.source / "src/tessera/serving/runtime_contract.json"),
                 "selected_modules": [e["name"] for e in population["modules"]],
                 "sample": None if selected_cut is None else {"expert": args.sample_expert, "tp": {"size": selected_cut[0], "rank": selected_cut[1]}},
                 "modules": [], "complete": True, "generation_finished": False, "items": []}
     write_json(args.out / "population-receipt.json", {"path": str(args.population), "sha256": population_digest, "review": population["review"]})
     for entry in population["modules"]:
+        launch_state.check()
         print(json.dumps({"module_start": entry["name"]}), flush=True)
         store = store_for(entry)
         scheme = store.schemes[entry["name"]]
         family = {"TESSERA_FP8": "e4m3", "TESSERA_NVFP4": "e2m1", "TESSERA_BF16": "value"}[scheme["family"]]
         structure = scheme.get("structure", "dense")
         facts = {**{key: entry[key] for key in ("wire_path", "wire_root", "wire_family", "layer") if key in entry},
-                 "name": entry["name"], "root": entry["root"], "family": family, "structure": structure,
+                 "name": entry["name"], "cell_ids": entry["cell_ids"], "root": entry["root"], "family": family, "structure": structure,
                  "roles": [n for n, _ in scheme.get("roles", [])], "experts": int(scheme.get("experts", 1)),
                  "rows": int(scheme["rows"]) if structure == "dense" else int(scheme["groups"]["w13"]["rows"]),
                  "cols": int(scheme["columns"]) if structure == "dense" else int(scheme["groups"]["w13"]["columns"]),
@@ -537,9 +546,11 @@ def main():
                         expected = {**rule["wire"], "q256": stamp["q256"]}
                         stamped = stamp == expected and lo <= stamp["q256"] <= hi and (stamp["q256"] - lo) % rule["step_q256"] == 0
                     file = args.out / f"{len(manifest['modules'])}-tp{size}-{rank}-{expert}-{name}.pt"
+                    launch_state.check()
                     torch.save({"weight": weight, "scale": scale}, file)
                     index_start = time.monotonic()
                     index = scale_index_manifest(weight, ratio, family, stage, table, peer, peer_scale, quantizer, facts["experts"], expert, local["m_configs"])
+                    launch_state.check()
                     index_seconds = time.monotonic() - index_start
                     local["roles"].append({"name": name, "expert": expert, "gs": gs, "reader_path": str(file), "reader_sha256": sha256(file),
                         "wire_stamp": stamp, "matches_attested_wire": stamped, "rows": weight.shape[0], "cols": weight.shape[1],
@@ -562,6 +573,7 @@ def main():
             "modules_completed": len(manifest["modules"]), "last_module": entry["name"],
             "reference_seconds": time.monotonic() - started,
             "host_peak_bytes": resource.getrusage(resource.RUSAGE_SELF).ru_maxrss * 1024})
+    launch_state.check()
     manifest.update(reference_seconds=time.monotonic() - started,
                     host_peak_bytes=resource.getrusage(resource.RUSAGE_SELF).ru_maxrss * 1024, generation_finished=True)
     if args.sample_expert is not None:

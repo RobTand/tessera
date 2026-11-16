@@ -27,7 +27,8 @@ A population JSON has `sms` and `modules`. Each module has these fields:
 - `root`: checkpoint directory.
 - `name`: exact target in its `config.json`.
 - `library`: `e4m3mma`, `e4m3`, `e2m1`, `value`, or `triton`.
-- `contract_family`: the format family from v68.
+- `contract_family`: the format family from the bound source contract.
+- `cell_ids`: the sorted full IDs of that contract's admitted decode and batch cells.
 - `pair`: the exact symbol and decoder.
 - `selector_env`: the arm's selector values, for the receipt.
 
@@ -46,19 +47,20 @@ Each module reports its path, wire size, metadata bytes, time, process I/O and p
 `population profile --arm ARM` measures one wire through both paths and saves CPU profiles.
 Use `--arm ARM` with `inspect` to split the population into separate jobs.
 
-The frozen rule record has `sha256`, `version`, `frozen_utc`, `reviewer`, `decisions`, and `preconditions`.
+The frozen rule record has `sha256`, `version`, `frozen_utc`, `reviewer`, `decisions`,
+`preconditions`, and `launch_levers_sha256`. Decisions include D1 through D9.
 The row checks its hash against the supplied rule file.
 
 The active target is A8S E4M3 on IMG-N. Its unsigned populations have 14 dense and 42 routed modules.
 Use `population draft --a8s-tsv PATH` to read the artifact root from the lead's real-gap table.
-Inspect and sign the dense population first. Routed rows wait for the contract pair fix.
+Inspect and sign the dense population first. Routed scope includes the IMG-N resident decode and batch cells at R1024.
 Keep the population tools for later extensions. E2M1, BF16 and IMG-G E4M3 rows are on hold.
 
 P uses the serving flags without additions. Its retained source tree stays at its original path and mtime.
 Pass one full Tessera commit to `prepare_job --source-revision`; every job checks it before its payload.
 P takes `--revision`; C1 and CPU commands take `--source-revision`. Q1 and H1 check P's recorded commit.
 The clean A8S campaign reruns P, Q1, H1 and C1 at the decode-once default fix commit F.
-The lead then supplies a new freeze record for the unchanged rule text and the new H1.
+The lead then supplies a rule v2 freeze record for the new H1 and the frozen lever file.
 From that freeze through the last counted row, every job uses F even if master moves.
 Use `build --existing-build BUILD_JSON` with the usual source, image and output arguments to write `p.json`.
 It adds code identities without rebuilding or changing the input. The `code_identity` docstring defines the exact encoding.
@@ -75,3 +77,22 @@ C1 profile f2qwcb5HuDy completed in 765.44 s. Scale cases took 745.30 s; 2,829 `
 514.88 s. C1 now selects the first nonzero coordinate once per group. The exact joint evaluator stays.
 The A8S before/after CPU profiles must show equal case data before any speed claim or time estimate.
 Read each exit status, profile, Netdata series and log. Open questions are in [questions.md](questions.md).
+
+Launch-state inputs are captured in a fresh CLI worker before its first Tessera import.
+Use `--launch-levers PATH` to supply the file frozen with rule v2. Unknown `TESSERA_` names count.
+The TSV names each excluded diagnostic and each included non-prefixed launch control.
+Required selectors stay in the hash. A8S uses `TESSERA_SERVE_MODE=resident`; optional levers stay unset.
+The same input object must hold after prepare, before each native call, and before graph replay.
+A changed input makes the unit INVALID. `_LATCHED` is a diagnostic and does not enter the hash.
+
+`launch_state.digest` defines the exact compact ASCII JSON encoding. C1 stores the input object,
+its hash and the lever-file hash. Rows store the object/hash in `runtime` and the lever hash in `inputs`.
+The join compares all eleven rule bindings. Unit keys and separation borrowing include cell and launch state.
+The signed population and C1 must name full source-contract cell IDs; historical scope aliases are refused.
+For routed rows, each declared route count is profiled. The tool resolves complete profiler names to the
+loaded library's exact symbols, decodes PM from template argument eight, and compares it with the prepared
+gate, up and down layouts. A known mismatch is FAIL. Missing or ambiguous proof is UNATTESTED.
+The tool does not replace NOT_EXERCISED units with other evidence.
+
+If both C1 and row evidence are absent, the join reports the required base scopes as UNATTESTED
+with a null launch state. It cannot infer a worker environment or establish PASS from no evidence.

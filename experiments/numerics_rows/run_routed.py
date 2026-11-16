@@ -20,7 +20,7 @@ def graph_record(unit, name, function, out, recorder):
 
     recorder.enabled = False
     try:
-        equal = graph_equal(function, out)
+        equal = graph_equal(function, out, before_call=recorder.before_call)
         unit["graph_replay_equal"].append({"call": name, "equal": equal})
     finally:
         recorder.enabled = True

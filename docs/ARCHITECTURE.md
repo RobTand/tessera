@@ -1,5 +1,10 @@
 # Tessera plan-to-serve architecture
 
+Re-stamped 2026-11-16 for the #1717 rule v2 attestation tool.
+The tool binds worker-start environment inputs and the frozen lever file in C1,
+row and joined receipts. It checks prepared routed layouts against resolved
+compiled symbols. This evidence does not change runtime contract admission.
+
 Re-stamped 2026-11-16 for tessera#1717 evidence wording.
 `device_qualified` with `evidence.grade: route_only` means the route dispatch
 was observed on the device; arithmetic is not attested. Admission does not

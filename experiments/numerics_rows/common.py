@@ -121,8 +121,10 @@ class BoundaryRecorder:
         self.synchronize, self.records = synchronize, records
         self.enabled = True
         self.attribute = True
+        self.before_call = lambda: None
 
     def call(self, name, kind, function):
+        self.before_call()
         if not self.enabled:
             return function()
         record = {"call": name, "kind": kind, "sync_before": None, "sync_after": None}
@@ -146,6 +148,8 @@ class BoundaryRecorder:
         except Exception as error:
             record["sync_after"] = False
             failure = error
+        if isinstance(failure, Invalid):
+            raise failure
         if failure is not None:
             record["message"] = str(failure)
             error = nested or BoundaryError(record, failure)

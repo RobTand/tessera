@@ -62,8 +62,31 @@ def declared_modules(population):
         cuts = [{"tp": tp, "launch_geometry": geometry,
                  "m_configs": configurations(**geometry, library=entry["library"], sms=population["sms"], structure=entry["structure"])}
                 for tp, geometry in wire_geometries(entry)]
-        result.append({"name": entry["name"], "structure": entry["structure"], "q256": entry["q256"], "cuts": cuts})
+        result.append({"name": entry["name"], "cell_ids": entry["cell_ids"], "structure": entry["structure"], "q256": entry["q256"], "cuts": cuts})
     return result
+
+
+def check_population_cells(contract, image, population):
+    """Signed scope names full source-contract IDs, including both regimes."""
+    for entry in population["modules"]:
+        expected = sorted({s["cell"] for m in (1, 2) for s in admitted_units(
+            contract, image, entry["contract_family"], entry["structure"], entry["q256"], entry["pair"], m)
+            if s["role"] == "unit"})
+        if not expected or entry.get("cell_ids") != expected:
+            raise Invalid("signed population cell IDs differ from the source contract")
+
+
+def check_selectors(contract, population, mapping):
+    selected = {name for entry in population["modules"] for name in entry["cell_ids"]}
+    for cell in contract["lane_eligibility"]["cells"]:
+        if cell["id"] not in selected:
+            continue
+        if "eager" not in cell.get("runtime", {}).get("execution_modes", ["eager"]):
+            raise Invalid("source cell does not admit the eager row")
+        for selector in cell.get("requires_serve_flags", []):
+            name, value = selector.split("=", 1)
+            if mapping.get(name) != value:
+                raise Invalid(f"required selector differs from the source cell: {name}")
 
 
 def unit_scopes(contract, image, entry, config, cut):

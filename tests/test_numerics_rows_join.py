@@ -34,8 +34,9 @@ def test_missing_c1_cannot_remove_its_expected_keys(monkeypatch):
     population, digest, manifests, receipts = joined_inputs(monkeypatch)
     keys = join(population, digest, manifests, receipts)["units"]
     result = join(population, digest, [], [])
-    assert [u["unit_id"] for u in result["units"]] == [u["unit_id"] for u in keys]
-    assert all(u["outcome"] == "UNATTESTED" for u in result["units"])
+    assert [u["unit_id"][:-1] for u in result["units"]] == [u["unit_id"][:-1] for u in keys]
+    assert result["required_scope"]["launch"] is None
+    assert all(u["unit_id"][-1] is None and u["outcome"] == "UNATTESTED" for u in result["units"])
 
 
 def test_an_unrelated_modules_absent_key_does_not_weaken_pass(monkeypatch):
@@ -96,7 +97,7 @@ def test_c1_cannot_define_the_geometry_it_is_judged_against(monkeypatch):
 def test_rule_key_projection_for_routed_and_triton(structure, decoder, config):
     unit = {"cell": "cell", "symbol": "symbol", "rung": 1024, "structure": structure, "decoder": decoder,
             "m_config": {"M": 8, **config}, "tp": {"size": 2, "rank": 0, "cut_range": [0, 32]}}
-    assert rule_unit_id(unit) == ["cell", "symbol", decoder, 1024, config, {"size": 2, "rank": 0}]
+    assert rule_unit_id(unit) == ["cell", "symbol", decoder, 1024, config, {"size": 2, "rank": 0}, None]
 
 
 @pytest.mark.parametrize("owner", [None, "row", "rule"])
@@ -225,3 +226,27 @@ def test_one_missing_c1_keeps_that_modules_distinct_keys_unattested(monkeypatch)
         missing = unit["unit_id"][3] == 960
         assert unit["outcome"] == ("UNATTESTED" if missing else "PASS")
         assert len(unit["modules"]) == 1 and unit["modules"][0]["missing_evidence"] is missing
+
+
+@pytest.mark.parametrize("where", ("row", "unit", "manifest", "object", "policy"))
+def test_join_refuses_mixed_launch_state_and_lever_policy(monkeypatch, where):
+    from experiments.numerics_rows.launch_state import digest as state_digest
+
+    population, digest, manifests, receipts = joined_inputs(monkeypatch)
+    assert join(population, digest, manifests, receipts)["verdict"] == "PASS"
+    receipt = receipts[1][1]
+    if where == "row":
+        receipt["runtime"]["launch_state"] = {"TESSERA_NEW": "1"}
+        receipt["runtime"]["launch_state_sha256"] = state_digest(receipt["runtime"]["launch_state"])
+    elif where == "unit":
+        unit = receipt["units"][0]
+        unit["launch_state_sha256"] = "b" * 64
+        unit["unit_id"] = row.unit_identity(unit)
+    elif where == "manifest":
+        manifests[1][1]["launch_state_sha256"] = "b" * 64
+    elif where == "object":
+        receipt["runtime"]["launch_state"]["TESSERA_NEW"] = "1"
+    else:
+        receipt["inputs"]["launch_levers_sha256"] = "b" * 64
+    with pytest.raises(Invalid, match="launch state|lever|execution identities"):
+        join(population, digest, manifests, receipts)
