@@ -711,18 +711,23 @@ def test_legacy_subnormal_receipt_is_normalized_only_with_its_recorded_reason():
 
 
 def elf_bytes(*, wide=True, order="<", text=b"\x01\x02\x03\x04", strtab=b"\0left\0", bss_size=8,
-              text_type=1, text_flags=6, reverse=False):
+              text_type=1, text_flags=6, reverse=False, extra_sections=()):
     names = b"\0.shstrtab\0.text\0.strtab\0.bss\0"
     sections = [("", 0, 0, b"", 0), (".shstrtab", 3, 0, names, len(names)),
                 (".text", text_type, text_flags, text, len(text)), (".strtab", 3, 0, strtab, len(strtab)),
                 (".bss", 8, 3, b"", bss_size)]
+    if extra_sections:
+        sections.extend(extra_sections)
+        names = b"\0" + b"".join(s[0].encode() + b"\0" for s in sections[1:])
+        sections[1] = (".shstrtab", 3, 0, names, len(names))
     if reverse:
         sections[2:] = reversed(sections[2:])
     size, stride = (64, 64) if wide else (52, 40)
     data = bytearray(size)
     headers = []
     for name, kind, flags, content, length in sections:
-        headers.append((names.index(name.encode() + b"\0"), kind, flags, 0, len(data), length, 0, 0, 1, 0))
+        headers.append((names.index(name.encode() + b"\0"), kind, flags, 0, len(data), length,
+                        3 if kind == 2 else 0, 0, 1, (24 if wide else 16) if kind == 2 else 0))
         data.extend(content)
     table_offset = len(data)
     for header in headers:
@@ -869,17 +874,19 @@ def test_population_job_stages_shared_draft_without_changing_signed_bytes(tmp_pa
         stage_population(signed, other)
 
 
-@pytest.mark.parametrize("field", ["library_code_sha256", "cubin_sha256s"])
+@pytest.mark.parametrize("field", ["library_canonical_code_sha256", "cubin_canonical_sha256s"])
 def test_row_refuses_served_code_identity_before_output_checks(field):
-    measured = {"library_so_sha256": "a" * 64, "library_code_sha256": "b" * 64, "cubin_sha256s": ["c" * 64]}
+    measured = {"library_so_sha256": "a" * 64, "library_code_sha256": "b" * 64, "cubin_sha256s": ["c" * 64],
+                "library_canonical_code_sha256": "b" * 64, "cubin_canonical_sha256s": ["c" * 64]}
     served = {**measured, "library_so_sha256": "d" * 64, "path": "/shared/worker/loaded.so",
               "pid": 1234, "executable_mappings": ["recorded executable mapping"]}
+    served.update(library_code_sha256="f" * 64, cubin_sha256s=["f" * 64])
     unit = row.new_unit({"decoder": "native_fused_window_dense_e4m3mma", "arm": {}})
     row.check_served_identity(unit, [served], measured)
     assert unit["arm"]["library_identity_verified"]
     assert unit["arm"]["loaded_modules"][0]["library_so_sha256"] == "d" * 64
     matching = copy.deepcopy(served)
-    served[field] = "e" * 64 if field == "library_code_sha256" else ["e" * 64]
+    served[field] = "e" * 64 if field == "library_canonical_code_sha256" else ["e" * 64]
     with pytest.raises(Invalid, match="served library code or cubin identity") as error:
         row.check_served_identity(unit, [matching, served], measured)
     assert not unit["arm"]["library_identity_verified"]
@@ -999,7 +1006,8 @@ def row_execution(tmp_path, monkeypatch):
     module = {**manifest["modules"][0], **manifest["modules"][0]["cuts"][0], "roles": [{"matches_attested_wire": True}]}
     scope = row.new_unit({"cell": "cell", "symbol": entry["pair"][0], "decoder": entry["pair"][1], "rung": 1024,
                          "structure": "dense", "role": "unit", "arm": {}, "tp": {}, "m_config": {"M": 1, "k_split": 1}})
-    identity = {"library_so_sha256": "a" * 64, "library_code_sha256": "b" * 64, "library_code_sections": [], "cubin_sha256s": ["c" * 64]}
+    identity = {"library_so_sha256": "a" * 64, "library_code_sha256": "b" * 64, "library_code_sections": [], "cubin_sha256s": ["c" * 64],
+                "library_canonical_code_sha256": "b" * 64, "cubin_canonical_sha256s": ["c" * 64]}
     served = {**identity, "name": "native", "path": "/mapped/native.so", "sha256": "a" * 64, "executable_mappings": ["device inode mapping"]}
     runtime = {**IMAGES["N"], "local_id": "image-local-id"}
     library = {"key": "e4m3", "library": {"sha256": "a" * 64}, "probe": {"sha256": "p" * 64}, "probe_source_sha256": "s", "cflags": []}

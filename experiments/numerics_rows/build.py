@@ -15,23 +15,8 @@ from experiments.numerics_rows.common import IMAGES, KERNEL, check_runtime, chec
 IDENTITY_FIELDS = ("library_so_sha256", "library_code_sha256", "library_code_sections", "cubin_sha256s")
 
 
-def code_identity(path):
-    r"""Return the code digest and its ordered ELF section records.
-
-    Visit sections in section-header order, including section zero. Exclude
-    only sections named exactly '.strtab'. For each included section, hash
-    this header followed immediately by its file payload:
-
-        json.dumps([name, sh_type, sh_flags, sh_size], ensure_ascii=True,
-                   separators=(',', ':')).encode('ascii') + b'\n'
-
-    The name is decoded as UTF-8. Integers use unsigned decimal JSON numbers.
-    Headers have no spaces; each ends with one LF byte. No other separators
-    or bytes enter the digest. SHT_NOBITS has an empty payload, regardless
-    of sh_size. Its header still includes sh_size. Each section's sha256
-    hashes only its payload, with no header. Offsets and addresses do not
-    enter the digest. ELF32 and ELF64 use the same encoding.
-    """
+def elf_sections(path):
+    """Read bounded section payloads in section-header order."""
     data = path if isinstance(path, bytes) else Path(path).read_bytes()
     if data[:4] != b"\x7fELF" or len(data) < 16 or data[4] not in (1, 2) or data[5] not in (1, 2):
         raise ValueError("unsupported ELF encoding")
@@ -61,20 +46,46 @@ def code_identity(path):
     table = [unpack(pattern, offset + i * stride) for i in range(count)]
     strings = table[names_index]
     names = payload(strings[4], strings[5])
-    digest, sections = hashlib.sha256(), []
+    sections = []
     for index, section in enumerate(table):
         name_index, kind, flags, _, start, size = section[:6]
         end = names.find(b"\0", name_index)
         if end < 0:
             raise ValueError("unterminated ELF section name")
         name = names[name_index:end].decode("utf-8")
-        if name == ".strtab":
-            continue
         content = b"" if kind == 8 else payload(start, size)
-        digest.update(json.dumps([name, kind, flags, size], ensure_ascii=True, separators=(",", ":")).encode("ascii") + b"\n")
-        digest.update(content)
-        sections.append({"index": index, "name": name, "sh_type": kind, "sh_flags": flags,
-                         "sh_size": size, "sha256": hashlib.sha256(content).hexdigest()})
+        sections.append({"index": index, "name": name, "sh_type": kind, "sh_flags": flags, "sh_size": size,
+                         "offset": start, "link": section[6], "entsize": section[9], "data": content})
+    return order, wide, sections
+
+
+def code_identity(path):
+    r"""Return the code digest and its ordered ELF section records.
+
+    Visit sections in section-header order, including section zero. Exclude
+    only sections named exactly '.strtab'. For each included section, hash
+    this header followed immediately by its file payload:
+
+        json.dumps([name, sh_type, sh_flags, sh_size], ensure_ascii=True,
+                   separators=(',', ':')).encode('ascii') + b'\n'
+
+    The name is decoded as UTF-8. Integers use unsigned decimal JSON numbers.
+    Headers have no spaces; each ends with one LF byte. No other separators
+    or bytes enter the digest. SHT_NOBITS has an empty payload, regardless
+    of sh_size. Its header still includes sh_size. Each section's sha256
+    hashes only its payload, with no header. Offsets and addresses do not
+    enter the digest. ELF32 and ELF64 use the same encoding.
+    """
+    _, _, records = elf_sections(path)
+    digest, sections = hashlib.sha256(), []
+    for r in records:
+        if r["name"] == ".strtab":
+            continue
+        header = [r[k] for k in ("name", "sh_type", "sh_flags", "sh_size")]
+        digest.update(json.dumps(header, ensure_ascii=True, separators=(",", ":")).encode("ascii") + b"\n")
+        digest.update(r["data"])
+        sections.append({k: r[k] for k in ("index", "name", "sh_type", "sh_flags", "sh_size")} | {
+            "sha256": hashlib.sha256(r["data"]).hexdigest()})
     return {"library_code_sha256": digest.hexdigest(), "library_code_sections": sections}
 
 
@@ -93,6 +104,14 @@ def library_identity(path, out, *, data=None):
     if not cubins:
         raise ValueError("cuobjdump extracted no cubins")
     identity["cubin_sha256s"] = [sha256(p) for p in cubins]
+    from experiments.numerics_rows.canonical import TOKEN, canonical_identity
+
+    embedded = [canonical_identity(p.read_bytes()) for p in cubins]
+    canonical = canonical_identity(data, [(p.name, r["sha256"]) for p, r in zip(cubins, embedded)])
+    identity["canonicalization"] = {"schema": "tessera.nvcc_pid.v1", "pattern": TOKEN.pattern.decode("ascii"), "replacement": "00000000"}
+    identity.update(library_canonical_code_sha256=canonical["sha256"], library_canonical_sections=canonical["sections"],
+                    cubin_canonical_sha256s=[r["sha256"] for r in embedded],
+                    canonical_cubins=[{"path": str(p), **r} for p, r in zip(cubins, embedded)])
     return identity
 
 

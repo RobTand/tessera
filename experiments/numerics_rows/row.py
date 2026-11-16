@@ -18,6 +18,7 @@ import traceback
 
 from experiments.numerics_rows.common import BoundaryError, BoundaryRecorder, Invalid, IMAGES, KERNEL_SHA256, check_runtime, check_source, sha256, write_json
 from experiments.numerics_rows.build import IDENTITY_FIELDS, library_identity
+from experiments.numerics_rows.canonical import CANONICAL_FIELDS
 from experiments.numerics_rows.reference import FiniteBound, compare, selftest
 
 
@@ -121,6 +122,7 @@ def bind_library_identity(library, proof, precondition):
     if identity["library_so_sha256"] != library["library"]["sha256"] or any(precondition.get(k) != v for k, v in identity.items()):
         raise Invalid("H1 code identity differs from the row's measured library")
     library.update(identity)
+    library.update({k: proof[k] for k in CANONICAL_FIELDS})
 
 
 def check_served_identity(unit, served, measured):
@@ -130,7 +132,7 @@ def check_served_identity(unit, served, measured):
         unit["arm"]["library_identity_verified"] = None
         return
     if unit["decoder"] == "native_window_gemm" or not served or any(
-            r.get(key) != measured[key] for r in served for key in ("library_code_sha256", "cubin_sha256s")):
+            not measured.get(key) or r.get(key) != measured[key] for r in served for key in CANONICAL_FIELDS):
         raise Invalid("served library code or cubin identity differs from the H1/P build")
     unit["arm"]["library_identity_verified"] = True
 

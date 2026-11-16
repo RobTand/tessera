@@ -2130,6 +2130,7 @@ ts_py_library(
         "test_no_gridbook_import.py",
         "test_nope_execution_identity.py",
         "test_numerics_rows.py",
+        "test_numerics_rows_canonical.py",
         "test_numerics_rows_receipts.py",
         "test_numerics_rows_sass.py",
         "test_original_wire_generation_origins.py",
@@ -10385,6 +10386,7 @@ ts_py_library(
         "test_no_gridbook_import.py",
         "test_nope_execution_identity.py",
         "test_numerics_rows.py",
+        "test_numerics_rows_canonical.py",
         "test_numerics_rows_receipts.py",
         "test_numerics_rows_sass.py",
         "test_original_wire_generation_origins.py",
@@ -14600,6 +14602,65 @@ ts_py_test(
     timeout = "moderate",
 )
 
+ts_py_test(
+    name = "test_numerics_rows_canonical",
+    path = "tests/test_numerics_rows_canonical.py",
+    library = ":test_numerics_rows_canonical_lib",
+    data = [
+        "//:pyproject.toml",
+        "//experiments:t8r_speed/bench_t8r.sh",
+        "//experiments:t8r_speed/build_ext.sh",
+    ],
+    deps = [
+        "//experiments:t8r_speed/bench_class_dispatch",
+        "//experiments:t8r_speed/bench_uniform_production_arm",
+        "//experiments:t8r_speed/finalize_native_build",
+        "//src/tessera:identity",
+        ":test_d41_e2m1_geometry_lib",
+        ":test_fp4_arithmetic_attestation_lib",
+    ],
+    lane = "torch",
+    args = [
+        "--budget='{\"enforce\":true,\"seconds\":80,\"slow\":{}}'",
+    ],
+    timeout = "moderate",
+)
+
+ts_py_test(
+    name = "test_numerics_rows_canonical.bytes",
+    path = "tests/test_numerics_rows_canonical.py",
+    library = ":test_numerics_rows_canonical_lib",
+    data = [
+        "//:pyproject.toml",
+        "//experiments:t8r_speed/bench_t8r.sh",
+        "//experiments:t8r_speed/build_ext.sh",
+    ],
+    deps = [
+        "//experiments:t8r_speed/bench_class_dispatch",
+        "//experiments:t8r_speed/bench_uniform_production_arm",
+        "//experiments:t8r_speed/finalize_native_build",
+        "//src/tessera:identity",
+        ":test_d41_e2m1_geometry_lib",
+        ":test_fp4_arithmetic_attestation_lib",
+    ],
+    lane = "bytes",
+    args = [
+        "--budget='{\"enforce\":true,\"seconds\":80,\"slow\":{}}'",
+    ],
+    timeout = "moderate",
+)
+
+ts_py_library(
+    name = "test_numerics_rows_canonical_lib",
+    srcs = [
+        "test_numerics_rows_canonical.py",
+    ],
+    deps = [
+        "//experiments:numerics_rows/build_cycle",
+        ":test_numerics_rows_receipts_lib",
+    ],
+)
+
 ts_py_library(
     name = "test_numerics_rows_lib",
     srcs = [
@@ -14683,7 +14744,7 @@ ts_py_library(
     ],
     deps = [
         "//experiments:dense_fused_oracle",
-        "//experiments:numerics_rows/build",
+        "//experiments:numerics_rows/build_cycle",
         "//experiments:numerics_rows/cases_cycle",
         "//experiments:numerics_rows/common",
         "//experiments:numerics_rows/job_receipt",
@@ -22433,7 +22494,7 @@ ts_py_library(
         "//experiments:results/nvfp4_moe_oracle_probe.json",
     ],
     deps = [
-        "//experiments:numerics_rows/build",
+        "//experiments:numerics_rows/build_cycle",
         "//experiments:numerics_rows/cases_cycle",
         "//src/tessera:__init___cycle",
         "//src/tessera:bf16_route_cycle",
