@@ -80,5 +80,20 @@ Publication still requires the prepared CPU and remote validation jobs.
 ## Validation state
 
 CPU jobs ƒ2j76ARLESj and ƒ2jBAYELkxP passed BUILD --check, but pytest failed
-5 and 6 cases, respectively. A dependency-scoped CPU run is pending this fix.
+5 and 6 cases, respectively. The later CPU checks below cover the fixes.
 Self-hosted bbrun follows under the lead's control. No GPU measurement is added.
+
+CPU checks at bce98d091d6f4934605d0e53c3e523d674a2b212 passed BUILD --check:
+- ƒ2jiCM25Tyy: 44 files, 1152 passed, 14 skipped, 736.46 seconds.
+- ƒ2jpoG5igRD: 40 files, 807 passed, 13 skipped, 1453.60 seconds.
+Both jobs are INACTIVE / COMPLETED, with Flux waitstatus 0, tool exit 0,
+key_match_count 0 and scratch removed. Their union covers all 84 dependency files.
+These CPU runs used no CUDA device and allocated no device memory.
+The skips cover absent box artifacts, vLLM, CUDA, the activation operator and
+the Python3.10 TOMLI backport. The historical skip reason remains
+`E2M1 publishes no reader range`. Full verbatim skip lists remain in the job logs
+and preparation report. These results do not cover the CUDA-gated surface.
+Job ƒ2jEjdZC5vw timed out with Flux rc 142; its erroneous tool exit 0 is not a pass.
+The next job scripts trap ALRM with exit 142.
+The final follow-up records these results only. The lead's final-head bbrun
+must run all 84 targets. It has not started.
