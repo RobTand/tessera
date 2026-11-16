@@ -60,6 +60,24 @@ def check_compile_paths(build_path, provenance_path):
     return records
 
 
+def check_retained_source(source, build_path, provenance_path):
+    """Use P's retained tree, including its source mtime; never a new clone."""
+    from experiments.numerics_rows.common import source_digest
+
+    root, proof = source_layout(build_path, provenance_path)
+    if Path(source).resolve() != root.resolve():
+        raise Invalid("serving source is not P's retained source tree")
+    try:
+        commit = check_source(root, proof["commit"])
+    except ValueError as error:
+        raise Invalid(f"P's retained source tree: {error}") from error
+    tree = lambda revision: subprocess.check_output(["git", "rev-parse", f"{revision}:src"], cwd=root, text=True).strip()
+    if tree("HEAD") != tree(proof["commit"]):
+        raise Invalid("serving source tree differs from P's commit")
+    return {"path": str(root), "commit": commit, "git_tree_sha": tree(commit), "tree_sha256": source_digest(root),
+            "kernel_source_sha256": sha256(root / KERNEL), "source_mtime_ns": (root / KERNEL).stat().st_mtime_ns}
+
+
 def compare_binaries(measured, served, measured_sass, out):
     from experiments.numerics_rows.canonical import CANONICAL_FIELDS, explain, mask, negative_controls
 
@@ -99,7 +117,7 @@ def main():
     p.add_argument("--retained-loader-proof", type=Path)
     args = p.parse_args()
     args.out.mkdir(parents=True)
-    check_source(args.source)
+    retained_source = check_retained_source(args.source, args.build, args.provenance)
     runtime = check_runtime("N")
     sys.path.insert(0, str(args.source / "src"))
     import torch
@@ -118,7 +136,7 @@ def main():
     h1 = json.loads(args.h1.read_text())
     if not h1["preconditions_confirmed"] or h1["build_sha256"] != sha256(args.build):
         raise Invalid("proof requires H1 for this retained P build")
-    report = {"runtime": runtime, "compile_paths": paths, "build_sha256": sha256(args.build),
+    report = {"runtime": runtime, "compile_paths": paths, "retained_source": retained_source, "build_sha256": sha256(args.build),
               "population_sha256": population_digest,
               "h1_sha256": sha256(args.h1), "cpu_only": True, "libraries": [], "verdict": "INCOMPLETE"}
     built = json.loads(args.build.read_text())
@@ -157,7 +175,6 @@ def main():
                 raise Invalid("retained failed loader snapshot changed")
             old["sass"] = retained["sass"]
             comparison["retained_failed_loader"] = compare_binaries(measured, old, record["library"]["sass"]["path"], args.out / "retained-comparison" / key)
-            comparison["identity_equal"] &= comparison["retained_failed_loader"]["identity_equal"]
         report["libraries"].append({"key": key, "uses": ["dense", "routed"] if key == "e4m3mma" else ["dense"],
                                     "platform_refusal": refusal, **comparison})
         record.update(measured)

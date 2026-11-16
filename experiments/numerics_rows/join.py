@@ -52,7 +52,7 @@ def join(population, digest, manifests, receipts):
     cases = dict(manifests)
     units, execution = {}, None
     for receipt_sha, receipt in receipts:
-        if not receipt["row"].get("utc_end") or type(receipt["row"].get("exit_status")) is not int:
+        if not receipt["row"].get("utc_end") or type(receipt["row"].get("exit_status")) is not int or receipt["row"].get("finalization_finished") is not True:
             raise Invalid("join requires finished row receipts")
         identity = execution_identity(receipt)
         if execution is not None and execution != identity:

@@ -1010,7 +1010,7 @@ def row_execution(tmp_path, monkeypatch):
                 "library_canonical_code_sha256": "b" * 64, "cubin_canonical_sha256s": ["c" * 64]}
     served = {**identity, "name": "native", "path": "/mapped/native.so", "sha256": "a" * 64, "executable_mappings": ["device inode mapping"]}
     runtime = {**IMAGES["N"], "local_id": "image-local-id"}
-    library = {"key": "e4m3", "library": {"sha256": "a" * 64}, "probe": {"sha256": "p" * 64}, "probe_source_sha256": "s", "cflags": []}
+    library = {"key": "e4m3", "library": {"sha256": "a" * 64, "sass": {"path": "P.library.sass"}}, "probe": {"sha256": "p" * 64}, "probe_source_sha256": "s", "cflags": []}
     write_json(args.build, {"commit": "cell-commit", "runtime": runtime, "libraries": [library]})
     args.rule.write_text("test rule")
     args.build_provenance.write_text("bound source provenance")
@@ -1036,6 +1036,13 @@ def row_execution(tmp_path, monkeypatch):
     else:
         args._compile_paths = serving_build.check_compile_paths
         monkeypatch.setattr(serving_build, "check_compile_paths", lambda *args: [{"key": "e4m3", "native_source_path": "/P/kernel.cu"}])
+        if hasattr(serving_build, "check_retained_source"):
+            monkeypatch.setattr(serving_build, "check_retained_source", lambda *args: {"commit": "cell-commit"})
+        def comparison(measured, served, sass, directory):
+            directory.mkdir(parents=True, exist_ok=True)
+            return {"identity_equal": True, "raw_file_audit": {"unexplained_bytes": 0}, "cubin_audits": [],
+                    "sass_token_masked_equal": True, "ptx": {}}
+        monkeypatch.setattr(serving_build, "compare_binaries", comparison)
     monkeypatch.setattr(common, "register_native_ops", lambda image: {"result": "PASS"})
     monkeypatch.setattr(common, "source_digest", lambda *args: "source-hash")
     monkeypatch.setattr(row.subprocess, "check_output", lambda *args, **kwargs: "test-value\n")
@@ -1211,7 +1218,7 @@ def joined_inputs():
             "case_manifest_sha256": "c1-" + name, "build_sha256": "build", "q1_table_sha256": "q1"},
             "tool": {"commit": "tool", "tree_sha256": "tree"}, "runtime": {"image_digest": "image"},
             "tessera": {"commit": "source", "contract_sha256": "contract"}, "rule": {"h1_sha256": "h1", "sha256": "rule"},
-            "row": {"utc_end": "finished", "exit_status": 0}, "units": [unit]}))
+            "row": {"utc_end": "finished", "exit_status": 0, "finalization_finished": True}, "units": [unit]}))
     return population, "signed", manifests, receipts
 
 
@@ -1363,3 +1370,72 @@ def test_attributed_cuda_error_survives_a_failed_post_case_identity_read(row_exe
         row.run(args, receipt)
     assert scope["outcome"] == "FAIL" and scope["cuda_errors"][0]["attributed_to"] == "native-launch"
     assert "post-case mapping disappeared" in scope["invalid"][0]
+
+
+@pytest.mark.parametrize("marker", [False, None, "missing"])
+def test_join_refuses_failed_finalization(marker):
+    from experiments.numerics_rows.join import join
+
+    population, digest, manifests, receipts = joined_inputs()
+    assert join(population, digest, manifests, receipts)["verdict"] == "PASS"
+    final = receipts[1][1]["row"]
+    final.update(exit_status=3, finalization_finished=marker)
+    if marker == "missing":
+        final.pop("finalization_finished")
+    with pytest.raises(Invalid, match="finished row"):
+        join(population, digest, manifests, receipts)
+
+
+@pytest.mark.parametrize("step", ["attach_separation", "historical_units"])
+def test_row_marks_finalization_only_after_all_steps(row_execution, monkeypatch, step):
+    args, receipt, _, _, _ = row_execution
+    with pytest.raises(SystemExit):
+        row.run(args, receipt)
+    assert receipt["row"].get("finalization_finished") is True
+    def failed(*args):
+        raise RuntimeError("finalization failed")
+    monkeypatch.setattr(row, step, failed)
+    with pytest.raises(RuntimeError, match="finalization failed"):
+        row.run(args, receipt)
+    assert receipt["row"]["finalization_finished"] is False
+
+
+def test_row_audits_served_bytes_before_first_case(row_execution, monkeypatch):
+    from experiments.numerics_rows import serving_build
+
+    args, receipt, scope, events, _ = row_execution
+    with pytest.raises(SystemExit):
+        row.run(args, receipt)
+    assert scope["outcome"] == "PASS" and "case" in events
+    events.clear()
+    original = serving_build.compare_binaries
+    def failed(*args):
+        result = original(*args)
+        result.update(identity_equal=False, raw_file_audit={"unexplained_bytes": 1})
+        return result
+    monkeypatch.setattr(serving_build, "compare_binaries", failed)
+    with pytest.raises(SystemExit):
+        row.run(args, receipt)
+    assert events == ["identity"] and scope["outcome"] == "INVALID"
+    assert scope["arm"]["library_identity_comparisons"][0]["unexplained_bytes"] == 1
+    assert "byte audit" in scope["invalid"][0]
+
+
+def test_retained_source_checks_the_p_path_tree_and_records_mtime(tmp_path, monkeypatch):
+    from experiments.numerics_rows import serving_build, common
+
+    source = tmp_path / common.KERNEL
+    source.parent.mkdir(parents=True)
+    source.write_bytes(b"kernel")
+    monkeypatch.setattr(serving_build, "source_layout", lambda *args: (tmp_path, {"commit": "P"}))
+    monkeypatch.setattr(serving_build, "check_source", lambda *args: "P")
+    monkeypatch.setattr(common, "source_digest", lambda *args: "tree-sha256")
+    monkeypatch.setattr(serving_build.subprocess, "check_output", lambda *args, **kwargs: "tree\n")
+    observed = serving_build.check_retained_source(tmp_path, None, None)
+    assert observed["source_mtime_ns"] == source.stat().st_mtime_ns and observed["git_tree_sha"] == "tree"
+    assert observed["kernel_source_sha256"] == common.sha256(source)
+    with pytest.raises(Invalid, match="retained source tree"):
+        serving_build.check_retained_source(tmp_path / "clone", None, None)
+    monkeypatch.setattr(serving_build.subprocess, "check_output", lambda cmd, **kwargs: "changed\n" if cmd[-1] == "HEAD:src" else "tree\n")
+    with pytest.raises(Invalid, match="tree differs"):
+        serving_build.check_retained_source(tmp_path, None, None)

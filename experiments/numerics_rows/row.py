@@ -121,8 +121,7 @@ def bind_library_identity(library, proof, precondition):
     identity = {k: proof[k] for k in IDENTITY_FIELDS}
     if identity["library_so_sha256"] != library["library"]["sha256"] or any(precondition.get(k) != v for k, v in identity.items()):
         raise Invalid("H1 code identity differs from the row's measured library")
-    library.update(identity)
-    library.update({k: proof[k] for k in CANONICAL_FIELDS})
+    library.update(proof)
 
 
 def check_served_identity(unit, served, measured):
@@ -144,6 +143,31 @@ def check_served_after(unit, before, after):
     if [[r[k] for k in fields] for r in before] != [[r[k] for k in fields] for r in after]:
         raise Invalid("served library mapping or bytes changed during the cases")
     unit["arm"]["library_identity_unchanged"] = True
+
+
+def audit_served(unit, served, measured, out, cache):
+    """Run the proof's byte audit and SASS/PTX witnesses on the mapped file."""
+    from experiments.numerics_rows.serving_build import compare_binaries
+
+    records = unit["arm"]["library_identity_comparisons"] = []
+    for library in served:
+        key = (measured["library_so_sha256"], library["library_so_sha256"])
+        if key not in cache:
+            directory = out / library["library_so_sha256"]
+            try:
+                comparison = compare_binaries(measured, library, measured["library"]["sass"]["path"], directory)
+            except Exception as error:
+                unit["arm"]["library_identity_verified"] = False
+                raise Invalid(f"served library byte audit: {error}") from error
+            path = directory / "comparison.json"
+            write_json(path, comparison)
+            cache[key] = {"path": str(path), "sha256": sha256(path), "identity_equal": comparison["identity_equal"],
+                          "unexplained_bytes": comparison["raw_file_audit"]["unexplained_bytes"] + sum(r["unexplained_bytes"] for r in comparison["cubin_audits"]),
+                          "sass_token_masked_equal": comparison["sass_token_masked_equal"], "ptx": comparison["ptx"]}
+        records.append(cache[key])
+        if not cache[key]["identity_equal"]:
+            unit["arm"]["library_identity_verified"] = False
+            raise Invalid("served library byte audit or SASS/PTX witness differs from H1/P")
 
 
 def compare_output(unit, case, got, ref, mask=None, operands=None, *, bound=None):
@@ -550,13 +574,14 @@ def main():
     args.out.mkdir(parents=True, exist_ok=True)
     receipt = {"schema": "tessera.numerics_row.v2",
                "row": {"name": args.name, "flux_job_id": os.environ.get("FLUX_JOB_ID"), "host": socket.gethostname(),
-                       "utc_start": datetime.now(timezone.utc).isoformat(), "utc_end": None, "exit_status": None, "stop_cause": None},
+                       "utc_start": datetime.now(timezone.utc).isoformat(), "utc_end": None, "exit_status": None, "stop_cause": None,
+                       "finalization_finished": False},
                "tool": {}, "rule": {}, "runtime": {}, "tessera": {}, "probe": {}, "inputs": {},
                "modules": [], "units": [], "negative_controls": [], "cells": [], "findings": []}
     try:
         run(args, receipt)
     except Exception as error:
-        receipt["row"].update(utc_end=datetime.now(timezone.utc).isoformat(), exit_status=3, stop_cause=str(error))
+        receipt["row"].update(utc_end=datetime.now(timezone.utc).isoformat(), exit_status=3, stop_cause=str(error), finalization_finished=False)
         if isinstance(error, Invalid):
             receipt["row"]["outcome"] = "INVALID"
             for unit in receipt["units"]:
@@ -573,12 +598,16 @@ def main():
 def run(args, receipt):
     from experiments.numerics_rows.population import load_signed_population, select_modules
 
+    receipt["row"]["finalization_finished"] = False
     population, population_digest = load_signed_population(args.population)
     population = select_modules(population, args.module)
-    commit, runtime = check_source(args.source), check_runtime(args.image)
+    runtime = check_runtime(args.image)
     sys.path.insert(0, str(args.source / "src"))
-    from experiments.numerics_rows.serving_build import check_compile_paths
+    from experiments.numerics_rows.serving_build import check_compile_paths, check_retained_source
 
+    retained_source = check_retained_source(args.source, args.build, args.build_provenance)
+    commit = retained_source["commit"]
+    receipt["tessera"]["retained_source"] = retained_source
     compile_paths = check_compile_paths(args.build, args.build_provenance)
     receipt["tessera"]["serving_compile"] = compile_paths
     import tessera
@@ -635,7 +664,7 @@ def run(args, receipt):
                "runtime": {**runtime, "device": torch.cuda.get_device_name(), "capability": list(torch.cuda.get_device_capability()),
                            "driver": __import__("subprocess").check_output(["nvidia-smi", "--query-gpu=driver_version", "--format=csv,noheader"], text=True).strip()},
                "tessera": {"commit": commit, "contract_sha256": sha256(args.source / "src/tessera/serving/runtime_contract.json"), "src_tree_sha256": source_digest(args.source), "kernel_source_sha256": KERNEL_SHA256,
-                           "serving_compile": compile_paths, "build_provenance_sha256": sha256(args.build_provenance),
+                           "serving_compile": compile_paths, "retained_source": retained_source, "build_provenance_sha256": sha256(args.build_provenance),
                            "build_provenance": str(args.build_provenance),
                            "cell_kernel_build": f"legacy-toolchain/{runtime['vllm']}/{runtime['torch']}", "matches_cell": True},
                "probe": {"source_sha256": library["probe_source_sha256"], "cflags": library["cflags"],
@@ -665,6 +694,7 @@ def run(args, receipt):
                             native_source = Path(next(r for r in compile_paths if r["key"] == key)["native_source_path"])
                             actual, served = identify_served(adapter, routed, native_source, args.out / "served-binaries", served_cache)
                             check_served_identity(unit, served, library)
+                            audit_served(unit, served, library, args.out / "served-comparisons", served_cache)
                             adapter.served_identity = served[0] if served else None
                             if receipt["inputs"]["reference_selftest"]["mismatches"] or not all(c["flagged_exactly"] for c in receipt["negative_controls"]):
                                 raise Invalid("reference self-test or mutated reference control failed")
@@ -723,7 +753,7 @@ def run(args, receipt):
         exit_status = 3
     receipt["units"].extend(historical_units(contract, runtime, receipt["units"]))
     receipt["cells"] = cell_verdicts(receipt["units"])
-    receipt["row"].update(utc_end=datetime.now(timezone.utc).isoformat(), exit_status=exit_status)
+    receipt["row"].update(utc_end=datetime.now(timezone.utc).isoformat(), exit_status=exit_status, finalization_finished=True)
     write_json(args.out / "numerics_row.json", receipt)
     raise SystemExit(exit_status)
 

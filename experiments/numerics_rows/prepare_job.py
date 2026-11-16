@@ -39,7 +39,7 @@ def prepare(step, image, extra=()):
     out.mkdir()
     subprocess.run(["git", "clone", "--bare", "--no-hardlinks", str(ROOT), str(out / "repository.git")], check=True)
     command = {"P": "build", "Q1": "quantizers", "H1": "h1", "C1": "cases", "ROW": "row", "CPU": "cpu_checks"}[step.split("-")[0]]
-    source, source_mount = out / "cell", ""
+    source = out / "cell"
     population_mount = ""
     if command in ("cases", "row"):
         parser = argparse.ArgumentParser(add_help=False)
@@ -53,7 +53,6 @@ def prepare(step, image, extra=()):
         parser.add_argument("--build-provenance", type=Path, required=True)
         inputs = parser.parse_known_args(extra)[0]
         source, _ = source_layout(inputs.build, inputs.build_provenance)
-        source_mount = f"-v {shlex.quote(str(out / 'cell') + ':' + str(source) + ':ro')} "
     gpu = step.startswith(("Q1", "H1", "ROW"))
     shape, minutes = ("core=2;memory=16;gpu=1", 9) if gpu else ("core=4;memory=8", 20)
     host = "sparklina"
@@ -83,7 +82,7 @@ exit "$rc"
                  f"podman run --rm --name {name} --pull=never --cgroups=disabled --network=none "
                  f"{'--device nvidia.com/gpu=all ' if gpu else ''}"
                  f"-v /mnt/shared:/mnt/shared:ro -v {out}:{out}:rw -w {out}/code "
-                 f"{population_mount}{source_mount}"
+                 f"{population_mount}"
                  f"--env PYTHONPATH={source}/src:{out}/code --env PYTHONPYCACHEPREFIX={out}/cache/pycache "
                  f"--env HOME={out}/home --env TMPDIR={out}/scratch --env XDG_CACHE_HOME={out}/cache "
                  f"--env CUDA_CACHE_PATH={out}/cuda-cache --env VLLM_CACHE_ROOT={out}/vllm-cache "
@@ -91,7 +90,7 @@ exit "$rc"
                  f"--env TESSERA_NUMERICS_IMAGE_INSPECT={out}/image-inspect.json "
                  '--env FLUX_JOB_ID="$FLUX_JOB_ID" '
                  "--env OMP_NUM_THREADS=1 --env MKL_NUM_THREADS=1 --env OPENBLAS_NUM_THREADS=1 "
-                 f"--env MAX_JOBS={2 if gpu else 4} --env TESSERA_PLATFORM_TOKEN=sm_121 "
+                 f"--env MAX_JOBS={2 if gpu else 4} --env TESSERA_PLATFORM_TOKEN=sm_121 --env GIT_OPTIONAL_LOCKS=0 "
                  f"--entrypoint /bin/bash {IMAGES[image]['local_id']} -euo pipefail -c {shlex.quote(payload)}")
     if gpu:
         container = f'''rc=0
@@ -103,6 +102,7 @@ test "$(cat results/payload-exit.txt)" = 0
 '''
     if command == "cpu_checks":
         container = f"env HOME={out}/home /home/rob/.local/bin/uv run --python 3.12 --no-project --extra-index-url https://download.pytorch.org/whl/cpu --index-strategy unsafe-best-match --with-requirements code/tools/ci/gate_torch_requirements.txt --with-requirements code/tools/ci/gate_requirements.txt {payload}"
+    cell_checkout = "" if command == "row" else "git clone --shared repository.git cell\ngit -C cell checkout --detach 8bf496ab"
     script = f'''#!/bin/bash
 set -euo pipefail
 cd {out}
@@ -114,15 +114,14 @@ export UV_CACHE_DIR={out}/cache/uv UV_PYTHON_INSTALL_DIR={out}/python
 export XDG_CACHE_HOME={out}/cache
 export PATH=/home/rob/.local/bin:$PATH
 export PYTHONPYCACHEPREFIX={out}/cache/pycache
-export PYTHONPATH={out}/cell/src:{out}/code
+export PYTHONPATH={source}/src:{out}/code
 export OMP_NUM_THREADS=1 MKL_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 MAX_JOBS={2 if gpu else 4}
 mkdir -p scratch cache results extensions triton home cuda-cache vllm-cache
 # The cell source stays separate from the implementation source.
 git clone --shared repository.git code
 git -C code checkout --detach {revision}
-git clone --shared repository.git cell
-git -C cell checkout --detach 8bf496ab
-printf '%s  %s\\n' 8a1536dfbc3df70edbdc37001a0db6947e97d9263926bc85a4d4d3ca231eae4f cell/src/tessera/serving/csrc/routed_fused_window.cu | sha256sum -c -
+{cell_checkout}
+printf '%s  %s\\n' 8a1536dfbc3df70edbdc37001a0db6947e97d9263926bc85a4d4d3ca231eae4f {source}/src/tessera/serving/csrc/routed_fused_window.cu | sha256sum -c -
 {f"podman image inspect {IMAGES[image]['local_id']} > image-inspect.json" if command != "cpu_checks" else ""}
 {container}
 '''
