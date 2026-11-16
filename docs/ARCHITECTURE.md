@@ -1,8 +1,8 @@
 # Tessera plan-to-serve architecture
 
-Re-stamped 2026-11-16 for #1717 arithmetic receipt checks.
+Re-stamped 2026-11-16 for #1717 arithmetic receipt and measured-scope checks.
 `validate_serving_contract(..., require_arithmetic=True)` requires
-`evidence.arithmetic {receipt, sha256}` on each `cell_is_device_backed` cell.
+`evidence.arithmetic {receipt, sha256, scope}` on each `cell_is_device_backed` cell.
 There was no existing switch for this rollout. The new keyword defaults to
 `False`; the 18 current cells have no arithmetic receipt. Enable it only when
 receipts or withdrawals cover all served cells. This change does not enable it.
@@ -21,7 +21,13 @@ there before the first summary. No frozen rule exists in this change.
 Summary schema `tessera.numerics_summary.v1` has `rule_sha256`,
 `receipt_sha256`, `tool {commit, tree_sha256}`, `image_digest`, and `records`.
 Each record has `cell`, `symbol`, `decoder`, `cut`, `rungs_pass`,
-`rungs_withdrawn`, and `verdict`. Cuts are `TP1` and `TP<size>/rank<rank>`.
+`rungs_withdrawn`, `verdict`, and `measured`. Each `measured` entry is
+`{rung, rows, cols, k_split}` for a PASS unit. These are distinct positive
+integer tuples, and their rungs must equal `rungs_pass`. The required cell
+arithmetic `scope` is `measured_m_configurations_only`: arithmetic is attested
+at those measured M configurations; all others are unattested. This check
+validates the record form. It does not gate on the M configurations a model
+launches. Cuts are `TP1` and `TP<size>/rank<rank>`.
 The closed-world TP ceiling sets the required cuts. A record aggregates all M
 configurations. Any non-PASS configuration withdraws its rung for that pair
 and cut. A record whose verdict is not PASS refuses the cell. A withdrawn rung cannot borrow proof

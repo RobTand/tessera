@@ -319,6 +319,8 @@ PLUGIN_ENTRY_POINT = "tessera = tessera.serving:register"
 #: A decode cell that cites the open gap keeps ``grade`` ``route_only``.
 EVIDENCE_KL_KINDS = ("topk_intersection_lower_bound", "full_vocab", "graph_equality")
 EVIDENCE_GRADES = ("route_only", "kl_lower_bound", "kl_full_vocab")
+# Arithmetic is attested at measured M configurations. All others are unattested.
+ARITHMETIC_SCOPE = "measured_m_configurations_only"
 EVIDENCE_RECEIPT_ROOT = "docs/measurements/"
 
 #: Schema v8 (#198) scopes historical evidence to the encoder that wrote it.
@@ -2481,7 +2483,9 @@ def cell_evidence(cell: Mapping[str, Any], where: str = "lane_eligibility cell",
                   optional={"arithmetic"})
     arithmetic = payload.get("arithmetic")
     if "arithmetic" in payload:
-        _require_keys(arithmetic, f"{at}.arithmetic", required={"receipt", "sha256"})
+        _require_keys(arithmetic, f"{at}.arithmetic", required={"receipt", "sha256", "scope"})
+        if arithmetic["scope"] != ARITHMETIC_SCOPE:
+            raise ValueError(f"{at}.arithmetic.scope must be {ARITHMETIC_SCOPE!r}")
         _require_receipt_path(arithmetic["receipt"], f"{at}.arithmetic")
         if not arithmetic["receipt"].startswith("docs/measurements/numerics/") or not arithmetic["receipt"].endswith(".json"):
             raise ValueError(f"{at}.arithmetic.receipt must name a numerics JSON summary")
@@ -3508,11 +3512,23 @@ def check_arithmetic_receipts(contract: Mapping[str, Any], root, rule_path) -> N
         seen = set()
         for record in summary["records"]:
             _require_keys(record, at, required={"cell", "symbol", "decoder", "cut",
-                                              "rungs_pass", "rungs_withdrawn", "verdict"})
+                                              "rungs_pass", "rungs_withdrawn", "verdict", "measured"})
             for key in ("rungs_pass", "rungs_withdrawn"):
                 values = record[key]
                 if not isinstance(values, list) or any(not _is_int(q) or q <= 0 for q in values) or len(set(values)) != len(values):
                     raise ValueError(f"{at}: {key} must list distinct positive rungs")
+            measured = record["measured"]
+            if not isinstance(measured, list):
+                raise ValueError(f"{at}: measured must be an array")
+            configurations = set()
+            for configuration in measured:
+                _require_keys(configuration, f"{at}.measured", required={"rung", "rows", "cols", "k_split"})
+                values = tuple(configuration[k] for k in ("rung", "rows", "cols", "k_split"))
+                if any(not _is_int(v) or v <= 0 for v in values) or values in configurations:
+                    raise ValueError(f"{at}: measured must list distinct positive integer configurations")
+                configurations.add(values)
+            if {c[0] for c in configurations} != set(record["rungs_pass"]):
+                raise ValueError(f"{at}: measured rungs must equal rungs_pass")
             if set(record["rungs_pass"]) & set(record["rungs_withdrawn"]):
                 raise ValueError(f"{at}: a rung cannot pass and be withdrawn")
             key = tuple(record[k] for k in ("cell", "symbol", "decoder", "cut"))
