@@ -17,7 +17,6 @@ def main():
     p.add_argument("--image", choices=IMAGES, required=True)
     p.add_argument("--library", action="append", choices=("e2m1", "e4m3mma", "e4m3", "value"))
     p.add_argument("--revision", choices=("8bf496ab", "e89757b9"), default="8bf496ab")
-    p.add_argument("--objdir-as-tempdir", action="store_true", help="Stabilize NVCC's embedded intermediate filename.")
     args = p.parse_args()
     commit = check_source(args.source, args.revision)
     runtime = check_runtime(args.image)
@@ -34,8 +33,7 @@ def main():
     for key in selected:
         name = "tessera_routed_fused_e2m1" if key == "e2m1" else LIBRARIES[key][0]
         flags = _cflags("sm_121", key in ("e4m3", "e4m3mma"), key == "e4m3mma", key == "e2m1")
-        if args.objdir_as_tempdir:
-            flags.append("--objdir-as-tempdir")
+        flags.append("--objdir-as-tempdir")
         build = args.out / name
         build.mkdir()
         lib = load(name=name, sources=[str(args.source / KERNEL)], build_directory=str(build),

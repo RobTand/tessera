@@ -54,9 +54,11 @@ Use `population draft --a8s-tsv PATH` to read the artifact root from the lead's 
 Inspect and sign the dense population first. Routed rows wait for the contract pair fix.
 Keep the population tools for later extensions. E2M1, BF16 and IMG-G E4M3 rows are on hold.
 
-P-N compares e4m3mma, e4m3 and value at 8bf496ab and e89757b9, with the same paths and flags.
-Only identical library hashes publish the build receipt for Q1-N and H1-N. Historical H1 was confirmed;
-the new IMG-N E4M3 builds need their own Q1 and H1. A P3 tool limit remains UNATTESTED.
+Builds add `--objdir-as-tempdir` to the cell flags and retain `-lineinfo`.
+CPU job `f2rST9Aa4Dd` found identical e4m3mma, e4m3 and value libraries at both commits and on repeat.
+Measured and served builds must use the same source and build paths. Read the
+[tested recipe](/mnt/shared/flux-jobs/tessera-1717-SO-REPRO-d5976c1d-20261116T154120Z/results/comparison.json).
+Q1 and H1 may use the retained 8bf496ab build before comparison. A P3 tool limit remains UNATTESTED.
 
 C1 profile f2qwcb5HuDy completed in 765.44 s. Scale cases took 745.30 s; 2,829 `argwhere` calls took
 514.88 s. C1 now selects the first nonzero coordinate once per group. The exact joint evaluator stays.
