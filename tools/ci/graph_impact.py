@@ -443,14 +443,15 @@ def compare(base, head, baseline, *, changed_tests=(), allowlist=None, record_ga
              for edge in changes['added'][kind]}
     structural_added = added - allowed_test_edges
     old_tests = set(base['reach']) & head['reach'].keys()
-    # Fanout is judged as a count: the test -> existing source pairs of the base
-    # tests (removed ones included) against those of the tests that remain, so
-    # an edge that moves to another source while others go is not growth.
+    # Fanout is judged as a count: the test -> existing source pairs of every
+    # base test against those of every head test, so an edge that moves to
+    # another source while others go is not growth. Growth is attributed to
+    # the tests that remain; a new test alone is judged by its reach budget.
     fanout_growth, affected_tests, net = {}, set(), 0
     for source in base['loc'].keys() & head['loc'].keys():
         previous = {t for t in base['reach'] if source in base['reach'][t]}
         current = {t for t in old_tests if source in head['reach'][t]}
-        net += len(current) - len(previous)
+        net += sum(source in reach for reach in head['reach'].values()) - len(previous)
         if len(current) > len(previous):
             fanout_growth[source] = len(current) - len(previous)
             affected_tests |= current - previous

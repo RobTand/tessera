@@ -125,6 +125,10 @@ def test_fanout_is_judged_as_a_count_of_test_to_source_pairs(tessera):
     assert fanout({'tests/test_a.py': {'tools/old.py'}, 'tests/test_b.py': {'tools/hub.py'}}) == []
     assert 'tools/hub.py +1' in ' '.join(fanout({'tests/test_a.py': {'tools/old.py'}, 'tests/test_b.py': {'tools/hub.py'},
                                                  'tests/test_gone.py': {'tools/hub.py'}}))
+    # A new test counts in the total: a -> old moves to the hub while new test c takes old.
+    base = graph({'tests/test_a.py': {'tools/old.py'}, 'tests/test_b.py': {'tools/hub.py'}})
+    assert 'tools/hub.py +1' in ' '.join(fanout({'tests/test_a.py': {'tools/hub.py'}, 'tests/test_b.py': {'tools/hub.py'},
+                                                 'tests/test_c.py': {'tools/old.py'}}))
 
 _LOADS_A_TOOL = '''import importlib.util
 from pathlib import Path
