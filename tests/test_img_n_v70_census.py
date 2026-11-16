@@ -63,11 +63,13 @@ def test_receipt_identity_and_both_rank_replay():
     contract = load_serving_contract()
     rungs = declared_rungs(receipt, config)
     for rank in receipt["ranks"]:
+        assert set(rank["records"]) == set(CENSUS_PHASE_REGIMES)
         assert rank["world_size"] == 2 and rank["runtime_image"] == IMAGE
         assert rank["platform_token"] == "sm_121" and rank["lane_refusals"] == {}
         block, problems = agreement(receipt, rank["records"], rungs, contract)
         assert problems == [] and block["agrees"] is True
         for phase, records in rank["records"].items():
+            assert len(records) == 21
             routed = {name: r for name, r in records.items()
                       if r["kind"] == "moe" and r["policy"] == "TESSERA_FP8:resident"}
             assert len(routed) == 4
@@ -113,7 +115,7 @@ def test_scope_cannot_borrow_historical_receipts(axis):
         if axis == "executes":
             cell[axis][0]["decoder"] = "native_routed_fused_window_e4m3mma"
         elif axis == "rungs_q256":
-            del cell["executes"][0][axis]
+            cell["executes"][0][axis] = [896]
         elif axis == "image":
             cell["runtime"][axis] = "example.invalid/other@sha256:" + "0" * 64
         else:

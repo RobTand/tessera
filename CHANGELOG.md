@@ -1,9 +1,9 @@
 # Changelog
 
-## 2026-11-16: prepare IMG-N routed E4M3 scope, candidate contract v70, issue #1699
+## 2026-11-16: qualify IMG-N routed E4M3 scope, contract v70, issue #1699
 
 Name the current class pair at the four existing rungs in decode and batch.
-Keep historical identities. Publication requires the pending TP2 census and CPU replay.
+Keep historical identities. The TP2 census records both ranks at all four rungs. CPU proof is pending.
 See `docs/measurements/2026-11-16-img-n-v70.md`.
 
 ## 2026-11-15: re-qualify eight stub route cells, contract v68, issue #1683
