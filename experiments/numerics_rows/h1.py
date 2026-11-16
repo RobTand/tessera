@@ -308,16 +308,10 @@ def cuda_control(where, image):
     return False
 
 
-def main():
-    p = argparse.ArgumentParser(description=__doc__)
-    p.add_argument("--source", type=Path)
-    p.add_argument("--out", type=Path)
-    p.add_argument("--image", choices=("G", "N"))
-    p.add_argument("--build", type=Path)
-    p.add_argument("--cuda-control", choices=("inside", "outside"))
-    args = p.parse_args()
-    if args.cuda_control:
-        raise SystemExit(0 if cuda_control(args.cuda_control, args.image) else 3)
+def run_checks(args, report):
+    def save():
+        write_json(args.out / "h1.json", report)
+
     check_source(args.source)
     check_runtime(args.image)
     sys.path.insert(0, str(args.source / "src"))
@@ -328,43 +322,78 @@ def main():
     from experiments.numerics_rows.sass_slice import match_library
 
     torch.set_num_threads(1)
-    args.out.mkdir(parents=True, exist_ok=True)
-    registration = register_native_ops(args.image)
-    write_json(args.out / "native_ops.json", registration)
-    report = {"native_ops": registration, "build_sha256": sha256(args.build), "P1": selftest(device="cuda"), "boundaries": [], "libraries": {}, "cuda_controls": [], "negative_controls": negative_controls()}
+    report["native_ops"] = register_native_ops(args.image)
+    write_json(args.out / "native_ops.json", report["native_ops"])
+    report["build_sha256"] = sha256(args.build)
+    report["P1"] = selftest(device="cuda")
+    save()
+    report["negative_controls"] = negative_controls()
+    save()
     recorder = BoundaryRecorder(torch.cuda.synchronize, report["boundaries"])
     built = json.loads(args.build.read_text())
     loaded = install_libraries(built["libraries"])
-    report["P3"] = {record["key"]: match_library(record) for record in built["libraries"]}
+    report["P3"] = {}
+    for record in built["libraries"]:
+        report["P3"][record["key"]] = match_library(record)
+        save()
     with init_vllm_world1():
         report["P2"] = p2_ties(recorder) if args.image == "G" else {"result": "not applicable to value-only image"}
+        save()
         for key, lib in loaded.items():
+            entry = report["libraries"].setdefault(key, {})
             try:
                 with e4m3_instruction("f16" if key == "e4m3" else "e4m3"):
-                    report["libraries"][key] = e2m1_preconditions(lib, recorder) if key == "e2m1" else dense_preconditions(key, recorder)
-                    report["libraries"][key]["subnormal_operand"] = subnormal_case(key, recorder)
+                    entry.update(e2m1_preconditions(lib, recorder) if key == "e2m1" else dense_preconditions(key, recorder))
+                    save()
+                    entry["subnormal_operand"] = subnormal_case(key, recorder)
+                    save()
                     if key != "e2m1":
                         report["negative_controls"].append(wrong_scale_index(key, recorder))
             except Exception as error:
-                report["libraries"][key] = {"error": str(error), "traceback": traceback.format_exc()}
-            write_json(args.out / "h1.json", report)
+                entry.update(error=str(error), traceback=traceback.format_exc())
+            finally:
+                save()
     for where in ("inside", "outside"):
         env = {**os.environ, "PYTHONPATH": os.pathsep.join((str(args.source.resolve() / "src"), str(Path(__file__).resolve().parents[2])))}
         run = subprocess.run([sys.executable, "-m", "experiments.numerics_rows.h1", "--cuda-control", where, "--image", args.image], env=env, capture_output=True, text=True)
         report["cuda_controls"].append({"where": where, "exit_status": run.returncode, "stdout": run.stdout, "stderr": run.stderr,
             "scope": "harness check of CUDA error attribution, not of the cell kernel",
             "injection": "async device assert in a helper kernel; cell binary unchanged"})
+        save()
     report["preconditions_confirmed"] = (
         not report["P1"]["mismatches"] and (args.image == "N" or report["P2"].get("result") == "PASS")
         and all(p["matched"] for p in report["P3"].values())
-        and all(v.get("P4") and v.get("P5", True)
+        and all(not v.get("error") and v.get("P4") and v.get("P5", True)
                 and (v.get("routed") is None or v["routed"]["P4"] and v["routed"]["P5"])
                 and v.get("wrong_scale_detected", True)
                 and (v.get("routed", {}).get("negative_control", {}).get("flagged_exactly", True)) for v in report["libraries"].values())
         and all(c["exit_status"] == 0 for c in report["cuda_controls"])
         and all(v.get("subnormal_operand", {}).get("result") != "FAIL" for v in report["libraries"].values())
         and all(c["flagged_exactly"] for c in report["negative_controls"]))
+    save()
+
+
+def main():
+    p = argparse.ArgumentParser(description=__doc__)
+    p.add_argument("--source", type=Path)
+    p.add_argument("--out", type=Path)
+    p.add_argument("--image", choices=("G", "N"))
+    p.add_argument("--build", type=Path)
+    p.add_argument("--cuda-control", choices=("inside", "outside"))
+    args = p.parse_args()
+    if args.cuda_control:
+        raise SystemExit(0 if cuda_control(args.cuda_control, args.image) else 3)
+    args.out.mkdir(parents=True, exist_ok=True)
+    report = {"boundaries": [], "libraries": {}, "cuda_controls": [], "negative_controls": [],
+              "preconditions_confirmed": False}
     write_json(args.out / "h1.json", report)
+    try:
+        run_checks(args, report)
+    except Exception as error:
+        report["preconditions_confirmed"] = False
+        report["error"] = {"type": type(error).__name__, "message": str(error), "traceback": traceback.format_exc()}
+    finally:
+        write_json(args.out / "h1.json", report)
     raise SystemExit(0 if report["preconditions_confirmed"] else 3)
 
 

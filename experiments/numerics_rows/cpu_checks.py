@@ -10,6 +10,7 @@ import sys
 from experiments.numerics_rows.common import check_source, write_json
 
 TESTS = ("tests/test_numerics_rows.py", "tests/test_numerics_rows_sass.py",
+         "tests/test_numerics_rows_receipts.py",
          "tests/test_dense_fused_window.py", "tests/test_routed_fused_e2m1.py")
 
 

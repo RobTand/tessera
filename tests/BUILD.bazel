@@ -2130,6 +2130,7 @@ ts_py_library(
         "test_no_gridbook_import.py",
         "test_nope_execution_identity.py",
         "test_numerics_rows.py",
+        "test_numerics_rows_receipts.py",
         "test_numerics_rows_sass.py",
         "test_original_wire_generation_origins.py",
         "test_pack_levels_device.py",
@@ -10398,6 +10399,7 @@ ts_py_library(
         "test_no_gridbook_import.py",
         "test_nope_execution_identity.py",
         "test_numerics_rows.py",
+        "test_numerics_rows_receipts.py",
         "test_numerics_rows_sass.py",
         "test_original_wire_generation_origins.py",
         "test_pack_levels_device.py",
@@ -14621,6 +14623,65 @@ ts_py_library(
         "//experiments:dense_fused_oracle_cycle",
         "//experiments:numerics_rows/common",
         "//experiments:numerics_rows/reference",
+    ],
+)
+
+ts_py_test(
+    name = "test_numerics_rows_receipts",
+    path = "tests/test_numerics_rows_receipts.py",
+    library = ":test_numerics_rows_receipts_lib",
+    data = [
+        "//:pyproject.toml",
+        "//experiments:t8r_speed/bench_t8r.sh",
+        "//experiments:t8r_speed/build_ext.sh",
+    ],
+    deps = [
+        "//experiments:t8r_speed/bench_class_dispatch",
+        "//experiments:t8r_speed/bench_uniform_production_arm",
+        "//experiments:t8r_speed/finalize_native_build",
+        "//src/tessera:identity",
+        ":test_d41_e2m1_geometry_lib",
+        ":test_fp4_arithmetic_attestation_lib",
+    ],
+    lane = "torch",
+    args = [
+        "--budget='{\"enforce\":true,\"seconds\":80,\"slow\":{}}'",
+    ],
+    timeout = "moderate",
+)
+
+ts_py_test(
+    name = "test_numerics_rows_receipts.bytes",
+    path = "tests/test_numerics_rows_receipts.py",
+    library = ":test_numerics_rows_receipts_lib",
+    data = [
+        "//:pyproject.toml",
+        "//experiments:t8r_speed/bench_t8r.sh",
+        "//experiments:t8r_speed/build_ext.sh",
+    ],
+    deps = [
+        "//experiments:t8r_speed/bench_class_dispatch",
+        "//experiments:t8r_speed/bench_uniform_production_arm",
+        "//experiments:t8r_speed/finalize_native_build",
+        "//src/tessera:identity",
+        ":test_d41_e2m1_geometry_lib",
+        ":test_fp4_arithmetic_attestation_lib",
+    ],
+    lane = "bytes",
+    args = [
+        "--budget='{\"enforce\":true,\"seconds\":80,\"slow\":{}}'",
+    ],
+    timeout = "moderate",
+)
+
+ts_py_library(
+    name = "test_numerics_rows_receipts_lib",
+    srcs = [
+        "test_numerics_rows_receipts.py",
+    ],
+    deps = [
+        "//experiments:dense_fused_oracle_cycle",
+        "//experiments:numerics_rows/common",
     ],
 )
 

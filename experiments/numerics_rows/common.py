@@ -25,7 +25,16 @@ def sha256(path):
 
 
 def write_json(path, value):
-    Path(path).write_text(json.dumps(value, indent=2, allow_nan=False) + "\n")
+    def numpy_value(item):
+        import numpy as np
+
+        if isinstance(item, np.ndarray):
+            return item.tolist()
+        if isinstance(item, np.generic):
+            return item.item()
+        raise TypeError(f"Object of type {type(item).__name__} is not JSON serializable")
+
+    Path(path).write_text(json.dumps(value, indent=2, allow_nan=False, default=numpy_value) + "\n")
 
 
 def check_source(root):
