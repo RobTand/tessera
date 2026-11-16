@@ -249,6 +249,7 @@ class Dense:
         from experiments.numerics_rows.cases import decode_roles
 
         self.entry, self.cut, self.store = entry, cut, dense.Store(entry["root"])
+        self.device = "cuda"
         self.name, self.library = entry["name"], entry["library"]
         self.layer, self.method, self.info = dense.build_served(
             self.store, self.name, mode="resident", tp_rank=cut["rank"], tp_size=cut["size"],

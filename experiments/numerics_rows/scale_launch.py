@@ -159,12 +159,12 @@ def check(adapter, unit, manifest, recorder):
             down = routed and mode == 2
             if routed:
                 raw_ids, raw_weights = routing(m, adapter.experts, m, meta.get("route_experts", role["expert"]))
-                ids, weights = torch.tensor(raw_ids, device="cuda"), torch.tensor(raw_weights, device="cuda", dtype=torch.float32)
+                ids, weights = torch.tensor(raw_ids, device=adapter.device), torch.tensor(raw_weights, device=adapter.device, dtype=torch.float32)
                 routes = adapter.route(ids, weights)
             for case in cases.values():
                 rows = routes.routes if down else m
                 cols = adapter.inter if down else adapter.cols
-                x = torch.zeros(rows, cols, device="cuda", dtype=torch.bfloat16)
+                x = torch.zeros(rows, cols, device=adapter.device, dtype=torch.bfloat16)
                 x[case["input_row"], case["column"]] = case["input"]
                 if routed:
                     q, sf, a, a_scale = adapter.quantized(x, adapter.gs2 if down else adapter.gs13, recorder)

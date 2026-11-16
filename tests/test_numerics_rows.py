@@ -71,7 +71,7 @@ def test_x_false_is_invalid_before_native(products):
     mask = x_products(torch.tensor([[float(value) for value in products]], dtype=torch.float64))
     assert not bool(mask[0])
     with pytest.raises(Invalid, match="X false"):
-        require_x(torch.tensor([[exact_input(products)["holds"]]]), sweep=True)
+        require_x(mask.reshape(1, 1), sweep=True)
 
 
 def test_subnormal_operand_is_exact_and_flushing_fails():
@@ -413,3 +413,51 @@ def test_q1_checks_both_sign_facts_used_by_gate_separation():
     assert not d_facts(gf, d)["d_nonpositive_negative_gf"]
     d[3] = -0.5
     assert not d_facts(gf, d)["nonzero_act_has_uf_sign_positive_gf"]
+
+
+@pytest.mark.parametrize("wrong", (False, True))
+def test_scale_launch_checks_the_loaded_read_on_cpu(monkeypatch, wrong):
+    from types import SimpleNamespace
+    from experiments.numerics_rows import scale_launch
+    from experiments.numerics_rows.scale_index import make_plan
+    w = torch.ones(2, 1, dtype=torch.float64)
+    adapter = SimpleNamespace(device="cpu", family="value", gs=1.0, cols=1,
+        roles=[("dense", w, torch.ones(2, dtype=torch.float32), None)])
+    adapter.quantized = lambda x, recorder: (x, None, x.double(), None)
+    cases = [{"read": [index], "g": 1.0, "u": 0.0, "a_scale": 1.0, "g_scale": 1.0, "u_scale": 1.0,
+              "scale": "row", "column": 0, "input": 1.0, "output_row": index, "input_row": 0} for index in range(2)]
+    plan = make_plan("row", 2, cases, metadata={"N": 2, "M": 1, "mode": 2})
+    assert plan["reads_covered"] == plan["reads"] == 2
+    def launch(adapter, role, q, sf, target, values, recorder):
+        # Controlled native boundary: compute the output with the selected scale indices.
+        indices = [0, 0] if wrong else [0, 1]
+        scales = torch.tensor([values[index] for index in indices], dtype=torch.float32)
+        return ((q.double() @ w.T).float() * scales).bfloat16()
+    monkeypatch.setattr(scale_launch, "dense_launch", launch)
+    scope = unit()
+    scope["m_config"] = {"M": 1}
+    scale_launch.check(adapter, scope, {"structure": "dense", "roles": [{"name": "dense", "expert": 0, "scale_index": [plan]}]},
+        BoundaryRecorder(lambda: None, scope["boundaries"]))
+    result = scope["exact"]["scale_index"]["arrays"][-1]
+    assert result["launches"] > 0
+    assert outcome(scope) == ("FAIL" if wrong else "PASS")
+    assert (result["mismatches"] > 0) is wrong
+
+
+def test_p4_checks_the_loaded_dense_scale_before_the_verdict():
+    from types import SimpleNamespace
+    from experiments.numerics_rows.row import Dense, scale_receipt
+    adapter = Dense.__new__(Dense)
+    adapter.family = "value"
+    reader = torch.tensor([1.0, 2.0], dtype=torch.float32)
+    loaded = reader.clone()
+    adapter.roles = [("dense", torch.ones(2, 1), reader, None)]
+    adapter.layer = SimpleNamespace(tessera_native=SimpleNamespace(role_bundles=[SimpleNamespace(scale=loaded)]))
+    positive = scale_receipt(adapter, False)
+    assert positive["equal"]
+    loaded.view(torch.int32)[1] ^= 1
+    negative = scale_receipt(adapter, False)
+    assert not negative["equal"] and negative["c_loaded_sha256"] != positive["c_loaded_sha256"]
+    scope = unit()
+    check_preconditions(scope, scale_equal=negative["equal"])
+    assert outcome(scope) == "FAIL"

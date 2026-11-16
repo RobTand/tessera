@@ -14,6 +14,7 @@ class Routed:
         from experiments.numerics_rows.cases import checkpoint_routed
 
         self.entry, self.cut, self.manifest, self.table = entry, cut, manifest, table
+        self.device = "cuda"
         self.limit = artifact_limit(entry["root"])
         if self.limit != table.limit:
             raise Invalid("artifact swiglu_limit differs from the Q1 D table")
