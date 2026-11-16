@@ -17,7 +17,7 @@ import subprocess
 import traceback
 
 from experiments.numerics_rows.common import BoundaryError, BoundaryRecorder, Invalid, IMAGES, KERNEL_SHA256, check_runtime, check_source, sha256, write_json
-from experiments.numerics_rows.build import IDENTITY_FIELDS
+from experiments.numerics_rows.build import IDENTITY_FIELDS, library_identity
 from experiments.numerics_rows.reference import FiniteBound, compare, selftest
 
 
@@ -121,6 +121,15 @@ def bind_library_identity(library, proof, precondition):
     if identity["library_so_sha256"] != library["library"]["sha256"] or any(precondition.get(k) != v for k, v in identity.items()):
         raise Invalid("H1 code identity differs from the row's measured library")
     library.update(identity)
+
+
+def check_served_identity(unit, served, measured):
+    """Refuse a mapped library mismatch before any numerics case can run."""
+    unit["arm"].update(loaded_modules=served, library_identity_verified=False)
+    if unit["decoder"] != "native_window_gemm" and (not served or any(
+            r.get(key) != measured[key] for r in served for key in ("library_code_sha256", "cubin_sha256s"))):
+        raise Invalid("served library code or cubin identity differs from the H1/P build")
+    unit["arm"]["library_identity_verified"] = True
 
 
 def compare_output(unit, case, got, ref, mask=None, operands=None, *, bound=None):
@@ -535,7 +544,7 @@ def run(args, receipt):
     import tessera
     import torch
     from experiments import dense_fused_oracle as dense
-    from experiments.numerics_rows.h1 import install_libraries, negative_controls
+    from experiments.numerics_rows.h1 import negative_controls
     from experiments.numerics_rows.cases import DTable
     from experiments.numerics_rows.routed import Routed
     from experiments.numerics_rows import run_routed
@@ -571,7 +580,6 @@ def run(args, receipt):
     groups = planned_units(contract, runtime["image_digest"], population, manifest)
     receipt["units"] = [unit for _, _, _, units in groups for unit in units]
     write_json(args.out / "numerics_row.json", receipt)
-    loaded = install_libraries(built["libraries"])
     if built["commit"] != commit or built["runtime"]["image_digest"] != runtime["image_digest"]:
         raise Invalid("library build does not match the cell")
     slices = {r["key"]: match_library(r, args.out / "binary-identity" / r["key"]) for r in built["libraries"]}
@@ -595,6 +603,7 @@ def run(args, receipt):
                           "q1_table_sha256": sha256(args.q1), "reference_selftest": selftest(device="cuda")},
                "negative_controls": negative_controls()})
     exit_status = 0
+    served_cache = {}
     try:
         with dense.init_vllm_world1():
             for entry, module, cut, units in groups:
@@ -603,13 +612,17 @@ def run(args, receipt):
                     key = entry["library"] if entry["library"] != "triton" else "e4m3mma"
                     table = DTable(next(t for t in q1["tables"] if t["key"] == key)) if routed else None
                     adapter = Routed(entry, cut, module, table) if routed else Dense(entry, cut, module)
-                    adapter.binary = library
                     receipt["modules"].append(module_receipt(module, adapter, routed))
                     for unit in units:
                         adapter.splits = unit["m_config"]["k_split"]
                         unit["tp"].update(tp_facts(adapter, module, routed))
                         recorder = BoundaryRecorder(torch.cuda.synchronize, unit["boundaries"])
                         try:
+                            actual = served_library(adapter, routed)
+                            served = unit_libraries(actual, args.source / "src/tessera/routed_fused.py",
+                                                    args.out / "served-binaries", served_cache)
+                            check_served_identity(unit, served, library)
+                            adapter.served_identity = served[0] if served else None
                             if receipt["inputs"]["reference_selftest"]["mismatches"] or not all(c["flagged_exactly"] for c in receipt["negative_controls"]):
                                 raise Invalid("reference self-test or mutated reference control failed")
                             if any(not role["matches_attested_wire"] for role in module["roles"]):
@@ -623,7 +636,7 @@ def run(args, receipt):
                                 unit["completed"] = True
                             else:
                                 verify_cases(adapter, unit, module, q1, table)
-                                with native_boundaries(loaded, recorder):
+                                with native_boundaries({key: actual} if actual is not None else {}, recorder):
                                     if routed:
                                         run_routed.run(adapter, unit, module, recorder)
                                     else:
@@ -632,8 +645,7 @@ def run(args, receipt):
                                     scale_index_checks(adapter, unit, module, recorder)
                                     profile_unit(adapter, unit, recorder, routed=routed)
                                 dispatch(unit, entry["pair"], adapter.pairs(),
-                                         unit_libraries(adapter, routed),
-                                         {r["library"]["sha256"] for r in built["libraries"] if r["key"] == key}, adapter.info.get("lane_reason"))
+                                         served, {r["library_so_sha256"] for r in served}, adapter.info.get("lane_reason"))
                                 unit["completed"] = True
                         except BoundaryError as error:
                             record_cuda_error(unit, error)
@@ -778,12 +790,12 @@ def profile_unit(adapter, unit, recorder, *, routed):
     unit["m_config"]["compiled_kernel_symbols"] = []
     if not routed and adapter.library == "triton":
         return
-    library = adapter.binary
-    if sha256(library["library"]["sass"]["path"]) != library["library"]["sass"]["sha256"]:
+    library = adapter.served_identity
+    if sha256(library["sass"]["path"]) != library["sass"]["sha256"]:
         raise Invalid("SASS symbol list changed")
     from experiments.t4_code.sass_dump import parse_sass
 
-    functions = sorted(parse_sass(Path(library["library"]["sass"]["path"]).read_text()))
+    functions = sorted(parse_sass(Path(library["sass"]["path"]).read_text()))
     demangled = subprocess.check_output(["c++filt"], input="\n".join(functions) + "\n", text=True).splitlines()
     symbols, unresolved = resolve_symbols(functions, [r["name"] for r in unit["arm"]["profiler_kernels"]], demangled)
     unit["m_config"]["compiled_kernel_symbols"] = [{**record, **{k: library[k] for k in IDENTITY_FIELDS if k != "library_code_sections"}} for record in symbols]
@@ -799,17 +811,32 @@ def opaque_apply(function, recorder, *args):
         recorder.attribute = previous
 
 
-def unit_libraries(adapter, routed):
+def served_library(adapter, routed):
     if not routed and adapter.library == "triton":
-        return []
-    from tessera._dev.native_identity import loaded_native_identity
+        return None
     from tessera import routed_fused as rf, routed_fused_e2m1 as fe
     key = ("e2m1" if adapter.family == "e2m1" else adapter.native.library) if routed else adapter.library
-    actual = (adapter.native.uniform.module if routed and key != "e2m1" else
-              fe._ext() if key == "e2m1" else rf._ext(key))
-    evidence = loaded_native_identity(actual, rf.__file__)
-    identity = {k: adapter.binary[k] for k in IDENTITY_FIELDS if k != "library_code_sections"} if evidence["sha256"] == adapter.binary["library"]["sha256"] else {}
-    return [{"name": actual.__name__, **evidence, **identity}]
+    return (adapter.native.uniform.module if routed and key != "e2m1" else
+            fe._ext() if key == "e2m1" else rf._ext(key))
+
+
+def unit_libraries(actual, source, out, cache):
+    if actual is None:
+        return []
+    from tessera._dev.native_identity import loaded_native_identity
+
+    evidence = loaded_native_identity(actual, source)
+    key = evidence["sha256"]
+    if key not in cache:
+        directory = out / evidence["sha256"]
+        identity = library_identity(evidence["path"], directory / "cubins")
+        if identity["library_so_sha256"] != evidence["sha256"]:
+            raise Invalid("served mapped library changed during hashing")
+        sass = directory / "library.sass"
+        with sass.open("w") as stream:
+            subprocess.run(["cuobjdump", "-sass", evidence["path"]], stdout=stream, check=True)
+        cache[key] = {**identity, "sass": {"path": str(sass), "sha256": sha256(sass)}}
+    return [{"name": actual.__name__, **evidence, **cache[key]}]
 
 
 def module_receipt(module, adapter, routed):

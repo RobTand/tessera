@@ -821,3 +821,22 @@ def test_population_job_stages_shared_draft_without_changing_signed_bytes(tmp_pa
     other.mkdir()
     with pytest.raises(ValueError, match="draft identity"):
         stage_population(signed, other)
+
+
+@pytest.mark.parametrize("field", ["library_code_sha256", "cubin_sha256s"])
+def test_row_refuses_served_code_identity_before_output_checks(field):
+    measured = {"library_so_sha256": "a" * 64, "library_code_sha256": "b" * 64, "cubin_sha256s": ["c" * 64]}
+    served = {**measured, "library_so_sha256": "d" * 64, "path": "/shared/worker/loaded.so",
+              "pid": 1234, "executable_mappings": ["recorded executable mapping"]}
+    unit = row.new_unit({"decoder": "native_fused_window_dense_e4m3mma", "arm": {}})
+    row.check_served_identity(unit, [served], measured)
+    assert unit["arm"]["library_identity_verified"]
+    assert unit["arm"]["loaded_modules"][0]["library_so_sha256"] == "d" * 64
+    served[field] = "e" * 64 if field == "library_code_sha256" else ["e" * 64]
+    with pytest.raises(Invalid, match="served library code or cubin identity") as error:
+        row.check_served_identity(unit, [served], measured)
+    assert not unit["arm"]["library_identity_verified"]
+    assert not unit["findings"] and not unit["completed"]
+    unit["invalid"].append(str(error.value))
+    unit["completed"] = True
+    assert row.outcome(unit) == "INVALID"

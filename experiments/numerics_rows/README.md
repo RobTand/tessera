@@ -62,8 +62,13 @@ The valid A8S Q1 and H1 use the retained pre-flag 8bf496ab build. Rows must read
 Use `build --existing-build BUILD_JSON` with the usual source, image and output arguments to write `p.json`.
 It adds code identities without rebuilding or changing the input. The `code_identity` docstring defines the exact encoding.
 P3 records these identities too. Confirm H1 with that CPU proof, then give the enriched H1 copy to the rows.
-The row recomputes each identity and requires equality. Cubin hashes remain separate from the ELF section digest.
+The row uses the serving loader. It hashes the worker's executable-mapped library and records its PID, path and mappings.
+Before any numerics case, it requires that library's code digest and cubin hashes to equal the H1/P identities.
+A difference is INVALID. Symbol resolution uses SASS from that mapped library. Cubin hashes remain separate from the ELF section digest.
 A P3 tool limit remains UNATTESTED.
+
+C1 job preparation copies the signed population and its bound draft into the shared job directory.
+It mounts the draft read-only at the source path in the signature. The signed JSON bytes stay unchanged.
 
 C1 profile f2qwcb5HuDy completed in 765.44 s. Scale cases took 745.30 s; 2,829 `argwhere` calls took
 514.88 s. C1 now selects the first nonzero coordinate once per group. The exact joint evaluator stays.
