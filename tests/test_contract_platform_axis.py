@@ -586,10 +586,6 @@ def test_v56_publishes_the_decode_once_prefill_lane_unattested(contract):
 
 def test_t16_cutover_withdraws_the_bf16_cells_and_their_attestation(contract):
     """Historical folded receipts do not qualify the new BF16 decoder identities."""
-    # v68 re-mints IDs from new scope receipts; folded claims stay withdrawn.
-    cells = contract["lane_eligibility"]["cells"]
-    assert all(not e["decoder"].endswith("_folded") for c in cells
-               if c["family"] == "TESSERA_BF16_K1" for e in c["executes"])
     unit = next(u for u in contract["tensor_parallel"]["units"]
                 if u["unit"] == "TESSERA_BF16_K1")
     assert unit["max_world_size"] == 1

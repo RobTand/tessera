@@ -35,7 +35,7 @@ def _scoped_contract():
     mapped = {pin: IMAGE, **{image: "example/runtime@sha256:" + f"{i + 1:x}" * 64
                              for i, image in enumerate(others)}}
     assert IMAGE not in list(mapped.values())[1:] and OTHER_IMAGE not in mapped.values()
-    cells = []
+    cells, dropped = [], set()
     for cell in contract["lane_eligibility"]["cells"]:
         cell["runtime"] = {**copy.deepcopy(RUNTIME), "image": mapped[cell["runtime"]["image"]]}
         # A synthetic image cannot retain the base-image class qualification.
@@ -45,6 +45,7 @@ def _scoped_contract():
             for symbol, decoder in sorted(runtime_contract.derive_cell_executes(
                 cell, runtime_contract._FAMILY_TO_ROUTE[cell["family"]], entry, contract))]
         if not cell["executes"]:
+            dropped.add(cell["id"])
             continue
         cells.append(cell)
         # Since contract v48 some cells carry the runtime suffix the validator
@@ -55,6 +56,14 @@ def _scoped_contract():
         base, suffixed, _ = cell["id"].partition("_runtime_")
         if suffixed:
             cell["id"] = base + runtime_contract.cell_runtime_id_suffix(cell)
+    assert dropped == {
+        f"{family}_{structure}_sm121_{regime}_resident{suffix}"
+        for family, suffix in (
+            ("tessera_bf16_k1", "_runtime_"
+             "1bd4e9052e00b217fe52b40a9b9a9e2445b6cdd504bef051d8410d3fbc72a96e"),
+            ("tessera_e2m1_k2", ""),
+        ) for structure in ("dense", "routed_moe") for regime in ("decode", "batch")
+    }
     contract["lane_eligibility"]["cells"] = cells
     # Real T4 activation receipts cannot move to synthetic images either.
     contract["activation_quantizers"]["platforms"] = {}

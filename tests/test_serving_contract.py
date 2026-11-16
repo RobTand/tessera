@@ -30,6 +30,7 @@ from tessera.serving.contract import (
     CONTRACT_SCHEMA,
     LANE_ELIGIBILITY_SCHEMA,
     REQUIRES_PLUGIN,
+    _SCOPED_EXECUTION_RECEIPTS,
     contract_path,
     load_serving_contract,
     validate_serving_contract,
@@ -323,10 +324,11 @@ _REEARNED = {
                         (_FUSED_MOE, "native_routed_fused_window_e4m3mma")})
        for _regime in ("decode", "batch")},
 }
-_REEARNED.update({cid: ("experiments/results/glm53_requal_v68_e2m1_census.json",
+_REEARNED.update({cid: ("experiments/results/glm53_requal_v68_bf16_census.json"
+                        if law["family"] == "TESSERA_BF16_K1"
+                        else "experiments/results/glm53_requal_v68_e2m1_census.json",
                         {(e["symbol"], e["decoder"]) for e in law["executes"]})
-                  for cid, law in _V68_LAWS.items()
-                  if law["family"] == "TESSERA_E2M1_K2" and law["structure"] == "routed_moe"})
+                  for cid, law in _V68_LAWS.items()})
 _REEARNED_CELL_IDS = frozenset(_REEARNED)
 
 #: Contract v37 withdrew the two earlier BF16 epilogue cells. Contract v59
@@ -366,6 +368,23 @@ _WITHDRAWN_V39_CELL_IDS = frozenset({
     "tessera_e2m1_k2_dense_sm121_batch",
 })
 
+# Minted at 5d1ea571; v59 (76a9f568) withdrew the nightly folded claims.
+_WITHDRAWN_V59 = {
+    nightly_id("TESSERA_BF16_K1", structure, regime): pairs
+    for structure, pairs in (
+        ("dense", {("tessera::window_gemm_dense", "native_window_gemm_folded"),
+                   ("tessera::fused_window_dense", "native_fused_window_dense_folded")}),
+        ("routed_moe", {(_COMPACT_MOE, "native_window_moe_compact_folded"),
+                        (_FUSED_MOE, "native_routed_fused_window_folded")}),
+    ) for regime in ("decode", "batch")
+}
+# Minted at aa36680f; v64 (cba87087) withdrew the dense A4 span2 claims.
+_WITHDRAWN_V64 = {
+    f"tessera_e2m1_k2_dense_sm121_{regime}_resident":
+        {("tessera.kernel_a4.a4_span2_gemm", "native_span2_gemm")}
+    for regime in ("decode", "batch")
+}
+
 #: What each withdrawal took away, by id: the launch pairs a returning cell
 #: under that id must never name again.
 #: The v31 claims are read from the fixture that quotes the withdrawn cells,
@@ -384,6 +403,9 @@ for _cid in _WITHDRAWN_V39_CELL_IDS:
     _WITHDRAWN_CLAIMS.setdefault(_cid, set()).add(
         ("vllm.fused_moe.modular_kernel", "torch_materialize_stock")
         if "routed_moe" in _cid else ("torch._scaled_mm", "native_span2"))
+
+_WITHDRAWN_CLAIMS.update(_WITHDRAWN_V59)
+_WITHDRAWN_CLAIMS.update(_WITHDRAWN_V64)
 
 
 @pytest.fixture(scope="module")
@@ -454,7 +476,7 @@ def test_a_cell_exists_exactly_where_a_receipt_does(contract):
         # ``_validate_cell_executes``.
         route = _FAMILY_TO_ROUTE[family]
         launchable = (any(launch_pairs(route, structure=structure) for structure in STRUCTURES)
-                      or any(c["id"] in _V68_LAWS for c in cells))
+                      or any(row["family"] == family for row in _SCOPED_EXECUTION_RECEIPTS))
         if rungs and launchable:
             assert cells, f"{family} attests {rungs} but publishes no lane_eligibility cell"
         elif not rungs:
@@ -855,7 +877,7 @@ def test_no_withdrawn_cell_has_come_back_with_its_withdrawn_claim(contract):
     """Re-minted IDs must name a new receipt and reject all withdrawn launch pairs."""
     present = {cell["id"] for cell in contract["lane_eligibility"]["cells"]}
     withdrawn = (_WITHDRAWN_CELL_IDS | _WITHDRAWN_V37_CELL_IDS | _WITHDRAWN_V38_CELL_IDS
-                 | _WITHDRAWN_V39_CELL_IDS)
+                 | _WITHDRAWN_V39_CELL_IDS | set(_WITHDRAWN_V59) | set(_WITHDRAWN_V64))
     assert set(_WITHDRAWN_CLAIMS) == withdrawn
     assert not (present & (withdrawn - _REEARNED_CELL_IDS))
     assert not (set(_CELL_LAWS) & (withdrawn - _REEARNED_CELL_IDS))
@@ -884,7 +906,8 @@ def test_no_withdrawn_cell_has_come_back_with_its_withdrawn_claim(contract):
         if cell["family"] == "TESSERA_E4M3_K1":
             assert (ROOT / E4M3MMA_RECEIPT).is_file(), cell["id"]
         from tessera.serving.contract import cell_executes, format_entry
-        pairs = cell_executes(cell, q256=896, entry=format_entry(cell["family"], contract)) \
+        rung = 1024 if cell["family"] == "TESSERA_BF16_K1" else 896
+        pairs = cell_executes(cell, q256=rung, entry=format_entry(cell["family"], contract)) \
             if cell["structure"] == "routed_moe" else cell_executes(cell)
         assert pairs == launch, cell["id"]
         assert not (pairs & _WITHDRAWN_CLAIMS[cell["id"]]), cell["id"]

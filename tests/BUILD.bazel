@@ -23007,6 +23007,7 @@ ts_py_library(
         "//:docs/measurements/tessera-glm-u1-census-2026-09-26.md",
         "//:docs/measurements/tessera-glm-x-census-2026-09-26.md",
         "//:docs/measurements/tessera-window-gemm-census-2026-09-21.md",
+        "//experiments:results/glm53_requal_v68_bf16_census.json",
         "//experiments:results/glm53_requal_v68_e2m1_census.json",
         "//experiments:results/glm53_requal_v68_scope.json",
         "//experiments:results/glm53_u1_stub_d_tp1_eager_census.json",

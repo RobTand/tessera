@@ -19,9 +19,9 @@ What it pins:
    plugin off, no attention override, and the serve log naming the image's
    backend;
 2. every served E4M3 module joins a nightly cell in both phases, and the BF16
-   records join none. Contract v59 withdrew the nightly BF16 cells with the
-   folded arithmetic they measured. The folded launches the receipt recorded
-   have no current cell. The fail-before drops the E4M3 cells;
+   records join none in this historical replay. Contract v59 withdrew their
+   folded claims. Contract v68 reuses the four IDs with new scope receipts;
+   those cells refuse the old folded launches. The fail-before drops the E4M3 cells;
 3. every module ran the launch the f8dbe1a0 E4M3-instruction receipt recorded
    for it, with both required lanes engaged, so the nightly cells name the
    launches their twins name;
@@ -89,11 +89,19 @@ def _declared_rungs(tool, receipt, config_path=CONFIG) -> dict:
     return {mapping.get(target) or target: rung for target, rung in rungs.items()}
 
 
+# v68 reuses these four IDs with new receipts; retain all other historical scopes.
+_V68_BF16_IDS = {
+    f"tessera_bf16_k1_{structure}_sm121_{regime}_resident_runtime_"
+    "1bd4e9052e00b217fe52b40a9b9a9e2445b6cdd504bef051d8410d3fbc72a96e"
+    for structure in ("dense", "routed_moe") for regime in ("decode", "batch")
+}
+
+
 def _agreement(tool, contract, receipt):
     """Replay v48 E4M3 qualification; folded BF16 remains historical."""
     return tool.all_structure_agreement(
         receipt["records"], cells=[c for c in contract["lane_eligibility"]["cells"]
-                                  if c["family"] != "TESSERA_BF16_K1"],
+                                  if c["id"] not in _V68_BF16_IDS],
         phase_regimes=CENSUS_PHASE_REGIMES, platform="sm_121",
         declared_rungs=_declared_rungs(tool, receipt),
         record_owners=receipt["record_owner"],
@@ -212,7 +220,7 @@ def test_the_nightly_cells_cover_exactly_the_rungs_the_receipts_carried():
     assert sorted(k for k in carried if k[0] != "TESSERA_BF16_K1") == sorted(SCOPES)
     cells = _nightly_cells(load_serving_contract())
     assert sorted({(c["family"], c["structure"]) for c in cells.values()}) == sorted(SCOPES)
-    # The BF16 scopes the stub-B receipt carried have no current cell (contract v59).
+    # v68 re-mints BF16 scopes; the old folded claims remain withdrawn at v59.
     assert ("TESSERA_BF16_K1", "dense") in carried and ("TESSERA_BF16_K1", "routed_moe") in carried
     for cell in cells.values():
         assert set(cell["rungs_q256"]) == carried[(cell["family"], cell["structure"])], cell["id"]

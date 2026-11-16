@@ -192,11 +192,19 @@ def _declared_rungs(tool, receipt, config_path) -> dict:
     return {mapping.get(target) or target: rung for target, rung in rungs.items()}
 
 
+# v68 reuses these four IDs with new receipts; retain all other historical scopes.
+_V68_BF16_IDS = {
+    f"tessera_bf16_k1_{structure}_sm121_{regime}_resident_runtime_"
+    "1bd4e9052e00b217fe52b40a9b9a9e2445b6cdd504bef051d8410d3fbc72a96e"
+    for structure in ("dense", "routed_moe") for regime in ("decode", "batch")
+}
+
+
 def _agreement(tool, contract, receipt, config_path):
     """Replay historical E4M3 qualification; v68 tests cover current BF16."""
     return tool.all_structure_agreement(
         receipt["records"], cells=[c for c in contract["lane_eligibility"]["cells"]
-                                  if c["family"] != "TESSERA_BF16_K1"],
+                                  if c["id"] not in _V68_BF16_IDS],
         phase_regimes=CENSUS_PHASE_REGIMES, platform="sm_121",
         declared_rungs=_declared_rungs(tool, receipt, config_path),
         record_owners=receipt["record_owner"],
@@ -292,7 +300,9 @@ def test_the_historical_tcq_stub_is_refused_by_the_window_cells():
     contract = load_serving_contract()
     receipt_path, config_path = _paths("d")
     block, problems = _agreement(tool, contract, _load(receipt_path), config_path)
-    assert problems  # The WINDOW cells refuse historical TCQ execution pairs.
+    assert problems and all("does not publish" in problem for problem in problems)
+    assert all(row["covered_by_cell"] == row["modules"] > 0
+               for per in block["structures"].values() for row in per["phases"].values())
     assert block["agrees"] is False
 
 

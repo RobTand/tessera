@@ -442,6 +442,8 @@ def test_a_compile_only_cell_is_not_a_serve_the_export_gate_can_read(monkeypatch
     day a route is compiled for a platform before anyone serves it there, and
     the gate has to refuse it on the strength of the fact the cell states, not
     on the strength of the document being malformed.
+    E2M1 native WINDOW bytes have an independent reader gate. They remain readable
+    after the downgrade, while attested_cells must return no device-qualified cell.
     """
     from tessera.serving import contract as contract_module
     from tessera.serving.contract import load_serving_contract, validate_serving_contract
@@ -598,9 +600,6 @@ def test_the_packaged_table_still_admits_every_device_qualified_rung():
                 family=route_for_grid(grid_name), span=served.span, target="stack.probe",
                 structure=STRUCTURE_ROUTED_MOE, contract=packaged) == \
                 route_for_grid(grid_name)
-    # v68 re-mints IDs from new scope receipts; historical folded pairs stay refused.
-    assert all(not e["decoder"].endswith("_folded") for c in packaged["lane_eligibility"]["cells"]
-               if c["family"] == "TESSERA_BF16_K1" for e in c["executes"])
 
 
 def test_a_cell_whose_facts_cannot_be_read_is_refused_not_assumed(monkeypatch):
