@@ -19,9 +19,12 @@ The freeze record and signed populations remain required inputs.
   Proposed receipt types: `scale` and `base` are lists, `families` is their union, and `passes_per_family`
   maps each family to its total. `arrays` retains each array's exact base, families, counts and read coverage.
   The other counts are sums. The current implementation uses these types. The spec has not been edited.
-- `rows.md:70`: C1 needs the device's observed SM count for `dense_k_split`. The received receipts do not
-  record it. Proposed answer: read `runtime.sms` from the next H1 receipt, then put that value in the
-  population JSON before review. The draft files keep `sms: null` until that result exists.
-- `rows.md:109`: each population path is present, but its wire stamp must be read in an admitted CPU job.
-  The prepared population job writes the stamped drafts in its own results directory. Proposed answer:
-  review those outputs, copy the reviewed files to the population directory, and set `reviewed: true`.
+
+## Inputs that remain pending
+
+- H1-G at `d1f8c7c6` records `runtime.sms: 48` in
+  `/mnt/shared/flux-jobs/tessera-1717-H1-G-d1f8c7c6-20261116T113444Z/results/h1.json`.
+  Put that observed count in the populations before review.
+- Five population arms have completed stamp reads. The next CPU job reads all six with bounded
+  metadata reads and compares the five completed outputs. The lead must review and sign the results.
+- H1-N still needs its GPU run. P3 confirmation, the signed populations and the frozen rule remain required.
