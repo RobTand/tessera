@@ -1,0 +1,70 @@
+{
+  "e2m1": {
+    "library": {
+      "path": "/mnt/shared/flux-jobs/tessera-1717-P-G-234d6cef-20261116T085416Z/results/e2m1.library.sass",
+      "sha256": "03d2a87e12f9ffe4956bd028b95166c304578a63644c009eb87fc43cdb06461f",
+      "excerpt_sha256": "9c2e6de809528f24e7eaa33ae7b3b7cf4417dd02b688b1895410da5c083dd1be"
+    },
+    "probe": {
+      "path": "/mnt/shared/flux-jobs/tessera-1717-P-G-234d6cef-20261116T085416Z/results/e2m1.probe.sass",
+      "sha256": "ce9a421d993c038e37a714bd737eaca0f2ea4b6b59c670c796612ff0e66da0e4",
+      "excerpt_sha256": "d510aa63f7a9d8cd80fe4abf7e5d1ffee96cbd354920f192965ab6582c7424cd"
+    },
+    "function": "_ZN55_GLOBAL__N__2594e719_22_routed_fused_window_cu_2a20e8a53fp423routed_fused_fp4_kernelILi0ELb0ELb0ELi7ELb1EEEvNS0_6ParamsE",
+    "gf_pc": 32768,
+    "join_pc": 33264,
+    "slow_entry_pc": 52992,
+    "slow_ret_pc": 54624
+  },
+  "e4m3mma": {
+    "library": {
+      "path": "/mnt/shared/flux-jobs/tessera-1717-P-G-234d6cef-20261116T085416Z/results/e4m3mma.library.sass",
+      "sha256": "40c30b257a0e06d52a4d2c5b232475f57d11ccb7554bbff1d97887bef765a3e6",
+      "excerpt_sha256": "b4d2d4445e9c8253dccad040fc388e721467fe366b30c793a6f3bee9a76d57f6"
+    },
+    "probe": {
+      "path": "/mnt/shared/flux-jobs/tessera-1717-P-G-234d6cef-20261116T085416Z/results/e4m3mma.probe.sass",
+      "sha256": "b3b2b6cc6bd3990a8028a678af6d5ff7e1405cef7bab0657d463190d19ad1c62",
+      "excerpt_sha256": "d510aa63f7a9d8cd80fe4abf7e5d1ffee96cbd354920f192965ab6582c7424cd"
+    },
+    "function": "_ZN55_GLOBAL__N__2594e719_22_routed_fused_window_cu_60b71ba819routed_fused_kernelILb1ELi0ELb0ELb0ELi7ELb1ELi128ELb0ELb0EEEvNS_6ParamsE",
+    "gf_pc": 27184,
+    "join_pc": 27600,
+    "slow_entry_pc": 97872,
+    "slow_ret_pc": 99520
+  },
+  "e4m3": {
+    "library": {
+      "path": "/mnt/shared/flux-jobs/tessera-1717-P-G-234d6cef-20261116T085416Z/results/e4m3.library.sass",
+      "sha256": "116b52a843a2bf3d5d2711b84c8c56d9cef7ca6d0c1712cd0eac47d485521d96",
+      "excerpt_sha256": "8fa71e61db81852ae57493ded81f380fbf1f7ab9e9461f8d3f9d635086fbb904"
+    },
+    "probe": {
+      "path": "/mnt/shared/flux-jobs/tessera-1717-P-G-234d6cef-20261116T085416Z/results/e4m3.probe.sass",
+      "sha256": "b3b2b6cc6bd3990a8028a678af6d5ff7e1405cef7bab0657d463190d19ad1c62",
+      "excerpt_sha256": "d510aa63f7a9d8cd80fe4abf7e5d1ffee96cbd354920f192965ab6582c7424cd"
+    },
+    "function": "_ZN55_GLOBAL__N__2594e719_22_routed_fused_window_cu_60b71ba819routed_fused_kernelILb1ELi0ELb0ELb0ELi7ELb1ELi64ELb0ELb0EEEvNS_6ParamsE",
+    "gf_pc": 24400,
+    "join_pc": 24800,
+    "slow_entry_pc": 60336,
+    "slow_ret_pc": 61968
+  },
+  "value": {
+    "library": {
+      "path": "/mnt/shared/flux-jobs/tessera-1717-P-N-234d6cef-20261116T085427Z/results/value.library.sass",
+      "sha256": "08baac5f3bab0153d94c1e8296a3aa923e332ec82ea84acbf2de87db62b19515",
+      "excerpt_sha256": "eb3bc8a8ab5b443446945f135c8b6e7160029751d0808cc7a913ba0a732c4d06"
+    },
+    "probe": {
+      "path": "/mnt/shared/flux-jobs/tessera-1717-P-N-234d6cef-20261116T085427Z/results/value.probe.sass",
+      "sha256": "d11f4b5013d4e237b2e8ab537f05d793d72c3e8c8f1a110734bbbe09e666adf6",
+      "excerpt_sha256": "d510aa63f7a9d8cd80fe4abf7e5d1ffee96cbd354920f192965ab6582c7424cd"
+    },
+    "function": "_ZN55_GLOBAL__N__dc3338cd_22_routed_fused_window_cu_60b71ba819routed_fused_kernelILb0ELi0ELb0ELb0ELi7ELb1ELi64ELb0ELb0EEEvNS_6ParamsE",
+    "gf_pc": 23760,
+    "join_pc": 24208,
+    "slow_entry_pc": 34608,
+    "slow_ret_pc": 36256
+  }
+}

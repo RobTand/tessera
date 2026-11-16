@@ -143,6 +143,11 @@ filegroup(
 )
 
 filegroup(
+    name = "files/data/numerics_rows",
+    srcs = glob(["data/numerics_rows/**"], exclude = ["**/BUILD.bazel", "bazel-*/**", "*bazel-remote-grpc.log", "*execution_log.binpb.zst", ".pytest_cache/**", "**/__pycache__/**", "**/*.pyc"]),
+)
+
+filegroup(
     name = "files/fixtures",
     srcs = glob(["fixtures/**"], exclude = ["**/BUILD.bazel", "bazel-*/**", "*bazel-remote-grpc.log", "*execution_log.binpb.zst", ".pytest_cache/**", "**/__pycache__/**", "**/*.pyc"]),
 )
@@ -14652,7 +14657,11 @@ ts_py_library(
     srcs = [
         "test_numerics_rows_sass.py",
     ],
+    data = [
+        ":files/data/numerics_rows",
+    ],
     deps = [
+        "//experiments:numerics_rows/common",
         "//experiments:numerics_rows/sass_slice",
     ],
 )
