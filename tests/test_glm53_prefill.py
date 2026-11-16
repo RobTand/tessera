@@ -369,7 +369,7 @@ class Layer(torch.nn.Module):
         self._mlp_is_moe = moe
 
     # Per-token stand-ins with the shapes of the real ops.
-    def hc_pre(self, residual, fn, scale, base, norm_weight=None, norm_eps=0.0):
+    def _pre(self, residual, fn, scale, base, norm_weight=None, norm_eps=0.0):
         flat = residual.reshape(residual.shape[0], -1)
         projected = _token_linear(flat, fn)
         mix = torch.sigmoid(projected * scale[0] + base)              # (T, N)
@@ -378,13 +378,15 @@ class Layer(torch.nn.Module):
         x = x * torch.rsqrt(x.pow(2).mean(-1, keepdim=True) + norm_eps) * norm_weight
         return mix.unsqueeze(-1), comb, x
 
+    hc_pre = _pre
+
     def hc_post(self, x, residual, post, comb):
         return torch.einsum("tij,tjh->tih", comb, residual) + post * x.unsqueeze(1)
 
     def hc_fused_post_pre(self, x, residual, post, comb, fn, scale, base, norm_weight=None,
                           norm_eps=0.0):
         res = self.hc_post(x, residual, post, comb)
-        post2, comb2, x2 = self.hc_pre(res, fn, scale, base, norm_weight, norm_eps)
+        post2, comb2, x2 = self._pre(res, fn, scale, base, norm_weight, norm_eps)
         return res, post2, comb2, x2
 
 
@@ -398,9 +400,8 @@ def test_mhc_fixture_is_exact_across_token_partitions(tokens):
     kwargs = dict(norm_weight=layer.input_layernorm.weight.data,
                   norm_eps=layer.input_layernorm.variance_epsilon)
     full = (*layer.hc_pre(residual, *args, **kwargs), _token_linear(residual.flatten(1), args[0]))
-    # One token per call fixes the reference operation shape independently of TP.
-    per_token = [(*layer.hc_pre(row[None], *args, **kwargs),
-                  _token_linear(row.flatten()[None], args[0])) for row in residual]
+    per_token = [(*layer.hc_pre(row[None], *args, **kwargs), _token_linear(row.flatten()[None], args[0]))
+                 for row in residual]
     for index, actual in enumerate(full):
         expected = torch.cat([result[index] for result in per_token])
         assert torch.equal(actual, expected), (index, (actual - expected).abs().max())
