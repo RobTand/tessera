@@ -542,6 +542,17 @@ READABLE_FACTS = {
 }
 
 
+def test_routed_e2m1_lane_admits_whole_tp1_window_unit():
+    from tessera.serving.ext import ROUTED_FUSED_E2M1_LANE_REQUIRES
+    from tessera.serving.scheme import decide_lane_requirements
+
+    facts = dict(READABLE_FACTS, plane="LUT", grid_arity=2, start_state=False,
+                 structure="routed_moe")
+    assert decide_lane_requirements(
+        "native_routed_fused_window_e2m1", ROUTED_FUSED_E2M1_LANE_REQUIRES, facts) == []
+    assert "start_state" not in ROUTED_FUSED_E2M1_LANE_REQUIRES
+
+
 def _shard_reparse():
     """A REAL TP row shard of the readable fixture, reparsed from its own bytes.
 
