@@ -40,6 +40,13 @@ def new_unit(scope):
                       "signed_zero_diffs": 0}}
 
 
+def finish_unit(unit):
+    unit["outcome"] = outcome(unit)
+    unit["decoder_bit_exact"] = unit["outcome"] == "PASS" and unit["role"] == "unit"
+    unit["unattested_reason"] = unit["unattested"]
+    unit["reasons"] = unit["findings"] + unit["invalid"] + unit["unattested"]
+
+
 def compare_output(unit, case, got, ref, mask=None, operands=None):
     import torch
 
@@ -349,6 +356,38 @@ def cell_verdicts(units):
     return result
 
 
+def planned_units(contract, image_digest, population, manifest):
+    """Enumerate every expected unit before a loader or native call can fail."""
+    from experiments.numerics_rows.cases import admitted_units
+
+    modules = {(m["root"], m["name"]): m for m in manifest["modules"]}
+    names = [(e["root"], e["name"]) for e in population["modules"]]
+    if len(modules) != len(manifest["modules"]) or set(names) != set(modules) or len(set(names)) != len(names):
+        raise Invalid("case manifest modules differ from the population")
+    groups = []
+    for entry in population["modules"]:
+        whole = modules[entry["root"], entry["name"]]
+        for cut in ({"rank": 0, "size": 1}, {"rank": 0, "size": 2}, {"rank": 1, "size": 2}):
+            matching = [c for c in whole["cuts"] if c["tp"] == cut]
+            if len(matching) != 1 or not matching[0]["m_configs"]:
+                raise Invalid("case manifest omitted or repeated a required cut or M configuration")
+            module, units = {**whole, **matching[0]}, []
+            for config in module["m_configs"]:
+                scopes = admitted_units(contract, image_digest, entry["contract_family"], module["structure"], module["q256"], entry["pair"], config["M"])
+                if not scopes:
+                    raise Invalid("population pair has no matching contract unit")
+                for scope in scopes:
+                    unit = new_unit({**scope, "symbol": entry["pair"][0], "decoder": entry["pair"][1], "rung": module["q256"],
+                                     "m_config": config, "tp": dict(cut),
+                                     "arm": {"selector_env": entry.get("selector_env", {}), "profiler_kernels": []}})
+                    if cut["size"] > 1 and entry["contract_family"] != "TESSERA_E4M3_K1":
+                        unit["role"], unit["admitted_by_v68"] = "observation", False
+                    finish_unit(unit)
+                    units.append(unit)
+            groups.append((entry, module, cut, units))
+    return groups
+
+
 def main():
     p = argparse.ArgumentParser(description=__doc__)
     for name in ("source", "out", "manifest", "population", "build", "q1", "h1", "rule", "freeze"):
@@ -367,6 +406,9 @@ def main():
     except Exception as error:
         receipt["row"].update(utc_end=datetime.now(timezone.utc).isoformat(), exit_status=3, stop_cause=str(error))
         receipt["findings"].append(traceback.format_exc())
+        for unit in receipt["units"]:
+            finish_unit(unit)
+        receipt["cells"] = cell_verdicts(receipt["units"])
         write_json(args.out / "numerics_row.json", receipt)
         raise SystemExit(3) from error
 
@@ -378,7 +420,7 @@ def run(args, receipt):
     import torch
     from experiments import dense_fused_oracle as dense
     from experiments.numerics_rows.h1 import install_libraries, negative_controls
-    from experiments.numerics_rows.cases import admitted_units, DTable
+    from experiments.numerics_rows.cases import DTable
     from experiments.numerics_rows.routed import Routed
     from experiments.numerics_rows import run_routed
     from experiments.numerics_rows.scale_launch import check as scale_index_checks
@@ -406,10 +448,13 @@ def run(args, receipt):
     if h1.get("preconditions_confirmed") is not True or h1["build_sha256"] != sha256(args.build) or h1["P1"]["mismatches"] or any(not v.get("P4") or not v.get("P5", True) for v in h1["libraries"].values()):
         raise Invalid("H1 did not confirm this binary set before the freeze")
     q1 = json.loads(args.q1.read_text())
+    contract = json.loads((args.source / "src/tessera/serving/runtime_contract.json").read_text())
+    groups = planned_units(contract, runtime["image_digest"], population, manifest)
+    receipt["units"] = [unit for _, _, _, units in groups for unit in units]
+    write_json(args.out / "numerics_row.json", receipt)
     loaded = install_libraries(built["libraries"])
     if built["commit"] != commit or built["runtime"]["image_digest"] != runtime["image_digest"]:
         raise Invalid("library build does not match the cell")
-    contract = json.loads((args.source / "src/tessera/serving/runtime_contract.json").read_text())
     slices = {r["key"]: match_library(r) for r in built["libraries"]}
     for library in built["libraries"]:
         d, = [t for t in q1["tables"] if t["key"] == library["key"]]
@@ -431,60 +476,47 @@ def run(args, receipt):
     exit_status = 0
     try:
         with dense.init_vllm_world1():
-            for entry, whole_module in zip(population["modules"], manifest["modules"]):
-                cuts = ({"rank": 0, "size": 1}, {"rank": 0, "size": 2}, {"rank": 1, "size": 2})
-                for cut in cuts:
-                    local, = [c for c in whole_module["cuts"] if c["tp"] == cut]
-                    module = {**whole_module, **local}
-                    with dense.e4m3_instruction("f16" if entry["library"] == "e4m3" else "e4m3"), dense.dense_lane(entry["library"] != "triton"):
-                        routed = module["structure"] == "routed_moe"
-                        key = entry["library"] if entry["library"] != "triton" else "e4m3mma"
-                        table = DTable(next(t for t in q1["tables"] if t["key"] == key)) if routed else None
-                        adapter = Routed(entry, cut, module, table) if routed else Dense(entry, cut, module)
-                        receipt["modules"].append(module_receipt(module, adapter, routed))
-                        for config in module["m_configs"]:
-                            for scope in admitted_units(contract, runtime["image_digest"], entry["contract_family"], module["structure"], module["q256"], entry["pair"], config["M"]):
-                                unit = new_unit({**scope, "symbol": entry["pair"][0], "decoder": entry["pair"][1], "rung": module["q256"], "m_config": config,
-                                                 "tp": dict(cut), "arm": {"selector_env": entry.get("selector_env", {}), "profiler_kernels": []}})
-                                receipt["units"].append(unit)
-                                if cut["size"] > 1 and entry["contract_family"] != "TESSERA_E4M3_K1":
-                                    unit["role"], unit["admitted_by_v68"] = "observation", False
-                                unit["tp"].update(tp_facts(adapter, module, routed))
-                                recorder = BoundaryRecorder(torch.cuda.synchronize, unit["boundaries"])
-                                try:
-                                    if receipt["inputs"]["reference_selftest"]["mismatches"] or not all(c["flagged_exactly"] for c in receipt["negative_controls"]):
-                                        raise Invalid("reference self-test or mutated reference control failed")
-                                    if any(not role["matches_attested_wire"] for role in module["roles"]):
-                                        raise Invalid("wire stamp differs from attested_wire")
-                                    unit["scales"] = scale_receipt(adapter, routed)
-                                    ready = check_preconditions(unit, scale_equal=unit["scales"]["equal"], routed=routed,
-                                        slice_matched=slices[key]["matched"], monotonic=next(t for t in q1["tables"] if t["key"] == key)["d_nondecreasing_0_L"])
-                                    if not ready:
-                                        unit["completed"] = True
+            for entry, module, cut, units in groups:
+                with dense.e4m3_instruction("f16" if entry["library"] == "e4m3" else "e4m3"), dense.dense_lane(entry["library"] != "triton"):
+                    routed = module["structure"] == "routed_moe"
+                    key = entry["library"] if entry["library"] != "triton" else "e4m3mma"
+                    table = DTable(next(t for t in q1["tables"] if t["key"] == key)) if routed else None
+                    adapter = Routed(entry, cut, module, table) if routed else Dense(entry, cut, module)
+                    receipt["modules"].append(module_receipt(module, adapter, routed))
+                    for unit in units:
+                        unit["tp"].update(tp_facts(adapter, module, routed))
+                        recorder = BoundaryRecorder(torch.cuda.synchronize, unit["boundaries"])
+                        try:
+                            if receipt["inputs"]["reference_selftest"]["mismatches"] or not all(c["flagged_exactly"] for c in receipt["negative_controls"]):
+                                raise Invalid("reference self-test or mutated reference control failed")
+                            if any(not role["matches_attested_wire"] for role in module["roles"]):
+                                raise Invalid("wire stamp differs from attested_wire")
+                            unit["scales"] = scale_receipt(adapter, routed)
+                            ready = check_preconditions(unit, scale_equal=unit["scales"]["equal"], routed=routed,
+                                slice_matched=slices[key]["matched"], monotonic=next(t for t in q1["tables"] if t["key"] == key)["d_nondecreasing_0_L"])
+                            if not ready:
+                                unit["completed"] = True
+                            else:
+                                verify_cases(adapter, unit, module, q1, table)
+                                with native_boundaries(loaded, recorder):
+                                    if routed:
+                                        run_routed.run(adapter, unit, module, recorder)
                                     else:
-                                        verify_cases(adapter, unit, module, q1, table)
-                                        with native_boundaries(loaded, recorder):
-                                            if routed:
-                                                run_routed.run(adapter, unit, module, recorder)
-                                            else:
-                                                dense_cases(adapter, unit, module, recorder)
-                                                dense_diagnostics(adapter, unit, recorder)
-                                            scale_index_checks(adapter, unit, module, recorder)
-                                            profile_unit(adapter, unit, recorder, routed=routed)
-                                        dispatch(unit, entry["pair"], adapter.pairs(),
-                                                 unit_libraries(adapter, routed),
-                                                 {r["library"]["sha256"] for r in built["libraries"] if r["key"] == key}, adapter.info.get("lane_reason"))
-                                        unit["completed"] = True
-                                except BoundaryError as error:
-                                    record_cuda_error(unit, error)
-                                except Invalid as error:
-                                    unit["invalid"].append(str(error))
-                                    unit["completed"] = True
-                                unit["outcome"] = outcome(unit)
-                                unit["decoder_bit_exact"] = unit["outcome"] == "PASS" and scope["role"] == "unit"
-                                unit["unattested_reason"] = unit["unattested"]
-                                unit["reasons"] = unit["findings"] + unit["invalid"] + unit["unattested"]
-                                write_json(args.out / "numerics_row.json", receipt)
+                                        dense_cases(adapter, unit, module, recorder)
+                                        dense_diagnostics(adapter, unit, recorder)
+                                    scale_index_checks(adapter, unit, module, recorder)
+                                    profile_unit(adapter, unit, recorder, routed=routed)
+                                dispatch(unit, entry["pair"], adapter.pairs(),
+                                         unit_libraries(adapter, routed),
+                                         {r["library"]["sha256"] for r in built["libraries"] if r["key"] == key}, adapter.info.get("lane_reason"))
+                                unit["completed"] = True
+                        except BoundaryError as error:
+                            record_cuda_error(unit, error)
+                        except Invalid as error:
+                            unit["invalid"].append(str(error))
+                            unit["completed"] = True
+                        finish_unit(unit)
+                        write_json(args.out / "numerics_row.json", receipt)
     except Exception as error:
         receipt["row"]["stop_cause"] = str(error)
         receipt["findings"].append(traceback.format_exc())
@@ -493,10 +525,7 @@ def run(args, receipt):
         receipt["row"]["stop_cause"] = receipt["row"]["stop_cause"] or "no population units ran"
         exit_status = 3
     for unit in receipt["units"]:
-        unit["outcome"] = outcome(unit)
-        unit["decoder_bit_exact"] = unit["outcome"] == "PASS" and unit["role"] == "unit"
-        unit["unattested_reason"] = unit["unattested"]
-        unit["reasons"] = unit["findings"] + unit["invalid"] + unit["unattested"]
+        finish_unit(unit)
     if any(unit["outcome"] in ("FAIL", "STOPPED", "INVALID") for unit in receipt["units"]):
         exit_status = 3
     receipt["units"].extend(historical_units(contract, runtime, receipt["units"]))
