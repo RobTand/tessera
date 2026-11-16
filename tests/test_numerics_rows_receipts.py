@@ -10,7 +10,27 @@ import pytest
 from experiments.numerics_rows.common import write_json
 from experiments.numerics_rows import h1
 from experiments.numerics_rows import row
-from experiments.numerics_rows.common import IMAGES, Invalid, artifact_limit, check_runtime
+from experiments.numerics_rows.common import IMAGES, Invalid, artifact_limit, check_runtime, load_build
+
+
+@pytest.mark.parametrize("keys", (("e4m3mma", "e4m3"), ("value",), ("e2m1",), ("e4m3", "e4m3"), ()))
+def test_img_n_build_selects_its_quantizers_and_h1_library_scope(tmp_path, keys):
+    runtime = copy.deepcopy(IMAGES["N"])
+    path = tmp_path / "build.json"
+    write_json(path, {"runtime": runtime, "libraries": [{"key": key} for key in keys]})
+    if keys in (("e4m3mma", "e4m3"), ("value",)):
+        built = load_build(path, runtime)
+        assert runtime["libraries"] == [r["key"] for r in built["libraries"]] == list(keys)
+    else:
+        with pytest.raises(Invalid, match="build libraries"):
+            load_build(path, runtime)
+
+
+def test_build_from_another_image_is_refused(tmp_path):
+    path = tmp_path / "build.json"
+    write_json(path, {"runtime": IMAGES["G"], "libraries": [{"key": "e4m3mma"}]})
+    with pytest.raises(Invalid, match="build runtime"):
+        load_build(path, copy.deepcopy(IMAGES["N"]))
 
 
 def test_numpy_scalars_and_arrays_are_exact_json_values(tmp_path):

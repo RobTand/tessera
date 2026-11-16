@@ -18,7 +18,7 @@ IMAGES = {
           "libraries": ["e2m1", "e4m3mma", "e4m3"]},
     "N": {"local_id": "acc684c06ec7", "image_digest": "sha256:5be13705acaecc7b4aaf342a84f80d67844c9970ff8375bf9fbeecc9c98ce84a",
           "vllm": "0.30.1rc1.dev336+gaf5b4857e.d20260929", "torch": "2.13.0+cu130",
-          "libraries": ["value"]},
+          "libraries": ["value", "e4m3mma", "e4m3"]},
 }
 
 
@@ -78,6 +78,17 @@ def artifact_limit(root):
     if math.isnan(limit) or limit <= 0:
         raise Invalid("artifact swiglu_limit must be positive")
     return limit
+
+
+def load_build(path, runtime):
+    built = json.loads(Path(path).read_text())
+    if any(built["runtime"][key] != runtime[key] for key in ("image_digest", "local_id", "vllm", "torch")):
+        raise Invalid("build runtime differs from this cell image")
+    keys = [record["key"] for record in built["libraries"]]
+    if not keys or len(set(keys)) != len(keys) or not set(keys) <= set(runtime["libraries"]):
+        raise Invalid("build libraries are empty, repeated, or unavailable in this image")
+    runtime["libraries"] = keys
+    return built
 
 
 def register_native_ops(image):

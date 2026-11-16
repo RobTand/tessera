@@ -11,7 +11,7 @@ import subprocess
 import sys
 import traceback
 
-from experiments.numerics_rows.common import BoundaryError, BoundaryRecorder, check_runtime, check_source, register_native_ops, sha256, write_json
+from experiments.numerics_rows.common import BoundaryError, BoundaryRecorder, check_runtime, check_source, load_build, register_native_ops, sha256, write_json
 from experiments.numerics_rows.reference import compare, selftest
 
 
@@ -407,14 +407,14 @@ def run_checks(args, report):
     report["negative_controls"] = negative_controls()
     save()
     recorder = BoundaryRecorder(torch.cuda.synchronize, report["boundaries"])
-    built = json.loads(args.build.read_text())
+    built = load_build(args.build, report["runtime"])
     loaded = install_libraries(built["libraries"])
     report["P3"] = {}
     for record in built["libraries"]:
         report["P3"][record["key"]] = match_library(record)
         save()
     with init_vllm_world1():
-        report["P2"] = p2_ties(recorder) if args.image == "G" else {"result": "not applicable to value-only image"}
+        report["P2"] = p2_ties(recorder) if set(loaded) != {"value"} else {"result": "not applicable to value-only build"}
         save()
         for key, lib in loaded.items():
             entry = report["libraries"].setdefault(key, {})

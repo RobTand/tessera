@@ -15,16 +15,21 @@ def main():
     p.add_argument("--source", type=Path, required=True)
     p.add_argument("--out", type=Path, required=True)
     p.add_argument("--image", choices=IMAGES, required=True)
+    p.add_argument("--library", action="append", choices=("e2m1", "e4m3mma", "e4m3", "value"))
     args = p.parse_args()
     commit = check_source(args.source)
     runtime = check_runtime(args.image)
+    selected = args.library or runtime["libraries"]
+    if len(set(selected)) != len(selected) or not set(selected) <= set(runtime["libraries"]):
+        p.error("libraries must be distinct and available in the cell image")
+    runtime["libraries"] = selected
     sys.path.insert(0, str(args.source / "src"))
     from tessera.routed_fused import LIBRARIES, _cflags
     from torch.utils.cpp_extension import load
 
     args.out.mkdir(parents=True, exist_ok=True)
     records = []
-    for key in IMAGES[args.image]["libraries"]:
+    for key in selected:
         name = "tessera_routed_fused_e2m1" if key == "e2m1" else LIBRARIES[key][0]
         flags = _cflags("sm_121", key in ("e4m3", "e4m3mma"), key == "e4m3mma", key == "e2m1")
         build = args.out / name
