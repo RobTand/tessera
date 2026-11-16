@@ -21,8 +21,9 @@ def f32_value(bits):
 
 def rn_bits(value, precision=24, emin=-126, emax=127):
     """Round a rational with integer arithmetic, including ties and subnormals."""
+    negative_zero = isinstance(value, float) and value == 0 and math.copysign(1.0, value) < 0
     value = F(value)
-    sign = int(value < 0)
+    sign = int(value < 0 or negative_zero)
     value = abs(value)
     if not value:
         return sign << 31
@@ -50,7 +51,10 @@ def bf16(value):
 
 
 def multiply(a, b):
-    return rn32(F(a) * F(b))
+    product = F(a) * F(b)
+    if not product:
+        return math.copysign(0.0, math.copysign(1.0, a) * math.copysign(1.0, b))
+    return rn32(product)
 
 
 def exact_input(products):
@@ -87,7 +91,8 @@ def selftest(samples=1_000_000):
         exponent = rng.randrange(-149, 104)
         numerator = rng.randrange(1, 2**24)
         if i % 2 == 0:
-            value = F(2 * numerator + 1) * power(exponent - 1)
+            # Midpoint between adjacent normal FP32 values, including an odd/even lower endpoint.
+            value = F(2 * (2**23 + numerator % 2**23) + 1) * power(rng.randrange(-126, 127) - 24)
             ties += 1
         else:
             value = F(rng.randrange(1, 2**40)) * power(exponent - 16)

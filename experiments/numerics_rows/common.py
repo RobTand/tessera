@@ -59,8 +59,11 @@ class BoundaryRecorder:
 
     def __init__(self, synchronize, records):
         self.synchronize, self.records = synchronize, records
+        self.enabled = True
 
     def call(self, name, kind, function):
+        if not self.enabled:
+            return function()
         record = {"call": name, "kind": kind, "sync_before": None, "sync_after": None}
         self.records.append(record)
         try:
@@ -83,5 +86,7 @@ class BoundaryRecorder:
             failure = error
         if failure is not None:
             record["message"] = str(failure)
+            if isinstance(failure, BoundaryError):
+                raise failure
             raise BoundaryError(record, failure) from failure
         return result

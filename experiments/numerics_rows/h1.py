@@ -126,9 +126,19 @@ def routed_preconditions(key, recorder):
         parallel.tp_rank, parallel.tp_size = rank, 2
         layer, method, info = routed.build_after(family, scheme, blobs, {}, 2, cfg, 10.0, "synthetic.experts")
         native = method._native
-        builds.append({"rank": rank, "build": info, "has_init": bool(native.gate.has_init.any()),
+        from tessera.fused import parse_fused
+        from tessera.unit_artifact import parse_unit_artifact
+        scale_equal = True
+        for projection, field in (("gate_proj", "gate"), ("up_proj", "up"), ("down_proj", "down")):
+            expected = []
+            for blob in blobs[projection]:
+                unit = parse_unit_artifact(parse_fused(blob)[0].blob, device="cuda").unit
+                value = unit.scale_rows.float() * float(unit.scale_global)
+                expected.append(value if projection == "down_proj" else value[rank * 256:(rank + 1) * 256])
+            scale_equal &= torch.equal(getattr(native, field).scale_all.view(torch.int32), torch.stack(expected).view(torch.int32))
+        builds.append({"rank": rank, "build": info, "P4_equal": scale_equal, "has_init": bool(native.gate.has_init.any()),
                        "start_state_sha256": __import__("hashlib").sha256(native.gate.init_all.cpu().numpy().tobytes()).hexdigest()})
-    return {"P5": len(builds) == 2, "ranks": builds}
+    return {"P4": all(b["P4_equal"] for b in builds), "P5": len(builds) == 2, "ranks": builds}
 
 
 def wrong_scale_index(key, recorder):
@@ -273,9 +283,17 @@ def main():
     for where in ("inside", "outside"):
         run = subprocess.run([sys.executable, "-m", "experiments.numerics_rows.h1", "--cuda-control", where], capture_output=True, text=True)
         report["cuda_controls"].append({"where": where, "exit_status": run.returncode, "stdout": run.stdout, "stderr": run.stderr})
+    report["preconditions_confirmed"] = (
+        not report["P1"]["mismatches"] and (args.image == "N" or report["P2"].get("result") == "PASS")
+        and all(p["matched"] for p in report["P3"].values())
+        and all(v.get("P4") and v.get("P5", True)
+                and (v.get("routed") is None or v["routed"]["P4"] and v["routed"]["P5"])
+                and v.get("wrong_scale_detected", True) for v in report["libraries"].values())
+        and all(c["exit_status"] == 0 for c in report["cuda_controls"])
+        and all(v.get("subnormal_operand", {}).get("result") != "FAIL" for v in report["libraries"].values())
+        and all(c["flagged_exactly"] for c in report["negative_controls"]))
     write_json(args.out / "h1.json", report)
-    raise SystemExit(3 if report["P1"]["mismatches"] or any("error" in v for v in report["libraries"].values())
-                     or any(v["exit_status"] for v in report["cuda_controls"]) else 0)
+    raise SystemExit(0 if report["preconditions_confirmed"] else 3)
 
 
 if __name__ == "__main__":

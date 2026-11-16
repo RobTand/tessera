@@ -36,6 +36,15 @@ def artifact_scales(root):
             result[key] = value
     if not result:
         raise ValueError("artifact has no input_global_scale tensors")
+    from tessera.serving.nvfp4_moe_route import _static_input_global
+    import torch
+    for module, scheme in store.schemes.items():
+        if scheme.get("structure") != "routed_moe":
+            continue
+        for name, projections in (("gs13", ("gate_proj", "up_proj")), ("gs2", ("down_proj",))):
+            values = [result[f"{module}.{e}.{projection}.input_global_scale"]
+                      for e in range(scheme["experts"]) for projection in projections]
+            result[f"{module}:{name}:runtime_reduction"] = float(_static_input_global(torch.tensor(values, dtype=torch.float32), "cpu"))
     return result
 
 
