@@ -54,7 +54,7 @@ The selector does not open the receipt or verify its commit or kernel build.
 The replay supplies byte and config checks; the receipts and scope file retain measured source provenance.
 
 Mint four E2M1 cells on IMG-G and four BF16 cells on IMG-N,
-dense and routed, decode and batch. BF16 dense has 5 measured rungs (832, 880, 960, 1024, 1088); 769-1279 admitted by the run-table rule (v52).
+dense and routed, decode and batch. BF16 dense rungs: 5 measured (832, 880, 960, 1024, 1088); 769-1279 admitted by the run-table rule (v52).
 Historical folded and TCQ records retain their old identities and cannot qualify current pairs.
 Historical E4M3 replay tests retain their original scopes. Current BF16 replay has its own test.
 The current experimental execution registry is unchanged.

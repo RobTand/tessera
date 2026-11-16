@@ -96,11 +96,18 @@ def test_malformed_or_unmeasured_scope_refuses(field, value):
 
 def test_img_n_cells_refuse_old_folded_records_on_the_same_image():
     _, receipt, _, rungs = inputs('bf16')
+    contract = load_serving_contract()
+    assert agreement(receipt, rungs, contract)[1] == []
     old = json.loads((ROOT / 'experiments/results/glm53_u1_stub_b_nightly_tp1_eager_census.json').read_text())
     assert old['runtime']['image'] == receipt['runtime']['image']
     records = {phase: {name: record for name, record in rows.items()
                         if record['policy'].startswith('TESSERA_BF16:')}
                for phase, rows in old['records'].items()}
-    assert all(records.values())
+    assert all(len(rows) == 9 for rows in records.values())
+    assert all(record['decoder'].endswith('_folded')
+               for rows in records.values() for record in rows.values())
     old['records'] = records
-    assert agreement(old, rungs, load_serving_contract())[1]
+    block, problems = agreement(old, rungs, contract)
+    assert len(problems) == 18 and all('does not publish' in p for p in problems)
+    assert all(row['covered_by_cell'] == row['modules'] > 0
+               for per in block['structures'].values() for row in per['phases'].values())

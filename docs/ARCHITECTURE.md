@@ -339,7 +339,7 @@ Its consumer passes that owner explicitly. Each class reports its real tables, w
 Contract v62 withdraws eight historical folded BF16 cells, their wire/rung
 attestations and the BF16 TP2 qualification. It does not relabel receipts.
 Contract v68 re-qualifies four BF16 cells on IMG-N from the current BF16-only stub census.
-BF16 dense has 5 measured rungs (832, 880, 960, 1024, 1088); 769-1279 admitted by the run-table rule (v52). Routed R1024 uses the current class decoder.
+BF16 dense rungs: 5 measured (832, 880, 960, 1024, 1088); 769-1279 admitted by the run-table rule (v52). Routed R1024 uses the current class decoder.
 The changed T16 D41 classes need new measurements on the merged build before the next allocation uses them.
 Four E2M1 cells on IMG-G cover R896 with the native fused E2M1 dense and routed pairs.
 Option S scopes those pairs to the measured images, eager resident execution and census rungs.
