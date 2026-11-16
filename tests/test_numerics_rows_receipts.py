@@ -1042,7 +1042,8 @@ def row_execution(tmp_path, monkeypatch):
             directory.mkdir(parents=True, exist_ok=True)
             return {"identity_equal": True, "raw_file_audit": {"unexplained_bytes": 0}, "cubin_audits": [],
                     "sass_token_masked_equal": True, "ptx": {}}
-        monkeypatch.setattr(serving_build, "compare_binaries", comparison)
+        if hasattr(serving_build, "compare_binaries"):
+            monkeypatch.setattr(serving_build, "compare_binaries", comparison)
     monkeypatch.setattr(common, "register_native_ops", lambda image: {"result": "PASS"})
     monkeypatch.setattr(common, "source_digest", lambda *args: "source-hash")
     monkeypatch.setattr(row.subprocess, "check_output", lambda *args, **kwargs: "test-value\n")
