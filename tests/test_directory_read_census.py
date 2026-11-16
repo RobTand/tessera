@@ -29,9 +29,10 @@ ROOT = Path(__file__).resolve().parents[1]
 # records each traced process writes to a directory under TEST_TMPDIR. Both
 # directories exist only at run time; neither has a repository base.
 # tessera#1701 deleted guarded_reexport, whose ast.parse call marked the resolver as
-# source-executing: its 12 existing reads with caller-supplied bases now count (no new read).
-_UNNAMED_DIRECTORY_READ_MODULES = 118
-_UNNAMED_DIRECTORY_READ_SITES = 183
+# source-executing, so its existing caller-based reads now count: source_dependencies.py
+# :532 (base.glob) and :758 (os.scandir). ast.walk no longer counts as a directory walk.
+_UNNAMED_DIRECTORY_READ_MODULES = 117
+_UNNAMED_DIRECTORY_READ_SITES = 172
 
 
 def _unnamed_directory_reads(root):

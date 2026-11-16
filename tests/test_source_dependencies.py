@@ -1311,3 +1311,13 @@ def test_an_aliased_source_executor_makes_a_reader_an_unknown_importer(tmp_path,
     source = binding + "\ndef consume(path):\n    text = path.read_text()\n    return " + call + "\n"
     _, unknown = _scan(source, tmp_path)
     assert unknown, "a recognized source-execution call classifies the module that reads"
+
+
+def test_only_a_filesystem_walk_is_a_directory_read(tmp_path):
+    """ast.walk walks a syntax tree; os.walk with a caller's base is an unnamed directory read."""
+    source = ("import ast\nimport os\n"
+              "def nodes(tree):\n    return list(ast.walk(tree))\n"
+              "def files(base):\n    return list(os.walk(base))\n")
+    unnamed = []
+    file_imports(ast.parse(source), tmp_path / "consumer.py", tmp_path, unnamed=unnamed)
+    assert unnamed == [6]

@@ -58,6 +58,10 @@ _READ_METHODS = {"read_text", "read_bytes", "open"}
 #: ``**`` spelling, which that resolver leaves unbounded -- selected nothing.
 _ENUMERATIONS = {"glob", "iglob", "rglob", "iterdir", "listdir", "scandir", "walk"}
 _KINDS = set(_LOADERS) | _READ_METHODS | _ENUMERATIONS
+#: Modules whose enumeration calls read the filesystem.  A call named like an
+#: enumeration whose resolved owners are all elsewhere (``ast.walk``) reads no
+#: directory; an owner nothing resolves still counts.
+_FILESYSTEM_OWNERS = ("os.", "glob.", "pathlib.")
 
 
 class _Scope:
@@ -1092,6 +1096,9 @@ def file_imports(tree, path, root, *, executes_source=None, unnamed=None):
             continue
         loader = next(iter(loaders))
         if loader in _ENUMERATIONS:
+            owners = _possible_symbols(call.func, scope)
+            if owners and not any(owner.startswith(_FILESYSTEM_OWNERS) for owner in owners):
+                continue
             refused, links, from_string = [], set(), []
             try:
                 targets = _enumeration_bases(
