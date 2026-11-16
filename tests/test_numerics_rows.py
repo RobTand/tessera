@@ -401,3 +401,15 @@ def test_sparse_dot_bound_keeps_cancellation_and_all_epilogue_scales():
     w = torch.tensor([[3.0, 3.0]], dtype=torch.float64)
     ref, mask, bound = dot_reference(a, w, torch.tensor([0.5]), torch.tensor([4.0]), with_bounds=True)
     assert ref.item() == 0 and bool(mask.item()) and bound.item() == 24
+
+
+def test_q1_checks_both_sign_facts_used_by_gate_separation():
+    import numpy as np
+    from experiments.numerics_rows.quantizers import d_facts
+    gf = np.array([-2, -1, 0, 1, 2], dtype=np.float32)
+    d = np.array([-0.25, -0.125, 0, 0.5, 1], dtype=np.float32)
+    assert all(d_facts(gf, d).values())
+    d[0] = 0.25
+    assert not d_facts(gf, d)["d_nonpositive_negative_gf"]
+    d[3] = -0.5
+    assert not d_facts(gf, d)["nonzero_act_has_uf_sign_positive_gf"]

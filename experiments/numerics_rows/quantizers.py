@@ -110,6 +110,21 @@ def record_quantizer(family, gs, out, boundaries):
     return result
 
 
+def d_facts(gf, d):
+    import numpy as np
+    from experiments.numerics_rows.reference import bf16_array
+
+    nonnegative, negative = gf >= 0, gf < 0
+    signs = True
+    for uf in (np.float32(1), np.float32(-1)):
+        act = bf16_array((d[nonnegative] * uf).astype(np.float32))
+        signs &= bool(np.all((act == 0) | (np.signbit(act) == np.signbit(uf))))
+    return {"d_nondecreasing_0_L": bool(np.all(d[nonnegative][1:] >= d[nonnegative][:-1])),
+            "d_nonpositive_negative_gf": bool(np.all(d[negative] <= 0)),
+            "d_nonnegative_nonnegative_gf": bool(np.all(d[nonnegative] >= 0)),
+            "nonzero_act_has_uf_sign_positive_gf": signs}
+
+
 def probe_table(library, out, limit=10.0):
     import numpy as np
 
@@ -123,11 +138,10 @@ def probe_table(library, out, limit=10.0):
     d = np.fromfile(target, dtype="<f4")
     if d.shape != gf.shape or not np.isfinite(d).all():
         raise ValueError("probe returned a nonfinite or incomplete D table")
-    mask = gf >= 0
     return {"key": library["key"], "L_bits": struct.unpack("<I", struct.pack("<f", limit))[0],
             "dom_size": len(gf), "dom_path": str(source), "dom_sha256": sha256(source),
             "d_table_path": str(target), "d_table_sha256": sha256(target),
-            "d_nondecreasing_0_L": bool(np.all(d[mask][1:] >= d[mask][:-1])),
+            **d_facts(gf, d),
             "library_so_sha256": library["library"]["sha256"], "probe_sha256": library["probe"]["sha256"]}
 
 

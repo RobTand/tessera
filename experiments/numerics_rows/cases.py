@@ -141,6 +141,11 @@ class DTable:
                 raise ValueError("changed D table")
         domain = np.fromfile(record["dom_path"], dtype="<f4")
         values = np.fromfile(record["d_table_path"], dtype="<f4")
+        from experiments.numerics_rows.quantizers import d_facts
+
+        self.facts = d_facts(domain, values)
+        if not all(value for name, value in self.facts.items() if name != "d_nondecreasing_0_L"):
+            raise ValueError("D table does not establish the gate sign facts")
         self.table = {f32_bits(float(x)): float(y) for x, y in zip(domain, values)}
         self.limit = f32_value(record["L_bits"])
 
@@ -299,7 +304,8 @@ def column_coverage(weights, scales, family, quantizer, *, peer=None, peer_scale
                 continue
             if stage == "gate":
                 gf = bf16_array(((aq * w).astype(np.float32) * np.float32(a_scale) * scales).astype(np.float32))
-                legal &= ((gf > 0) & (gf < table.limit)) | (actual == 0)
+                uf = np.clip(bf16_array(((aq * peer[:, column]).astype(np.float32) * np.float32(a_scale) * peer_scales).astype(np.float32)), -table.limit, table.limit)
+                legal &= ((gf > 0) & (gf < table.limit) & (np.signbit(actual) == np.signbit(uf))) | (actual == 0)
             if stage == "up":
                 g = bf16_array(((aq * peer[:, column]).astype(np.float32) * np.float32(a_scale) * peer_scales).astype(np.float32))
                 legal &= np.asarray([table(float(min(x, table.limit))) != 0 for x in g])
