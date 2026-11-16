@@ -73,6 +73,10 @@ def test_the_change_does_not_deepen_the_graph(tessera, head, capsys):
     assert code == 0
 
 
+def test_test_to_test_edges_are_strict(tessera):
+    assert json.loads((ROOT / tessera.BASELINE).read_text()).get('test_to_test', 'strict') == 'strict'
+
+
 def test_the_baseline_stores_no_edge_list(tessera):
     """New edges are judged by the base revision's graph against the head's. An
     edge list stored in the baseline goes stale when master gains edges through
