@@ -11,6 +11,26 @@ from experiments.numerics_rows.common import Invalid, sha256, write_json
 OUTCOMES = ("FAIL", "INVALID", "STOPPED", "UNATTESTED", "PASS")
 
 
+def rule_unit_id(unit):
+    """Project rows section 2 launch parameters; M and tensor ranges are evidence."""
+    config = unit["m_config"]
+    fields = (("triton_shape",) if unit["decoder"] == "native_window_gemm" else
+              ("superblock_width",) if unit.get("structure") == "routed_moe" else ("k_split", "last_tile_partial"))
+    return [unit[k] for k in ("cell", "symbol", "decoder", "rung")] + [
+        {k: config[k] for k in fields}, {k: unit["tp"][k] for k in ("size", "rank")}]
+
+
+def execution_identity(receipt):
+    fields = {"tool_commit": receipt["tool"]["commit"], "tool_tree_sha256": receipt["tool"]["tree_sha256"],
+              "image_digest": receipt["runtime"]["image_digest"], "source_commit": receipt["tessera"]["commit"],
+              "contract_sha256": receipt["tessera"]["contract_sha256"], "build_sha256": receipt["inputs"]["build_sha256"],
+              "h1_sha256": receipt["rule"]["h1_sha256"], "rule_sha256": receipt["rule"]["sha256"],
+              "q1_table_sha256": receipt["inputs"]["q1_table_sha256"]}
+    if any(not isinstance(v, str) or not v for v in fields.values()):
+        raise Invalid("join execution identity is incomplete")
+    return fields
+
+
 def join(population, digest, manifests, receipts):
     from experiments.numerics_rows.row import unit_identity
 
@@ -30,20 +50,29 @@ def join(population, digest, manifests, receipts):
         if selected != expected:
             raise Invalid("join requires every signed module exactly once")
     cases = dict(manifests)
-    units = {}
+    units, execution = {}, None
     for receipt_sha, receipt in receipts:
+        if not receipt["row"].get("utc_end") or type(receipt["row"].get("exit_status")) is not int:
+            raise Invalid("join requires finished row receipts")
+        identity = execution_identity(receipt)
+        if execution is not None and execution != identity:
+            raise Invalid("joined rows have different execution identities")
+        execution = identity
         scope = receipt["inputs"]
         case = cases.get(scope["case_manifest_sha256"])
         if case is None or case["selected_modules"] != scope["selected_modules"] or not receipt["units"]:
             raise Invalid("row has no matching C1 manifest or unit receipts")
+        if any(case.get(k) != identity[k] for k in ("source_commit", "contract_sha256", "q1_table_sha256")):
+            raise Invalid("joined C1 and row execution identities differ")
         for unit in receipt["units"]:
             if unit["unit_id"] != unit_identity(unit) or unit["outcome"] not in OUTCOMES:
                 raise Invalid("row unit key or outcome is invalid")
-            key = json.dumps(unit["unit_id"], sort_keys=True, separators=(",", ":"))
-            joined = units.setdefault(key, {"unit_id": unit["unit_id"], "outcome": "PASS", "modules": []})
+            projected = rule_unit_id(unit)
+            key = json.dumps(projected, sort_keys=True, separators=(",", ":"))
+            joined = units.setdefault(key, {"unit_id": projected, "outcome": "PASS", "modules": []})
             joined["outcome"] = min((joined["outcome"], unit["outcome"]), key=OUTCOMES.index)
-            joined["modules"].append({"modules": scope["selected_modules"], "outcome": unit["outcome"], "receipt_sha256": receipt_sha})
-    return {"schema": "tessera.numerics_join.v1", "population_sha256": digest, "selected_modules": sorted(expected),
+            joined["modules"].append({"modules": scope["selected_modules"], "outcome": unit["outcome"], "receipt_sha256": receipt_sha, "source_unit_id": unit["unit_id"]})
+    return {"schema": "tessera.numerics_join.v1", "population_sha256": digest, "execution": execution, "selected_modules": sorted(expected),
             "verdict": min((u["outcome"] for u in units.values()), key=OUTCOMES.index),
             "units": [units[k] for k in sorted(units)]}
 

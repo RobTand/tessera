@@ -632,7 +632,7 @@ def run(args, receipt):
     receipt.update({"rule": rule_receipt(args.rule, freeze, h1, args.h1),
                "runtime": {**runtime, "device": torch.cuda.get_device_name(), "capability": list(torch.cuda.get_device_capability()),
                            "driver": __import__("subprocess").check_output(["nvidia-smi", "--query-gpu=driver_version", "--format=csv,noheader"], text=True).strip()},
-               "tessera": {"commit": commit, "src_tree_sha256": source_digest(args.source), "kernel_source_sha256": KERNEL_SHA256,
+               "tessera": {"commit": commit, "contract_sha256": sha256(args.source / "src/tessera/serving/runtime_contract.json"), "src_tree_sha256": source_digest(args.source), "kernel_source_sha256": KERNEL_SHA256,
                            "serving_compile": compile_paths, "build_provenance_sha256": sha256(args.build_provenance),
                            "build_provenance": str(args.build_provenance),
                            "cell_kernel_build": f"legacy-toolchain/{runtime['vllm']}/{runtime['torch']}", "matches_cell": True},
@@ -640,7 +640,7 @@ def run(args, receipt):
                          "so_sha256": library["probe"]["sha256"], "L_bits": d["L_bits"], "dom_size": d["dom_size"],
                          "d_table_sha256": d["d_table_sha256"], "d_nondecreasing_0_L": d["d_nondecreasing_0_L"],
                          "sass_slice": slices[key], "finite_certificate": DTable(d).finite_certificate},
-               "inputs": {"population_sha256": population_digest, "case_manifest_sha256": sha256(args.manifest),
+               "inputs": {"population_sha256": population_digest, "build_sha256": sha256(args.build), "case_manifest_sha256": sha256(args.manifest),
                           "selected_modules": [entry["name"] for entry in population["modules"]],
                           "q1_table_sha256": sha256(args.q1), "reference_selftest": selftest(device="cuda")},
                "negative_controls": negative_controls()})

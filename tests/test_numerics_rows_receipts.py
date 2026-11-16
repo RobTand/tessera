@@ -1195,12 +1195,15 @@ def joined_inputs():
     manifests, receipts = [], []
     for name in ("a", "b"):
         manifests.append(("c1-" + name, {"population_sha256": "signed", "selected_modules": [name],
-            "generation_finished": True, "modules": [{"name": name}]}))
-        unit = {"cell": "cell", "symbol": "symbol", "decoder": "decoder", "rung": 1024, "m_config": {"M": 1},
+            "generation_finished": True, "source_commit": "source", "contract_sha256": "contract", "q1_table_sha256": "q1", "modules": [{"name": name}]}))
+        unit = {"cell": "cell", "symbol": "symbol", "decoder": "decoder", "rung": 1024, "m_config": {"M": 1, "k_split": 1, "last_tile_partial": True},
                 "tp": {"size": 1, "rank": 0}, "outcome": "PASS",
-                "unit_id": ["cell", "symbol", "decoder", 1024, {"M": 1}, {"size": 1, "rank": 0}]}
+                "unit_id": ["cell", "symbol", "decoder", 1024, {"M": 1, "k_split": 1, "last_tile_partial": True}, {"size": 1, "rank": 0}]}
         receipts.append(("row-" + name, {"inputs": {"population_sha256": "signed", "selected_modules": [name],
-            "case_manifest_sha256": "c1-" + name}, "units": [unit]}))
+            "case_manifest_sha256": "c1-" + name, "build_sha256": "build", "q1_table_sha256": "q1"},
+            "tool": {"commit": "tool", "tree_sha256": "tree"}, "runtime": {"image_digest": "image"},
+            "tessera": {"commit": "source", "contract_sha256": "contract"}, "rule": {"h1_sha256": "h1", "sha256": "rule"},
+            "row": {"utc_end": "finished", "exit_status": 0}, "units": [unit]}))
     return population, "signed", manifests, receipts
 
 
@@ -1281,3 +1284,54 @@ def test_unattributed_cuda_error_rechecks_identity_without_dispatch_failure(row_
     assert scope["arm"]["library_identity_unchanged"] and events[-1] == "identity"
     assert not scope["completed"] and not scope["findings"]
     assert "emitted_pairs" not in scope["arm"]
+
+
+@pytest.mark.parametrize("path", ["tool.commit", "tool.tree_sha256", "runtime.image_digest", "tessera.commit", "tessera.contract_sha256",
+                                  "inputs.build_sha256", "inputs.q1_table_sha256", "rule.h1_sha256", "rule.sha256"])
+def test_join_refuses_mixed_execution_identity(path):
+    from experiments.numerics_rows.join import join
+
+    population, digest, manifests, receipts = joined_inputs()
+    assert join(population, digest, manifests, receipts)["verdict"] == "PASS"
+    owner, field = path.split(".")
+    receipts[1][1][owner][field] = "different"
+    with pytest.raises(Invalid, match="execution identities"):
+        join(population, digest, manifests, receipts)
+
+
+@pytest.mark.parametrize("field", ["source_commit", "contract_sha256", "q1_table_sha256"])
+def test_join_refuses_mixed_manifest_identity(field):
+    from experiments.numerics_rows.join import join
+
+    population, digest, manifests, receipts = joined_inputs()
+    assert join(population, digest, manifests, receipts)["verdict"] == "PASS"
+    manifests[1][1][field] = "different"
+    with pytest.raises(Invalid, match="execution identities"):
+        join(population, digest, manifests, receipts)
+
+
+@pytest.mark.parametrize("field", ["utc_end", "exit_status"])
+def test_join_refuses_unfinished_rows(field):
+    from experiments.numerics_rows.join import join
+
+    population, digest, manifests, receipts = joined_inputs()
+    assert join(population, digest, manifests, receipts)["verdict"] == "PASS"
+    receipts[1][1]["row"][field] = None
+    with pytest.raises(Invalid, match="finished row"):
+        join(population, digest, manifests, receipts)
+
+
+def test_join_projects_launch_configuration_and_tp_rank_instead_of_tensor_geometry():
+    from experiments.numerics_rows.join import join
+
+    population, digest, manifests, receipts = joined_inputs()
+    assert join(population, digest, manifests, receipts)["verdict"] == "PASS"
+    unit = receipts[1][1]["units"][0]
+    unit["tp"].update(cut_axis=1, cut_range=[0, 1024])
+    unit["m_config"].update(M=52, chunk_size=32, superblock_width=64)
+    unit["unit_id"], unit["outcome"] = row.unit_identity(unit), "FAIL"
+    result = join(population, digest, manifests, receipts)
+    assert len(result["units"]) == 1 and result["units"][0]["outcome"] == "FAIL"
+    unit["m_config"]["k_split"] = 2
+    unit["unit_id"] = row.unit_identity(unit)
+    assert len(join(population, digest, manifests, receipts)["units"]) == 2
