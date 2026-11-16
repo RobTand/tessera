@@ -679,6 +679,7 @@ def run(args, receipt):
                                 unit["completed"] = True
                             else:
                                 verify_cases(adapter, unit, module, q1, table)
+                                cases_completed = False
                                 try:
                                     with native_boundaries({key: actual} if actual is not None else {}, recorder):
                                         if routed:
@@ -688,12 +689,16 @@ def run(args, receipt):
                                             dense_diagnostics(adapter, unit, recorder)
                                         scale_index_checks(adapter, unit, module, recorder)
                                         profile_unit(adapter, unit, recorder, routed=routed)
+                                    cases_completed = True
+                                except BoundaryError as error:
+                                    record_cuda_error(unit, error)
                                 finally:
                                     _, after = identify_served(adapter, routed, native_source, args.out / "served-binaries", served_cache)
                                     check_served_after(unit, served, after)
-                                dispatch(unit, entry["pair"], adapter.pairs(),
-                                         after, adapter.info.get("lane_reason"))
-                                unit["completed"] = True
+                                if cases_completed:
+                                    dispatch(unit, entry["pair"], adapter.pairs(),
+                                             after, adapter.info.get("lane_reason"))
+                                    unit["completed"] = True
                         except BoundaryError as error:
                             record_cuda_error(unit, error)
                         except Invalid as error:

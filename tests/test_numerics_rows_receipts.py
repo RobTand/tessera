@@ -1343,3 +1343,23 @@ def test_join_projects_launch_configuration_and_tp_rank_instead_of_tensor_geomet
     unit["m_config"]["k_split"] = 2
     unit["unit_id"] = row.unit_identity(unit)
     assert len(join(population, digest, manifests, receipts)["units"]) == 2
+
+
+def test_attributed_cuda_error_survives_a_failed_post_case_identity_read(row_execution, monkeypatch):
+    from experiments.numerics_rows.common import BoundaryError
+
+    args, receipt, scope, _, _ = row_execution
+    original, calls = row.unit_libraries, []
+    def identity(*args):
+        calls.append(True)
+        if len(calls) == 2:
+            raise RuntimeError("post-case mapping disappeared")
+        return original(*args)
+    def failed(*args):
+        raise BoundaryError({"call": "native-launch", "kind": "tessera", "sync_before": True, "sync_after": False}, RuntimeError("device assert"))
+    monkeypatch.setattr(row, "unit_libraries", identity)
+    monkeypatch.setattr(row, "dense_cases", failed)
+    with pytest.raises(SystemExit):
+        row.run(args, receipt)
+    assert scope["outcome"] == "FAIL" and scope["cuda_errors"][0]["attributed_to"] == "native-launch"
+    assert "post-case mapping disappeared" in scope["invalid"][0]
