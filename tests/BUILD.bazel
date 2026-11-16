@@ -19168,6 +19168,10 @@ ts_py_library(
     data = [
         "//experiments:results/glm53_r768_stub_base_config.json",
         "//experiments:results/glm53_r768_stub_base_tp2_eager_census.json",
+        "//experiments:results/glm53_requal_v68_bf16_census.json",
+        "//experiments:results/glm53_requal_v68_bf16_config.json",
+        "//experiments:results/glm53_requal_v68_e2m1_census.json",
+        "//experiments:results/glm53_requal_v68_e2m1_config.json",
         "//src/tessera:serving/runtime_contract.json",
     ],
     deps = [

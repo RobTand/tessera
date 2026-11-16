@@ -102,32 +102,40 @@ def test_route_census_tool_accepts_the_fused_nvfp4_pairs():
 
 
 def test_experimental_launches_require_their_own_runtime_and_rung_receipt():
-    """A scoped receipt must not qualify an operation on another runtime or table."""
-    from tessera.serving.contract import CENSUS_PHASE_REGIMES, cell_executes, format_entry
+    """Every experimental claim must match a committed v66 or v68 receipt scope."""
+    from tessera.serving.contract import (
+        CENSUS_PHASE_REGIMES, PAYLOAD_FAMILY_BY_ROUTE, cell_executes,
+        cell_residency_modes, format_entry)
     from tessera.serving.scheme import EXPERIMENTAL_LAUNCHES
 
     contract = json.loads(CONTRACT.read_text(encoding="utf-8"))
     results = CONTRACT.parents[3] / "experiments/results"
-    receipt = json.loads((results / "glm53_r768_stub_base_tp2_eager_census.json").read_text())
-    config = json.loads((results / "glm53_r768_stub_base_config.json").read_text())
-    tool = _tool()
-    rungs = {tool.declared_rung(group["scheme"])
-             for group in config["quantization_config"]["config_groups"].values()}
-    experimental = set(EXPERIMENTAL_LAUNCHES)
+    tool, expected = _tool(), {}
+    for receipt_name, config_name in (
+        ("glm53_r768_stub_base_tp2_eager_census.json", "glm53_r768_stub_base_config.json"),
+        ("glm53_requal_v68_e2m1_census.json", "glm53_requal_v68_e2m1_config.json"),
+        ("glm53_requal_v68_bf16_census.json", "glm53_requal_v68_bf16_config.json"),
+    ):
+        receipt = json.loads((results / receipt_name).read_text())
+        config = json.loads((results / config_name).read_text())
+        assert receipt["verdict"] == "served" and receipt["problems"] == []
+        rungs = {receipt["declared_name_mapping"].get(t, t): tool.declared_rung(g["scheme"])
+                 for g in config["quantization_config"]["config_groups"].values() for t in g["targets"]}
+        for phase, records in receipt["records"].items():
+            for name, record in records.items():
+                route, _, mode = record["policy"].partition(":")
+                key = (PAYLOAD_FAMILY_BY_ROUTE[route],
+                       "routed_moe" if record["kind"] == "moe" else "dense",
+                       receipt["device"]["platform_token"], CENSUS_PHASE_REGIMES[phase],
+                       (mode,), receipt["runtime"]["image"],
+                       (receipt["runtime"]["execution_mode"],),
+                       rungs[receipt["record_owner"][phase][name]])
+                expected.setdefault(key, set()).add((record["symbol"], record["decoder"]))
     for cell in contract["lane_eligibility"]["cells"]:
         entry = format_entry(cell["family"], contract)
-        phase = next(phase for phase, regime in CENSUS_PHASE_REGIMES.items()
-                     if regime == cell["regime"])
-        recorded = {(record["symbol"], record["decoder"])
-                    for record in receipt["ranks"][0]["records"][phase].values()}
         for rung in cell["rungs_q256"]:
-            scope_matches = (
-                cell["platform"] == receipt["device"]["platform_token"]
-                and cell["runtime"]["image"] == receipt["runtime"]["image"]
-                and cell["runtime"]["execution_modes"] == [receipt["runtime"]["execution_mode"]]
-                and cell["structure"] == "routed_moe" and cell["family"] == "TESSERA_E4M3_K1"
-                and cell["requires_serve_flags"] == ["TESSERA_SERVE_MODE=resident"]
-                and rung in rungs)
-            observed = cell_executes(cell, q256=rung, entry=entry) & experimental
-            assert observed == (recorded & experimental if scope_matches else set()), (
-                cell["id"], rung, observed)
+            key = (cell["family"], cell["structure"], cell["platform"], cell["regime"],
+                   cell_residency_modes(cell), cell["runtime"]["image"],
+                   tuple(cell["runtime"]["execution_modes"]), rung)
+            observed = cell_executes(cell, q256=rung, entry=entry) & EXPERIMENTAL_LAUNCHES
+            assert observed == expected.get(key, set()) & EXPERIMENTAL_LAUNCHES, (cell["id"], rung)
