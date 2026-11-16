@@ -248,10 +248,6 @@ def reference_weight(store, module, plan):
     blob = store.wire(module).contiguous().numpy().tobytes()
     parsed = parse_tessera_blob_for_scheme(blob, scheme, module, device="cuda")
     roles = shard_parsed_roles(parsed, plan)
-    if scheme["family"] == "TESSERA_NVFP4":
-        from experiments.numerics_rows.cases import decode_roles
-        weights = [w * scale.double() for _, w, scale, _ in decode_roles(blob, scheme, module, device="cuda", plan=plan)]
-        return torch.cat(weights), {"kind": "e2m1_lut_times_global", "epilogue_mults": 1}
     if scheme["family"] == "TESSERA_FP8":
         prepared = fp8_route.prepare_tessera_fp8_module(roles, device="cuda")
         codes = prepared.decode().view(torch.float8_e4m3fn).double()
