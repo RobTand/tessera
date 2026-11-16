@@ -6,9 +6,15 @@ Re-stamped 2026-11-16 for #1717 arithmetic receipt checks.
 There was no existing switch for this rollout. The new keyword defaults to
 `False`; the 18 current cells have no arithmetic receipt. Enable it only when
 receipts or withdrawals cover all served cells. This change does not enable it.
+The PQ+Tessera lead will set `require_arithmetic=True` in
+`load_serving_contract` by 2026-11-19 05:30Z. That later PR must add receipts
+for the 12 cells in scope and withdraw or narrow the rest in the same commit.
+The switch refuses the whole contract until every served cell is covered.
 The wheel checks receipt grammar. `test_tree_arithmetic_receipts` opens each
-named summary under `docs/measurements/numerics/` and checks its SHA-256,
-image, tool identity, rule SHA-256 and scope. It reads the rule from
+summary under `docs/measurements/numerics/` and refuses every record whose
+verdict is not PASS. For each named summary it checks its SHA-256, image,
+rule SHA-256 and scope. It checks that the tool identity is present and has
+the required syntax; it does not compare that identity with tool source. It reads the rule from
 `docs/measurements/numerics/pass-rule.md`. The lead must add the frozen rule
 there before the first summary. No frozen rule exists in this change.
 
@@ -18,9 +24,10 @@ Each record has `cell`, `symbol`, `decoder`, `cut`, `rungs_pass`,
 `rungs_withdrawn`, and `verdict`. Cuts are `TP1` and `TP<size>/rank<rank>`.
 The closed-world TP ceiling sets the required cuts. A record aggregates all M
 configurations. Any non-PASS configuration withdraws its rung for that pair
-and cut. A FAIL record refuses the cell. A withdrawn rung cannot borrow proof
-from its run table. Otherwise a PASS rung covers the same pair and cut at
-rungs with the same rate-rule run table. The full receipt stays in the job
+and cut. A record whose verdict is not PASS refuses the cell. A withdrawn rung cannot borrow proof
+from its run table. Each measured rung needs its own PASS. A PASS rung also
+covers the same pair and cut at by-rule rungs outside the pair's measured
+list when they have the same rate-rule run table. The full receipt stays in the job
 directory; `receipt_sha256` binds that receipt. The tree check verifies the
 summary, not the full receipt or the tool source outside this tree.
 
@@ -28,8 +35,10 @@ Re-stamped 2026-11-16 for #1716. Contract v69 removes the routed E2M1 start-stat
 
 Re-stamped 2026-11-16 for tessera#1717 evidence wording.
 `device_qualified` with `evidence.grade: route_only` means the route dispatch
-was observed on the device; arithmetic is not attested. Admission requires arithmetic evidence when the validator caller sets
-`require_arithmetic=True`. The default is `False` until the receipts arrive. Read both fields in each returned cell.
+was observed on the device; arithmetic is not attested. The validator refuses
+the contract when a served cell has no `evidence.arithmetic` and the caller
+sets `require_arithmetic=True`. The default is `False` until the receipts
+arrive. Read both fields in each returned cell.
 The v68 cells all grade `route_only`. Contract cell data does not change.
 
 Re-stamped 2026-11-15 for deletion plan PR 4. This change deletes 41 unused files.
