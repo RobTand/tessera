@@ -8,7 +8,7 @@ from pathlib import Path
 
 from experiments.numerics_rows.common import Invalid, sha256, write_json
 
-OUTCOMES = ("FAIL", "INVALID", "STOPPED", "UNATTESTED", "PASS")
+OUTCOMES = ("FAIL", "STOPPED", "INVALID", "UNATTESTED", "PASS")
 
 
 def rule_unit_id(unit):

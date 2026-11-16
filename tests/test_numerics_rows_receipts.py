@@ -1242,7 +1242,7 @@ def test_join_refuses_missing_repeated_or_unfinished_signed_modules(mutation):
         join(population, digest, manifests, receipts)
 
 
-@pytest.mark.parametrize("left,right,expected", [("PASS", "FAIL", "FAIL"), ("STOPPED", "INVALID", "INVALID"),
+@pytest.mark.parametrize("left,right,expected", [("PASS", "FAIL", "FAIL"), ("STOPPED", "INVALID", "STOPPED"),
     ("PASS", "UNATTESTED", "UNATTESTED"), ("UNATTESTED", "STOPPED", "STOPPED")])
 def test_join_uses_the_worst_module_outcome(left, right, expected):
     from experiments.numerics_rows.join import join
