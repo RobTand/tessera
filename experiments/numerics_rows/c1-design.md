@@ -48,3 +48,9 @@ Also compare the module-pass path against one complete routed module generated b
 The first profile, f2tKNb1eMNf at 618b4c19, ended at its 1,500-second cap with tool and container exits 0. Netdata collection reported no errors. make_plan spent 1,472.9 seconds on the row-scale array with N=589,824. Its final plans record counts 68 completed reads of 1,024; the phase record's zero was an entry-time snapshot, now corrected. Six groupings took about 14 seconds in total. joint_coverage used about 461 seconds in its own loop; 4,157,105 evaluate calls used about 973 seconds. No complete-item time was measured. Neither gmpy2 nor python-flint was present.
 
 The first change is an opt-in bounded LRU around the unchanged Fraction evaluator. A cache instance owns one D table. Keys contain the epilogue selection, arity and binary64 bytes of every used numeric operand and selected scale value. Signed zeros stay distinct. Index and column labels do not enter the numeric calculation. Per-signature bitsets count distinct value tuples exactly even when the LRU evicts entries. Arithmetic, search order and the full wrong-index domain are unchanged. The next single-core job measures this same array with the same profiler and records hit/miss and distinct-tuple counts. Fraction without memoization stays the default while byte equality is checked. The module-pass restructuring follows this measurement; GMP and dyadic arithmetic wait.
+
+Before replacement, generate one complete routed module with the new path twice:
+all 288 experts, three roles and both TP2 ranks. Enable cross-expert reuse in
+one run and disable it in the other. Require byte-equal numeric case data.
+A three-expert sample compares the new path with the old path only. It cannot
+authorize replacement. The 72 dense role-cuts must also remain byte-equal.

@@ -562,6 +562,27 @@ def rule_receipt(rule, freeze, h1, h1_path):
             "h1_path": str(h1_path), "h1_sha256": sha256(h1_path)}
 
 
+def check_rule_freeze(rule, freeze, *, canary=False):
+    if freeze.get("sha256") != sha256(rule) or not freeze.get("reviewer"):
+        raise Invalid("rule is not the reviewed rule")
+    if canary:
+        if freeze.get("canary") is not True or freeze.get("frozen_utc") is not None:
+            raise Invalid("canary record must say canary=true and frozen_utc=null")
+    elif freeze.get("canary") or not freeze.get("frozen_utc"):
+        raise Invalid("rule is not the reviewed, frozen rule")
+
+
+def selected_groups(groups, size=None, rank=None):
+    if size is None and rank is None:
+        return groups
+    if size not in (1, 2) or rank is None or not 0 <= rank < size:
+        raise Invalid("select both a valid TP size and TP rank")
+    selected = [group for group in groups if group[2] == {"size": size, "rank": rank}]
+    if not selected:
+        raise Invalid("selected TP cut is absent from the validated full manifest")
+    return selected
+
+
 def main():
     p = argparse.ArgumentParser(description=__doc__)
     for name in ("source", "out", "manifest", "population", "build", "q1", "h1", "rule", "freeze"):
@@ -570,14 +591,20 @@ def main():
     p.add_argument("--name", required=True)
     p.add_argument("--build-provenance", type=Path, required=True)
     p.add_argument("--module", action="append", default=[], help="Explicit module name in the signed population; repeat for a subset")
+    p.add_argument("--canary", action="store_true", help="Uncounted pre-freeze run; its receipt cannot be joined")
+    p.add_argument("--tp-size", type=int, choices=(1, 2))
+    p.add_argument("--tp-rank", type=int, choices=(0, 1))
     args = p.parse_args()
     args.out.mkdir(parents=True, exist_ok=True)
-    receipt = {"schema": "tessera.numerics_row.v2",
+    receipt = {"schema": "tessera.numerics_row.v2", "canary": args.canary,
                "row": {"name": args.name, "flux_job_id": os.environ.get("FLUX_JOB_ID"), "host": socket.gethostname(),
                        "utc_start": datetime.now(timezone.utc).isoformat(), "utc_end": None, "exit_status": None, "stop_cause": None,
                        "finalization_finished": False},
                "tool": {}, "rule": {}, "runtime": {}, "tessera": {}, "probe": {}, "inputs": {},
                "modules": [], "units": [], "negative_controls": [], "diagnostic_cells": [], "findings": []}
+    from experiments.numerics_rows.gpu_time import RowMeter
+
+    meter = RowMeter()
     try:
         run(args, receipt)
     except Exception as error:
@@ -593,6 +620,9 @@ def main():
         receipt["diagnostic_cells"] = diagnostic_cells(receipt["units"])
         write_json(args.out / "numerics_row.json", receipt)
         raise SystemExit(3) from error
+    finally:
+        receipt["row"]["gpu_minutes"] = meter.finish()
+        write_json(args.out / "numerics_row.json", receipt)
 
 
 def run(args, receipt):
@@ -631,8 +661,8 @@ def run(args, receipt):
     if torch.cuda.get_device_capability() != (12, 1):
         raise Invalid("device capability differs from the sm_121 cell")
     freeze = json.loads(args.freeze.read_text())
-    if freeze["sha256"] != sha256(args.rule) or not freeze["frozen_utc"] or not freeze["reviewer"]:
-        raise Invalid("rule is not the reviewed, frozen rule")
+    check_rule_freeze(args.rule, freeze, canary=getattr(args, "canary", False))
+    receipt["canary"] = getattr(args, "canary", False)
     manifest, built, h1 = (json.loads(path.read_text()) for path in (args.manifest, args.build, args.h1))
     check_manifest_source(manifest, commit, args.source / "src/tessera/serving/runtime_contract.json")
     if manifest["population_sha256"] != population_digest or manifest["q1_table_sha256"] != sha256(args.q1):
@@ -648,6 +678,7 @@ def run(args, receipt):
     q1 = json.loads(args.q1.read_text())
     contract = json.loads((args.source / "src/tessera/serving/runtime_contract.json").read_text())
     groups = planned_units(contract, runtime["image_digest"], population, manifest)
+    groups = selected_groups(groups, getattr(args, "tp_size", None), getattr(args, "tp_rank", None))
     receipt["units"] = [unit for _, _, _, units in groups for unit in units]
     write_json(args.out / "numerics_row.json", receipt)
     if built["commit"] != commit or built["runtime"]["image_digest"] != runtime["image_digest"]:
@@ -673,6 +704,7 @@ def run(args, receipt):
                          "sass_slice": slices[key], "finite_certificate": DTable(d).finite_certificate},
                "inputs": {"population_sha256": population_digest, "build_sha256": sha256(args.build), "case_manifest_sha256": sha256(args.manifest),
                           "selected_modules": [entry["name"] for entry in population["modules"]],
+                          "selected_cuts": [dict(cut) for _, _, cut, _ in groups],
                           "q1_table_sha256": sha256(args.q1), "reference_selftest": selftest(device="cuda")},
                "negative_controls": negative_controls()})
     exit_status = 0

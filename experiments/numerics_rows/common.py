@@ -42,11 +42,11 @@ def write_json(path, value):
 def check_source(root, revision=COMMIT):
     root = Path(root)
     if sha256(root / KERNEL) != KERNEL_SHA256:
-        raise ValueError("kernel source sha256 differs from the cell")
+        raise Invalid("kernel source sha256 differs from the cell")
     rev = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=root, text=True).strip()
     want = subprocess.check_output(["git", "rev-parse", revision], cwd=root, text=True).strip()
     if rev != want or subprocess.check_output(["git", "status", "--porcelain", "--", "src"], cwd=root):
-        raise ValueError(f"kernel source is not clean commit {revision}")
+        raise Invalid(f"kernel source is not clean commit {revision}")
     return rev
 
 
@@ -62,7 +62,7 @@ def check_runtime(image):
         raise Invalid("observed Podman image differs from the cell")
     actual = {name: importlib.metadata.version(name) for name in ("torch", "vllm")}
     if any(actual[name] != expected[name] for name in actual):
-        raise ValueError(f"runtime differs from the cell: {actual}")
+        raise Invalid(f"runtime differs from the cell: {actual}")
     return {**expected, **actual, "local_id": local, "image_inspect_sha256": sha256(path)}
 
 

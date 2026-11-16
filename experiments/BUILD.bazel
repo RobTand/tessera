@@ -2010,6 +2010,7 @@ ts_py_library(
         ":dense_fused_oracle",
         ":numerics_rows/build_cycle",
         ":numerics_rows/common",
+        ":numerics_rows/gpu_time",
         ":numerics_rows/quantizers",
         ":numerics_rows/reference",
         ":numerics_rows/sass_slice",
@@ -2046,6 +2047,13 @@ ts_py_library(
     ],
     deps = [
         ":numerics_rows/common",
+    ],
+)
+
+ts_py_library(
+    name = "numerics_rows/gpu_time",
+    srcs = [
+        "numerics_rows/gpu_time.py",
     ],
 )
 

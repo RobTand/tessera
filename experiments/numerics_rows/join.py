@@ -95,7 +95,7 @@ def _join(population, digest, manifests, receipts, contract):
         if receipt_sha in seen_receipts:
             raise Invalid("duplicate row receipt")
         seen_receipts.add(receipt_sha)
-        if receipt.get("canary") is True or receipt["row"].get("canary") is True or receipt["rule"].get("canary") is True:
+        if receipt.get("canary") or receipt["row"].get("canary") or receipt["rule"].get("canary"):
             raise Invalid("a canary cannot supply attestation")
         if not receipt["row"].get("utc_end") or type(receipt["row"].get("exit_status")) is not int or receipt["row"].get("finalization_finished") is not True:
             raise Invalid("join requires finished row receipts")

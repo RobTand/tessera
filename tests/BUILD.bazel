@@ -14720,6 +14720,7 @@ ts_py_library(
     deps = [
         "//experiments:numerics_rows/cases_cycle",
         "//experiments:numerics_rows/common",
+        "//experiments:numerics_rows/gpu_time",
         "//experiments:numerics_rows/join",
         "//experiments:numerics_rows/scope",
         ":test_numerics_rows_receipts_lib",
