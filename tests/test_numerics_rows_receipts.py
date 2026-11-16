@@ -988,7 +988,7 @@ def row_execution(tmp_path, monkeypatch):
     from contextlib import nullcontext
     import torch
     from experiments import dense_fused_oracle as dense
-    from experiments.numerics_rows import cases, common, population, sass_slice, scale_launch, serving_build
+    from experiments.numerics_rows import cases, common, population, sass_slice, scale_launch
 
     args = SimpleNamespace(**{name: tmp_path / name for name in
         ("source", "out", "population", "manifest", "build", "build_provenance", "q1", "h1", "rule", "freeze")}, image="N", module=[])
@@ -1018,7 +1018,12 @@ def row_execution(tmp_path, monkeypatch):
     monkeypatch.setattr(population, "load_signed_population", lambda path: (pop, "population-hash"))
     monkeypatch.setattr(row, "check_source", lambda path: "cell-commit")
     monkeypatch.setattr(row, "check_runtime", lambda image: runtime)
-    monkeypatch.setattr(serving_build, "check_compile_paths", lambda *args: [{"key": "e4m3", "native_source_path": "/P/kernel.cu"}])
+    try:
+        from experiments.numerics_rows import serving_build
+    except ImportError:
+        pass  # The pre-fix checkout has no compile-path verifier.
+    else:
+        monkeypatch.setattr(serving_build, "check_compile_paths", lambda *args: [{"key": "e4m3", "native_source_path": "/P/kernel.cu"}])
     monkeypatch.setattr(common, "register_native_ops", lambda image: {"result": "PASS"})
     monkeypatch.setattr(common, "source_digest", lambda *args: "source-hash")
     monkeypatch.setattr(row.subprocess, "check_output", lambda *args, **kwargs: "test-value\n")
