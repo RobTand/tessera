@@ -76,9 +76,10 @@ def canonical_identity(data, cubins=()):
     payloads are byte-exact except mask()'s eight PID digits in the one exact
     observed token form. No other string, hash, instruction or note is masked.
 
-    SHT_SYMTAB and SHT_DYNSYM payloads are packed(sorted(records)), where each
+    SHT_SYMTAB and SHT_DYNSYM payloads are packed(records) in file order. Each
     record is [masked_name, value, size, info, other, shndx]. Names are decoded
-    as Latin-1, so every byte is retained. Symbol order alone is immaterial.
+    as Latin-1, so every byte is retained. Symbol indices remain significant
+    because relocations use them. No symbol or relocation permutation is made.
     Their associated string-table payloads remain strict, with only PID masking.
 
     A host .nv_fatbin payload is represented by packed([(extracted_cubin_name,
@@ -111,7 +112,7 @@ def canonical_identity(data, cubins=()):
             for _, (name, *fields) in symbols(order, wide, records, record):
                 masked_name, _ = mask(name + b"\0")
                 rows.append([masked_name[:-1].decode("latin1"), *fields])
-            content, method = packed(sorted(rows)), "sorted-symbol-records"
+            content, method = packed(rows), "symbol-records-file-order"
         elif raw and record["name"] == ".nv_fatbin":
             if not cubins:
                 raise ValueError("fatbin identity requires extracted cubins")

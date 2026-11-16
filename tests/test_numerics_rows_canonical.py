@@ -1,4 +1,4 @@
-"""Only an exact nvcc PID token and symbol-record order may be canonicalized."""
+"""Only an exact nvcc PID token may change a symbol record."""
 import struct
 
 import pytest
@@ -38,11 +38,12 @@ def test_exact_token_mask_records_only_the_eight_pid_digits():
 
 
 @pytest.mark.parametrize("wide,order", [(False, "<"), (False, ">"), (True, "<"), (True, ">")])
-def test_pid_and_symbol_record_order_are_the_only_symbol_equivalences(wide, order):
+def test_only_pid_digits_may_change_symbol_records(wide, order):
     a = symbolic(wide=wide, order=order)
-    equal = symbolic(wide=wide, order=order, pid=b"0000000f", reverse=True)
+    equal = symbolic(wide=wide, order=order, pid=b"0000000f")
     assert a != equal and canonical_identity(a)["sha256"] == canonical_identity(equal)["sha256"]
-    for changed in (symbolic(wide=wide, order=order, rename=True), symbolic(wide=wide, order=order, value=17)):
+    for changed in (symbolic(wide=wide, order=order, rename=True), symbolic(wide=wide, order=order, value=17),
+                    symbolic(wide=wide, order=order, reverse=True)):
         assert canonical_identity(a)["sha256"] != canonical_identity(changed)["sha256"]
 
 
@@ -76,10 +77,10 @@ def test_each_requested_negative_control_changes_canonical_identity():
 def test_raw_file_audit_does_not_explain_an_unmasked_byte(tmp_path):
     a, b = tmp_path / "a.so", tmp_path / "b.so"
     a.write_bytes(symbolic())
-    b.write_bytes(symbolic(pid=b"0000000f", reverse=True))
+    b.write_bytes(symbolic(pid=b"0000000f"))
     left, right = canonical_identity(a.read_bytes()), canonical_identity(b.read_bytes())
     assert explain(a, b, left["sections"], right["sections"])["all_differences_explained"]
-    b.write_bytes(symbolic(pid=b"0000000f", reverse=True, text=b"codf"))
+    b.write_bytes(symbolic(pid=b"0000000f", text=b"codf"))
     right = canonical_identity(b.read_bytes())
     report = explain(a, b, left["sections"], right["sections"])
     assert not report["all_differences_explained"] and report["unexplained_bytes"] == 1
@@ -133,3 +134,11 @@ def test_nobits_and_zero_size_have_no_file_payload(kind, size):
     section = result["sections"][5]
     assert section["sh_size"] == size and section["canonical_size"] == 0
     assert section["payload_source_section"] is None
+
+
+def test_symbol_swap_with_unchanged_relocation_is_different():
+    relocation = struct.pack("<QQ", 0, (1 << 32) | 1)
+    sections = [(".rel.text", 9, 0, relocation, len(relocation))]
+    original, changed = symbolic(extra_sections=sections), symbolic(reverse=True, extra_sections=sections)
+    assert elf_sections(original)[2][-1]["data"] == elf_sections(changed)[2][-1]["data"]
+    assert canonical_identity(original)["sha256"] != canonical_identity(changed)["sha256"]
