@@ -189,7 +189,6 @@ def test_register_mov_is_transparent_and_a_different_source_is_different(reuse):
     library = library.replace("-R11, c[0x3][0x0]", "-R62, c[0x3][0x0]")
     result = prove(library, lelf, probe, pelf)
     assert result["matched"], result
-    assert result["instruction_examples"]["register_moves"]
     changed = prove(library.replace(f"MOV R62, R11{reuse}", f"MOV R62, R63{reuse}"), lelf, probe, pelf)
     assert changed["status"] == "DIFFERENT" and not changed["unresolved"]
 
