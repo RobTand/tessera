@@ -308,11 +308,11 @@ def test_h1_can_confirm_cpu_p3_without_loading_cuda(tmp_path, monkeypatch):
 
 def population_cases():
     pair = ["tessera::fused_window_dense", "native_fused_window_dense"]
-    population = {"sms": 1, "modules": [{"root": "/wires", "name": name, "library": "e4m3",
+    population = {"sms": 1, "modules": [{"root": "/wires", "name": name, "library": "e4m3", "roles": [["down_proj", 128]], "experts": 1,
                                "contract_family": "TESSERA_E4M3_K1", "pair": pair}
                               for name in ("module-a", "module-b")]}
-    manifest = {"modules": [{"root": "/wires", "name": name, "structure": "dense", "q256": 1024,
-                             "cuts": [{"tp": {"size": size, "rank": rank},
+    manifest = {"generation_finished": True, "modules": [{"root": "/wires", "name": name, "structure": "dense", "q256": 1024,
+                             "cuts": [{"tp": {"size": size, "rank": rank}, "roles": [{"name": "down_proj", "expert": 0}],
                                        "launch_geometry": {"rows": 128, "cols": 64, "tile_words": 4096, "blocks": 1, "merged": False},
                                        "m_configs": [{"M": m, "k_split": 1, "last_tile_partial": m % 64 != 0,
                                                       "superblock_width": 64, "chunk_size": 32, "route_counts": []}
@@ -1015,6 +1015,9 @@ def row_execution(tmp_path, monkeypatch):
     contract_path = args.source / "src/tessera/serving/runtime_contract.json"
     contract_path.parent.mkdir(parents=True)
     write_json(contract_path, contract)
+    doc = json.loads(args.manifest.read_text())
+    doc.update(source_commit="cell-commit", contract_sha256=common.sha256(contract_path))
+    write_json(args.manifest, doc)
     monkeypatch.setattr(population, "load_signed_population", lambda path: (pop, "population-hash"))
     monkeypatch.setattr(row, "check_source", lambda path: "cell-commit")
     monkeypatch.setattr(row, "check_runtime", lambda image: runtime)
@@ -1096,3 +1099,134 @@ def test_run_library_change_after_cases_is_invalid(row_execution, monkeypatch):
         row.run(args, receipt)
     assert len(events) == 5 and scope["outcome"] == "INVALID"
     assert not scope["arm"]["library_identity_unchanged"] and not receipt["findings"]
+
+
+@pytest.mark.parametrize("field", ["source_commit", "contract_sha256"])
+def test_run_refuses_a_c1_source_mismatch(row_execution, field):
+    args, receipt, _, events, _ = row_execution
+    with pytest.raises(SystemExit) as passed:
+        row.run(args, receipt)
+    assert passed.value.code == 0
+    events.clear()
+    manifest = json.loads(args.manifest.read_text())
+    manifest[field] = "different source"
+    write_json(args.manifest, manifest)
+    with pytest.raises(Invalid, match="source commit or contract"):
+        row.run(args, receipt)
+    assert events == []
+
+
+@pytest.mark.parametrize("finished", [False, None, "missing"])
+def test_unfinished_c1_is_refused(finished):
+    contract, population, manifest = population_cases()
+    assert row.planned_units(contract, "image", population, manifest)
+    if finished == "missing":
+        manifest.pop("generation_finished")
+    else:
+        manifest["generation_finished"] = finished
+    with pytest.raises(Invalid, match="generation is not finished"):
+        row.planned_units(contract, "image", population, manifest)
+
+
+@pytest.mark.parametrize("kind", ["dense", "routed_expert", "routed_projection", "repeated"])
+def test_manifest_requires_every_declared_expert_role(kind):
+    from experiments.numerics_rows.cases import configurations
+
+    contract, population, manifest = population_cases()
+    if kind.startswith("routed"):
+        for entry, module in zip(population["modules"], manifest["modules"]):
+            entry["experts"] = 2
+            module["structure"] = "routed_moe"
+            for cut in module["cuts"]:
+                cut["roles"] = [{"expert": e, "name": p} for e in range(2) for p in ("gate_proj", "up_proj", "down_proj")]
+                cut["m_configs"] = configurations(
+                    **cut["launch_geometry"], library="e4m3", sms=1, structure="routed_moe")
+        for cell in contract["lane_eligibility"]["cells"]:
+            cell["structure"] = "routed_moe"
+    assert row.planned_units(contract, "image", population, manifest)
+    roles = manifest["modules"][0]["cuts"][0]["roles"]
+    if kind == "repeated":
+        roles.append(copy.deepcopy(roles[0]))
+    elif kind == "routed_expert":
+        roles[:] = [r for r in roles if r["expert"] != 1]
+    else:
+        roles.pop()
+    with pytest.raises(Invalid, match="declared role"):
+        row.planned_units(contract, "image", population, manifest)
+
+
+def joined_inputs():
+    population = {"modules": [{"name": "a"}, {"name": "b"}]}
+    manifests, receipts = [], []
+    for name in ("a", "b"):
+        manifests.append(("c1-" + name, {"population_sha256": "signed", "selected_modules": [name],
+            "generation_finished": True, "modules": [{"name": name}]}))
+        unit = {"cell": "cell", "symbol": "symbol", "decoder": "decoder", "rung": 1024, "m_config": {"M": 1},
+                "tp": {"size": 1, "rank": 0}, "outcome": "PASS",
+                "unit_id": ["cell", "symbol", "decoder", 1024, {"M": 1}, {"size": 1, "rank": 0}]}
+        receipts.append(("row-" + name, {"inputs": {"population_sha256": "signed", "selected_modules": [name],
+            "case_manifest_sha256": "c1-" + name}, "units": [unit]}))
+    return population, "signed", manifests, receipts
+
+
+@pytest.mark.parametrize("mutation", ["missing", "repeated", "unfinished"])
+def test_join_refuses_missing_repeated_or_unfinished_signed_modules(mutation):
+    from experiments.numerics_rows.join import join
+
+    population, digest, manifests, receipts = joined_inputs()
+    result = join(population, digest, manifests, receipts)
+    assert result["verdict"] == "PASS" and len(result["units"]) == 1 and len(result["units"][0]["modules"]) == 2
+    if mutation == "missing":
+        manifests.pop()
+        receipts.pop()
+    elif mutation == "repeated":
+        manifests.append(manifests[0])
+        receipts.append(receipts[0])
+    else:
+        manifests[0][1]["generation_finished"] = False
+    with pytest.raises(Invalid):
+        join(population, digest, manifests, receipts)
+
+
+@pytest.mark.parametrize("left,right,expected", [("PASS", "FAIL", "FAIL"), ("STOPPED", "INVALID", "INVALID"),
+    ("PASS", "UNATTESTED", "UNATTESTED"), ("UNATTESTED", "STOPPED", "STOPPED")])
+def test_join_uses_the_worst_module_outcome(left, right, expected):
+    from experiments.numerics_rows.join import join
+
+    population, digest, manifests, receipts = joined_inputs()
+    assert join(population, digest, manifests, receipts)["verdict"] == "PASS"
+    receipts[0][1]["units"][0]["outcome"], receipts[1][1]["units"][0]["outcome"] = left, right
+    result = join(population, digest, manifests, receipts)
+    assert result["verdict"] == result["units"][0]["outcome"] == expected
+
+
+@pytest.mark.parametrize("mutation", [None, "dense", "fp4", "many", "negative", "large", "tp"])
+def test_routed_sample_guard_accepts_tp1_and_refuses_invalid_scopes(mutation):
+    from experiments.numerics_rows.cases import sample_cut
+
+    entry = {"structure": "routed_moe", "family": "TESSERA_FP8", "experts": 288}
+    population, expert, size, rank = {"modules": [entry]}, 144, 1, 0
+    assert sample_cut(population, expert, size, rank) == (1, 0)
+    assert sample_cut(population, expert, 2, 1) == (2, 1)
+    if mutation is None:
+        return
+    if mutation == "dense": entry["structure"] = "dense"
+    elif mutation == "fp4": entry["family"] = "TESSERA_NVFP4"
+    elif mutation == "many": population["modules"].append(copy.deepcopy(entry))
+    elif mutation == "negative": expert = -1
+    elif mutation == "large": expert = 288
+    else: rank = 1
+    with pytest.raises(Invalid, match="routed sample"):
+        sample_cut(population, expert, size, rank)
+
+
+def test_two_sample_rate_includes_tp1_and_all_2592_items():
+    from experiments.numerics_rows.join import sample_rate
+
+    base = {"population_sha256": "signed", "q1_table_sha256": "q1", "source_commit": "source", "contract_sha256": "contract",
+            "generation_finished": True, "items": [{}, {}, {}], "modules": [{"name": "module", "experts": 288}]}
+    first = {**base, "sample": {"expert": 0, "tp": {"size": 2, "rank": 0}}, "reference_seconds": 30}
+    second = {**base, "sample": {"expert": 144, "tp": {"size": 1, "rank": 0}}, "reference_seconds": 60}
+    report = sample_rate(first, second)
+    assert report["mean_seconds_per_item"] == 15 and report["module_items"] == 2592
+    assert report["projected_module_seconds"] == 38880 and report["sample_scope_only"]

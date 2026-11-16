@@ -2050,6 +2050,17 @@ ts_py_library(
 )
 
 ts_py_library(
+    name = "numerics_rows/join",
+    srcs = [
+        "numerics_rows/join.py",
+    ],
+    deps = [
+        ":numerics_rows/cases_cycle",
+        ":numerics_rows/common",
+    ],
+)
+
+ts_py_library(
     name = "numerics_rows/prepare_job",
     srcs = [
         "numerics_rows/prepare_job.py",

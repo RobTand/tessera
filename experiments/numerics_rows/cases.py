@@ -18,6 +18,7 @@ from experiments.numerics_rows.quantizers import PHASES
 from experiments.numerics_rows.reference import bf16, bf16_array, f32_bits, f32_value, multiply
 
 D2 = (1, 2, 8, 64, 65, 128, 512, 2048)
+TP_CUTS = ((1, 0), (2, 0), (2, 1))
 COUNTS = {1: (1,), 2: (1, 2), 8: (1, 5, 8), 64: (1, 37, 64),
           65: (1, 64, 65), 128: (1, 64, 65, 128), 512: (1, 64, 65, 128, 129, 512)}
 
@@ -394,6 +395,16 @@ def projection_scheme(scheme, projection, wire):
             "columns": int(meta.columns), "wire_bytes": len(wire), "roles": [[projection, int(meta.rows)]]}
 
 
+def sample_cut(population, expert, size, rank):
+    if expert is None:
+        return None
+    if (size, rank) not in TP_CUTS or len(population["modules"]) != 1 or any(
+            e["structure"] != "routed_moe" or e["family"] != "TESSERA_FP8" or not 0 <= expert < e["experts"]
+            for e in population["modules"]):
+        raise Invalid("a routed sample requires one signed E4M3 module, a valid expert and a TP cut")
+    return size, rank
+
+
 def main():
     p = argparse.ArgumentParser(description=__doc__)
     for name in ("source", "population", "q1", "out"):
@@ -401,7 +412,9 @@ def main():
     p.add_argument("--image", choices=("G", "N"), required=True)
     p.add_argument("--module", action="append", default=[], help="Explicit signed module name; repeat for a subset")
     p.add_argument("--source-revision", default=COMMIT)
-    p.add_argument("--sample-expert", type=int, help="Sample all three E4M3 roles of one expert at TP2 rank 0; not a row manifest")
+    p.add_argument("--sample-expert", type=int, help="Sample all three E4M3 roles of one expert; not a row manifest")
+    p.add_argument("--sample-tp-size", type=int, choices=(1, 2), default=2)
+    p.add_argument("--sample-tp-rank", type=int, choices=(0, 1), default=0)
     args = p.parse_args()
     source_revision = check_source(args.source, args.source_revision)
     check_runtime(args.image)
@@ -415,10 +428,7 @@ def main():
     args.out.mkdir(parents=True, exist_ok=True)
     population, population_digest = load_signed_population(args.population)
     population = select_modules(population, args.module)
-    if args.sample_expert is not None and (len(population["modules"]) != 1 or any(
-            e["structure"] != "routed_moe" or e["family"] != "TESSERA_FP8" or not 0 <= args.sample_expert < e["experts"]
-            for e in population["modules"])):
-        raise Invalid("a routed sample requires one signed E4M3 module and a valid expert index")
+    selected_cut = sample_cut(population, args.sample_expert, args.sample_tp_size, args.sample_tp_rank)
     q1 = json.loads(args.q1.read_text())
     contract = json.loads((args.source / "src/tessera/serving/runtime_contract.json").read_text())
     manifest = {"schema": "tessera.numerics_cases.v1", "population_path": str(args.population),
@@ -426,7 +436,7 @@ def main():
                 "q1_table_sha256": sha256(args.q1), "source_commit": source_revision,
                 "contract_sha256": sha256(args.source / "src/tessera/serving/runtime_contract.json"),
                 "selected_modules": [e["name"] for e in population["modules"]],
-                "sample": None if args.sample_expert is None else {"expert": args.sample_expert, "tp": {"size": 2, "rank": 0}},
+                "sample": None if selected_cut is None else {"expert": args.sample_expert, "tp": {"size": selected_cut[0], "rank": selected_cut[1]}},
                 "modules": [], "complete": True, "generation_finished": False, "items": []}
     write_json(args.out / "population-receipt.json", {"path": str(args.population), "sha256": population_digest, "review": population["review"]})
     for entry in population["modules"]:
@@ -462,7 +472,7 @@ def main():
         if table is not None and table.limit != artifact_limit(entry["root"]):
             raise ValueError("artifact swiglu_limit differs from the Q1 D table")
         facts["cuts"] = []
-        for size, rank in (((1, 0), (2, 0), (2, 1)) if args.sample_expert is None else ((2, 0),)):
+        for size, rank in (TP_CUTS if selected_cut is None else (selected_cut,)):
             local = {"structure": structure, "family": family, "tp": {"size": size, "rank": rank}, "roles": [], "complete": True}
             facts["cuts"].append(local)
             # Ask the loader's pure shard planner for each original projection.
@@ -545,8 +555,8 @@ def main():
                             "peak_bytes": resource.getrusage(resource.RUSAGE_SELF).ru_maxrss * 1024}
                     manifest["items"].append(item)
                     print(json.dumps(item), flush=True)
-                    write_json(args.out / "case_manifest.json", manifest)
             facts["complete"] &= local["complete"]
+            write_json(args.out / "case_manifest.json", manifest)
         manifest["complete"] &= facts["complete"]
         write_json(args.out / "progress.json", {"arm": population.get("arm", args.population.stem),
             "modules_completed": len(manifest["modules"]), "last_module": entry["name"],
@@ -555,10 +565,10 @@ def main():
     manifest.update(reference_seconds=time.monotonic() - started,
                     host_peak_bytes=resource.getrusage(resource.RUSAGE_SELF).ru_maxrss * 1024, generation_finished=True)
     if args.sample_expert is not None:
-        seconds = sum(i["seconds"] + i["decode_seconds"] for i in manifest["items"])
-        manifest["sample"].update(items=len(manifest["items"]), measured_item_seconds=seconds / len(manifest["items"]),
+        seconds = manifest["reference_seconds"]
+        manifest["sample"].update(items=len(manifest["items"]), sample_scope_only=True, measured_item_seconds=seconds / len(manifest["items"]),
                                    measured_wall_seconds=manifest["reference_seconds"],
-                                   tp2_module_items=1728, projected_tp2_module_seconds=seconds / len(manifest["items"]) * 1728)
+                                   module_items=facts["experts"] * 3 * len(TP_CUTS))
     write_json(args.out / "case_manifest.json", manifest)
 
 

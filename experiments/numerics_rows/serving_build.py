@@ -60,7 +60,7 @@ def check_compile_paths(build_path, provenance_path):
 
 def main():
     p = argparse.ArgumentParser(description=__doc__)
-    for name in ("source", "build", "provenance", "h1", "out"):
+    for name in ("source", "build", "provenance", "h1", "population", "out"):
         p.add_argument("--" + name, type=Path, required=True)
     args = p.parse_args()
     args.out.mkdir(parents=True)
@@ -72,8 +72,10 @@ def main():
     from tessera import routed_fused as rf
     from tessera.serving.backend import PlatformMismatchError
     from experiments.numerics_rows.row import unit_libraries
+    from experiments.numerics_rows.population import load_signed_population
 
     torch.set_num_threads(1)
+    _, population_digest = load_signed_population(args.population)
     if torch.cuda.is_available():
         raise Invalid("this is a CPU-only serving-loader compile proof")
     paths = check_compile_paths(args.build, args.provenance)
@@ -81,6 +83,7 @@ def main():
     if not h1["preconditions_confirmed"] or h1["build_sha256"] != sha256(args.build):
         raise Invalid("proof requires H1 for this retained P build")
     report = {"runtime": runtime, "compile_paths": paths, "build_sha256": sha256(args.build),
+              "population_sha256": population_digest,
               "h1_sha256": sha256(args.h1), "cpu_only": True, "libraries": [], "verdict": "INCOMPLETE"}
     original_load = cpp_extension.load
     captured = []

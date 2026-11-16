@@ -476,6 +476,8 @@ def planned_units(contract, image_digest, population, manifest):
 
     if manifest.get("sample"):
         raise Invalid("a C1 sample cannot supply a row manifest")
+    if manifest.get("generation_finished") is not True:
+        raise Invalid("C1 generation is not finished")
     modules = {module_key(m): m for m in manifest["modules"]}
     names = [module_key(e) for e in population["modules"]]
     if len(modules) != len(manifest["modules"]) or set(names) != set(modules) or len(set(names)) != len(names):
@@ -488,6 +490,11 @@ def planned_units(contract, image_digest, population, manifest):
             if len(matching) != 1 or not matching[0]["m_configs"]:
                 raise Invalid("case manifest omitted or repeated a required cut or M configuration")
             module, units = {**whole, **matching[0]}, []
+            expected_roles = {(0, name) for name, _ in entry["roles"]} if module["structure"] == "dense" else {
+                (expert, name) for expert in range(entry["experts"]) for name in ("gate_proj", "up_proj", "down_proj")}
+            roles = [(r["expert"], r["name"]) for r in module["roles"]]
+            if len(roles) != len(expected_roles) or set(roles) != expected_roles:
+                raise Invalid("case manifest omitted or repeated a declared role")
             expected = configurations(**module["launch_geometry"], library=entry["library"], sms=population["sms"], structure=module["structure"])
             if module["m_configs"] != expected:
                 raise Invalid("case manifest omitted or changed an expected M configuration")
@@ -505,6 +512,11 @@ def planned_units(contract, image_digest, population, manifest):
                     units.append(unit)
             groups.append((entry, module, cut, units))
     return groups
+
+
+def check_manifest_source(manifest, commit, contract_path):
+    if manifest.get("source_commit") != commit or manifest.get("contract_sha256") != sha256(contract_path):
+        raise Invalid("case manifest source commit or contract differs from the row")
 
 
 def rule_receipt(rule, freeze, h1, h1_path):
@@ -591,6 +603,7 @@ def run(args, receipt):
     if freeze["sha256"] != sha256(args.rule) or not freeze["frozen_utc"] or not freeze["reviewer"]:
         raise Invalid("rule is not the reviewed, frozen rule")
     manifest, built, h1 = (json.loads(path.read_text()) for path in (args.manifest, args.build, args.h1))
+    check_manifest_source(manifest, commit, args.source / "src/tessera/serving/runtime_contract.json")
     if manifest["population_sha256"] != population_digest or manifest["q1_table_sha256"] != sha256(args.q1):
         raise Invalid("case manifest input identity differs")
     if len(manifest["modules"]) != len(population["modules"]):
