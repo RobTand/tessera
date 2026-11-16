@@ -203,7 +203,7 @@ def test_p_uses_the_original_serving_flags(tmp_path, monkeypatch):
 
     monkeypatch.setattr(cpp_extension, "load", load)
     monkeypatch.setattr("sys.argv", ["build", "--source", str(tmp_path), "--out", str(tmp_path),
-                                     "--image", "N", "--revision", "b" * 40])
+                                     "--image", "N", "--revision", "e89757b9"])
     build.main()
     assert observed == [routed_fused._cflags("sm_121", True, True, False)]
 
