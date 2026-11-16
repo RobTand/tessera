@@ -10291,7 +10291,7 @@ reuses those CPU measurements. Unknown targets use the inventory's p90 estimate
 the smallest rule populations by count. The manifest records estimated test seconds. The client submits
 each with `--target_pattern_file` in a separate Remote Bazel run. The PR gate
 uses its 45-minute default; the post-merge workflow explicitly requests 55 minutes.
-Since #1729 the post-merge record runs every 6 hours when master moved, and on manual dispatch,
+Since 2026-11-16 the post-merge record runs every 6 hours when master moved, and on manual dispatch,
 over a 7-hour window of merges; a red window is bisected per merge with `--failed`.
 Only gate fallback permits six concurrent shard runs per controller,
 each with `--jobs=16`; all other paths stay serial.
