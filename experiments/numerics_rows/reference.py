@@ -158,12 +158,8 @@ def output(products, scales):
 
 
 def bf16_array(values):
-    import numpy as np
-
-    value = np.asarray(values, dtype=np.float32)
-    bits = value.view(np.uint32)
-    rounded = (bits + np.uint32(0x7FFF) + ((bits >> 16) & 1)) & np.uint32(0xFFFF0000)
-    return rounded.view(np.float32)
+    import torch
+    return torch.as_tensor(values, dtype=torch.float32).to(torch.bfloat16).float().numpy()
 
 
 
