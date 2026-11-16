@@ -26,7 +26,20 @@ def outcome(unit):
         return "INVALID"
     if unit["unattested"]:
         return "UNATTESTED"
+    if missing_cases(unit):
+        return "STOPPED"
     return "PASS"
+
+
+def missing_cases(unit):
+    exact = unit["exact"]
+    required = {"sweep": exact["sweep"]["elements"],
+                "separation": sum(r["both"] for r in exact["separation"]),
+                "scale_index": sum(r.get("launches", 0) for r in exact["scale_index"]),
+                "chunk_pairs": exact["chunk_pairs"]["x_elements"], "composition": exact["composition"]["cases"]}
+    if unit.get("structure") == "routed_moe":
+        required.update({name: exact[name]["elements"] for name in ("swiglu", "down_input", "token_sum")})
+    return [name for name, count in required.items() if count <= 0]
 
 
 def new_unit(scope):
@@ -45,6 +58,8 @@ def finish_unit(unit):
     unit["decoder_bit_exact"] = unit["outcome"] == "PASS" and unit["role"] == "unit"
     unit["unattested_reason"] = unit["unattested"]
     unit["reasons"] = unit["findings"] + unit["invalid"] + unit["unattested"]
+    if unit["outcome"] == "STOPPED":
+        unit["reasons"] += [f"required cases did not run: {name}" for name in missing_cases(unit)]
 
 
 def finite_outputs(unit, case, got, bound):
@@ -398,7 +413,7 @@ def planned_units(contract, image_digest, population, manifest):
                 if not scopes:
                     raise Invalid("population pair has no matching contract unit")
                 for scope in scopes:
-                    unit = new_unit({**scope, "symbol": entry["pair"][0], "decoder": entry["pair"][1], "rung": module["q256"],
+                    unit = new_unit({**scope, "symbol": entry["pair"][0], "decoder": entry["pair"][1], "rung": module["q256"], "structure": module["structure"],
                                      "m_config": config, "tp": dict(cut),
                                      "arm": {"selector_env": entry.get("selector_env", {}), "profiler_kernels": []}})
                     if cut["size"] > 1 and entry["contract_family"] != "TESSERA_E4M3_K1":

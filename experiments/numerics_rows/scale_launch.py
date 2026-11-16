@@ -151,7 +151,7 @@ def check(adapter, unit, manifest, recorder):
             complete = verified["reads"] == verified["reads_covered"]
             coverage(unit, "scale-index", complete, plan["reads"] == plan["reads_covered"])
             record = {k: plan[k] for k in ("scale", "base", "families", "passes_per_family", "passes_total")}
-            record.update(verified, mismatches=0)
+            record.update(verified, mismatches=0, launches=0)
             unit["exact"]["scale_index"].append(record)
             if not complete:
                 continue
@@ -243,6 +243,7 @@ def check(adapter, unit, manifest, recorder):
                         out = dense_launch(adapter, role, qq, ss, plan["scale"], vals, recorder)
                         output_row = case["input_row"]
                     finite_outputs(unit, "scale-index:all-outputs", out, bound)
+                    record["launches"] += 1
                     ref = torch.tensor([expected], device=q.device, dtype=torch.bfloat16)
                     got = out[output_row, case["output_row"]].reshape(1)
                     result = compare_output(unit, f"scale-index:{role['name']}:{coding['family']}:{coding['digit']}:{case['read']}", got, ref, operands={"input": case["input"], "column": case["column"], "read": case["read"],

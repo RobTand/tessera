@@ -16,8 +16,13 @@ from experiments.numerics_rows.scale_index import digits, evaluate, joint_covera
 
 
 def unit():
-    result = new_unit({"decoder": "native_fused_window_dense", "arm": {}})
+    result = new_unit({"decoder": "native_fused_window_dense", "arm": {}, "role": "unit", "structure": "dense"})
     result["completed"] = True
+    result["exact"]["sweep"]["elements"] = 1
+    result["exact"]["separation"] = [{"both": 1}]
+    result["exact"]["scale_index"] = [{"launches": 1}]
+    result["exact"]["chunk_pairs"]["x_elements"] = 1
+    result["exact"]["composition"]["cases"] = 1
     return result
 
 
@@ -177,6 +182,26 @@ def test_stopped_job_and_fail_precedence():
     assert outcome(scope) == "STOPPED"
     check_preconditions(scope, scale_equal=False)
     assert outcome(scope) == "FAIL"
+
+
+def test_completed_without_any_cases_is_stopped():
+    scope = new_unit({"role": "unit", "structure": "dense"})
+    scope["completed"] = True
+    assert outcome(scope) == "STOPPED"
+
+
+@pytest.mark.parametrize("section", ("sweep", "separation", "scale_index", "chunk_pairs", "composition", "swiglu", "down_input", "token_sum"))
+def test_pass_requires_each_required_case_family(section):
+    scope = unit()
+    scope["structure"] = "routed_moe"
+    for name in ("swiglu", "down_input", "token_sum"):
+        scope["exact"][name]["elements"] = 1
+    assert outcome(scope) == "PASS"
+    if section in ("separation", "scale_index"):
+        scope["exact"][section].clear()
+    else:
+        scope["exact"][section] = {key: 0 for key in scope["exact"][section]}
+    assert outcome(scope) == "STOPPED"
 
 
 @pytest.mark.parametrize("where,expected", (("before", "STOPPED"), ("after", "FAIL"), ("apply", "STOPPED")))
