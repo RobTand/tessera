@@ -250,7 +250,7 @@ class QuantizerTable:
         return self.codes[f32_bits(value) >> 16]
 
 
-def column_coverage(weights, scales, family, quantizer, *, peer=None, peer_scales=None, table=None, stage="dense", lut=()):
+def column_coverage(weights, scales, family, quantizer, *, peer=None, peer_scales=None, table=None, stage="dense", lut=(), router_weight=1.0):
     """Check all elements. Retain only the tested input recipe and coverage counts."""
     import numpy as np
     import torch
@@ -284,7 +284,7 @@ def column_coverage(weights, scales, family, quantizer, *, peer=None, peer_scale
                 acc = (acc * np.float32(a_scale)).astype(np.float32)
                 acc = (acc * scales).astype(np.float32)
                 if peer is None:
-                    return bf16_array(acc)
+                    return bf16_array((acc * np.float32(router_weight)).astype(np.float32))
                 other = ((aq * peer[:, column]).astype(np.float32) * np.float32(a_scale)).astype(np.float32)
                 other = (other * peer_scales).astype(np.float32)
                 g, u = (acc, other) if stage == "gate" else (other, acc)
@@ -321,6 +321,28 @@ def column_coverage(weights, scales, family, quantizer, *, peer=None, peer_scale
             "both": int(both.sum()), "by_sign": {"positive": [int(positive_left.sum()), int(positive_right.sum())],
             "negative": [int(negative_left.sum()), int(negative_right.sum())]}, "complete": bool(both.all()), "x_false_candidates": x_false, "recipes": recipes,
             "uncovered": np.argwhere(~both)[:512].tolist()}
+
+
+def separation_route(m, experts, expert):
+    """Choose one real route from the count-one census for this expert."""
+    selected = list(range(expert // 8 * 8, min(expert // 8 * 8 + 8, experts)))
+    ids, weights = routing(m, experts, 1, selected)
+    flat = [e for row in ids for e in row]
+    index = flat.index(expert)
+    return {"M": m, "count": 1, "selected": selected, "flat_index": index,
+            "weight": f32_value(f32_bits(weights[index // 8][index % 8]))}
+
+
+def routed_separation(weight, scale, family, quantizer, *, expert, experts, configs, **kwargs):
+    records = []
+    for config in configs:
+        m = config["M"]
+        if m not in (1, 64, 2048):
+            continue
+        route = separation_route(m, experts, expert)
+        records.append({**column_coverage(weight, scale, family, quantizer, router_weight=route["weight"], **kwargs),
+                        "route": route})
+    return {**records[0], "complete": all(record["complete"] for record in records), "by_m": records}
 
 
 
@@ -447,8 +469,8 @@ def main():
                 mapping = {name: (weight, scale) for name, weight, scale, _, _ in decoded}
                 for name, weight, scale, parsed, gs in decoded:
                     quantizer = QuantizerTable(q1, family, gs)
-                    stage = "gate" if structure == "routed_moe" and name == "gate_proj" else "up" if structure == "routed_moe" and name == "up_proj" else "dense"
-                    peer = mapping["up_proj" if stage == "gate" else "gate_proj"] if stage != "dense" else None
+                    stage = "gate" if structure == "routed_moe" and name == "gate_proj" else "up" if structure == "routed_moe" and name == "up_proj" else "down" if structure == "routed_moe" else "dense"
+                    peer = mapping["up_proj" if stage == "gate" else "gate_proj"] if stage in ("gate", "up") else None
                     ratio = (scale.float() / torch.tensor(gs, dtype=torch.float32)) if family == "e2m1" else scale
                     if ratio.numel() == 1:
                         ratio = ratio.expand(weight.shape[0])
@@ -456,7 +478,9 @@ def main():
                     if peer_scale is not None and peer_scale.numel() == 1:
                         peer_scale = peer_scale.expand(weight.shape[0])
                     lut = lut_scale_bytes(parsed.unit.scale_lut, "cpu").view(torch.float8_e4m3fn).float().tolist() if family == "e2m1" else ()
-                    separated = column_coverage(weight.numpy(), ratio.numpy(), family, quantizer,
+                    separation_fn = routed_separation if stage == "down" else column_coverage
+                    route_args = {"expert": expert, "experts": len(groups), "configs": local["m_configs"]} if stage == "down" else {}
+                    separated = separation_fn(weight.numpy(), ratio.numpy(), family, quantizer, **route_args,
                         peer=None if peer is None else peer[0].numpy(), peer_scales=None if peer_scale is None else peer_scale.numpy(),
                         table=table, stage=stage, lut=lut)
                     chunks = exact_chunks(weight, quantizer, local["m_configs"], None if peer is None else peer[0])

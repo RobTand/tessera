@@ -111,8 +111,10 @@ def run(adapter, unit, manifest, recorder):
                 if role["expert"] not in group:
                     continue
                 separated = role["separation"]
+                if "by_m" in separated:
+                    separated = next((r for r in separated["by_m"] if r["route"]["M"] == m), separated["by_m"][0])
                 coverage(unit, "separation", separated["complete"], manifest["complete"])
-                unit["exact"]["separation"].append({k: v for k, v in separated.items() if k not in ("recipes", "uncovered")})
+                unit["exact"]["separation"].append({k: v for k, v in separated.items() if k not in ("recipes", "uncovered", "by_m")})
                 for recipe in separated["recipes"]:
                     for activation in recipe["values"]:
                         stage = role["name"]

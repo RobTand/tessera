@@ -647,7 +647,8 @@ def tp_facts(adapter, module, routed):
 
 
 def verify_cases(adapter, unit, module, q1, table):
-    from experiments.numerics_rows.cases import QuantizerTable, column_coverage
+    from experiments.numerics_rows.cases import QuantizerTable, column_coverage, routing, separation_route
+    import torch
     for role in module["roles"]:
         if sha256(role["reader_path"]) != role["reader_sha256"]:
             raise Invalid("C1 reader artifact changed")
@@ -666,13 +667,27 @@ def verify_cases(adapter, unit, module, q1, table):
         if peer_scale is not None and peer_scale.numel() == 1:
             peer_scale = peer_scale.expand(weight.shape[0])
         # C1 stores the complete value alphabet, including each unit's E2M1 LUT.
-        checked = column_coverage(weight.numpy(), scale.numpy(), adapter.family, QuantizerTable(q1, adapter.family, role["gs"]),
-            peer=None if peer is None else peer[0].numpy(), peer_scales=None if peer is None else peer_scale.numpy(),
-            table=table, stage=role["separation"]["stage"], lut=role["lut"])
-        coverage(unit, "separation", checked["complete"], role["separation"]["complete"])
-        for field in ("elements", "lower_excluded", "upper_excluded", "both", "recipes"):
-            if checked[field] != role["separation"][field]:
-                raise Invalid("C1 separation does not match the loaded reader operands")
+        for record in role["separation"].get("by_m", [role["separation"]]):
+            router_weight = 1.0
+            if "route" in record:
+                route = record["route"]
+                if route != separation_route(route["M"], adapter.experts, role["expert"]):
+                    raise Invalid("C1 separation route differs from the tested routing census")
+                ids, weights = routing(route["M"], adapter.experts, route["count"], route["selected"])
+                routes = adapter.route(torch.tensor(ids, device="cuda"), torch.tensor(weights, device="cuda", dtype=torch.float32))
+                position = (routes.flat_sorted == route["flat_index"]).nonzero().flatten()
+                if position.numel() != 1:
+                    raise Invalid("C1 separation route is missing from the native routing")
+                router_weight = float(routes.rw_sorted[position[0]])
+                if router_weight != route["weight"]:
+                    raise Invalid("C1 separation router weight differs from rw_sorted")
+            checked = column_coverage(weight.numpy(), scale.numpy(), adapter.family, QuantizerTable(q1, adapter.family, role["gs"]),
+                peer=None if peer is None else peer[0].numpy(), peer_scales=None if peer is None else peer_scale.numpy(),
+                table=table, stage=record["stage"], lut=role["lut"], router_weight=router_weight)
+            coverage(unit, "separation", checked["complete"], record["complete"])
+            for field in ("elements", "lower_excluded", "upper_excluded", "both", "recipes"):
+                if checked[field] != record[field]:
+                    raise Invalid("C1 separation does not match the loaded reader operands")
 
 
 def historical_units(contract, runtime, units):

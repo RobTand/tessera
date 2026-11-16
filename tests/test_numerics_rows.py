@@ -258,6 +258,32 @@ def test_routing_has_the_requested_count_and_distinct_experts():
     assert (ids, weights) == routing(65, 24, 37, list(range(8)))
 
 
+def test_down_separation_uses_the_actual_router_weight_before_bf16():
+    import numpy as np
+    from experiments.numerics_rows.cases import column_coverage
+    class Quantizer:
+        gs, normal_j = 1.0, 0
+        def __call__(self, value):
+            return math.copysign(1.0, value), 1.0
+    weight, scale = np.ones((1, 1)), np.ones(1, dtype=np.float32)
+    assert bf16(float(np.float32(0.501))) == bf16(float(np.float32(255 / 256) * np.float32(0.501))) == 0.5
+    direct = column_coverage(weight, scale, "value", Quantizer(), stage="down")
+    weighted = column_coverage(weight, scale, "value", Quantizer(), stage="down", router_weight=0.501)
+    assert direct["complete"] and direct["lower_excluded"] == 1
+    assert not weighted["complete"] and weighted["lower_excluded"] == 0
+
+
+@pytest.mark.parametrize("m,expert", ((1, 0), (64, 7), (2048, 16)))
+def test_separation_route_binds_an_actual_census_weight(m, expert):
+    import numpy as np
+    from experiments.numerics_rows.cases import routing, separation_route
+    route = separation_route(m, 24, expert)
+    ids, weights = routing(m, 24, 1, route["selected"])
+    row, slot = divmod(route["flat_index"], 8)
+    assert ids[row][slot] == expert
+    assert route["weight"] == float(np.float32(weights[row][slot]))
+
+
 @pytest.mark.parametrize("changed", (None, "read", "array", "g", "u", "a_scale", "g_scale", "u_scale"))
 def test_scale_case_is_bound_to_actual_operands(changed):
     from experiments.numerics_rows.scale_launch import validate_case
