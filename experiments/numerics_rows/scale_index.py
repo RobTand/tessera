@@ -2,7 +2,9 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
+from functools import lru_cache
 import math
+import struct
 
 from experiments.numerics_rows.reference import bf16, multiply
 
@@ -136,7 +138,71 @@ def evaluate(case, wrong, values, table=None):
     return swiglu(g, u, table, table.limit)
 
 
-def make_plan(scale, n, read_cases, *, table=None, gate=(), up=(), ue4m3=False, metadata=None):
+class CachedEvaluator:
+    """Cache the unchanged Fraction evaluator on its exact represented inputs.
+
+    The instance owns one immutable measured D table, including its clamp limit.
+    IEEE binary64 bytes distinguish all represented inputs, including signed zero.
+    Index, column and expert labels affect evaluation only through the scale values
+    read at those indices. Omit only operands the selected epilogue does not read.
+    The LRU bounds memory; optional tuple counts use one bit per value-code pair
+    per operand signature, so evictions do not inflate the distinct-input count.
+    """
+    def __init__(self, read_cases, table=None, *, coding=(), metrics=None, maxsize=2**18):
+        self.keys, self.cases, self.seen = {}, {}, {}
+        self.metrics, self.previous = metrics, None
+        bits = lambda value: struct.pack("<d", value)
+        self.bits = bits
+        for case in read_cases:
+            read, scale = tuple(case["read"]), case["scale"]
+            names = ["g"] + (["u"] if len(read) == 2 else [])
+            if scale not in ("a_s", "sfa"):
+                names.append("a_scale")
+            if scale in ("a_s", "sfa", "router"):
+                names += ["g_scale"] + (["u_scale"] if len(read) == 2 else [])
+            operands = tuple((name, bits(case[name])) for name in names)
+            if len(read) == 1 and scale != "router":
+                operands += (("router_weight", bits(case.get("router_weight", 1.0))),)
+            key = scale, len(read), operands
+            self.keys[read], self.cases[key] = key, dict(case)
+        if metrics is not None:
+            alphabet = set()
+            for entry in coding:
+                values = (entry["values"] if "values" in entry else
+                          [2.0**(entry["low"] + i) for i in range(entry["base"])] +
+                          [entry["gate_constant"], entry["up_constant"]])
+                alphabet.update(map(bits, values))
+            self.codes = {value: i for i, value in enumerate(sorted(alphabet))}
+            self.stride = len(self.codes)
+            metrics.update(operand_signatures=len(self.cases), scale_value_codes=self.stride, completed_reads=0)
+        cases_by_key = self.cases
+        @lru_cache(maxsize=maxsize)
+        def cached(key, values):
+            decoded = [struct.unpack("<d", value)[0] for value in values]
+            return evaluate(cases_by_key[key], range(len(values)), decoded, table)
+        self.cached = cached
+
+    def __call__(self, read, wrong, values):
+        key = self.keys[tuple(read)]
+        codes = tuple(self.bits(values[i]) for i in wrong)
+        if self.metrics is not None:
+            read = tuple(read)
+            if self.previous is not None and self.previous != read:
+                self.metrics["completed_reads"] += 1
+            self.previous = read
+            position = self.codes[codes[0]]
+            if len(codes) == 2:
+                position = position * self.stride + self.codes[codes[1]]
+            self.seen[key] = self.seen.get(key, 0) | 1 << position
+        return self.cached(key, codes)
+
+    def report(self):
+        info = self.cached.cache_info()._asdict()
+        return {**info, "requests": info["hits"] + info["misses"],
+                "distinct_evaluate_tuples": sum(mask.bit_count() for mask in self.seen.values()) if self.metrics is not None else None}
+
+
+def make_plan(scale, n, read_cases, *, table=None, gate=(), up=(), ue4m3=False, metadata=None, memoize=False, metrics=None):
     """Choose a normal power range. Check each output before claiming coverage."""
     def operand(c, side):
         value = c[side]
@@ -172,5 +238,14 @@ def make_plan(scale, n, read_cases, *, table=None, gate=(), up=(), ue4m3=False, 
     plan = passes(n, low, high, gate=gate, up=up,
                   gate_constant=held(gmin) if mode0 else 1.0, up_constant=held(umin) if mode0 else 1.0, compact=True)
     cases = {tuple(c["read"]): c for c in read_cases}
-    result = joint_coverage(list(cases), plan["coding"], lambda read, wrong, values: evaluate(cases[read], wrong, values, table), n)
+    evaluator = CachedEvaluator(cases.values(), table, coding=plan["coding"], metrics=metrics) if memoize else None
+    if metrics is not None:
+        metrics["coding"] = plan["coding"]
+    try:
+        result = joint_coverage(list(cases), plan["coding"], evaluator or (lambda read, wrong, values: evaluate(cases[read], wrong, values, table)), n)
+    finally:
+        if evaluator is not None and metrics is not None:
+            metrics.update(evaluator.report())
+    if evaluator is not None and metrics is not None:
+        metrics["completed_reads"] = result["reads"]
     return {"scale": scale, **plan, **result, "mismatches": 0, "read_cases": read_cases, "array": metadata or {}}

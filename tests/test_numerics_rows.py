@@ -601,3 +601,92 @@ def test_routed_profile_cap_keeps_the_profile_and_partial_phases(tmp_path, monke
     assert record["phases"][0]["phase"] == "column_coverage" and record["phases"][0]["finished"] is False
     assert (tmp_path / "c1.pstats").stat().st_size and (tmp_path / "c1-profile.txt").stat().st_size
     assert timers == [(signal.ITIMER_REAL, 1), (signal.ITIMER_REAL, 0)]
+
+
+@pytest.mark.parametrize("scale", ["row", "ratio", "a_s", "sfa", "router"])
+@pytest.mark.parametrize("arity", [1, 2])
+def test_cached_evaluator_matches_fraction_bits_and_reuses_scale_values(scale, arity):
+    from experiments.numerics_rows.reference import f32_bits
+    from experiments.numerics_rows.scale_index import CachedEvaluator
+    table, codes = Table(), [0.0, -0.0, 0.5, 1.0, 2.0]
+    cases = [{**mode0_case(g=2**-12), "read": [i] * arity, "scale": scale, "router_weight": -0.5} for i in range(2)]
+    cache = CachedEvaluator(cases, table, maxsize=128)
+    for case in cases:
+        for wrong in itertools.product(range(len(codes)), repeat=arity):
+            expected = evaluate(case, wrong, codes, table)
+            assert f32_bits(cache(tuple(case["read"]), wrong, codes)) == f32_bits(expected)
+    info = cache.cached.cache_info()
+    assert info.misses == len(codes)**arity and info.hits == len(codes)**arity
+
+
+def test_cached_evaluator_counts_exact_tuples_across_evictions_and_unused_labels():
+    from experiments.numerics_rows.scale_index import CachedEvaluator
+    cases = [{**mode0_case(), "read": [i, i], "g_scale": float(i + 1), "column": i} for i in range(2)]
+    metrics = {}
+    cache = CachedEvaluator(cases, Table(), coding=[{"values": [0.0, -0.0, 1.0]}], metrics=metrics, maxsize=1)
+    for case in cases:
+        for wrong in itertools.product(range(3), repeat=2):
+            cache(case["read"], wrong, [0.0, -0.0, 1.0])
+    report = cache.report()
+    assert metrics["operand_signatures"] == 1 and metrics["completed_reads"] == 1
+    assert report["distinct_evaluate_tuples"] == 9 and report["requests"] == report["misses"] == 18
+    assert report["currsize"] == 1
+
+
+@pytest.mark.parametrize("scale", ["row", "a_s", "router"])
+def test_cached_evaluator_keeps_every_used_operand_and_the_table(scale):
+    from experiments.numerics_rows.reference import f32_bits
+    from experiments.numerics_rows.scale_index import CachedEvaluator
+    cases = [mode0_case()]
+    for field in ("g", "u", "a_scale", "g_scale", "u_scale"):
+        cases.append({**mode0_case(), field: 2.0})
+    cases = [{**case, "scale": scale, "read": [i, i]} for i, case in enumerate(cases)]
+    class OtherTable:
+        limit = 10.0
+        def __call__(self, value):
+            return value
+    for table in (Table(), OtherTable()):
+        cache = CachedEvaluator(cases, table)
+        for case in cases:
+            assert f32_bits(cache(case["read"], (0, 1), [0.5, 1.0])) == f32_bits(evaluate(case, (0, 1), [0.5, 1.0], table))
+
+
+@pytest.mark.parametrize("mode0", [False, True])
+def test_memoized_plan_keeps_every_case_byte(mode0):
+    import json
+    from experiments.numerics_rows.scale_index import make_plan
+    cases = [{**mode0_case(), "read": [i, i + 4] if mode0 else [i]} for i in range(4)]
+    arguments = {"table": Table(), "gate": range(4), "up": range(4, 8)} if mode0 else {}
+    old = make_plan("row", 8, cases, **arguments)
+    metrics = {}
+    new = make_plan("row", 8, cases, **arguments, memoize=True, metrics=metrics)
+    assert json.dumps(old, sort_keys=True, allow_nan=False).encode() == json.dumps(new, sort_keys=True, allow_nan=False).encode()
+    assert metrics["completed_reads"] == new["reads"] == 4
+    assert metrics["hits"] > 0 and metrics["distinct_evaluate_tuples"] <= metrics["requests"]
+
+
+def test_profile_phase_records_the_final_completed_read_count(tmp_path, monkeypatch):
+    import json
+    import signal
+    import sys
+    import experiments.numerics_rows.profile_c1 as profile_c1
+    from experiments.numerics_rows import cases, scale_index
+
+    for module, names in ((cases, ("checkpoint_routed", "decode_roles", "column_coverage", "routed_separation", "exact_chunks", "scale_index_manifest")),
+                          (scale_index, ("scale_values", "evaluate", "make_plan"))):
+        for name in names:
+            monkeypatch.setattr(module, name, getattr(module, name))
+    read_cases = [{**mode0_case(), "read": [i]} for i in range(2)]
+    def interrupted_plan(*args, **kwargs):
+        for case in read_cases:
+            scale_index.evaluate(case, (0,), [1.0])
+        signal.getsignal(signal.SIGALRM)(signal.SIGALRM, None)
+    monkeypatch.setattr(scale_index, "make_plan", interrupted_plan)
+    monkeypatch.setattr(cases, "main", lambda: scale_index.make_plan("row", 2, read_cases))
+    monkeypatch.setattr(signal, "setitimer", lambda *args: None)
+    monkeypatch.setattr(sys, "argv", ["profile_c1", "--out", str(tmp_path), "--", "--sample-expert", "0"])
+    profile_c1.main()
+    record = json.loads((tmp_path / "profile.json").read_text())
+    assert record["status"] == "CAPPED"
+    assert record["plans"][0]["completed_reads"] == 1
+    assert record["phases"][0]["completed_reads"] == 1

@@ -27,6 +27,8 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--out", type=Path, required=True)
     parser.add_argument("--seconds", type=int, default=1500)
+    parser.add_argument("--memoize", action="store_true", help="Opt-in Fraction evaluator cache; count exact input tuples")
+    parser.add_argument("--first-plan", action="store_true", help="Stop after the first scale array, before activation plans")
     args, remaining = parser.parse_known_args()
     if not 0 < args.seconds <= 1500:
         parser.error("the profile budget must be in [1, 1500] seconds")
@@ -56,6 +58,7 @@ def main():
                 record["finished"] = True
                 return result
             finally:
+                record.update(metadata(*a, **k))
                 record.update(seconds=time.monotonic() - started, peak_bytes=resource.getrusage(resource.RUSAGE_SELF).ru_maxrss * 1024)
                 phases.append(record)
                 emit({"end": record})
@@ -104,9 +107,27 @@ def main():
         current.clear()
         current["plan"] = key
         reads[key] = {"scale": scale, "n": n, "reads": len(read_cases), "completed_reads": 0, "array": kwargs.get("metadata", {})}
-        result = phase("make_plan", original_plan, lambda *_a, **_k: reads[key])(scale, n, read_cases, **kwargs)
+        cache = {}
+        if args.memoize:
+            reads[key]["cache"] = cache
+            kwargs.update(memoize=True, metrics=cache)
+        if args.first_plan:
+            write_json(args.out / f"plan-inputs-{key}.json", {"scale": scale, "n": n, "read_cases": read_cases,
+                       "gate": [kwargs["gate"].start, kwargs["gate"].stop] if kwargs.get("gate") else [],
+                       "up": [kwargs["up"].start, kwargs["up"].stop] if kwargs.get("up") else [],
+                       "ue4m3": kwargs.get("ue4m3", False), "metadata": kwargs.get("metadata", {})})
+        def run():
+            try:
+                return original_plan(scale, n, read_cases, **kwargs)
+            finally:
+                if args.memoize:
+                    reads[key]["completed_reads"] = cache.get("completed_reads", 0)
+        result = phase("make_plan", run, lambda: reads[key])()
         reads[key]["completed_reads"] = result["reads"]
         current.clear()
+        if args.first_plan:
+            write_json(args.out / f"plan-result-{key}.json", result)
+            raise ProfileEnd("ONE_PLAN_FINISHED")
         return result
     scale_index.make_plan = plan
     original_index = cases.scale_index_manifest
@@ -141,6 +162,7 @@ def main():
             "status": status, "error": error, "wall_seconds": time.monotonic() - started, "budget_seconds": args.seconds,
             "peak_bytes": resource.getrusage(resource.RUSAGE_SELF).ru_maxrss * 1024, "phases": phases,
             "plans": list(reads.values()), "arithmetic": arithmetic, "packages": packages,
+            "memoized": args.memoize, "first_plan_only": args.first_plan,
             "scope": "one routed gate role, Fraction backend, one native thread"})
         events.close()
 
