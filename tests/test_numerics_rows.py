@@ -300,3 +300,16 @@ def test_scale_coding_checks_incidental_outputs_before_launch():
     finite_references(*arguments, [1.0, 1.0], 1.0, 1.0, None, None, 2)
     with pytest.raises(Invalid, match="nonfinite incidental reference"):
         finite_references(*arguments, [1.0, 2.0], 1.0, 1.0, None, None, 2)
+
+
+def test_c1_rejects_normal_products_with_subnormal_quantum():
+    import numpy as np
+    from experiments.numerics_rows.cases import column_coverage
+    class Quantizer:
+        gs, normal_j = 1.0, 0
+        def __call__(self, value):
+            return value, 1.0
+    weight = np.array([[(129 / 128) * 2**-126]])
+    result = column_coverage(weight, np.ones(1, dtype=np.float32), "value", Quantizer())
+    assert not result["complete"] and result["x_false_candidates"] > 0
+    assert result["recipes"][0]["values"] == []

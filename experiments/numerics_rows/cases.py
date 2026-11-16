@@ -262,6 +262,8 @@ def bf16_array(values):
 def column_coverage(weights, scales, family, quantizer, *, peer=None, peer_scales=None, table=None, stage="dense", lut=()):
     """Check all elements. Retain only the tested input recipe and coverage counts."""
     import numpy as np
+    import torch
+    from experiments.numerics_rows.row import x_products
 
     weights, scales = np.asarray(weights), np.asarray(scales).reshape(-1)
     values = np.asarray(alphabet(family, lut))
@@ -280,7 +282,9 @@ def column_coverage(weights, scales, family, quantizer, *, peer=None, peer_scale
         for activation in inputs:
             aq, a_scale = quantizer(activation)
             product = aq * w
-            valid = (product == 0) | ((np.abs(product) >= 2**-126) & (np.abs(product) < 2**128))
+            valid = x_products(torch.from_numpy(product[:, None])).numpy()
+            if peer is not None:
+                valid &= x_products(torch.from_numpy((aq * peer[:, column])[:, None])).numpy()
             x_false += int((~valid).sum())
             if not valid.all():
                 continue
