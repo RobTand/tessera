@@ -1232,7 +1232,7 @@ def joined_inputs(monkeypatch):
         receipts.append(("row-" + name, {"inputs": {"population_sha256": "signed", "selected_modules": [name],
             "case_manifest_sha256": "c1-" + name, "build_sha256": "build", "q1_table_sha256": "q1"},
             "tool": {"commit": "tool", "tree_sha256": "tree"}, "runtime": {"image_digest": IMAGES["N"]["image_digest"]},
-            "tessera": {"commit": "source", "contract_sha256": "contract"}, "rule": {"h1_sha256": "h1", "sha256": "rule"},
+            "tessera": {"commit": "source", "contract_sha256": "contract"}, "rule": {"h1_sha256": "h1", "sha256": "rule", "frozen_utc": "2026-11-16T20:00:00Z"},
             "row": {"utc_end": "finished", "exit_status": 0, "finalization_finished": True}, "units": owned}))
     return population, "signed", manifests, receipts
 

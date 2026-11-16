@@ -97,6 +97,9 @@ def _join(population, digest, manifests, receipts, contract):
         seen_receipts.add(receipt_sha)
         if receipt.get("canary") or receipt["row"].get("canary") or receipt["rule"].get("canary"):
             raise Invalid("a canary cannot supply attestation")
+        frozen = receipt["rule"].get("frozen_utc")
+        if not isinstance(frozen, str) or not frozen.strip():
+            raise Invalid("join requires a frozen rule in every receipt")
         if not receipt["row"].get("utc_end") or type(receipt["row"].get("exit_status")) is not int or receipt["row"].get("finalization_finished") is not True:
             raise Invalid("join requires finished row receipts")
         identity = execution_identity(receipt)

@@ -99,10 +99,12 @@ def test_rule_key_projection_for_routed_and_triton(structure, decoder, config):
     assert rule_unit_id(unit) == ["cell", "symbol", decoder, 1024, config, {"size": 2, "rank": 0}]
 
 
-def test_a_canary_is_never_joinable(monkeypatch):
+@pytest.mark.parametrize("owner", [None, "row", "rule"])
+def test_a_canary_is_never_joinable(monkeypatch, owner):
     population, digest, manifests, receipts = joined_inputs(monkeypatch)
     assert join(population, digest, manifests, receipts)["verdict"] == "PASS"
-    receipts[0][1]["canary"] = True
+    target = receipts[0][1] if owner is None else receipts[0][1][owner]
+    target["canary"] = True
     with pytest.raises(Invalid, match="canary"):
         join(population, digest, manifests, receipts)
 
@@ -165,3 +167,16 @@ def test_missing_m_evidence_is_unattested_even_when_another_m_has_the_same_key(m
     result = join(population, digest, manifests, receipts)
     assert result["verdict"] == "UNATTESTED"
     assert any(u["outcome"] == "UNATTESTED" and u["unit_id"][0] == "batch" for u in result["units"])
+
+
+@pytest.mark.parametrize("frozen", [None, "absent", "", "  "])
+def test_join_refuses_an_unfrozen_rule(monkeypatch, frozen):
+    population, digest, manifests, receipts = joined_inputs(monkeypatch)
+    assert join(population, digest, manifests, receipts)["verdict"] == "PASS"
+    rule = receipts[1][1]["rule"]
+    if frozen == "absent":
+        rule.pop("frozen_utc")
+    else:
+        rule["frozen_utc"] = frozen
+    with pytest.raises(Invalid, match="frozen rule"):
+        join(population, digest, manifests, receipts)
