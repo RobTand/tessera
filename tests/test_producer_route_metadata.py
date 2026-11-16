@@ -32,7 +32,7 @@ def test_public_lookup_refuses_an_unowned_grid():
     assert scheme.route_for_grid("UNOWNED_GRID") is None
 
 
-def test_api_extraction_keeps_the_exact_receipt_backed_v69_contract():
+def test_api_extraction_keeps_the_exact_receipt_backed_v70_contract():
     source = Path(scheme.__file__).with_name("runtime_contract.json").read_bytes()
-    # The v69 cell laws and committed receipt replays check the new claims.
-    assert hashlib.sha256(source).hexdigest() == "e819d2e90c0b5fe27f11283890d1fec53054d88fbe29d7f9cc473a08682e7b5a"
+    # The v70 cell laws and committed receipt replays check the new claims.
+    assert hashlib.sha256(source).hexdigest() == "703871fa2c2e6f8c14f0b5fbaa1634ed589a70b737f16220391f3702e3c7fdd8"
