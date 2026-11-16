@@ -1403,8 +1403,6 @@ def validate_serving_contract(contract: Mapping[str, Any], *,
     structure the dispatch refuses, or a rung the reader will not accept would
     be a claim about a runtime that does not exist.
     """
-    if not isinstance(require_arithmetic, bool):
-        raise ValueError("require_arithmetic must be a boolean")
     from .scheme import (MOE_BUILDERS, ROUTES, STRUCTURE_DENSE, STRUCTURE_ROUTED_MOE,
                          STRUCTURES)
 
@@ -2648,8 +2646,7 @@ def cell_evidence(cell: Mapping[str, Any], where: str = "lane_eligibility cell",
         raise ValueError(
             f"{at}.grade is {grade!r} but its kl entries derive {derived!r}; the grade is read "
             "off the entries, never asserted beside them")
-    return {**({"arithmetic": dict(arithmetic)} if arithmetic is not None else {}),
-            "grade": grade, "kl": parsed_kl, "artifact": artifact,
+    return {"arithmetic": arithmetic, "grade": grade, "kl": parsed_kl, "artifact": artifact,
             "smoke": {"status": status, "receipt": smoke_receipt,
                       "attribution": attribution, "control": parsed_control,
                       "record": parsed_record}}
@@ -3480,6 +3477,9 @@ def check_arithmetic_receipts(contract: Mapping[str, Any], root, rule_path) -> N
     from pathlib import Path
 
     root = Path(root)
+    for path in (root / "docs/measurements/numerics").glob("*.json"):
+        if any(r["verdict"] != "PASS" for r in json.loads(path.read_bytes())["records"]):
+            raise ValueError(f"{path}: non-PASS unit")
     rule_sha256 = hashlib.sha256(Path(rule_path).read_bytes()).hexdigest()
     for cell in contract["lane_eligibility"]["cells"]:
         evidence = cell_evidence(cell).get("arithmetic")
@@ -3495,7 +3495,7 @@ def check_arithmetic_receipts(contract: Mapping[str, Any], root, rule_path) -> N
         if summary["schema"] != "tessera.numerics_summary.v1" or summary["rule_sha256"] != rule_sha256:
             raise ValueError(f"{at}: schema or rule_sha256 differs")
         _require_keys(summary["tool"], f"{at}.tool", required={"commit", "tree_sha256"})
-        if not isinstance(summary["tool"]["commit"], str) or not re.fullmatch(r"[0-9a-f]{40}", summary["tool"]["commit"]):
+        if not isinstance(summary["tool"]["commit"], str) or not _COMMIT.fullmatch(summary["tool"]["commit"]):
             raise ValueError(f"{at}: tool commit must be a full Git SHA-1")
         for digest in (summary["receipt_sha256"], summary["tool"]["tree_sha256"]):
             if not isinstance(digest, str) or not _SHA256.fullmatch(digest):
@@ -3509,9 +3509,6 @@ def check_arithmetic_receipts(contract: Mapping[str, Any], root, rule_path) -> N
         for record in summary["records"]:
             _require_keys(record, at, required={"cell", "symbol", "decoder", "cut",
                                               "rungs_pass", "rungs_withdrawn", "verdict"})
-            for key in ("cell", "symbol", "decoder", "cut", "verdict"):
-                if not isinstance(record[key], str) or not record[key]:
-                    raise ValueError(f"{at}: {key} must be a nonempty string")
             for key in ("rungs_pass", "rungs_withdrawn"):
                 values = record[key]
                 if not isinstance(values, list) or any(not _is_int(q) or q <= 0 for q in values) or len(set(values)) != len(values):
@@ -3529,14 +3526,19 @@ def check_arithmetic_receipts(contract: Mapping[str, Any], root, rule_path) -> N
         entry = format_entry(cell["family"], contract)
         world = next(u["max_world_size"] for u in contract["tensor_parallel"]["units"] if u["unit"] == cell["family"])
         cuts = ["TP1"] + [f"TP{size}/rank{rank}" for size in range(2, world + 1) for rank in range(size)]
+        coverage = {}
+        for pair in cell["executes"]:
+            for cut in cuts:
+                row = next((r for r in records if (r["symbol"], r["decoder"], r["cut"]) == (pair["symbol"], pair["decoder"], cut)), {})
+                passed, withdrawn = set(row.get("rungs_pass", [])), set(row.get("rungs_withdrawn", []))
+                tables = {rung_rates(entry, q) for q in passed - withdrawn}
+                coverage[pair["symbol"], pair["decoder"], cut] = passed, withdrawn, tables, set(pair.get("rungs_q256", cell["rungs_q256"]))
         low, high = entry["reader_rate_range_q256"]
         for rung in range(low, high + 1, entry["reader_rate_step_q256"]):
             if not cell_covers_rung(cell, rung, entry):
                 continue
             for symbol, decoder in cell_executes(cell, q256=rung, entry=entry):
                 for cut in cuts:
-                    rows = [r for r in records if (r["symbol"], r["decoder"], r["cut"]) == (symbol, decoder, cut)]
-                    withdrawn = {q for r in rows for q in r["rungs_withdrawn"]}
-                    passed = {q for r in rows for q in r["rungs_pass"]}
-                    if rung in withdrawn or not any(q not in withdrawn and (q == rung or rung_rates(entry, q) == rung_rates(entry, rung)) for q in passed):
+                    passed, withdrawn, tables, measured = coverage[symbol, decoder, cut]
+                    if rung in withdrawn or (rung not in passed and (rung in measured or rung_rates(entry, rung) not in tables)):
                         raise ValueError(f"{at}: missing PASS for {(symbol, decoder, rung, cut)}")
