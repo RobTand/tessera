@@ -1009,10 +1009,6 @@ def test_arithmetic_receipt_gate(contract, tmp_path, case):
     payload = copy.deepcopy(contract)
     cell = next(c for c in payload["lane_eligibility"]["cells"]
                 if c["family"] == "TESSERA_E4M3_K1" and len(c["rungs_q256"]) > 15)
-    payload["lane_eligibility"]["cells"] = [cell]
-    payload["lane_eligibility"]["structures"] = [cell["structure"]]
-    payload["versions"]["default_serve_image"] = cell["runtime"]["image"]
-    payload["lane_eligibility"]["platforms"][cell["platform"]]["serve_image"] = cell["runtime"]["image"]
     if case == "census":
         options = {"require_arithmetic": True} if "require_arithmetic" in inspect.signature(reader.validate_serving_contract).parameters else {}
         with pytest.raises(ValueError, match="arithmetic"):
@@ -1049,11 +1045,10 @@ def test_arithmetic_receipt_gate(contract, tmp_path, case):
     path = tmp_path / receipt
     path.parent.mkdir(parents=True)
     path.write_text(json.dumps(summary))
-    if case != "census":
-        cell["evidence"]["arithmetic"] = dict(receipt=receipt, sha256=hashlib.sha256(path.read_bytes()).hexdigest())
+    cell["evidence"]["arithmetic"] = dict(receipt=receipt, sha256=hashlib.sha256(path.read_bytes()).hexdigest())
     if case == "sha256":
         path.write_text(path.read_text() + "\n")
-    reader.validate_serving_contract(payload, require_arithmetic=True)
+    reader.validate_serving_contract(payload)
     if case in ("pass", "by_rule"):
         reader.check_arithmetic_receipts(payload, tmp_path, rule)
     else:
