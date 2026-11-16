@@ -1,5 +1,7 @@
 """Receipts keep exact NumPy values and completed H1 sections."""
 import json
+import hashlib
+import struct
 import sys
 import copy
 from types import SimpleNamespace
@@ -8,6 +10,7 @@ import numpy as np
 import pytest
 
 from experiments.numerics_rows.common import write_json
+from experiments.numerics_rows.build import code_identity
 from experiments.numerics_rows import h1
 from experiments.numerics_rows import row
 from experiments.numerics_rows.common import IMAGES, Invalid, artifact_limit, check_runtime, load_build
@@ -659,3 +662,62 @@ def test_legacy_subnormal_receipt_is_normalized_only_with_its_recorded_reason():
     assert entry["subnormal_operand"]["original_result"] == "UNATTESTED"
     entry["subnormal_operand"].pop("reason")
     assert not h1.gpu_preconditions(report)
+
+
+def elf_bytes(*, wide=True, order="<", text=b"\x01\x02\x03\x04", strtab=b"\0left\0", bss_size=8,
+              text_type=1, text_flags=6, reverse=False):
+    names = b"\0.shstrtab\0.text\0.strtab\0.bss\0"
+    sections = [("", 0, 0, b"", 0), (".shstrtab", 3, 0, names, len(names)),
+                (".text", text_type, text_flags, text, len(text)), (".strtab", 3, 0, strtab, len(strtab)),
+                (".bss", 8, 3, b"", bss_size)]
+    if reverse:
+        sections[2:] = reversed(sections[2:])
+    size, stride = (64, 64) if wide else (52, 40)
+    data = bytearray(size)
+    headers = []
+    for name, kind, flags, content, length in sections:
+        headers.append((names.index(name.encode() + b"\0"), kind, flags, 0, len(data), length, 0, 0, 1, 0))
+        data.extend(content)
+    table_offset = len(data)
+    for header in headers:
+        data.extend(struct.pack(order + ("IIQQQQIIQQ" if wide else "IIIIIIIIII"), *header))
+    ident = b"\x7fELF" + bytes((2 if wide else 1, 1 if order == "<" else 2, 1)) + b"\0" * 9
+    data[:size] = ident + struct.pack(order + ("HHIQQQIHHHHHH" if wide else "HHIIIIIHHHHHH"),
+                                     3, 62, 1, 0, 0, table_offset, 0, size, 0, 0, stride, len(headers), 1)
+    return bytes(data)
+
+
+@pytest.mark.parametrize("wide,order", [(False, "<"), (False, ">"), (True, "<"), (True, ">")])
+def test_code_digest_has_exact_header_and_payload_encoding(tmp_path, wide, order):
+    path = tmp_path / "library.so"
+    path.write_bytes(elf_bytes(wide=wide, order=order))
+    names = b"\0.shstrtab\0.text\0.strtab\0.bss\0"
+    expected = (b'["",0,0,0]\n[".shstrtab",3,0,30]\n' + names
+                + b'[".text",1,6,4]\n\x01\x02\x03\x04[".bss",8,3,8]\n')
+    result = code_identity(path)
+    assert result["library_code_sha256"] == hashlib.sha256(expected).hexdigest()
+    sections = result["library_code_sections"]
+    assert [s["name"] for s in sections] == ["", ".shstrtab", ".text", ".bss"]
+    assert [s["index"] for s in sections] == [0, 1, 2, 4]
+    assert sections[-1] == {"index": 4, "name": ".bss", "sh_type": 8, "sh_flags": 3,
+                            "sh_size": 8, "sha256": hashlib.sha256(b"").hexdigest()}
+
+
+@pytest.mark.parametrize("change,equal", [({"strtab": b"\0right\0"}, True),
+                                        ({"text": b"\x01\x02\x03\x05"}, False),
+                                        ({"bss_size": 9}, False), ({"text_type": 7}, False),
+                                        ({"text_flags": 2}, False), ({"reverse": True}, False)])
+def test_code_digest_ignores_only_strtab(tmp_path, change, equal):
+    original, changed = tmp_path / "original.so", tmp_path / "changed.so"
+    original.write_bytes(elf_bytes())
+    changed.write_bytes(elf_bytes(**change))
+    assert original.read_bytes() != changed.read_bytes()
+    assert (code_identity(original)["library_code_sha256"] == code_identity(changed)["library_code_sha256"]) is equal
+
+
+@pytest.mark.parametrize("data", [b"not ELF", elf_bytes()[:-1]])
+def test_code_digest_refuses_invalid_elf(tmp_path, data):
+    path = tmp_path / "broken.so"
+    path.write_bytes(data)
+    with pytest.raises(ValueError):
+        code_identity(path)

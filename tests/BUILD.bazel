@@ -14682,6 +14682,7 @@ ts_py_library(
     ],
     deps = [
         "//experiments:dense_fused_oracle",
+        "//experiments:numerics_rows/build",
         "//experiments:numerics_rows/cases_cycle",
         "//experiments:numerics_rows/common",
         "//experiments:numerics_rows/job_receipt",
