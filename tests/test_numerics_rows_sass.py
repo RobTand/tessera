@@ -171,12 +171,27 @@ def test_extended_constant_folding_uses_exact_opcode_semantics(opcode, operands,
 
 def test_constant_bank_folding_uses_this_functions_exact_word():
     library, lelf, probe, pelf = evidence()
-    library = library.replace("FMNMX R11", "FADD R60, RZ, c[0x3][0x0];\n/*0008*/ FMNMX R11")
-    library = library.replace("-R11, c[0x3][0x0]", "-R11, R60")
-    probe = probe.replace("LDG.E R1", "MOV R60, 0x3fb8aa3b;\n/*0008*/ LDG.E R1")
-    probe = probe.replace("-R1, c[0x3][0x0]", "-R1, R60")
-    assert prove(library, lelf, probe, pelf)["matched"]
+    library = library.replace("FMNMX R11", "FADD R62, RZ, c[0x3][0x0];\n/*0008*/ FMNMX R11")
+    library = library.replace("-R11, c[0x3][0x0]", "-R11, R62")
+    probe = probe.replace("LDG.E R1", "MOV R62, 0x3fb8aa3b;\n/*0008*/ LDG.E R1")
+    probe = probe.replace("-R1, c[0x3][0x0]", "-R1, R62")
+    result = prove(library, lelf, probe, pelf)
+    assert result["matched"], result
     assert prove(library, elf(KERNEL, "3fb8aa3c"), probe, pelf)["status"] == "DIFFERENT"
+    assert prove(library.replace("R62", "R60"), lelf, probe, pelf)["status"] == "UNSUPPORTED"
+
+
+@pytest.mark.parametrize("reuse", ["", ".reuse"])
+def test_register_mov_is_transparent_and_a_different_source_is_different(reuse):
+    _, lelf, probe, pelf = evidence()
+    library = sass(KERNEL, ["FMNMX R11, R20, c[0x0][0x160], PT", "FADD R63, R11, 1",
+                            f"MOV R62, R11{reuse}"] + expression(11, 12))
+    library = library.replace("-R11, c[0x3][0x0]", "-R62, c[0x3][0x0]")
+    result = prove(library, lelf, probe, pelf)
+    assert result["matched"], result
+    assert result["instruction_examples"]["register_moves"]
+    changed = prove(library.replace(f"MOV R62, R11{reuse}", f"MOV R62, R63{reuse}"), lelf, probe, pelf)
+    assert changed["status"] == "DIFFERENT" and not changed["unresolved"]
 
 
 def test_ffma_constant_matches_mov_and_one_ulp_is_different():

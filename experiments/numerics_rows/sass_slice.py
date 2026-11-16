@@ -386,6 +386,8 @@ class Slice:
                     if re.fullmatch(r"U?R\d+", ins.destinations[slot]) else None)
         if constant is not None:
             return self.node("constant", constant)
+        if ins.opcode == "MOV" and len(ins.operands) == 2 and re.fullmatch(r"(?:UR|R)\d+(?:\.reuse)?", ins.operands[1]):
+            return self.register(ins.operands[1].removesuffix(".reuse"), state)
         shift = left_shift(ins)
         if shift is not None:
             return self.node("shift-left", self.operand(shift[0], name, index, state), shift[1])
@@ -605,7 +607,8 @@ def instruction_examples(result, probe, library):
             break
         for (pname, _), p in probe.origins.get(key, {}).items():
             for (lname, _), lib in library.origins.get(key, {}).items():
-                kind = ("constant_nodes" if {p.opcode, lib.opcode} == {"FFMA", "MOV"} else
+                kind = ("constant_nodes" if {p.opcode, lib.opcode} == {"FFMA", "MOV"} and library.nodes[key][0] == "constant" else
+                        "register_moves" if "MOV" in {p.opcode, lib.opcode} and p.opcode != lib.opcode else
                         "left_shifts" if {p.opcode, lib.opcode} == {"IMAD.SHL.U32", "SHF.L.U32"} else None)
                 if kind and len(examples[kind]) < 3:
                     record = {"probe_function": pname, "probe_instruction": p.text,
@@ -619,7 +622,7 @@ def prove(library_sass, library_elf, probe_sass, probe_elf):
     """Require every mode-0 quotient, including all slow paths, to match."""
     result = {"mode0_instantiations": 0, "quotients": 0, "quotients_examined": 0,
               "constant_operands": {}, "unresolved": [], "differences": [],
-              "instruction_examples": {"constant_nodes": [], "left_shifts": []},
+              "instruction_examples": {"constant_nodes": [], "left_shifts": [], "register_moves": []},
               "matched": False, "status": "UNSUPPORTED"}
     try:
         libraries = binary_records(library_sass, library_elf)
