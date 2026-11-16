@@ -125,7 +125,7 @@ def instructions(text):
             if not match:
                 raise Unmatched(f"instruction parse failed: {line}")
             result[name].append(Instruction(address, match[1] or "", match[2],
-                                            tuple(x.strip() for x in (match[3] or "").split(","))))
+                                            tuple(x.strip().replace(".reuse", "") for x in (match[3] or "").split(","))))
     return result
 
 

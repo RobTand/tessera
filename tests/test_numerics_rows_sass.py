@@ -42,6 +42,18 @@ def test_register_names_and_unrelated_schedule_do_not_count():
     assert result["unresolved"] == []
 
 
+@pytest.mark.parametrize("side,first,gf", [(0, 12, 11), (2, 2, 1)])
+def test_operand_reuse_hint_is_ignored_but_a_different_source_is_different(side, first, gf):
+    inputs = list(evidence())
+    source = f"MUFU.EX2 R{first + 1}, R{first}"
+    hinted = source + ".reuse"
+    inputs[side] = inputs[side].replace(source, hinted)
+    assert prove(*inputs)["status"] == "MATCHED"
+    inputs[side] = inputs[side].replace(hinted, f"MUFU.EX2 R{first + 1}, R{gf}.reuse")
+    result = prove(*inputs)
+    assert result["status"] == "DIFFERENT" and not result["unresolved"]
+
+
 @pytest.mark.parametrize("before,after", (("FMUL R16, R11, R15", "FMUL.FTZ R16, R11, R15"),
     ("FMUL R16, R11, R15", "FMUL R16, R15, R11"),
     ("FADD R14, R13, 1", "FADD R14, R13, 2"),
