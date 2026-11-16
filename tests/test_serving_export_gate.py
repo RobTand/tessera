@@ -310,6 +310,8 @@ def test_a_routed_stack_is_gated_against_the_routed_moe_cells_not_the_dense_rang
     message = str(caught.value)
     for cell in routed:
         assert cell["id"] in message, message
+        assert f"{cell['qualification']}, evidence.grade={cell['evidence']['grade']}" in message
+    assert "route_only does not attest arithmetic" in message
     assert "routed_moe" in message and "[256, 2048]" not in message, message
 
     # The rung the routed cells DO attest passes on the same table, and on
