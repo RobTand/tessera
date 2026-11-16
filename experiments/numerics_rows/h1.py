@@ -248,7 +248,8 @@ def main():
     sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "tests"))
     import tessera
     import torch
-    from experiments.dense_fused_oracle import init_vllm_world1
+    from experiments.dense_fused_oracle import e4m3_instruction, init_vllm_world1
+    from experiments.numerics_rows.sass_slice import match_library
 
     torch.set_num_threads(1)
     args.out.mkdir(parents=True, exist_ok=True)
@@ -256,14 +257,16 @@ def main():
     recorder = BoundaryRecorder(torch.cuda.synchronize, report["boundaries"])
     built = json.loads(args.build.read_text())
     loaded = install_libraries(built["libraries"])
+    report["P3"] = {record["key"]: match_library(record) for record in built["libraries"]}
     with init_vllm_world1():
         report["P2"] = p2_ties(recorder) if args.image == "G" else {"result": "not applicable to value-only image"}
         for key, lib in loaded.items():
             try:
-                report["libraries"][key] = e2m1_preconditions(lib, recorder) if key == "e2m1" else dense_preconditions(key, recorder)
-                report["libraries"][key]["subnormal_operand"] = subnormal_case(key, recorder)
-                if key != "e2m1":
-                    report["negative_controls"].append(wrong_scale_index(key, recorder))
+                with e4m3_instruction("f16" if key == "e4m3" else "e4m3"):
+                    report["libraries"][key] = e2m1_preconditions(lib, recorder) if key == "e2m1" else dense_preconditions(key, recorder)
+                    report["libraries"][key]["subnormal_operand"] = subnormal_case(key, recorder)
+                    if key != "e2m1":
+                        report["negative_controls"].append(wrong_scale_index(key, recorder))
             except Exception as error:
                 report["libraries"][key] = {"error": str(error), "traceback": traceback.format_exc()}
             write_json(args.out / "h1.json", report)
