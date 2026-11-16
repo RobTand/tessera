@@ -162,7 +162,9 @@ def wrong_scale_index(key, recorder):
     recorder.call("scale-index:correct", "tessera", lambda: rf.dense_forward(role, x, a, got, counter))
     changed = dataclasses.replace(role, wscale=role.wscale.roll(1, 1))
     recorder.call("scale-index:wrong", "tessera", lambda: rf.dense_forward(changed, x, a, wrong, counter))
-    return {"mutation": "row-scale-index", "flagged_exactly": bool((got != wrong).all())}
+    reference = torch.arange(1, 257, device="cuda", dtype=torch.float32).bfloat16().reshape(1, -1)
+    return {"mutation": "row-scale-index", "flagged_exactly": compare(got, reference)["equal"]
+            and compare(wrong, reference.roll(1, 1))["equal"] and compare(wrong, reference)["mismatches"] == reference.numel()}
 
 
 def negative_controls():
@@ -218,8 +220,15 @@ def e2m1_preconditions(lib, recorder):
     # A wrong ratio index must be visible in the exact check.
     wrong = dataclasses.replace(role, ratio=role.ratio * 2)
     mutated = recorder.call("H1:e2m1:wrong-scale", "tessera", lambda: dense_forward_quantized(wrong, q, sf))
+    from experiments.numerics_rows.row import dot_reference
+    a, weight = check.a_deq(q, sf), check.ref_weight(blob, None, "cuda")
+    reference, mask = dot_reference(a, weight, None, role.ratio)
+    wrong_reference, _ = dot_reference(a, weight, None, wrong.ratio)
+    control = compare(mutated, reference)
     return {"P4": torch.equal(role.ratio.view(torch.int32), expected.view(torch.int32)),
-            "wrong_scale_detected": bool((mutated != got).any()), "rung": 896,
+            "wrong_scale_detected": bool(mask.all()) and compare(got, reference)["equal"]
+                and compare(mutated, wrong_reference)["equal"] and control["mismatches"] > 0,
+            "wrong_scale_mismatches": control["mismatches"], "rung": 896,
             "routed": e2m1_routed_preconditions(recorder)}
 
 
@@ -259,7 +268,21 @@ def e2m1_routed_preconditions(recorder):
     got, changed = (torch.empty(2, 256, device="cuda", dtype=torch.bfloat16) for _ in range(2))
     for owner, out, name in ((correct, got, "correct"), (wrong, changed, "wrong-index")):
         recorder.call("H1:e2m1:" + name, "tessera", lambda: owner._launch(2, q, sf, routes, a_row_mode=1, mul_weight=False, limit=float("inf"), out=out, counter=1))
-    control = {"mutation": "expert-ratio-index", "flagged_exactly": bool((got != changed).any())}
+    from experiments.numerics_rows.row import dot_reference
+    from experiments.t4_code.fused_e2m1_check import a_deq
+    reference, wrong_reference = torch.empty_like(got), torch.empty_like(got)
+    all_exact = True
+    for row, flat in enumerate(routes.flat_sorted.tolist()):
+        expert = int(ids.flatten()[flat])
+        weight = ref_weight(parse_fused(blobs["down_proj"][expert])[0].blob, None, "cuda")
+        for owner, ref in ((correct, reference), (wrong, wrong_reference)):
+            value, mask = dot_reference(a_deq(q, sf)[row:row + 1], weight, None, owner.ratio_down[expert:expert + 1])
+            ref[flat] = value[0]
+            all_exact &= bool(mask.all())
+    expected_mismatches = compare(wrong_reference, reference)["mismatches"]
+    control = {"mutation": "expert-ratio-index", "flagged_exactly": all_exact and compare(got, reference)["equal"]
+               and compare(changed, wrong_reference)["equal"] and expected_mismatches > 0
+               and compare(changed, reference)["mismatches"] == expected_mismatches}
     return {"P4": equal, "P5": True, "build": info, "negative_control": control}
 
 def cuda_control(where):
