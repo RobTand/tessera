@@ -11,9 +11,9 @@ The PQ+Tessera lead will set `require_arithmetic=True` in
 for the 12 cells in scope and withdraw or narrow the rest in the same commit.
 The switch refuses the whole contract until every served cell is covered.
 The wheel checks receipt grammar. `test_tree_arithmetic_receipts` opens each
-summary under `docs/measurements/numerics/` and refuses every record whose
+summary under `docs/measurements/numerics/`, including subdirectories, and refuses every record whose
 verdict is not PASS. For each named summary it checks its SHA-256, image,
-rule SHA-256 and scope. It checks that the tool identity is present and has
+rule SHA-256 and the cell's scope. It checks that the tool identity is present and has
 the required syntax; it does not compare that identity with tool source. It reads the rule from
 `docs/measurements/numerics/pass-rule.md`. The lead must add the frozen rule
 there before the first summary. No frozen rule exists in this change.
@@ -22,18 +22,22 @@ Summary schema `tessera.numerics_summary.v1` has `rule_sha256`,
 `receipt_sha256`, `tool {commit, tree_sha256}`, `image_digest`, and `records`.
 Each record has `cell`, `symbol`, `decoder`, `cut`, `rungs_pass`,
 `rungs_withdrawn`, `verdict`, and `measured`. Each `measured` entry is
-`{rung, rows, cols, k_split}` for a PASS unit. These are distinct positive
-integer tuples, and their rungs must equal `rungs_pass`. The required cell
+`{rung, rows, cols, k_split, last_tile_partial, superblock_width}` for a PASS
+unit. The first four values are positive integers. `last_tile_partial` is a
+boolean. `superblock_width` is null for dense and a positive integer for
+routed. The tuples are distinct, and their rungs must equal `rungs_pass`. The required cell
 arithmetic `scope` is `measured_m_configurations_only`: arithmetic is attested
-at those measured M configurations; all others are unattested. This check
+at those measured M configurations and, by D3, at by-rule rungs outside the
+census with the same run table. All others are unattested. This check
 validates the record form. It does not gate on the M configurations a model
 launches. Cuts are `TP1` and `TP<size>/rank<rank>`.
 The closed-world TP ceiling sets the required cuts. A record aggregates all M
 configurations. Any non-PASS configuration withdraws its rung for that pair
-and cut. A record whose verdict is not PASS refuses the cell. A withdrawn rung cannot borrow proof
+and cut. An UNATTESTED unit's rung goes into `rungs_withdrawn`. A record verdict must
+be PASS; any other verdict refuses the check. A withdrawn rung cannot borrow proof
 from its run table. Each measured rung needs its own PASS. A PASS rung also
-covers the same pair and cut at by-rule rungs outside the pair's measured
-list when they have the same rate-rule run table. The full receipt stays in the job
+covers the same pair and cut at by-rule rungs outside the pair's census
+rungs when they have the same rate-rule run table. The full receipt stays in the job
 directory; `receipt_sha256` binds that receipt. The tree check verifies the
 summary, not the full receipt or the tool source outside this tree.
 
