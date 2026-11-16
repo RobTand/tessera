@@ -4,7 +4,7 @@
 
 Name the current class pair at the four existing rungs in decode and batch.
 Keep historical identities. The TP2 census records both ranks at all four rungs.
-The full 82-file CPU proof passes: 1,870 tests pass and 24 skip. Both generated-file checks pass.
+The full 82-file CPU proof passes: 1,887 tests pass and 24 skip. Both generated-file checks pass.
 Grade remains `route_only`.
 See `docs/measurements/2026-11-16-img-n-v70.md`.
 
