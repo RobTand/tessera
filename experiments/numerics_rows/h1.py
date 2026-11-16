@@ -131,6 +131,30 @@ def routed_preconditions(key, recorder):
     return {"P5": len(builds) == 2, "ranks": builds}
 
 
+def wrong_scale_index(key, recorder):
+    import torch
+    from tessera import routed_fused as rf, window_gemm as wg
+    from window_gemm_grouped_support import Expert
+
+    expert = Expert(256, 256, (4,) * 256, 51, family="e4m3" if key != "value" else "value")
+    if key == "value":
+        expert.unit.table.fill_(1)
+    else:
+        expert.unit.native.fill_(0x38)
+    expert.unit.scale.copy_(torch.arange(1, 257, device="cuda", dtype=torch.float32))
+    with __import__("experiments.dense_fused_oracle", fromlist=["e4m3_instruction"]).e4m3_instruction("f16" if key == "e4m3" else "e4m3"):
+        role = rf.prepare_dense_role(wg.prepare_window_gemm(expert.unit))
+    x = torch.zeros(1, 256, dtype=torch.bfloat16 if key == "value" else torch.float8_e4m3fn, device="cuda")
+    x[:, 0] = 1
+    a = None if key == "value" else torch.ones(1, device="cuda")
+    got, wrong = (torch.empty(1, 256, device="cuda", dtype=torch.bfloat16) for _ in range(2))
+    counter = torch.zeros(1, dtype=torch.int32, device="cuda")
+    recorder.call("scale-index:correct", "tessera", lambda: rf.dense_forward(role, x, a, got, counter))
+    changed = dataclasses.replace(role, wscale=role.wscale.roll(1, 1))
+    recorder.call("scale-index:wrong", "tessera", lambda: rf.dense_forward(changed, x, a, wrong, counter))
+    return {"mutation": "row-scale-index", "flagged_exactly": bool((got != wrong).all())}
+
+
 def negative_controls():
     import torch
 
@@ -238,6 +262,8 @@ def main():
             try:
                 report["libraries"][key] = e2m1_preconditions(lib, recorder) if key == "e2m1" else dense_preconditions(key, recorder)
                 report["libraries"][key]["subnormal_operand"] = subnormal_case(key, recorder)
+                if key != "e2m1":
+                    report["negative_controls"].append(wrong_scale_index(key, recorder))
             except Exception as error:
                 report["libraries"][key] = {"error": str(error), "traceback": traceback.format_exc()}
             write_json(args.out / "h1.json", report)
