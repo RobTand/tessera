@@ -578,46 +578,19 @@ ts_py_library(
         "dense_fused_ncu.py",
     ],
     deps = [
-        ":dense_fused_oracle_cycle",
+        ":dense_fused_oracle",
     ],
 )
 
 ts_py_library(
-    name = "dense_fused_oracle_cycle",
+    name = "dense_fused_oracle",
     srcs = [
         "dense_fused_oracle.py",
-        "numerics_rows/cases.py",
-        "numerics_rows/h1.py",
-        "numerics_rows/population.py",
-        "numerics_rows/quantizers.py",
-        "numerics_rows/routed.py",
-        "numerics_rows/row.py",
-        "numerics_rows/run_routed.py",
-        "numerics_rows/scale_index.py",
-        "numerics_rows/scale_launch.py",
-    ],
-    data = [
-        "//src/tessera:serving/runtime_contract.json",
     ],
     deps = [
         "//src/tessera:__init___cycle",
-        "//src/tessera:_dev/__init__",
-        "//src/tessera:_dev/native_identity",
         "//src/tessera:bf16_route_cycle",
-        "//src/tessera:container",
-        "//src/tessera:decode",
-        "//src/tessera:fused",
-        "//src/tessera:fused_frame",
-        "//src/tessera:kernel_a4",
-        "//tests:window_gemm_grouped_support",
-        ":numerics_rows/common",
-        ":numerics_rows/reference",
-        ":numerics_rows/sass_slice",
-        ":numerics_rows/synthetic",
         ":routed_pair_oracle",
-        ":t4_code/fp4_arithmetic_attest",
-        ":t4_code/fused_e2m1_check",
-        ":t4_code/sass_dump",
     ],
 )
 
@@ -1996,6 +1969,45 @@ ts_py_library(
 )
 
 ts_py_library(
+    name = "numerics_rows/cases_cycle",
+    srcs = [
+        "numerics_rows/cases.py",
+        "numerics_rows/h1.py",
+        "numerics_rows/population.py",
+        "numerics_rows/routed.py",
+        "numerics_rows/row.py",
+        "numerics_rows/run_routed.py",
+        "numerics_rows/scale_index.py",
+        "numerics_rows/scale_launch.py",
+    ],
+    data = [
+        "//src/tessera:serving/runtime_contract.json",
+    ],
+    deps = [
+        "//src/tessera:__init___cycle",
+        "//src/tessera:_dev/__init__",
+        "//src/tessera:_dev/native_identity",
+        "//src/tessera:bf16_route_cycle",
+        "//src/tessera:container",
+        "//src/tessera:decode",
+        "//src/tessera:fused",
+        "//src/tessera:fused_frame",
+        "//src/tessera:kernel_a4",
+        "//tests:window_gemm_grouped_support",
+        ":dense_fused_oracle",
+        ":numerics_rows/common",
+        ":numerics_rows/quantizers",
+        ":numerics_rows/reference",
+        ":numerics_rows/sass_slice",
+        ":numerics_rows/synthetic",
+        ":routed_pair_oracle",
+        ":t4_code/fp4_arithmetic_attest",
+        ":t4_code/fused_e2m1_check",
+        ":t4_code/sass_dump",
+    ],
+)
+
+ts_py_library(
     name = "numerics_rows/common",
     srcs = [
         "numerics_rows/common.py",
@@ -2033,6 +2045,21 @@ ts_py_library(
     ],
     deps = [
         ":numerics_rows/common",
+    ],
+)
+
+ts_py_library(
+    name = "numerics_rows/quantizers",
+    srcs = [
+        "numerics_rows/quantizers.py",
+    ],
+    deps = [
+        "//src/tessera:__init___cycle",
+        "//src/tessera:bf16_route_cycle",
+        "//src/tessera:kernel_a4",
+        ":dense_fused_oracle",
+        ":numerics_rows/common",
+        ":numerics_rows/reference",
     ],
 )
 
