@@ -1026,6 +1026,7 @@ def row_execution(tmp_path, monkeypatch):
     except ImportError:
         pass  # The pre-fix checkout has no compile-path verifier.
     else:
+        args._compile_paths = serving_build.check_compile_paths
         monkeypatch.setattr(serving_build, "check_compile_paths", lambda *args: [{"key": "e4m3", "native_source_path": "/P/kernel.cu"}])
     monkeypatch.setattr(common, "register_native_ops", lambda image: {"result": "PASS"})
     monkeypatch.setattr(common, "source_digest", lambda *args: "source-hash")
@@ -1073,6 +1074,40 @@ def test_run_checks_identity_before_every_case_and_rechecks_after(row_execution)
     assert events == ["identity", *(["case"] * 5), "identity"]
     assert scope["outcome"] == "PASS"
     assert scope["arm"]["library_identity_verified"] and scope["arm"]["library_identity_unchanged"]
+
+
+def test_run_refuses_a_changed_compile_path_before_any_case(row_execution, monkeypatch):
+    from experiments.numerics_rows.common import KERNEL, sha256
+    from tessera.serving import ext
+    from tessera import routed_fused as rf
+
+    args, receipt, _, events, _ = row_execution
+    source = args.source / KERNEL
+    source.parent.mkdir(parents=True)
+    source.write_bytes(b"pinned test kernel")
+    built = json.loads(args.build.read_text())
+    built["libraries"][0]["name"] = "tessera_routed_fused_e4m3"
+    write_json(args.build, built)
+    h1_report = json.loads(args.h1.read_text())
+    h1_report["build_sha256"] = sha256(args.build)
+    write_json(args.h1, h1_report)
+    write_json(args.build_provenance, {**built, "build_sha256": sha256(args.build), "libraries": [
+        {**built["libraries"][0], "native_source_path": str(source), "native_source_sha256": sha256(source)}]})
+    if hasattr(args, "_compile_paths"):
+        from experiments.numerics_rows import serving_build
+
+        monkeypatch.setattr(serving_build, "check_compile_paths", args._compile_paths)
+        monkeypatch.setattr(serving_build, "KERNEL_SHA256", sha256(source))
+    monkeypatch.setattr(ext, "native_source_path", lambda name: str(source))
+    monkeypatch.setattr(rf, "_cflags", lambda *args: [])
+    with pytest.raises(SystemExit) as passed:
+        row.run(args, receipt)
+    assert passed.value.code == 0 and "case" in events
+    events.clear()
+    monkeypatch.setattr(ext, "native_source_path", lambda name: str(args.source / "different" / KERNEL))
+    with pytest.raises(Invalid, match="compile path"):
+        row.run(args, receipt)
+    assert events == []
 
 
 def test_run_identity_runtime_error_is_an_invalid_unit(row_execution, monkeypatch):

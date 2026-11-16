@@ -359,7 +359,7 @@ def test_setup_failure_writes_stopped_receipt(tmp_path, monkeypatch):
     import json
     from experiments.numerics_rows.row import main
     argv = ["row", "--image", "G", "--name", "test"]
-    for name in ("source", "manifest", "population", "build", "q1", "h1", "rule", "freeze"):
+    for name in ("source", "manifest", "population", "build", "build-provenance", "q1", "h1", "rule", "freeze"):
         argv += ["--" + name, str(tmp_path / name)]
     argv += ["--out", str(tmp_path / "results")]
     monkeypatch.setattr("sys.argv", argv)
