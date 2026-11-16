@@ -287,6 +287,10 @@ def _hc_contract(x, n):
     return x.sum(1) / n
 
 
+def _token_linear(x, weight):
+    return torch.stack([torch.mv(weight, token) for token in x])
+
+
 class RowParallel(torch.nn.Module):
     """Rank-sharded input columns; reduces inside when ``reduce_results``."""
 
@@ -297,7 +301,7 @@ class RowParallel(torch.nn.Module):
     def forward(self, x_full_cols):
         r = self.ranks.rank
         k = self.full.shape[1] // 2
-        part = x_full_cols[:, r * k:(r + 1) * k] @ self.full[:, r * k:(r + 1) * k].T
+        part = _token_linear(x_full_cols[:, r * k:(r + 1) * k], self.full[:, r * k:(r + 1) * k])
         return self.ranks.all_reduce(part) if self.reduce_results else part
 
 
@@ -308,7 +312,7 @@ class Attn(torch.nn.Module):
         self.o_proj = RowParallel(w_out, ranks)
 
     def forward(self, hidden_states, positions):
-        h = torch.tanh(hidden_states @ self.w_in.T + positions[:, None].double() * 1e-3)
+        h = torch.tanh(_token_linear(hidden_states, self.w_in) + positions[:, None].double() * 1e-3)
         return self.o_proj(h)
 
 
@@ -323,7 +327,7 @@ class MoeRunner:
 
     def __call__(self, x):
         self.down.reduce_results = not self.moe_config.skip_final_all_reduce
-        return self.down(torch.relu(x @ self.w_up.T))
+        return self.down(torch.relu(_token_linear(x, self.w_up)))
 
 
 class Moe(torch.nn.Module):
@@ -342,7 +346,7 @@ class Dense(torch.nn.Module):
         self.down_proj = RowParallel(w_down, ranks)
 
     def forward(self, x):
-        return self.down_proj(torch.relu(x @ self.w_up.T))
+        return self.down_proj(torch.relu(_token_linear(x, self.w_up)))
 
 
 class Layer(torch.nn.Module):
@@ -365,20 +369,14 @@ class Layer(torch.nn.Module):
         self._mlp_is_moe = moe
 
     # Per-token stand-ins with the shapes of the real ops.
-    def _pre(self, residual, fn, scale, base, norm_weight, norm_eps):
+    def hc_pre(self, residual, fn, scale, base, norm_weight=None, norm_eps=0.0):
         flat = residual.reshape(residual.shape[0], -1)
-        # SP changes T. Batched BLAS may change reduction order with T, so
-        # keep the toy mHC projection's arithmetic fixed for each token.
-        projected = torch.stack([torch.mv(fn, token) for token in flat])
+        projected = _token_linear(flat, fn)
         mix = torch.sigmoid(projected * scale[0] + base)              # (T, N)
         comb = torch.softmax(torch.einsum("ti,tj->tij", mix, mix), -1)  # (T, N, N)
         x = (mix.unsqueeze(-1) * residual).sum(1)
         x = x * torch.rsqrt(x.pow(2).mean(-1, keepdim=True) + norm_eps) * norm_weight
         return mix.unsqueeze(-1), comb, x
-
-    def hc_pre(self, x, fn, scale, base, norm_weight=None, norm_eps=0.0):
-        post, comb, x = self._pre(x, fn, scale, base, norm_weight, norm_eps)
-        return post, comb, x
 
     def hc_post(self, x, residual, post, comb):
         return torch.einsum("tij,tjh->tih", comb, residual) + post * x.unsqueeze(1)
@@ -386,22 +384,23 @@ class Layer(torch.nn.Module):
     def hc_fused_post_pre(self, x, residual, post, comb, fn, scale, base, norm_weight=None,
                           norm_eps=0.0):
         res = self.hc_post(x, residual, post, comb)
-        post2, comb2, x2 = self._pre(res, fn, scale, base, norm_weight, norm_eps)
+        post2, comb2, x2 = self.hc_pre(res, fn, scale, base, norm_weight, norm_eps)
         return res, post2, comb2, x2
 
 
 @pytest.mark.parametrize("tokens", [8, 7])
 def test_mhc_fixture_is_exact_across_token_partitions(tokens):
-    """The toy mHC must preserve each token's arithmetic when SP changes batch size."""
+    """Toy projections and mHC must preserve each token's arithmetic across partitions."""
     layer = _stack(TwoRanks())[0]
     gen = torch.Generator().manual_seed(7)
     residual = _hc_expand(torch.randn(tokens, H, generator=gen, dtype=torch.float64), N)
     args = (layer.hc_attn_fn, layer.hc_attn_scale, layer.hc_attn_base)
     kwargs = dict(norm_weight=layer.input_layernorm.weight.data,
                   norm_eps=layer.input_layernorm.variance_epsilon)
-    full = layer.hc_pre(residual, *args, **kwargs)
+    full = (*layer.hc_pre(residual, *args, **kwargs), _token_linear(residual.flatten(1), args[0]))
     # One token per call fixes the reference operation shape independently of TP.
-    per_token = [layer.hc_pre(row.unsqueeze(0), *args, **kwargs) for row in residual]
+    per_token = [(*layer.hc_pre(row[None], *args, **kwargs),
+                  _token_linear(row.flatten()[None], args[0])) for row in residual]
     for index, actual in enumerate(full):
         expected = torch.cat([result[index] for result in per_token])
         assert torch.equal(actual, expected), (index, (actual - expected).abs().max())
