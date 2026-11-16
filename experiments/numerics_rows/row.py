@@ -686,8 +686,6 @@ def run(args, receipt):
                                             dense_diagnostics(adapter, unit, recorder)
                                         scale_index_checks(adapter, unit, module, recorder)
                                         profile_unit(adapter, unit, recorder, routed=routed)
-                                except BoundaryError as error:
-                                    record_cuda_error(unit, error)
                                 finally:
                                     _, after = identify_served(adapter, routed, native_source, args.out / "served-binaries", served_cache)
                                     check_served_after(unit, served, after)

@@ -1265,3 +1265,19 @@ def test_two_sample_rate_includes_tp1_and_all_2592_items():
     report = sample_rate(first, second)
     assert report["mean_seconds_per_item"] == 15 and report["module_items"] == 2592
     assert report["projected_module_seconds"] == 38880 and report["sample_scope_only"]
+
+
+def test_unattributed_cuda_error_rechecks_identity_without_dispatch_failure(row_execution, monkeypatch):
+    from experiments.numerics_rows.common import BoundaryError
+
+    args, receipt, scope, events, _ = row_execution
+    row.Dense().pairs = lambda: []
+    def failed(*args):
+        raise BoundaryError({"call": "apply", "kind": "apply", "sync_before": False, "sync_after": None}, RuntimeError("outside launch"))
+    monkeypatch.setattr(row, "dense_cases", failed)
+    with pytest.raises(SystemExit) as stopped:
+        row.run(args, receipt)
+    assert stopped.value.code == 3 and scope["outcome"] == "STOPPED"
+    assert scope["arm"]["library_identity_unchanged"] and events[-1] == "identity"
+    assert not scope["completed"] and not scope["findings"]
+    assert "emitted_pairs" not in scope["arm"]
