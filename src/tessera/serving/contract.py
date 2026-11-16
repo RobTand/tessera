@@ -104,6 +104,7 @@ import hashlib
 import json
 import re
 from functools import lru_cache
+from pathlib import Path
 from types import MappingProxyType
 from typing import Any, Mapping
 
@@ -319,6 +320,10 @@ PLUGIN_ENTRY_POINT = "tessera = tessera.serving:register"
 #: A decode cell that cites the open gap keeps ``grade`` ``route_only``.
 EVIDENCE_KL_KINDS = ("topk_intersection_lower_bound", "full_vocab", "graph_equality")
 EVIDENCE_GRADES = ("route_only", "kl_lower_bound", "kl_full_vocab")
+# Arithmetic is attested at measured M configurations and, by D3, at by-rule
+# rungs outside the census with the same run table. All others are unattested.
+ARITHMETIC_SCOPE = "measured_m_configurations_only"
+_NUMERICS_ROOT = Path(__file__).resolve().parents[3] / "docs/measurements/numerics"
 EVIDENCE_RECEIPT_ROOT = "docs/measurements/"
 
 #: Schema v8 (#198) scopes historical evidence to the encoder that wrote it.
@@ -1394,7 +1399,8 @@ def stock_kernel_override_refusal(enabled_by: str, *, kind: str, overrides: Mapp
     return None
 
 
-def validate_serving_contract(contract: Mapping[str, Any]) -> None:
+def validate_serving_contract(contract: Mapping[str, Any], *,
+                              require_arithmetic: bool = False) -> None:
     """Refuse a contract this package would not itself honour.
 
     The point is not schema hygiene: it is that the packaged table and the code
@@ -1677,7 +1683,9 @@ def validate_serving_contract(contract: Mapping[str, Any]) -> None:
                 f"{where}: every route is reached through a declared residency, so a cell names "
                 "the serve flag that selects one")
         cell_predicates(cell, where)
-        cell_evidence(cell, where, regimes=block["regimes"])
+        evidence = cell_evidence(cell, where, regimes=block["regimes"])
+        if require_arithmetic and cell_is_device_backed(cell, where) and not evidence.get("arithmetic"):
+            raise ValueError(f"{where}.evidence.arithmetic is required for a served cell")
         expected = contracts_by_family[cell["family"]]
         if cell["activation_contract"] != expected:
             raise ValueError(
@@ -2474,7 +2482,18 @@ def cell_evidence(cell: Mapping[str, Any], where: str = "lane_eligibility cell",
     """
     payload = cell.get("evidence")
     at = f"{where}.evidence"
-    _require_keys(payload, at, required={"grade", "kl", "smoke", "artifact"})
+    _require_keys(payload, at, required={"grade", "kl", "smoke", "artifact"},
+                  optional={"arithmetic"})
+    arithmetic = payload.get("arithmetic")
+    if "arithmetic" in payload:
+        _require_keys(arithmetic, f"{at}.arithmetic", required={"receipt", "sha256", "scope"})
+        if arithmetic["scope"] != ARITHMETIC_SCOPE:
+            raise ValueError(f"{at}.arithmetic.scope must be {ARITHMETIC_SCOPE!r}")
+        _require_receipt_path(arithmetic["receipt"], f"{at}.arithmetic")
+        if not arithmetic["receipt"].startswith("docs/measurements/numerics/") or not arithmetic["receipt"].endswith(".json"):
+            raise ValueError(f"{at}.arithmetic.receipt must name a numerics JSON summary")
+        if not isinstance(arithmetic["sha256"], str) or not _SHA256.fullmatch(arithmetic["sha256"]):
+            raise ValueError(f"{at}.arithmetic.sha256 must be 64 lowercase hex digits")
     artifact = _evidence_artifact(payload["artifact"], f"{at}.artifact")
     grade = payload["grade"]
     if grade not in EVIDENCE_GRADES:
@@ -2634,7 +2653,7 @@ def cell_evidence(cell: Mapping[str, Any], where: str = "lane_eligibility cell",
         raise ValueError(
             f"{at}.grade is {grade!r} but its kl entries derive {derived!r}; the grade is read "
             "off the entries, never asserted beside them")
-    return {"grade": grade, "kl": parsed_kl, "artifact": artifact,
+    return {"arithmetic": arithmetic, "grade": grade, "kl": parsed_kl, "artifact": artifact,
             "smoke": {"status": status, "receipt": smoke_receipt,
                       "attribution": attribution, "control": parsed_control,
                       "record": parsed_record}}
@@ -3458,3 +3477,90 @@ def classify_construction(entry: Mapping[str, Any], checkpoint_module: str) -> t
     if pattern in {row["prefix_pattern"] for row in entry["never_offered"]}:
         return "never_offered", pattern
     return "absent", pattern
+
+
+def check_arithmetic_receipts(contract: Mapping[str, Any], root, rule_path, *,
+                              summaries=None) -> None:
+    """Check summary files in a source tree. The wheel checks their grammar only."""
+    root = Path(root)
+    for path in _NUMERICS_ROOT.rglob("*.json") if summaries is None else summaries:
+        if any(r["verdict"] != "PASS" for r in json.loads(path.read_bytes())["records"]):
+            raise ValueError(f"{path}: non-PASS unit")
+    rule_sha256 = hashlib.sha256(Path(rule_path).read_bytes()).hexdigest()
+    for cell in contract["lane_eligibility"]["cells"]:
+        evidence = cell_evidence(cell).get("arithmetic")
+        if evidence is None:
+            continue
+        at = f"{cell['id']} arithmetic summary"
+        raw = (root / evidence["receipt"]).read_bytes()
+        if hashlib.sha256(raw).hexdigest() != evidence["sha256"]:
+            raise ValueError(f"{at}: sha256 differs")
+        summary = json.loads(raw)
+        _require_keys(summary, at, required={"schema", "rule_sha256", "receipt_sha256",
+                                          "tool", "image_digest", "records"})
+        if summary["schema"] != "tessera.numerics_summary.v1" or summary["rule_sha256"] != rule_sha256:
+            raise ValueError(f"{at}: schema or rule_sha256 differs")
+        _require_keys(summary["tool"], f"{at}.tool", required={"commit", "tree_sha256"})
+        if not isinstance(summary["tool"]["commit"], str) or not _COMMIT.fullmatch(summary["tool"]["commit"]):
+            raise ValueError(f"{at}: tool commit must be a full Git SHA-1")
+        for digest in (summary["receipt_sha256"], summary["tool"]["tree_sha256"]):
+            if not isinstance(digest, str) or not _SHA256.fullmatch(digest):
+                raise ValueError(f"{at}: receipt and tool need SHA-256 digests")
+        if summary["image_digest"] != cell_runtime_scope(cell)[0]:
+            raise ValueError(f"{at}: image_digest differs")
+        if not isinstance(summary["records"], list):
+            raise ValueError(f"{at}: records must be an array")
+        records = []
+        seen = set()
+        for record in summary["records"]:
+            _require_keys(record, at, required={"cell", "symbol", "decoder", "cut",
+                                              "rungs_pass", "rungs_withdrawn", "verdict", "measured"})
+            for key in ("rungs_pass", "rungs_withdrawn"):
+                values = record[key]
+                if not isinstance(values, list) or any(not _is_int(q) or q <= 0 for q in values) or len(set(values)) != len(values):
+                    raise ValueError(f"{at}: {key} must list distinct positive rungs")
+            measured = record["measured"]
+            if not isinstance(measured, list):
+                raise ValueError(f"{at}: measured must be an array")
+            configurations = set()
+            structure = next((c["structure"] for c in contract["lane_eligibility"]["cells"] if c["id"] == record["cell"]), None)
+            for configuration in measured:
+                _require_keys(configuration, f"{at}.measured", required={"rung", "rows", "cols", "k_split", "last_tile_partial", "superblock_width"})
+                values = tuple(configuration[k] for k in ("rung", "rows", "cols", "k_split"))
+                if any(not _is_int(v) or v <= 0 for v in values):
+                    raise ValueError(f"{at}: measured must list distinct positive integer configurations")
+                partial, width = configuration["last_tile_partial"], configuration["superblock_width"]
+                if not isinstance(partial, bool) or (structure == "dense" and width is not None) or (structure == "routed_moe" and (not _is_int(width) or width <= 0)):
+                    raise ValueError(f"{at}: measured launch configuration is invalid")
+                if values + (partial, width) in configurations:
+                    raise ValueError(f"{at}: measured repeats a launch configuration")
+                configurations.add(values + (partial, width))
+            if {c[0] for c in configurations} != set(record["rungs_pass"]):
+                raise ValueError(f"{at}: measured rungs must equal rungs_pass")
+            if set(record["rungs_pass"]) & set(record["rungs_withdrawn"]):
+                raise ValueError(f"{at}: a rung cannot pass and be withdrawn")
+            key = tuple(record[k] for k in ("cell", "symbol", "decoder", "cut"))
+            if key in seen:
+                raise ValueError(f"{at}: duplicate record")
+            seen.add(key)
+            if record["cell"] == cell["id"]:
+                records.append(record)
+        entry = format_entry(cell["family"], contract)
+        world = next(u["max_world_size"] for u in contract["tensor_parallel"]["units"] if u["unit"] == cell["family"])
+        cuts = ["TP1"] + [f"TP{size}/rank{rank}" for size in range(2, world + 1) for rank in range(size)]
+        coverage = {}
+        for pair in cell["executes"]:
+            for cut in cuts:
+                row = next((r for r in records if (r["symbol"], r["decoder"], r["cut"]) == (pair["symbol"], pair["decoder"], cut)), {})
+                passed, withdrawn = set(row.get("rungs_pass", [])), set(row.get("rungs_withdrawn", []))
+                tables = {rung_rates(entry, q) for q in passed}
+                coverage[pair["symbol"], pair["decoder"], cut] = passed, withdrawn, tables, set(pair.get("rungs_q256", cell["rungs_q256"]))
+        low, high = entry["reader_rate_range_q256"]
+        for rung in range(low, high + 1, entry["reader_rate_step_q256"]):
+            if not cell_covers_rung(cell, rung, entry):
+                continue
+            for symbol, decoder in cell_executes(cell, q256=rung, entry=entry):
+                for cut in cuts:
+                    passed, withdrawn, tables, measured = coverage[symbol, decoder, cut]
+                    if rung in withdrawn or (rung not in passed and (rung in measured or rung_rates(entry, rung) not in tables)):
+                        raise ValueError(f"{at}: missing PASS for {(symbol, decoder, rung, cut)}")
