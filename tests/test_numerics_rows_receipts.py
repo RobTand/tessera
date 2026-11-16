@@ -94,7 +94,7 @@ def completed_gpu_receipt():
             "P3": {"e4m3": {"library_so_sha256": "a" * 64, "probe_sha256": "b" * 64,
                             "matched": False, "status": "DIFFERENT"}},
             "libraries": {"e4m3": {"P4": True, "P5": True, "routed": {"P4": True, "P5": True},
-                                    "subnormal_operand": {"result": "UNATTESTED"}}},
+                                    "subnormal_operand": {"result": "NOT_APPLICABLE", "reason": "not representable; native code range"}}},
             "negative_controls": [{"flagged_exactly": True}],
             "cuda_controls": [{"where": where, "exit_status": 0, "attribution_confirmed": True,
                                "attributed_to": "injected-launch" if where == "inside" else None}
@@ -529,3 +529,20 @@ def test_own_separation_needs_no_borrowed_symbol_resolution():
     unit = row.new_unit({"m_config": {"M": 64}, "arm": {"unresolved_kernel_names": ["unknown"]}})
     row.attach_separation([unit])
     assert unit["m_config"]["separation_source"] is None and not unit["unattested"]
+
+
+@pytest.mark.parametrize("key", ["e2m1", "e4m3", "e4m3mma"])
+def test_non_bf16_subnormal_case_records_its_native_range(key):
+    result = h1.subnormal_case(key, None)
+    assert result["result"] == "NOT_APPLICABLE" and "native" in result["reason"]
+
+
+def test_legacy_subnormal_receipt_is_normalized_only_with_its_recorded_reason():
+    report = completed_gpu_receipt()
+    entry = report["libraries"]["e4m3"]
+    entry["subnormal_operand"] = {"result": "UNATTESTED", "reason": "not representable; this library's FP32 products cannot be subnormal"}
+    assert h1.gpu_preconditions(report)
+    assert entry["subnormal_operand"]["result"] == "NOT_APPLICABLE"
+    assert entry["subnormal_operand"]["original_result"] == "UNATTESTED"
+    entry["subnormal_operand"].pop("reason")
+    assert not h1.gpu_preconditions(report)

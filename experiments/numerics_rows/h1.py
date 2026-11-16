@@ -184,12 +184,12 @@ def negative_controls():
 
 
 def subnormal_case(key, recorder):
+    if key != "value":
+        return {"result": "NOT_APPLICABLE", "reason": "not representable; native E4M3 codes start at 2^-9 and E2M1 codes at 1/2; their supported block scales cannot make a native FP32 operand subnormal"}
     import torch
     from tessera import routed_fused as rf, window_gemm as wg
     from window_gemm_grouped_support import Expert
 
-    if key != "value":
-        return {"result": "UNATTESTED", "reason": "not representable; this library's FP32 products cannot be subnormal"}
     expert = Expert(256, 256, (4,) * 256, 7)
     expert.unit.table.fill_(2**-133)
     expert.unit.scale.fill_(1)
@@ -331,6 +331,9 @@ def gpu_preconditions(report):
     controls = report.get("cuda_controls", [])
     for key, value in libraries.items():
         routed = value.get("routed") or {}
+        subnormal = value.get("subnormal_operand", {})
+        if key != "value" and subnormal == {"result": "UNATTESTED", "reason": "not representable; this library's FP32 products cannot be subnormal"}:
+            subnormal.update(result="NOT_APPLICABLE", original_result="UNATTESTED")
         if key not in ("e4m3", "e4m3mma"):
             value["P5"] = {"result": "NOT_APPLICABLE", "reason": "pass-rule section 0 P5 requires E4M3 TP2 ranks"}
             if routed:
@@ -349,7 +352,8 @@ def gpu_preconditions(report):
                 and (key not in ("e4m3", "e4m3mma") or v.get("P5") is True and v["routed"].get("P5") is True)
                 and (key != "e2m1" or v.get("wrong_scale_detected") is True
                      and (v["routed"].get("negative_control") or {}).get("flagged_exactly") is True)
-                and v.get("subnormal_operand", {}).get("result") == ("PASS" if key == "value" else "UNATTESTED")
+                and v.get("subnormal_operand", {}).get("result") == ("PASS" if key == "value" else "NOT_APPLICABLE")
+                and (key == "value" or "not representable" in v["subnormal_operand"].get("reason", ""))
                 for key, v in libraries.items())
         and len(controls) == 2 and {c["where"] for c in controls} == {"inside", "outside"}
         and all(c["exit_status"] == 0 and c.get("attribution_confirmed") is True
