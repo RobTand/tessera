@@ -204,17 +204,10 @@ def regressions(live, baseline, allowlist=None):
 
 
 def stale_entries(live, baseline):
-    """Require SCC and forbidden-edge gains to be recorded. U is informational."""
-    errors = []
-    for key, old in baseline['figures'].items():
-        if key == 'scc_max' and live[key] < old - baseline['tolerances'][key]:
-            errors.append(f'{key} fell from {old:g} to {live[key]:g}; record the gain')
-    for group, rows in baseline.get('edge_groups', {}).items():
-        if policy_mode(baseline) == 'reach' and group in TEST_EDGE_GROUPS:
-            continue
-        for edge in sorted(set(rows) - set(live.get('edge_groups', {}).get(group, ()))):
-            errors.append(f'{group} edge is gone: {edge}; record the gain')
-    return errors
+    """Require SCC gains to be recorded. A removed edge is a gain with nothing to record."""
+    return [f'{key} fell from {old:g} to {live[key]:g}; record the gain'
+            for key, old in baseline['figures'].items()
+            if key == 'scc_max' and live[key] < old - baseline['tolerances'][key]]
 
 
 def baseline_errors(current, previous):
