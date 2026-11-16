@@ -368,8 +368,8 @@ _WITHDRAWN_V39_CELL_IDS = frozenset({
     "tessera_e2m1_k2_dense_sm121_batch",
 })
 
-# Minted at 5d1ea571; v59 (76a9f568) withdrew the nightly folded claims.
-_WITHDRAWN_V59 = {
+# Minted at 5d1ea571; v62 (76a9f568) withdrew the nightly folded claims.
+_WITHDRAWN_V62 = {
     nightly_id("TESSERA_BF16_K1", structure, regime): pairs
     for structure, pairs in (
         ("dense", {("tessera::window_gemm_dense", "native_window_gemm_folded"),
@@ -404,7 +404,7 @@ for _cid in _WITHDRAWN_V39_CELL_IDS:
         ("vllm.fused_moe.modular_kernel", "torch_materialize_stock")
         if "routed_moe" in _cid else ("torch._scaled_mm", "native_span2"))
 
-_WITHDRAWN_CLAIMS.update(_WITHDRAWN_V59)
+_WITHDRAWN_CLAIMS.update(_WITHDRAWN_V62)
 _WITHDRAWN_CLAIMS.update(_WITHDRAWN_V64)
 
 
@@ -877,7 +877,7 @@ def test_no_withdrawn_cell_has_come_back_with_its_withdrawn_claim(contract):
     """Re-minted IDs must name a new receipt and reject all withdrawn launch pairs."""
     present = {cell["id"] for cell in contract["lane_eligibility"]["cells"]}
     withdrawn = (_WITHDRAWN_CELL_IDS | _WITHDRAWN_V37_CELL_IDS | _WITHDRAWN_V38_CELL_IDS
-                 | _WITHDRAWN_V39_CELL_IDS | set(_WITHDRAWN_V59) | set(_WITHDRAWN_V64))
+                 | _WITHDRAWN_V39_CELL_IDS | set(_WITHDRAWN_V62) | set(_WITHDRAWN_V64))
     assert set(_WITHDRAWN_CLAIMS) == withdrawn
     assert not (present & (withdrawn - _REEARNED_CELL_IDS))
     assert not (set(_CELL_LAWS) & (withdrawn - _REEARNED_CELL_IDS))

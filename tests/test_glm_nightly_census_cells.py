@@ -220,7 +220,7 @@ def test_the_nightly_cells_cover_exactly_the_rungs_the_receipts_carried():
     assert sorted(k for k in carried if k[0] != "TESSERA_BF16_K1") == sorted(SCOPES)
     cells = _nightly_cells(load_serving_contract())
     assert sorted({(c["family"], c["structure"]) for c in cells.values()}) == sorted(SCOPES)
-    # v68 re-mints BF16 scopes; the old folded claims remain withdrawn at v59.
+    # v68 re-mints BF16 scopes; the old folded claims remain withdrawn at v62.
     assert ("TESSERA_BF16_K1", "dense") in carried and ("TESSERA_BF16_K1", "routed_moe") in carried
     for cell in cells.values():
         assert set(cell["rungs_q256"]) == carried[(cell["family"], cell["structure"])], cell["id"]
