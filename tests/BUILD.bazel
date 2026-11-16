@@ -14692,8 +14692,19 @@ ts_py_test(
     name = "test_numerics_rows_sass",
     path = "tests/test_numerics_rows_sass.py",
     library = ":test_numerics_rows_sass_lib",
+    data = [
+        "//:pyproject.toml",
+        "//experiments:t8r_speed/bench_t8r.sh",
+        "//experiments:t8r_speed/build_ext.sh",
+    ],
     deps = [
+        "//experiments:routed_pair_oracle",
+        "//experiments:t8r_speed/bench_class_dispatch",
+        "//experiments:t8r_speed/bench_uniform_production_arm",
+        "//experiments:t8r_speed/finalize_native_build",
         "//src/tessera:identity",
+        ":test_d41_e2m1_geometry_lib",
+        ":test_fp4_arithmetic_attestation_lib",
     ],
     lane = "torch",
     args = [
@@ -14706,8 +14717,19 @@ ts_py_test(
     name = "test_numerics_rows_sass.bytes",
     path = "tests/test_numerics_rows_sass.py",
     library = ":test_numerics_rows_sass_lib",
+    data = [
+        "//:pyproject.toml",
+        "//experiments:t8r_speed/bench_t8r.sh",
+        "//experiments:t8r_speed/build_ext.sh",
+    ],
     deps = [
+        "//experiments:routed_pair_oracle",
+        "//experiments:t8r_speed/bench_class_dispatch",
+        "//experiments:t8r_speed/bench_uniform_production_arm",
+        "//experiments:t8r_speed/finalize_native_build",
         "//src/tessera:identity",
+        ":test_d41_e2m1_geometry_lib",
+        ":test_fp4_arithmetic_attestation_lib",
     ],
     lane = "bytes",
     args = [

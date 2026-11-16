@@ -1,6 +1,6 @@
 # Numerics rows
 
-Build against draft 10. The specification files stay outside this checkout.
+Build against the lead's current draft. The specification files stay outside this checkout.
 Do not submit the prepared jobs until the lead gives Fleet OK.
 Do not run a row before the lead supplies the frozen rule record.
 
@@ -16,6 +16,11 @@ Use this order:
 4. C1-G and C1-N read a population JSON and the corresponding Q1 receipt.
 5. CPU runs syntax checks, selected pytest files, and Bazel metadata generation.
 6. Rows read all the receipts and the frozen rule record.
+
+P3 can run in a CPU job after H1 completes. Combine the receipts with
+`python3 -m experiments.numerics_rows.h1 --gpu-receipt H1_JSON --p3-receipt P3_JSON --out OUTPUT_DIR`.
+This command checks the library and probe hashes, keeps both input receipts, and runs no CUDA work.
+Use its `h1.json` for the freeze and rows. A missing or incomplete CPU proof cannot confirm H1.
 
 A population JSON has `sms` and `modules`. Each module has these fields:
 

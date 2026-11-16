@@ -2051,6 +2051,7 @@ ts_py_library(
     ],
     deps = [
         ":numerics_rows/common",
+        ":numerics_rows/reference",
         ":t4_code/sass_dump",
     ],
 )
