@@ -148,3 +148,39 @@ def test_runtime_checks_the_observed_image(tmp_path, monkeypatch, mutation):
 def test_limit_comes_from_the_artifact_config(tmp_path, config, expected):
     (tmp_path / "config.json").write_text(json.dumps(config))
     assert artifact_limit(tmp_path) == expected
+
+
+def test_profiler_names_resolve_to_exact_sass_symbols():
+    symbols, unresolved = row.resolve_symbols(["_Zkernel0", "_Zkernel2"],
+        ["void routed_fused_kernel<0>( Params )", "quantizer", "_Zkernel2"],
+        ["void routed_fused_kernel<0>(Params)", "void routed_fused_kernel<2>(Params)"])
+    assert symbols == ["_Zkernel0", "_Zkernel2"] and unresolved == []
+    assert row.resolve_symbols(["_Zkernel0"], ["void routed_fused_kernel<1>(Params)"],
+        ["void routed_fused_kernel<0>(Params)"]) == ([], ["void routed_fused_kernel<1>(Params)"])
+
+
+@pytest.mark.parametrize("different", (None, "symbol", "binary", "rung", "tp", "pair"))
+def test_separation_attaches_only_to_the_same_compiled_function(different):
+    import copy
+    scope = {"symbol": "pair", "decoder": "decoder", "rung": 1024, "tp": {"rank": 0, "size": 1}}
+    source, target = row.new_unit(scope), row.new_unit(scope)
+    identity = [{"symbol": "_Zrouted_fused_kernel0", "library_so_sha256": "binary-a"}]
+    source.update(outcome="PASS", separation_census_complete=True, m_config={"M": 64, "compiled_kernel_symbols": identity})
+    source["exact"]["separation"] = [{"elements": 10, "both": 10}]
+    target.update(needs_separation_transfer=True, m_config={"M": 2, "compiled_kernel_symbols": copy.deepcopy(identity)})
+    if different == "symbol":
+        target["m_config"]["compiled_kernel_symbols"][0]["symbol"] += "different"
+    elif different == "binary":
+        target["m_config"]["compiled_kernel_symbols"][0]["library_so_sha256"] = "binary-b"
+    elif different == "rung":
+        target["rung"] = 1088
+    elif different == "tp":
+        target["tp"] = {"rank": 1, "size": 2}
+    elif different == "pair":
+        target["decoder"] = "other-decoder"
+    row.attach_separation([source, target])
+    if different:
+        assert target["unattested"] and "separation_from" not in target
+    else:
+        assert target["separation_from"]["M"] == 64 and not target["unattested"]
+        assert target["exact"]["separation"] == source["exact"]["separation"]

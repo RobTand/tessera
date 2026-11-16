@@ -102,8 +102,8 @@ def run(adapter, unit, manifest, recorder):
 
     m, width = unit["m_config"]["M"], unit["m_config"]["superblock_width"]
     every_expert = m in (1, 64, 2048)
-    if not every_expert:
-        unit["unattested"].append("element separation at columns-only M awaits the lead clarification in questions.md")
+    unit["separation_census_complete"] = every_expert
+    unit["needs_separation_transfer"] = not every_expert
     selected = [list(range(start, min(start + 8, adapter.experts))) for start in range(0, adapter.experts, 8)] if every_expert else [[0]]
     graphed = set()
     for count in unit["m_config"]["route_counts"]:
@@ -119,7 +119,8 @@ def run(adapter, unit, manifest, recorder):
                 if "by_m" in separated:
                     separated = next((r for r in separated["by_m"] if r["route"]["M"] == m), separated["by_m"][0])
                 coverage(unit, "separation", separated["complete"], manifest["complete"])
-                unit["exact"]["separation"].append({k: v for k, v in separated.items() if k not in ("recipes", "uncovered", "by_m")})
+                if count == 1:
+                    unit["exact"]["separation"].append({k: v for k, v in separated.items() if k not in ("recipes", "uncovered", "by_m")})
                 for recipe in separated["recipes"]:
                     for activation in recipe["values"]:
                         stage = role["name"]

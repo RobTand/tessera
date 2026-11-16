@@ -3,14 +3,17 @@ from __future__ import annotations
 
 import argparse
 import contextlib
+import copy
 from datetime import datetime, timezone
 import hashlib
 import json
 import math
 import os
 from pathlib import Path
+import re
 import socket
 import sys
+import subprocess
 import traceback
 
 from experiments.numerics_rows.common import BoundaryError, BoundaryRecorder, Invalid, IMAGES, KERNEL_SHA256, check_runtime, check_source, sha256, write_json
@@ -518,6 +521,7 @@ def run(args, receipt):
                     key = entry["library"] if entry["library"] != "triton" else "e4m3mma"
                     table = DTable(next(t for t in q1["tables"] if t["key"] == key)) if routed else None
                     adapter = Routed(entry, cut, module, table) if routed else Dense(entry, cut, module)
+                    adapter.binary = library
                     receipt["modules"].append(module_receipt(module, adapter, routed))
                     for unit in units:
                         unit["tp"].update(tp_facts(adapter, module, routed))
@@ -560,6 +564,10 @@ def run(args, receipt):
     if not receipt["units"]:
         receipt["row"]["stop_cause"] = receipt["row"]["stop_cause"] or "no population units ran"
         exit_status = 3
+    for unit in receipt["units"]:
+        finish_unit(unit)
+    for _, _, _, units in groups:
+        attach_separation(units)
     for unit in receipt["units"]:
         finish_unit(unit)
     if any(unit["outcome"] in ("FAIL", "STOPPED", "INVALID") for unit in receipt["units"]):
@@ -610,6 +618,38 @@ def dense_diagnostics(adapter, unit, recorder):
                 graph_record(unit, "dense-staged", lambda: buffer.copy_(adapter.staged(q, sf, recorder)), buffer, recorder)
 
 
+def resolve_symbols(functions, names, demangled):
+    """Resolve complete profiler names to exact symbols from this binary's SASS."""
+    normalize = lambda name: re.sub(r"\s+", "", name)
+    aliases = {}
+    for symbol, name in zip(functions, demangled, strict=True):
+        for alias in (symbol, name):
+            aliases.setdefault(normalize(alias), set()).add(symbol)
+    found, unresolved = set(), []
+    for name in names:
+        matches = aliases.get(normalize(name), set())
+        if len(matches) == 1:
+            found.update(matches)
+        elif "routed_fused" in name or "dense_fused" in name:
+            unresolved.append(name)
+    return sorted(found), sorted(unresolved)
+
+
+def attach_separation(units):
+    for unit in units:
+        if not unit.get("needs_separation_transfer"):
+            continue
+        symbols = unit["m_config"].get("compiled_kernel_symbols", [])
+        source = next((other for other in units if other.get("separation_census_complete")
+            and other["outcome"] == "PASS" and symbols and other["m_config"].get("compiled_kernel_symbols") == symbols
+            and all(unit[key] == other[key] for key in ("symbol", "decoder", "rung", "tp"))), None)
+        if source is None:
+            unit["unattested"].append("incomplete separation: no census with the same compiled kernel symbols and binary")
+        else:
+            unit["exact"]["separation"] = copy.deepcopy(source["exact"]["separation"])
+            unit["separation_from"] = {"M": source["m_config"]["M"], "compiled_kernel_symbols": symbols}
+
+
 def profile_unit(adapter, unit, recorder, *, routed):
     import torch
     from experiments.routed_pair_oracle import kernel_table
@@ -625,7 +665,22 @@ def profile_unit(adapter, unit, recorder, *, routed):
         call = lambda: adapter.apply(x)
     with torch.profiler.profile(activities=[torch.profiler.ProfilerActivity.CPU, torch.profiler.ProfilerActivity.CUDA]) as profile:
         recorder.call("dispatch-profiler:apply", "apply", lambda: opaque_apply(call, recorder))
-    unit["arm"]["profiler_kernels"] = kernel_table(profile)
+    unit["arm"]["profiler_kernels"] = kernel_table(profile, limit=100000)
+    unit["m_config"]["compiled_kernel_symbols"] = []
+    if not routed and adapter.library == "triton":
+        return
+    library = adapter.binary
+    if sha256(library["library"]["sass"]["path"]) != library["library"]["sass"]["sha256"]:
+        raise Invalid("SASS symbol list changed")
+    from experiments.t4_code.sass_dump import parse_sass
+
+    functions = sorted(parse_sass(Path(library["library"]["sass"]["path"]).read_text()))
+    demangled = subprocess.check_output(["c++filt"], input="\n".join(functions) + "\n", text=True).splitlines()
+    symbols, unresolved = resolve_symbols(functions, [r["name"] for r in unit["arm"]["profiler_kernels"]], demangled)
+    unit["m_config"]["compiled_kernel_symbols"] = [{"symbol": symbol, "library_so_sha256": library["library"]["sha256"]} for symbol in symbols]
+    unit["arm"]["unresolved_kernel_names"] = unresolved
+    if routed and (unresolved or not any("routed_fused" in symbol for symbol in symbols)):
+        unit["unattested"].append("profiler did not resolve every routed compiled kernel symbol")
 
 
 def opaque_apply(function, recorder, *args):
