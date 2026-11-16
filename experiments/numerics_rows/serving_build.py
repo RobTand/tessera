@@ -6,6 +6,7 @@ import hashlib
 import subprocess
 import json
 from pathlib import Path
+import re
 import sys
 
 from experiments.numerics_rows.common import Invalid, KERNEL, KERNEL_SHA256, check_runtime, check_source, sha256, write_json
@@ -97,12 +98,14 @@ def compare_binaries(measured, served, measured_sass, out):
         output = out / f"{name}.ptx"
         with output.open("w") as stream:
             subprocess.run(["cuobjdump", "-ptx", binary], stdout=stream, check=True)
-        ptx[name] = {"path": str(output), "sha256": sha256(output), "empty": not output.read_text().strip()}
+        text = output.read_text()
+        ptx[name] = {"path": str(output), "sha256": sha256(output), "empty": not text.strip(),
+                     "has_program": bool(re.search(r"\.(?:version|entry)\b", text))}
     compressed = all(b"\ncompressed\n" in path.read_bytes() for path in witness.values())
     equal = (all(served[field] == measured[field] for field in CANONICAL_FIELDS) and sass_equal
              and audit["all_differences_explained"] and len(device_audits) == len(measured["canonical_cubins"]) == len(served["canonical_cubins"])
              and all(r["all_differences_explained"] for r in device_audits) and all(r["verdict"] == "DIFFERENT" for r in controls.values())
-             and compressed and all(r["empty"] for r in ptx.values()))
+             and compressed and not any(r["has_program"] for r in ptx.values()))
     return {"identity_equal": equal, "measured": measured, "served": served,
             "raw_file_audit": audit, "cubin_audits": device_audits, "negative_controls": controls,
             "sass_token_masked_equal": sass_equal,

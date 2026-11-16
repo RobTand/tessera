@@ -142,3 +142,30 @@ def test_symbol_swap_with_unchanged_relocation_is_different():
     original, changed = symbolic(extra_sections=sections), symbolic(reverse=True, extra_sections=sections)
     assert elf_sections(original)[2][-1]["data"] == elf_sections(changed)[2][-1]["data"]
     assert canonical_identity(original)["sha256"] != canonical_identity(changed)["sha256"]
+
+
+@pytest.mark.parametrize("program", ["", ".version 9.0\n.visible .entry kernel() { ret; }\n"], ids=["header-only", "ptx-entry"])
+def test_ptx_fatbin_header_is_not_a_program(tmp_path, monkeypatch, program):
+    from experiments.numerics_rows import serving_build
+
+    # Retained cuobjdump -ptx output from f2tBGwuMrUX, exactly 250 bytes.
+    header = "\nFatbin elf code:\n================\narch = sm_121\ncode version = [1,8]\nhost = linux\ncompile_size = 64bit\ncompressed\nidentifier = /mnt/shared/flux-jobs/tessera-1717-P-N-A8S-2ab48a03-20261116T150541Z/cell/src/tessera/serving/csrc/routed_fused_window.cu\n"
+    assert len(header.encode()) == 250
+    host, device, sass = [tmp_path / name for name in ("host.so", "device.cubin", "host.sass")]
+    host.write_bytes(symbolic(extra_sections=[(".nv_fatbin", 1, 2, b"compressed-a", 12)]))
+    device.write_bytes(elf_bytes())
+    sass.write_text("\ncompressed\n")
+    cubin = canonical_identity(device.read_bytes())
+    identity = canonical_identity(host.read_bytes(), [(device.name, cubin["sha256"])])
+    measured = {"snapshot_path": str(host), "library_canonical_code_sha256": identity["sha256"],
+                "library_canonical_sections": identity["sections"], "cubin_canonical_sha256s": [cubin["sha256"]],
+                "canonical_cubins": [{"path": str(device), "sections": cubin["sections"]}]}
+    served = {**measured, "sass": {"path": str(sass)}}
+    def cuobjdump(command, *, stdout, check):
+        assert command[:2] == ["cuobjdump", "-ptx"] and check
+        stdout.write(header + (program if command[2] == str(host) else ""))
+    monkeypatch.setattr(serving_build.subprocess, "run", cuobjdump)
+    result = serving_build.compare_binaries(measured, served, sass, tmp_path / "comparison")
+    assert result["identity_equal"] is (not program)
+    assert all(not r["empty"] for r in result["ptx"].values())
+    assert all(r["has_program"] is bool(program) for r in result["ptx"].values())
