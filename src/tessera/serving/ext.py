@@ -282,12 +282,11 @@ ROUTED_FUSED_VALUE_LANE_REQUIRES = {
 }
 
 #: The native block-scaled FP4 library reads paired WINDOW LUT16, L14.
-#: Both dense and routed paths consume carried starts and rates 1..8.
+#: Both paths read rates 1..8, a shard's start state via has_init and a whole unit alike.
 ROUTED_FUSED_E2M1_LANE_REQUIRES = {
     **ROUTED_FUSED_LANE_REQUIRES,
     "plane": "lut16",
     "grid_arities": [2],
-    "start_state": True,
 }
 
 #: The native code this package can load INTO A SERVING PROCESS, as the

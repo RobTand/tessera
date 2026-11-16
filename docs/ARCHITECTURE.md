@@ -1,5 +1,7 @@
 # Tessera plan-to-serve architecture
 
+Re-stamped 2026-11-16 for #1716. Contract v69 removes the routed E2M1 start-state predicate; the kernel reads whole units and shards through has_init.
+
 Re-stamped 2026-11-16 for tessera#1717 evidence wording.
 `device_qualified` with `evidence.grade: route_only` means the route dispatch
 was observed on the device; arithmetic is not attested. Admission does not
