@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import argparse
 import cProfile
+import csv
 from contextlib import contextmanager
 from datetime import datetime, timezone
 import hashlib
@@ -106,7 +107,23 @@ def arm(name, modules, library, decoder, *, routed=False, selector=None):
                         for entry in modules]}
 
 
-def draft(out):
+def draft(out, a8s_tsv=None):
+    if a8s_tsv is not None:
+        with a8s_tsv.open() as stream:
+            roots = {row["artifact"] for row in csv.DictReader(stream, delimiter="\t")}
+        root, = roots
+        out.mkdir(parents=True, exist_ok=True)
+        for suffix, structure, decoder in (("D-mma", "dense", "native_fused_window_dense_e4m3mma"),
+                                           ("R", "routed_moe", "native_routed_window_classes_e4m3mma")):
+            modules = entries(Path(root), family="TESSERA_FP8", structure=structure)
+            if len(modules) != (14 if structure == "dense" else 42) or any(m["q256"] != 1024 for m in modules):
+                raise ValueError("A8S must have 14 dense and 42 routed E4M3 modules at R1024")
+            population = arm("N-A8S-E4M3-" + suffix, modules, "e4m3mma", decoder,
+                             routed=structure == "routed_moe", selector={"TESSERA_FUSED_E4M3_MMA": "e4m3"})
+            population.update(image="N", source_tsv={"path": str(a8s_tsv), "sha256": hashlib.sha256(a8s_tsv.read_bytes()).hexdigest()},
+                              config_sha256=hashlib.sha256((Path(root) / "config.json").read_bytes()).hexdigest())
+            write_json(out / (population["arm"] + ".json"), population)
+        return
     dense = entries(BASE / "t8-coverage-20260930/stubs/stub-T8D1", family="TESSERA_FP8", structure="dense")
     dense += entries(STUB, family="TESSERA_FP8", structure="dense")
     template, = [entry for entry in dense if entry["root"] == str(STUB) and entry["name"] == "model.language_model.layers.5.mlp.shared_experts.down_proj"]
@@ -342,9 +359,10 @@ def main():
     parser.add_argument("--out", type=Path, required=True)
     parser.add_argument("--source", type=Path)
     parser.add_argument("--arm", action="append", help="Inspect only this arm; repeat to select several.")
+    parser.add_argument("--a8s-tsv", type=Path, help="Draft only A8S E4M3 on IMG-N from the lead's real-gap table.")
     args = parser.parse_args()
     if args.mode == "draft":
-        draft(args.out)
+        draft(args.out, args.a8s_tsv)
         return
     check_source(args.source)
     sys.path.insert(0, str(args.source / "src"))
