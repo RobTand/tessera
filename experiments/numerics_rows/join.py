@@ -90,7 +90,7 @@ def _join(population, digest, manifests, receipts, contract):
                     raise Invalid("C1 omitted or changed an expected M configuration from signed wires")
         case_modules.update(selection)
         cases[case_sha] = case
-    evidence, execution, seen_receipts, seen_full = {}, None, set(), set()
+    evidence, execution, seen_receipts, seen_full, row_modules = {}, None, set(), set(), set()
     for receipt_sha, receipt in receipts:
         if receipt_sha in seen_receipts:
             raise Invalid("duplicate row receipt")
@@ -114,6 +114,9 @@ def _join(population, digest, manifests, receipts, contract):
         selection = inputs["selected_modules"]
         if inputs["population_sha256"] != digest or not selection or len(selection) != len(set(selection)) or set(selection) - set(names):
             raise Invalid("row population or selected modules differ")
+        if row_modules.intersection(selection):
+            raise Invalid("duplicate row module selection")
+        row_modules.update(selection)
         case = cases.get(inputs["case_manifest_sha256"])
         if case is not None:
             if case["selected_modules"] != selection:
@@ -138,8 +141,6 @@ def _join(population, digest, manifests, receipts, contract):
             seen_full.add(marker)
             pair = (module, key)
             record = evidence.setdefault(pair, {"outcomes": [], "receipts": set(), "c1_present": True})
-            if record["receipts"] and receipt_sha not in record["receipts"]:
-                raise Invalid("duplicate row for a required module and key")
             record["outcomes"].append(unit["outcome"])
             record["receipts"].add(receipt_sha)
             record["c1_present"] &= case is not None

@@ -180,3 +180,48 @@ def test_join_refuses_an_unfrozen_rule(monkeypatch, frozen):
         rule["frozen_utc"] = frozen
     with pytest.raises(Invalid, match="frozen rule"):
         join(population, digest, manifests, receipts)
+
+
+@pytest.mark.parametrize("split", ["projected_key", "empty", "observations"])
+def test_join_refuses_overlapping_row_modules_even_without_overlapping_units(monkeypatch, split):
+    population, digest, manifests, receipts = joined_inputs(monkeypatch)
+    assert join(population, digest, manifests, receipts)["verdict"] == "PASS"
+    original = receipts[0][1]
+    other = copy.deepcopy(original)
+    if split == "projected_key":
+        key = rule_unit_id(original["units"][0])
+        other["units"] = [u for u in other["units"] if rule_unit_id(u) != key]
+        original["units"] = [u for u in original["units"] if rule_unit_id(u) == key]
+        assert other["units"] and original["units"]
+    elif split == "empty":
+        other["units"] = []
+    else:
+        for unit in other["units"]:
+            unit.update(role="observation", admitted_by_v68=False)
+    receipts.insert(1, ("distinct-receipt-hash", other))
+    with pytest.raises(Invalid, match="duplicate row module selection"):
+        join(population, digest, manifests, receipts)
+
+
+def test_one_missing_c1_keeps_that_modules_distinct_keys_unattested(monkeypatch):
+    from experiments.numerics_rows import scope
+
+    population, digest, manifests, receipts = joined_inputs(monkeypatch)
+    population["modules"][1]["q256"] = 960
+    contract, _ = scope.contract_document()
+    for cell in contract["lane_eligibility"]["cells"]:
+        cell["rungs_q256"].append(960)
+    manifests[1][1]["modules"][0]["q256"] = 960
+    for unit in receipts[1][1]["units"]:
+        unit["rung"] = 960
+        unit["unit_id"] = row.unit_identity(unit)
+    positive = join(population, digest, manifests, receipts)
+    assert positive["verdict"] == "PASS"
+    manifests.pop()
+    result = join(population, digest, manifests, receipts)
+    assert [u["unit_id"] for u in result["units"]] == [u["unit_id"] for u in positive["units"]]
+    assert result["verdict"] == "UNATTESTED"
+    for unit in result["units"]:
+        missing = unit["unit_id"][3] == 960
+        assert unit["outcome"] == ("UNATTESTED" if missing else "PASS")
+        assert len(unit["modules"]) == 1 and unit["modules"][0]["missing_evidence"] is missing
