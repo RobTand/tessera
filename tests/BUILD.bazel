@@ -2031,6 +2031,7 @@ ts_py_library(
         "test_ig790_row_scripts.py",
         "test_ig790_verify.py",
         "test_image_metadata.py",
+        "test_img_n_v70_census.py",
         "test_import_direction.py",
         "test_inductor_determinism_knob.py",
         "test_issue1253_mla_collection.py",
@@ -9815,6 +9816,51 @@ ts_py_library(
 )
 
 ts_py_test(
+    name = "test_img_n_v70_census",
+    path = "tests/test_img_n_v70_census.py",
+    library = ":test_img_n_v70_census_lib",
+    deps = [
+        "//src/tessera:identity",
+    ],
+    lane = "torch",
+    args = [
+        "--budget='{\"enforce\":true,\"seconds\":80,\"slow\":{}}'",
+    ],
+    timeout = "moderate",
+)
+
+ts_py_test(
+    name = "test_img_n_v70_census.bytes",
+    path = "tests/test_img_n_v70_census.py",
+    library = ":test_img_n_v70_census_lib",
+    deps = [
+        "//src/tessera:identity",
+    ],
+    lane = "bytes",
+    args = [
+        "--budget='{\"enforce\":true,\"seconds\":80,\"slow\":{}}'",
+    ],
+    timeout = "moderate",
+)
+
+ts_py_library(
+    name = "test_img_n_v70_census_lib",
+    srcs = [
+        "test_img_n_v70_census.py",
+    ],
+    data = [
+        "//experiments:results/glm53_img_n_v70_scope.json",
+        "//experiments:results/glm53_u1_stub_b_config.json",
+        "//experiments:results/glm53_u1_stub_b_nightly_tp1_eager_census.json",
+    ],
+    deps = [
+        "//src/tessera:__init___cycle",
+        "//src/tessera:bf16_route_cycle",
+        "//tools:tessera_route_census",
+    ],
+)
+
+ts_py_test(
     name = "test_import_direction",
     path = "tests/test_import_direction.py",
     library = ":test_import_direction_lib",
@@ -10224,6 +10270,7 @@ ts_py_library(
         "test_ig790_row_scripts.py",
         "test_ig790_verify.py",
         "test_image_metadata.py",
+        "test_img_n_v70_census.py",
         "test_import_direction.py",
         "test_inductor_determinism_knob.py",
         "test_issue56_column_groups.py",
@@ -18272,6 +18319,8 @@ ts_py_library(
         "test_route_census_nvfp4_fused.py",
     ],
     data = [
+        "//experiments:results/glm53_img_n_v70_config.json",
+        "//experiments:results/glm53_img_n_v70_tp2_census.json",
         "//experiments:results/glm53_r768_stub_base_config.json",
         "//experiments:results/glm53_r768_stub_base_tp2_eager_census.json",
         "//experiments:results/glm53_requal_v68_bf16_census.json",
