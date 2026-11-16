@@ -10356,7 +10356,7 @@ and both attempts' timing. Closed or missing owners and nonexistent nodes
 fail the gate. Remove each mark with its deflake fix; never rerun the gate
 to obtain a pass.
 
-**`pure`** runs on every push to master and every pull request, in an
+**`pure`** runs on every pull request push and on release tags (not on master pushes or PR body edits, since 2026-11-16), in an
 interpreter with pytest, xdist, pytest-timeout, and jsonschema, without torch: the bytes-only tests (whatever
 `tests/conftest.py` can collect without torch, reported with the modules it
 could not -- the collector reads a module's *import*, so a test body that
