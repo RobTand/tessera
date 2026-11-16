@@ -453,6 +453,7 @@ def test_the_batch_matrix_joins_the_exporter_shape(monkeypatch):
     module = _load()
     observed = []
 
+    # Build the per-process encoder identity first, so the spy counts only batch calls.
     export_module.stamped_fixture_id()
     real = export_module.encode_linears_planes
 

@@ -42,7 +42,6 @@ GLOB_EXCLUDE = ['**/BUILD.bazel', 'bazel-*/**', '*bazel-remote-grpc.log', '*exec
 # Files longer than this on hosted runners are split across Bazel test shards.
 SHARD_SECONDS = 40.0
 MAX_SHARDS = 8
-UNSHARDED = {}
 CONTRACT = 'src/tessera/serving/runtime_contract.json'
 CONTRACT_PATH = re.compile(r'[\w.-]+(?:/[\w.-]+)+')
 LANES = ('torch', 'bytes')
@@ -144,7 +143,7 @@ def test_attributes(path, lane, durations, quarantine, budget):
     elif deselect:
         attributes['args'] += ['--deselect=' + node for node in deselect]
     seconds = durations.get(lane, {}).get(path)
-    if seconds is not None and seconds > SHARD_SECONDS and path not in UNSHARDED:
+    if seconds is not None and seconds > SHARD_SECONDS:
         shards = min(MAX_SHARDS, math.ceil(seconds / SHARD_SECONDS))
         attributes['shard_count'] = shards
         seconds /= shards
