@@ -1,7 +1,7 @@
 """Execute routed exact cases on the served launch and its staged replay."""
 from __future__ import annotations
 
-from experiments.numerics_rows.row import Invalid, compare_output, coverage, finite_outputs, opaque_apply, require_x
+from experiments.numerics_rows.row import Invalid, compare_output, coverage, finite_outputs, finite_reference, opaque_apply, require_x
 from experiments.numerics_rows.common import BoundaryError
 
 
@@ -42,11 +42,10 @@ def run_case(adapter, unit, projection, column_values, ids, weights, recorder, *
     got = torch.empty(routes.routes, adapter.rows if down else adapter.inter, device="cuda", dtype=torch.bfloat16)
     launch = lambda: adapter.launch(mode, q, sf, routes, got, row_mode=1 if down else 0, weighted=down)
     if down:
-        ref, mask = adapter.down_reference(a, a_scale, ids, weights, routes)
-        bound = adapter.projection_bounds("down_proj", a, a_scale, ids, routes)
+        ref, mask, bound = adapter.down_reference(a, a_scale, ids, weights, routes)
     else:
-        ref, mask = adapter.gate_reference(a, a_scale, ids, routes)
-        bound, mode1_bound = adapter.gate_bounds(a, a_scale, ids, routes)
+        ref, mask, bound, mode1_bound = adapter.gate_reference(a, a_scale, ids, routes)
+    finite_reference(ref)
     require_x(mask, sweep=len(column_values) == 1)
     launch()
     result = compare_output(unit, f"{projection}:{column_values}", got, ref, mask, bound=bound)
@@ -59,10 +58,11 @@ def run_case(adapter, unit, projection, column_values, ids, weights, recorder, *
         library = fe._ext() if adapter.family == "e2m1" else rf._ext(adapter.native.library)
         summed = torch.empty(m, adapter.rows, device="cuda", dtype=torch.bfloat16)
         sum_call = lambda: library.token_sum(got, summed, ids.shape[1])
-        sum_call()
         sum_ref = token_reference(ref, ids.shape[1])
+        finite_reference(sum_ref)
+        sum_call()
         sum_mask = mask.reshape(m, ids.shape[1], adapter.rows).all(1)
-        sum_bound = got.double().abs().reshape(m, ids.shape[1], adapter.rows).sum(1)
+        sum_bound = bound.token_sum(ids.shape[1])
         reduced = compare_output(unit, "token_sum", summed, sum_ref, sum_mask, bound=sum_bound)
         unit["exact"]["token_sum"]["elements"] += int(sum_mask.sum())
         unit["exact"]["token_sum"]["mismatches"] += reduced["mismatches"]
@@ -80,13 +80,14 @@ def run_case(adapter, unit, projection, column_values, ids, weights, recorder, *
 def composition(adapter, unit, x, ids, weights, recorder):
     from experiments.numerics_rows.reference import compare
 
+    bound = adapter.preflight(x, ids, weights, recorder)
     try:
         got = recorder.call("routed:apply", "apply", lambda: opaque_apply(adapter.apply, recorder, x, ids, weights))
     except BoundaryError as error:
         if error.attributed_to is None:
             adapter.staged(x, ids, weights, recorder)
         raise
-    staged, bound = adapter.staged(x, ids, weights, recorder, unit=unit)
+    staged, _ = adapter.staged(x, ids, weights, recorder, unit=unit)
     finite_outputs(unit, "composition:apply", got, bound)
     result = compare(got, staged)
     unit["exact"]["composition"]["cases"] += 1
@@ -173,7 +174,10 @@ def diagnostic_cases(adapter, unit, recorder):
             down = torch.randn(routes.routes, adapter.inter, generator=generator, device="cuda").bfloat16()
             q, sf, a, a_scale = adapter.quantized(down, adapter.gs2, recorder)
             native = torch.empty(routes.routes, adapter.rows, device="cuda", dtype=torch.bfloat16)
+            reference, _, bound = adapter.down_reference(a, a_scale, ids, weights, routes)
+            finite_reference(reference)
             adapter.launch(2, q, sf, routes, native, row_mode=1, weighted=True)
+            finite_outputs(unit, f"diagnostic:mode-2:{distribution}:{seed}", native, bound)
             record = diagnostic_down(adapter, unit, native, a, a_scale, ids, routes, distribution, seed)
             unit["diagnostic"].append(record)
 
@@ -196,5 +200,4 @@ def diagnostic_down(adapter, unit, got, a, a_scale, ids, routes, distribution, s
             aa = aa * a_scale[select, None].double()
         reference[flat[select]] = (aa @ weight.T) * c * routes.rw_sorted[select, None].double()
         total[flat[select]] = (aa.abs() @ weight.abs().T) * c.abs() * routes.rw_sorted[select, None].double().abs()
-    finite_outputs(unit, f"diagnostic:mode-2:{distribution}:{seed}", got, total)
     return diagnostic(got, reference, total, a.shape[1], 1, distribution, seed)

@@ -5,6 +5,80 @@ from fractions import Fraction as F
 import math
 import random
 import struct
+from functools import lru_cache
+
+
+def outward(value):
+    rounded = float(value)
+    return math.nextafter(rounded, math.inf) if math.isfinite(rounded) and F(rounded) < value else rounded
+
+
+@lru_cache(None)
+def reduction_growth(count):
+    return outward(F(2**23 + 1, 2**23) ** count)
+
+
+class FiniteBound:
+    """Outward binary64 bounds with the validity of every preceding stage."""
+    def __init__(self, value, held=True):
+        import torch
+        self.value = torch.as_tensor(value, dtype=torch.float64)
+        self.held = (self.value < 2.0**126) & held
+
+    @staticmethod
+    def exact_sum(values, axis):
+        import numpy as np
+        import torch
+        array = values.detach().double().cpu().numpy()
+        def total(row):
+            return outward(sum((F(float(x)) for x in row), F(0))) if np.isfinite(row).all() else math.inf
+        return torch.as_tensor(np.apply_along_axis(total, axis, array), device=values.device)
+
+    @staticmethod
+    def up(value):
+        import torch
+        return torch.nextafter(value, torch.full_like(value, math.inf))
+
+    @classmethod
+    def dot(cls, products, k, splits, top_k=0):
+        total = cls.exact_sum(products.abs(), -1)
+        return cls(total).rounded(k + splits) if k + splits + top_k < 2**20 else cls(total, False)
+
+    def rounded(self, count=1, *, bf16=False):
+        if count >= 2**20:
+            return FiniteBound(self.value, False)
+        factor, tiny = (1 + 2**-7, 2**-133) if bf16 else (reduction_growth(count), count * 2**-149)
+        return FiniteBound(self.up(self.up(self.value * factor) + tiny), self.held)
+
+    def multiply(self, scale):
+        import torch
+        value = scale.value if isinstance(scale, FiniteBound) else torch.as_tensor(scale, dtype=torch.float64, device=self.value.device).abs()
+        held = self.held & scale.held if isinstance(scale, FiniteBound) else self.held
+        return FiniteBound(self.up(self.value * value), held).rounded()
+
+    def activation(self, up, limit, table_held):
+        clamped = FiniteBound(up.value.clamp(max=limit), up.held & table_held)
+        return self.multiply(clamped).rounded(bf16=True)
+
+    def token_sum(self, top_k):
+        value = self.value.reshape(-1, top_k, self.value.shape[-1])
+        held = self.held.reshape_as(value).all(1)
+        return FiniteBound(self.exact_sum(value, 1), held).rounded(top_k).rounded(bf16=True)
+
+    @classmethod
+    def join(cls, values, axis=0, *, stack=False):
+        import torch
+        operation = torch.stack if stack else torch.cat
+        return cls(operation([x.value for x in values], axis), operation([x.held for x in values], axis))
+
+    def __getitem__(self, index):
+        return FiniteBound(self.value[index], self.held[index])
+
+    def __setitem__(self, index, value):
+        self.value[index], self.held[index] = value.value, value.held
+
+    def reshape(self, *shape):
+        return FiniteBound(self.value.reshape(*shape), self.held.reshape(*shape))
 
 
 def power(exponent):

@@ -7,7 +7,7 @@ import pytest
 import torch
 
 from experiments.numerics_rows.common import BoundaryError, BoundaryRecorder
-from experiments.numerics_rows.reference import bf16, exact_input, output, rn32, selftest
+from experiments.numerics_rows.reference import FiniteBound, bf16, exact_input, output, rn32, selftest
 from experiments.numerics_rows.row import (
     Invalid, check_preconditions, compare_output, coverage, dispatch, new_unit,
     finite_outputs, opaque_apply, outcome, record_cuda_error, require_x, x_products,
@@ -350,7 +350,7 @@ def test_scale_coding_checks_incidental_outputs_before_launch():
     from types import SimpleNamespace
     from experiments.numerics_rows.scale_launch import finite_references
     weight = torch.tensor([[1.0], [torch.finfo(torch.bfloat16).max]], dtype=torch.float64)
-    adapter = SimpleNamespace(family="value", gs=1.0, roles=[("dense", weight, torch.ones(2), None)])
+    adapter = SimpleNamespace(family="value", gs=1.0, splits=1, roles=[("dense", weight, torch.ones(2), None)])
     arguments = (adapter, {"name": "dense"}, {"input_row": 0, "column": 0}, "row")
     finite_references(*arguments, [1.0, 1.0], 1.0, 1.0, None, None, 2)
     with pytest.raises(Invalid, match="nonfinite incidental reference"):
@@ -377,21 +377,22 @@ def test_bounded_nonfinite_outputs_fail_before_x_or_scale_selection(kind, value)
     got = torch.tensor([[1.0, value]], dtype=torch.bfloat16)
     reference = torch.ones_like(got)
     mask = torch.tensor([[True, False]])
-    bound = torch.tensor([[1.0, 2.0**126]], dtype=torch.float64)
+    bound = FiniteBound(torch.tensor([[1.0, 2.0**125]], dtype=torch.float64))
     if kind == "exact":
         result = compare_output(scope, kind, got, reference, mask, bound=bound)
         assert result["equal"] and result["elements"] == 1
     else:
         finite_outputs(scope, kind, got, bound)
     assert outcome(scope) == "FAIL"
+    assert scope["exact"]["finite_certificate"] == {"elements": 2, "held": 2, "nonfinite_where_held": 1}
 
 
 def test_universal_finiteness_uses_the_strict_bound():
     scope = unit()
     got = torch.full((2,), float("inf"), dtype=torch.bfloat16)
-    finite_outputs(scope, "outside", got, torch.tensor([2.0**127, 2.0**128], dtype=torch.float64))
+    finite_outputs(scope, "outside", got, FiniteBound(torch.tensor([2.0**126, 2.0**127], dtype=torch.float64)))
     assert not scope["findings"]
-    finite_outputs(scope, "inside", got, torch.tensor([2.0**126, 2.0**127], dtype=torch.float64))
+    finite_outputs(scope, "inside", got, FiniteBound(torch.tensor([2.0**125, 2.0**126], dtype=torch.float64)))
     assert outcome(scope) == "FAIL" and "1 nonfinite outputs" in scope["findings"][0]
 
 
@@ -400,7 +401,8 @@ def test_sparse_dot_bound_keeps_cancellation_and_all_epilogue_scales():
     a = torch.tensor([[2.0, -2.0]], dtype=torch.float64)
     w = torch.tensor([[3.0, 3.0]], dtype=torch.float64)
     ref, mask, bound = dot_reference(a, w, torch.tensor([0.5]), torch.tensor([4.0]), with_bounds=True)
-    assert ref.item() == 0 and bool(mask.item()) and bound.item() == 24
+    assert ref.item() == 0 and bool(mask.item())
+    assert bound.held.item() and 24 < bound.value.item() < 25
 
 
 def test_q1_checks_both_sign_facts_used_by_gate_separation():
@@ -461,3 +463,77 @@ def test_p4_checks_the_loaded_dense_scale_before_the_verdict():
     scope = unit()
     check_preconditions(scope, scale_equal=negative["equal"])
     assert outcome(scope) == "FAIL"
+
+
+def test_ordered_scale_overflow_has_no_certificate_and_is_invalid_before_launch():
+    from experiments.numerics_rows.row import dot_reference, finite_reference
+    a, w = torch.tensor([[448.0]]), torch.tensor([[448.0]])
+    ref, mask, bound = dot_reference(a, w, torch.tensor([2.0**118]), torch.tensor([2.0**-118]), with_bounds=True)
+    assert mask.item() and not bound.held.item() and torch.isinf(ref).item()
+    scope = unit()
+    finite_outputs(scope, "no certificate", ref, bound)
+    assert scope["exact"]["finite_certificate"] == {"elements": 1, "held": 0, "nonfinite_where_held": 0}
+    assert not scope["findings"]
+    with pytest.raises(Invalid, match="before the native call") as error:
+        finite_reference(ref)
+    scope["invalid"].append(str(error.value))
+    assert outcome(scope) == "INVALID"
+
+
+def test_certificate_exact_dot_sum_is_rounded_outward():
+    from experiments.numerics_rows.reference import FiniteBound
+    exact = F(2**60) + 1
+    bound = FiniteBound.exact_sum(torch.tensor([[2.0**60, 1.0]], dtype=torch.float64), -1).item()
+    assert F(math.nextafter(bound, -math.inf)) < exact <= F(bound)
+
+
+@pytest.mark.parametrize("k,splits,top_k,held", [(1, 1, 0, True), (2**20-2, 1, 1, False)])
+def test_certificate_checks_manifest_operation_limit(k, splits, top_k, held):
+    bound = FiniteBound.dot(torch.tensor([[1.0]], dtype=torch.float64), k, splits, top_k)
+    assert bound.held.item() is held
+
+
+def test_certificate_keeps_failed_ancestors_and_bf16_underflow_error():
+    failed = FiniteBound(torch.tensor([2.0**126], dtype=torch.float64)).multiply(0)
+    assert not failed.held.item()
+    tiny = FiniteBound(torch.tensor([2.0**-134 * (1 + 2**-23)], dtype=torch.float64)).rounded(bf16=True)
+    assert tiny.value.item() >= 2.0**-133
+    routes = FiniteBound(torch.tensor([[1.0], [2.0]], dtype=torch.float64))
+    total = routes.token_sum(2)
+    assert total.held.item() and total.value.item() > 3
+
+
+@pytest.mark.parametrize("d,held", [([-1.0, 0.0, 1.0], True), ([-2.0, 0.0, 1.0], False), ([float("nan"), 0.0, 1.0], False)])
+def test_measured_d_table_controls_the_mode_zero_certificate(d, held):
+    import numpy as np
+    from experiments.numerics_rows.quantizers import d_certificate
+    record = d_certificate(np.array([-1, 0, 1], dtype=np.float32), np.array(d, dtype=np.float32))
+    assert record["held"] is held
+    gate = FiniteBound(torch.tensor([100.0], dtype=torch.float64))
+    up = FiniteBound(torch.tensor([1000.0], dtype=torch.float64))
+    act = gate.activation(up, 10.0, record["held"])
+    assert act.held.item() is held and 1000 < act.value.item() < 1010
+
+
+def test_routed_certificate_keeps_negative_gate_and_router_order():
+    from types import SimpleNamespace
+    from experiments.numerics_rows.routed import Routed
+    class Table:
+        finite_certificate = {"held": True}
+        def __call__(self, value):
+            return value
+    adapter = Routed.__new__(Routed)
+    adapter.rows = adapter.inter = adapter.splits = 1
+    adapter.top_k, adapter.family, adapter.limit, adapter.table = 2, "value", 10.0, Table()
+    def weight(expert, projection):
+        return torch.tensor([[{"gate_proj": -100, "up_proj": 100, "down_proj": 2}[projection]]]), torch.tensor([3.0 if projection == "down_proj" else 1.0])
+    adapter.weight = weight
+    routes = SimpleNamespace(flat_sorted=torch.tensor([1, 0]), rw_sorted=torch.tensor([1.0, 2.0]))
+    ids = torch.tensor([[0, 1]])
+    act, _, gate, mode1 = adapter.gate_reference(torch.ones(1, 1), None, ids, routes)
+    assert act.tolist() == [[-1000], [-1000]]
+    assert bool(gate.held.all()) and bool((gate.value > 1000).all())
+    assert mode1.value.shape == (1, 2, 2)
+    down, _, bound = adapter.down_reference(torch.ones(2, 1), None, ids, None, routes)
+    assert down.tolist() == [[12], [6]]
+    assert bound.token_sum(2).held.item() and bound.token_sum(2).value.item() > 18

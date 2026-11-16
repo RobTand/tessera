@@ -17,7 +17,7 @@ import subprocess
 import traceback
 
 from experiments.numerics_rows.common import BoundaryError, BoundaryRecorder, Invalid, IMAGES, KERNEL_SHA256, check_runtime, check_source, sha256, write_json
-from experiments.numerics_rows.reference import compare, selftest
+from experiments.numerics_rows.reference import FiniteBound, compare, selftest
 
 
 def outcome(unit):
@@ -54,6 +54,7 @@ def new_unit(scope):
                       "separation": {"records": []}, "scale_index": {"arrays": []}, "chunk_pairs": {"rows": 0, "x_elements": 0, "mismatches": 0},
                       "down_input": {"elements": 0, "mismatches": 0}, "swiglu": {"elements": 0, "mismatches": 0},
                       "token_sum": {"elements": 0, "mismatches": 0}, "composition": {"cases": 0, "equal": True},
+                      "finite_certificate": {"elements": 0, "held": 0, "nonfinite_where_held": 0},
                       "signed_zero_diffs": 0}}
 
 
@@ -83,14 +84,24 @@ def finish_unit(unit):
 
 
 def finite_outputs(unit, case, got, bound):
-    """Apply the universal T*|c| rule before any X or selected-output mask."""
+    """Check every output for which all stage bounds hold, before selection by X."""
     import torch
 
-    if got.shape != bound.shape:
+    if got.shape != bound.value.shape:
         raise Invalid(f"{case}: finite-output bound has the wrong shape")
-    bad = (~torch.isfinite(got)) & (bound.to(got.device) < 2.0**127)
+    held = bound.held.to(got.device)
+    bad = (~torch.isfinite(got)) & held
+    counts = unit["exact"]["finite_certificate"]
+    for key, value in (("elements", got.numel()), ("held", int(held.sum())), ("nonfinite_where_held", int(bad.sum()))):
+        counts[key] += value
     if bool(bad.any()):
-        unit["findings"].append(f"{case}: {int(bad.sum())} nonfinite outputs with T*|c| < 2^127")
+        unit["findings"].append(f"{case}: {int(bad.sum())} nonfinite outputs where the finite certificate holds")
+
+
+def finite_reference(reference):
+    import torch
+    if not bool(torch.isfinite(reference).all()):
+        raise Invalid("reference is not finite before the native call")
 
 
 def compare_output(unit, case, got, ref, mask=None, operands=None, *, bound=None):
@@ -99,10 +110,9 @@ def compare_output(unit, case, got, ref, mask=None, operands=None, *, bound=None
     if got.shape != ref.shape or got.dtype != ref.dtype:
         unit["findings"].append(f"{case}: wrong shape or dtype")
         return {"equal": False, "mismatches": max(got.numel(), ref.numel())}
+    finite_reference(ref)
     if bound is not None:
         finite_outputs(unit, case, got, bound)
-    if not bool(torch.isfinite(ref).all()):
-        raise Invalid(f"{case}: reference is not finite")
     positions = mask.nonzero() if mask is not None else None
     if mask is not None:
         got, ref = got[mask], ref[mask]
@@ -161,7 +171,7 @@ def x_products(products):
     return torch.as_tensor(valid, device=products.device)
 
 
-def dot_reference(a, weight, a_scale, scale, *, exact=True, with_bounds=False):
+def dot_reference(a, weight, a_scale, scale, *, exact=True, with_bounds=False, splits=1, top_k=0, router_weight=None):
     import torch
 
     # Sparse exact cases use only the columns that the quantizer actually kept nonzero.
@@ -172,21 +182,25 @@ def dot_reference(a, weight, a_scale, scale, *, exact=True, with_bounds=False):
             products = weight[:, columns.to(weight.device)].to(a.device).double() * a[row, columns].double()[None, :]
             mask = x_products(products) if exact else torch.ones(weight.shape[0], dtype=torch.bool, device=a.device)
             acc = products.sum(-1)
-            total = products.abs().sum(-1)
         else:
             mask = torch.ones(weight.shape[0], dtype=torch.bool, device=a.device)
             acc = torch.zeros(weight.shape[0], dtype=torch.float64, device=a.device)
-            total = torch.zeros_like(acc)
+            products = torch.zeros(weight.shape[0], 1, dtype=torch.float64, device=a.device)
+        bound = FiniteBound.dot(products, weight.shape[1], splits, top_k)
         value = acc.float()
         if a_scale is not None:
             value = value * a_scale[row].float()
-            total = total * a_scale[row].double().abs()
+            bound = bound.multiply(a_scale[row])
         value = value * scale.float()
-        bounds.append(total * scale.double().abs())
+        bound = bound.multiply(scale)
+        if router_weight is not None:
+            value = value * router_weight[row].float()
+            bound = bound.multiply(router_weight[row])
+        bounds.append(bound.rounded(bf16=True))
         outputs.append(value.to(torch.bfloat16))
         masks.append(mask)
     result = torch.stack(outputs), torch.stack(masks)
-    return (*result, torch.stack(bounds)) if with_bounds else result
+    return (*result, FiniteBound.join(bounds, stack=True)) if with_bounds else result
 
 
 def diagnostic(got, ref, products_abs, k, splits, distribution, seed):
@@ -284,18 +298,18 @@ class Dense:
             return q, sf, a, None
         return q, sf, q.double(), sf.reshape(-1) if self.family == "e4m3" else None
 
-    def reference(self, a, a_scale, exact=True):
+    def reference(self, a, a_scale, exact=True, splits=1):
         import torch
 
         parts, masks, bounds = [], [], []
         for _, weight, scale, _ in self.roles:
             if self.family == "e2m1":
                 scale = torch.tensor([float(scale)], device=weight.device, dtype=torch.float32) / torch.tensor(self.gs, device=weight.device, dtype=torch.float32)
-            y, mask, bound = dot_reference(a, weight, a_scale, scale, exact=exact, with_bounds=True)
+            y, mask, bound = dot_reference(a, weight, a_scale, scale, exact=exact, with_bounds=True, splits=splits)
             parts.append(y)
             masks.append(mask)
             bounds.append(bound)
-        return torch.cat(parts, 1), torch.cat(masks, 1), torch.cat(bounds, 1)
+        return torch.cat(parts, 1), torch.cat(masks, 1), FiniteBound.join(bounds, 1)
 
     def staged(self, q, sf, recorder):
         import torch
@@ -348,7 +362,8 @@ def run_dense_case(adapter, unit, recipe, recorder, *, exact=True):
     for row, columns, values in recipe:
         x[row % m, columns] = torch.tensor(values, dtype=torch.bfloat16, device="cuda")
     q, sf, a, a_scale = adapter.quantized(x, recorder)
-    reference, mask, bound = adapter.reference(a, a_scale, exact=exact)
+    reference, mask, bound = adapter.reference(a, a_scale, exact=exact, splits=unit["m_config"]["k_split"])
+    finite_reference(reference)
     if exact:
         require_x(mask, sweep=all(len(columns) <= 1 for _, columns, _ in recipe))
     try:
@@ -375,7 +390,7 @@ def run_dense_case(adapter, unit, recipe, recorder, *, exact=True):
                         "w": w[column - offset, columns].tolist(), "a_scale": None if a_scale is None else float(a_scale[row]),
                         "scale": scale.reshape(-1).tolist() if scale.numel() == 1 else float(scale[column - offset])}
             offset += w.shape[0]
-    return compare_output(unit, str(recipe), got, reference, mask, actual_operands, bound=bound) if exact else (got, reference, a)
+    return compare_output(unit, str(recipe), got, reference, mask, actual_operands) if exact else (got, reference, a)
 
 
 def dense_cases(adapter, unit, manifest, recorder):
@@ -552,7 +567,7 @@ def run(args, receipt):
                "probe": {"source_sha256": library["probe_source_sha256"], "cflags": library["cflags"],
                          "so_sha256": library["probe"]["sha256"], "L_bits": d["L_bits"], "dom_size": d["dom_size"],
                          "d_table_sha256": d["d_table_sha256"], "d_nondecreasing_0_L": d["d_nondecreasing_0_L"],
-                         "sass_slice": slices[key]},
+                         "sass_slice": slices[key], "finite_certificate": DTable(d).finite_certificate},
                "inputs": {"population_sha256": population_digest, "case_manifest_sha256": sha256(args.manifest),
                           "q1_table_sha256": sha256(args.q1), "reference_selftest": selftest(device="cuda")},
                "negative_controls": negative_controls()})
@@ -568,6 +583,7 @@ def run(args, receipt):
                     adapter.binary = library
                     receipt["modules"].append(module_receipt(module, adapter, routed))
                     for unit in units:
+                        adapter.splits = unit["m_config"]["k_split"]
                         unit["tp"].update(tp_facts(adapter, module, routed))
                         recorder = BoundaryRecorder(torch.cuda.synchronize, unit["boundaries"])
                         try:
@@ -642,6 +658,8 @@ def dense_diagnostics(adapter, unit, recorder):
                 if adapter.family == "e2m1":
                     x = (x.float() * min(1.0, 6 * 448 / (float(x.abs().max()) * adapter.gs))).bfloat16()
             q, sf, a, a_scale = adapter.quantized(x, recorder)
+            ordered, _, certificate = adapter.reference(a, a_scale, exact=False, splits=unit["m_config"]["k_split"])
+            finite_reference(ordered)
             got = recorder.call("diagnostic:apply", "apply", lambda: opaque_apply(adapter.apply, recorder, x))
             staged = adapter.staged(q, sf, recorder)
             if not compare(got, staged)["equal"]:
@@ -653,8 +671,8 @@ def dense_diagnostics(adapter, unit, recorder):
                 reference.append((aa @ weight.double().T) * c)
                 totals.append((aa.abs() @ weight.double().abs().T) * c.abs())
             bound = torch.cat(totals, 1)
-            finite_outputs(unit, f"diagnostic:{distribution}:{seed}:apply", got, bound)
-            finite_outputs(unit, f"diagnostic:{distribution}:{seed}:staged", staged, bound)
+            finite_outputs(unit, f"diagnostic:{distribution}:{seed}:apply", got, certificate)
+            finite_outputs(unit, f"diagnostic:{distribution}:{seed}:staged", staged, certificate)
             unit["exact"]["composition"]["cases"] += 1
             unit["exact"]["composition"]["equal"] &= compare(got, staged)["equal"]
             unit["diagnostic"].append(diagnostic(got, torch.cat(reference, 1), bound, adapter.cols,

@@ -125,6 +125,13 @@ def d_facts(gf, d):
             "nonzero_act_has_uf_sign_positive_gf": signs}
 
 
+def d_certificate(gf, d):
+    import numpy as np
+    finite = bool(np.isfinite(d).all())
+    magnitude = bool(d.shape == gf.shape and np.all(np.abs(d) <= np.abs(gf)))
+    return {"elements": int(d.size), "finite": finite, "magnitude_bounded": magnitude, "held": finite and magnitude}
+
+
 def probe_table(library, out, limit=10.0):
     import numpy as np
 
@@ -142,6 +149,7 @@ def probe_table(library, out, limit=10.0):
             "dom_size": len(gf), "dom_path": str(source), "dom_sha256": sha256(source),
             "d_table_path": str(target), "d_table_sha256": sha256(target),
             **d_facts(gf, d),
+            "finite_certificate": d_certificate(gf, d),
             "library_so_sha256": library["library"]["sha256"], "probe_sha256": library["probe"]["sha256"]}
 
 

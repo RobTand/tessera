@@ -7,7 +7,7 @@ from dataclasses import replace
 from fractions import Fraction as F
 
 from experiments.numerics_rows.common import Invalid
-from experiments.numerics_rows.reference import exact_input, f32_bits, multiply
+from experiments.numerics_rows.reference import FiniteBound, exact_input, f32_bits, multiply
 from experiments.numerics_rows.scale_index import evaluate, joint_coverage, scale_values
 
 
@@ -89,7 +89,7 @@ def finite_references(adapter, role, case, target, values, aq, a_scale, ids, rou
     bound = None
     for position, expert in experts:
         names = ("gate_proj", "up_proj") if routed and mode == 0 else (role["name"],)
-        side_bounds = []
+        side_bounds, side_values = [], []
         for side, name in enumerate(names):
             if routed:
                 weight, scale = adapter.weight(expert, name)
@@ -111,22 +111,28 @@ def finite_references(adapter, role, case, target, values, aq, a_scale, ids, rou
             if target == "sfa":
                 product *= values[case["input_row"] * (cols // 16) + case["column"] // 16]
             epilogue = product.float() * (values[case["input_row"]] if target == "a_s" else a_scale)
-            total = product.abs() * abs(values[case["input_row"]] if target == "a_s" else a_scale)
+            total = FiniteBound.dot(product[:, None], cols, adapter.splits, adapter.top_k if routed else 0)
+            total = total.multiply(values[case["input_row"]] if target == "a_s" else a_scale)
             epilogue = epilogue * scale
-            total *= scale.double().abs()
+            total = total.multiply(scale)
             if down:
                 rw = values[position] if target == "router" else float(routes.rw_sorted[position])
                 epilogue *= rw
-                total *= abs(rw)
+                total = total.multiply(rw)
             if not bool(torch.isfinite(epilogue.bfloat16()).all()):
                 raise Invalid("C1 scale coding gives a nonfinite incidental reference")
-            side_bounds.append(total)
+            side_bounds.append(total.rounded(bf16=True))
+            side_values.append(epilogue.bfloat16().float())
         total = side_bounds[0]
         if routed and mode == 0:
-            total = torch.where((total < 2.0**127) & (side_bounds[1] < 2.0**127), adapter.table.limit**2, float("inf"))
+            total = total.activation(side_bounds[1], adapter.table.limit, adapter.table.finite_certificate["held"])
+            gf, uf = side_values[0].clamp(max=adapter.table.limit), side_values[1].clamp(-adapter.table.limit, adapter.table.limit)
+            d = torch.tensor([adapter.table(float(g)) for g in gf], dtype=torch.float32)
+            if not bool(torch.isfinite((d * uf).bfloat16()).all()):
+                raise Invalid("C1 scale coding gives a nonfinite incidental reference")
         if bound is None:
             count = routes.routes if routed else (rows if rows is not None else case["input_row"] + 1)
-            bound = torch.zeros(count, total.numel(), dtype=torch.float64)
+            bound = FiniteBound(torch.zeros(count, total.value.numel(), dtype=torch.float64), cols + adapter.splits + (adapter.top_k if routed else 0) < 2**20)
         output_row = int(routes.flat_sorted[position]) if down else position
         bound[output_row] = total
     return bound
