@@ -1555,3 +1555,62 @@ def test_phase_wall_times_are_exclusive_and_survive_errors(monkeypatch):
         now = 19
         raise RuntimeError("diagnostic interrupted")
     assert receipt["phase_wall_seconds"] == {"setup": 5, "identity_audit": 5, "gate_cases": 7, "diagnostics": 2}
+
+
+def test_gpu_sampler_keeps_power_and_compute_app_memory_when_memory_used_is_na(monkeypatch):
+    from experiments.numerics_rows import gpu_time
+    import torch
+
+    times, stop = iter((10, 20, 30)), iter((False, True))
+    monkeypatch.setattr(gpu_time.time, "monotonic", lambda: next(times))
+    meter = gpu_time.RowMeter.__new__(gpu_time.RowMeter)
+    meter.start, meter.samples, meter.errors = 0, [], []
+    meter.done = SimpleNamespace(wait=lambda seconds: next(stop), set=lambda: None)
+    meter.thread = SimpleNamespace(join=lambda **kwargs: None, is_alive=lambda: False)
+    lines = iter(("GPU-GB10, 0, 10.0, [N/A]\n", "GPU-GB10, [N/A], 10.7, [N/A]\n"))
+    def query(command, **kwargs):
+        assert command[0] == "nvidia-smi" and command[-1] == "--format=csv,noheader,nounits"
+        return "128\n220\n" if "--query-compute-apps=used_memory" in command else next(lines)
+    monkeypatch.setattr(gpu_time.subprocess, "check_output", query)
+    monkeypatch.setattr(torch.cuda, "is_initialized", lambda: True)
+    monkeypatch.setattr(torch.cuda, "max_memory_allocated", lambda: 1024)
+    monkeypatch.setattr(torch.cuda, "max_memory_reserved", lambda: 2048)
+    meter.sample()
+    result = meter.finish()
+    assert len(result["samples"]) == 2 and not result["errors"]
+    assert all(s["memory_mib"] is None and s["compute_apps_memory_mib"] == 348 for s in result["samples"])
+    assert result["peak_device_memory_mib"] == 348 and result["peak_power_watts"] == 10.7
+    assert result["torch_peak_allocated_bytes"] == 1024 and result["torch_peak_reserved_bytes"] == 2048
+    assert result["gpu_busy_minutes"] is None and result["busy_sampled_seconds"] == 0
+
+
+def test_gpu_memory_query_failure_preserves_power_and_recovers(monkeypatch):
+    from experiments.numerics_rows import gpu_time
+
+    meter = gpu_time.RowMeter.__new__(gpu_time.RowMeter)
+    meter.samples, meter.errors = [], []
+    stop, values = iter((False, True)), iter((TimeoutError("compute query timed out"), "16\n32\n"))
+    meter.done = SimpleNamespace(wait=lambda seconds: next(stop))
+    def query(command):
+        if "--query-gpu=" in command:
+            return "GPU-GB10, 0, 10.0, [N/A]"
+        value = next(values)
+        if isinstance(value, Exception):
+            raise value
+        return value
+    monkeypatch.setattr(gpu_time.subprocess, "check_output", lambda command, **kwargs: query(command[1]))
+    meter.sample()
+    assert len(meter.samples) == 2 and meter.errors == ["compute query timed out"]
+    assert [s["power_watts"] for s in meter.samples] == [10.0, 10.0]
+    assert [s["compute_apps_memory_mib"] for s in meter.samples] == [None, 48]
+
+
+def test_missing_gpu_fields_do_not_invent_zero_memory_or_activity():
+    from experiments.numerics_rows.gpu_time import compute_memory, gpu_reading, summarize
+
+    reading = gpu_reading("GPU-GB10, [N/A], 10.7, [N/A]")
+    result = summarize([{**reading, "t": 1, "compute_apps_memory_mib": None},
+                        {**reading, "t": 2, "compute_apps_memory_mib": None}], 0, 3)
+    assert result["gpu_busy_minutes"] is None and result["peak_device_memory_mib"] is None
+    assert result["peak_power_watts"] == 10.7 and compute_memory("[N/A]\n") is None
+    assert compute_memory("") == 0

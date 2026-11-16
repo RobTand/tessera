@@ -137,7 +137,7 @@ def test_tp_selection_requires_a_valid_cut_and_retains_only_that_cut():
 def test_gpu_minutes_integrate_measured_resident_time_and_record_coverage():
     from experiments.numerics_rows.gpu_time import summarize
 
-    samples = [{"t": t, "busy_percent": busy, "memory_mib": 1024} for t, busy in ((10, 0), (40, 100), (70, 0))]
+    samples = [{"t": t, "busy_percent": busy, "compute_apps_memory_mib": 1024} for t, busy in ((10, 0), (40, 100), (70, 0))]
     result = summarize(samples, 0, 120)
     assert result["wall_minutes"] == 2 and result["gpu_busy_minutes"] == 0.5
     assert result["sampled_seconds"] == 60 and result["peak_device_memory_mib"] == 1024
