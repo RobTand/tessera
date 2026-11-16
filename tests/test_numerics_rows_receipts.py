@@ -8,7 +8,7 @@ import pytest
 from experiments.numerics_rows.common import write_json
 from experiments.numerics_rows import h1
 from experiments.numerics_rows import row
-from experiments.numerics_rows.common import Invalid
+from experiments.numerics_rows.common import IMAGES, Invalid, artifact_limit, check_runtime
 
 
 def test_numpy_scalars_and_arrays_are_exact_json_values(tmp_path):
@@ -119,3 +119,32 @@ def test_observation_cannot_claim_decoder_bit_exact():
     unit["completed"] = True
     row.finish_unit(unit)
     assert not unit["decoder_bit_exact"]
+
+
+@pytest.mark.parametrize("mutation", (None, "id", "digest", "version", "missing"))
+def test_runtime_checks_the_observed_image(tmp_path, monkeypatch, mutation):
+    expected = IMAGES["G"]
+    record = {"Id": "sha256:" + expected["local_id"] + "0" * 52, "Digest": expected["image_digest"]}
+    if mutation == "id":
+        record["Id"] = "sha256:wrong-image"
+    if mutation == "digest":
+        record["Digest"] = "sha256:wrong-digest"
+    path = tmp_path / "inspect.json"
+    path.write_text(json.dumps([record]))
+    monkeypatch.setenv("TESSERA_NUMERICS_IMAGE_INSPECT", str(path))
+    monkeypatch.setattr("importlib.metadata.version", lambda name: "wrong-version" if mutation == "version" else expected[name])
+    if mutation == "missing":
+        monkeypatch.delenv("TESSERA_NUMERICS_IMAGE_INSPECT")
+    if mutation is None:
+        result = check_runtime("G")
+        assert result["local_id"] == record["Id"][7:] and result["image_inspect_sha256"]
+    else:
+        with pytest.raises(ValueError):
+            check_runtime("G")
+
+
+@pytest.mark.parametrize("config,expected", (({"swiglu_limit": 4.0}, 4.0),
+    ({"swiglu_limit": 2.0, "text_config": {"swiglu_limit": 8.0}}, 8.0), ({}, float("inf"))))
+def test_limit_comes_from_the_artifact_config(tmp_path, config, expected):
+    (tmp_path / "config.json").write_text(json.dumps(config))
+    assert artifact_limit(tmp_path) == expected

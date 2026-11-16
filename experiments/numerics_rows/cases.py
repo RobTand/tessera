@@ -13,7 +13,7 @@ import resource
 import sys
 import time
 
-from experiments.numerics_rows.common import check_runtime, check_source, sha256, write_json
+from experiments.numerics_rows.common import artifact_limit, check_runtime, check_source, sha256, write_json
 from experiments.numerics_rows.quantizers import PHASES
 from experiments.numerics_rows.reference import bf16, bf16_array, exact_input, f32_bits, f32_value, multiply, output
 
@@ -438,6 +438,8 @@ def main():
 
             facts["wire_sha256"] = hashlib.sha256(wire).hexdigest()
         table = DTable(next(t for t in q1["tables"] if t["key"] == entry["library"])) if structure == "routed_moe" else None
+        if table is not None and table.limit != artifact_limit(entry["root"]):
+            raise ValueError("artifact swiglu_limit differs from the Q1 D table")
         facts["cuts"] = []
         for size, rank in ((1, 0), (2, 0), (2, 1)):
             local = {"structure": structure, "family": family, "tp": {"size": size, "rank": rank}, "roles": [], "complete": True}

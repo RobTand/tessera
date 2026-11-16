@@ -20,7 +20,7 @@ def prepare(step, image, extra=()):
     subprocess.run(["git", "clone", "--bare", "--no-hardlinks", str(ROOT), str(out / "repository.git")], check=True)
     command = {"P": "build", "Q1": "quantizers", "H1": "h1", "C1": "cases", "CPU": "cpu_checks"}[step.split("-")[0]]
     gpu = step.startswith(("Q1", "H1"))
-    shape, minutes = ("core=2;memory=8;gpu=1", 9) if gpu else ("core=4;memory=8", 20)
+    shape, minutes = ("core=2;memory=16;gpu=1", 9) if gpu else ("core=4;memory=8", 20)
     host = "sparklina"
     if command == "cases":
         shape, minutes = "core=4;memory=32", 60
@@ -28,12 +28,15 @@ def prepare(step, image, extra=()):
         shape, minutes, host = "core=4;memory=16", 30, "dl380g10"
     payload = shlex.join(["python3", "-m", f"experiments.numerics_rows.{command}", "--source", str(out / "cell"),
                           "--image", image, "--out", str(out / "results"), *extra])
-    container = (f"podman run --rm --pull=never --cgroups=disabled --network=none "
+    name = f'tessera-1717-{step.lower()}-"$FLUX_JOB_ID"'
+    container = (f"timeout --signal=TERM --kill-after=20s {480 if gpu else minutes * 60 - 60}s "
+                 f"podman run --rm --name {name} --pull=never --cgroups=disabled --network=none "
                  f"{'--device nvidia.com/gpu=all ' if gpu else ''}"
                  f"-v /mnt/shared:/mnt/shared:ro -v {out}:{out}:rw -w {out}/code "
                  f"--env HOME={out}/home --env TMPDIR={out}/scratch --env XDG_CACHE_HOME={out}/cache "
                  f"--env CUDA_CACHE_PATH={out}/cuda-cache --env VLLM_CACHE_ROOT={out}/vllm-cache "
                  f"--env TORCH_EXTENSIONS_DIR={out}/extensions --env TRITON_CACHE_DIR={out}/triton "
+                 f"--env TESSERA_NUMERICS_IMAGE_INSPECT={out}/image-inspect.json "
                  "--env OMP_NUM_THREADS=1 --env MKL_NUM_THREADS=1 --env OPENBLAS_NUM_THREADS=1 "
                  f"--env MAX_JOBS={2 if gpu else 4} --env TESSERA_PLATFORM_TOKEN=sm_121 "
                  f"--entrypoint /bin/bash {IMAGES[image]['local_id']} -euo pipefail -c {shlex.quote(payload)}")
@@ -42,7 +45,9 @@ def prepare(step, image, extra=()):
     script = f'''#!/bin/bash
 set -euo pipefail
 cd {out}
-trap 'rc=$?; rm -rf -- scratch; test ! -e scratch || rc=3; printf "%s\\n" "$rc" > tool-exit.txt; exit "$rc"' EXIT
+trap 'rc=$?; podman rm -f {name} >/dev/null 2>&1 || true; rm -rf -- scratch; test ! -e scratch || rc=3; printf "%s\\n" "$rc" > tool-exit.txt; exit "$rc"' EXIT
+trap 'exit 143' TERM
+trap 'exit 130' INT
 export TMPDIR={out}/scratch
 export UV_CACHE_DIR={out}/cache/uv UV_PYTHON_INSTALL_DIR={out}/python
 export XDG_CACHE_HOME={out}/cache
@@ -57,6 +62,7 @@ git -C code checkout --detach {revision}
 git clone --shared repository.git cell
 git -C cell checkout --detach 8bf496ab
 printf '%s  %s\\n' 8a1536dfbc3df70edbdc37001a0db6947e97d9263926bc85a4d4d3ca231eae4f cell/src/tessera/serving/csrc/routed_fused_window.cu | sha256sum -c -
+{f"podman image inspect {IMAGES[image]['local_id']} > image-inspect.json" if command != "cpu_checks" else ""}
 {container}
 '''
     (out / "job.sh").write_text(script)
@@ -71,6 +77,18 @@ printf '%s  %s\\n' 8a1536dfbc3df70edbdc37001a0db6947e97d9263926bc85a4d4d3ca231ea
         "The lead must obtain Fleet OK before submission.\n"
         "GPU work cannot run from 12:15 through 13:45 UTC on 2026-11-16.\n\n"
         f"```bash\n{submit}\n```\n\nRead tool-exit.txt, the Flux status, stdout, and stderr after the job.\n")
+    (out / "submit-after-review.sh").write_text(f'''#!/bin/bash
+set -euo pipefail
+root={out}
+read -r FLUX_PREFIX FLUX_RUN < /mnt/shared/flux-migration/INSTANCE
+export PATH=$FLUX_PREFIX/install/bin:$FLUX_PREFIX/deps/bin:/usr/bin:/bin
+export LD_LIBRARY_PATH=$FLUX_PREFIX/install/lib:$FLUX_PREFIX/deps/lib
+export FLUX_URI=$(/mnt/shared/flux-migration/flux-uri.sh)
+test ! -e "$root/jobid"
+cp /mnt/shared/flux-migration/INSTANCE "$root/instance.txt"
+{submit} 2> "$root/submit.stderr"
+cat "$root/jobid"
+''')
     print(out)
     return out
 

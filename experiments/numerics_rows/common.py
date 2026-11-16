@@ -4,6 +4,8 @@ from __future__ import annotations
 import hashlib
 import importlib.metadata
 import json
+import math
+import os
 from pathlib import Path
 import subprocess
 
@@ -50,10 +52,32 @@ def check_source(root):
 
 def check_runtime(image):
     expected = IMAGES[image]
+    path = os.environ.get("TESSERA_NUMERICS_IMAGE_INSPECT")
+    if not path:
+        raise Invalid("missing Podman image inspection for this job")
+    observed, = json.loads(Path(path).read_text())
+    local = observed["Id"].removeprefix("sha256:")
+    digests = {observed.get("Digest"), *(value.rsplit("@", 1)[-1] for value in observed.get("RepoDigests", []))}
+    if not local.startswith(expected["local_id"]) or expected["image_digest"] not in digests:
+        raise Invalid("observed Podman image differs from the cell")
     actual = {name: importlib.metadata.version(name) for name in ("torch", "vllm")}
     if any(actual[name] != expected[name] for name in actual):
         raise ValueError(f"runtime differs from the cell: {actual}")
-    return {**expected, **actual}
+    return {**expected, **actual, "local_id": local, "image_inspect_sha256": sha256(path)}
+
+
+def artifact_limit(root):
+    """Read the model's configured clamp and convert it to the kernel's fp32 value."""
+    import struct
+
+    config = json.loads((Path(root) / "config.json").read_text())
+    value = config.get("text_config", config).get("swiglu_limit")
+    if value is None:
+        return float("inf")
+    limit, = struct.unpack("<f", struct.pack("<f", float(value)))
+    if math.isnan(limit) or limit <= 0:
+        raise Invalid("artifact swiglu_limit must be positive")
+    return limit
 
 
 def register_native_ops(image):

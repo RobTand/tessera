@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import hashlib
 
-from experiments.numerics_rows.common import Invalid
+from experiments.numerics_rows.common import Invalid, artifact_limit
 from experiments.numerics_rows.row import dot_reference
 
 
@@ -14,6 +14,9 @@ class Routed:
         from experiments.numerics_rows.cases import checkpoint_routed
 
         self.entry, self.cut, self.manifest, self.table = entry, cut, manifest, table
+        self.limit = artifact_limit(entry["root"])
+        if self.limit != table.limit:
+            raise Invalid("artifact swiglu_limit differs from the Q1 D table")
         store = dense.Store(entry["root"])
         scheme, blobs, scales = checkpoint_routed(store, entry)
         if {p: [hashlib.sha256(w).hexdigest() for w in wires] for p, wires in blobs.items()} != manifest["wire_sha256"]:
@@ -22,10 +25,10 @@ class Routed:
         routed.HIDDEN = scheme["groups"]["w13"]["columns"]
         routed.INTER = scheme["groups"]["w13"]["rows"] // 2
         routed.TOP_K = 8
-        config = routed.moe_config(scheme["experts"], 10.0)
+        config = routed.moe_config(scheme["experts"], self.limit)
         config.moe_parallel_config.tp_rank, config.moe_parallel_config.tp_size = cut["rank"], cut["size"]
         self.layer, self.method, self.info = routed.build_after(
-            {"family": scheme["family"]}, scheme, blobs, scales, scheme["experts"], config, 10.0, entry["name"])
+            {"family": scheme["family"]}, scheme, blobs, scales, scheme["experts"], config, self.limit, entry["name"])
         self.native = self.layer.tessera_routed_fused if self.family == "e2m1" else self.method._native
         if self.family != "e2m1" and self.native.uniform is None:
             raise Invalid("the routed row requires one uniform expert class")
@@ -97,7 +100,7 @@ class Routed:
         return self.native._routing(ids, weights)
 
     def launch(self, mode, q, sf, routes, out, *, row_mode=0, weighted=False):
-        kwargs = {"a_row_mode": row_mode, "mul_weight": weighted, "limit": 10.0 if mode == 0 else float("inf"), "out": out}
+        kwargs = {"a_row_mode": row_mode, "mul_weight": weighted, "limit": self.limit if mode == 0 else float("inf"), "out": out}
         if self.family == "e2m1":
             kwargs["counter"] = 1 if mode == 2 else 0
         self.native._launch(mode, q, sf, routes, **kwargs)
@@ -154,7 +157,7 @@ class Routed:
         gate = self.projection_bounds("gate_proj", a, a_scale, ids, routes)
         up = self.projection_bounds("up_proj", a, a_scale, ids, routes)
         # Finite dot epilogues and the finite clamp bound the subsequent activation.
-        bound = torch.where((gate < 2.0**127) & (up < 2.0**127), 10.0**2, float("inf"))
+        bound = torch.where((gate < 2.0**127) & (up < 2.0**127), self.limit**2, float("inf"))
         mode1 = torch.empty_like(torch.cat((gate, up), dim=1))
         mode1[routes.flat_sorted.long()] = torch.cat((gate, up), dim=1)
         return bound, mode1.reshape(ids.shape[0], ids.shape[1], -1)
@@ -168,7 +171,7 @@ class Routed:
         tokens = flat // ids.shape[1]
         g, mg = self.project("gate_proj", a, a_scale, experts, tokens)
         u, mu = self.project("up_proj", a, a_scale, experts, tokens)
-        gf, uf = g.float().clamp(max=10.0), u.float().clamp(-10.0, 10.0)
+        gf, uf = g.float().clamp(max=self.limit), u.float().clamp(-self.limit, self.limit)
         d = torch.tensor([self.table(float(value)) for value in gf.flatten().cpu()], device=a.device, dtype=torch.float32).reshape(g.shape)
         return (d * uf).to(torch.bfloat16), mg & mu
 
