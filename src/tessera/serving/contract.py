@@ -104,6 +104,7 @@ import hashlib
 import json
 import re
 from functools import lru_cache
+from pathlib import Path
 from types import MappingProxyType
 from typing import Any, Mapping
 
@@ -322,6 +323,7 @@ EVIDENCE_GRADES = ("route_only", "kl_lower_bound", "kl_full_vocab")
 # Arithmetic is attested at measured M configurations and, by D3, at by-rule
 # rungs outside the census with the same run table. All others are unattested.
 ARITHMETIC_SCOPE = "measured_m_configurations_only"
+_NUMERICS_ROOT = Path(__file__).resolve().parents[3] / "docs/measurements/numerics"
 EVIDENCE_RECEIPT_ROOT = "docs/measurements/"
 
 #: Schema v8 (#198) scopes historical evidence to the encoder that wrote it.
@@ -3477,12 +3479,11 @@ def classify_construction(entry: Mapping[str, Any], checkpoint_module: str) -> t
     return "absent", pattern
 
 
-def check_arithmetic_receipts(contract: Mapping[str, Any], root, rule_path) -> None:
+def check_arithmetic_receipts(contract: Mapping[str, Any], root, rule_path, *,
+                              summaries=None) -> None:
     """Check summary files in a source tree. The wheel checks their grammar only."""
-    from pathlib import Path
-
     root = Path(root)
-    for path in (root / "docs/measurements/numerics").rglob("*.json"):
+    for path in _NUMERICS_ROOT.rglob("*.json") if summaries is None else summaries:
         if any(r["verdict"] != "PASS" for r in json.loads(path.read_bytes())["records"]):
             raise ValueError(f"{path}: non-PASS unit")
     rule_sha256 = hashlib.sha256(Path(rule_path).read_bytes()).hexdigest()

@@ -1050,10 +1050,12 @@ def test_arithmetic_receipt_gate(contract, tmp_path, case):
     path = tmp_path / receipt
     path.parent.mkdir(parents=True)
     path.write_text(json.dumps(summary))
+    summaries = [path]
     cell["evidence"]["arithmetic"] = dict(receipt=receipt, sha256=hashlib.sha256(path.read_bytes()).hexdigest(), scope=reader.ARITHMETIC_SCOPE)
     if case == "orphan_fail":
         (path.parent / "nested").mkdir()
-        (path.parent / "nested/orphan.json").write_text(json.dumps({"records": [{"verdict": "UNATTESTED"}]}))
+        summaries.append(path.parent / "nested/orphan.json")
+        summaries[-1].write_text(json.dumps({"records": [{"verdict": "UNATTESTED"}]}))
     if case == "sha256":
         path.write_text(path.read_text() + "\n")
     if case == "scope_invalid":
@@ -1064,10 +1066,10 @@ def test_arithmetic_receipt_gate(contract, tmp_path, case):
     reader.validate_serving_contract(payload)
     assert reader.cell_evidence(cell)["arithmetic"]["scope"] == "measured_m_configurations_only"
     if case in ("pass", "by_rule", "routed_pass"):
-        reader.check_arithmetic_receipts(payload, tmp_path, rule)
+        reader.check_arithmetic_receipts(payload, tmp_path, rule, summaries=summaries)
     else:
         with pytest.raises(ValueError, match="non-PASS unit" if case in ("fail", "orphan_fail") else "sha256 differs" if case == "sha256" else "measured must list distinct positive integer configurations" if case == "measured_form" else "measured rungs must equal rungs_pass" if case == "measured_absent" else "measured launch configuration is invalid" if case in ("partial_form", "width_form", "routed_form") else "missing PASS"):
-            reader.check_arithmetic_receipts(payload, tmp_path, rule)
+            reader.check_arithmetic_receipts(payload, tmp_path, rule, summaries=summaries)
 
 
 def test_tree_arithmetic_receipts(contract):
