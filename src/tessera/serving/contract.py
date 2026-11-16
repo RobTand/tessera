@@ -8,7 +8,8 @@ its own ``runtime_contract.json`` and a producer (PrismaQuant) reads it through
 
 WHAT A CELL MEANS. A cell records a platform, payload family, module kind,
 rungs, token regime, residency, kernel build and execution mode.
-The image remains provenance. A receipt backs each cell.
+Read qualification beside evidence.grade. With device_qualified and route_only,
+the route dispatch was observed on the device; arithmetic is not attested.
 Legacy build names identify recorded toolchain scopes, not native binary equivalence.
 The compatibility map preserves historical receipt identifiers.
 An explicit kernel build selects cells without an image-digest key.
@@ -239,8 +240,8 @@ CENSUS_PHASE_REGIMES: Mapping[str, str] = MappingProxyType(
 #: it and refuses it beside either of these.
 BACKED_ROUTE_STATUSES = frozenset({"backed", "backed_with_serve_flag"})
 _ROUTE_STATUSES = BACKED_ROUTE_STATUSES | {"unbacked"}
-#: The qualification a cell carries when a DEVICE ran the route, as against
-#: ``compile_only``, which says a toolchain accepted the code.
+#: Device dispatch, not arithmetic proof. Read beside ``evidence.grade``.
+#: ``route_only`` attests no arithmetic; ``compile_only`` records toolchain acceptance.
 DEVICE_QUALIFICATION = "device_qualified"
 _QUALIFICATIONS = frozenset({DEVICE_QUALIFICATION, "compile_only"})
 
@@ -1640,7 +1641,9 @@ def validate_serving_contract(contract: Mapping[str, Any]) -> None:
         if cell["route_status"] not in _ROUTE_STATUSES:
             raise ValueError(f"{where}.route_status {cell['route_status']!r} is not a status")
         if cell["qualification"] not in _QUALIFICATIONS:
-            raise ValueError(f"{where}.qualification {cell['qualification']!r} is not one")
+            raise ValueError(f"{where}.qualification {cell['qualification']!r} is unknown; "
+                             f"evidence.grade={cell.get('evidence', {}).get('grade')!r}. "
+                             "Qualification records device dispatch, not arithmetic proof.")
         # A CELL IS A RECEIPT FROM A BACKED PLATFORM (v10, #456).  The entry
         # is the platform's statement about the family; a cell is a serve that
         # happened.  A cell sitting on a null entry is the document
@@ -2297,35 +2300,21 @@ def cell_predicates(cell: Mapping[str, Any],
 
 def cell_is_device_backed(cell: Mapping[str, Any],
                           where: str = "lane_eligibility cell") -> bool:
-    """Does this cell attest a SERVE, or only a toolchain fact?
+    """Select device dispatch evidence, not arithmetic proof.
 
-    A cell states two facts that answer two questions: ``qualification`` says
-    who ran it -- ``device_qualified``, or ``compile_only`` for a toolchain that
-    only accepted the code -- and ``route_status`` says whether a serve exists
-    at all, with ``unbacked`` as this document's word for no.  v10 (#456)
-    already refuses the document that states the contradiction
-    (``compile_only`` beside a backed status, because a compile receipt cannot
-    carry a device's claim); this predicate is the reader's half of the same
-    rule.  A reader resolving "what has this build SERVED" must select on both
-    facts -- reading every cell of a ``(family, structure)`` pair as a receipt
-    is how a platform's first compiled-but-unserved route would admit rungs no
-    device ever ran.
-
-    FAILS CLOSED.  A cell missing either field, or naming a value outside the
-    closed sets :func:`validate_serving_contract` publishes, raises rather than
-    returning ``False``.  "cannot tell" is not "not backed": a reader that
-    quietly answered ``False`` would make an unreadable document
-    indistinguishable from the weaker fact, and the difference between the two
-    is the whole reason this predicate exists.  A caller reading a table the
-    validator has not seen (a test's copy, a staged contract) therefore gets the
-    answer the validator would give -- a refusal, by name.
+    Read ``qualification`` beside ``evidence.grade``. ``device_qualified``
+    with ``route_only`` means the route dispatch was observed on the device;
+    arithmetic is not attested. This predicate does not gate on the grade.
+    ``compile_only`` records toolchain acceptance and cannot back a route.
+    Unknown qualification or route status raises, as the validator requires.
     """
     qualification = cell.get("qualification")
     if qualification not in _QUALIFICATIONS:
         raise ValueError(
             f"{where} states qualification {qualification!r}, which is not one of "
             f"{sorted(_QUALIFICATIONS)}. A cell's qualification says whether a DEVICE ran "
-            "the route; this build cannot read an unknown value as served or as not served, "
+            f"the route; evidence.grade={cell.get('evidence', {}).get('grade')!r}. "
+            "route_only does not attest arithmetic; an unknown qualification is refused, "
             "and guessing either way would answer a question the document did not.")
     route_status = cell.get("route_status")
     if route_status not in _ROUTE_STATUSES:
@@ -2394,7 +2383,7 @@ def derive_evidence_grade(cell: Mapping[str, Any]) -> str:
 
     Every entry is in the cell's own regime (:func:`cell_evidence` refuses
     any other), so the derivation is: no entry, ``route_only`` -- the census
-    attests dispatch and nothing attests quality in this regime; any top-K
+    attests dispatch, not arithmetic or quality in this regime; any top-K
     intersection bound, ``kl_lower_bound``; any full-vocabulary KL,
     ``kl_full_vocab``.  A ``graph_equality`` record never raises the grade
     (tessera#1152): it cites the open graph gap and claims no compiled KL,

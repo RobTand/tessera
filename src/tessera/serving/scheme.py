@@ -1068,19 +1068,11 @@ def attested_cells(family: str, structure: str,
                    device_backed: bool = True) -> "list[dict]":
     """The ``lane_eligibility`` cells that attest ``(family, structure)``.
 
-    A cell is the unit of attestation (``contract`` module docstring): it
-    names the platform, family, STRUCTURE, regime, residency and image a
-    container receipt covered, and the rungs it covered them at.  A gate
-    asking what this build has served for a routed-MoE stack reads the cells
-    of that structure and nothing else -- the format row's
-    ``reader_rate_range_q256`` is the dense route's reader, and the routed
-    route runs a different consuming kernel (#135).  Returns the cells in
-    contract order, ``[]`` when none attests the pair; the caller decides
-    whether an empty list is a refusal.  A cell that states a ``predicates``
-    narrowing is REFUSED rather than returned: this filter reads family and
-    structure, which cannot resolve a predicate, and a narrowed cell read as
-    unconditional is the failure the grammar exists to prevent
-    (``contract.refuse_unevaluated_predicates``).
+    Returns complete cells in contract order, including ``qualification``
+    and ``evidence.grade``. Read them together: ``device_qualified`` with
+    ``route_only`` records device dispatch; arithmetic is not attested.
+    Selection does not gate on the grade. An empty list means no matching cell.
+    Unresolved predicates raise rather than admit a narrower cell.
 
     THE CELL'S OWN QUALIFICATION IS PART OF THE SELECTION.  A cell may state the
     weaker fact -- ``qualification: compile_only`` beside ``route_status:
@@ -1183,7 +1175,7 @@ def refuse_unserveable_wire(grid: str, q256: int, body: str, plane: str,
                 raise ValueError(
                     f"tessera export {target!r}: the {structure} cells of runtime_contract.json "
                     f"for {family} state the pair and no serve -- "
-                    + "; ".join(f"{cell['id']} is {cell['qualification']}/{cell['route_status']}"
+                    + "; ".join(f"{cell['id']} is {cell['qualification']}/{cell['route_status']}, evidence.grade={cell['evidence']['grade']}"
                                 for cell in compiled_only)
                     + f". A cell attests a serve only when a device ran the route, so this "
                     f"build promises no rung for a {structure} stack on grid {grid!r}; the "
@@ -1205,13 +1197,13 @@ def refuse_unserveable_wire(grid: str, q256: int, body: str, plane: str,
         if not any(cell_covers_rung(cell, q256, entry) for cell in cells):
             rungs = sorted({int(r) for cell in cells for r in cell["rungs_q256"]})
             per_cell = "; ".join(
-                f"{cell['id']} attests {sorted(cell['rungs_q256'])}"
+                f"{cell['id']} ({cell['qualification']}, evidence.grade={cell['evidence']['grade']}) covers {sorted(cell['rungs_q256'])}"
                 + (f" and run tables {cell['run_tables']}" if cell.get("run_tables") else "")
                 for cell in cells)
             raise ValueError(
                 f"tessera export {target!r}: q256={q256} on grid {grid!r} is outside the rungs "
                 f"the {structure} cells of runtime_contract.json attest for {family} "
-                f"({rungs}: {per_cell}). The format row's reader range is the dense route's; "
+                f"({rungs}: {per_cell}). route_only does not attest arithmetic. The format row's reader range is the dense route's; "
                 f"a {structure} stack is served by a different consuming kernel and is "
                 f"attested only at the rungs its own cells cover: their census rungs, and the "
                 f"allowable rungs of their run tables. Re-plan the stack on a covered rung, "

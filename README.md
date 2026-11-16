@@ -393,6 +393,10 @@ and [Tessera measurements](https://github.com/RobTand/tessera/blob/v0.1.0/experi
 
 ### End-to-end serving
 
+`device_qualified` with `evidence.grade: route_only` means the route dispatch
+was observed on the device; arithmetic is not attested. Admission does not
+require arithmetic evidence. Read both fields in each returned cell.
+
 The serves below were measured on **NVIDIA GB10 (`sm_121`), single rank**.
 KL measures disagreement with a BF16 teacher's next-token probabilities;
 lower is better. The cited quality scores use **top-1,024 intersection KL
