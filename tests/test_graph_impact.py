@@ -95,6 +95,18 @@ def test_new_edges_are_judged_against_the_base_revision(tessera):
     assert core.stale_entries(head, compared) == []
 
 
+
+def test_strict_mode_refuses_a_new_test_edge_and_accepts_a_removed_one(tessera):
+    core = tessera.core
+    def graph(*test_edges):
+        return core.measure({'tests/test_a.py': {'src/x.py'}, 'tests/test_b.py': {'src/x.py'}},
+                            {('tests/test_a.py', 'src/x.py'), ('tests/test_b.py', 'src/x.py'), *test_edges})
+    base = graph(('tests/test_b.py', 'tests/test_a.py'))
+    stored = {'schema': core.SCHEMA, 'figures': {}, 'tolerances': {}, 'reach_budget': 10, 'test_to_test': 'strict'}
+    assert core.compare(base, graph(), stored) == []
+    assert 'new test_to_test edge: tests/test_a.py -> tests/test_b.py' in core.compare(
+        base, graph(('tests/test_a.py', 'tests/test_b.py')), stored)
+
 _LOADS_A_TOOL = '''import importlib.util
 from pathlib import Path
 
