@@ -1000,15 +1000,15 @@ def test_the_cells_v39_withdrew_are_quoted_with_the_evidence_they_carried():
                 if k != "artifact"} == expected, cell_id
 
 
-@pytest.mark.parametrize("case", ["census", "pass", "fail", "missing", "sha256", "by_rule", "measured_missing", "withdrawn", "orphan_fail", "measured_form", "measured_absent", "scope", "scope_invalid"])
+@pytest.mark.parametrize("case", ["census", "pass", "fail", "missing", "sha256", "by_rule", "measured_missing", "withdrawn", "orphan_fail", "measured_form", "measured_absent", "scope_invalid", "partial_form", "width_form", "routed_pass", "routed_form"])
 def test_arithmetic_receipt_gate(contract, tmp_path, case):
     import hashlib
     from tessera.serving import contract as reader
     payload = copy.deepcopy(contract)
     cell = next(c for c in payload["lane_eligibility"]["cells"]
-                if c["family"] == "TESSERA_E4M3_K1" and len(c["rungs_q256"]) > 15)
+                if c["family"] == "TESSERA_E4M3_K1" and (c["structure"] == "routed_moe" if case.startswith("routed") else len(c["rungs_q256"]) > 15))
     if case == "census":
-        with pytest.raises(ValueError, match="arithmetic"):
+        with pytest.raises(ValueError, match="arithmetic is required"):
             reader.validate_serving_contract(payload, require_arithmetic=True)
         return
     rule = tmp_path / "pass-rule.md"
@@ -1037,9 +1037,13 @@ def test_arithmetic_receipt_gate(contract, tmp_path, case):
         rungs = records[0]["rungs_pass"]
         rungs.remove(next(q for q in rungs if any(q != other and reader.rung_rates(entry, q) == reader.rung_rates(entry, other) for other in rungs)))
     for record in records:
-        record["measured"] = [dict(rung=q, rows=64, cols=128, k_split=1) for q in record["rungs_pass"]]
+        record["measured"] = [dict(rung=q, rows=64, cols=128, k_split=1, last_tile_partial=False, superblock_width=64 if cell["structure"] == "routed_moe" else None) for q in record["rungs_pass"]]
     if case == "measured_form":
         records[0]["measured"][0]["k_split"] = True
+    if case == "partial_form":
+        records[0]["measured"][0]["last_tile_partial"] = 0
+    if case in ("width_form", "routed_form"):
+        records[0]["measured"][0]["superblock_width"] = None if case == "routed_form" else 64
     if case == "measured_absent":
         records[0]["measured"].pop()
     receipt = "docs/measurements/numerics/fixture.json"
@@ -1048,7 +1052,8 @@ def test_arithmetic_receipt_gate(contract, tmp_path, case):
     path.write_text(json.dumps(summary))
     cell["evidence"]["arithmetic"] = dict(receipt=receipt, sha256=hashlib.sha256(path.read_bytes()).hexdigest(), scope=reader.ARITHMETIC_SCOPE)
     if case == "orphan_fail":
-        (path.parent / "orphan.json").write_text(json.dumps({"records": [{"verdict": "UNATTESTED"}]}))
+        (path.parent / "nested").mkdir()
+        (path.parent / "nested/orphan.json").write_text(json.dumps({"records": [{"verdict": "UNATTESTED"}]}))
     if case == "sha256":
         path.write_text(path.read_text() + "\n")
     if case == "scope_invalid":
@@ -1058,15 +1063,15 @@ def test_arithmetic_receipt_gate(contract, tmp_path, case):
         return
     reader.validate_serving_contract(payload)
     assert reader.cell_evidence(cell)["arithmetic"]["scope"] == "measured_m_configurations_only"
-    if case in ("pass", "by_rule", "scope"):
+    if case in ("pass", "by_rule", "routed_pass"):
         reader.check_arithmetic_receipts(payload, tmp_path, rule)
     else:
-        with pytest.raises(ValueError, match="non-PASS unit" if case in ("fail", "orphan_fail") else "sha256 differs" if case == "sha256" else "measured must list distinct positive integer configurations" if case == "measured_form" else "measured rungs must equal rungs_pass" if case == "measured_absent" else "missing PASS"):
+        with pytest.raises(ValueError, match="non-PASS unit" if case in ("fail", "orphan_fail") else "sha256 differs" if case == "sha256" else "measured must list distinct positive integer configurations" if case == "measured_form" else "measured rungs must equal rungs_pass" if case == "measured_absent" else "measured launch configuration is invalid" if case in ("partial_form", "width_form", "routed_form") else "missing PASS"):
             reader.check_arithmetic_receipts(payload, tmp_path, rule)
 
 
 def test_tree_arithmetic_receipts(contract):
     from tessera.serving.contract import check_arithmetic_receipts
 
-    if list((ROOT / "docs/measurements/numerics").glob("*.json")) or any("arithmetic" in c["evidence"] for c in contract["lane_eligibility"]["cells"]):
+    if list((ROOT / "docs/measurements/numerics").rglob("*.json")) or any("arithmetic" in c["evidence"] for c in contract["lane_eligibility"]["cells"]):
         check_arithmetic_receipts(contract, ROOT, ROOT / "docs/measurements/numerics/pass-rule.md")

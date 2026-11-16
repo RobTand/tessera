@@ -319,7 +319,8 @@ PLUGIN_ENTRY_POINT = "tessera = tessera.serving:register"
 #: A decode cell that cites the open gap keeps ``grade`` ``route_only``.
 EVIDENCE_KL_KINDS = ("topk_intersection_lower_bound", "full_vocab", "graph_equality")
 EVIDENCE_GRADES = ("route_only", "kl_lower_bound", "kl_full_vocab")
-# Arithmetic is attested at measured M configurations. All others are unattested.
+# Arithmetic is attested at measured M configurations and, by D3, at by-rule
+# rungs outside the census with the same run table. All others are unattested.
 ARITHMETIC_SCOPE = "measured_m_configurations_only"
 EVIDENCE_RECEIPT_ROOT = "docs/measurements/"
 
@@ -3481,7 +3482,7 @@ def check_arithmetic_receipts(contract: Mapping[str, Any], root, rule_path) -> N
     from pathlib import Path
 
     root = Path(root)
-    for path in (root / "docs/measurements/numerics").glob("*.json"):
+    for path in (root / "docs/measurements/numerics").rglob("*.json"):
         if any(r["verdict"] != "PASS" for r in json.loads(path.read_bytes())["records"]):
             raise ValueError(f"{path}: non-PASS unit")
     rule_sha256 = hashlib.sha256(Path(rule_path).read_bytes()).hexdigest()
@@ -3521,12 +3522,18 @@ def check_arithmetic_receipts(contract: Mapping[str, Any], root, rule_path) -> N
             if not isinstance(measured, list):
                 raise ValueError(f"{at}: measured must be an array")
             configurations = set()
+            structure = next((c["structure"] for c in contract["lane_eligibility"]["cells"] if c["id"] == record["cell"]), None)
             for configuration in measured:
-                _require_keys(configuration, f"{at}.measured", required={"rung", "rows", "cols", "k_split"})
+                _require_keys(configuration, f"{at}.measured", required={"rung", "rows", "cols", "k_split", "last_tile_partial", "superblock_width"})
                 values = tuple(configuration[k] for k in ("rung", "rows", "cols", "k_split"))
-                if any(not _is_int(v) or v <= 0 for v in values) or values in configurations:
+                if any(not _is_int(v) or v <= 0 for v in values):
                     raise ValueError(f"{at}: measured must list distinct positive integer configurations")
-                configurations.add(values)
+                partial, width = configuration["last_tile_partial"], configuration["superblock_width"]
+                if not isinstance(partial, bool) or (structure == "dense" and width is not None) or (structure == "routed_moe" and (not _is_int(width) or width <= 0)):
+                    raise ValueError(f"{at}: measured launch configuration is invalid")
+                if values + (partial, width) in configurations:
+                    raise ValueError(f"{at}: measured repeats a launch configuration")
+                configurations.add(values + (partial, width))
             if {c[0] for c in configurations} != set(record["rungs_pass"]):
                 raise ValueError(f"{at}: measured rungs must equal rungs_pass")
             if set(record["rungs_pass"]) & set(record["rungs_withdrawn"]):
@@ -3536,8 +3543,6 @@ def check_arithmetic_receipts(contract: Mapping[str, Any], root, rule_path) -> N
                 raise ValueError(f"{at}: duplicate record")
             seen.add(key)
             if record["cell"] == cell["id"]:
-                if record["verdict"] != "PASS":
-                    raise ValueError(f"{at}: non-PASS unit")
                 records.append(record)
         entry = format_entry(cell["family"], contract)
         world = next(u["max_world_size"] for u in contract["tensor_parallel"]["units"] if u["unit"] == cell["family"])
@@ -3547,7 +3552,7 @@ def check_arithmetic_receipts(contract: Mapping[str, Any], root, rule_path) -> N
             for cut in cuts:
                 row = next((r for r in records if (r["symbol"], r["decoder"], r["cut"]) == (pair["symbol"], pair["decoder"], cut)), {})
                 passed, withdrawn = set(row.get("rungs_pass", [])), set(row.get("rungs_withdrawn", []))
-                tables = {rung_rates(entry, q) for q in passed - withdrawn}
+                tables = {rung_rates(entry, q) for q in passed}
                 coverage[pair["symbol"], pair["decoder"], cut] = passed, withdrawn, tables, set(pair.get("rungs_q256", cell["rungs_q256"]))
         low, high = entry["reader_rate_range_q256"]
         for rung in range(low, high + 1, entry["reader_rate_step_q256"]):
