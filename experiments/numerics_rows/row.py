@@ -504,7 +504,7 @@ def main():
     receipt = {"schema": "tessera.numerics_row.v2",
                "row": {"name": args.name, "flux_job_id": os.environ.get("FLUX_JOB_ID"), "host": socket.gethostname(),
                        "utc_start": datetime.now(timezone.utc).isoformat(), "utc_end": None, "exit_status": None, "stop_cause": None},
-               "rule": {}, "runtime": {}, "tessera": {}, "probe": {}, "inputs": {},
+               "tool": {}, "rule": {}, "runtime": {}, "tessera": {}, "probe": {}, "inputs": {},
                "modules": [], "units": [], "negative_controls": [], "cells": [], "findings": []}
     try:
         run(args, receipt)
@@ -535,6 +535,9 @@ def run(args, receipt):
     from experiments.numerics_rows.sass_slice import match_library
     from experiments.numerics_rows.common import register_native_ops, source_digest
 
+    tool_root = Path(__file__).resolve().parents[2]
+    receipt["tool"] = {"commit": subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=tool_root, text=True).strip(),
+                       "tree_sha256": source_digest(tool_root, ".")}
     torch.set_num_threads(1)
     runtime["native_ops"] = register_native_ops(args.image)
     receipt["runtime"] = runtime

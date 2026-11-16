@@ -147,10 +147,10 @@ class BoundaryRecorder:
         return result
 
 
-def source_digest(root):
+def source_digest(root, pathspec="src"):
     digest = hashlib.sha256()
     root = Path(root)
-    paths = subprocess.check_output(["git", "ls-files", "-z", "src"], cwd=root).split(b"\0")
+    paths = subprocess.check_output(["git", "ls-files", "-z", pathspec], cwd=root).split(b"\0")
     for name in sorted(p for p in paths if p):
         data = (root / name.decode()).read_bytes()
         digest.update(name + b"\0" + len(data).to_bytes(8, "little") + data)
