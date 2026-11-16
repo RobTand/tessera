@@ -3482,7 +3482,7 @@
   {
    "contract_version": 70,
    "date": "2026-11-16",
-   "change": "Candidate for #1699. Scope IMG-N E4M3 routed decode and batch to the dispatched class pair at R896, R928, R1024 and R1088. Require the new TP2 eager resident census before publication. Keep historical identities, cell IDs, rungs and route_only grades."
+   "change": "Issue #1699. Scope IMG-N E4M3 routed decode and batch to the dispatched class pair at R896, R928, R1024 and R1088. The committed TP2 eager resident census records both ranks at all four rungs in both phases. Keep historical identities, cell IDs, rungs and route_only grades."
   },
   {"contract_version": 69, "date": "2026-11-16", "change": "The routed E2M1 lane accepts whole TP1 units without carried start states and shards with carried start states (#1716). The kernel uses has_init to select the start state. Receipt-bound pairs cannot use global lane derivation outside their measured runtime scope. No kernel, wire, cell or arithmetic evidence changes."},
   {
