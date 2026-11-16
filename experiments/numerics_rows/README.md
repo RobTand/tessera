@@ -49,10 +49,16 @@ Use `--arm ARM` with `inspect` to split the population into separate jobs.
 The frozen rule record has `sha256`, `version`, `frozen_utc`, `reviewer`, `decisions`, and `preconditions`.
 The row checks its hash against the supplied rule file.
 
-P-G and P-N built the libraries. Q1 passed on both images. The lead holds those job results.
-H1, the P3 matcher and the review-fix CPU checks still need their recorded verdicts.
-The SASS matcher refuses branch joins with unknown reaching definitions.
-Such a refusal leaves routed units UNATTESTED. It does not prove a slice mismatch.
-The CPU job writes `checks.json`, logs, population JSON, and a metadata patch.
-Read each exit status and log before using any result.
-Open questions are in [questions.md](questions.md).
+The active target is A8S E4M3 on IMG-N. Its unsigned populations have 14 dense and 42 routed modules.
+Use `population draft --a8s-tsv PATH` to read the artifact root from the lead's real-gap table.
+Inspect and sign the dense population first. Routed rows wait for the contract pair fix.
+Keep the population tools for later extensions. E2M1, BF16 and IMG-G E4M3 rows are on hold.
+
+P-N compares e4m3mma, e4m3 and value at 8bf496ab and e89757b9, with the same paths and flags.
+Only identical library hashes publish the build receipt for Q1-N and H1-N. Historical H1 was confirmed;
+the new IMG-N E4M3 builds need their own Q1 and H1. A P3 tool limit remains UNATTESTED.
+
+C1 profile f2qwcb5HuDy completed in 765.44 s. Scale cases took 745.30 s; 2,829 `argwhere` calls took
+514.88 s. C1 now selects the first nonzero coordinate once per group. The exact joint evaluator stays.
+The A8S before/after CPU profiles must show equal case data before any speed claim or time estimate.
+Read each exit status, profile, Netdata series and log. Open questions are in [questions.md](questions.md).
