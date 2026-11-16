@@ -388,8 +388,9 @@ def run_checks(args, report):
     def save():
         write_json(args.out / "h1.json", report)
 
-    check_source(args.source)
     report["runtime"] = check_runtime(args.image)
+    built = load_build(args.build, report["runtime"])
+    check_source(args.source, built["commit"])
     sys.path.insert(0, str(args.source / "src"))
     sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "tests"))
     import tessera
@@ -407,7 +408,6 @@ def run_checks(args, report):
     report["negative_controls"] = negative_controls()
     save()
     recorder = BoundaryRecorder(torch.cuda.synchronize, report["boundaries"])
-    built = load_build(args.build, report["runtime"])
     loaded = install_libraries(built["libraries"])
     report["P3"] = {}
     for record in built["libraries"]:

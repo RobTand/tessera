@@ -9,7 +9,6 @@ import os
 from pathlib import Path
 import subprocess
 
-COMMIT = "8bf496ab"
 KERNEL = "src/tessera/serving/csrc/routed_fused_window.cu"
 KERNEL_SHA256 = "8a1536dfbc3df70edbdc37001a0db6947e97d9263926bc85a4d4d3ca231eae4f"
 IMAGES = {
@@ -39,7 +38,7 @@ def write_json(path, value):
     Path(path).write_text(json.dumps(value, indent=2, allow_nan=False, default=numpy_value) + "\n")
 
 
-def check_source(root, revision=COMMIT):
+def check_source(root, revision):
     root = Path(root)
     if sha256(root / KERNEL) != KERNEL_SHA256:
         raise Invalid("kernel source sha256 differs from the cell")

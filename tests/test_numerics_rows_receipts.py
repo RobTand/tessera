@@ -130,6 +130,84 @@ def completed_p3_receipt():
                      "mode0_instantiations": 1, "quotients": 1, "quotients_examined": 1}}
 
 
+def test_source_check_has_no_implicit_commit(tmp_path, monkeypatch):
+    from experiments.numerics_rows import common
+
+    monkeypatch.setattr(common, "sha256", lambda path: common.KERNEL_SHA256)
+    monkeypatch.setattr(common.subprocess, "check_output", lambda command, **kw:
+                        b"" if "status" in command else "a" * 40)
+    with pytest.raises(TypeError):
+        common.check_source(tmp_path)
+
+
+def test_p_accepts_the_explicit_campaign_commit(tmp_path, monkeypatch):
+    from experiments.numerics_rows import build
+
+    class Checked(Exception):
+        pass
+
+    def check(source, revision):
+        assert revision == "b" * 40
+        raise Checked
+
+    monkeypatch.setattr(build, "check_source", check)
+    monkeypatch.setattr("sys.argv", ["build", "--source", str(tmp_path), "--out", str(tmp_path),
+                                     "--image", "N", "--revision", "b" * 40])
+    with pytest.raises(Checked):
+        build.main()
+
+
+@pytest.mark.parametrize("entrypoint", ("quantizers", "h1"))
+def test_gpu_checks_use_the_p_commit(tmp_path, monkeypatch, entrypoint):
+    from experiments.numerics_rows import h1, quantizers
+
+    module = {"h1": h1, "quantizers": quantizers}[entrypoint]
+
+    class Checked(Exception):
+        pass
+
+    def check(source, revision=None):
+        assert revision == "b" * 40
+        raise Checked
+
+    monkeypatch.setattr(module, "check_source", check)
+    monkeypatch.setattr(module, "check_runtime", lambda image: {})
+    monkeypatch.setattr(module, "load_build", lambda *args: {"commit": "b" * 40})
+    with pytest.raises(Checked):
+        if entrypoint == "h1":
+            h1.run_checks(SimpleNamespace(source=tmp_path, image="N", build=tmp_path), {})
+        else:
+            monkeypatch.setattr("sys.argv", ["quantizers", "--source", str(tmp_path), "--out", str(tmp_path),
+                                             "--image", "N", "--build", str(tmp_path), "--artifact", str(tmp_path)])
+            quantizers.main()
+
+
+def test_p_uses_the_original_serving_flags(tmp_path, monkeypatch):
+    from pathlib import Path
+    from experiments.numerics_rows import build
+    from tessera import routed_fused
+    from torch.utils import cpp_extension
+
+    observed = []
+    binary = tmp_path / "library.so"
+    binary.write_bytes(b"fixture")
+    monkeypatch.setattr(build, "check_source", lambda *args: "b" * 40)
+    monkeypatch.setattr(build, "check_runtime", lambda image: {"libraries": ["e4m3mma"]})
+    monkeypatch.setattr(build, "library_identity", lambda *args: {})
+    monkeypatch.setattr(build.subprocess, "run", lambda command, **kw:
+                        Path(command[-1]).write_bytes(b"probe") if command[0] == "nvcc" else None)
+
+    def load(**kwargs):
+        observed.append(kwargs["extra_cuda_cflags"])
+        return SimpleNamespace(__file__=str(binary))
+
+    monkeypatch.setattr(cpp_extension, "load", load)
+    monkeypatch.setattr("sys.argv", ["build", "--source", str(tmp_path), "--out", str(tmp_path),
+                                     "--image", "N", "--revision", "b" * 40])
+    build.main()
+    assert observed == [routed_fused._cflags("sm_121", True, True, False)]
+
+
 @pytest.mark.parametrize("step", ("Q1-N", "H1-N"))
 def test_generated_jobs_refuse_empty_container_success(tmp_path, monkeypatch, step):
     import os
@@ -142,18 +220,43 @@ def test_generated_jobs_refuse_empty_container_success(tmp_path, monkeypatch, st
                       if str(value).startswith("/mnt/shared/flux-jobs/") else Path(value))
         patch.setattr(prepare_job.subprocess, "check_output", lambda *a, **kw: "a" * 40)
         patch.setattr(prepare_job.subprocess, "run", lambda *a, **kw: None)
-        out = prepare_job.prepare(step, "N", ("--build", str(tmp_path / "build.json")))
+        out = prepare_job.prepare(step, "N", ("--build", str(tmp_path / "build.json")), source_revision="b" * 40)
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir()
     for name in ("git", "sha256sum", "podman"):
         path = bin_dir / name
-        path.write_text("#!/bin/sh\nexit 0\n")
+        path.write_text("#!/bin/sh\n" + ("echo " + "b" * 40 + "\n" if name == "git" else "") + "exit 0\n")
         path.chmod(0o755)
     run = subprocess.run(["/bin/bash", str(out / "job.sh")], capture_output=True, text=True,
                          env={**os.environ, "PATH": f"{bin_dir}:{os.environ['PATH']}", "FLUX_JOB_ID": "test"})
     assert run.returncode != 0
     assert int((out / "tool-exit.txt").read_text()) != 0
     assert not (out / "results" / f"{step.split('-')[0].lower()}.json").exists()
+
+
+def test_generated_job_refuses_another_source_commit_before_podman(tmp_path, monkeypatch):
+    import os
+    from pathlib import Path
+    import subprocess
+    from experiments.numerics_rows import prepare_job
+
+    with monkeypatch.context() as patch:
+        patch.setattr(prepare_job, "Path", lambda value: tmp_path / Path(value).name
+                      if str(value).startswith("/mnt/shared/flux-jobs/") else Path(value))
+        patch.setattr(prepare_job.subprocess, "check_output", lambda *a, **kw: "a" * 40)
+        patch.setattr(prepare_job.subprocess, "run", lambda *a, **kw: None)
+        out = prepare_job.prepare("P-N", "N", source_revision="b" * 40)
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    (bin_dir / "git").write_text("#!/bin/sh\necho " + "c" * 40 + "\n")
+    marker = tmp_path / "container-started"
+    (bin_dir / "podman").write_text(f'#!/bin/sh\nif [ "$1" = run ]; then touch "{marker}"; fi\n')
+    for path in bin_dir.iterdir():
+        path.chmod(0o755)
+    run = subprocess.run(["/bin/bash", str(out / "job.sh")], capture_output=True, text=True,
+                         env={**os.environ, "PATH": f"{bin_dir}:{os.environ['PATH']}", "FLUX_JOB_ID": "test"})
+    assert run.returncode != 0 and not marker.exists()
+    assert (out / "tool-exit.txt").read_text().strip() != "0"
 
 
 @pytest.fixture

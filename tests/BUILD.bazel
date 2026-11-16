@@ -14819,6 +14819,7 @@ ts_py_library(
         "//experiments:numerics_rows/job_receipt",
         "//experiments:numerics_rows/join",
         "//experiments:numerics_rows/prepare_job",
+        "//experiments:numerics_rows/quantizers",
         "//experiments:numerics_rows/reference",
         "//experiments:numerics_rows/sass_slice",
         "//experiments:numerics_rows/scope",

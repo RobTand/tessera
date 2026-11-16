@@ -368,13 +368,16 @@ def main():
     parser.add_argument("--population-dir", type=Path, required=True)
     parser.add_argument("--out", type=Path, required=True)
     parser.add_argument("--source", type=Path)
+    parser.add_argument("--source-revision")
     parser.add_argument("--arm", action="append", help="Inspect only this arm; repeat to select several.")
     parser.add_argument("--a8s-tsv", type=Path, help="Draft only A8S E4M3 on IMG-N from the lead's real-gap table.")
     args = parser.parse_args()
     if args.mode == "draft":
         draft(args.out, args.a8s_tsv)
         return
-    check_source(args.source)
+    if not args.source or not args.source_revision:
+        parser.error("inspect and profile require --source and --source-revision")
+    check_source(args.source, args.source_revision)
     sys.path.insert(0, str(args.source / "src"))
     args.out.mkdir(parents=True, exist_ok=True)
     errors = []

@@ -13,5 +13,6 @@
   "pre-fix-ptx-header": {"file": "test_numerics_rows_canonical.py", "expected": 1, "nodes": ["test_ptx_fatbin_header_is_not_a_program[header-only]"]},
   "pre-fix-draft17": {"file": "test_numerics_rows_draft17_before.py", "expected": 7, "nodes": ["test_missing_evidence_contributes_unattested", "test_observation_is_not_attestation", "test_stop_precedes_invalid", "test_canary_cannot_be_joined"]},
   "pre-fix-draft17-narrow": {"file": "test_numerics_rows_join.py", "expected": 7, "nodes": ["test_join_refuses_an_unfrozen_rule", "test_join_refuses_overlapping_row_modules_even_without_overlapping_units"]},
-  "pre-fix-canary": {"file": "test_numerics_rows_receipts.py", "expected": 3, "nodes": ["test_dense_graph_capture_prepares_metadata_before_capture", "test_all_gate_cases_precede_diagnostics_and_diagnostic_errors_do_not_stop_them", "test_gpu_sampler_keeps_power_and_compute_app_memory_when_memory_used_is_na"]}
+  "pre-fix-canary": {"file": "test_numerics_rows_receipts.py", "expected": 3, "nodes": ["test_dense_graph_capture_prepares_metadata_before_capture", "test_all_gate_cases_precede_diagnostics_and_diagnostic_errors_do_not_stop_them", "test_gpu_sampler_keeps_power_and_compute_app_memory_when_memory_used_is_na"]},
+  "pre-fix-campaign-revision": {"file": "test_numerics_rows_receipts.py", "expected": 5, "nodes": ["test_source_check_has_no_implicit_commit", "test_p_accepts_the_explicit_campaign_commit", "test_gpu_checks_use_the_p_commit", "test_p_uses_the_original_serving_flags"]}
 }

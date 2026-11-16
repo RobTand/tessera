@@ -13,7 +13,7 @@ import resource
 import sys
 import time
 
-from experiments.numerics_rows.common import COMMIT, Invalid, artifact_limit, check_runtime, check_source, sha256, write_json
+from experiments.numerics_rows.common import Invalid, artifact_limit, check_runtime, check_source, sha256, write_json
 from experiments.numerics_rows.quantizers import PHASES
 from experiments.numerics_rows.reference import bf16, bf16_array, f32_bits, f32_value, multiply
 
@@ -411,7 +411,7 @@ def main():
         p.add_argument("--" + name, type=Path, required=True)
     p.add_argument("--image", choices=("G", "N"), required=True)
     p.add_argument("--module", action="append", default=[], help="Explicit signed module name; repeat for a subset")
-    p.add_argument("--source-revision", default=COMMIT)
+    p.add_argument("--source-revision", required=True)
     p.add_argument("--sample-expert", type=int, help="Sample all three E4M3 roles of one expert; not a row manifest")
     p.add_argument("--sample-tp-size", type=int, choices=(1, 2), default=2)
     p.add_argument("--sample-tp-rank", type=int, choices=(0, 1), default=0)

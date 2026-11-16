@@ -165,8 +165,9 @@ def main():
     p.add_argument("--build", type=Path, required=True)
     p.add_argument("--artifact", type=Path, required=True)
     args = p.parse_args()
-    check_source(args.source)
     runtime = check_runtime(args.image)
+    built = load_build(args.build, runtime)
+    check_source(args.source, built["commit"])
     sys.path.insert(0, str(args.source / "src"))
     import tessera
     import torch
@@ -176,7 +177,6 @@ def main():
     args.out.mkdir(parents=True, exist_ok=True)
     registration = register_native_ops(args.image)
     write_json(args.out / "native_ops.json", registration)
-    built = load_build(args.build, runtime)
     limit = artifact_limit(args.artifact)
     scales = artifact_scales(args.artifact) if "e2m1" in runtime["libraries"] else {}
     records, boundaries = [], []

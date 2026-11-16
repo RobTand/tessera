@@ -54,11 +54,12 @@ Use `population draft --a8s-tsv PATH` to read the artifact root from the lead's 
 Inspect and sign the dense population first. Routed rows wait for the contract pair fix.
 Keep the population tools for later extensions. E2M1, BF16 and IMG-G E4M3 rows are on hold.
 
-Builds add `--objdir-as-tempdir` to the cell flags and retain `-lineinfo`.
-CPU job `f2rST9Aa4Dd` found identical e4m3mma, e4m3 and value libraries at both commits and on repeat.
-This result covers fixed source and build paths. Serving keeps its original flags and paths. Read the
-[tested recipe](/mnt/shared/flux-jobs/tessera-1717-SO-REPRO-d5976c1d-20261116T154120Z/results/comparison.json).
-The valid A8S Q1 and H1 use the retained pre-flag 8bf496ab build. Rows must read that original build JSON.
+P uses the serving flags without additions. Its retained source tree stays at its original path and mtime.
+Pass one full Tessera commit to `prepare_job --source-revision`; every job checks it before its payload.
+P takes `--revision`; C1 and CPU commands take `--source-revision`. Q1 and H1 check P's recorded commit.
+The clean A8S campaign reruns P, Q1, H1 and C1 at the decode-once default fix commit F.
+The lead then supplies a new freeze record for the unchanged rule text and the new H1.
+From that freeze through the last counted row, every job uses F even if master moves.
 Use `build --existing-build BUILD_JSON` with the usual source, image and output arguments to write `p.json`.
 It adds code identities without rebuilding or changing the input. The `code_identity` docstring defines the exact encoding.
 P3 records these identities too. Confirm H1 with that CPU proof, then give the enriched H1 copy to the rows.

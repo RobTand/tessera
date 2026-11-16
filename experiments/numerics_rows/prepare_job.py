@@ -32,13 +32,20 @@ def stage_population(path, out):
     return inputs / "population.json", f"-v {shlex.quote(str(inputs / 'draft.json') + ':' + str(original) + ':ro')} "
 
 
-def prepare(step, image, extra=()):
+def prepare(step, image, extra=(), *, source_revision):
+    if len(source_revision) != 40 or any(c not in "0123456789abcdef" for c in source_revision):
+        raise ValueError("source revision must be one full lowercase commit SHA")
     revision = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=ROOT, text=True).strip()
     stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
     out = Path(f"/mnt/shared/flux-jobs/tessera-1717-{step}-{revision[:8]}-{stamp}")
     out.mkdir()
     subprocess.run(["git", "clone", "--bare", "--no-hardlinks", str(ROOT), str(out / "repository.git")], check=True)
     command = {"P": "build", "Q1": "quantizers", "H1": "h1", "C1": "cases", "ROW": "row", "CPU": "cpu_checks"}[step.split("-")[0]]
+    extra = list(extra)
+    if command == "build":
+        extra += ["--revision", source_revision]
+    elif command in ("cases", "cpu_checks"):
+        extra += ["--source-revision", source_revision]
     source = out / "cell"
     population_mount = ""
     if command in ("cases", "row"):
@@ -102,7 +109,7 @@ test "$(cat results/payload-exit.txt)" = 0
 '''
     if command == "cpu_checks":
         container = f"env HOME={out}/home /home/rob/.local/bin/uv run --python 3.12 --no-project --extra-index-url https://download.pytorch.org/whl/cpu --index-strategy unsafe-best-match --with-requirements code/tools/ci/gate_torch_requirements.txt --with-requirements code/tools/ci/gate_requirements.txt {payload}"
-    cell_checkout = "" if command == "row" else "git clone --shared repository.git cell\ngit -C cell checkout --detach 8bf496ab"
+    cell_checkout = "" if command == "row" else f"git clone --shared repository.git cell\ngit -C cell checkout --detach {source_revision}"
     script = f'''#!/bin/bash
 set -euo pipefail
 cd {out}
@@ -120,7 +127,10 @@ mkdir -p scratch cache results extensions triton home cuda-cache vllm-cache
 # The cell source stays separate from the implementation source.
 git clone --shared repository.git code
 git -C code checkout --detach {revision}
+test "$(git -C code rev-parse HEAD)" = {revision}
 {cell_checkout}
+test "$(git -C {source} rev-parse HEAD)" = {source_revision}
+printf '%s\\n' {source_revision} > results/tessera-commit.txt
 printf '%s  %s\\n' 8a1536dfbc3df70edbdc37001a0db6947e97d9263926bc85a4d4d3ca231eae4f {source}/src/tessera/serving/csrc/routed_fused_window.cu | sha256sum -c -
 {f"podman image inspect {IMAGES[image]['local_id']} > image-inspect.json" if command != "cpu_checks" else ""}
 {container}
@@ -133,7 +143,7 @@ printf '%s  %s\\n' 8a1536dfbc3df70edbdc37001a0db6947e97d9263926bc85a4d4d3ca231ea
               "--env=OMP_NUM_THREADS=1 --env=MKL_NUM_THREADS=1 --env=OPENBLAS_NUM_THREADS=1 "
               f"--output={out}/stdout --error={out}/stderr /bin/bash {out}/job.sh > {out}/jobid")
     (out / "README.md").write_text(
-        f"# {step}\n\nSource: {revision}. No work has been submitted.\n\n"
+        f"# {step}\n\nTool: {revision}. Tessera: {source_revision}. No work has been submitted.\n\n"
         "The lead must obtain Fleet OK before submission.\n"
         "GPU work cannot run from 12:15 through 13:45 UTC on 2026-11-16.\n\n"
         f"```bash\n{submit}\n```\n\nRead tool-exit.txt, the Flux status, stdout, and stderr after the job.\n")
@@ -157,5 +167,6 @@ if __name__ == "__main__":
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument("step", choices=("P-G", "P-N", "Q1-G", "Q1-N", "H1-G", "H1-N", "C1-G", "C1-N", "ROW-G", "ROW-N", "CPU"))
     p.add_argument("--image", choices=IMAGES, required=True)
+    p.add_argument("--source-revision", required=True)
     args, extra = p.parse_known_args()
-    prepare(args.step, args.image, extra)
+    prepare(args.step, args.image, extra, source_revision=args.source_revision)

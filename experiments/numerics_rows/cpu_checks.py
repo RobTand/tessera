@@ -17,10 +17,11 @@ TESTS = ("tests/test_numerics_rows.py", "tests/test_numerics_rows_sass.py",
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--source", type=Path, required=True)
+    parser.add_argument("--source-revision", required=True)
     parser.add_argument("--out", type=Path, required=True)
     parser.add_argument("--image")
     args = parser.parse_args()
-    check_source(args.source)
+    check_source(args.source, args.source_revision)
     args.out.mkdir(parents=True, exist_ok=True)
     (args.out / "bazel-targets.txt").write_text(Path(__file__).with_name("bazel-targets.txt").read_text())
     root = Path(__file__).resolve().parents[2]
