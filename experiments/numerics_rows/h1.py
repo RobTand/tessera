@@ -196,7 +196,7 @@ def subnormal_case(key, recorder):
     bundle = wg.prepare_window_gemm(expert.unit)
     role = rf.prepare_dense_role(bundle)
     x = torch.zeros(1, 256, dtype=torch.bfloat16, device="cuda")
-    x[0, 0] = 2**64
+    x[0, 0] = 2.0**64
     got = torch.empty(1, 256, dtype=torch.bfloat16, device="cuda")
     counter = torch.zeros(1, dtype=torch.int32, device="cuda")
     recorder.call("subnormal-operand", "tessera", lambda: rf.dense_forward(role, x, None, got, counter))
