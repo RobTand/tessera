@@ -225,7 +225,9 @@ def test_generated_jobs_refuse_empty_container_success(tmp_path, monkeypatch, st
     bin_dir.mkdir()
     for name in ("git", "sha256sum", "podman"):
         path = bin_dir / name
-        path.write_text("#!/bin/sh\n" + ("echo " + "b" * 40 + "\n" if name == "git" else "") + "exit 0\n")
+        path.write_text("#!/bin/sh\n" + (
+            f'if [ "$3" = rev-parse ]; then if [ "$2" = code ]; then echo {"a" * 40}; else echo {"b" * 40}; fi; fi\n'
+            if name == "git" else "") + "exit 0\n")
         path.chmod(0o755)
     run = subprocess.run(["/bin/bash", str(out / "job.sh")], capture_output=True, text=True,
                          env={**os.environ, "PATH": f"{bin_dir}:{os.environ['PATH']}", "FLUX_JOB_ID": "test"})
@@ -248,7 +250,7 @@ def test_generated_job_refuses_another_source_commit_before_podman(tmp_path, mon
         out = prepare_job.prepare("P-N", "N", source_revision="b" * 40)
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir()
-    (bin_dir / "git").write_text("#!/bin/sh\necho " + "c" * 40 + "\n")
+    (bin_dir / "git").write_text(f'#!/bin/sh\nif [ "$3" = rev-parse ]; then if [ "$2" = code ]; then echo {"a" * 40}; else echo {"c" * 40}; fi; fi\n')
     marker = tmp_path / "container-started"
     (bin_dir / "podman").write_text(f'#!/bin/sh\nif [ "$1" = run ]; then touch "{marker}"; fi\n')
     for path in bin_dir.iterdir():
@@ -256,6 +258,7 @@ def test_generated_job_refuses_another_source_commit_before_podman(tmp_path, mon
     run = subprocess.run(["/bin/bash", str(out / "job.sh")], capture_output=True, text=True,
                          env={**os.environ, "PATH": f"{bin_dir}:{os.environ['PATH']}", "FLUX_JOB_ID": "test"})
     assert run.returncode != 0 and not marker.exists()
+    assert "checkout --detach " + "b" * 40 in (out / "job.sh").read_text()
     assert (out / "tool-exit.txt").read_text().strip() != "0"
 
 
