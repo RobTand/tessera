@@ -1,7 +1,7 @@
 """Execute routed exact cases on the served launch and its staged replay."""
 from __future__ import annotations
 
-from experiments.numerics_rows.row import Invalid, compare_output, coverage, opaque_apply, require_x
+from experiments.numerics_rows.row import Invalid, compare_output, coverage, finite_outputs, opaque_apply, require_x
 from experiments.numerics_rows.common import BoundaryError
 
 
@@ -43,11 +43,13 @@ def run_case(adapter, unit, projection, column_values, ids, weights, recorder, *
     launch = lambda: adapter.launch(mode, q, sf, routes, got, row_mode=1 if down else 0, weighted=down)
     if down:
         ref, mask = adapter.down_reference(a, a_scale, ids, weights, routes)
+        bound = adapter.projection_bounds("down_proj", a, a_scale, ids, routes)
     else:
         ref, mask = adapter.gate_reference(a, a_scale, ids, routes)
+        bound, mode1_bound = adapter.gate_bounds(a, a_scale, ids, routes)
     require_x(mask, sweep=len(column_values) == 1)
     launch()
-    result = compare_output(unit, f"{projection}:{column_values}", got, ref, mask)
+    result = compare_output(unit, f"{projection}:{column_values}", got, ref, mask, bound=bound)
     section = "down_input" if down else "swiglu"
     unit["exact"][section]["elements"] += int(mask.sum())
     unit["exact"][section]["mismatches"] += result["mismatches"]
@@ -60,15 +62,17 @@ def run_case(adapter, unit, projection, column_values, ids, weights, recorder, *
         sum_call()
         sum_ref = token_reference(ref, ids.shape[1])
         sum_mask = mask.reshape(m, ids.shape[1], adapter.rows).all(1)
-        reduced = compare_output(unit, "token_sum", summed, sum_ref, sum_mask)
+        sum_bound = got.double().abs().reshape(m, ids.shape[1], adapter.rows).sum(1)
+        reduced = compare_output(unit, "token_sum", summed, sum_ref, sum_mask, bound=sum_bound)
         unit["exact"]["token_sum"]["elements"] += int(sum_mask.sum())
         unit["exact"]["token_sum"]["mismatches"] += reduced["mismatches"]
         if graph:
             graph_record(unit, "token_sum", sum_call, summed, recorder)
     else:
-        # Mode 1 is an observation. It cannot decide the unit's outcome.
+        # Mode 1 has no exact-equality claim. The universal finiteness rule still applies.
         observation = torch.empty(m, ids.shape[1], 2 * adapter.inter, device="cuda", dtype=torch.bfloat16)
         adapter.launch(1, q, sf, routes, observation)
+        finite_outputs(unit, "mode-1", observation, mode1_bound)
         unit.setdefault("mode1", []).append({"shape": list(observation.shape), "nonfinite": int((~torch.isfinite(observation)).sum())})
     return result
 
@@ -82,7 +86,8 @@ def composition(adapter, unit, x, ids, weights, recorder):
         if error.attributed_to is None:
             adapter.staged(x, ids, weights, recorder)
         raise
-    staged = adapter.staged(x, ids, weights, recorder)
+    staged, bound = adapter.staged(x, ids, weights, recorder, unit=unit)
+    finite_outputs(unit, "composition:apply", got, bound)
     result = compare(got, staged)
     unit["exact"]["composition"]["cases"] += 1
     unit["exact"]["composition"]["equal"] &= result["equal"]
@@ -168,11 +173,11 @@ def diagnostic_cases(adapter, unit, recorder):
             q, sf, a, a_scale = adapter.quantized(down, adapter.gs2, recorder)
             native = torch.empty(routes.routes, adapter.rows, device="cuda", dtype=torch.bfloat16)
             adapter.launch(2, q, sf, routes, native, row_mode=1, weighted=True)
-            record = diagnostic_down(adapter, native, a, a_scale, ids, routes, distribution, seed)
+            record = diagnostic_down(adapter, unit, native, a, a_scale, ids, routes, distribution, seed)
             unit["diagnostic"].append(record)
 
 
-def diagnostic_down(adapter, got, a, a_scale, ids, routes, distribution, seed):
+def diagnostic_down(adapter, unit, got, a, a_scale, ids, routes, distribution, seed):
     import torch
     from experiments.numerics_rows.row import diagnostic
 
@@ -183,10 +188,12 @@ def diagnostic_down(adapter, got, a, a_scale, ids, routes, distribution, seed):
         select = (experts == expert).nonzero().flatten()
         weight, scale = adapter.weight(expert, "down_proj")
         weight = weight.to(a.device)
-        c = scale.to(a.device).double() / (adapter.gs2 if adapter.family == "e2m1" else 1)
+        c = (scale.float() / torch.tensor(adapter.gs2, dtype=torch.float32)) if adapter.family == "e2m1" else scale
+        c = c.to(a.device).double()
         aa = a[select].double()
         if a_scale is not None:
             aa = aa * a_scale[select, None].double()
         reference[flat[select]] = (aa @ weight.T) * c * routes.rw_sorted[select, None].double()
-        total[flat[select]] = a[select].double().abs() @ weight.abs().T
+        total[flat[select]] = (aa.abs() @ weight.abs().T) * c.abs() * routes.rw_sorted[select, None].double().abs()
+    finite_outputs(unit, f"diagnostic:mode-2:{distribution}:{seed}", got, total)
     return diagnostic(got, reference, total, a.shape[1], 1, distribution, seed)

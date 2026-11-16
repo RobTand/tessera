@@ -75,7 +75,7 @@ def validate_case(case, plan, *, aq, a_scale, weight, scale, peer=None, peer_sca
         raise Invalid("C1 scale case differs from the actual quantizer, reader, or router scale")
 
 
-def finite_references(adapter, role, case, target, values, aq, a_scale, ids, routes, mode):
+def finite_references(adapter, role, case, target, values, aq, a_scale, ids, routes, mode, *, rows=None):
     """Check the other outputs that share this case's nonzero input before the native call."""
     import torch
 
@@ -86,8 +86,10 @@ def finite_references(adapter, role, case, target, values, aq, a_scale, ids, rou
         experts = [(position, int(ids.flatten()[flat[position]])) for position in positions]
     else:
         experts = [(case["input_row"], 0)]
+    bound = None
     for position, expert in experts:
         names = ("gate_proj", "up_proj") if routed and mode == 0 else (role["name"],)
+        side_bounds = []
         for side, name in enumerate(names):
             if routed:
                 weight, scale = adapter.weight(expert, name)
@@ -109,17 +111,31 @@ def finite_references(adapter, role, case, target, values, aq, a_scale, ids, rou
             if target == "sfa":
                 product *= values[case["input_row"] * (cols // 16) + case["column"] // 16]
             epilogue = product.float() * (values[case["input_row"]] if target == "a_s" else a_scale)
+            total = product.abs() * abs(values[case["input_row"]] if target == "a_s" else a_scale)
             epilogue = epilogue * scale
+            total *= scale.double().abs()
             if down:
-                epilogue *= values[position] if target == "router" else float(routes.rw_sorted[position])
+                rw = values[position] if target == "router" else float(routes.rw_sorted[position])
+                epilogue *= rw
+                total *= abs(rw)
             if not bool(torch.isfinite(epilogue.bfloat16()).all()):
                 raise Invalid("C1 scale coding gives a nonfinite incidental reference")
+            side_bounds.append(total)
+        total = side_bounds[0]
+        if routed and mode == 0:
+            total = torch.where((total < 2.0**127) & (side_bounds[1] < 2.0**127), adapter.table.limit**2, float("inf"))
+        if bound is None:
+            count = routes.routes if routed else (rows if rows is not None else case["input_row"] + 1)
+            bound = torch.zeros(count, total.numel(), dtype=torch.float64)
+        output_row = int(routes.flat_sorted[position]) if down else position
+        bound[output_row] = total
+    return bound
 
 
 def check(adapter, unit, manifest, recorder):
     import torch
     from experiments.numerics_rows.cases import routing
-    from experiments.numerics_rows.row import compare_output, coverage
+    from experiments.numerics_rows.row import compare_output, coverage, finite_outputs
 
     routed = manifest["structure"] == "routed_moe"
     m = unit["m_config"]["M"]
@@ -196,9 +212,9 @@ def check(adapter, unit, manifest, recorder):
                     expected = evaluate(case, case["read"], vals, table)
                     if not math.isfinite(expected):
                         raise Invalid("scale-index reference is not finite")
-                    finite_references(adapter, role, case, plan["scale"], vals, aq,
+                    bound = finite_references(adapter, role, case, plan["scale"], vals, aq,
                         1.0 if a_scale is None else float(a_scale[case["input_row"]]),
-                        ids if routed else None, routes if routed else None, mode)
+                        ids if routed else None, routes if routed else None, mode, rows=m)
                     copied = adapter
                     rr = routes if routed else None
                     if plan["scale"] == "a_s":
@@ -226,6 +242,7 @@ def check(adapter, unit, manifest, recorder):
                     else:
                         out = dense_launch(adapter, role, qq, ss, plan["scale"], vals, recorder)
                         output_row = case["input_row"]
+                    finite_outputs(unit, "scale-index:all-outputs", out, bound)
                     ref = torch.tensor([expected], device=q.device, dtype=torch.bfloat16)
                     got = out[output_row, case["output_row"]].reshape(1)
                     result = compare_output(unit, f"scale-index:{role['name']}:{coding['family']}:{coding['digit']}:{case['read']}", got, ref, operands={"input": case["input"], "column": case["column"], "read": case["read"],

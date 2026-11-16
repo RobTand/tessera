@@ -10,7 +10,7 @@ from experiments.numerics_rows.common import BoundaryError, BoundaryRecorder
 from experiments.numerics_rows.reference import bf16, exact_input, output, rn32, selftest
 from experiments.numerics_rows.row import (
     Invalid, check_preconditions, compare_output, coverage, dispatch, new_unit,
-    opaque_apply, outcome, record_cuda_error, require_x,
+    finite_outputs, opaque_apply, outcome, record_cuda_error, require_x, x_products,
 )
 from experiments.numerics_rows.scale_index import digits, evaluate, joint_coverage, passes
 
@@ -63,6 +63,8 @@ def test_wrong_dispatch_identity_fails(changed):
 @pytest.mark.parametrize("products", ([F(1, 2**133)], [F(1, 2**126), -F(129, 128 * 2**126)], [F(2**24), F(1)]))
 def test_x_false_is_invalid_before_native(products):
     assert not exact_input(products)["holds"]
+    mask = x_products(torch.tensor([[float(value) for value in products]], dtype=torch.float64))
+    assert not bool(mask[0])
     with pytest.raises(Invalid, match="X false"):
         require_x(torch.tensor([[exact_input(products)["holds"]]]), sweep=True)
 
@@ -341,3 +343,36 @@ def test_c1_rejects_normal_products_with_subnormal_quantum():
     result = column_coverage(weight, np.ones(1, dtype=np.float32), "value", Quantizer())
     assert not result["complete"] and result["x_false_candidates"] > 0
     assert result["recipes"][0]["values"] == []
+
+
+@pytest.mark.parametrize("kind", ("exact", "diagnostic", "scale-index", "staged"))
+@pytest.mark.parametrize("value", (float("nan"), float("inf"), float("-inf")))
+def test_bounded_nonfinite_outputs_fail_before_x_or_scale_selection(kind, value):
+    scope = unit()
+    got = torch.tensor([[1.0, value]], dtype=torch.bfloat16)
+    reference = torch.ones_like(got)
+    mask = torch.tensor([[True, False]])
+    bound = torch.tensor([[1.0, 2.0**126]], dtype=torch.float64)
+    if kind == "exact":
+        result = compare_output(scope, kind, got, reference, mask, bound=bound)
+        assert result["equal"] and result["elements"] == 1
+    else:
+        finite_outputs(scope, kind, got, bound)
+    assert outcome(scope) == "FAIL"
+
+
+def test_universal_finiteness_uses_the_strict_bound():
+    scope = unit()
+    got = torch.full((2,), float("inf"), dtype=torch.bfloat16)
+    finite_outputs(scope, "outside", got, torch.tensor([2.0**127, 2.0**128], dtype=torch.float64))
+    assert not scope["findings"]
+    finite_outputs(scope, "inside", got, torch.tensor([2.0**126, 2.0**127], dtype=torch.float64))
+    assert outcome(scope) == "FAIL" and "1 nonfinite outputs" in scope["findings"][0]
+
+
+def test_sparse_dot_bound_keeps_cancellation_and_all_epilogue_scales():
+    from experiments.numerics_rows.row import dot_reference
+    a = torch.tensor([[2.0, -2.0]], dtype=torch.float64)
+    w = torch.tensor([[3.0, 3.0]], dtype=torch.float64)
+    ref, mask, bound = dot_reference(a, w, torch.tensor([0.5]), torch.tensor([4.0]), with_bounds=True)
+    assert ref.item() == 0 and bool(mask.item()) and bound.item() == 24

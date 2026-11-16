@@ -1,4 +1,4 @@
-"""Run eager numerics units and write the v2 receipt. Diagnostics do not decide outcomes."""
+"""Run eager numerics units. Check bounded finiteness on exact and diagnostic inputs."""
 from __future__ import annotations
 
 import argparse
@@ -47,12 +47,25 @@ def finish_unit(unit):
     unit["reasons"] = unit["findings"] + unit["invalid"] + unit["unattested"]
 
 
-def compare_output(unit, case, got, ref, mask=None, operands=None):
+def finite_outputs(unit, case, got, bound):
+    """Apply the universal T*|c| rule before any X or selected-output mask."""
+    import torch
+
+    if got.shape != bound.shape:
+        raise Invalid(f"{case}: finite-output bound has the wrong shape")
+    bad = (~torch.isfinite(got)) & (bound.to(got.device) < 2.0**127)
+    if bool(bad.any()):
+        unit["findings"].append(f"{case}: {int(bad.sum())} nonfinite outputs with T*|c| < 2^127")
+
+
+def compare_output(unit, case, got, ref, mask=None, operands=None, *, bound=None):
     import torch
 
     if got.shape != ref.shape or got.dtype != ref.dtype:
         unit["findings"].append(f"{case}: wrong shape or dtype")
         return {"equal": False, "mismatches": max(got.numel(), ref.numel())}
+    if bound is not None:
+        finite_outputs(unit, case, got, bound)
     if not bool(torch.isfinite(ref).all()):
         raise Invalid(f"{case}: reference is not finite")
     positions = mask.nonzero() if mask is not None else None
@@ -113,27 +126,32 @@ def x_products(products):
     return torch.as_tensor(valid, device=products.device)
 
 
-def dot_reference(a, weight, a_scale, scale, *, exact=True):
+def dot_reference(a, weight, a_scale, scale, *, exact=True, with_bounds=False):
     import torch
 
     # Sparse exact cases use only the columns that the quantizer actually kept nonzero.
-    outputs, masks = [], []
+    outputs, masks, bounds = [], [], []
     for row in range(a.shape[0]):
         columns = (a[row] != 0).nonzero().flatten()
         if columns.numel():
             products = weight[:, columns.to(weight.device)].to(a.device).double() * a[row, columns].double()[None, :]
             mask = x_products(products) if exact else torch.ones(weight.shape[0], dtype=torch.bool, device=a.device)
             acc = products.sum(-1)
+            total = products.abs().sum(-1)
         else:
             mask = torch.ones(weight.shape[0], dtype=torch.bool, device=a.device)
             acc = torch.zeros(weight.shape[0], dtype=torch.float64, device=a.device)
+            total = torch.zeros_like(acc)
         value = acc.float()
         if a_scale is not None:
             value = value * a_scale[row].float()
+            total = total * a_scale[row].double().abs()
         value = value * scale.float()
+        bounds.append(total * scale.double().abs())
         outputs.append(value.to(torch.bfloat16))
         masks.append(mask)
-    return torch.stack(outputs), torch.stack(masks)
+    result = torch.stack(outputs), torch.stack(masks)
+    return (*result, torch.stack(bounds)) if with_bounds else result
 
 
 def diagnostic(got, ref, products_abs, k, splits, distribution, seed):
@@ -232,14 +250,15 @@ class Dense:
     def reference(self, a, a_scale, exact=True):
         import torch
 
-        parts, masks = [], []
+        parts, masks, bounds = [], [], []
         for _, weight, scale, _ in self.roles:
             if self.family == "e2m1":
                 scale = torch.tensor([float(scale)], device=weight.device, dtype=torch.float32) / torch.tensor(self.gs, device=weight.device, dtype=torch.float32)
-            y, mask = dot_reference(a, weight, a_scale, scale, exact=exact)
+            y, mask, bound = dot_reference(a, weight, a_scale, scale, exact=exact, with_bounds=True)
             parts.append(y)
             masks.append(mask)
-        return torch.cat(parts, 1), torch.cat(masks, 1)
+            bounds.append(bound)
+        return torch.cat(parts, 1), torch.cat(masks, 1), torch.cat(bounds, 1)
 
     def staged(self, q, sf, recorder):
         import torch
@@ -292,7 +311,7 @@ def run_dense_case(adapter, unit, recipe, recorder, *, exact=True):
     for row, columns, values in recipe:
         x[row % m, columns] = torch.tensor(values, dtype=torch.bfloat16, device="cuda")
     q, sf, a, a_scale = adapter.quantized(x, recorder)
-    reference, mask = adapter.reference(a, a_scale, exact=exact)
+    reference, mask, bound = adapter.reference(a, a_scale, exact=exact)
     if exact:
         require_x(mask, sweep=all(len(columns) <= 1 for _, columns, _ in recipe))
     try:
@@ -302,6 +321,8 @@ def run_dense_case(adapter, unit, recipe, recorder, *, exact=True):
             adapter.staged(q, sf, recorder)
         raise
     composition = adapter.staged(q, sf, recorder)
+    finite_outputs(unit, "dense:apply", got, bound)
+    finite_outputs(unit, "dense:staged", composition, bound)
     composed = compare(got, composition)
     unit["exact"]["composition"]["cases"] += 1
     unit["exact"]["composition"]["equal"] &= composed["equal"]
@@ -317,7 +338,7 @@ def run_dense_case(adapter, unit, recipe, recorder, *, exact=True):
                         "w": w[column - offset, columns].tolist(), "a_scale": None if a_scale is None else float(a_scale[row]),
                         "scale": scale.reshape(-1).tolist() if scale.numel() == 1 else float(scale[column - offset])}
             offset += w.shape[0]
-    return compare_output(unit, str(recipe), got, reference, mask, actual_operands) if exact else (got, reference, a)
+    return compare_output(unit, str(recipe), got, reference, mask, actual_operands, bound=bound) if exact else (got, reference, a)
 
 
 def dense_cases(adapter, unit, manifest, recorder):
@@ -558,11 +579,16 @@ def dense_diagnostics(adapter, unit, recorder):
                 unit["findings"].append("realistic apply differs from its staged composition")
             reference, totals = [], []
             for _, weight, scale, _ in adapter.roles:
-                c = scale.double() / (adapter.gs if adapter.family == "e2m1" else 1)
+                c = (scale.float() / torch.tensor(adapter.gs, dtype=torch.float32, device=scale.device)).double() if adapter.family == "e2m1" else scale.double()
                 aa = a.double() * (a_scale[:, None].double() if a_scale is not None else 1)
                 reference.append((aa @ weight.double().T) * c)
-                totals.append(aa.abs() @ weight.double().abs().T)
-            unit["diagnostic"].append(diagnostic(got, torch.cat(reference, 1), torch.cat(totals, 1), adapter.cols,
+                totals.append((aa.abs() @ weight.double().abs().T) * c.abs())
+            bound = torch.cat(totals, 1)
+            finite_outputs(unit, f"diagnostic:{distribution}:{seed}:apply", got, bound)
+            finite_outputs(unit, f"diagnostic:{distribution}:{seed}:staged", staged, bound)
+            unit["exact"]["composition"]["cases"] += 1
+            unit["exact"]["composition"]["equal"] &= compare(got, staged)["equal"]
+            unit["diagnostic"].append(diagnostic(got, torch.cat(reference, 1), bound, adapter.cols,
                                                  unit["m_config"]["k_split"], distribution, seed))
             if seed == 0 and distribution == "gauss":
                 buffer = torch.empty_like(got)
