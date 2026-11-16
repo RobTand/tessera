@@ -1,6 +1,7 @@
 """Receipts keep exact NumPy values and completed H1 sections."""
 import json
 import sys
+from types import SimpleNamespace
 
 import numpy as np
 import pytest
@@ -48,6 +49,31 @@ def test_later_h1_error_keeps_finished_sections(tmp_path, monkeypatch):
     assert result["preconditions_confirmed"] is False
     assert result["error"]["type"] == "RuntimeError"
     assert result["error"]["message"] == "later section failed"
+
+
+@pytest.mark.parametrize("size,rank", [(1, 0), (2, 0), (2, 1)])
+@pytest.mark.parametrize("fails", [False, True])
+def test_routed_build_passes_rank_local_width_and_restores_full_width(monkeypatch, size, rank, fails):
+    from experiments import routed_pair_oracle as oracle
+    from experiments.numerics_rows.routed import build_served
+
+    config = SimpleNamespace(intermediate_size=512,
+                             moe_parallel_config=SimpleNamespace(tp_size=size, tp_rank=rank))
+    monkeypatch.setattr(oracle, "INTER", 512)
+    calls = []
+    def loader(family, scheme, blobs, scales, experts, cfg, limit, prefix):
+        calls.append((oracle.INTER, cfg.intermediate_size, cfg.moe_parallel_config.tp_rank))
+        if fails:
+            raise ValueError("loader failure")
+        return "layer", "method", "info"
+    monkeypatch.setattr(oracle, "build_after", loader)
+    if fails:
+        with pytest.raises(ValueError, match="loader failure"):
+            build_served({}, {}, {}, {}, 2, config, 10.0, "synthetic.experts")
+    else:
+        assert build_served({}, {}, {}, {}, 2, config, 10.0, "synthetic.experts") == ("layer", "method", "info")
+    assert calls == [(512 // size, 512, rank)]
+    assert oracle.INTER == 512
 
 
 def population_cases():

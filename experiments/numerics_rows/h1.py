@@ -114,6 +114,7 @@ def routed_preconditions(key, recorder):
     import torch
     from experiments import routed_pair_oracle as routed
     from experiments.numerics_rows.synthetic import encode_module
+    from experiments.numerics_rows.routed import build_served
 
     routed.HIDDEN, routed.INTER, routed.TOP_K = 256, 512, 2
     blobs = {p: [encode_module("value" if key == "value" else "e4m3", [(p, rows)], cols, q256=1024, seed=e)[0] for e in range(2)]
@@ -125,7 +126,7 @@ def routed_preconditions(key, recorder):
         cfg = routed.moe_config(2, 10.0)
         parallel = cfg.moe_parallel_config
         parallel.tp_rank, parallel.tp_size = rank, 1 if key == "value" else 2
-        layer, method, info = routed.build_after(family, scheme, blobs, {}, 2, cfg, 10.0, "synthetic.experts")
+        layer, method, info = build_served(family, scheme, blobs, {}, 2, cfg, 10.0, "synthetic.experts")
         native = method._native
         from tessera.fused import parse_fused
         from tessera.unit_artifact import parse_unit_artifact

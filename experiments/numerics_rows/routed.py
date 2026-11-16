@@ -7,6 +7,18 @@ from experiments.numerics_rows.common import Invalid, artifact_limit
 from experiments.numerics_rows.row import dot_reference
 
 
+def build_served(family, scheme, blobs, scales, experts, config, limit, prefix):
+    """Give the served loader this rank's width and keep the full configuration."""
+    from experiments import routed_pair_oracle as routed
+
+    intermediate = routed.INTER
+    try:
+        routed.INTER = config.intermediate_size // config.moe_parallel_config.tp_size
+        return routed.build_after(family, scheme, blobs, scales, experts, config, limit, prefix)
+    finally:
+        routed.INTER = intermediate
+
+
 class Routed:
     def __init__(self, entry, cut, manifest, table):
         import torch
@@ -28,7 +40,7 @@ class Routed:
         routed.TOP_K = 8
         config = routed.moe_config(scheme["experts"], self.limit)
         config.moe_parallel_config.tp_rank, config.moe_parallel_config.tp_size = cut["rank"], cut["size"]
-        self.layer, self.method, self.info = routed.build_after(
+        self.layer, self.method, self.info = build_served(
             {"family": scheme["family"]}, scheme, blobs, scales, scheme["experts"], config, self.limit, entry["name"])
         self.native = self.layer.tessera_routed_fused if self.family == "e2m1" else self.method._native
         if self.family != "e2m1" and self.native.uniform is None:
