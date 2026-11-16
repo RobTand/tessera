@@ -100,11 +100,13 @@ def test_malformed_or_unmeasured_scope_refuses(field, value):
         validate_serving_contract(contract)
 
 
+@pytest.mark.parametrize("structure", ["dense", "routed_moe"])
+@pytest.mark.parametrize("family", ["TESSERA_BF16_K1", "TESSERA_E2M1_K2"])
 @pytest.mark.parametrize("axis", ["executes", "image", "execution_modes"])
-def test_option_s_axes_cannot_borrow_historical_receipts(axis):
+def test_option_s_axes_cannot_borrow_historical_receipts(axis, family, structure):
     contract = load_serving_contract()
     cell = next(c for c in contract["lane_eligibility"]["cells"]
-                if c["family"] == "TESSERA_BF16_K1" and c["regime"] == "decode")
+                if c["family"] == family and c["structure"] == structure and c["regime"] == "decode")
     validate_serving_contract(contract)
     if axis == "executes":
         cell[axis].append({"symbol": "torch.mm", "decoder": "torch_window"})

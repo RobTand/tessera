@@ -1,6 +1,6 @@
 {
  "default_repo": "RobTand/tessera",
- "generated": "2026-11-16T01:24:56Z",
+ "generated": "2026-11-16T05:43:27Z",
  "repos": {
   "RobTand/prismaquant": {
    "1": {
@@ -11312,7 +11312,7 @@
     "title": "Move the research-proposal export binding into tessera_export_lane so the export lane does not import the proposal CLI"
    },
    "3543": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "Write the selected-wire request in tessera_lane so the lane plugin does not import tessera_materialization"
    },
    "3544": {
@@ -11792,7 +11792,7 @@
     "title": "merge queue: merged #3646: #3645 Start the hosted exception lane with the remote shards"
    },
    "3651": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "Move bind_joint_served_quantizer into joint_served_activation so Stage A measurement does not import Stage B"
    },
    "3652": {
@@ -11864,7 +11864,7 @@
     "title": "merge queue: merged #3664: #3511 [P2] Pass profiler: record the device identity and the device bytes of the selected capture group (part of #2881) [skip ci]"
    },
    "3668": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "#3543 Write the selected-wire request in tessera_lane so the lane plugin does not import tessera_materialization [skip ci]"
    },
    "3669": {
@@ -11876,20 +11876,132 @@
     "title": "Use Tessera extents for payload-free GLM menu pricing"
    },
    "3670": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "Build the graph check's base and head graphs at the same time; delete the unused import_fanout shim"
    },
    "3671": {
+    "state": "CLOSED",
+    "title": "merge queue: merged #3668: #3543 Write the selected-wire request in tessera_lane so the lane plugin does not import tessera_materialization [skip ci]"
+   },
+   "3672": {
+    "state": "CLOSED",
+    "title": "#3670 Build the graph check's base and head graphs at the same time"
+   },
+   "3673": {
+    "state": "CLOSED",
+    "title": "merge queue: checking #3672 on main (0f65a54)"
+   },
+   "3674": {
+    "state": "CLOSED",
+    "title": "Run the base and head halves of the gate plan at the same time"
+   },
+   "3675": {
+    "state": "CLOSED",
+    "title": "#3651 Move bind_joint_served_quantizer into joint_served_activation so Stage A measurement does not import Stage B [skip ci]"
+   },
+   "3676": {
+    "state": "CLOSED",
+    "title": "merge queue: merged #3675: #3651 Move bind_joint_served_quantizer into joint_served_activation so Stage A measurement does not import Stage B [skip ci]"
+   },
+   "3677": {
     "state": "OPEN",
-    "title": "merge queue: checking #3668 on main (14aa349)"
+    "title": "Move the Tessera pin to contract v68 (8bf496ab)"
+   },
+   "3678": {
+    "state": "CLOSED",
+    "title": "merge queue: merged #3672: #3670 Build the graph check's base and head graphs at the same time"
+   },
+   "3679": {
+    "state": "CLOSED",
+    "title": "CI speed: measure an 8-CPU Remote Bazel runner (canary, not for merge)"
    },
    "368": {
     "state": "CLOSED",
     "title": "Price Tessera menus without placeholder payloads"
    },
+   "3680": {
+    "state": "CLOSED",
+    "title": "Move the head-slice schema and roles into joint_layer_quanta so it does not import joint_stage_b_head"
+   },
+   "3681": {
+    "state": "CLOSED",
+    "title": "Move the three head-walk journal constants into joint_head_walk_quanta so it does not import tessera_joint_aura"
+   },
+   "3682": {
+    "state": "OPEN",
+    "title": "Delete saturation_select.bootstrap_mean_ci, which has no production caller, and the tests that test only it"
+   },
+   "3683": {
+    "state": "CLOSED",
+    "title": "#3680 Move the head-slice schema and roles into joint_layer_quanta so it does not import joint_stage_b_head [skip ci]"
+   },
+   "3684": {
+    "state": "CLOSED",
+    "title": "merge queue: merged #3683: #3680 Move the head-slice schema and roles into joint_layer_quanta so it does not import joint_stage_b_head [skip ci]"
+   },
+   "3685": {
+    "state": "OPEN",
+    "title": "#3682 Delete bootstrap_mean_ci and the tests that test only it"
+   },
+   "3686": {
+    "state": "OPEN",
+    "title": "Delete the uncalled Gridbook extension closure shipcard._gold_extension_requirements and its three constants"
+   },
+   "3687": {
+    "state": "CLOSED",
+    "title": "Delete the uncalled render_score helpers output_error_distribution_stats and render_mechanism"
+   },
+   "3688": {
+    "state": "OPEN",
+    "title": "Delete three uncalled production_weight_cache names whose callers were removed"
+   },
+   "3689": {
+    "state": "OPEN",
+    "title": "Delete the uncalled chunked weight save and load in build_rtn_cache"
+   },
    "369": {
     "state": "CLOSED",
     "title": "Release completed CPU allocations during bounded capture"
+   },
+   "3690": {
+    "state": "CLOSED",
+    "title": "#3681 Move the three head-walk journal constants into joint_head_walk_quanta so it does not import tessera_joint_aura [skip ci]"
+   },
+   "3691": {
+    "state": "OPEN",
+    "title": "Delete the uncalled _bound_pickle and two unused file-name constants in tessera_campaign_table"
+   },
+   "3692": {
+    "state": "OPEN",
+    "title": "Delete four unused TypedDict declarations of the original source authority in source_generation"
+   },
+   "3693": {
+    "state": "CLOSED",
+    "title": "merge queue: merged #3690: #3681 Move the three head-walk journal constants into joint_head_walk_quanta so it does not import tessera_joint_aura [skip ci]"
+   },
+   "3694": {
+    "state": "OPEN",
+    "title": "#3677 Move the Tessera pin to contract v68"
+   },
+   "3695": {
+    "state": "CLOSED",
+    "title": "#3679 Measure an 8-CPU Remote Bazel runner (canary, not for merge)"
+   },
+   "3696": {
+    "state": "CLOSED",
+    "title": "#3687 Delete the uncalled render_score helpers output_error_distribution_stats and render_mechanism [skip ci]"
+   },
+   "3697": {
+    "state": "CLOSED",
+    "title": "merge queue: merged #3696: #3687 Delete the uncalled render_score helpers output_error_distribution_stats and render_mechanism [skip ci]"
+   },
+   "3698": {
+    "state": "OPEN",
+    "title": "merge queue: checking #3685 on main (5a6cfe3)"
+   },
+   "3699": {
+    "state": "OPEN",
+    "title": "CI speed: check the graph baseline against the PR base; drop the 146 s pra_baseline test and the per-shard history refetch"
    },
    "37": {
     "state": "CLOSED",
@@ -17814,11 +17926,11 @@
     "title": "merge queue: merged #1698: Use one FIFO merge queue"
    },
    "1701": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "Delete the unused hosted-gate test selector tools/impacted_tests.py"
    },
    "1702": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "Delete the unused hosted-gate test selector tools/impacted_tests.py"
    },
    "1703": {
@@ -17838,12 +17950,60 @@
     "title": "merge queue: merged #1705: Switch the graph-impact test-to-test policy to strict"
    },
    "1707": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "#1683 Mint scoped E2M1 and BF16 stub cells in contract v68"
+   },
+   "1708": {
+    "state": "CLOSED",
+    "title": "Make the GLM53 prefill test fixture partition-exact so the SP equality check does not depend on BLAS kernel choice"
+   },
+   "1709": {
+    "state": "CLOSED",
+    "title": "#1708 Make the GLM53 prefill fixture partition-exact"
    },
    "171": {
     "state": "CLOSED",
     "title": "Price the streaming index on disk, and name the ignored embedding from the tensor"
+   },
+   "1710": {
+    "state": "CLOSED",
+    "title": "merge queue: merged #1709: #1708 Make the GLM53 prefill fixture partition-exact"
+   },
+   "1711": {
+    "state": "CLOSED",
+    "title": "merge queue: merged #1707: #1683 Mint scoped E2M1 and BF16 stub cells in contract v68"
+   },
+   "1712": {
+    "state": "CLOSED",
+    "title": "Make the joined-expert export test fast enough to stay far from its timeout"
+   },
+   "1713": {
+    "state": "CLOSED",
+    "title": "#1712 Make the joined-expert export test fast"
+   },
+   "1714": {
+    "state": "CLOSED",
+    "title": "merge queue: merged #1702: Delete the unused hosted-gate test selector tools/impacted_tests.py"
+   },
+   "1715": {
+    "state": "CLOSED",
+    "title": "merge queue: merged #1713: #1712 Make the joined-expert export test fast"
+   },
+   "1716": {
+    "state": "OPEN",
+    "title": "[P1] v68 routed E2M1 lane requires a carried start state that its own served TP1 units do not have"
+   },
+   "1717": {
+    "state": "OPEN",
+    "title": "[P1] The contract validator admits a served cell on a route census alone; require an arithmetic receipt"
+   },
+   "1718": {
+    "state": "OPEN",
+    "title": "#1717 Make the route_only evidence grade visible in the contract's words"
+   },
+   "1719": {
+    "state": "OPEN",
+    "title": "#1716 Accept whole TP1 units in the routed E2M1 lane predicate"
    },
    "172": {
     "state": "CLOSED",
