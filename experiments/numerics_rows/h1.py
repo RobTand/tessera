@@ -329,15 +329,26 @@ def cuda_control_record(where, run):
 def gpu_preconditions(report):
     libraries = report.get("libraries", {})
     controls = report.get("cuda_controls", [])
+    for key, value in libraries.items():
+        routed = value.get("routed") or {}
+        if key not in ("e4m3", "e4m3mma"):
+            value["P5"] = {"result": "NOT_APPLICABLE", "reason": "pass-rule section 0 P5 requires E4M3 TP2 ranks"}
+            if routed:
+                routed["P5"] = dict(value["P5"])
+        if key != "e2m1":
+            value["wrong_scale_detected"] = {"result": "NOT_APPLICABLE", "reason": "E2M1 dense-ratio control; this library uses the row-scale control in negative_controls"}
+            if routed:
+                routed["negative_control"] = {"result": "NOT_APPLICABLE", "reason": "expert-ratio-index control applies to E2M1 only"}
     return bool(
         not report.get("error") and libraries
         and set(libraries) == set(report.get("runtime", {}).get("libraries", []))
         and report.get("P1", {}).get("samples") == 1_000_000 and report["P1"].get("mismatches") == 0
         and (set(libraries) == {"value"} or report.get("P2", {}).get("result") == "PASS")
-        and all(not v.get("error") and v.get("P4") and v.get("P5")
-                and (v.get("routed") is None or v["routed"]["P4"] and v["routed"]["P5"])
-                and v.get("wrong_scale_detected", True)
-                and v.get("routed", {}).get("negative_control", {}).get("flagged_exactly", True)
+        and all(not v.get("error") and v.get("P4") is True
+                and (v.get("routed") or {}).get("P4") is True
+                and (key not in ("e4m3", "e4m3mma") or v.get("P5") is True and v["routed"].get("P5") is True)
+                and (key != "e2m1" or v.get("wrong_scale_detected") is True
+                     and (v["routed"].get("negative_control") or {}).get("flagged_exactly") is True)
                 and v.get("subnormal_operand", {}).get("result") == ("PASS" if key == "value" else "UNATTESTED")
                 for key, v in libraries.items())
         and len(controls) == 2 and {c["where"] for c in controls} == {"inside", "outside"}

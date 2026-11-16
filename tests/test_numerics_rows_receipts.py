@@ -107,6 +107,42 @@ def completed_p3_receipt():
                      "mode0_instantiations": 1, "quotients": 1, "quotients_examined": 1}}
 
 
+def gpu_receipt_with_inapplicable_checks():
+    report = completed_gpu_receipt()
+    template = report["libraries"]["e4m3"]
+    report["runtime"]["libraries"] = ["e2m1", "e4m3", "e4m3mma"]
+    report["libraries"] = {key: copy.deepcopy(template) for key in report["runtime"]["libraries"]}
+    for key, value in report["libraries"].items():
+        value["P5"] = None if key == "e2m1" else True
+        value["wrong_scale_detected"] = True if key == "e2m1" else None
+        value["routed"]["negative_control"] = {"flagged_exactly": True if key == "e2m1" else None}
+    return report
+
+
+def test_gpu_preconditions_record_only_inapplicable_checks():
+    report = gpu_receipt_with_inapplicable_checks()
+    assert h1.gpu_preconditions(report)
+    assert report["libraries"]["e2m1"]["P5"]["result"] == "NOT_APPLICABLE"
+    for key in ("e4m3", "e4m3mma"):
+        entry = report["libraries"][key]
+        assert entry["wrong_scale_detected"]["result"] == "NOT_APPLICABLE"
+        assert entry["routed"]["negative_control"]["result"] == "NOT_APPLICABLE"
+
+
+@pytest.mark.parametrize("key,path", [("e4m3", ("P5",)), ("e4m3mma", ("routed", "P5")),
+    ("e2m1", ("wrong_scale_detected",)), ("e2m1", ("routed", "negative_control", "flagged_exactly")),
+    ("e2m1", ("P4",)), ("e4m3", ("routed", "P4"))])
+@pytest.mark.parametrize("value", [None, False])
+def test_gpu_preconditions_do_not_exempt_required_checks(key, path, value):
+    report = gpu_receipt_with_inapplicable_checks()
+    assert h1.gpu_preconditions(report)
+    entry = report["libraries"][key]
+    for field in path[:-1]:
+        entry = entry[field]
+    entry[path[-1]] = value
+    assert not h1.gpu_preconditions(report)
+
+
 @pytest.mark.parametrize("mutation", ["library_so_sha256", "probe_sha256", "missing", "gpu"])
 def test_cpu_p3_confirmation_requires_the_h1_binary_and_completed_gpu_checks(mutation):
     report, proof = completed_gpu_receipt(), completed_p3_receipt()
