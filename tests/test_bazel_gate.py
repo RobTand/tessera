@@ -225,7 +225,7 @@ def test_the_workflow_keeps_its_check_names_refs_and_scopes():
     text = (ROOT / '.github/workflows/gate.yml').read_text()
     assert '    name: pr-gate\n' in text and '    name: gate\n' in text
     assert 'action: scopes-git-refs' in text and 'action: scopes-upload' in text
-    assert 'branches: [master]' in text
+    assert "cron: '17 3-23/6 * * *'" in text and 'workflow_dispatch:' in text
     assert 'labeled' not in text
     assert 'check_no_secret_leak.py' in text or 'check-no-secret-leak' in text
 

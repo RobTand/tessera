@@ -243,6 +243,37 @@ def test_hard_timeout_or_failed_build_fails_the_combined_verdict(mode):
     assert merged['inputs']
 
 
+@pytest.mark.parametrize('failed,verdict,missed', [
+    ('//tests:a,//tests:z', 'detection-miss', ['//tests:z']), ('//tests:a', 'selected-but-failed', [])])
+def test_bisect_verdict_uses_only_the_merges_own_selection(tmp_path, monkeypatch, failed, verdict, missed):
+    # A red scheduled record covers several merges. Its bisect asks, for one merge, whether that merge's
+    # OWN selection (base = the head before it, that PR only) held each failed label: no window union.
+    remote = load('remote_gate')
+    plan, _ = results('main')
+    plan.update(selection='impacted', selected=['//tests:a'])
+    submitted = []
+
+    class Args:
+        mode, base, head, checkout, branch = 'main', 'a' * 40, 'b' * 40, '', 'master'
+        repo, cpu, memory, timeout = remote.REPOSITORY, 4, '8GB', 55
+        output_dir = tmp_path
+    Args.failed = failed
+
+    class Client:
+        def call(self, method, request, **options):
+            submitted.append(request['steps'][0]['run'])
+            return {'invocationId': 'plan'}
+
+    monkeypatch.setattr(remote, 'await_invocation', lambda *args: {'success': True})
+    monkeypatch.setattr(remote, 'diagnostics', lambda *args: [])
+    monkeypatch.setattr(remote, 'fetch', lambda *args: json.dumps(
+        dict(plan, schema=remote.SCHEMA, base='a' * 40, error=None)).encode())
+    record = remote.post_merge_record(remote.execute(Client(), Args), [7], 1)
+    assert len(submitted) == 1 and '--plan-full' in submitted[0]
+    assert f"--base {'a' * 40} --head {'b' * 40}" in submitted[0]
+    assert (record['verdict'], record['missed']['amd64'], record['prs']) == (verdict, missed, [7])
+
+
 @pytest.mark.parametrize('selection_failed', [False, True])
 @pytest.mark.parametrize('failed', [False, True])
 def test_postmerge_runs_each_shard_once_and_waits_before_submitting_next(
@@ -262,6 +293,7 @@ def test_postmerge_runs_each_shard_once_and_waits_before_submitting_next(
         base, head, checkout, branch = 'a' * 40, 'b' * 40, '', 'master'
         repo, cpu, memory, timeout = remote.REPOSITORY, 4, '8GB', 55
         output_dir = tmp_path
+        failed = ''
     Args.mode = mode
 
     class Client:
@@ -380,6 +412,7 @@ def test_only_gate_fallback_overlaps_and_never_exceeds_six_runs(tmp_path, monkey
         base, head, checkout, branch = 'a' * 40, 'b' * 40, '', 'master'
         repo, cpu, memory, timeout = remote.REPOSITORY, 4, '8GB', 55
         output_dir = tmp_path
+        failed = ''
     Args.mode = mode
 
     class Client:
