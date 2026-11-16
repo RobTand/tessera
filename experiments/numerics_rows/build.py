@@ -16,8 +16,9 @@ def main():
     p.add_argument("--out", type=Path, required=True)
     p.add_argument("--image", choices=IMAGES, required=True)
     p.add_argument("--library", action="append", choices=("e2m1", "e4m3mma", "e4m3", "value"))
+    p.add_argument("--revision", choices=("8bf496ab", "e89757b9"), default="8bf496ab")
     args = p.parse_args()
-    commit = check_source(args.source)
+    commit = check_source(args.source, args.revision)
     runtime = check_runtime(args.image)
     selected = args.library or runtime["libraries"]
     if len(set(selected)) != len(selected) or not set(selected) <= set(runtime["libraries"]):

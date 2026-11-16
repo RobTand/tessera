@@ -39,14 +39,14 @@ def write_json(path, value):
     Path(path).write_text(json.dumps(value, indent=2, allow_nan=False, default=numpy_value) + "\n")
 
 
-def check_source(root):
+def check_source(root, revision=COMMIT):
     root = Path(root)
     if sha256(root / KERNEL) != KERNEL_SHA256:
         raise ValueError("kernel source sha256 differs from the cell")
     rev = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=root, text=True).strip()
-    want = subprocess.check_output(["git", "rev-parse", COMMIT], cwd=root, text=True).strip()
+    want = subprocess.check_output(["git", "rev-parse", revision], cwd=root, text=True).strip()
     if rev != want or subprocess.check_output(["git", "status", "--porcelain", "--", "src"], cwd=root):
-        raise ValueError("kernel source is not clean commit 8bf496ab")
+        raise ValueError(f"kernel source is not clean commit {revision}")
     return rev
 
 
