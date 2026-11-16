@@ -309,6 +309,23 @@ def cuda_control(where, image):
     return False
 
 
+def cuda_control_record(where, run):
+    child = {}
+    for line in run.stdout.splitlines():
+        try:
+            value = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(value, dict) and value.get("where") == where:
+            child = value
+    return {"where": where, "exit_status": run.returncode, "stdout": run.stdout, "stderr": run.stderr,
+            "attributed_to": child.get("attributed_to"), "boundaries": child.get("boundaries", []),
+            "attribution_confirmed": "attributed_to" in child
+                and child["attributed_to"] == ("injected-launch" if where == "inside" else None),
+            "scope": "harness check of CUDA error attribution, not of the cell kernel",
+            "injection": "async device assert in a helper kernel; cell binary unchanged"}
+
+
 def run_checks(args, report):
     def save():
         write_json(args.out / "h1.json", report)
@@ -358,9 +375,7 @@ def run_checks(args, report):
     for where in ("inside", "outside"):
         env = {**os.environ, "PYTHONPATH": os.pathsep.join((str(args.source.resolve() / "src"), str(Path(__file__).resolve().parents[2])))}
         run = subprocess.run([sys.executable, "-m", "experiments.numerics_rows.h1", "--cuda-control", where, "--image", args.image], env=env, capture_output=True, text=True)
-        report["cuda_controls"].append({"where": where, "exit_status": run.returncode, "stdout": run.stdout, "stderr": run.stderr,
-            "scope": "harness check of CUDA error attribution, not of the cell kernel",
-            "injection": "async device assert in a helper kernel; cell binary unchanged"})
+        report["cuda_controls"].append(cuda_control_record(where, run))
         save()
     report["preconditions_confirmed"] = (
         not report["P1"]["mismatches"] and (args.image == "N" or report["P2"].get("result") == "PASS")
@@ -369,7 +384,7 @@ def run_checks(args, report):
                 and (v.get("routed") is None or v["routed"]["P4"] and v["routed"]["P5"])
                 and v.get("wrong_scale_detected", True)
                 and (v.get("routed", {}).get("negative_control", {}).get("flagged_exactly", True)) for v in report["libraries"].values())
-        and all(c["exit_status"] == 0 for c in report["cuda_controls"])
+        and all(c["exit_status"] == 0 and c["attribution_confirmed"] for c in report["cuda_controls"])
         and all(v.get("subnormal_operand", {}).get("result") != "FAIL" for v in report["libraries"].values())
         and all(c["flagged_exactly"] for c in report["negative_controls"]))
     save()

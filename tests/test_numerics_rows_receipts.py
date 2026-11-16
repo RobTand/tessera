@@ -76,6 +76,17 @@ def test_routed_build_passes_rank_local_width_and_restores_full_width(monkeypatc
     assert oracle.INTER == 512
 
 
+@pytest.mark.parametrize("where,owner", [("inside", "injected-launch"), ("outside", None)])
+def test_cuda_child_attribution_is_present_in_parent_record(where, owner):
+    child = {"where": where, "attributed_to": owner, "boundaries": [{"call": "injected-launch"}]}
+    run = SimpleNamespace(returncode=0, stdout="runtime log\n" + json.dumps(child) + "\n", stderr="assert log")
+    record = h1.cuda_control_record(where, run)
+    assert record["attributed_to"] == owner and record["attribution_confirmed"]
+    assert record["boundaries"] == child["boundaries"]
+    run.stdout = json.dumps({"where": where})
+    assert not h1.cuda_control_record(where, run)["attribution_confirmed"]
+
+
 def population_cases():
     pair = ["tessera::fused_window_dense", "native_fused_window_dense"]
     population = {"sms": 1, "modules": [{"root": "/wires", "name": name, "library": "e4m3",
