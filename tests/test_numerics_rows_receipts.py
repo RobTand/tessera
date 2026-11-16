@@ -795,3 +795,29 @@ def test_row_requires_h1_code_identity(retained_binary_receipts, tmp_path, field
     proof.pop(field)
     with pytest.raises(Invalid, match="H1 code identity"):
         row.bind_library_identity(record, record, proof)
+
+
+def test_population_job_stages_shared_draft_without_changing_signed_bytes(tmp_path):
+    from pathlib import Path
+    from experiments.numerics_rows.prepare_job import stage_population
+
+    shared = tmp_path / "shared"
+    (shared / "drafts").mkdir(parents=True)
+    draft = shared / "drafts/population.json"
+    draft.write_text('{"reviewed":false,"wire_stamps_read":true,"sms":48,"modules":[]}\n')
+    original = Path("/home/rob/unavailable-on-sparks/population.json")
+    signed = shared / "signed.json"
+    signed.write_text(json.dumps({"review": {"source_file": str(original),
+                                             "source_sha256": hashlib.sha256(draft.read_bytes()).hexdigest()}}))
+    before = signed.read_bytes()
+    job = tmp_path / "job"
+    job.mkdir()
+    staged, mount = stage_population(signed, job)
+    assert staged.read_bytes() == before == signed.read_bytes()
+    assert (job / "inputs/draft.json").read_bytes() == draft.read_bytes()
+    assert mount == f"-v {job}/inputs/draft.json:{original}:ro "
+    draft.write_text(draft.read_text() + " ")
+    other = tmp_path / "wrong-job"
+    other.mkdir()
+    with pytest.raises(ValueError, match="draft identity"):
+        stage_population(signed, other)

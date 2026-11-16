@@ -3,13 +3,32 @@ from __future__ import annotations
 
 import argparse
 from datetime import datetime, timezone
+import json
 from pathlib import Path
 import shlex
+import shutil
 import subprocess
 
-from experiments.numerics_rows.common import IMAGES
+from experiments.numerics_rows.common import IMAGES, sha256
 
 ROOT = Path(__file__).resolve().parents[2]
+
+
+def stage_population(path, out):
+    """Copy signed bytes and their bound draft. Mount the draft at its signed path."""
+    path = Path(path)
+    review = json.loads(path.read_text())["review"]
+    original = Path(review["source_file"])
+    draft = path.parent / "drafts" / original.name
+    if not draft.is_file():
+        draft = original
+    if not original.is_absolute() or sha256(draft) != review["source_sha256"]:
+        raise ValueError("population draft identity differs")
+    inputs = out / "inputs"
+    inputs.mkdir()
+    shutil.copyfile(path, inputs / "population.json")
+    shutil.copyfile(draft, inputs / "draft.json")
+    return inputs / "population.json", f"-v {shlex.quote(str(inputs / 'draft.json') + ':' + str(original) + ':ro')} "
 
 
 def prepare(step, image, extra=()):
@@ -19,6 +38,13 @@ def prepare(step, image, extra=()):
     out.mkdir()
     subprocess.run(["git", "clone", "--bare", "--no-hardlinks", str(ROOT), str(out / "repository.git")], check=True)
     command = {"P": "build", "Q1": "quantizers", "H1": "h1", "C1": "cases", "CPU": "cpu_checks"}[step.split("-")[0]]
+    population_mount = ""
+    if command == "cases":
+        parser = argparse.ArgumentParser(add_help=False)
+        parser.add_argument("--population", type=Path, required=True)
+        inputs, extra = parser.parse_known_args(extra)
+        population, population_mount = stage_population(inputs.population, out)
+        extra += ["--population", str(population)]
     gpu = step.startswith(("Q1", "H1"))
     shape, minutes = ("core=2;memory=16;gpu=1", 9) if gpu else ("core=4;memory=8", 20)
     host = "sparklina"
@@ -46,6 +72,7 @@ exit "$rc"
                  f"podman run --rm --name {name} --pull=never --cgroups=disabled --network=none "
                  f"{'--device nvidia.com/gpu=all ' if gpu else ''}"
                  f"-v /mnt/shared:/mnt/shared:ro -v {out}:{out}:rw -w {out}/code "
+                 f"{population_mount}"
                  f"--env HOME={out}/home --env TMPDIR={out}/scratch --env XDG_CACHE_HOME={out}/cache "
                  f"--env CUDA_CACHE_PATH={out}/cuda-cache --env VLLM_CACHE_ROOT={out}/vllm-cache "
                  f"--env TORCH_EXTENSIONS_DIR={out}/extensions --env TRITON_CACHE_DIR={out}/triton "
