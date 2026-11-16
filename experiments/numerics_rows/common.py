@@ -45,3 +45,43 @@ def check_runtime(image):
     if any(actual[name] != expected[name] for name in actual):
         raise ValueError(f"runtime differs from the cell: {actual}")
     return {**expected, **actual}
+
+
+class BoundaryError(RuntimeError):
+    def __init__(self, record, error):
+        self.record = record
+        self.attributed_to = record["call"] if record["kind"] == "tessera" and record["sync_before"] and record["sync_after"] is False else None
+        super().__init__(str(error))
+
+
+class BoundaryRecorder:
+    """Synchronize each call and retain the boundary that first reports an error."""
+
+    def __init__(self, synchronize, records):
+        self.synchronize, self.records = synchronize, records
+
+    def call(self, name, kind, function):
+        record = {"call": name, "kind": kind, "sync_before": None, "sync_after": None}
+        self.records.append(record)
+        try:
+            self.synchronize()
+            record["sync_before"] = True
+        except Exception as error:
+            record["sync_before"] = False
+            record["message"] = str(error)
+            raise BoundaryError(record, error) from error
+        failure = None
+        try:
+            result = function()
+        except Exception as error:
+            failure = error
+        try:
+            self.synchronize()
+            record["sync_after"] = True
+        except Exception as error:
+            record["sync_after"] = False
+            failure = error
+        if failure is not None:
+            record["message"] = str(failure)
+            raise BoundaryError(record, failure) from failure
+        return result

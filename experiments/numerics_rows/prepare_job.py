@@ -28,11 +28,11 @@ def prepare(step, image, extra=()):
                           "--image", image, "--out", str(out / "results"), *extra])
     container = (f"podman run --rm --pull=never --cgroups=disabled --network=none "
                  f"{'--device nvidia.com/gpu=all ' if gpu else ''}"
-                 f"-v {out}:{out}:rw -w {out}/code "
+                 f"-v /mnt/shared:/mnt/shared:ro -v {out}:{out}:rw -w {out}/code "
                  f"--env TMPDIR={out}/scratch --env XDG_CACHE_HOME={out}/cache "
                  f"--env TORCH_EXTENSIONS_DIR={out}/extensions --env TRITON_CACHE_DIR={out}/triton "
                  "--env OMP_NUM_THREADS=1 --env MKL_NUM_THREADS=1 --env OPENBLAS_NUM_THREADS=1 "
-                 "--env MAX_JOBS=4 --env TESSERA_PLATFORM_TOKEN=sm_121 "
+                 f"--env MAX_JOBS={2 if gpu else 4} --env TESSERA_PLATFORM_TOKEN=sm_121 "
                  f"{IMAGES[image]['local_id']} /bin/bash -euo pipefail -c {shlex.quote(payload)}")
     script = f'''#!/bin/bash
 set -euo pipefail
