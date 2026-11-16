@@ -254,3 +254,49 @@ def test_routing_has_the_requested_count_and_distinct_experts():
     assert all(sum(expert in row for row in ids) == 37 for expert in range(8))
     assert all(abs(sum(row) - 1) < 1e-14 for row in weights)
     assert (ids, weights) == routing(65, 24, 37, list(range(8)))
+
+
+@pytest.mark.parametrize("changed", (None, "read", "array", "g", "u", "a_scale", "g_scale", "u_scale"))
+def test_scale_case_is_bound_to_actual_operands(changed):
+    from experiments.numerics_rows.scale_launch import validate_case
+    case = {"read": [2, 6], "g": 6.0, "u": -3.0, "a_scale": 0.5, "g_scale": 4.0, "u_scale": 8.0}
+    plan = {"scale": "row", "array": {"N": 8}}
+    if changed == "read":
+        case["read"] = [1, 6]
+    elif changed == "array":
+        plan["array"]["N"] = 7
+    elif changed:
+        case[changed] *= 2
+    arguments = dict(aq=3.0, a_scale=0.5, weight=2.0, scale=4.0, peer=-1.0, peer_scale=8.0, n=8, read=[2, 6])
+    if changed:
+        with pytest.raises(Invalid, match="C1 scale case"):
+            validate_case(case, plan, **arguments)
+    else:
+        validate_case(case, plan, **arguments)
+
+
+def test_setup_failure_writes_stopped_receipt(tmp_path, monkeypatch):
+    import json
+    from experiments.numerics_rows.row import main
+    argv = ["row", "--image", "G", "--name", "test"]
+    for name in ("source", "manifest", "population", "build", "q1", "h1", "rule", "freeze"):
+        argv += ["--" + name, str(tmp_path / name)]
+    argv += ["--out", str(tmp_path / "results")]
+    monkeypatch.setattr("sys.argv", argv)
+    with pytest.raises(SystemExit) as caught:
+        main()
+    assert caught.value.code == 3
+    receipt = json.loads((tmp_path / "results/numerics_row.json").read_text())
+    assert receipt["row"]["exit_status"] == 3 and receipt["row"]["stop_cause"]
+    assert receipt["row"]["utc_end"] and receipt["units"] == []
+
+
+def test_scale_coding_checks_incidental_outputs_before_launch():
+    from types import SimpleNamespace
+    from experiments.numerics_rows.scale_launch import finite_references
+    weight = torch.tensor([[1.0], [torch.finfo(torch.bfloat16).max]], dtype=torch.float64)
+    adapter = SimpleNamespace(family="value", gs=1.0, roles=[("dense", weight, torch.ones(2), None)])
+    arguments = (adapter, {"name": "dense"}, {"input_row": 0, "column": 0}, "row")
+    finite_references(*arguments, [1.0, 1.0], 1.0, 1.0, None, None, 2)
+    with pytest.raises(Invalid, match="nonfinite incidental reference"):
+        finite_references(*arguments, [1.0, 2.0], 1.0, 1.0, None, None, 2)

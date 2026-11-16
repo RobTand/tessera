@@ -1,7 +1,7 @@
 """Served routed loading and explicit mode-0, mode-2, and token-sum replay."""
 from __future__ import annotations
 
-from pathlib import Path
+import hashlib
 
 from experiments.numerics_rows.common import Invalid
 from experiments.numerics_rows.row import dot_reference
@@ -16,6 +16,8 @@ class Routed:
         self.entry, self.cut, self.manifest, self.table = entry, cut, manifest, table
         store = dense.Store(entry["root"])
         scheme, blobs, scales = checkpoint_routed(store, entry)
+        if {p: [hashlib.sha256(w).hexdigest() for w in wires] for p, wires in blobs.items()} != manifest["wire_sha256"]:
+            raise Invalid("loaded wires differ from the C1 reader artifacts")
         self.family = {"TESSERA_FP8": "e4m3", "TESSERA_BF16": "value", "TESSERA_NVFP4": "e2m1"}[scheme["family"]]
         routed.HIDDEN = scheme["groups"]["w13"]["columns"]
         routed.INTER = scheme["groups"]["w13"]["rows"] // 2

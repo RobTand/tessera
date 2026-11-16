@@ -42,7 +42,7 @@ def main():
     # bbrun is required by AGENTS.md. A missing installation remains a failed check.
     try:
         run("bazel-targets", ["bbrun", "test", "--config=remote", "--jobs=4",
-            "//tests:test_numerics_rows", "//tests:test_numerics_rows_sass"])
+            *("//tests:" + Path(test).stem for test in TESTS)])
     except FileNotFoundError:
         records.append({"name": "bazel-targets", "exit_status": 127, "reason": "bbrun is not on PATH"})
         write_json(args.out / "checks.json", records)

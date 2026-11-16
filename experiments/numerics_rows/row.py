@@ -183,7 +183,7 @@ def native_boundaries(libraries, recorder):
 
 
 class Dense:
-    def __init__(self, entry, cut):
+    def __init__(self, entry, cut, manifest):
         from experiments import dense_fused_oracle as dense
         from experiments.numerics_rows.cases import decode_roles
 
@@ -194,6 +194,8 @@ class Dense:
             fused=self.library != "triton", instruction="f16" if self.library == "e4m3" else "e4m3")
         self.scheme = self.store.schemes[self.name]
         wire = self.store.wire(self.name).contiguous().numpy().tobytes()
+        if hashlib.sha256(wire).hexdigest() != manifest["wire_sha256"]:
+            raise Invalid("loaded wire differs from the C1 reader artifact")
         self.roles = decode_roles(wire, self.scheme, self.name, device="cuda", plan=self.layer.tessera_shard_plan)
         self.family = {"TESSERA_FP8": "e4m3", "TESSERA_NVFP4": "e2m1", "TESSERA_BF16": "value"}[self.scheme["family"]]
         self.cols, self.rows = int(self.layer.tessera_columns), int(self.layer.tessera_rows)
@@ -354,6 +356,22 @@ def main():
     p.add_argument("--image", choices=("G", "N"), required=True)
     p.add_argument("--name", required=True)
     args = p.parse_args()
+    args.out.mkdir(parents=True, exist_ok=True)
+    receipt = {"schema": "tessera.numerics_row.v2",
+               "row": {"name": args.name, "flux_job_id": os.environ.get("FLUX_JOB_ID"), "host": socket.gethostname(),
+                       "utc_start": datetime.now(timezone.utc).isoformat(), "utc_end": None, "exit_status": None, "stop_cause": None},
+               "rule": {}, "runtime": {}, "tessera": {}, "probe": {}, "inputs": {},
+               "modules": [], "units": [], "negative_controls": [], "cells": [], "findings": []}
+    try:
+        run(args, receipt)
+    except Exception as error:
+        receipt["row"].update(utc_end=datetime.now(timezone.utc).isoformat(), exit_status=3, stop_cause=str(error))
+        receipt["findings"].append(traceback.format_exc())
+        write_json(args.out / "numerics_row.json", receipt)
+        raise SystemExit(3) from error
+
+
+def run(args, receipt):
     commit, runtime = check_source(args.source), check_runtime(args.image)
     sys.path.insert(0, str(args.source / "src"))
     import tessera
@@ -370,7 +388,6 @@ def main():
     torch.set_num_threads(1)
     if torch.cuda.get_device_capability() != (12, 1):
         raise Invalid("device capability differs from the sm_121 cell")
-    args.out.mkdir(parents=True, exist_ok=True)
     freeze = json.loads(args.freeze.read_text())
     if freeze["sha256"] != sha256(args.rule) or not freeze["frozen_utc"] or not freeze["reviewer"]:
         raise Invalid("rule is not the reviewed, frozen rule")
@@ -379,6 +396,10 @@ def main():
         raise Invalid("case manifest input identity differs")
     if len(manifest["modules"]) != len(population["modules"]):
         raise Invalid("case manifest omitted a population module")
+    keys = {e["library"] if e["library"] != "triton" else "e4m3mma" for e in population["modules"]}
+    if len(keys) != 1:
+        raise Invalid("a row must contain one library arm")
+    key, = keys
     if h1["build_sha256"] != sha256(args.build) or h1["P1"]["mismatches"] or any(not v.get("P4") or not v.get("P5", True) for v in h1["libraries"].values()):
         raise Invalid("H1 did not confirm this binary set before the freeze")
     q1 = json.loads(args.q1.read_text())
@@ -391,16 +412,19 @@ def main():
         d, = [t for t in q1["tables"] if t["key"] == library["key"]]
         if d["library_so_sha256"] != library["library"]["sha256"] or d["probe_sha256"] != library["probe"]["sha256"]:
             raise Invalid("Q1 D table belongs to a different library or probe")
-    receipt = {"schema": "tessera.numerics_row.v2", "rule": {"path": str(args.rule), **freeze},
-               "row": {"name": args.name, "flux_job_id": os.environ.get("FLUX_JOB_ID"), "host": socket.gethostname(),
-                       "utc_start": datetime.now(timezone.utc).isoformat(), "utc_end": None, "exit_status": None, "stop_cause": None},
+    library, = [r for r in built["libraries"] if r["key"] == key]
+    d, = [t for t in q1["tables"] if t["key"] == key]
+    receipt.update({"rule": {"path": str(args.rule), **freeze},
                "runtime": {**runtime, "device": torch.cuda.get_device_name(), "capability": list(torch.cuda.get_device_capability()),
                            "driver": __import__("subprocess").check_output(["nvidia-smi", "--query-gpu=driver_version", "--format=csv,noheader"], text=True).strip()},
                "tessera": {"commit": commit, "src_tree_sha256": source_digest(args.source), "kernel_source_sha256": KERNEL_SHA256,
                            "cell_kernel_build": f"legacy-toolchain/{runtime['vllm']}/{runtime['torch']}", "matches_cell": True},
-               "probe": {"libraries": [{**r, "sass_slice": slices[r["key"]]} for r in built["libraries"]]},
+               "probe": {"source_sha256": library["probe_source_sha256"], "cflags": library["cflags"],
+                         "so_sha256": library["probe"]["sha256"], "L_bits": d["L_bits"], "dom_size": d["dom_size"],
+                         "d_table_sha256": d["d_table_sha256"], "d_nondecreasing_0_L": d["d_nondecreasing_0_L"],
+                         "sass_slice": slices[key]},
                "inputs": {"case_manifest_sha256": sha256(args.manifest), "q1_table_sha256": sha256(args.q1), "reference_selftest": selftest()},
-               "modules": manifest["modules"], "units": [], "negative_controls": negative_controls(), "cells": [], "findings": []}
+               "negative_controls": negative_controls()})
     exit_status = 0
     try:
         with dense.init_vllm_world1():
@@ -413,7 +437,8 @@ def main():
                         routed = module["structure"] == "routed_moe"
                         key = entry["library"] if entry["library"] != "triton" else "e4m3mma"
                         table = DTable(next(t for t in q1["tables"] if t["key"] == key)) if routed else None
-                        adapter = Routed(entry, cut, module, table) if routed else Dense(entry, cut)
+                        adapter = Routed(entry, cut, module, table) if routed else Dense(entry, cut, module)
+                        receipt["modules"].append(module_receipt(module, adapter, routed))
                         for config in module["m_configs"]:
                             for scope in admitted_units(contract, runtime["image_digest"], entry["contract_family"], module["structure"], module["q256"], entry["pair"], config["M"]):
                                 unit = new_unit({**scope, "symbol": entry["pair"][0], "decoder": entry["pair"][1], "rung": module["q256"], "m_config": config,
@@ -442,18 +467,15 @@ def main():
                                                 dense_cases(adapter, unit, module, recorder)
                                                 dense_diagnostics(adapter, unit, recorder)
                                             scale_index_checks(adapter, unit, module, recorder)
+                                            profile_unit(adapter, unit, recorder, routed=routed)
                                         dispatch(unit, entry["pair"], adapter.pairs(),
-                                                 unit_libraries(adapter, loaded, built, routed),
+                                                 unit_libraries(adapter, routed),
                                                  {r["library"]["sha256"] for r in built["libraries"] if r["key"] == key}, adapter.info.get("lane_reason"))
                                         unit["completed"] = True
                                 except BoundaryError as error:
                                     record_cuda_error(unit, error)
                                 except Invalid as error:
                                     unit["invalid"].append(str(error))
-                                    unit["completed"] = True
-                                if unit["completed"] and not unit["unattested"] and not unit["invalid"]:
-                                    unit["completed"] = False
-                                    profile_unit(adapter, unit, recorder, routed=routed)
                                     unit["completed"] = True
                                 unit["outcome"] = outcome(unit)
                                 unit["decoder_bit_exact"] = unit["outcome"] == "PASS" and scope["role"] == "unit"
@@ -529,7 +551,7 @@ def profile_unit(adapter, unit, recorder, *, routed):
     else:
         call = lambda: adapter.apply(x)
     with torch.profiler.profile(activities=[torch.profiler.ProfilerActivity.CPU, torch.profiler.ProfilerActivity.CUDA]) as profile:
-        recorder.call("dispatch-profiler:apply", "apply", call)
+        recorder.call("dispatch-profiler:apply", "apply", lambda: opaque_apply(call, recorder))
     unit["arm"]["profiler_kernels"] = kernel_table(profile)
 
 
@@ -542,15 +564,24 @@ def opaque_apply(function, recorder, *args):
         recorder.attribute = previous
 
 
-def unit_libraries(adapter, loaded, built, routed):
+def unit_libraries(adapter, routed):
     if not routed and adapter.library == "triton":
         return []
     from tessera._dev.native_identity import loaded_native_identity
     from tessera import routed_fused as rf, routed_fused_e2m1 as fe
     key = ("e2m1" if adapter.family == "e2m1" else adapter.native.library) if routed else adapter.library
-    actual = fe._ext() if key == "e2m1" else rf._ext(key)
+    actual = (adapter.native.uniform.module if routed and key != "e2m1" else
+              fe._ext() if key == "e2m1" else rf._ext(key))
     evidence = loaded_native_identity(actual, rf.__file__)
     return [{"name": actual.__name__, **evidence}]
+
+
+def module_receipt(module, adapter, routed):
+    roles = module["roles"]
+    return {k: module[k] for k in ("name", "family", "structure", "q256", "rows", "cols", "experts", "wire_sha256")} | {
+        "tp": dict(adapter.cut), "roles": [{"name": r["name"], "expert": r["expert"]} for r in roles],
+        "runs_table": [r["runs_table"] for r in roles], "wire_stamp": [r["wire_stamp"] for r in roles],
+        "matches_attested_wire": all(r["matches_attested_wire"] for r in roles), "scales": scale_receipt(adapter, routed)}
 
 
 def scale_receipt(adapter, routed):
