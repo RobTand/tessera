@@ -126,10 +126,22 @@ def bind_library_identity(library, proof, precondition):
 def check_served_identity(unit, served, measured):
     """Refuse a mapped library mismatch before any numerics case can run."""
     unit["arm"].update(loaded_modules=served, library_identity_verified=False)
-    if unit["decoder"] != "native_window_gemm" and (not served or any(
-            r.get(key) != measured[key] for r in served for key in ("library_code_sha256", "cubin_sha256s"))):
+    if not served and unit["decoder"] == "native_window_gemm":
+        unit["arm"]["library_identity_verified"] = None
+        return
+    if unit["decoder"] == "native_window_gemm" or not served or any(
+            r.get(key) != measured[key] for r in served for key in ("library_code_sha256", "cubin_sha256s")):
         raise Invalid("served library code or cubin identity differs from the H1/P build")
     unit["arm"]["library_identity_verified"] = True
+
+
+def check_served_after(unit, before, after):
+    unit["arm"]["loaded_modules_after"] = after
+    unit["arm"]["library_identity_unchanged"] = False
+    fields = ("name", "path", "library_so_sha256", "executable_mappings")
+    if [[r[k] for k in fields] for r in before] != [[r[k] for k in fields] for r in after]:
+        raise Invalid("served library mapping or bytes changed during the cases")
+    unit["arm"]["library_identity_unchanged"] = True
 
 
 def compare_output(unit, case, got, ref, mask=None, operands=None, *, bound=None):
@@ -156,7 +168,7 @@ def compare_output(unit, case, got, ref, mask=None, operands=None, *, bound=None
     return result
 
 
-def dispatch(unit, expected, emitted, loaded, allowed, lane_reason=None):
+def dispatch(unit, expected, emitted, loaded, lane_reason=None):
     unit["arm"].update(emitted_pairs=emitted, loaded_modules=loaded, lane_reason=lane_reason)
     if not emitted:
         if lane_reason:
@@ -165,7 +177,7 @@ def dispatch(unit, expected, emitted, loaded, allowed, lane_reason=None):
             unit["findings"].append("cell pair did not dispatch and has no named predicate refusal")
     elif any(tuple(pair) != tuple(expected) for pair in emitted):
         unit["findings"].append("telemetry pair is not the unit's exact pair")
-    if (not loaded and unit["decoder"] != "native_window_gemm") or any(module["sha256"] not in allowed for module in loaded):
+    if not loaded and unit["decoder"] != "native_window_gemm":
         unit["findings"].append("loaded module is not the unit's binary")
 
 
@@ -518,6 +530,7 @@ def main():
         p.add_argument("--" + name, type=Path, required=True)
     p.add_argument("--image", choices=("G", "N"), required=True)
     p.add_argument("--name", required=True)
+    p.add_argument("--build-provenance", type=Path, required=True)
     p.add_argument("--module", action="append", default=[], help="Explicit module name in the signed population; repeat for a subset")
     args = p.parse_args()
     args.out.mkdir(parents=True, exist_ok=True)
@@ -530,6 +543,11 @@ def main():
         run(args, receipt)
     except Exception as error:
         receipt["row"].update(utc_end=datetime.now(timezone.utc).isoformat(), exit_status=3, stop_cause=str(error))
+        if isinstance(error, Invalid):
+            receipt["row"]["outcome"] = "INVALID"
+            for unit in receipt["units"]:
+                unit["invalid"].append(str(error))
+                unit["completed"] = True
         receipt["findings"].append(traceback.format_exc())
         for unit in receipt["units"]:
             finish_unit(unit)
@@ -545,6 +563,10 @@ def run(args, receipt):
     population = select_modules(population, args.module)
     commit, runtime = check_source(args.source), check_runtime(args.image)
     sys.path.insert(0, str(args.source / "src"))
+    from experiments.numerics_rows.serving_build import check_compile_paths
+
+    compile_paths = check_compile_paths(args.build, args.build_provenance)
+    receipt["tessera"]["serving_compile"] = compile_paths
     import tessera
     import torch
     from experiments import dense_fused_oracle as dense
@@ -598,6 +620,8 @@ def run(args, receipt):
                "runtime": {**runtime, "device": torch.cuda.get_device_name(), "capability": list(torch.cuda.get_device_capability()),
                            "driver": __import__("subprocess").check_output(["nvidia-smi", "--query-gpu=driver_version", "--format=csv,noheader"], text=True).strip()},
                "tessera": {"commit": commit, "src_tree_sha256": source_digest(args.source), "kernel_source_sha256": KERNEL_SHA256,
+                           "serving_compile": compile_paths, "build_provenance_sha256": sha256(args.build_provenance),
+                           "build_provenance": str(args.build_provenance),
                            "cell_kernel_build": f"legacy-toolchain/{runtime['vllm']}/{runtime['torch']}", "matches_cell": True},
                "probe": {"source_sha256": library["probe_source_sha256"], "cflags": library["cflags"],
                          "so_sha256": library["probe"]["sha256"], "L_bits": d["L_bits"], "dom_size": d["dom_size"],
@@ -623,9 +647,8 @@ def run(args, receipt):
                         unit["tp"].update(tp_facts(adapter, module, routed))
                         recorder = BoundaryRecorder(torch.cuda.synchronize, unit["boundaries"])
                         try:
-                            actual = served_library(adapter, routed)
-                            served = unit_libraries(actual, args.source / "src/tessera/routed_fused.py",
-                                                    args.out / "served-binaries", served_cache)
+                            native_source = Path(next(r for r in compile_paths if r["key"] == key)["native_source_path"])
+                            actual, served = identify_served(adapter, routed, native_source, args.out / "served-binaries", served_cache)
                             check_served_identity(unit, served, library)
                             adapter.served_identity = served[0] if served else None
                             if receipt["inputs"]["reference_selftest"]["mismatches"] or not all(c["flagged_exactly"] for c in receipt["negative_controls"]):
@@ -641,16 +664,22 @@ def run(args, receipt):
                                 unit["completed"] = True
                             else:
                                 verify_cases(adapter, unit, module, q1, table)
-                                with native_boundaries({key: actual} if actual is not None else {}, recorder):
-                                    if routed:
-                                        run_routed.run(adapter, unit, module, recorder)
-                                    else:
-                                        dense_cases(adapter, unit, module, recorder)
-                                        dense_diagnostics(adapter, unit, recorder)
-                                    scale_index_checks(adapter, unit, module, recorder)
-                                    profile_unit(adapter, unit, recorder, routed=routed)
+                                try:
+                                    with native_boundaries({key: actual} if actual is not None else {}, recorder):
+                                        if routed:
+                                            run_routed.run(adapter, unit, module, recorder)
+                                        else:
+                                            dense_cases(adapter, unit, module, recorder)
+                                            dense_diagnostics(adapter, unit, recorder)
+                                        scale_index_checks(adapter, unit, module, recorder)
+                                        profile_unit(adapter, unit, recorder, routed=routed)
+                                except BoundaryError as error:
+                                    record_cuda_error(unit, error)
+                                finally:
+                                    _, after = identify_served(adapter, routed, native_source, args.out / "served-binaries", served_cache)
+                                    check_served_after(unit, served, after)
                                 dispatch(unit, entry["pair"], adapter.pairs(),
-                                         served, {r["library_so_sha256"] for r in served}, adapter.info.get("lane_reason"))
+                                         after, adapter.info.get("lane_reason"))
                                 unit["completed"] = True
                         except BoundaryError as error:
                             record_cuda_error(unit, error)
@@ -817,12 +846,30 @@ def opaque_apply(function, recorder, *args):
 
 
 def served_library(adapter, routed):
-    if not routed and adapter.library == "triton":
-        return None
     from tessera import routed_fused as rf, routed_fused_e2m1 as fe
-    key = ("e2m1" if adapter.family == "e2m1" else adapter.native.library) if routed else adapter.library
+    if adapter.family == "e2m1":
+        return fe._ext()
+    if not routed:
+        native = adapter.layer.tessera_native
+        if native.lane == "triton":
+            return None
+        # The pinned owner exposes these served roles only through its private tuple.
+        keys = {role.library for role in native._PreparedDenseNativeModule__fused}
+        if len(keys) != 1:
+            raise Invalid("served dense roles do not select one library")
+        key, = keys
+    else:
+        key = adapter.native.library
     return (adapter.native.uniform.module if routed and key != "e2m1" else
             fe._ext() if key == "e2m1" else rf._ext(key))
+
+
+def identify_served(adapter, routed, source, out, cache):
+    try:
+        actual = served_library(adapter, routed)
+        return actual, unit_libraries(actual, source, out, cache)
+    except Exception as error:
+        raise Invalid(f"served library identity: {error}") from error
 
 
 def unit_libraries(actual, source, out, cache):
@@ -834,14 +881,15 @@ def unit_libraries(actual, source, out, cache):
     key = evidence["sha256"]
     if key not in cache:
         directory = out / evidence["sha256"]
-        identity = library_identity(evidence["path"], directory / "cubins")
-        if identity["library_so_sha256"] != evidence["sha256"]:
+        data = Path(evidence["path"]).read_bytes()
+        if hashlib.sha256(data).hexdigest() != evidence["sha256"]:
             raise Invalid("served mapped library changed during hashing")
+        identity = library_identity(evidence["path"], directory / "cubins", data=data)
         sass = directory / "library.sass"
         with sass.open("w") as stream:
-            subprocess.run(["cuobjdump", "-sass", evidence["path"]], stdout=stream, check=True)
+            subprocess.run(["cuobjdump", "-sass", identity["snapshot_path"]], stdout=stream, check=True)
         cache[key] = {**identity, "sass": {"path": str(sass), "sha256": sha256(sass)}}
-    return [{"name": actual.__name__, **evidence, **cache[key]}]
+    return [{"name": actual.__name__, **evidence, **cache[key], "native_source_path": str(source), "native_source_sha256": sha256(source)}]
 
 
 def module_receipt(module, adapter, routed):

@@ -10,6 +10,7 @@ import shutil
 import subprocess
 
 from experiments.numerics_rows.common import IMAGES, sha256
+from experiments.numerics_rows.serving_build import source_layout
 
 ROOT = Path(__file__).resolve().parents[2]
 
@@ -37,22 +38,32 @@ def prepare(step, image, extra=()):
     out = Path(f"/mnt/shared/flux-jobs/tessera-1717-{step}-{revision[:8]}-{stamp}")
     out.mkdir()
     subprocess.run(["git", "clone", "--bare", "--no-hardlinks", str(ROOT), str(out / "repository.git")], check=True)
-    command = {"P": "build", "Q1": "quantizers", "H1": "h1", "C1": "cases", "CPU": "cpu_checks"}[step.split("-")[0]]
+    command = {"P": "build", "Q1": "quantizers", "H1": "h1", "C1": "cases", "ROW": "row", "CPU": "cpu_checks"}[step.split("-")[0]]
+    source, source_mount = out / "cell", ""
     population_mount = ""
-    if command == "cases":
+    if command in ("cases", "row"):
         parser = argparse.ArgumentParser(add_help=False)
         parser.add_argument("--population", type=Path, required=True)
         inputs, extra = parser.parse_known_args(extra)
         population, population_mount = stage_population(inputs.population, out)
         extra += ["--population", str(population)]
-    gpu = step.startswith(("Q1", "H1"))
+    if command == "row":
+        parser = argparse.ArgumentParser(add_help=False)
+        parser.add_argument("--build", type=Path, required=True)
+        parser.add_argument("--build-provenance", type=Path, required=True)
+        inputs = parser.parse_known_args(extra)[0]
+        source, _ = source_layout(inputs.build, inputs.build_provenance)
+        source_mount = f"-v {shlex.quote(str(out / 'cell') + ':' + str(source) + ':ro')} "
+    gpu = step.startswith(("Q1", "H1", "ROW"))
     shape, minutes = ("core=2;memory=16;gpu=1", 9) if gpu else ("core=4;memory=8", 20)
     host = "sparklina"
     if command == "cases":
         shape, minutes = "core=4;memory=32", 60
+    if command == "row":
+        shape, minutes = "core=4;memory=32;gpu=1", 90
     if command == "cpu_checks":
         shape, minutes, host = "core=4;memory=16", 30, "dl380g10"
-    payload = shlex.join(["python3", "-m", f"experiments.numerics_rows.{command}", "--source", str(out / "cell"),
+    payload = shlex.join(["python3", "-m", f"experiments.numerics_rows.{command}", "--source", str(source),
                           "--image", image, "--out", str(out / "results"), *extra])
     if gpu:
         parser = argparse.ArgumentParser(add_help=False)
@@ -68,11 +79,12 @@ exit "$rc"
 ''')
         payload = f"/bin/bash {out}/payload.sh"
     name = f'tessera-1717-{step.lower()}-"$FLUX_JOB_ID"'
-    container = (f"timeout --signal=TERM --kill-after=20s {480 if gpu else minutes * 60 - 60}s "
+    container = (f"timeout --signal=TERM --kill-after=20s {480 if gpu and command != 'row' else minutes * 60 - 60}s "
                  f"podman run --rm --name {name} --pull=never --cgroups=disabled --network=none "
                  f"{'--device nvidia.com/gpu=all ' if gpu else ''}"
                  f"-v /mnt/shared:/mnt/shared:ro -v {out}:{out}:rw -w {out}/code "
-                 f"{population_mount}"
+                 f"{population_mount}{source_mount}"
+                 f"--env PYTHONPATH={source}/src:{out}/code --env PYTHONPYCACHEPREFIX={out}/cache/pycache "
                  f"--env HOME={out}/home --env TMPDIR={out}/scratch --env XDG_CACHE_HOME={out}/cache "
                  f"--env CUDA_CACHE_PATH={out}/cuda-cache --env VLLM_CACHE_ROOT={out}/vllm-cache "
                  f"--env TORCH_EXTENSIONS_DIR={out}/extensions --env TRITON_CACHE_DIR={out}/triton "
@@ -87,7 +99,7 @@ exit "$rc"
 printf '%s\\n' "$rc" > results/podman-exit.txt
 test "$rc" -eq 0
 test "$(cat results/payload-exit.txt)" = 0
-python3 -m experiments.numerics_rows.job_receipt {step.split('-')[0]} --out {out}/results --build {shlex.quote(str(build))}
+{f"test -s {out}/results/numerics_row.json" if command == "row" else f"python3 -m experiments.numerics_rows.job_receipt {step.split('-')[0]} --out {out}/results --build {shlex.quote(str(build))}"}
 '''
     if command == "cpu_checks":
         container = f"env HOME={out}/home /home/rob/.local/bin/uv run --python 3.12 --no-project --extra-index-url https://download.pytorch.org/whl/cpu --index-strategy unsafe-best-match --with-requirements code/tools/ci/gate_torch_requirements.txt --with-requirements code/tools/ci/gate_requirements.txt {payload}"
@@ -144,7 +156,7 @@ cat "$root/jobid"
 
 if __name__ == "__main__":
     p = argparse.ArgumentParser(description=__doc__)
-    p.add_argument("step", choices=("P-G", "P-N", "Q1-G", "Q1-N", "H1-G", "H1-N", "C1-G", "C1-N", "CPU"))
+    p.add_argument("step", choices=("P-G", "P-N", "Q1-G", "Q1-N", "H1-G", "H1-N", "C1-G", "C1-N", "ROW-G", "ROW-N", "CPU"))
     p.add_argument("--image", choices=IMAGES, required=True)
     args, extra = p.parse_known_args()
     prepare(args.step, args.image, extra)

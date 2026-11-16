@@ -408,7 +408,7 @@ def test_adapter_failure_keeps_unrun_units_stopped(tmp_path, monkeypatch):
         raise RuntimeError("second adapter failed")
 
     argv = ["row", "--image", "G", "--name", "test", "--out", str(tmp_path)]
-    for name in ("source", "manifest", "population", "build", "q1", "h1", "rule", "freeze"):
+    for name in ("source", "manifest", "population", "build", "build-provenance", "q1", "h1", "rule", "freeze"):
         argv.extend(("--" + name, str(tmp_path / name)))
     monkeypatch.setattr(row, "run", run)
     monkeypatch.setattr(sys, "argv", argv)
@@ -878,11 +878,216 @@ def test_row_refuses_served_code_identity_before_output_checks(field):
     row.check_served_identity(unit, [served], measured)
     assert unit["arm"]["library_identity_verified"]
     assert unit["arm"]["loaded_modules"][0]["library_so_sha256"] == "d" * 64
+    matching = copy.deepcopy(served)
     served[field] = "e" * 64 if field == "library_code_sha256" else ["e" * 64]
     with pytest.raises(Invalid, match="served library code or cubin identity") as error:
-        row.check_served_identity(unit, [served], measured)
+        row.check_served_identity(unit, [matching, served], measured)
     assert not unit["arm"]["library_identity_verified"]
     assert not unit["findings"] and not unit["completed"]
     unit["invalid"].append(str(error.value))
     unit["completed"] = True
     assert row.outcome(unit) == "INVALID"
+
+
+def test_served_native_empty_and_triton_exemption():
+    unit = row.new_unit({"decoder": "native_fused_window_dense_e4m3mma", "arm": {}})
+    with pytest.raises(Invalid, match="served library"):
+        row.check_served_identity(unit, [], {})
+    unit["decoder"] = "native_window_gemm"
+    row.check_served_identity(unit, [], {})
+    assert unit["arm"]["library_identity_verified"] is None
+    with pytest.raises(Invalid, match="served library"):
+        row.check_served_identity(unit, [{"name": "unexpected native library"}], {})
+
+
+@pytest.mark.parametrize("key", ["e4m3mma", "e4m3", "value"])
+def test_dense_library_selection_comes_from_the_served_role(monkeypatch, key):
+    from tessera import routed_fused as rf
+
+    calls = []
+    monkeypatch.setattr(rf, "_ext", lambda key: calls.append(key) or key)
+    native = SimpleNamespace(lane="fused", _PreparedDenseNativeModule__fused=[SimpleNamespace(library=key)])
+    adapter = SimpleNamespace(family="value" if key == "value" else "e4m3", library="wrong-population-key",
+                              layer=SimpleNamespace(tessera_native=native))
+    assert row.served_library(adapter, False) == key and calls == [key]
+    native.lane = "triton"
+    assert row.served_library(adapter, False) is None and calls == [key]
+
+
+def test_unit_libraries_uses_bound_snapshot_and_rechecks_on_cache_hits(tmp_path, monkeypatch):
+    from pathlib import Path
+    from experiments.numerics_rows import build
+    from tessera._dev import native_identity
+
+    live, source = tmp_path / "live.so", tmp_path / "kernel.cu"
+    data = elf_bytes()
+    live.write_bytes(data)
+    source.write_bytes(b"kernel source")
+    calls = []
+    def mapped(*args):
+        calls.append("mapped")
+        return {"path": str(live), "sha256": hashlib.sha256(live.read_bytes()).hexdigest(),
+                "executable_mappings": ["same inode and device"], "pid": 1}
+    def dump(command, *, stdout, cwd=None, **kwargs):
+        snapshot = Path(command[-1])
+        assert snapshot != live and snapshot.read_bytes() == data
+        calls.append(command[1])
+        if command[1] == "-xelf":
+            live.write_bytes(elf_bytes(text=b"new!"))
+            (cwd / "sm_121.cubin").write_bytes(elf_bytes())
+        else:
+            stdout.write("served SASS\n")
+    monkeypatch.setattr(native_identity, "loaded_native_identity", mapped)
+    monkeypatch.setattr(build.subprocess, "run", dump)
+    cache = {}
+    lib = SimpleNamespace(__name__="native", __file__=str(live))
+    before = row.unit_libraries(lib, source, tmp_path / "evidence", cache)
+    assert before[0]["library_so_sha256"] == hashlib.sha256(data).hexdigest()
+    assert before[0]["library_code_sha256"] == build.code_identity(data)["library_code_sha256"]
+    assert Path(before[0]["sass"]["path"]).read_text() == "served SASS\n"
+    live.write_bytes(data)
+    assert row.unit_libraries(lib, source, tmp_path / "evidence", cache) == before
+    assert calls == ["mapped", "-xelf", "-sass", "mapped"]
+    monkeypatch.setattr(native_identity, "loaded_native_identity", lambda *args: {**mapped(), "sha256": "0" * 64})
+    with pytest.raises(Invalid, match="changed during hashing"):
+        row.unit_libraries(lib, source, tmp_path / "evidence", cache)
+
+
+def test_compile_path_refusal_is_bound_to_the_retained_p_json(tmp_path, monkeypatch):
+    from pathlib import Path
+    from experiments.numerics_rows import serving_build
+    from tessera.serving import ext
+    from tessera import routed_fused as rf
+
+    source = tmp_path / "P-cell" / serving_build.KERNEL
+    source.parent.mkdir(parents=True)
+    source.write_bytes(b"pinned test kernel")
+    digest = hashlib.sha256(source.read_bytes()).hexdigest()
+    monkeypatch.setattr(serving_build, "KERNEL_SHA256", digest)
+    ninja = tmp_path / "build.ninja"
+    ninja.write_text(f"build kernel.cuda.o: cuda_compile {source}\n")
+    record = {"key": "value", "name": "tessera_routed_fused_value", "cflags": ["retained flags"],
+              "library": {"path": str(tmp_path / "library.so"), "sha256": "a" * 64}}
+    build, proof = tmp_path / "build.json", tmp_path / "p.json"
+    write_json(build, {"libraries": [record]})
+    original = build.read_bytes()
+    serving_build.source_provenance(build, proof)
+    assert build.read_bytes() == original
+    assert serving_build.source_layout(build, proof)[0] == source.parents[4]
+    monkeypatch.setattr(ext, "native_source_path", lambda name: str(source))
+    monkeypatch.setattr(rf, "_cflags", lambda *args: record["cflags"])
+    assert serving_build.check_compile_paths(build, proof)[0]["native_source_path"] == str(source)
+    monkeypatch.setattr(ext, "native_source_path", lambda name: str(tmp_path / "row-cell" / serving_build.KERNEL))
+    with pytest.raises(Invalid, match="compile path"):
+        serving_build.check_compile_paths(build, proof)
+
+
+@pytest.fixture
+def row_execution(tmp_path, monkeypatch):
+    """Drive run() on CPU; replace device and filesystem boundaries, keep its policy."""
+    from contextlib import nullcontext
+    import torch
+    from experiments import dense_fused_oracle as dense
+    from experiments.numerics_rows import cases, common, population, sass_slice, scale_launch, serving_build
+
+    args = SimpleNamespace(**{name: tmp_path / name for name in
+        ("source", "out", "population", "manifest", "build", "build_provenance", "q1", "h1", "rule", "freeze")}, image="N", module=[])
+    args.out.mkdir()
+    contract, pop, manifest = population_cases()
+    pop["modules"] = pop["modules"][:1]
+    entry = pop["modules"][0]
+    module = {**manifest["modules"][0], **manifest["modules"][0]["cuts"][0], "roles": [{"matches_attested_wire": True}]}
+    scope = row.new_unit({"cell": "cell", "symbol": entry["pair"][0], "decoder": entry["pair"][1], "rung": 1024,
+                         "structure": "dense", "role": "unit", "arm": {}, "tp": {}, "m_config": {"M": 1, "k_split": 1}})
+    identity = {"library_so_sha256": "a" * 64, "library_code_sha256": "b" * 64, "library_code_sections": [], "cubin_sha256s": ["c" * 64]}
+    served = {**identity, "name": "native", "path": "/mapped/native.so", "sha256": "a" * 64, "executable_mappings": ["device inode mapping"]}
+    runtime = {**IMAGES["N"], "local_id": "image-local-id"}
+    library = {"key": "e4m3", "library": {"sha256": "a" * 64}, "probe": {"sha256": "p" * 64}, "probe_source_sha256": "s", "cflags": []}
+    write_json(args.build, {"commit": "cell-commit", "runtime": runtime, "libraries": [library]})
+    args.rule.write_text("test rule")
+    args.build_provenance.write_text("bound source provenance")
+    write_json(args.freeze, {"sha256": common.sha256(args.rule), "frozen_utc": "now", "reviewer": "reviewer", "decisions": {f"D{i}": "yes" for i in range(1, 9)}})
+    write_json(args.q1, {"tables": [{"key": "e4m3", "library_so_sha256": "a" * 64, "probe_sha256": "p" * 64,
+        "L_bits": 0, "dom_size": 1, "d_table_sha256": "d", "d_nondecreasing_0_L": True}]})
+    write_json(args.h1, {"preconditions_confirmed": True, "build_sha256": common.sha256(args.build), "P1": {"mismatches": 0},
+        "P2": {"result": "PASS"}, "P3": {"e4m3": identity}, "libraries": {"e4m3": {"P4": True, "P5": True}}, "flux_job_id": "h1-job"})
+    write_json(args.manifest, {"population_sha256": "population-hash", "q1_table_sha256": common.sha256(args.q1), "modules": [module]})
+    contract_path = args.source / "src/tessera/serving/runtime_contract.json"
+    contract_path.parent.mkdir(parents=True)
+    write_json(contract_path, contract)
+    monkeypatch.setattr(population, "load_signed_population", lambda path: (pop, "population-hash"))
+    monkeypatch.setattr(row, "check_source", lambda path: "cell-commit")
+    monkeypatch.setattr(row, "check_runtime", lambda image: runtime)
+    monkeypatch.setattr(serving_build, "check_compile_paths", lambda *args: [{"key": "e4m3", "native_source_path": "/P/kernel.cu"}])
+    monkeypatch.setattr(common, "register_native_ops", lambda image: {"result": "PASS"})
+    monkeypatch.setattr(common, "source_digest", lambda *args: "source-hash")
+    monkeypatch.setattr(row.subprocess, "check_output", lambda *args, **kwargs: "test-value\n")
+    for name, value in (("get_device_capability", (12, 1)), ("get_device_name", "CPU test device"), ("synchronize", None)):
+        monkeypatch.setattr(torch.cuda, name, lambda *args, _value=value: _value)
+    monkeypatch.setattr(row, "selftest", lambda **kwargs: {"mismatches": 0})
+    monkeypatch.setattr(h1, "negative_controls", lambda: [{"flagged_exactly": True}])
+    monkeypatch.setattr(sass_slice, "match_library", lambda *args: {**identity, "matched": True})
+    monkeypatch.setattr(cases, "DTable", lambda value: SimpleNamespace(finite_certificate=True))
+    monkeypatch.setattr(row, "planned_units", lambda *args: [(entry, module, {"rank": 0, "size": 1}, [scope])])
+    monkeypatch.setattr(dense, "init_vllm_world1", nullcontext)
+    adapter = SimpleNamespace(info={}, pairs=lambda: [entry["pair"]])
+    monkeypatch.setattr(row, "Dense", lambda *args: adapter)
+    monkeypatch.setattr(row, "module_receipt", lambda *args: {})
+    monkeypatch.setattr(row, "tp_facts", lambda *args: {})
+    monkeypatch.setattr(row, "actual_geometry", lambda *args: module["launch_geometry"])
+    monkeypatch.setattr(row, "scale_receipt", lambda *args: {"equal": True})
+    monkeypatch.setattr(row, "native_boundaries", lambda *args: nullcontext())
+    monkeypatch.setattr(row, "historical_units", lambda *args: [])
+    monkeypatch.setattr(row, "served_library", lambda *args: SimpleNamespace(__name__="native"))
+    events = []
+    def libraries(*args):
+        events.append("identity")
+        return [copy.deepcopy(served)]
+    monkeypatch.setattr(row, "unit_libraries", libraries)
+    def case(*args, **kwargs):
+        assert scope["arm"]["library_identity_verified"] is True
+        events.append("case")
+        exact = scope["exact"]
+        exact["sweep"]["elements"] = exact["chunk_pairs"]["x_elements"] = exact["composition"]["cases"] = 1
+        exact["separation"]["records"] = [{"both": 1}]
+        exact["scale_index"]["arrays"] = [{"launches": 1}]
+    for name in ("verify_cases", "dense_cases", "dense_diagnostics", "profile_unit"):
+        monkeypatch.setattr(row, name, case)
+    monkeypatch.setattr(scale_launch, "check", case)
+    receipt = {"row": {"stop_cause": None}, "tessera": {}, "inputs": {}, "units": [], "modules": [], "findings": []}
+    return args, receipt, scope, events, served
+
+
+def test_run_checks_identity_before_every_case_and_rechecks_after(row_execution):
+    args, receipt, scope, events, _ = row_execution
+    with pytest.raises(SystemExit):
+        row.run(args, receipt)
+    assert events == ["identity", *(["case"] * 5), "identity"]
+    assert scope["outcome"] == "PASS"
+    assert scope["arm"]["library_identity_verified"] and scope["arm"]["library_identity_unchanged"]
+
+
+def test_run_identity_runtime_error_is_an_invalid_unit(row_execution, monkeypatch):
+    args, receipt, scope, events, _ = row_execution
+    def error(*args):
+        raise RuntimeError("mapped inode changed")
+    monkeypatch.setattr(row, "unit_libraries", error)
+    with pytest.raises(SystemExit):
+        row.run(args, receipt)
+    assert events == [] and scope["outcome"] == "INVALID"
+    assert receipt["row"]["stop_cause"] is None and not receipt["findings"]
+    assert "mapped inode changed" in scope["invalid"][0]
+
+
+def test_run_library_change_after_cases_is_invalid(row_execution, monkeypatch):
+    args, receipt, scope, events, served = row_execution
+    def libraries(*args):
+        value = copy.deepcopy(served)
+        if "case" in events:
+            value["library_so_sha256"] = "changed after cases"
+        return [value]
+    monkeypatch.setattr(row, "unit_libraries", libraries)
+    with pytest.raises(SystemExit):
+        row.run(args, receipt)
+    assert len(events) == 5 and scope["outcome"] == "INVALID"
+    assert not scope["arm"]["library_identity_unchanged"] and not receipt["findings"]

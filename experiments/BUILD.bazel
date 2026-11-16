@@ -1979,6 +1979,7 @@ ts_py_library(
         "numerics_rows/run_routed.py",
         "numerics_rows/scale_index.py",
         "numerics_rows/scale_launch.py",
+        "numerics_rows/serving_build.py",
     ],
     data = [
         "//src/tessera:serving/runtime_contract.json",
@@ -2057,6 +2058,7 @@ ts_py_library(
         "numerics_rows/README.md",
     ],
     deps = [
+        ":numerics_rows/cases_cycle",
         ":numerics_rows/common",
     ],
 )

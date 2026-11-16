@@ -53,15 +53,13 @@ def test_changed_output_fails(mutation):
 def test_missing_pair_fails_but_named_refusal_is_unattested():
     for reason, expected in ((None, "FAIL"), ("row shape is outside this pair", "UNATTESTED")):
         scope = unit()
-        dispatch(scope, ("symbol", "decoder"), [], [{"name": "library", "sha256": "a"}], {"a"}, reason)
+        dispatch(scope, ("symbol", "decoder"), [], [{"name": "library", "sha256": "a"}], reason)
         assert outcome(scope) == expected
 
 
-@pytest.mark.parametrize("changed", ("symbol", "binary"))
-def test_wrong_dispatch_identity_fails(changed):
+def test_wrong_dispatch_identity_fails():
     scope = unit()
-    dispatch(scope, ("symbol", "decoder"), [("wrong" if changed == "symbol" else "symbol", "decoder")],
-             [{"name": "library", "sha256": "b" if changed == "binary" else "a"}], {"a"})
+    dispatch(scope, ("symbol", "decoder"), [("wrong", "decoder")], [{"name": "library", "sha256": "a"}])
     assert outcome(scope) == "FAIL"
 
 
