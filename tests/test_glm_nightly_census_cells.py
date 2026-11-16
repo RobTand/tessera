@@ -1,5 +1,8 @@
 """Keep the historical IMG-N census and check its current contract agreement.
 
+V48 added the IMG-N scopes from a TP1 eager census on nightly 155ce16b with nccl230.
+The receipt records NoPE off and the image's FLASHINFER_MLA_SPARSE_SM120 attention backend.
+This file preserves its config, image, toolchain, lane engagement and rung coverage.
 V70 gives routed E4M3 cells a separate class receipt at the same four rungs.
 The historical routed launches now refuse. Dense E4M3 records still agree.
 V68 BF16 receipts also retain separate scope from the old folded records.
@@ -178,6 +181,9 @@ def test_historical_twins_keep_their_launches_without_qualifying_img_n_classes()
             old = cell_executes(shipped[base], q256=rung, entry=entry)
             current = cell_executes(cell, q256=rung, entry=entry)
             if cell["structure"] == "routed_moe":
+                assert current == {
+                    ("tessera.routed_fused.FusedRoutedWindowMoE.__call__",
+                     "native_routed_window_classes_e4m3mma")}, (cell["id"], rung)
                 assert current.isdisjoint(old), (cell["id"], rung)
             else:
                 assert current == old, (cell["id"], rung)

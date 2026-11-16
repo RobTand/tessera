@@ -8,7 +8,7 @@ from pathlib import Path
 import pytest
 
 from tessera.serving.contract import (
-    CENSUS_PHASE_REGIMES, PAYLOAD_FAMILY_BY_ROUTE,
+    CENSUS_PHASE_REGIMES, PAYLOAD_FAMILY_BY_ROUTE, _SCOPED_EXECUTION_RECEIPTS,
     load_serving_contract, validate_serving_contract,
 )
 
@@ -18,6 +18,7 @@ IMAGE = "localhost/prismaquant/spark-vllm-nccl230@sha256:5be13705acaecc7b4aaf342
 PAIR = ("tessera.routed_fused.FusedRoutedWindowMoE.__call__",
         "native_routed_window_classes_e4m3mma")
 RUNGS = [896, 928, 1024, 1088]
+RECEIPT_SHA256 = "02446cb19674a23102319b601c0e918f4920bba37f641fad9c7d61c7d0fc2943"
 SPEC = importlib.util.spec_from_file_location("img_n_census", ROOT / "tools/tessera_route_census.py")
 TOOL = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(TOOL)
@@ -46,6 +47,15 @@ def agreement(receipt, records, rungs, contract):
 def test_receipt_identity_and_both_rank_replay():
     scope = json.loads((RESULTS / "glm53_img_n_v70_scope.json").read_text())
     assert scope["status"] == "served", "The approved TP2 census is not committed."
+    assert scope["sha256"] == RECEIPT_SHA256
+    assert scope["image"] == IMAGE and scope["rungs_q256"] == RUNGS
+    rows = [row for row in _SCOPED_EXECUTION_RECEIPTS if row["receipt"] == scope["receipt"]]
+    assert rows == [{
+        "platform": "sm_121", "family": "TESSERA_E4M3_K1", "structure": "routed_moe",
+        "regimes": ("decode", "batch"), "residencies": ("resident",),
+        "image": scope["image"], "execution_modes": ("eager",),
+        "rungs_q256": tuple(scope["rungs_q256"]), "pair": PAIR, "receipt": scope["receipt"],
+    }]
     raw = (ROOT / scope["receipt"]).read_bytes()
     config_raw = (ROOT / scope["config"]).read_bytes()
     assert hashlib.sha256(raw).hexdigest() == scope["sha256"]
@@ -103,8 +113,13 @@ def test_historical_img_n_records_refuse():
     assert all("does not publish" in p for p in problems)
 
 
-@pytest.mark.parametrize("axis", ["executes", "image", "execution_modes", "rungs_q256"])
-def test_scope_cannot_borrow_historical_receipts(axis):
+@pytest.mark.parametrize("axis,match", [
+    ("executes", "not attested by historical receipts"),
+    ("image", "not attested by historical receipts"),
+    ("execution_modes", "not attested by historical receipts"),
+    ("rungs_q256", "the execution receipts require"),
+])
+def test_scope_cannot_borrow_historical_receipts(axis, match):
     contract = load_serving_contract()
     cells = scoped_cells(contract)
     assert len(cells) == 2
@@ -120,5 +135,5 @@ def test_scope_cannot_borrow_historical_receipts(axis):
             cell["runtime"][axis] = "example.invalid/other@sha256:" + "0" * 64
         else:
             cell["runtime"][axis] = ["eager", "compiled"]
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match=match):
         validate_serving_contract(contract)
