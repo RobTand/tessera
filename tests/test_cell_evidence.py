@@ -998,3 +998,71 @@ def test_the_cells_v39_withdrew_are_quoted_with_the_evidence_they_carried():
     for cell_id, expected in _WITHDRAWN_V39_EVIDENCE.items():
         assert {k: v for k, v in quoted[cell_id]["evidence"].items()
                 if k != "artifact"} == expected, cell_id
+
+
+@pytest.mark.parametrize("case", ["census", "pass", "fail", "missing", "sha256", "by_rule", "withdrawn"])
+def test_arithmetic_receipt_gate(contract, tmp_path, case):
+    import hashlib
+    import inspect
+    from tessera.serving import contract as reader
+
+    payload = copy.deepcopy(contract)
+    cell = next(c for c in payload["lane_eligibility"]["cells"]
+                if c["family"] == "TESSERA_E4M3_K1" and len(c["rungs_q256"]) > 15)
+    payload["lane_eligibility"]["cells"] = [cell]
+    payload["versions"]["default_serve_image"] = cell["runtime"]["image"]
+    payload["lane_eligibility"]["platforms"][cell["platform"]]["serve_image"] = cell["runtime"]["image"]
+    if case == "census":
+        options = {"require_arithmetic": True} if "require_arithmetic" in inspect.signature(reader.validate_serving_contract).parameters else {}
+        with pytest.raises(ValueError, match="arithmetic"):
+            reader.validate_serving_contract(payload, **options)
+        return
+    assert hasattr(reader, "check_arithmetic_receipts"), "Arithmetic receipt check is absent"
+    rule = tmp_path / "pass-rule.md"
+    rule.write_text("Fixture rule. All configurations must pass.\n")
+    entry = reader.format_entry(cell["family"], payload)
+    records = []
+    for pair in cell["executes"]:
+        rungs = pair.get("rungs_q256", cell["rungs_q256"])
+        records.extend(dict(cell=cell["id"], symbol=pair["symbol"], decoder=pair["decoder"],
+                            cut=cut, rungs_pass=list(rungs), rungs_withdrawn=[], verdict="PASS")
+                       for cut in ("TP1", "TP2/rank0", "TP2/rank1"))
+    summary = dict(schema="tessera.numerics_summary.v1", rule_sha256=hashlib.sha256(rule.read_bytes()).hexdigest(),
+                   receipt_sha256="a" * 64, tool=dict(commit="b" * 40, tree_sha256="c" * 64),
+                   image_digest=cell["runtime"]["image"], records=records)
+    if case == "fail":
+        records[0]["verdict"] = "FAIL"
+    if case == "missing":
+        records.pop(0)
+    if case == "withdrawn":
+        records[0]["rungs_withdrawn"] = [records[0]["rungs_pass"].pop(0)]
+    if case == "by_rule":
+        # Keep one measured rung per run table. The rule covers the other rungs.
+        for record in records:
+            tables = {}
+            for q in record["rungs_pass"]:
+                tables.setdefault(reader.rung_rates(entry, q), q)
+            record["rungs_pass"] = list(tables.values())
+        assert any(len(r["rungs_pass"]) < len(cell["rungs_q256"]) for r in records)
+    receipt = "docs/measurements/numerics/fixture.json"
+    path = tmp_path / receipt
+    path.parent.mkdir(parents=True)
+    path.write_text(json.dumps(summary))
+    if case != "census":
+        cell["evidence"]["arithmetic"] = dict(receipt=receipt, sha256=hashlib.sha256(path.read_bytes()).hexdigest())
+    if case == "sha256":
+        path.write_text(path.read_text() + "\n")
+    if case in ("pass", "by_rule"):
+        reader.validate_serving_contract(payload, require_arithmetic=True)
+        reader.check_arithmetic_receipts(payload, tmp_path, rule)
+    else:
+        with pytest.raises(ValueError, match="arithmetic|PASS|sha256"):
+            reader.validate_serving_contract(payload, require_arithmetic=True)
+            reader.check_arithmetic_receipts(payload, tmp_path, rule)
+
+
+def test_tree_arithmetic_receipts(contract):
+    from tessera.serving.contract import check_arithmetic_receipts
+
+    if any("arithmetic" in c["evidence"] for c in contract["lane_eligibility"]["cells"]):
+        check_arithmetic_receipts(contract, ROOT, ROOT / "docs/measurements/numerics/pass-rule.md")

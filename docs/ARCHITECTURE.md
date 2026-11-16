@@ -1,12 +1,36 @@
 # Tessera plan-to-serve architecture
 
+Re-stamped 2026-11-16 for #1717 arithmetic receipt checks.
+`validate_serving_contract(..., require_arithmetic=True)` requires
+`evidence.arithmetic {receipt, sha256}` on each `cell_is_device_backed` cell.
+There was no existing switch for this rollout. The new keyword defaults to
+`False`; the 18 current cells have no arithmetic receipt. Enable it only when
+receipts or withdrawals cover all served cells. This change does not enable it.
+The wheel checks receipt grammar. `test_tree_arithmetic_receipts` opens each
+named summary under `docs/measurements/numerics/` and checks its SHA-256,
+image, tool identity, rule SHA-256 and scope. It reads the rule from
+`docs/measurements/numerics/pass-rule.md`. The lead must add the frozen rule
+there before the first summary. No frozen rule exists in this change.
+
+Summary schema `tessera.numerics_summary.v1` has `rule_sha256`,
+`receipt_sha256`, `tool {commit, tree_sha256}`, `image_digest`, and `records`.
+Each record has `cell`, `symbol`, `decoder`, `cut`, `rungs_pass`,
+`rungs_withdrawn`, and `verdict`. Cuts are `TP1` and `TP<size>/rank<rank>`.
+The closed-world TP ceiling sets the required cuts. A record aggregates all M
+configurations. Any non-PASS configuration withdraws its rung for that pair
+and cut. A FAIL record refuses the cell. A withdrawn rung cannot borrow proof
+from its run table. Otherwise a PASS rung covers the same pair and cut at
+rungs with the same rate-rule run table. The full receipt stays in the job
+directory; `receipt_sha256` binds that receipt. The tree check verifies the
+summary, not the full receipt or the tool source outside this tree.
+
 Re-stamped 2026-11-16 for #1716. Contract v69 removes the routed E2M1 start-state predicate; the kernel reads whole units and shards through has_init.
 
 Re-stamped 2026-11-16 for tessera#1717 evidence wording.
 `device_qualified` with `evidence.grade: route_only` means the route dispatch
-was observed on the device; arithmetic is not attested. Admission does not
-require arithmetic evidence. Read both fields in each returned cell.
-The v68 cells all grade `route_only`. Contract bytes and gates do not change.
+was observed on the device; arithmetic is not attested. Admission requires arithmetic evidence when the validator caller sets
+`require_arithmetic=True`. The default is `False` until the receipts arrive. Read both fields in each returned cell.
+The v68 cells all grade `route_only`. Contract cell data does not change.
 
 Re-stamped 2026-11-15 for deletion plan PR 4. This change deletes 41 unused files.
 Linked deleted sources below are historical. Git retains their contents.

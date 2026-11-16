@@ -1394,7 +1394,8 @@ def stock_kernel_override_refusal(enabled_by: str, *, kind: str, overrides: Mapp
     return None
 
 
-def validate_serving_contract(contract: Mapping[str, Any]) -> None:
+def validate_serving_contract(contract: Mapping[str, Any], *,
+                              require_arithmetic: bool = False) -> None:
     """Refuse a contract this package would not itself honour.
 
     The point is not schema hygiene: it is that the packaged table and the code
@@ -1402,6 +1403,8 @@ def validate_serving_contract(contract: Mapping[str, Any]) -> None:
     structure the dispatch refuses, or a rung the reader will not accept would
     be a claim about a runtime that does not exist.
     """
+    if not isinstance(require_arithmetic, bool):
+        raise ValueError("require_arithmetic must be a boolean")
     from .scheme import (MOE_BUILDERS, ROUTES, STRUCTURE_DENSE, STRUCTURE_ROUTED_MOE,
                          STRUCTURES)
 
@@ -1677,7 +1680,9 @@ def validate_serving_contract(contract: Mapping[str, Any]) -> None:
                 f"{where}: every route is reached through a declared residency, so a cell names "
                 "the serve flag that selects one")
         cell_predicates(cell, where)
-        cell_evidence(cell, where, regimes=block["regimes"])
+        evidence = cell_evidence(cell, where, regimes=block["regimes"])
+        if require_arithmetic and cell_is_device_backed(cell, where) and not evidence.get("arithmetic"):
+            raise ValueError(f"{where}.evidence.arithmetic is required for a served cell")
         expected = contracts_by_family[cell["family"]]
         if cell["activation_contract"] != expected:
             raise ValueError(
@@ -2474,7 +2479,16 @@ def cell_evidence(cell: Mapping[str, Any], where: str = "lane_eligibility cell",
     """
     payload = cell.get("evidence")
     at = f"{where}.evidence"
-    _require_keys(payload, at, required={"grade", "kl", "smoke", "artifact"})
+    _require_keys(payload, at, required={"grade", "kl", "smoke", "artifact"},
+                  optional={"arithmetic"})
+    arithmetic = payload.get("arithmetic")
+    if "arithmetic" in payload:
+        _require_keys(arithmetic, f"{at}.arithmetic", required={"receipt", "sha256"})
+        _require_receipt_path(arithmetic["receipt"], f"{at}.arithmetic")
+        if not arithmetic["receipt"].startswith("docs/measurements/numerics/") or not arithmetic["receipt"].endswith(".json"):
+            raise ValueError(f"{at}.arithmetic.receipt must name a numerics JSON summary")
+        if not isinstance(arithmetic["sha256"], str) or not _SHA256.fullmatch(arithmetic["sha256"]):
+            raise ValueError(f"{at}.arithmetic.sha256 must be 64 lowercase hex digits")
     artifact = _evidence_artifact(payload["artifact"], f"{at}.artifact")
     grade = payload["grade"]
     if grade not in EVIDENCE_GRADES:
@@ -2634,7 +2648,8 @@ def cell_evidence(cell: Mapping[str, Any], where: str = "lane_eligibility cell",
         raise ValueError(
             f"{at}.grade is {grade!r} but its kl entries derive {derived!r}; the grade is read "
             "off the entries, never asserted beside them")
-    return {"grade": grade, "kl": parsed_kl, "artifact": artifact,
+    return {**({"arithmetic": dict(arithmetic)} if arithmetic is not None else {}),
+            "grade": grade, "kl": parsed_kl, "artifact": artifact,
             "smoke": {"status": status, "receipt": smoke_receipt,
                       "attribution": attribution, "control": parsed_control,
                       "record": parsed_record}}
@@ -3458,3 +3473,70 @@ def classify_construction(entry: Mapping[str, Any], checkpoint_module: str) -> t
     if pattern in {row["prefix_pattern"] for row in entry["never_offered"]}:
         return "never_offered", pattern
     return "absent", pattern
+
+
+def check_arithmetic_receipts(contract: Mapping[str, Any], root, rule_path) -> None:
+    """Check summary files in a source tree. The wheel checks their grammar only."""
+    from pathlib import Path
+
+    root = Path(root)
+    rule_sha256 = hashlib.sha256(Path(rule_path).read_bytes()).hexdigest()
+    for cell in contract["lane_eligibility"]["cells"]:
+        evidence = cell_evidence(cell).get("arithmetic")
+        if evidence is None:
+            continue
+        at = f"{cell['id']} arithmetic summary"
+        raw = (root / evidence["receipt"]).read_bytes()
+        if hashlib.sha256(raw).hexdigest() != evidence["sha256"]:
+            raise ValueError(f"{at}: sha256 differs")
+        summary = json.loads(raw)
+        _require_keys(summary, at, required={"schema", "rule_sha256", "receipt_sha256",
+                                          "tool", "image_digest", "records"})
+        if summary["schema"] != "tessera.numerics_summary.v1" or summary["rule_sha256"] != rule_sha256:
+            raise ValueError(f"{at}: schema or rule_sha256 differs")
+        _require_keys(summary["tool"], f"{at}.tool", required={"commit", "tree_sha256"})
+        if not isinstance(summary["tool"]["commit"], str) or not re.fullmatch(r"[0-9a-f]{40}", summary["tool"]["commit"]):
+            raise ValueError(f"{at}: tool commit must be a full Git SHA-1")
+        for digest in (summary["receipt_sha256"], summary["tool"]["tree_sha256"]):
+            if not isinstance(digest, str) or not _SHA256.fullmatch(digest):
+                raise ValueError(f"{at}: receipt and tool need SHA-256 digests")
+        if summary["image_digest"] != cell_runtime_scope(cell)[0]:
+            raise ValueError(f"{at}: image_digest differs")
+        if not isinstance(summary["records"], list):
+            raise ValueError(f"{at}: records must be an array")
+        records = []
+        seen = set()
+        for record in summary["records"]:
+            _require_keys(record, at, required={"cell", "symbol", "decoder", "cut",
+                                              "rungs_pass", "rungs_withdrawn", "verdict"})
+            for key in ("cell", "symbol", "decoder", "cut", "verdict"):
+                if not isinstance(record[key], str) or not record[key]:
+                    raise ValueError(f"{at}: {key} must be a nonempty string")
+            for key in ("rungs_pass", "rungs_withdrawn"):
+                values = record[key]
+                if not isinstance(values, list) or any(not _is_int(q) or q <= 0 for q in values) or len(set(values)) != len(values):
+                    raise ValueError(f"{at}: {key} must list distinct positive rungs")
+            if set(record["rungs_pass"]) & set(record["rungs_withdrawn"]):
+                raise ValueError(f"{at}: a rung cannot pass and be withdrawn")
+            key = tuple(record[k] for k in ("cell", "symbol", "decoder", "cut"))
+            if key in seen:
+                raise ValueError(f"{at}: duplicate record")
+            seen.add(key)
+            if record["cell"] == cell["id"]:
+                if record["verdict"] != "PASS":
+                    raise ValueError(f"{at}: non-PASS unit")
+                records.append(record)
+        entry = format_entry(cell["family"], contract)
+        world = next(u["max_world_size"] for u in contract["tensor_parallel"]["units"] if u["unit"] == cell["family"])
+        cuts = ["TP1"] + [f"TP{size}/rank{rank}" for size in range(2, world + 1) for rank in range(size)]
+        low, high = entry["reader_rate_range_q256"]
+        for rung in range(low, high + 1, entry["reader_rate_step_q256"]):
+            if not cell_covers_rung(cell, rung, entry):
+                continue
+            for symbol, decoder in cell_executes(cell, q256=rung, entry=entry):
+                for cut in cuts:
+                    rows = [r for r in records if (r["symbol"], r["decoder"], r["cut"]) == (symbol, decoder, cut)]
+                    withdrawn = {q for r in rows for q in r["rungs_withdrawn"]}
+                    passed = {q for r in rows for q in r["rungs_pass"]}
+                    if rung in withdrawn or not any(q not in withdrawn and (q == rung or rung_rates(entry, q) == rung_rates(entry, rung)) for q in passed):
+                        raise ValueError(f"{at}: missing PASS for {(symbol, decoder, rung, cut)}")
