@@ -231,6 +231,19 @@ def test_exact_imad_shift_matches_shf_and_shift_changed_by_one_is_different(shif
     assert changed["status"] == "DIFFERENT" and not changed["unresolved"]
 
 
+@pytest.mark.parametrize("shift", [0, 23, 31])
+@pytest.mark.parametrize("zero", [False, True])
+def test_imad_matches_plain_lea_but_changed_shift_or_addend_is_different(shift, zero):
+    b, other = ("RZ", "RZ") if zero else ("R11", "R1")
+    lea = f"LEA R60, R11, {b}, {shift}"
+    library = sass(KERNEL, ["FMNMX R11, R20, c[0x0][0x160], PT", lea] + expression(11, 12, "R60"))
+    probe = sass("swiglu_probe", ["LDG.E R1, [R40]", f"IMAD R60, R1, {2**shift}, {other}"] + expression(1, 2, "R60"))
+    assert prove(library, "", probe, "")["status"] == "MATCHED"
+    for replacement in (f"LEA R60, R11, {b}, {shift + 1}", f"LEA R60, R11, {'R11' if zero else 'RZ'}, {shift}"):
+        result = prove(library.replace(lea, replacement), "", probe, "")
+        assert result["status"] == "DIFFERENT" and not result["unresolved"]
+
+
 @pytest.mark.parametrize("opcode,operands", [
     ("IMAD.SHL.U32", ("R2", "R1", "3", "RZ")),
     ("IMAD.SHL.U32", ("R2", "R1", "0x100000000", "RZ")),
@@ -238,9 +251,14 @@ def test_exact_imad_shift_matches_shf_and_shift_changed_by_one_is_different(shif
     ("IMAD.U32", ("R2", "R1", "8", "RZ")),
     ("SHF.L.U32", ("R2", "R1", "32", "RZ")),
     ("SHF.L.U32.HI", ("R2", "R1", "3", "RZ")),
+    ("LEA.HI", ("R2", "R1", "R3", "3")),
+    ("LEA.X", ("R2", "R1", "R3", "3")),
+    ("LEA", ("R2", "R1.X", "R3", "3")),
+    ("LEA", ("R2", "R1", "R3.X", "3")),
+    ("LEA", ("R2", "R1", "R3", "32")),
 ])
 def test_shift_equivalence_rejects_every_other_form(opcode, operands):
-    assert sass_slice.left_shift(Instruction(0, "", opcode, operands)) is None
+    assert sass_slice.shift_add(Instruction(0, "", opcode, operands)) is None
 
 
 def real_slice(key, kind, text=None):

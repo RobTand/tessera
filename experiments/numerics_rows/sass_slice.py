@@ -215,24 +215,33 @@ def immediate32(ins, resolve=lambda text: None):
         if opcode == "SHF.L.U32" and len(operands) == 3 and operands[2] in ("RZ", "URZ"):
             a, shift, _ = map(integer, operands)
             return (a << min(shift, 32)) & 0xFFFFFFFF
+        if opcode == "LEA" and len(operands) == 3 and 0 <= int(operands[2], 0) < 32:
+            return ((integer(operands[0]) << int(operands[2], 0)) + integer(operands[1])) & 0xFFFFFFFF
     except (ValueError, OverflowError, struct.error):
         pass
     return None
 
 
-def left_shift(ins):
-    """Recognize only the two shift forms permitted by the pass rule."""
-    if ins.destination_count != 1 or len(ins.operands) != 4 or ins.operands[3] != "RZ":
+def shift_add(ins):
+    """Recognize exactly the four shift-and-add forms in the pass rule."""
+    if ins.destination_count != 1 or len(ins.operands) != 4:
         return None
+    a, value, b = ins.operands[1:]
     try:
-        value = int(ins.operands[2], 0)
+        if ins.opcode == "LEA":
+            b, n = value, int(b, 0)
+        elif ins.opcode in ("IMAD", "IMAD.SHL.U32"):
+            value = int(value, 0)
+            if not 0 < value <= 2**31 or value & (value - 1) or ins.opcode == "IMAD.SHL.U32" and b != "RZ":
+                return None
+            n = value.bit_length() - 1
+        elif ins.opcode == "SHF.L.U32" and b == "RZ":
+            n = int(value, 0)
+        else:
+            return None
     except ValueError:
         return None
-    if ins.opcode == "IMAD.SHL.U32" and 0 < value <= 2**31 and value & (value - 1) == 0:
-        return ins.operands[1], value.bit_length() - 1
-    if ins.opcode == "SHF.L.U32" and 0 <= value < 32:
-        return ins.operands[1], value
-    return None
+    return (a, b, n) if 0 <= n < 32 and not any(".X" in x for x in (a, b)) else None
 
 
 class Slice:
@@ -388,9 +397,9 @@ class Slice:
             return self.node("constant", constant)
         if ins.opcode == "MOV" and len(ins.operands) == 2 and re.fullmatch(r"(?:UR|R)\d+(?:\.reuse)?", ins.operands[1]):
             return self.register(ins.operands[1].removesuffix(".reuse"), state)
-        shift = left_shift(ins)
+        shift = shift_add(ins)
         if shift is not None:
-            return self.node("shift-left", self.operand(shift[0], name, index, state), shift[1])
+            return self.node("shift-add", *(self.operand(x, name, index, state) for x in shift[:2]), shift[2])
         if ins.opcode.startswith(("LD", "ULD", "S2R", "S2UR", "CS2R")):
             if not ins.opcode.startswith(("LDC", "ULDC")) or not any(CONST.search(x) for x in ins.operands[ins.destination_count:]):
                 return self.node("unresolved", f"load: {ins.opcode}")
@@ -609,7 +618,7 @@ def instruction_examples(result, probe, library):
             for (lname, _), lib in library.origins.get(key, {}).items():
                 kind = ("constant_nodes" if {p.opcode, lib.opcode} == {"FFMA", "MOV"} and library.nodes[key][0] == "constant" else
                         "register_moves" if "MOV" in {p.opcode, lib.opcode} and p.opcode != lib.opcode else
-                        "left_shifts" if {p.opcode, lib.opcode} == {"IMAD.SHL.U32", "SHF.L.U32"} else None)
+                        "left_shifts" if p.opcode != lib.opcode and shift_add(p) is not None and shift_add(lib) is not None else None)
                 if kind and len(examples[kind]) < 3:
                     record = {"probe_function": pname, "probe_instruction": p.text,
                               "library_function": lname, "library_instruction": lib.text,
