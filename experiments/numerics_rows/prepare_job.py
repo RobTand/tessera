@@ -67,7 +67,7 @@ printf '%s  %s\\n' 8a1536dfbc3df70edbdc37001a0db6947e97d9263926bc85a4d4d3ca231ea
 {container}
 '''
     (out / "job.sh").write_text(script)
-    submit = (f"flux submit -n1 -t{minutes}m --resources-shape='slot/[{shape}]' --requires=host:{host} "
+    submit = (f"flux submit --job-name=tessera-1717-{step} -n1 -t{minutes}m --resources-shape='slot/[{shape}]' --requires=host:{host} "
               f"--cwd={out} --input=/dev/null '--env=-*' --env=PATH=/usr/bin:/bin "
               "--env=HOME=/home/rob --env=XDG_RUNTIME_DIR=/run/user/1000 "
               "--env=FLUX_F58_FORCE_ASCII=1 --env=FLUX_SCRATCH=/var/tmp "
