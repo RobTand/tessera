@@ -156,3 +156,12 @@ def test_runtime_version_mismatch_is_an_invalid_precondition(tmp_path, monkeypat
     monkeypatch.setattr(common.importlib.metadata, "version", lambda name: "wrong")
     with pytest.raises(Invalid, match="runtime differs"):
         common.check_runtime("N")
+
+
+def test_missing_m_evidence_is_unattested_even_when_another_m_has_the_same_key(monkeypatch):
+    population, digest, manifests, receipts = joined_inputs(monkeypatch)
+    assert join(population, digest, manifests, receipts)["verdict"] == "PASS"
+    receipts[1][1]["units"] = [u for u in receipts[1][1]["units"] if u["m_config"]["M"] != 8]
+    result = join(population, digest, manifests, receipts)
+    assert result["verdict"] == "UNATTESTED"
+    assert any(u["outcome"] == "UNATTESTED" and u["unit_id"][0] == "batch" for u in result["units"])

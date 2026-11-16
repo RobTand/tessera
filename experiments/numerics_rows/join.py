@@ -146,11 +146,13 @@ def _join(population, digest, manifests, receipts, contract):
         for module in sorted(modules):
             record = evidence.get((module, key))
             outcomes = list(record["outcomes"]) if record else []
-            if not record or not record["c1_present"]:
+            missing = (not record or not record["c1_present"] or
+                       any((module, full) not in seen_full for full in allowed[(module, key)]))
+            if missing:
                 outcomes.append("UNATTESTED")
             joined["modules"].append({"module": module, "outcome": min(outcomes, key=OUTCOMES.index),
                                       "receipt_sha256s": sorted(record["receipts"]) if record else [],
-                                      "missing_evidence": not record or not record["c1_present"]})
+                                      "missing_evidence": bool(missing)})
         joined["outcome"] = min((m["outcome"] for m in joined["modules"]), key=OUTCOMES.index)
         units.append(joined)
     declared = {"population_sha256": digest, "modules": list(declarations.values()),
