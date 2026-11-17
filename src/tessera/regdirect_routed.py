@@ -127,11 +127,13 @@ def _ext():
         ensure_toolchain_on_path,
         pin_build_arch,
         platform_token,
+        probed_platform_token,
         offload_flags,
     )
     from .jit_build_lock import GUARDED_BUILD_SUFFIX, jit_build_lock
     from .load_built import load_built
-    if (retained := load_built("tessera_regdirect_routed", torch=torch)) is not None:
+    if (retained := load_built("tessera_regdirect_routed", torch=torch, platform_token=platform_token,
+                               probed_platform_token=probed_platform_token)) is not None:
         return retained
 
     ensure_toolchain_on_path(torch)

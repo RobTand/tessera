@@ -17,11 +17,10 @@ def refuse_build(module: str) -> None:
         raise RuntimeError(f"{module}: TESSERA_LOAD_BUILT has no retained loader for this library")
 
 
-def load_built(module: str, *, torch):
+def load_built(module: str, *, torch, platform_token, probed_platform_token):
     if ENV not in os.environ:
         return None
     from .native_identity import loaded_native_identity
-    from .serving.backend import platform_token, probed_platform_token
 
     root = Path(os.environ[ENV]).resolve(strict=True)
     record_root = Path(os.environ[RECORD_ENV]).resolve(strict=True) if RECORD_ENV in os.environ else None

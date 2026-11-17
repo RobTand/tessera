@@ -366,7 +366,8 @@ def _ext():
 
     from .jit_build_lock import GUARDED_BUILD_SUFFIX, jit_build_lock
     from .load_built import load_built
-    if (retained := load_built("tessera_window_gemv", torch=torch)) is not None:
+    if (retained := load_built("tessera_window_gemv", torch=torch, platform_token=platform_token,
+                               probed_platform_token=probed_platform_token)) is not None:
         return retained
 
     _ensure_toolchain_on_path()
