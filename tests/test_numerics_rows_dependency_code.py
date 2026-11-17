@@ -125,7 +125,7 @@ def test_unattested_code_survives_native_boundary(code, monkeypatch, dev):
 
 # Exact, independently supplied symbols. CPU span names are not CUDA identities.
 CANARY = ["void vllm::dynamic_per_token_scaled_fp8_quant_kernel_strided<float>()",
-          "void at::native::elementwise_kernel<128, 4, Fill>()",
+          "void at::native::vectorized_elementwise_kernel<4, at::native::FillFunctor<int>, std::array<char*, 1ul> >(int, at::native::FillFunctor<int>, std::array<char*, 1ul>)",
           "void routed_fused_kernel<true, 0, false, false, 4, false, 64, true, false>(Params)",
           "void dense_reduce_kernel<4>(Params)"]
 CUTLASS = "void cutlass::Kernel<at::cuda::ScaledMM>()"
