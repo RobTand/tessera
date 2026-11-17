@@ -11,7 +11,6 @@ import sys
 from experiments.numerics_rows.common import Invalid, sha256
 
 LEVERS = Path(__file__).with_name("launch-levers.tsv")
-PREFIXES = ("TESSERA_", "TRITON_", "TORCH_", "PYTORCH_", "CUBLAS_", "CUBLASLT_", "CUDNN_", "NVIDIA_")
 IMPORTS = ("tessera", "torch", "triton", "vllm")
 TOOLCHAIN = ("PATH", "CUDA_HOME", "CUDA_PATH", "PYTORCH_NVCC", "PYTORCH_ROCM_ARCH", "ROCM_HOME", "ROCM_PATH")
 MATH_PATHS = (
@@ -72,6 +71,8 @@ class LaunchState:
                 raise Invalid("launch lever policy has no environment name")
             if policy not in ("include", "exclude", "not launch-changing") or self.policy.get(name, policy) != policy:
                 raise Invalid("launch lever policy is malformed or inconsistent")
+            if policy == "exclude" and not all(row.get(k) not in (None, "", "-") for k in ("exclusion_reason", "evidence", "file:line")):
+                raise Invalid("launch exclusion has no cited reason: " + name)
             self.policy[name] = policy
         if not self.policy or self.policy.get("TESSERA_SERVE_MODE") != "include":
             raise Invalid("launch lever policy must retain the residency selector")
@@ -80,6 +81,7 @@ class LaunchState:
         if self.policy.get("PRISMAQUANT_DEV_MODE") != "include":
             raise Invalid("launch lever policy must include PRISMAQUANT_DEV_MODE")
         self.levers_sha256 = sha256(self.path)
+        self.start_names = set(os.environ)
         self.mapping = self.current()
         self.sha256 = digest(self.mapping)
         self.torch = None
@@ -98,12 +100,12 @@ class LaunchState:
         self.math_sha256 = json_digest(self.math)
 
     def current(self):
-        return {k: v for k, v in sorted(os.environ.items()) if (
-            self.policy.get(k) != "exclude" and (k.startswith(PREFIXES) or self.policy.get(k) == "include"))}
+        return {k: v for k, v in sorted(os.environ.items()) if self.policy.get(k) != "exclude"}
 
     def check(self):
-        if self.current() != self.mapping:
-            raise Invalid("launch state changed after worker start")
+        changed = sorted(k for k, v in self.mapping.items() if os.environ.get(k) != v)
+        if changed:
+            raise Invalid("launch state changed after worker start: " + ", ".join(changed))
         self.check_math()
 
     def check_math(self):
@@ -111,18 +113,56 @@ class LaunchState:
             raise Invalid("dependency math settings changed after worker start")
 
     def fields(self):
-        result = {"launch_state": dict(self.mapping), "launch_state_sha256": self.sha256,
-                  "launch_levers_sha256": self.levers_sha256}
+        from experiments.numerics_rows.start_env import specification_sha256
+
+        result = {"launch_state_names": sorted(self.mapping), "launch_state_sha256": self.sha256,
+                  "launch_levers_sha256": self.levers_sha256,
+                  "start_environment_spec_sha256": specification_sha256(),
+                  "launch_selectors": self.public_values(self.mapping)}
         if self.torch is not None:
             result.update(dependency_math=dict(self.math), dependency_math_sha256=self.math_sha256)
         return result
 
     def diagnostics(self):
-        return {name: os.environ[name] for name in sorted(self.policy) if self.policy[name] == "exclude" and name in os.environ}
+        return {"excluded_names": sorted(k for k in os.environ if self.policy.get(k) == "exclude"),
+                "added_names": sorted(set(os.environ) - self.start_names)}
+
+    def public_values(self, mapping):
+        """Expose only frozen Tessera lever names and the admission-policy switch."""
+        return {k: mapping[k] for k in sorted(mapping) if k == "PRISMAQUANT_DEV_MODE" or (
+            k.startswith("TESSERA_") and self.policy.get(k) == "include")}
+
+    def latched_diagnostic(self, mapping):
+        return {"names": sorted(mapping), "non_secret_values": self.public_values(mapping)}
+
+
+def check_fields(record):
+    """Validate names-only evidence. Values remain solely in the live worker."""
+    names = record.get("launch_state_names")
+    if not isinstance(names, list) or any(not isinstance(k, str) or not k for k in names) or names != sorted(set(names)):
+        raise Invalid("launch state names are missing or malformed")
+    if "launch_state" in record:
+        raise Invalid("launch state values must not be recorded")
+    for key in ("launch_state_sha256", "launch_levers_sha256", "start_environment_spec_sha256"):
+        value = record.get(key)
+        if not isinstance(value, str) or len(value) != 64 or any(c not in "0123456789abcdef" for c in value):
+            raise Invalid("launch state binding is missing or malformed: " + key)
+    selectors = record.get("launch_selectors")
+    if not isinstance(selectors, dict) or set(selectors) - set(names):
+        raise Invalid("launch state selectors are missing or malformed")
+    policy = LaunchState().policy
+    if any(not isinstance(v, str) or not (k == "PRISMAQUANT_DEV_MODE" or k.startswith("TESSERA_") and policy.get(k) == "include")
+           for k, v in selectors.items()):
+        raise Invalid("launch state diagnostic contains a name outside the non-secret list")
 
 
 def check_binding(record, expected):
-    for field in ("launch_state", "launch_state_sha256", "launch_levers_sha256"):
+    try:
+        check_fields(record)
+        check_fields(expected)
+    except Invalid as error:
+        raise Invalid("C1 launch state or lever file: " + str(error)) from error
+    for field in ("launch_state_names", "launch_state_sha256", "launch_levers_sha256", "launch_selectors", "start_environment_spec_sha256"):
         if record.get(field) != expected[field]:
             raise Invalid(f"C1 launch state or lever file differs: {field}")
 

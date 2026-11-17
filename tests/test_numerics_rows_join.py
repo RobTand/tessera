@@ -246,8 +246,8 @@ def test_join_refuses_mixed_launch_state_and_lever_policy(monkeypatch, where):
     assert join(population, digest, manifests, receipts)["verdict"] == "PASS"
     receipt = receipts[1][1]
     if where == "row":
-        receipt["runtime"]["launch_state"] = {"TESSERA_NEW": "1"}
-        receipt["runtime"]["launch_state_sha256"] = state_digest(receipt["runtime"]["launch_state"])
+        receipt["runtime"]["launch_state_names"] = ["TESSERA_NEW"]
+        receipt["runtime"]["launch_state_sha256"] = state_digest({"TESSERA_NEW": "1"})
     elif where == "unit":
         unit = receipt["units"][0]
         unit["launch_state_sha256"] = "b" * 64
@@ -255,7 +255,7 @@ def test_join_refuses_mixed_launch_state_and_lever_policy(monkeypatch, where):
     elif where == "manifest":
         manifests[1][1]["launch_state_sha256"] = "b" * 64
     elif where == "object":
-        receipt["runtime"]["launch_state"]["TESSERA_NEW"] = "1"
+        receipt["runtime"]["launch_state_names"].append("TESSERA_NEW")
     else:
         receipt["inputs"]["launch_levers_sha256"] = "b" * 64
     with pytest.raises(Invalid, match="launch state|lever|execution identities"):

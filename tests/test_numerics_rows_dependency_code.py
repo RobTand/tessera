@@ -160,7 +160,6 @@ def profiled(code, tmp_path, monkeypatch):
     audit = code.CodeAudit("image", tmp_path)
     audit.saved = (object, None, None)
     monkeypatch.setattr(audit, "image_libraries", lambda: image)
-    monkeypatch.setattr(audit, "dependency_review", lambda: {"complete": True, "sha256": "f" * 64})
     recorder = BoundaryRecorder(lambda: None, [])
     recorder.code_audit = audit
     def run():
@@ -202,11 +201,11 @@ def test_profile_checks_image_file_identity_before_accepting_origin(profiled, mo
         run()
 
 
-def test_incomplete_dependency_source_audit_cannot_attest(profiled, monkeypatch):
-    run, _, _, audit = profiled
-    assert not run()["unattested"]
-    monkeypatch.setattr(audit, "dependency_review", lambda: {"complete": False, "sha256": "f" * 64})
-    assert "counted-path dependency audit is incomplete" in run()["unattested"]
+def test_source_read_audit_is_not_an_attestation_gate(profiled):
+    run, _, _, _ = profiled
+    unit = run()
+    assert not unit["unattested"]
+    assert "dependency_audit_complete" not in unit["dependency_code"]
 
 
 @pytest.mark.parametrize("mutation", ("missing_observer", "missing_specializations", "missing_origin", "duplicate_origin", "unknown_origin", "unbound_compiled"))

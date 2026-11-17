@@ -1,17 +1,14 @@
 # Tessera plan-to-serve architecture
 
-Re-stamped 2026-11-17 for the #1717 rule v2 draft 3 worker policy.
-Worker inputs include the dependency environment prefixes. The seven named
-toolchain inputs are diagnostics. C1, H1 and row receipts record effective
-torch math settings. The worker refuses a changed setting before a native
-call. The join checks these settings per unit, beside its 11 global bindings.
-The attestation tool now binds actual Triton cubins, entries, targets, constants
-and launch parameters per unit and case. It checks every profiled CUDA kernel
-against audited native code, an unchanged mapped image library, or bound
-compiled code. Unknown owners are UNATTESTED. The join refuses incomplete PASS
-evidence. The lever policy binds the dependency source review. That review
-still records two unresolved scopes, so counted v2 attestation remains held.
-This tool changes no serving default or kernel arithmetic.
+Re-stamped 2026-11-17 for the #1717 rule v2 draft 4 worker policy.
+The tool binds the whole worker start environment, with exact frozen exclusions.
+It stores names and one digest. Values remain in worker memory, except named public selectors.
+Workers reject changed or removed captured inputs. Later-added names are diagnostic.
+C1, H1 and rows use fixed container paths from the serve environment specification.
+The environment proof checks those starts without GPU work or environment-value output.
+The source-read audit is diagnostic and cannot block attestation.
+Effective math settings, actual Triton identities and every-kernel origin checks remain required.
+Unknown code origins are UNATTESTED. No serving default or kernel arithmetic changes.
 
 Re-stamped 2026-11-16 for the #1717 rule v2 attestation tool.
 The tool binds worker-start environment inputs and the frozen lever file in C1,

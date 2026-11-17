@@ -11,6 +11,7 @@ import subprocess
 
 from experiments.numerics_rows.common import IMAGES, sha256
 from experiments.numerics_rows.serving_build import source_layout
+from experiments.numerics_rows.start_env import container_options, worker_command
 
 ROOT = Path(__file__).resolve().parents[2]
 
@@ -61,7 +62,6 @@ def prepare(step, image, extra=(), *, source_revision):
         inputs = parser.parse_known_args(extra)[0]
         source, _ = source_layout(inputs.build, inputs.build_provenance)
     gpu = step.startswith(("Q1", "H1", "ROW"))
-    selector = "--env TESSERA_SERVE_MODE=resident" if command in ("cases", "row") else "--env TESSERA_PLATFORM_TOKEN=sm_121"
     shape, minutes = ("core=2;memory=16;gpu=1", 9) if gpu else ("core=4;memory=8", 20)
     host = "sparklina"
     if command == "cases":
@@ -70,61 +70,55 @@ def prepare(step, image, extra=(), *, source_revision):
         shape, minutes = "core=4;memory=32;gpu=1", 90
     if command == "cpu_checks":
         shape, minutes, host = "core=4;memory=16", 30, "dl380g10"
-    payload = shlex.join(["python3", "-m", f"experiments.numerics_rows.{command}", "--source", str(source),
-                          "--image", image, "--out", str(out / "results"), *extra])
+    arguments = ["--source", str(source), "--image", image, "--out", str(out / "results"), *extra]
+    payload = worker_command(source, f"experiments.numerics_rows.{command}", arguments)
     if gpu:
         parser = argparse.ArgumentParser(add_help=False)
         parser.add_argument("--build", type=Path, required=True)
         build = parser.parse_known_args(extra)[0].build
-        (out / "payload.sh").write_text(f'''#!/bin/bash
+    name = f'tessera-1717-{step.lower()}-"$FLUX_JOB_ID"'
+    # All worker starts use the same shell depth, working directory and constants.
+    (out / "payload.sh").write_text(f'''#!/bin/bash
 set -euo pipefail
 exec > {out}/results/payload.stdout 2> {out}/results/payload.stderr
-rc=0
-{payload} || rc=$?
-printf '%s\\n' "$rc" > {out}/results/payload-exit.txt
-exit "$rc"
+exec {payload}
 ''')
-        payload = f"/bin/bash {out}/payload.sh"
-    name = f'tessera-1717-{step.lower()}-"$FLUX_JOB_ID"'
+    options = shlex.join(container_options("$task_scratch")).replace("'$task_scratch", '"$task_scratch').replace(":rw'", ':rw"').replace(":ro'", ':ro"')
     container = (f"timeout --signal=TERM --kill-after=20s {480 if gpu and command != 'row' else minutes * 60 - 60}s "
                  f"podman run --rm --name {name} --pull=never --cgroups=disabled --network=none "
                  f"{'--device nvidia.com/gpu=all ' if gpu else ''}"
-                 f"-v /mnt/shared:/mnt/shared:ro -v {out}:{out}:rw -w {out}/code "
-                 f"{population_mount}"
-                 f"--env PYTHONPATH={source}/src:{out}/code --env PYTHONPYCACHEPREFIX={out}/cache/pycache "
-                 f"--env HOME={out}/home --env TMPDIR={out}/scratch --env XDG_CACHE_HOME={out}/cache "
-                 f"--env CUDA_CACHE_PATH={out}/cuda-cache --env VLLM_CACHE_ROOT={out}/vllm-cache "
-                 f"--env TORCH_EXTENSIONS_DIR={out}/extensions --env TRITON_CACHE_DIR={out}/triton "
-                 f"--env NUMERICS_IMAGE_INSPECT={out}/image-inspect.json "
-                 '--env FLUX_JOB_ID="$FLUX_JOB_ID" '
-                 "--env OMP_NUM_THREADS=1 --env MKL_NUM_THREADS=1 --env OPENBLAS_NUM_THREADS=1 "
-                 f"--env MAX_JOBS={2 if gpu else 4} {selector} --env GIT_OPTIONAL_LOCKS=0 "
-                 f"--entrypoint /bin/bash {IMAGES[image]['local_id']} -euo pipefail -c {shlex.quote(payload)}")
-    if gpu:
-        container = f'''rc=0
+                 f"-v /mnt/shared:/mnt/shared:ro -v {out}:{out}:rw -v {out}/code:/numerics:ro "
+                 f"{population_mount}{options} "
+                 f"--entrypoint /bin/bash {IMAGES[image]['local_id']} -euo pipefail {out}/payload.sh")
+    container = f'''rc=0
 {container} > results/podman.stdout 2> results/podman.stderr || rc=$?
 printf '%s\\n' "$rc" > results/podman-exit.txt
+printf '%s\\n' "$rc" > results/payload-exit.txt
 test "$rc" -eq 0
-test "$(cat results/payload-exit.txt)" = 0
-{f"test -s {out}/results/numerics_row.json" if command == "row" else f"python3 -m experiments.numerics_rows.job_receipt {step.split('-')[0]} --out {out}/results --build {shlex.quote(str(build))}"}
 '''
+    if gpu:
+        container += (f"test -s {out}/results/numerics_row.json\n" if command == "row" else
+                      f"python3 -m experiments.numerics_rows.job_receipt {step.split('-')[0]} --out {out}/results --build {shlex.quote(str(build))}\n")
     if command == "cpu_checks":
+        payload = shlex.join(["python3", "-m", f"experiments.numerics_rows.{command}", *arguments])
         container = f"env HOME={out}/home /home/rob/.local/bin/uv run --python 3.12 --no-project --extra-index-url https://download.pytorch.org/whl/cpu --index-strategy unsafe-best-match --with-requirements code/tools/ci/gate_torch_requirements.txt --with-requirements code/tools/ci/gate_requirements.txt {payload}"
     cell_checkout = "" if command == "row" else f"git clone --shared repository.git cell\ngit -C cell checkout --detach {source_revision}"
     script = f'''#!/bin/bash
 set -euo pipefail
+umask 077
 cd {out}
-trap 'rc=$?; podman rm -f {name} >/dev/null 2>&1 || true; rm -rf -- scratch; test ! -e scratch || rc=3; printf "%s\\n" "$rc" > tool-exit.txt; exit "$rc"' EXIT
+task_scratch=$(mktemp -d /var/tmp/tessera-1717-worker.XXXXXX)
+trap 'rc=$?; podman rm -f {name} >/dev/null 2>&1 || true; rm -rf -- "$task_scratch"; test ! -e "$task_scratch" || rc=3; printf "%s\\n" "$rc" > tool-exit.txt; exit "$rc"' EXIT
 trap 'exit 143' TERM
 trap 'exit 130' INT
-export TMPDIR={out}/scratch
+export TMPDIR="$task_scratch"
 export UV_CACHE_DIR={out}/cache/uv UV_PYTHON_INSTALL_DIR={out}/python
 export XDG_CACHE_HOME={out}/cache
 export PATH=/home/rob/.local/bin:$PATH
 export PYTHONPYCACHEPREFIX={out}/cache/pycache
 export PYTHONPATH={source}/src:{out}/code
 export OMP_NUM_THREADS=1 MKL_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 MAX_JOBS={2 if gpu else 4}
-mkdir -p scratch cache results extensions triton home cuda-cache vllm-cache
+mkdir -p cache results home "$task_scratch/home"
 # The cell source stays separate from the implementation source.
 git clone --shared repository.git code
 git -C code checkout --detach {revision}
@@ -133,7 +127,7 @@ test "$(git -C code rev-parse HEAD)" = {revision}
 test "$(git -C {source} rev-parse HEAD)" = {source_revision}
 printf '%s\\n' {source_revision} > results/tessera-commit.txt
 printf '%s  %s\\n' 8a1536dfbc3df70edbdc37001a0db6947e97d9263926bc85a4d4d3ca231eae4f {source}/src/tessera/serving/csrc/routed_fused_window.cu | sha256sum -c -
-{f"podman image inspect {IMAGES[image]['local_id']} > image-inspect.json" if command != "cpu_checks" else ""}
+{f"podman image inspect {IMAGES[image]['local_id']} > $task_scratch/image-inspect.json" if command != "cpu_checks" else ""}
 {container}
 '''
     (out / "job.sh").write_text(script)

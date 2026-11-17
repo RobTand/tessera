@@ -414,7 +414,7 @@ def run_checks(args, report):
     report["negative_controls"] = negative_controls()
     save()
     recorder = BoundaryRecorder(torch.cuda.synchronize, report["boundaries"])
-    recorder.before_call = args.launch_state.check_math
+    recorder.before_call = args.launch_state.check
     recorder.context = args.code_audit.context
     loaded = install_libraries(built["libraries"])
     report["P3"] = {}
@@ -477,7 +477,6 @@ def main():
             write_json(args.out / "h1.json", report)
         raise SystemExit(0 if report["preconditions_confirmed"] else 3)
     report = {"boundaries": [], "libraries": {}, "cuda_controls": [], "negative_controls": [],
-              "flux_job_id": os.environ.get("FLUX_JOB_ID"),
               "preconditions_confirmed": False}
     write_json(args.out / "h1.json", report)
     try:

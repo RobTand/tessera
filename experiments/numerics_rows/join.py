@@ -21,9 +21,8 @@ def rule_unit_id(unit):
 
 
 def execution_identity(receipt):
-    from experiments.numerics_rows.launch_state import digest
-    if digest(receipt["runtime"]["launch_state"]) != receipt["runtime"]["launch_state_sha256"]:
-        raise Invalid("row launch state object differs from its digest")
+    from experiments.numerics_rows.launch_state import check_fields
+    check_fields({**receipt["runtime"], "launch_levers_sha256": receipt["inputs"]["launch_levers_sha256"]})
     if receipt["rule"].get("launch_levers_sha256") != receipt["inputs"]["launch_levers_sha256"]:
         raise Invalid("row launch lever file differs from its frozen rule")
     fields = {"tool_commit": receipt["tool"]["commit"], "tool_tree_sha256": receipt["tool"]["tree_sha256"],
@@ -54,18 +53,17 @@ def _join(population, digest, manifests, receipts, contract):
     from experiments.numerics_rows.common import IMAGES
     from experiments.numerics_rows.population import select_modules
     from experiments.numerics_rows.row import planned_units, unit_identity
-    from experiments.numerics_rows.launch_state import check_binding, check_math_binding, digest as state_digest
+    from experiments.numerics_rows.launch_state import check_binding, check_math_binding, check_fields
 
     contract, contract_hash = scope.contract_document(contract)
     image = IMAGES[population["image"]]["image_digest"]
     scope.check_population_cells(contract, image, population)
-    launch = ({**{k: receipts[0][1]["runtime"][k] for k in ("launch_state", "launch_state_sha256")},
+    launch = ({**{k: receipts[0][1]["runtime"][k] for k in ("launch_state_names", "launch_state_sha256", "launch_selectors", "start_environment_spec_sha256")},
                "launch_levers_sha256": receipts[0][1]["inputs"]["launch_levers_sha256"]} if receipts else
-              {k: manifests[0][1][k] for k in ("launch_state", "launch_state_sha256", "launch_levers_sha256")} if manifests else None)
+              {k: manifests[0][1][k] for k in ("launch_state_names", "launch_state_sha256", "launch_selectors", "start_environment_spec_sha256", "launch_levers_sha256")} if manifests else None)
     if launch is not None:
-        if state_digest(launch["launch_state"]) != launch["launch_state_sha256"]:
-            raise Invalid("launch state object differs from its digest")
-        scope.check_selectors(contract, population, launch["launch_state"])
+        check_fields(launch)
+        scope.check_selectors(contract, population, launch["launch_selectors"])
     state = launch["launch_state_sha256"] if launch is not None else None
     names = [e["name"] for e in population["modules"]]
     if not names or len(set(names)) != len(names):

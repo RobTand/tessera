@@ -2072,7 +2072,6 @@ ts_py_library(
         "numerics_rows/dependency_code.py",
     ],
     data = [
-        "numerics_rows/dependency-audit-review.json",
         "numerics_rows/dependency-image.json",
     ],
     deps = [
@@ -2081,6 +2080,22 @@ ts_py_library(
         "//src/tessera:_dev/native_identity",
         ":numerics_rows/common",
         ":numerics_rows/launch_state",
+    ],
+)
+
+ts_py_library(
+    name = "numerics_rows/env_proof",
+    srcs = [
+        "numerics_rows/env_proof.py",
+    ],
+    data = [
+        "build_identity.sh",
+        "tessera_plugin_served.sh",
+    ],
+    deps = [
+        ":numerics_rows/common",
+        ":numerics_rows/launch_state",
+        ":numerics_rows/start_env",
     ],
 )
 
@@ -2126,6 +2141,17 @@ ts_py_library(
     ],
     deps = [
         ":numerics_rows/common",
+        ":numerics_rows/start_env",
+    ],
+)
+
+ts_py_library(
+    name = "numerics_rows/prepare_env",
+    srcs = [
+        "numerics_rows/prepare_env.py",
+    ],
+    data = [
+        "numerics_rows/README.md",
     ],
 )
 
@@ -2140,6 +2166,7 @@ ts_py_library(
     deps = [
         ":numerics_rows/cases_cycle",
         ":numerics_rows/common",
+        ":numerics_rows/start_env",
     ],
 )
 
@@ -2189,6 +2216,13 @@ ts_py_library(
         ":numerics_rows/common",
         ":numerics_rows/reference",
         ":t4_code/sass_dump",
+    ],
+)
+
+ts_py_library(
+    name = "numerics_rows/start_env",
+    srcs = [
+        "numerics_rows/start_env.py",
     ],
 )
 

@@ -8,10 +8,8 @@ from datetime import datetime, timezone
 import hashlib
 import json
 import math
-import os
 from pathlib import Path
 import re
-import socket
 import sys
 import subprocess
 import traceback
@@ -615,7 +613,7 @@ def main():
     args = p.parse_args()
     args.out.mkdir(parents=True, exist_ok=True)
     receipt = {"schema": "tessera.numerics_row.v2", "canary": args.canary,
-               "row": {"name": args.name, "flux_job_id": os.environ.get("FLUX_JOB_ID"), "host": socket.gethostname(),
+               "row": {"name": args.name,
                        "utc_start": datetime.now(timezone.utc).isoformat(), "utc_end": None, "exit_status": None, "stop_cause": None,
                        "finalization_finished": False},
                "tool": {}, "rule": {}, "runtime": {}, "tessera": {}, "probe": {}, "inputs": {},
@@ -875,7 +873,7 @@ def run_row(args, receipt, phases):
                             unit["unattested"].append(str(error))
                             unit["completed"] = True
                         finally:
-                            unit["flags_latched_diagnostic"] = dict(getattr(sys.modules.get("tessera.serving.flags"), "_LATCHED", {}))
+                            unit["flags_latched_diagnostic"] = launch_state.latched_diagnostic(getattr(sys.modules.get("tessera.serving.flags"), "_LATCHED", {}))
                             receipt["runtime"]["environment_diagnostics"] = launch_state.diagnostics()
                             finish_unit(unit)
                             write_json(args.out / "numerics_row.json", receipt)

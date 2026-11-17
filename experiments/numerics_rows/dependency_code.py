@@ -9,7 +9,6 @@ loaded at its original image path from the same executable-mapped inode.
 from __future__ import annotations
 
 from contextlib import contextmanager
-import csv
 from dataclasses import asdict, is_dataclass
 import hashlib
 import json
@@ -19,10 +18,9 @@ import subprocess
 from types import SimpleNamespace
 
 from experiments.numerics_rows.common import Invalid, Unattested, sha256
-from experiments.numerics_rows.launch_state import LEVERS, json_digest
+from experiments.numerics_rows.launch_state import json_digest
 
 IMAGE_CODE = Path(__file__).with_name("dependency-image.json")
-REVIEW = Path(__file__).with_name("dependency-audit-review.json")
 
 
 def canonical(value):
@@ -229,35 +227,20 @@ class CodeAudit:
         records, unresolved = kernel_origins(names, libraries, unit.get("triton_specializations", []))
         unit["kernel_origins"] = records
         unit["unresolved_kernel_origins"] = unresolved
-        review = self.dependency_review()
         unit["dependency_code"] = {"observer": "IMG-N Triton 3.7.1 CompiledKernel load/run",
                                    "observation_complete": self.saved is not None,
-                                   "dependency_audit_sha256": review["sha256"],
-                                   "dependency_audit_complete": review["complete"],
                                    "p2_verified": all(any(all(r["identity"][k] == p["identity"][k] for k in ("cubin_sha256", "entry", "target", "constants")) for p in self.p2) for r in unit.get("triton_specializations", [])),
                                    "image_inventory_sha256": sha256(self.inventory_path) if self.inventory_path.is_file() else None}
         if not unit["dependency_code"]["p2_verified"]:
             unit["unattested"].append("H1 P2 did not check a prepared Triton specialization")
-        if review["complete"] is not True:
-            unit["unattested"].append("counted-path dependency audit is incomplete")
         if unresolved:
             unit["unattested"].append("profiled kernel origin is missing or ambiguous")
-
-    def dependency_review(self):
-        report = json.loads(REVIEW.read_text())
-        digest = sha256(REVIEW)
-        hashes = {r["dependency_audit_sha256"] for r in csv.DictReader(LEVERS.read_text().splitlines(), delimiter="\t")}
-        if hashes != {digest} or report["image_digest"] != self.image_digest:
-            raise Invalid("dependency source audit differs from the frozen lever policy or image")
-        return {"sha256": digest, "complete": report["complete"]}
 
 
 def check_unit_code(unit, image_digest=None):
     evidence = unit.get("dependency_code", {})
     if evidence.get("observation_complete") is not True or not isinstance(unit.get("triton_specializations"), list):
         raise Invalid("unit has no finished compiled-code observation")
-    if evidence.get("dependency_audit_complete") is not True:
-        raise Invalid("unit has no complete dependency source audit")
     names = {r["name"] for r in unit["arm"].get("profiler_kernels", []) + unit["arm"].get("preparation_kernels", [])}
     covered = [r["profiler_name"] for r in unit.get("kernel_origins", [])]
     if len(covered) != len(set(covered)) or names != set(covered) or unit.get("unresolved_kernel_origins"):

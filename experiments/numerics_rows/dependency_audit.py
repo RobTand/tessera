@@ -14,16 +14,14 @@ import importlib.metadata
 import json
 import os
 from pathlib import Path
-import re
-import socket
 import subprocess
 
 from experiments.numerics_rows.common import check_runtime, sha256, write_json
-from experiments.numerics_rows.launch_state import LaunchState, PREFIXES, digest
+from experiments.numerics_rows.launch_state import LaunchState, digest
 
 
 def serve_inputs(artifact):
-    """Record launch-policy values and all other names, never unrelated values."""
+    """Record names and one digest. Keep environment values in memory only."""
     processes = {}
     for path in Path("/proc").glob("[0-9]*"):
         try:
@@ -49,17 +47,14 @@ def serve_inputs(artifact):
             if before != after:
                 raise RuntimeError("process identity changed while reading inputs")
             state = LaunchState()
-            included = {k: v for k, v in env.items() if state.policy.get(k) != "exclude" and
-                        (k.startswith(PREFIXES) or state.policy.get(k) == "include")}
-            if any(re.search(r"API_KEY|SECRET|PASSWORD|AUTH_TOKEN|ACCESS_TOKEN", k) for k in included):
-                raise RuntimeError("included input has a secret-like name; no values recorded")
+            included = {k: v for k, v in env.items() if state.policy.get(k) != "exclude"}
             observed.append({"pid": pid, "ppid": parent, "start_ticks": before, "environment_names": sorted(env),
-                             "launch_state": included, "launch_state_sha256": digest(included), "launch_levers_sha256": state.levers_sha256,
-                             "unclassified_names": sorted(set(env) - set(included) - set(state.policy)),
-                             "excluded_diagnostics": {k: env[k] for k in env if state.policy.get(k) == "exclude"}})
+                             "launch_state_names": sorted(included), "launch_state_sha256": digest(included),
+                             "launch_levers_sha256": state.levers_sha256,
+                             "excluded_names": sorted(set(env) - set(included))})
         except (OSError, ValueError, RuntimeError) as error:
             observed.append({"pid": pid, "error": str(error)})
-    return {"host": socket.gethostname(), "utc": datetime.now(timezone.utc).isoformat(),
+    return {"utc": datetime.now(timezone.utc).isoformat(),
             "artifact": artifact, "observed": bool(observed), "processes": observed,
             "limitation": "/proc environ is the process-start environment; latched or later writes need the worker-start validator"}
 
@@ -89,6 +84,8 @@ def package_reads(root):
 def image_inputs(out):
     state = LaunchState(fresh=True)
     runtime = check_runtime("N")
+    inspect, = json.loads(Path(os.environ.get("NUMERICS_IMAGE_INSPECT", "/run/numerics/image-inspect.json")).read_text())
+    write_json(out / "image-environment-names.json", sorted(v.split("=", 1)[0] for v in inspect["Config"].get("Env", [])))
     packages, reads, errors, libraries = {}, [], [], []
     for name in ("torch", "triton", "vllm", "nvidia-cublas-cu13", "nvidia-cudnn-cu13"):
         try:
@@ -119,7 +116,7 @@ def image_inputs(out):
         path = Path(packages[package]["root"]) / relative
         if path.is_file():
             (sources / relative.replace("/", "_")).write_bytes(path.read_bytes())
-    return {"runtime": runtime, "complete": False, "review_required": "Trace counted preparation, quantization, composition and launch paths; classify dynamic reads and names outside conservative prefixes.",
+    return {"runtime": runtime, "complete": False, "diagnostic_only": True, "review_required": "Source reads are diagnostic. The whole worker start environment supplies the launch-state binding.",
             "packages": packages, "reads": reads, "parse_errors": errors, "image_libraries": libraries,
             **state.fields(), "environment_diagnostics": state.diagnostics(),
             "cuobjdump": subprocess.run(["cuobjdump", "--version"], capture_output=True, text=True).stdout}

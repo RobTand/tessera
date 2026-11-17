@@ -52,8 +52,8 @@ def check_source(root, revision):
 
 def check_runtime(image):
     expected = IMAGES[image]
-    path = os.environ.get("NUMERICS_IMAGE_INSPECT")
-    if not path:
+    path = os.environ.get("NUMERICS_IMAGE_INSPECT", "/run/numerics/image-inspect.json")
+    if not path or not Path(path).is_file():
         raise Invalid("missing Podman image inspection for this job")
     observed, = json.loads(Path(path).read_text())
     local = observed["Id"].removeprefix("sha256:")

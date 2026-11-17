@@ -281,7 +281,7 @@ def test_generated_rows_use_only_the_required_resident_selector(tmp_path, monkey
     script = (out / "job.sh").read_text()
     assert "--env TESSERA_SERVE_MODE=resident" in script
     assert "--env TESSERA_PLATFORM_TOKEN=" not in script and "--env TESSERA_FUSED_E4M3_MMA=" not in script
-    assert "--env NUMERICS_IMAGE_INSPECT=" in script and "TESSERA_NUMERICS_IMAGE_INSPECT" not in script
+    assert "/run/numerics/image-inspect.json:ro" in script and "--env NUMERICS_IMAGE_INSPECT=" not in script
 
 
 @pytest.mark.parametrize("dev_mode", ("0", "1"))
@@ -1152,6 +1152,9 @@ def row_execution(tmp_path, monkeypatch):
 
     args = SimpleNamespace(**{name: tmp_path / name for name in
         ("source", "out", "population", "manifest", "build", "build_provenance", "q1", "h1", "rule", "freeze")}, image="N", module=[])
+    # The simulated worker has one start environment, separate from pytest phases.
+    import _pytest.runner
+    monkeypatch.setattr(_pytest.runner, "_update_current_test_var", lambda *args: None)
     from experiments.numerics_rows.launch_state import LaunchState
     args.launch_state = LaunchState()
     args.launch_state.bind_math(torch)
@@ -1392,7 +1395,7 @@ def joined_inputs(monkeypatch):
         for unit in owned:
             unit.update(outcome="PASS", launch_state_sha256=state["launch_state_sha256"])
             unit.update(triton_specializations=[], kernel_origins=[], unresolved_kernel_origins=[],
-                        dependency_code={"observation_complete": True, "dependency_audit_complete": True})
+                        dependency_code={"observation_complete": True})
             unit.update({k: v for k, v in state.items() if k.startswith("dependency_math")})
             unit["unit_id"] = row.unit_identity(unit)
         receipts.append(("row-" + name, {"inputs": {"population_sha256": "signed", "selected_modules": [name],
@@ -1828,10 +1831,10 @@ def test_toolchain_changes_are_recorded_as_diagnostics(monkeypatch, name):
 
     monkeypatch.setenv(name, "/original")
     state = LaunchState()
-    assert name not in state.mapping and state.diagnostics()[name] == "/original"
+    assert name not in state.mapping and name in state.diagnostics()["excluded_names"]
     monkeypatch.setenv(name, "/changed")
     state.check()
-    assert state.diagnostics()[name] == "/changed"
+    assert name in state.diagnostics()["excluded_names"]
 
 
 @pytest.mark.parametrize("package", ("tessera", "torch", "triton", "vllm"))
@@ -1913,6 +1916,7 @@ def test_changed_worker_input_refuses_before_the_next_native_call(monkeypatch):
     from experiments.numerics_rows.launch_state import LaunchState
     from experiments.numerics_rows.common import BoundaryRecorder
 
+    monkeypatch.setenv("TESSERA_NEW_UNLISTED_INPUT", "original")
     state, calls = LaunchState(), []
     recorder = BoundaryRecorder(lambda: None, [])
     recorder.before_call = state.check
@@ -1932,7 +1936,7 @@ def test_row_refuses_input_changed_during_prepare(row_execution, monkeypatch):
     build = row.Dense
     def prepare(*args):
         adapter = build(*args)
-        monkeypatch.setenv("TESSERA_NEW_UNLISTED_INPUT", "changed during prepare")
+        monkeypatch.setenv("TESSERA_SERVE_MODE", "changed during prepare")
         return adapter
     monkeypatch.setattr(row, "Dense", prepare)
     with pytest.raises(SystemExit):
@@ -1940,7 +1944,7 @@ def test_row_refuses_input_changed_during_prepare(row_execution, monkeypatch):
     assert unit["outcome"] == "INVALID" and not events
 
 
-@pytest.mark.parametrize("field", ("launch_state", "launch_state_sha256", "launch_levers_sha256"))
+@pytest.mark.parametrize("field", ("launch_state_names", "launch_state_sha256", "launch_levers_sha256"))
 def test_row_refuses_c1_launch_state_or_policy_before_cases(row_execution, field):
     args, receipt, _, events, _ = row_execution
     with pytest.raises(SystemExit) as positive:
@@ -1948,7 +1952,7 @@ def test_row_refuses_c1_launch_state_or_policy_before_cases(row_execution, field
     assert positive.value.code == 0
     events.clear()
     manifest = json.loads(args.manifest.read_text())
-    manifest[field] = {"TESSERA_CHANGED": "1"} if field == "launch_state" else "b" * 64
+    manifest[field] = ["TESSERA_CHANGED"] if field == "launch_state_names" else "b" * 64
     write_json(args.manifest, manifest)
     with pytest.raises(Invalid, match="C1 launch state"):
         row.run(args, receipt)
@@ -2089,6 +2093,7 @@ def test_changed_launch_state_inside_a_nested_boundary_stays_invalid(monkeypatch
     from experiments.numerics_rows.launch_state import LaunchState
     from experiments.numerics_rows.common import BoundaryRecorder
 
+    monkeypatch.setenv("TESSERA_UNKNOWN_NEW_INPUT", "original")
     state, calls = LaunchState(), []
     recorder = BoundaryRecorder(lambda: None, [])
     recorder.before_call = state.check
@@ -2107,6 +2112,7 @@ def test_changed_launch_state_refuses_before_graph_replay(monkeypatch):
     from experiments.numerics_rows.run_routed import graph_record
     from experiments.t4_code import fused_e2m1_check
 
+    monkeypatch.setenv("TESSERA_UNKNOWN_NEW_INPUT", "original")
     state, calls = LaunchState(), []
     recorder = BoundaryRecorder(lambda: None, [])
     recorder.before_call = state.check
@@ -2125,3 +2131,68 @@ def test_changed_launch_state_refuses_before_graph_replay(monkeypatch):
     with pytest.raises(Invalid, match="launch state changed"):
         graph_record(unit, "graph", lambda: None, None, recorder)
     assert calls == ["replay"] and recorder.enabled
+
+
+@pytest.mark.parametrize("dev_mode", ("0", "1"))
+@pytest.mark.parametrize("mutation", ("change", "remove"))
+def test_whole_start_environment_refuses_uncatalogued_input(monkeypatch, dev_mode, mutation):
+    from experiments.numerics_rows.launch_state import LaunchState
+    from experiments.numerics_rows.common import BoundaryRecorder
+
+    monkeypatch.setenv("PRISMAQUANT_DEV_MODE", dev_mode)
+    monkeypatch.setenv("UNCLASSIFIED_VENDOR_CONTROL", "initial")
+    worker, calls = LaunchState(), []
+    recorder = BoundaryRecorder(lambda: None, [])
+    recorder.before_call = worker.check
+    recorder.call("positive", "tessera", lambda: calls.append("positive"))
+    if mutation == "change":
+        monkeypatch.setenv("UNCLASSIFIED_VENDOR_CONTROL", "changed")
+    else:
+        monkeypatch.delenv("UNCLASSIFIED_VENDOR_CONTROL")
+    with pytest.raises(Invalid, match="launch state changed"):
+        recorder.call("changed", "tessera", lambda: calls.append("changed"))
+    assert calls == ["positive"]
+
+
+def test_code_added_names_do_not_change_the_start_binding(monkeypatch):
+    from experiments.numerics_rows.launch_state import LaunchState
+
+    monkeypatch.delenv("TESSERA_IMPORT_ADDED_INPUT", raising=False)
+    state = LaunchState()
+    before = state.fields()
+    monkeypatch.setenv("TESSERA_IMPORT_ADDED_INPUT", "added by pinned import")
+    state.check()
+    assert state.fields() == before
+    assert "TESSERA_IMPORT_ADDED_INPUT" in state.diagnostics()["added_names"]
+
+
+def test_environment_records_never_write_private_values_or_per_name_hashes(monkeypatch):
+    from experiments.numerics_rows.launch_state import LaunchState, digest
+
+    private = "do-not-record-this-private-value"
+    monkeypatch.setenv("UNCLASSIFIED_VENDOR_CONTROL", private)
+    monkeypatch.setenv("PATH", private)
+    monkeypatch.setenv("VLLM_API_KEY", private)
+    state = LaunchState()
+    fields = state.fields()
+    assert private not in json.dumps([fields, state.diagnostics()])
+    assert "UNCLASSIFIED_VENDOR_CONTROL" in fields["launch_state_names"]
+    assert "VLLM_API_KEY" not in state.mapping
+    assert fields["launch_state_sha256"] == digest(state.mapping)
+    assert "launch_state" not in fields
+    latched = state.latched_diagnostic({"UNLISTED_SECRET": private, "TESSERA_SERVE_MODE": "resident"})
+    assert latched["names"] == ["TESSERA_SERVE_MODE", "UNLISTED_SECRET"]
+    assert latched["non_secret_values"] == {"TESSERA_SERVE_MODE": "resident"}
+    recorded = json.dumps([fields, state.diagnostics(), latched])
+    assert private not in recorded and hashlib.sha256(private.encode()).hexdigest() not in recorded
+
+
+def test_start_environment_recipe_has_no_job_values():
+    from experiments.numerics_rows.start_env import container_options, worker_command
+    from experiments.numerics_rows.env_proof import serve_options
+
+    first, second = container_options("/var/tmp/job-a"), container_options("/var/tmp/job-b")
+    assert first == serve_options("/var/tmp/job-a")
+    assert [v for v in first if "=" in v] == [v for v in second if "=" in v]
+    assert "--device" not in first
+    assert "--env PYTHONPATH=" not in worker_command("/retained/cell", "module", [])

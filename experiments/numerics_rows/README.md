@@ -78,21 +78,10 @@ C1 profile f2qwcb5HuDy completed in 765.44 s. Scale cases took 745.30 s; 2,829 `
 The A8S before/after CPU profiles must show equal case data before any speed claim or time estimate.
 Read each exit status, profile, Netdata series and log. Open questions are in [questions.md](questions.md).
 
-Launch-state inputs are captured in a fresh CLI worker before its first Tessera import.
-Use `--launch-levers PATH` to supply the file frozen with rule v2. Unknown `TESSERA_` names count.
-The TSV names each excluded diagnostic and each included non-prefixed launch control.
-Required selectors stay in the hash. A8S uses `TESSERA_SERVE_MODE=resident`; optional levers stay unset.
-The same input object must hold after prepare, before each native call, and before graph replay.
-A changed input makes the unit INVALID. `_LATCHED` is a diagnostic and does not enter the hash.
-
-`launch_state.digest` defines the exact compact ASCII JSON encoding. C1 stores the input object,
-its hash and the lever-file hash. Rows store the object/hash in `runtime` and the lever hash in `inputs`.
-The join compares all eleven rule bindings. Unit keys and separation borrowing include cell and launch state.
-The signed population and C1 must name full source-contract cell IDs; historical scope aliases are refused.
-For routed rows, each declared route count is profiled. The tool resolves complete profiler names to the
-loaded library's exact symbols, decodes PM from template argument eight, and compares it with the prepared
-gate, up and down layouts. A known mismatch is FAIL. Missing or ambiguous proof is UNATTESTED.
-The tool does not replace NOT_EXERCISED units with other evidence.
-
-If both C1 and row evidence are absent, the join reports the required base scopes as UNATTESTED
-with a null launch state. It cannot infer a worker environment or establish PASS from no evidence.
+Launch state uses the whole worker start environment under rule v2 draft 4.
+Only exact frozen exclusions do not count. Unknown names count.
+Captured names cannot change or disappear. Later additions are diagnostic.
+Receipts store sorted names and one digest. Values remain in worker memory.
+`launch-levers.README.md` describes the public-value list and the environment proof.
+`start_env.py` defines the common C1, H1, row and specified-serve constants.
+No source-read completeness gate remains. Math and compiled-code checks remain.
