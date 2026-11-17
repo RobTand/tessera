@@ -148,13 +148,13 @@ def _join(population, digest, manifests, receipts, contract):
             if any(case.get(k) != identity[k] for k in ("source_commit", "contract_sha256", "q1_table_sha256")):
                 raise Invalid("joined C1 and row execution identities differ")
         for unit in receipt["units"]:
-            check_math_binding(unit, receipt["runtime"])
             if unit.get("launch_state_sha256") != state:
                 raise Invalid("row unit launch state differs from its worker")
             if unit["unit_id"] != unit_identity(unit) or unit["outcome"] not in OUTCOMES or unit["role"] not in ("unit", "observation") or type(unit["admitted_by_v68"]) is not bool:
                 raise Invalid("row unit key or outcome is invalid")
             if unit["role"] != "unit" or unit["admitted_by_v68"] is not True:
                 continue
+            check_math_binding(unit, receipt["runtime"])
             module = unit.get("module")
             if module is None and len(selection) == 1:
                 module = selection[0]
