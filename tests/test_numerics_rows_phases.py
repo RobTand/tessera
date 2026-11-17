@@ -714,21 +714,40 @@ def test_feeder_anon_admission_falls_back_and_rechecks(anon_wave, canary_peak):
 
 
 @pytest.mark.parametrize('late_peak', (3 * 2**30, 4 * 2**30 + 1))
-def test_feeder_invalid_rows_hold_until_a_valid_fv1_probe(anon_wave, monkeypatch, late_peak):
+def test_feeder_invalid_rows_hold_until_a_valid_fv1_probe(anon_wave, late_peak):
     api, canary, rows, bookings, peaks, submits = anon_wave
     assert hasattr(api, 'anon_peak'), 'feature absent: sampled anon admission'
     root = Path(api.read(api.SETTINGS)['fv1e_jobmem_row_dirs'][0])
     (root/'f111-3.tsv').unlink()
     peaks.update(dict.fromkeys(rows, None))
-    def publish(seconds):
-        assert not (Path(rows['module-A'])/'prepare/jobid').exists()
-        jobid = (Path(rows['module-B'])/'prepare/jobid').read_text()
-        (root/(jobid+'-3.tsv')).write_text(f'0 0 0 0 0 30000000000 0 0 {late_peak} 50 ok')
-        peaks['module-A'] = 3 * 2**30
-    monkeypatch.setattr(api.time, 'sleep', publish)
+    peaks.update({'module-C': late_peak, 'module-A': 3 * 2**30})
     api.run(canary, bookings)
     prepares = [(m, n) for m, p, n in submits if p == 'prepare']
-    assert prepares[-1] == ('module-A', 'fv1' if late_peak > 4 * 2**30 else 'fv1e-sparklina')
+    if late_peak > 4 * 2**30:
+        assert prepares[-1] == ('module-A', 'fv1')
+    else:
+        assert prepares[:2] == [('module-B', 'fv1'), ('module-C', 'fv1')]
+        assert next(m for m, n in prepares if n != 'fv1') == 'module-A'
+
+
+def test_feeder_invalid_anon_wave_releases_held_row_last(anon_wave, monkeypatch):
+    api, canary, rows, bookings, peaks, submits = anon_wave
+    root = Path(api.read(api.SETTINGS)['fv1e_jobmem_row_dirs'][0])
+    (root/'f111-3.tsv').unlink()
+    peaks.update(dict.fromkeys(rows, None))
+    def pause(seconds):
+        assert False, 'an exhausted invalid anon wave must finish without HOLD'
+    monkeypatch.setattr(api.time, 'sleep', pause)
+    api.run(canary, bookings)
+    prepares = [(m, n) for m, p, n in submits if p == 'prepare']
+    assert len(prepares) == len(rows) and all(n == 'fv1' for _, n in prepares)
+    assert prepares[-1][0] == 'module-A'
+    events = [json.loads(line) for line in (canary/'counted-feeder.jsonl').read_text().splitlines()]
+    reason = 'no valid anon sample in this wave'
+    assert next(e for e in events if e['event'] == 'STOP')['reason'] == reason
+    assert next(e for e in events if e['event'] == 'EP_NOT_RUN')['reason'] == reason
+    assert api.read(canary/'counted-feeder-state.json')['fv1e_admission'] == 'stopped'
+    assert events[-1]['event'] == 'COMPLETE'
 
 
 def test_feeder_anon_rolling_stop_finishes_running_and_keeps_fv1(anon_wave):

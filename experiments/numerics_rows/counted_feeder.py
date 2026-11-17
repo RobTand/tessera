@@ -260,6 +260,10 @@ def run(canary, bookings):
     review_peak((canary/'prepare/jobid').read_text().strip(), 'fv1')
     pending = list(modules)
     while pending:
+        # A module leaves pending only after its prepare was collected and checked.
+        if state['fv1e_admission'] == 'pending' and pending == [first]:
+            state.update(fv1e_admission='stopped', fv1e_stop_reason='no valid anon sample in this wave')
+            event('STOP', reason=state['fv1e_stop_reason'], scope='new fv1e prepares only')
         e_lanes = [lane for lane in state['lanes'] if lane[0] != 'fv1' and not (canary/('pause-fv1e-' + lane[1])).exists()]
         if state['fv1e_admission'] == 'admitted' and 'ep_tensor_check' not in state and e_lanes:
             if not phase_job(first, 'prepare', *e_lanes[0]):
@@ -268,7 +272,7 @@ def run(canary, bookings):
             state['ep_tensor_check'] = tensor_subset_equal(canary/'prepare/results/prepare', Path(rows[first])/'prepare/results/prepare')
             event('EP_TENSOR_EQUAL', **state['ep_tensor_check'])
         if state['fv1e_admission'] == 'stopped' and 'ep_tensor_check' not in state:
-            state['ep_tensor_check'] = {'ran': False, 'reason': 'no fv1e in this wave'}
+            state['ep_tensor_check'] = {'ran': False, 'reason': state.get('fv1e_stop_reason', 'no fv1e in this wave')}
             event('EP_NOT_RUN', **state['ep_tensor_check'])
         eligible = [m for m in pending if m != first]
         if 'ep_tensor_check' in state and first in pending:
