@@ -153,6 +153,8 @@ class MeasuredTableTest(OracleChecks):
         from experiments.numerics_rows.cases import DTable
         path = Path(os.environ.get('NUMERICS_Q1', '/inputs/q1.json'))
         record = next(t for t in json.loads(path.read_text())['tables'] if t['key'] == 'e4m3mma')
+        for field in ('dom_path', 'd_table_path'):
+            record[field] = str(path.parent / record[field])
         cls.table = DTable(record)
 
     def test_batch_upper_up_clamp_edges(self):

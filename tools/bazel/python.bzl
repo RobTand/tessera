@@ -45,6 +45,7 @@ def ts_py_test(name, path, library, lane, args = [], tags = [], deps = [], data 
     """
     extra = TEST_INPUTS.get("//%s:%s" % (native.package_name(), name.removesuffix(".bytes")))
     extra_tags, exec_properties, env = nonhermetic(name)
+    env.update(getattr(extra, "env", {}) if extra else {})
     py_test(
         name = name,
         main = "//tools/bazel:python_runner.py",

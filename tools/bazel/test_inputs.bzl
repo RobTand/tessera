@@ -7,6 +7,7 @@ how an entry is found. Keep each entry to the files named, and the reason true.
 Entries are keyed by the test file's target; its `.bytes` lane shares them.
 `packages` names pip packages from tools/bazel/requirements.txt that only the
 torch-lane target installs.
+`env` supplies declared runfile locations to readers with explicit input names.
 """
 
 _CONSTRUCTION_T8 = "//:docs/measurements/construction/2026-10-07/glm53-flash-4layer-selected-t8.json"
@@ -15,6 +16,15 @@ _CONSTRUCTION_REASON = "experiments/t8r_speed/bench_dense_module.py reads this c
 _PRISMAQUANT = "it reads PrismaQuant, pinned in tools/ci/gate_prismaquant_requirements.txt; its own dependencies are heavy, so only the tests that read it carry it."
 
 TEST_INPUTS = {
+    "//tests:test_numerics_integer": struct(
+        data = [
+            "//tests:data/numerics_rows/q1.json",
+            "//tests:data/numerics_rows/dom.f32",
+            "//tests:data/numerics_rows/D-e4m3mma.f32",
+        ],
+        env = {"NUMERICS_Q1": "$(rootpath //tests:data/numerics_rows/q1.json)"},
+        reason = "The measured Q1 record names the byte-pinned D tables used by the Fraction oracle checks.",
+    ),
     "//tests:test_glm_requalification_v68": struct(
         data = [
             "//experiments:results/glm53_requal_v68_scope.json",

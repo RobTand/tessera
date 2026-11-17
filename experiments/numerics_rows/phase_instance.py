@@ -7,6 +7,7 @@ import subprocess
 import sys
 
 TOOLS = '/mnt/shared/flux-migration/lead-1114/tools'
+INSTANCE = Path('/mnt/shared/flux-migration/INSTANCE')
 
 
 def client(name):
@@ -57,7 +58,7 @@ def submit(job, args):
 
 
 def check(job):
-    prefix = Path('/mnt/shared/flux-migration/INSTANCE').read_text().split()[0]
+    prefix = INSTANCE.read_text().split()[0]
     command = ['env', f'PATH={prefix}/install/bin:{prefix}/deps/bin:/usr/bin:/bin',
                f'LD_LIBRARY_PATH={prefix}/install/lib:{prefix}/deps/lib', f'{prefix}/install/bin/flux']
     bound = json.loads((job/'instance.json').read_text())

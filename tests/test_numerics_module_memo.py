@@ -4,6 +4,7 @@ import json
 
 import pytest
 
+from experiments.numerics_rows.batch_evaluator import BatchEvaluator
 from experiments.numerics_rows.scale_index import ModuleMemo, evaluate, joint_coverage, make_plan, passes, scale_values
 
 
@@ -70,6 +71,5 @@ def test_module_memo_refuses_another_table():
 
 
 def test_module_memo_uses_batch_by_default():
-    from experiments.numerics_rows.batch_evaluator import BatchEvaluator
     memo = ModuleMemo(None)
     assert isinstance(memo.evaluator([], [], None), BatchEvaluator)

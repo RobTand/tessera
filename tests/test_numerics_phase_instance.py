@@ -10,6 +10,9 @@ from experiments.numerics_rows.phase_artifact import tensor_subset_equal
 
 
 def test_prepare_capture_bind_instances_and_hold_until_recorded(tmp_path, monkeypatch):
+    instance = tmp_path/'INSTANCE'
+    instance.write_text('/fixture/flux /fixture/run\n')
+    monkeypatch.setattr(api, 'INSTANCE', instance)
     calls, live = [], ['fv1e-sparklina']
     def query(command, *args):
         name = live[0] if command[0] == 'env' else 'fv1e-' + command[1] if len(command) == 2 else 'fv1'

@@ -8,6 +8,7 @@ import importlib
 from types import SimpleNamespace
 
 import pytest
+import torch
 
 from experiments.numerics_rows import common, row
 from experiments.numerics_rows.common import BoundaryRecorder, Invalid
@@ -133,7 +134,6 @@ CUTLASS = "void cutlass::Kernel<at::cuda::ScaledMM>()"
 
 @pytest.fixture
 def profiled(code, tmp_path, monkeypatch):
-    import torch
     from experiments import routed_pair_oracle
     from experiments.t4_code import sass_dump
 
@@ -305,7 +305,6 @@ def test_join_refuses_incomplete_unit_code_bindings(code, monkeypatch, mutation)
 
 
 def test_image_origin_hashes_the_executable_mapped_file_at_its_image_path(code, tmp_path, monkeypatch):
-    import torch
     path = Path(torch._C.__file__).resolve()
     inventory = tmp_path / "image.json"
     common.write_json(inventory, {"image_digest": "image", "libraries": [{"path": str(path), "sha256": common.sha256(path)}]})

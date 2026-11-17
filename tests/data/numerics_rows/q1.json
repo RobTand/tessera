@@ -1,0 +1,28 @@
+{
+  "source_q1_sha256": "bb1e488e8986f3d34c25c8a07116b42f91919f08a753194ecfda1d2d92913d59",
+  "source_job": "tessera-1717-Q1-N-A8S-d5976c1d-20261116T154250Z",
+  "image_digest": "sha256:5be13705acaecc7b4aaf342a84f80d67844c9970ff8375bf9fbeecc9c98ce84a",
+  "tables": [
+    {
+      "key": "e4m3mma",
+      "L_bits": 1092616192,
+      "dom_size": 49313,
+      "dom_path": "dom.f32",
+      "dom_sha256": "dc53c5ff74c2658625bbcbc8c8f3786fd2558f116bfc9781f91aec846373ad3c",
+      "d_table_path": "D-e4m3mma.f32",
+      "d_table_sha256": "e8504e1bbabb7e2bf5e7e6df22af863e4d65b29803216c39f56c74b8f245c58f",
+      "d_nondecreasing_0_L": true,
+      "d_nonpositive_negative_gf": true,
+      "d_nonnegative_nonnegative_gf": true,
+      "nonzero_act_has_uf_sign_positive_gf": true,
+      "finite_certificate": {
+        "elements": 49313,
+        "finite": true,
+        "magnitude_bounded": true,
+        "held": true
+      },
+      "library_so_sha256": "4febd7e60d818787f3f59852b5fa29946171c41b7d4c8cda6e5ec61a898481bf",
+      "probe_sha256": "a143fc66d25e951bd55a34ec7a123b96c79603d16dab01cebfeb5a85aee0384d"
+    }
+  ]
+}
