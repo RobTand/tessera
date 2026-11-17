@@ -1954,35 +1954,9 @@ ts_py_library(
 )
 
 ts_py_library(
-    name = "numerics_rows/build_cycle",
+    name = "numerics_rows/batch_evaluator_cycle",
     srcs = [
-        "numerics_rows/build.py",
-        "numerics_rows/canonical.py",
-    ],
-    data = [
-        "numerics_rows/swiglu_probe.cu",
-    ],
-    deps = [
-        "//src/tessera:__init___cycle",
-        "//src/tessera:bf16_route_cycle",
-        ":numerics_rows/common",
-    ],
-)
-
-ts_py_library(
-    name = "numerics_rows/c1_campaign",
-    srcs = [
-        "numerics_rows/c1_campaign.py",
-    ],
-    deps = [
-        ":numerics_rows/cases_cycle",
-        ":numerics_rows/common",
-    ],
-)
-
-ts_py_library(
-    name = "numerics_rows/cases_cycle",
-    srcs = [
+        "numerics_rows/batch_evaluator.py",
         "numerics_rows/cases.py",
         "numerics_rows/dense_phases.py",
         "numerics_rows/h1.py",
@@ -2018,6 +1992,8 @@ ts_py_library(
         ":numerics_rows/dependency_code",
         ":numerics_rows/gpu_time",
         ":numerics_rows/launch_state",
+        ":numerics_rows/module_io",
+        ":numerics_rows/phase_instance",
         ":numerics_rows/quantizers",
         ":numerics_rows/reference",
         ":numerics_rows/sass_slice",
@@ -2026,6 +2002,33 @@ ts_py_library(
         ":t4_code/fp4_arithmetic_attest",
         ":t4_code/fused_e2m1_check",
         ":t4_code/sass_dump",
+    ],
+)
+
+ts_py_library(
+    name = "numerics_rows/build_cycle",
+    srcs = [
+        "numerics_rows/build.py",
+        "numerics_rows/canonical.py",
+    ],
+    data = [
+        "numerics_rows/swiglu_probe.cu",
+    ],
+    deps = [
+        "//src/tessera:__init___cycle",
+        "//src/tessera:bf16_route_cycle",
+        ":numerics_rows/common",
+    ],
+)
+
+ts_py_library(
+    name = "numerics_rows/c1_campaign",
+    srcs = [
+        "numerics_rows/c1_campaign.py",
+    ],
+    deps = [
+        ":numerics_rows/batch_evaluator_cycle",
+        ":numerics_rows/common",
     ],
 )
 
@@ -2048,7 +2051,12 @@ ts_py_library(
     srcs = [
         "numerics_rows/counted_feeder.py",
     ],
+    data = [
+        "numerics_rows/feeder-settings.json",
+    ],
     deps = [
+        ":numerics_rows/batch_evaluator_cycle",
+        ":numerics_rows/phase_instance",
         ":numerics_rows/prepare_split",
     ],
 )
@@ -2126,7 +2134,7 @@ ts_py_library(
         "numerics_rows/job_receipt.py",
     ],
     deps = [
-        ":numerics_rows/cases_cycle",
+        ":numerics_rows/batch_evaluator_cycle",
         ":numerics_rows/common",
         ":numerics_rows/quantizers",
     ],
@@ -2138,7 +2146,7 @@ ts_py_library(
         "numerics_rows/join.py",
     ],
     deps = [
-        ":numerics_rows/cases_cycle",
+        ":numerics_rows/batch_evaluator_cycle",
         ":numerics_rows/common",
         ":numerics_rows/dependency_code",
         ":numerics_rows/launch_state",
@@ -2156,6 +2164,23 @@ ts_py_library(
     deps = [
         ":numerics_rows/common",
         ":numerics_rows/start_env",
+    ],
+)
+
+ts_py_library(
+    name = "numerics_rows/module_io",
+    srcs = [
+        "numerics_rows/module_io.py",
+    ],
+    deps = [
+        ":numerics_rows/common",
+    ],
+)
+
+ts_py_library(
+    name = "numerics_rows/phase_instance",
+    srcs = [
+        "numerics_rows/phase_instance.py",
     ],
 )
 
@@ -2185,7 +2210,7 @@ ts_py_library(
         "numerics_rows/README.md",
     ],
     deps = [
-        ":numerics_rows/cases_cycle",
+        ":numerics_rows/batch_evaluator_cycle",
         ":numerics_rows/common",
         ":numerics_rows/start_env",
     ],
@@ -2198,9 +2223,10 @@ ts_py_library(
     ],
     data = [
         "numerics_rows/README.md",
+        "numerics_rows/feeder-settings.json",
     ],
     deps = [
-        ":numerics_rows/cases_cycle",
+        ":numerics_rows/batch_evaluator_cycle",
         ":numerics_rows/common",
         ":numerics_rows/launch_state",
         ":numerics_rows/prepare_job",
@@ -2214,7 +2240,7 @@ ts_py_library(
         "numerics_rows/profile_c1.py",
     ],
     deps = [
-        ":numerics_rows/cases_cycle",
+        ":numerics_rows/batch_evaluator_cycle",
         ":numerics_rows/common",
     ],
 )
