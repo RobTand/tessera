@@ -130,7 +130,7 @@ def test_one_byte_in_an_aliased_payload_changes_identity():
 @pytest.mark.parametrize("kind,size", [(8, 32), (1, 0)])
 def test_nobits_and_zero_size_have_no_file_payload(kind, size):
     result = canonical_identity(aliased_elf(kind=kind, start=1, size=size))
-    assert result["alias_groups"] == []
+    assert result.get("alias_groups") == []
     section = result["sections"][5]
     assert section["sh_size"] == size and section["canonical_size"] == 0
     assert section["payload_source_section"] is None

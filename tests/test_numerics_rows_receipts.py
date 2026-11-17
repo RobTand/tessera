@@ -1970,7 +1970,7 @@ def test_capture_self_visibility_retries_before_stopping(monkeypatch, failure):
     monkeypatch.setattr(gpu_time.time, "sleep", delays.append)
     report = gpu_time.self_visibility(fake_torch)
     assert report["verdict"] == "VISIBLE" and report["compute_process_count"] == 1
-    assert report["nvml_busy_percent"] == 96 and report["attempts"] == 3
+    assert report.get("attempts") == 3 and report.get("nvml_busy_percent") == 96
     assert len(calls) == 3 and delays == [1, 1]
 
 

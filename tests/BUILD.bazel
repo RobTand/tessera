@@ -2134,6 +2134,7 @@ ts_py_library(
         "test_numerics_rows_dependency_code.py",
         "test_numerics_rows_join.py",
         "test_numerics_rows_phases.py",
+        "test_numerics_rows_pre_fix.py",
         "test_numerics_rows_receipts.py",
         "test_numerics_rows_sass.py",
         "test_original_wire_generation_origins.py",
@@ -10393,6 +10394,7 @@ ts_py_library(
         "test_numerics_rows_dependency_code.py",
         "test_numerics_rows_join.py",
         "test_numerics_rows_phases.py",
+        "test_numerics_rows_pre_fix.py",
         "test_numerics_rows_receipts.py",
         "test_numerics_rows_sass.py",
         "test_original_wire_generation_origins.py",
@@ -14939,6 +14941,38 @@ ts_py_library(
         "//experiments:pair",
         "//experiments:routed_pair_oracle",
         "//src/tessera:__init___cycle",
+    ],
+)
+
+ts_py_test(
+    name = "test_numerics_rows_pre_fix",
+    path = "tests/test_numerics_rows_pre_fix.py",
+    library = ":test_numerics_rows_pre_fix_lib",
+    lane = "torch",
+    args = [
+        "--budget='{\"enforce\":true,\"seconds\":80,\"slow\":{}}'",
+    ],
+    timeout = "moderate",
+)
+
+ts_py_test(
+    name = "test_numerics_rows_pre_fix.bytes",
+    path = "tests/test_numerics_rows_pre_fix.py",
+    library = ":test_numerics_rows_pre_fix_lib",
+    lane = "bytes",
+    args = [
+        "--budget='{\"enforce\":true,\"seconds\":80,\"slow\":{}}'",
+    ],
+    timeout = "moderate",
+)
+
+ts_py_library(
+    name = "test_numerics_rows_pre_fix_lib",
+    srcs = [
+        "test_numerics_rows_pre_fix.py",
+    ],
+    deps = [
+        "//experiments:numerics_rows/pre_fix",
     ],
 )
 

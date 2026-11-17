@@ -7,6 +7,7 @@
     ]
   },
   "pre-fix-B1": {
+    "expected_refusals": {"test_run_refuses_a_changed_compile_path_before_any_case": ["SystemExit"]},
     "file": "test_numerics_rows_receipts.py",
     "expected": 3,
     "nodes": [
@@ -26,6 +27,7 @@
     ]
   },
   "pre-fix-coverage": {
+    "expected_refusals": {"test_run_refuses_a_c1_source_mismatch": ["SystemExit"]},
     "file": "test_numerics_rows_receipts.py",
     "expected": 24,
     "nodes": [
@@ -50,6 +52,7 @@
     ]
   },
   "pre-fix-canonical-verifier": {
+    "expected_refusals": {"test_row_refuses_served_code_identity_before_output_checks": ["Invalid"]},
     "file": "test_numerics_rows_receipts.py",
     "expected": 2,
     "nodes": [
@@ -71,6 +74,7 @@
     ]
   },
   "pre-fix-alias": {
+    "expected_refusals": {"test_exact_payload_alias_keeps_both_full_headers": ["ValueError"],"test_one_byte_in_an_aliased_payload_changes_identity": ["ValueError"]},
     "file": "test_numerics_rows_canonical.py",
     "expected": 5,
     "nodes": [
@@ -105,6 +109,7 @@
     ]
   },
   "pre-fix-draft17": {
+    "expected_refusals": {"test_missing_evidence_contributes_unattested": ["Invalid"]},
     "file": "test_numerics_rows_draft17_before.py",
     "expected": 7,
     "nodes": [
@@ -132,6 +137,7 @@
     ]
   },
   "pre-fix-campaign-revision": {
+    "expected_refusals": {"test_p_accepts_the_explicit_campaign_commit": ["SystemExit"]},
     "file": "test_numerics_rows_receipts.py",
     "expected": 5,
     "nodes": [
@@ -142,6 +148,7 @@
     ]
   },
   "pre-fix-launch-worker": {
+    "expected_refusals": {"test_row_refuses_a_different_frozen_lever_file": ["SystemExit"],"test_row_refuses_c1_launch_state_or_policy_before_cases": ["SystemExit"],"test_row_refuses_missing_required_residency_selector": ["SystemExit"]},
     "file": "test_numerics_rows_receipts.py",
     "expected": 22,
     "nodes": [
@@ -181,6 +188,7 @@
     ]
   },
   "pre-fix-dependency-worker": {
+    "expected_refusals": {"test_row_refuses_foreign_math_settings_before_cases": ["SystemExit"]},
     "file": "test_numerics_rows_receipts.py",
     "expected": 24,
     "nodes": [
@@ -208,6 +216,7 @@
     ]
   },
   "pre-fix-dependency-code": {
+    "expected_refusals": {"test_unattested_code_survives_native_boundary": ["BoundaryError"]},
     "file": "test_numerics_rows_dependency_code.py",
     "expected": 22,
     "nodes": [
@@ -219,6 +228,7 @@
     ]
   },
   "pre-fix-draft4-environment": {
+    "expected_refusals": {"test_code_added_names_do_not_change_the_start_binding": ["Invalid"]},
     "file": "test_numerics_rows_receipts.py",
     "expected": 6,
     "nodes": [
@@ -268,6 +278,7 @@
     ]
   },
   "pre-fix-review-M2": {
+    "expected_refusals": {"test_row_refuses_a_different_h1_launch_binding_before_cases": ["SystemExit"]},
     "file": "test_numerics_rows_receipts.py",
     "expected": 3,
     "nodes": [
@@ -282,6 +293,7 @@
     ]
   },
   "pre-fix-split-review": {
+    "expected_refusals": {"test_split_first_cuda_error_finishes_compare_as_fail": ["Invalid"]},
     "file": "test_numerics_rows_phases.py",
     "expected": 6,
     "nodes": [
@@ -300,6 +312,7 @@
     ]
   },
   "pre-fix-file-symbol-audit": {
+    "expected_refusals": {"test_image_symbol_audit_reads_files_without_loading_driver": ["OSError"]},
     "file": "test_numerics_rows_dependency_code.py",
     "expected": 1,
     "nodes": [

@@ -2160,6 +2160,13 @@ ts_py_library(
 )
 
 ts_py_library(
+    name = "numerics_rows/pre_fix",
+    srcs = [
+        "numerics_rows/pre_fix.py",
+    ],
+)
+
+ts_py_library(
     name = "numerics_rows/prepare_env",
     srcs = [
         "numerics_rows/prepare_env.py",

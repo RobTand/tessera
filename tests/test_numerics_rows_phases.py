@@ -262,6 +262,7 @@ def test_capture_refusal_for_a_nonfinite_prepared_reference(tmp_path):
 
 
 def test_host_phase_negative_reference_control_allocates_no_device(monkeypatch):
+    phase_api()
     from experiments.numerics_rows.h1 import negative_controls
     calls = []
     original = torch.tensor
