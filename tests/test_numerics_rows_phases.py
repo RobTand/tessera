@@ -251,6 +251,26 @@ def test_shared_dense_roster_prepares_every_case_without_native_calls(tmp_path):
     assert unit["exact"]["chunk_pairs"]["rows"] == 1
 
 
+@pytest.mark.parametrize('structure', ('dense', 'routed'))
+def test_separation_claim_is_independent_of_incomplete_scale_plan(monkeypatch, structure):
+    from experiments.numerics_rows import run_routed
+    record = {'complete': True, 'both': 1, 'recipes': []}
+    manifest = {'complete': True, 'roles': [{'expert': 0, 'separation': record,
+        'scale_index': [{'reads': 1, 'reads_covered': 1}]}]}
+    adapter = SimpleNamespace(cols=1, inter=1, experts=24)
+    monkeypatch.setattr(run_routed, 'composition', lambda *a: None)
+    for name in ('tensor', 'zeros'):
+        original = getattr(torch, name)
+        monkeypatch.setattr(torch, name, lambda *a, _call=original, **kw: _call(*a, **{**kw, 'device': 'cpu'}))
+    for scale_complete in (True, False):
+        manifest['complete'] = scale_complete
+        manifest['roles'][0]['scale_index'][0]['reads_covered'] = int(scale_complete)
+        unit = row.new_unit({'m_config': {'M': 1, 'chunk_size': 1, 'k_split': 1, 'route_counts': [1]}})
+        (row.dense_cases if structure == 'dense' else run_routed.run)(adapter, unit, manifest, None)
+        assert not unit['unattested'], 'complete separation must not inherit another section\'s incomplete claim'
+        assert not unit['invalid']
+
+
 def test_capture_refusal_for_a_nonfinite_prepared_reference(tmp_path):
     api = phase_api()
     from experiments.numerics_rows.dense_phases import preflight_case
@@ -594,6 +614,137 @@ def test_dense_prepare_waits_for_pending_aarch64_jobs(monkeypatch):
     assert api.excludes_sparks({'properties': ['host:dl380g10']})
     assert not api.excludes_sparks({})
     assert not api.excludes_sparks({'or': [{'properties': ['amd64']}, {'properties': ['aarch64']}]})
+
+
+def test_dense_admission_ignores_held_jobs_but_waits_for_active_jobs(monkeypatch):
+    from experiments.numerics_rows import counted_feeder as api
+    polls, queried, pauses = [], [], []
+    def query(command, **kw):
+        if command[1] == 'jobs':
+            polls.append(True)
+            return json.dumps({'jobs': [{'id': 11, 'urgency': 0}, {'id': 22, 'urgency': 8}]} if len(polls) == 1 else {'jobs': []})
+        queried.append(command[3])
+        return json.dumps({'attributes': {'system': {'constraints': {'properties': ['aarch64']}}}})
+    monkeypatch.setattr(api.subprocess, 'check_output', query)
+    monkeypatch.setattr(api, 'time', SimpleNamespace(monotonic=lambda: 0, sleep=pauses.append))
+    api.wait_dense_slot()
+    assert queried == ['22']
+    assert pauses == [15]
+
+
+def test_dense_admission_reports_one_stall_after_thirty_minutes(monkeypatch, capsys):
+    from experiments.numerics_rows import counted_feeder as api
+    elapsed, polls, stalls = [0], [], []
+    def query(command, **kw):
+        if command[1] == 'jobs':
+            polls.append(True)
+            return json.dumps({'jobs': [{'id': 33, 'urgency': 8}]} if len(polls) <= 4 else {'jobs': []})
+        return json.dumps({'attributes': {'system': {'constraints': {}}}})
+    def pause(seconds):
+        stalls.extend((elapsed[0], line) for line in capsys.readouterr().out.splitlines() if 'STALL' in line)
+        elapsed[0] += 900
+    monkeypatch.setattr(api.subprocess, 'check_output', query)
+    monkeypatch.setattr(api, 'time', SimpleNamespace(monotonic=lambda: elapsed[0], sleep=pause))
+    api.wait_dense_slot()
+    assert len(stalls) == 1, 'one STALL report is required'
+    assert stalls[0][0] == 1800 and '33' in stalls[0][1]
+
+
+@pytest.fixture
+def fv1e_client(tmp_path, monkeypatch):
+    import shlex
+    from experiments.numerics_rows import counted_feeder as api
+    log, state, client = tmp_path / 'calls', tmp_path / 'polls', tmp_path / 'fxe.sh'
+    reason = tmp_path / 'reason'
+    client.write_text('#!/bin/sh\nprintf "%s\\n" "$*" >> ' + shlex.quote(str(log)) + '\n'
+        'if test "$2 $3" = "resource drain"; then\n'
+        '  if test "$4" = 0; then printf "%s\\n" "$5" > ' + shlex.quote(str(reason)) + ';\n'
+        '  else cat ' + shlex.quote(str(reason)) + '; fi\nfi\n'
+        'if test "$2" = jobs; then\n'
+        '  if test -e ' + shlex.quote(str(state)) + '; then echo \'{"jobs":[]}\';\n'
+        '  else touch ' + shlex.quote(str(state)) + '; echo \'{"jobs":[{"id":1}]}\'; fi\nfi\n')
+    client.chmod(0o700)
+    monkeypatch.setattr(api, 'FXE', str(client), raising=False)
+    elapsed, pauses = [0], []
+    def pause(seconds):
+        elapsed[0] += seconds
+        pauses.append(seconds)
+    monkeypatch.setattr(api, 'time', SimpleNamespace(monotonic=lambda: elapsed[0], sleep=pause))
+    return api, log, pauses
+
+
+@pytest.mark.parametrize('memory', (32, 36, 37))
+def test_fv1e_drain_only_above_memory_limit(fv1e_client, memory):
+    api, log, pauses = fv1e_client
+    assert hasattr(api, 'drain_ecores_before_submit'), 'feature absent: fv1e memory admission'
+    api.drain_ecores_before_submit(memory, 'flux submit --requires=host:sparklina command', 'test-drain')
+    calls = log.read_text().splitlines() if log.exists() else []
+    if memory <= 36:
+        assert calls == [] and pauses == []
+    else:
+        assert calls[0].startswith('sparklina resource drain 0 ')
+        assert calls[1:] == ['sparklina jobs --json', 'sparklina jobs --json']
+        assert pauses
+
+
+def test_fv1e_large_job_requires_one_spark(fv1e_client):
+    api, log, pauses = fv1e_client
+    assert hasattr(api, 'drain_ecores_before_submit'), 'feature absent: fv1e memory admission'
+    for submit in ('flux submit', 'flux submit --requires=host:dl380g10',
+                   'flux submit --requires=host:sparky --requires=host:sparklina'):
+        with pytest.raises(api.FeederError, match='FV1E_REQUIRES_ONE_SPARK_HOST'):
+            api.drain_ecores_before_submit(37, submit, 'test-drain')
+    assert not log.exists() and not pauses
+
+
+def test_fv1e_drain_refuses_when_jobs_do_not_end(fv1e_client, monkeypatch):
+    api, log, pauses = fv1e_client
+    assert hasattr(api, 'drain_ecores_before_submit'), 'feature absent: fv1e memory admission'
+    monkeypatch.setattr(api.subprocess, 'check_output', lambda *a, **kw: '{"jobs":[{"id":1}]}')
+    with pytest.raises(api.FeederError, match='FV1E_DRAIN_TIMEOUT'):
+        api.drain_ecores_before_submit(37, 'flux submit --requires=host:sparky command', 'test-drain')
+    assert log.read_text().startswith('sparky resource drain 0 ')
+    assert 0 < sum(pauses) <= 300
+
+
+@pytest.mark.parametrize('reason', ('test-drain', 'TP2 smoke'))
+def test_fv1e_undrain_keeps_another_owners_reason(fv1e_client, reason):
+    api, log, _ = fv1e_client
+    assert hasattr(api, 'undrain_ecores'), 'feature absent: owned fv1e undrain'
+    drain = api.drain_ecores_before_submit(37, 'flux submit --requires=host:sparky command', 'test-drain')
+    (log.parent / 'reason').write_text(reason + '\n')
+    api.undrain_ecores(**drain)
+    releases = [line for line in log.read_text().splitlines() if 'resource undrain' in line]
+    assert releases == (['sparky resource undrain 0 test-drain'] if reason == 'test-drain' else [])
+
+
+@pytest.mark.parametrize('failure', (None, 'native', 'artifact'))
+def test_feeder_undrains_only_after_clean_and_checks(feeder_booking, monkeypatch, failure):
+    api, canary, rowdir, bookings = feeder_booking
+    assert hasattr(api, 'undrain_ecores'), 'feature absent: owned fv1e undrain'
+    requested = json.loads(bookings.read_text())
+    requested['module-A']['capture']['memory_gib'] = 37
+    bookings.write_text(json.dumps(requested))
+    events = []
+    monkeypatch.setattr(api, 'drain_ecores_before_submit', lambda memory, *a: {'host': 'sparky', 'reason': 'test-drain'} if memory > 36 else None)
+    monkeypatch.setattr(api, 'undrain_ecores', lambda **kw: events.append('undrain'))
+    original = api.subprocess.run
+    def run(command, **kw):
+        if command[:3] == ['flux', 'job', 'wait-event']:
+            events.append('clean')
+        return original(command, **kw)
+    monkeypatch.setattr(api.subprocess, 'run', run)
+    if failure == 'native':
+        (rowdir / 'capture/results/podman-exit.txt').write_text('1')
+    if failure == 'artifact':
+        (rowdir / 'capture/results/capture/phase.json').write_text('{"completion":false}')
+    if failure:
+        with pytest.raises(api.FeederError, match='COUNTED_PHASE_'):
+            api.run(canary, bookings)
+        assert 'undrain' not in events
+    else:
+        api.run(canary, bookings)
+        assert events == ['clean', 'clean', 'undrain', 'clean']
 
 
 def test_dense_prepare_booking_and_low_urgency(feeder_booking):

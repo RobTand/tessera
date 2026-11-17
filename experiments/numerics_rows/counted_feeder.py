@@ -10,6 +10,9 @@ import subprocess
 import sys
 import time
 
+FXE = '/mnt/shared/flux-migration/lead-1114/tools/fxe.sh'
+SETTINGS = Path(__file__).with_name('feeder-settings.json')
+
 
 def sha(path):
     with Path(path).open('rb') as stream:
@@ -41,17 +44,58 @@ def excludes_sparks(constraints):
 
 
 def wait_dense_slot():
+    settings = read(SETTINGS)
+    started, reported = time.monotonic(), False
     while True:
         jobs = json.loads(subprocess.check_output(['flux', 'jobs', '--json', '--filter=pending'], text=True))['jobs']
-        specs = [json.loads(subprocess.check_output(['flux', 'job', 'info', str(j['id']), 'jobspec'], text=True)) for j in jobs]
-        if all(excludes_sparks(s.get('attributes', {}).get('system', {}).get('constraints', {})) for s in specs):
+        blocking = []
+        for job in jobs:
+            if job.get('urgency') == 0:
+                continue
+            spec = json.loads(subprocess.check_output(['flux', 'job', 'info', str(job['id']), 'jobspec'], text=True))
+            if not excludes_sparks(spec.get('attributes', {}).get('system', {}).get('constraints', {})):
+                blocking.append(str(job['id']))
+        if not blocking:
             return
-        print('DEFER_DENSE_SUBMIT: pending aarch64 or portable job', flush=True)
-        time.sleep(15)
+        if not reported and time.monotonic() - started >= settings['stall_seconds']:
+            print('STALL: pending aarch64 or portable jobs ' + ','.join(blocking), flush=True)
+            reported = True
+        time.sleep(settings['pending_poll_seconds'])
+
+
+def drain_ecores_before_submit(memory_gib, submit, reason):
+    settings = read(SETTINGS)
+    if memory_gib <= settings['fv1_memory_without_fv1e_drain_gib']:
+        return None
+    hosts = re.findall(r'--requires=host:([\w-]+)', submit)
+    if len(hosts) != 1 or hosts[0] not in ('sparky', 'sparklina'):
+        raise FeederError('FV1E_REQUIRES_ONE_SPARK_HOST')
+    host = hosts[0]
+    subprocess.run([FXE, host, 'resource', 'drain', '0', reason], check=True, timeout=settings['client_timeout_seconds'])
+    deadline = time.monotonic() + settings['drain_timeout_seconds']
+    while True:
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            raise FeederError('FV1E_DRAIN_TIMEOUT')
+        try:
+            jobs = json.loads(subprocess.check_output([FXE, host, 'jobs', '--json'], text=True, timeout=min(remaining, settings['client_timeout_seconds'])))['jobs']
+        except subprocess.TimeoutExpired:
+            raise FeederError('FV1E_DRAIN_TIMEOUT') from None
+        if not jobs:
+            return {'host': host, 'reason': reason}
+        time.sleep(min(max(0, deadline - time.monotonic()), settings['drain_poll_seconds']))
+
+
+def undrain_ecores(host, reason):
+    timeout = read(SETTINGS)['client_timeout_seconds']
+    current = subprocess.check_output([FXE, host, 'resource', 'drain', '--no-header', '--include=0', '--format={reason}'], text=True, timeout=timeout).rstrip('\n')
+    if current == reason:
+        subprocess.run([FXE, host, 'resource', 'undrain', '0', reason], check=True, timeout=timeout)
 
 
 def run(canary, bookings):
     canary = Path(canary)
+    settings = read(SETTINGS)
     lock = (canary / 'counted-feeder.lock').open('w')
     fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
     rows = read(canary / 'counted-rows.json')
@@ -65,10 +109,10 @@ def run(canary, bookings):
             if (set(shape) != {'memory_gib', 'minutes'} or any(type(v) is not int for v in shape.values())
                     or shape['memory_gib'] <= 0 or shape['minutes'] <= 1):
                 raise FeederError('BOOKING_SHAPE_INVALID')
-        if phases['prepare']['memory_gib'] != 8:
-            raise FeederError('DENSE_PREPARE_REQUIRES_8_GIB')
-        if phases['capture']['minutes'] != 15:
-            raise FeederError('DENSE_CAPTURE_REQUIRES_15_MINUTES')
+        if phases['prepare']['memory_gib'] != settings['fv1_prepare_memory_gib']:
+            raise FeederError(f"DENSE_PREPARE_REQUIRES_{settings['fv1_prepare_memory_gib']}_GIB")
+        if phases['capture']['minutes'] != settings['capture_minutes']:
+            raise FeederError(f"DENSE_CAPTURE_REQUIRES_{settings['capture_minutes']}_MINUTES")
     state_path = canary / 'counted-feeder-state.json'
     state = read(state_path) if state_path.exists() else {'bookings_sha256': sha(bookings), 'instance_sha256': sha('/mnt/shared/flux-migration/INSTANCE'), 'jobs': {}}
     if state['bookings_sha256'] != sha(bookings) or state['instance_sha256'] != sha('/mnt/shared/flux-migration/INSTANCE'):
@@ -95,6 +139,7 @@ def run(canary, bookings):
         for phase in ('prepare', 'capture', 'compare'):
             job = directory / phase
             key = module + ':' + phase
+            drain = state['jobs'].get(key, {}).get('fv1e_drain')
             if (job / 'jobid').exists():
                 jobid = (job / 'jobid').read_text().strip()
                 if not re.fullmatch(r'f[1-9A-HJ-NP-Za-km-z]+', jobid):
@@ -107,15 +152,17 @@ def run(canary, bookings):
                 submit = replace_once(r' -t\d+m ', f' -t{shape["minutes"]}m ', submit)
                 submit = replace_once(r'slot/\[core=1;memory=\d+(;gpu=1)?\]',
                     'slot/[core=1;memory=' + str(shape['memory_gib']) + (';gpu=1]' if phase == 'capture' else ']'), submit)
-                submit = replace_once(r'--urgency=\d+', '--urgency=8', submit) if '--urgency=' in submit else replace_once(r'flux submit\b', 'flux submit --urgency=8', submit)
+                urgency = '--urgency=' + str(settings['urgency'])
+                submit = replace_once(r'--urgency=\d+', urgency, submit) if '--urgency=' in submit else replace_once(r'flux submit\b', 'flux submit ' + urgency, submit)
                 (job / 'job.sh').write_text(script)
                 (job / 'submit-after-review.sh').write_text(submit)
                 files = [*directory.glob('*.py'), *directory.glob('*/*.sh')]
                 (directory / 'transport-preparation.sha256').write_text(''.join(f'{sha(p)}  {p}\n' for p in sorted(files)))
                 wait_dense_slot()
+                drain = drain_ecores_before_submit(shape['memory_gib'], submit, 'tessera-1717:' + str(job))
                 subprocess.run(['bash', str(job / 'submit-after-review.sh')], check=True)
                 jobid = (job / 'jobid').read_text().strip()
-            state['jobs'][key] = {'id': jobid, 'directory': str(job)}
+            state['jobs'][key] = {'id': jobid, 'directory': str(job), 'fv1e_drain': drain}
             event('WAIT', module=module, phase=phase, id=jobid)
             subprocess.run(['flux', 'job', 'wait-event', jobid, 'clean'], check=True, stdout=subprocess.DEVNULL)
             native = int(subprocess.check_output(['flux', 'jobs', '-n', '-o', '{returncode}', jobid], text=True).strip())
@@ -128,6 +175,8 @@ def run(canary, bookings):
             artifact = read(job / 'results' / phase / 'phase.json')
             if artifact.get('completion') is not True:
                 raise FeederError('COUNTED_PHASE_UNFINISHED')
+            if drain:
+                undrain_ecores(**drain)
         receipt = read(directory / 'compare/results/numerics_row.json')
         event('ROW', module=module, outcome=receipt['row']['outcome'])
         if not receipt['row'].get('finalization_finished') or receipt['row']['outcome'] != 'PASS':

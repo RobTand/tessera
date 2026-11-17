@@ -177,6 +177,7 @@ def prepare(cpu_check, *, module=MODULE, canary=True, canary_directory=None):
         "paths": dict.fromkeys(INPUTS), "cpu_check": str(cpu_check)})
     shutil.copyfile(__file__, out / "prepare.py")
     shutil.copyfile(ROOT / 'experiments/numerics_rows/counted_feeder.py', out / 'admission.py')
+    shutil.copyfile(ROOT / 'experiments/numerics_rows/feeder-settings.json', out / 'feeder-settings.json')
     capture_cores = 4 if canary else 1
     for phase, minutes in (("prepare", 360 if canary else 1440), ("capture", 15), ("compare", 120 if canary else 360)):
         job = out / phase
