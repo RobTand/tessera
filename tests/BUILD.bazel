@@ -14927,11 +14927,14 @@ ts_py_library(
         "test_numerics_rows_phases.py",
     ],
     deps = [
+        "//experiments:dense_fused_oracle",
         "//experiments:numerics_rows/build_cycle",
         "//experiments:numerics_rows/cases_cycle",
         "//experiments:numerics_rows/common",
         "//experiments:numerics_rows/gpu_time",
         "//experiments:numerics_rows/reference",
+        "//experiments:pair",
+        "//experiments:routed_pair_oracle",
         "//src/tessera:__init___cycle",
     ],
 )

@@ -591,7 +591,12 @@ def check_rule_freeze(rule, freeze, *, canary=False, launch_levers_sha256=None):
         raise Invalid("rule is not the reviewed, frozen rule")
 
 
+FREEZE_ADDENDUM = Path("/mnt/shared/flux-jobs/tessera-1717-rule/freeze-addendum-v2.json")
+
+
 def bind_freeze_addendum(freeze, freeze_path, rule_path, addendum_path):
+    if Path(addendum_path).resolve() != FREEZE_ADDENDUM:
+        raise Invalid("lever freeze addendum is not at its fixed rule path")
     addendum = json.loads(Path(addendum_path).read_text())
     if addendum.get("freeze_record_sha256") != sha256(freeze_path) or addendum.get("rule_sha256") != sha256(rule_path) or not addendum.get("reviewer") or not addendum.get("frozen_utc"):
         raise Invalid("lever freeze addendum does not bind this frozen record and rule")
@@ -739,7 +744,7 @@ def run_row(args, receipt, phases):
     check_binding(manifest, launch_state.fields())
     check_math_binding(manifest, launch_state.fields())
     check_math_binding(h1, launch_state.fields())
-    check_binding(h1, launch_state.fields())
+    check_binding(h1, launch_state.fields(), "H1")
     check_manifest_source(manifest, commit, args.source / "src/tessera/serving/runtime_contract.json")
     if manifest["population_sha256"] != population_digest or manifest["q1_table_sha256"] != sha256(args.q1):
         raise Invalid("case manifest input identity differs")

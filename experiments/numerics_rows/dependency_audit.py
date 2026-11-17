@@ -91,8 +91,16 @@ def main():
             libraries = audit.image_libraries()
             if len(libraries) != len(handles) or any(not r["symbols"] for r in libraries):
                 raise RuntimeError("pinned image CUDA function roster is missing or empty")
+            witnesses = {}
+            for name, suffix, marker in (("quantizer", "/vllm/_C_stable_libtorch.abi3.so", "dynamic_per_token_scaled_fp8_quant_kernel_strided"),
+                                         ("fill", "/torch/lib/libtorch_cuda.so", "FillFunctor")):
+                owner, = [r for r in libraries if r["path"].endswith(suffix)]
+                symbols = [s for s in owner["symbols"] if marker in s["demangled"]]
+                if not symbols:
+                    raise RuntimeError("canary image kernel roster is missing: " + name)
+                witnesses[name] = {"path": owner["path"], "sha256": owner["sha256"], "symbols": symbols}
             write_json(args.out / "image-code-rosters.json", {"runtime": report["runtime"], "libraries": libraries,
-                       "triton_load_run_observer_installed": True, "device_launches": 0})
+                       "canary_2_image_witnesses": witnesses, "triton_load_run_observer_installed": True, "device_launches": 0})
         finally:
             audit.close()
     write_json(args.out / "dependency-audit.json", report)

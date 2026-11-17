@@ -140,9 +140,12 @@ def profiled(code, tmp_path, monkeypatch):
     native_functions = ["_Zrouted", "_Zreduce"]
     native_names = CANARY[2:]
     names = CANARY + [CUTLASS]
-    image = [{"origin": "image", "path": "/image/vllm/_C.so", "sha256": "a" * 64,
+    inventory = json.loads(code.IMAGE_CODE.read_text())
+    quantizer, = [r for r in inventory["libraries"] if r["path"].endswith("/vllm/_C_stable_libtorch.abi3.so")]
+    torch_cuda, = [r for r in inventory["libraries"] if r["path"].endswith("/torch/lib/libtorch_cuda.so")]
+    image = [{**quantizer, "origin": "image",
               "symbols": [{"symbol": "_Zquant", "demangled": CANARY[0]}]},
-             {"origin": "image", "path": "/image/torch/libtorch_cuda.so", "sha256": "b" * 64,
+             {**torch_cuda, "origin": "image",
               "symbols": [{"symbol": "_Zfill", "demangled": CANARY[1]}, {"symbol": "_Zscaled_mm", "demangled": CUTLASS}]}]
     monkeypatch.setattr(torch.profiler, "profile", lambda **kwargs: nullcontext())
     monkeypatch.setattr(routed_pair_oracle, "kernel_table", lambda *args, **kwargs: [{"name": n} for n in names])

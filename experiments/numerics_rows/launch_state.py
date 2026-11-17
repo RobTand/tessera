@@ -162,15 +162,15 @@ def check_fields(record):
         raise Invalid("launch state diagnostic contains a name outside the non-secret list")
 
 
-def check_binding(record, expected):
+def check_binding(record, expected, label="C1"):
     try:
         check_fields(record)
         check_fields(expected)
     except Invalid as error:
-        raise Invalid("C1 launch state or lever file: " + str(error)) from error
+        raise Invalid(label + " launch state or lever file: " + str(error)) from error
     for field in ("launch_state_names", "launch_state_sha256", "launch_levers_sha256", "launch_selectors", "start_environment_spec_sha256"):
         if record.get(field) != expected[field]:
-            raise Invalid(f"C1 launch state or lever file differs: {field}")
+            raise Invalid(f"{label} launch state or lever file differs: {field}")
 
 
 def check_math_binding(record, expected):

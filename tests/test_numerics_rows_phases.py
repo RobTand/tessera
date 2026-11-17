@@ -188,10 +188,11 @@ def test_frozen_canary_remains_marked_uncounted(tmp_path):
     row.check_rule_freeze(rule, {"sha256": sha256(rule), "reviewer": "lead", "frozen_utc": "2026-11-17T02:39:51Z", "canary": False}, canary=True)
 
 
-def test_lever_addendum_binds_the_frozen_record_without_rewriting_it(tmp_path):
+def test_lever_addendum_binds_the_frozen_record_without_rewriting_it(tmp_path, monkeypatch):
     phase_api()
     from experiments.numerics_rows.common import sha256
     rule, freeze, addendum = (tmp_path / n for n in ("rule.md", "freeze.json", "addendum.json"))
+    monkeypatch.setattr(row, "FREEZE_ADDENDUM", addendum, raising=False)
     rule.write_text("frozen rule")
     freeze.write_text('{"frozen_utc":"2026-11-17T02:39:51Z"}')
     before = freeze.read_bytes()
@@ -289,7 +290,7 @@ def test_payload_hash_covers_the_same_read_that_is_decoded(phase_pair, monkeypat
     assert len(reads) == 1
 
 
-def test_split_diagnostic_composition_is_recorded_without_a_gate_verdict(tmp_path):
+def test_split_realistic_composition_mismatch_is_fail(tmp_path):
     api = phase_api()
     from experiments.numerics_rows.dense_phases import compare_case
     prepared = api.Artifact(tmp_path / "prepare", "prepare", {})
@@ -304,7 +305,120 @@ def test_split_diagnostic_composition_is_recorded_without_a_gate_verdict(tmp_pat
     observed = {"completion": True, "boundaries": [{"kind": "quantizer", "sync_before": True, "sync_after": True}] * 2,
                 "profiler_names": ["kernel"], "kernel_origins": [{"profiler_name": "kernel"}],
                 "tensors": {k: captured.tensor(v) for k, v in {"output": x * 2, "staged": x * 3, "quantizer_q": x, "quantizer_sf": sf}.items()}}
-    unit = row.new_unit({"cell": "dense"})
+    unit = row.new_unit({"cell": "dense", "role": "unit"})
     compare_case(case, observed, prepared.root, captured.root, unit)
-    assert not unit["findings"] and unit["diagnostic_composition_equal"] == [False]
-    assert unit["exact"]["composition"]["cases"] == 0 and len(unit["diagnostic"]) == 1
+    row.finish_unit(unit)
+    assert unit["outcome"] == "FAIL" and unit["diagnostic_composition_equal"] == [False]
+    assert unit["exact"]["composition"]["cases"] == 1 and len(unit["diagnostic"]) == 1
+
+
+@pytest.fixture
+def split_capture(tmp_path, monkeypatch):
+    from contextlib import nullcontext
+    from experiments import dense_fused_oracle as dense, routed_pair_oracle
+    from experiments.numerics_rows import dense_phases as dp
+    from experiments.numerics_rows.common import BoundaryError, Unattested
+    from experiments.numerics_rows.gpu_time import PhaseTimes
+    common, runs = {"test": "bound phases"}, []
+    monkeypatch.setattr(dp, "identities", lambda receipt: common)
+    monkeypatch.setattr(dense, "init_vllm_world1", nullcontext)
+    monkeypatch.setattr(torch.profiler, "profile", lambda **_: nullcontext())
+    monkeypatch.setattr(routed_pair_oracle, "kernel_table", lambda *a, **kw: [{"name": "kernel"}])
+    monkeypatch.setattr(row, "native_boundaries", lambda *a: nullcontext())
+    monkeypatch.setattr(row, "Dense", lambda *a: SimpleNamespace(info={}, pairs=lambda: []))
+    monkeypatch.setattr(row, "identify_served", lambda *a: (object(), [{"path": "native.so"}]))
+    monkeypatch.setattr(row, "actual_geometry", lambda *a: {})
+    monkeypatch.setattr(row, "module_receipt", lambda *a: {})
+    monkeypatch.setattr(row, "tp_facts", lambda *a: {})
+    monkeypatch.setattr(row, "scale_receipt", lambda *a: {"equal": True})
+    for name in ("check_served_identity", "audit_served", "check_served_after", "dispatch"):
+        monkeypatch.setattr(row, name, lambda *a: None)
+    def bind_profile(adapter, unit, recorder, records, profiles, **kw):
+        unit["kernel_origins"] = [{"profiler_name": "kernel", "origin": "tessera"}]
+    monkeypatch.setattr(row, "bind_kernel_profile", bind_profile)
+    def run(error=None, index=0, *, bind_error=False):
+        root = tmp_path / str(len(runs)); runs.append(root)
+        unit = row.new_unit({"cell": "dense", "module": "A", "role": "unit", "admitted_by_v68": True,
+            "symbol": "dense", "decoder": "native", "rung": 1024, "launch_state_sha256": "a" * 64,
+            "tp": {"size": 2, "rank": 0}, "m_config": {"M": 1, "k_split": 1}, "arm": {}})
+        unit["exact"]["separation"]["records"] = [{"both": 1}]
+        unit["exact"]["sweep"]["elements"] = 2
+        unit["exact"]["scale_index"]["arrays"] = [{"launches": 1}]
+        unit["exact"]["chunk_pairs"]["x_elements"] = 1
+        row.finish_unit(unit)
+        receipt = {"row": {"utc_start": "2026-11-17T00:00:00Z", "finalization_finished": False},
+                   "units": [unit], "modules": [], "runtime": {}}
+        groups = [({"name": "A", "pair": ["dense", "native"]}, {"wire_sha256": "w", "launch_geometry": {}}, unit["tp"], [unit])]
+        scope = dp.scopes(groups)[0]
+        prepared = dp.Artifact(root / "prepare", "prepare", common)
+        prepared.document["scopes"] = [scope]
+        x = torch.ones(1, 1, dtype=torch.bfloat16); sf = torch.ones(1, 1)
+        for category in ("sweep", "sweep", "diagnostic"):
+            prepared.add(scope, dp.clean_config(unit), "dense", {"input": x, "q": x, "sf": sf, "reference": x * 2,
+                "x_mask": torch.ones_like(x, dtype=torch.bool), "finite_value": sf * 10, "finite_held": sf.bool(),
+                "diagnostic_reference": sf * 2, "products_abs": sf}, category=category, distribution="gauss", seed=1)
+        prepared.finish(receipt=copy.deepcopy(receipt))
+        calls = []
+        def capture(adapter, current, case, tensors, recorder):
+            calls.append(case["id"])
+            if error and len(calls) == index + 1:
+                if error == "cuda":
+                    raise BoundaryError({"call": "native", "kind": "tessera", "sync_before": True, "sync_after": False}, RuntimeError("CUDA error"))
+                raise (Invalid if error == "invalid" else Unattested)("refused capture")
+            current["boundaries"].extend([{"kind": "quantizer", "sync_before": True, "sync_after": True}] * 2)
+            return {"output": x * 2, "staged": x * 2, "quantizer_q": x, "quantizer_sf": sf}
+        monkeypatch.setattr(dp, "capture_case", capture)
+        out = root / "capture-job"; out.mkdir()
+        args = SimpleNamespace(out=out, prepare_artifact=prepared.root,
+            code_audit=SimpleNamespace(records=[], unit=None, context=lambda *a: nullcontext()),
+            meter=SimpleNamespace(snapshot=lambda **kw: {}, finish=lambda: {}),
+            launch_state=SimpleNamespace(check=lambda: None, diagnostics=lambda: {}, latched_diagnostic=lambda *a: {}))
+        dp.device_capture(args, receipt, PhaseTimes(receipt["row"]), groups, {"key": "e4m3mma"}, [{"key": "e4m3mma", "native_source_path": "kernel.cu"}])
+        args.capture_artifact = out / "capture"
+        args.out = root / "compare-job"; args.out.mkdir()
+        if bind_error:
+            monkeypatch.setattr(dp, "bind_evidence", lambda *a: (_ for _ in ()).throw(RuntimeError("compare binding failed")))
+            with pytest.raises(RuntimeError, match="compare binding failed"):
+                dp.host_compare(args, receipt, PhaseTimes({}), groups)
+            return json.loads((args.out / "numerics_row.json").read_text()), calls
+        dp.host_compare(args, receipt, PhaseTimes({}), groups)
+        captured = json.loads((args.capture_artifact / "phase.json").read_text())
+        assert len(captured["cases"]) == len(prepared.document["cases"])
+        return receipt, captured
+    return run
+
+
+def test_split_first_cuda_error_finishes_compare_as_fail(split_capture):
+    positive, _ = split_capture()
+    assert positive["row"]["finalization_finished"] and positive["units"][0]["outcome"] == "PASS"
+    receipt, captured = split_capture("cuda")
+    assert receipt["row"]["finalization_finished"] and receipt["units"][0]["outcome"] == receipt["row"]["outcome"] == "FAIL"
+    assert all(c["not_run"] and not c["completion"] for c in captured["cases"][1:])
+
+
+@pytest.mark.parametrize("error", ("invalid", "unattested"))
+def test_split_last_case_preserves_refusal_class(split_capture, error):
+    positive, _ = split_capture()
+    assert positive["row"]["finalization_finished"] and positive["units"][0]["outcome"] == "PASS"
+    receipt, _ = split_capture(error, index=2)
+    assert receipt["row"]["finalization_finished"] and receipt["units"][0]["outcome"] == receipt["row"]["outcome"] == error.upper()
+
+
+def test_split_compare_binds_its_artifact_before_finalization(split_capture):
+    positive, _ = split_capture()
+    assert positive["row"]["finalization_finished"] and "compare" in positive["phase_artifacts"]
+    partial, _ = split_capture(bind_error=True)
+    assert partial["row"]["finalization_finished"] is False
+
+
+def test_lever_addendum_refuses_another_path_with_identical_bytes(tmp_path, monkeypatch):
+    from experiments.numerics_rows.common import sha256
+    rule, freeze, addendum = (tmp_path / n for n in ("rule.md", "freeze.json", "freeze-addendum-v2.json"))
+    rule.write_text("frozen rule"); freeze.write_text("{}")
+    monkeypatch.setattr(row, "FREEZE_ADDENDUM", addendum, raising=False)
+    addendum.write_text(json.dumps({"freeze_record_sha256": sha256(freeze), "rule_sha256": sha256(rule),
+        "reviewer": "lead", "frozen_utc": "2026-11-17T04:00:00Z", "launch_levers_sha256": "a" * 64}))
+    assert row.bind_freeze_addendum({}, freeze, rule, addendum)["freeze_addendum_sha256"] == sha256(addendum)
+    other = tmp_path / "copied-addendum.json"; other.write_bytes(addendum.read_bytes())
+    with pytest.raises(Invalid, match="fixed rule path"):
+        row.bind_freeze_addendum({}, freeze, rule, other)

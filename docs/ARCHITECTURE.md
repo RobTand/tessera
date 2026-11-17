@@ -6,6 +6,8 @@ GPU capture checks the bound input and actual quantizer bytes before native use.
 CPU compare checks every case once and is the only phase that can finish a row.
 Each artifact binds the full unit key, common identities and raw tensor hashes.
 An unfinished capture remains STOPPED. A known FAIL remains FAIL.
+Capture records unrun cases. Compare preserves refusals and finalizes after its artifact binding.
+Composition mismatches fail on exact and realistic inputs in both row paths.
 The capture writes a gate checkpoint before diagnostics. Phase records, diagnostic
 reference profiles, NVML power and resident time, and cgroup peak memory expose
 host work and interrupted cases. These tools change no serving default or arithmetic.

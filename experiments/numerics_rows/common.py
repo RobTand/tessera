@@ -10,6 +10,7 @@ import os
 from pathlib import Path
 import subprocess
 
+OUTCOMES = ("FAIL", "STOPPED", "INVALID", "UNATTESTED", "PASS")
 KERNEL = "src/tessera/serving/csrc/routed_fused_window.cu"
 KERNEL_SHA256 = "8a1536dfbc3df70edbdc37001a0db6947e97d9263926bc85a4d4d3ca231eae4f"
 IMAGES = {

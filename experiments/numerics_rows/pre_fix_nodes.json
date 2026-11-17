@@ -257,7 +257,7 @@
       "test_capture_refusal_for_a_nonfinite_prepared_reference",
       "test_host_phase_negative_reference_control_allocates_no_device",
       "test_payload_hash_covers_the_same_read_that_is_decoded",
-      "test_split_diagnostic_composition_is_recorded_without_a_gate_verdict"
+      "test_split_realistic_composition_mismatch_is_fail"
     ]
   },
   "pre-fix-review-M1": {
@@ -279,6 +279,17 @@
     "expected": 1,
     "nodes": [
       "test_fixed_worker_launcher_reads_a_private_script_from_an_existing_mount"
+    ]
+  },
+  "pre-fix-split-review": {
+    "file": "test_numerics_rows_phases.py",
+    "expected": 6,
+    "nodes": [
+      "test_split_realistic_composition_mismatch_is_fail",
+      "test_split_first_cuda_error_finishes_compare_as_fail",
+      "test_split_last_case_preserves_refusal_class",
+      "test_split_compare_binds_its_artifact_before_finalization",
+      "test_lever_addendum_refuses_another_path_with_identical_bytes"
     ]
   }
 }

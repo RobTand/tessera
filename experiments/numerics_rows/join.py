@@ -6,9 +6,7 @@ from collections import Counter
 import json
 from pathlib import Path
 
-from experiments.numerics_rows.common import Invalid, sha256, write_json
-
-OUTCOMES = ("FAIL", "STOPPED", "INVALID", "UNATTESTED", "PASS")
+from experiments.numerics_rows.common import OUTCOMES, Invalid, sha256, write_json
 
 
 def rule_unit_id(unit):

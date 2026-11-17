@@ -36,6 +36,8 @@ The loaded-library audit conditions every toolchain exclusion. It checks the act
 Each Triton specialization binds its cubin, entry, target, constants and launch parameters.
 Each profiled kernel must have one audited native, unchanged image-file or compiled-code origin.
 Unknown or ambiguous origins remain UNATTESTED. No source-read completeness gate remains.
+IMG-N has no vllm/_C.abi3.so. Its inventoried owner is _C_stable_libtorch.abi3.so.
+The CPU code-roster check records quantizer and fill functions from that file and libtorch_cuda.so.
 Effective torch math settings remain fixed and bound in C1, H1, rows and the serve.
 The tool does not add the serve validator to Tessera's plugin.
 

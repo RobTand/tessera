@@ -2247,7 +2247,7 @@ def test_row_refuses_a_different_h1_launch_binding_before_cases(row_execution, f
     doc = json.loads(args.h1.read_text())
     doc[field] = "b" * 64
     write_json(args.h1, doc)
-    with pytest.raises(Invalid, match="launch state or lever file"):
+    with pytest.raises(Invalid, match="H1 launch state or lever file"):
         row.run(args, receipt)
     assert not events
 

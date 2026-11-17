@@ -17,7 +17,7 @@ from pathlib import Path
 import pstats
 import time
 
-from experiments.numerics_rows.common import BoundaryError, BoundaryRecorder, Invalid, Unattested, sha256, write_json
+from experiments.numerics_rows.common import OUTCOMES, BoundaryError, BoundaryRecorder, Invalid, Unattested, sha256, write_json
 from experiments.numerics_rows.phase_artifact import Artifact, identities, unit_scope, read, payload, check_capture
 from experiments.numerics_rows.phase_lifecycle import Progress
 from experiments.numerics_rows import row
@@ -235,6 +235,9 @@ def device_capture(args, receipt, phases, groups, library, compile_paths):
     progress = args.progress = Progress(args.out, receipt, phases, args.meter)
     artifact = Artifact(args.out / "capture", "capture", common)
     artifact.document.update(scopes=expected_scopes, prepare_digest=prepare_digest)
+    captures = {case["id"]: {**{k: copy.deepcopy(case[k]) for k in ("id", "identities", "scope", "configuration", "kind")},
+                "completion": False, "not_run": True, "tensors": {}, "cuda_errors": []} for case in prepared["cases"]}
+    artifact.document["cases"] = list(captures.values())
     cache, audit = {}, args.code_audit
     native_source = Path(next(r for r in compile_paths if r["key"] == library["key"])["native_source_path"])
     receipt["row"].update(capture_finished=False, finalization_finished=False, outcome="STOPPED")
@@ -263,7 +266,7 @@ def device_capture(args, receipt, phases, groups, library, compile_paths):
                         selected = [case for case in wanted if case["scope"]["unit_key"] == row.unit_identity(unit)]
                         if not selected:
                             raise Invalid("prepare omitted a required unit")
-                        if unit["invalid"] or unit["cuda_errors"]:
+                        if unit["invalid"] or unit["cuda_errors"] or unit["unattested"]:
                             continue
                         progress.record("identity_audit", unit, checkpoint=True)
                         row.check_served_identity(unit, served, library)
@@ -287,8 +290,8 @@ def device_capture(args, receipt, phases, groups, library, compile_paths):
                             if case["identities"] != common or case["scope"] not in expected_scopes:
                                 raise Invalid("prepared case changed its common bindings")
                             tensors, certificate = preflight_case(args.prepare_artifact, case)
-                            captured = {k: copy.deepcopy(case[k]) for k in ("id", "identities", "scope", "configuration", "kind")}
-                            captured.update(completion=False, tensors={}, cuda_errors=[])
+                            captured = captures[case["id"]]
+                            captured.pop("not_run")
                             before = time.monotonic()
                             recorder.context = lambda name, case_id=case["id"]: audit.context(case_id + ":" + name)
                             try:
@@ -315,7 +318,6 @@ def device_capture(args, receipt, phases, groups, library, compile_paths):
                                 captured["elapsed_seconds"] = time.monotonic() - before
                                 captured["boundaries"] = copy.deepcopy(unit["boundaries"])
                                 unit["boundaries"].clear()
-                                artifact.document["cases"].append(captured)
                                 unit_captures.append(captured)
                                 recorder.quantizer_result = None
                             if not captured["completion"]:
@@ -364,7 +366,7 @@ def compare_case(case, observed, prepare_root, capture_root, unit):
     from experiments.numerics_rows.reference import compare
     tensors, certificate = preflight_case(prepare_root, case)
     if not observed.get("completion"):
-        unit["completed"] = False
+        unit["completed"] &= bool(unit["invalid"] or unit["unattested"])
         return
     outputs = {k: payload(capture_root, v) for k, v in observed["tensors"].items()}
     quantizer_guard((outputs["quantizer_q"], outputs["quantizer_sf"]), (tensors["q"], tensors["sf"]))
@@ -391,15 +393,15 @@ def compare_case(case, observed, prepare_root, capture_root, unit):
         return
     row.finite_outputs(unit, case["id"] + ":staged", staged, certificate)
     equal = compare(got, staged)["equal"]
+    unit["exact"]["composition"]["cases"] += 1
+    unit["exact"]["composition"]["equal"] &= equal
+    if not equal:
+        unit["findings"].append("apply differs from the same staged launches")
     if case["category"] == "diagnostic":
         unit.setdefault("diagnostic_composition_equal", []).append(equal)
         unit["diagnostic"].append(row.diagnostic(got, tensors["diagnostic_reference"], tensors["products_abs"],
             tensors["input"].shape[1], case["configuration"]["k_split"], case["distribution"], case["seed"]))
     else:
-        unit["exact"]["composition"]["cases"] += 1
-        unit["exact"]["composition"]["equal"] &= equal
-        if not equal:
-            unit["findings"].append("apply differs from the same staged launches")
         result = row.compare_output(unit, case["id"], got, tensors["reference"], tensors["x_mask"])
         if case["category"] in ("sweep", "chunk_pairs"):
             unit["exact"][case["category"]]["mismatches"] += result["mismatches"]
@@ -446,8 +448,9 @@ def host_compare(args, receipt, phases, groups):
         row.finish_unit(unit)
     # Only a finished, validated compare creates a joinable receipt.
     receipt["row"]["utc_start"] = prepared["receipt"]["row"]["utc_start"]
-    compare_row.update(utc_end=datetime.now(timezone.utc).isoformat(), finalization_finished=True)
-    receipt["row"].update(utc_end=compare_row["utc_end"], finalization_finished=True,
+    compare_row.update(utc_end=datetime.now(timezone.utc).isoformat())
+    receipt["row"].update(utc_end=compare_row["utc_end"],
+                          outcome=min((u["outcome"] for u in receipt["units"]), key=OUTCOMES.index),
                           exit_status=3 if any(u["outcome"] in ("FAIL", "STOPPED", "INVALID") for u in receipt["units"]) else 0)
     receipt["phase_artifacts"] = {"prepare": {"path": str(args.prepare_artifact / "phase.json"), "sha256": prepare_digest},
                                   "capture": {"path": str(args.capture_artifact / "phase.json"), "sha256": capture_digest}}
@@ -458,6 +461,7 @@ def host_compare(args, receipt, phases, groups):
     artifact.finish(case_ids=[case["id"] for case, _ in pairs], receipt=receipt)
     receipt["phase_artifacts"]["compare"] = {"path": str(artifact.root / "phase.json"), "sha256": sha256(artifact.root / "phase.json")}
     receipt["diagnostic_cells"] = row.diagnostic_cells(receipt["units"])
+    compare_row["finalization_finished"] = receipt["row"]["finalization_finished"] = True
     write_json(args.out / "numerics_row.json", receipt)
 
 
