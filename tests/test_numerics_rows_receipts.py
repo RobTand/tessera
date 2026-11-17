@@ -1868,7 +1868,7 @@ def test_capture_preflight_stops_before_first_device_call(tmp_path, monkeypatch)
     assert saved["row"]["outcome"] == "STOPPED" and saved["row"]["finalization_finished"] is False
 
 
-@pytest.mark.parametrize("failure", ("empty", "query-error"))
+@pytest.mark.parametrize("failure", ("empty", "query-error", "unknown-memory", "zero-memory"))
 def test_capture_self_visibility_stops_before_row_setup(tmp_path, monkeypatch, failure):
     import torch
     from experiments.numerics_rows import gpu_time, launch_state
@@ -1892,7 +1892,7 @@ def test_capture_self_visibility_stops_before_row_setup(tmp_path, monkeypatch, f
             return "987654321, 32"
         if failure == "query-error":
             raise OSError("NVML query failed")
-        return ""
+        return {"unknown-memory": "701, [N/A]", "zero-memory": "701, 0"}.get(failure, "")
     monkeypatch.setattr(gpu_time, "query", query)
     monkeypatch.setattr(row, "run", lambda *args: calls.append("row-setup"))
     row.main()
@@ -1907,6 +1907,8 @@ def test_capture_self_visibility_stops_before_row_setup(tmp_path, monkeypatch, f
     assert saved["row"]["outcome"] == "STOPPED" and saved["row"]["finalization_finished"] is False
     assert "NVML self-visibility" in saved["row"]["stop_cause"]
     assert saved["row"]["gpu_self_visibility"]["verdict"] == "STOPPED"
+    if failure in ("unknown-memory", "zero-memory"):
+        assert saved["row"]["gpu_self_visibility"]["reason"] == "NVML self-visibility found no per-process memory"
 
 
 def test_missing_gpu_fields_do_not_invent_zero_memory_or_activity():
@@ -1950,7 +1952,7 @@ def test_gpu_phase_idle_excludes_unknown_sample_intervals(monkeypatch):
     assert result["max_compute_process_count"] == 0
 
 
-@pytest.mark.parametrize("failure", ("empty", "query-error"))
+@pytest.mark.parametrize("failure", ("empty", "query-error", "unknown-memory"))
 def test_capture_self_visibility_retries_before_stopping(monkeypatch, failure):
     from experiments.numerics_rows import gpu_time
     calls, delays = [], []
@@ -1963,7 +1965,7 @@ def test_capture_self_visibility_retries_before_stopping(monkeypatch, failure):
             return "701, 128"
         if failure == "query-error":
             raise TimeoutError("NVML compute query failed")
-        return ""
+        return "701, [N/A]" if failure == "unknown-memory" else ""
     monkeypatch.setattr(gpu_time, "query", query)
     monkeypatch.setattr(gpu_time.time, "sleep", delays.append)
     report = gpu_time.self_visibility(fake_torch)

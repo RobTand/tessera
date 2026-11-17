@@ -58,15 +58,8 @@ def run(canary, bookings):
         temporary.replace(state_path)
         print(json.dumps(record), flush=True)
     inputs = read(canary / 'counted-chain-inputs.json')
-    repository = canary / 'repository.git'
-    code = canary / 'feeder-code'
-    if not code.exists():
-        subprocess.run(['git', 'clone', '--shared', str(repository), str(code)], check=True)
     revision = read(canary / 'campaign.json')['tool_commit']
-    subprocess.run(['git', '-C', str(code), 'checkout', '--detach', revision], check=True)
-    sys.path.insert(0, str(code))
     from experiments.numerics_rows.prepare_split import check_canary
-    # Bind only after the canary's complete compare and phase exits pass.
     check_canary(canary, revision, inputs[next(iter(rows))])
     for module, directory in rows.items():
         directory = Path(directory)

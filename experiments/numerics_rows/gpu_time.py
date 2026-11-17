@@ -99,9 +99,11 @@ def self_visibility(torch):
         try:
             apps = compute_processes(query("--query-compute-apps=pid,used_memory"))
             gpu = gpu_reading(query("--query-gpu=uuid,utilization.gpu,power.draw,memory.used"))
-            report = {"verdict": "VISIBLE" if apps else "STOPPED", "reason": None if apps else "NVML self-visibility found no compute process",
-                      "compute_process_count": len(apps), "compute_apps_memory_mib": process_memory(apps), "nvml_busy_percent": gpu["busy_percent"], "attempts": attempt}
-            if apps:
+            memory = process_memory(apps)
+            visible = bool(apps) and memory is not None and memory > 0
+            report = {"verdict": "VISIBLE" if visible else "STOPPED", "reason": None if visible else "NVML self-visibility found no per-process memory",
+                      "compute_process_count": len(apps), "compute_apps_memory_mib": memory, "nvml_busy_percent": gpu["busy_percent"], "attempts": attempt}
+            if visible:
                 return report
         except Exception as error:
             report = {"verdict": "STOPPED", "reason": "NVML self-visibility query failed", "exception_type": type(error).__name__,

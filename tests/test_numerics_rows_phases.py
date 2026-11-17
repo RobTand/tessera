@@ -534,7 +534,7 @@ def test_capture_telemetry_records_known_sample_coverage(split_canary_evidence):
 def feeder_booking(tmp_path, monkeypatch):
     from experiments.numerics_rows import counted_feeder as api, prepare_split
     canary, rowdir = tmp_path / "canary", tmp_path / "row"
-    canary.mkdir(); rowdir.mkdir(); (canary / "feeder-code").mkdir()
+    canary.mkdir(); rowdir.mkdir()
     def write(path, value):
         path.write_text(json.dumps(value))
     write(canary / "counted-rows.json", {"module-A": str(rowdir)})
@@ -555,7 +555,6 @@ def feeder_booking(tmp_path, monkeypatch):
     write(rowdir / "compare/results/numerics_row.json", {"row": {"outcome": "PASS", "finalization_finished": True}})
     monkeypatch.setattr(prepare_split, "check_canary", lambda *a: None)
     monkeypatch.setattr(api, "sha", lambda path: "a" * 64)
-    monkeypatch.setattr(api.sys, "path", list(api.sys.path))
     def run(command, **kw):
         if command[0] == "bash":
             (Path(command[1]).parent / "jobid").write_text("f123")

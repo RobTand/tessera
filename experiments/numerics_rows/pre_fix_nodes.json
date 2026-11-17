@@ -315,12 +315,15 @@
   },
   "pre-fix-canary-review": {
     "file": "test_numerics_rows_receipts.py",
-    "expected": 4,
+    "expected": 7,
     "nodes": [
       "test_capture_preflight_requires_free_memory_no_compute_and_no_vllm[empty-gb10]",
       "test_gpu_phase_idle_excludes_unknown_sample_intervals",
       "test_capture_self_visibility_retries_before_stopping[empty]",
-      "test_capture_self_visibility_retries_before_stopping[query-error]"
+      "test_capture_self_visibility_retries_before_stopping[query-error]",
+      "test_capture_self_visibility_retries_before_stopping[unknown-memory]",
+      "test_capture_self_visibility_stops_before_row_setup[unknown-memory]",
+      "test_capture_self_visibility_stops_before_row_setup[zero-memory]"
     ]
   },
   "pre-fix-unknown-compute": {
