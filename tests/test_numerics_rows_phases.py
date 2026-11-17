@@ -578,7 +578,7 @@ def feeder_booking(tmp_path, monkeypatch):
     monkeypatch.setattr(prepare_split, "check_canary", lambda *a: None)
     monkeypatch.setattr(api, "sha", lambda path: "a" * 64)
     write(canary/'counted-feeder-state.json', {'bookings_sha256': 'a'*64, 'settings_sha256': 'a'*64,
-          'jobs': {}, 'lanes': [['fv1e-sparklina', 'sparklina']]})
+          'jobs': {}, 'lanes': [['fv1e-sparklina', 'sparklina']], 'fv1e_admission': 'admitted'})
     monkeypatch.setattr(api, 'client', lambda name: ['flux'])
     monkeypatch.setattr(api, 'observe', lambda name: {'name': name})
     from experiments.numerics_rows import phase_artifact
@@ -590,9 +590,177 @@ def feeder_booking(tmp_path, monkeypatch):
             (job/'jobid').write_text(jobid)
             write(job/'instance.json', {'name': (job/'instance-name.txt').read_text().strip(), 'job_id': jobid})
     monkeypatch.setattr(api.subprocess, "run", run)
-    monkeypatch.setattr(api.subprocess, "check_output", lambda *a, **kw: "0")
+    (canary/'prepare').mkdir()
+    (canary/'prepare/jobid').write_text('f111')
+    settings = api.read(api.SETTINGS)
+    settings['fv1e_jobmem_row_dirs'] = [str(tmp_path/'rows-anon'), str(tmp_path/'rows')]
+    settings_path = tmp_path/'settings.json'
+    write(settings_path, settings)
+    monkeypatch.setattr(api, 'SETTINGS', settings_path)
+    for jobid, prefix in [('f111', ''), ('f123', 'fv1e-sparklina-')]:
+        row = tmp_path/'rows-anon'/(prefix + jobid + '-3.tsv')
+        row.parent.mkdir(exist_ok=True)
+        row.write_text('0 0 0 0 0 30000000000 0 0 3000000000 50 ok\n')
+    monkeypatch.setattr(api.subprocess, "check_output", lambda command, **kw: '100' if '{runtime:.6f}' in command else '0')
     monkeypatch.setattr(api, "wait_dense_slot", lambda: None, raising=False)
     return api, canary, rowdir, bookings
+
+
+@pytest.mark.parametrize('fault', ('none', 'missing', 'short', 'unknown', 'status', 'samples', 'above-total', 'negative', 'runtime', 'query', 'malformed'))
+def test_feeder_anon_peak_requires_valid_fleet_row(feeder_booking, monkeypatch, fault):
+    api, canary, _, _ = feeder_booking
+    assert hasattr(api, 'anon_peak'), 'feature absent: sampled anon admission'
+    settings = api.read(api.SETTINGS)
+    path = Path(settings['fv1e_jobmem_row_dirs'][0])/'f111-3.tsv'
+    fields = path.read_text().split()
+    mutations = {'unknown': (8, '?'), 'status': (10, 'invalid'), 'samples': (9, '49'),
+                 'above-total': (8, '30000000001'), 'negative': (8, '-1'), 'malformed': (9, 'x')}
+    if fault in mutations:
+        index, value = mutations[fault]; fields[index] = value
+    path.write_text(' '.join(fields[:10] if fault == 'short' else fields))
+    if fault == 'missing':
+        path.unlink()
+    if fault in ('runtime', 'query'):
+        def query(*a, **kw):
+            if fault == 'query':
+                raise api.subprocess.CalledProcessError(1, 'flux')
+            return '0'
+        monkeypatch.setattr(api.subprocess, 'check_output', query)
+    assert api.anon_peak('f111', 'fv1', settings) == (3000000000 if fault == 'none' else None)
+
+
+def test_feeder_anon_peak_uses_configured_column_dirs_and_host_ranks(feeder_booking):
+    api, _, _, _ = feeder_booking
+    assert hasattr(api, 'anon_peak'), 'feature absent: sampled anon admission'
+    settings = api.read(api.SETTINGS)
+    first, second = map(Path, settings['fv1e_jobmem_row_dirs'])
+    second.mkdir()
+    source = first/'fv1e-sparklina-f123-3.tsv'
+    (second/source.name).write_text(source.read_text().replace('3000000000', '4000000000'))
+    assert api.anon_peak('f123', 'fv1e-sparklina', settings) == 3000000000
+    source.unlink()
+    assert api.anon_peak('f123', 'fv1e-sparklina', settings) == 4000000000
+    settings['fv1e_anon_peak_column'] = 8
+    (second/source.name).write_text('0 0 0 0 0 30000000000 0 4000000001 ? 50 ok')
+    assert api.anon_peak('f123', 'fv1e-sparklina', settings) == 4000000001
+    (second/'fv1e-sparklina-f123-7.tsv').write_text('0 0 0 0 0 30000000000 0 ? ? 50 ok')
+    assert api.anon_peak('f123', 'fv1e-sparklina', settings) is None
+
+
+@pytest.fixture
+def anon_wave(feeder_booking, monkeypatch):
+    import shutil
+    api, canary, rowdir, bookings = feeder_booking
+    settings = api.read(api.SETTINGS)
+    settings['fv1e_max_prepares_per_spark'] = 2
+    api.SETTINGS.write_text(json.dumps(settings))
+    (canary/'counted-feeder-state.json').unlink()
+    rows, requested = api.read(canary/'counted-rows.json'), api.read(bookings)
+    for suffix in 'BCDEFG':
+        target = rowdir.with_name('row' + suffix)
+        shutil.copytree(rowdir, target)
+        rows['module-' + suffix] = str(target)
+        requested['module-' + suffix] = requested['module-A']
+    (canary/'counted-rows.json').write_text(json.dumps(rows))
+    (canary/'counted-chain-inputs.json').write_text(json.dumps(dict.fromkeys(rows, {})))
+    bookings.write_text(json.dumps(requested))
+    peaks, submits = {}, []
+    original = api.subprocess.run
+    ids = iter('fAA' + char for char in 'ABCDEFGHJKLMNPQRSTUVWXYZ')
+    def run(command, **kw):
+        if command[0] != 'bash':
+            return original(command, **kw)
+        job = Path(command[1]).parent
+        name = (job/'instance-name.txt').read_text().strip()
+        module = next(m for m, path in rows.items() if Path(path) == job.parent)
+        jobid = next(ids)
+        (job/'jobid').write_text(jobid)
+        (job/'instance.json').write_text(json.dumps({'name': name, 'job_id': jobid}))
+        submits.append((module, job.name, name))
+        prefix = '' if name == 'fv1' else name + '-'
+        peak = peaks.get(module, 3 * 2**30)
+        if peak is not None:
+            (Path(settings['fv1e_jobmem_row_dirs'][0])/(prefix+jobid+'-3.tsv')).write_text(f'0 0 0 0 0 30000000000 0 0 {peak} 50 ok')
+    monkeypatch.setattr(api.subprocess, 'run', run)
+    def observe(name):
+        if name == 'fv1e-sparky':
+            raise OSError('not installed')
+        return {'name': name}
+    monkeypatch.setattr(api, 'observe', observe)
+    return api, canary, rows, bookings, peaks, submits
+
+
+@pytest.mark.parametrize('canary_peak', (4 * 2**30, 4 * 2**30 + 1, None))
+def test_feeder_anon_admission_falls_back_and_rechecks(anon_wave, canary_peak):
+    api, canary, _, bookings, _, submits = anon_wave
+    assert hasattr(api, 'anon_peak'), 'feature absent: sampled anon admission'
+    path = Path(api.read(api.SETTINGS)['fv1e_jobmem_row_dirs'][0])/'f111-3.tsv'
+    path.write_text(path.read_text().replace('3000000000', str(canary_peak) if canary_peak is not None else '?'))
+    api.run(canary, bookings)
+    prepares = [(m, n) for m, p, n in submits if p == 'prepare']
+    events = [json.loads(line) for line in (canary/'counted-feeder.jsonl').read_text().splitlines()]
+    if canary_peak == 4 * 2**30 + 1:
+        assert all(name == 'fv1' for _, name in prepares)
+        assert prepares[-1][0] == 'module-A'
+        assert next(e for e in events if e['event'] == 'EP_NOT_RUN')['ran'] is False
+    else:
+        assert next(m for m, n in prepares if n != 'fv1') == 'module-A'
+        if canary_peak is None:
+            assert prepares[0][0] != 'module-A' and prepares[0][1] == 'fv1'
+        ep = next(i for i, e in enumerate(events) if e['event'] == 'EP_TENSOR_EQUAL')
+        e_ids = {v['id'] for v in api.read(canary/'counted-feeder-state.json')['jobs'].values() if v['instance']['name'] != 'fv1'}
+        assert not any(e['event'] == 'WAIT' and e.get('module') != 'module-A' and e.get('id') in e_ids for e in events[:ep])
+    assert any('LOWER bound' in e.get('policy', '') and 'MemoryMax' in e.get('policy', '') for e in events)
+
+
+@pytest.mark.parametrize('late_peak', (3 * 2**30, 4 * 2**30 + 1))
+def test_feeder_invalid_rows_hold_until_a_valid_fv1_probe(anon_wave, monkeypatch, late_peak):
+    api, canary, rows, bookings, peaks, submits = anon_wave
+    assert hasattr(api, 'anon_peak'), 'feature absent: sampled anon admission'
+    root = Path(api.read(api.SETTINGS)['fv1e_jobmem_row_dirs'][0])
+    (root/'f111-3.tsv').unlink()
+    peaks.update(dict.fromkeys(rows, None))
+    def publish(seconds):
+        assert not (Path(rows['module-A'])/'prepare/jobid').exists()
+        jobid = (Path(rows['module-B'])/'prepare/jobid').read_text()
+        (root/(jobid+'-3.tsv')).write_text(f'0 0 0 0 0 30000000000 0 0 {late_peak} 50 ok')
+        peaks['module-A'] = 3 * 2**30
+    monkeypatch.setattr(api.time, 'sleep', publish)
+    api.run(canary, bookings)
+    prepares = [(m, n) for m, p, n in submits if p == 'prepare']
+    assert prepares[-1] == ('module-A', 'fv1' if late_peak > 4 * 2**30 else 'fv1e-sparklina')
+
+
+def test_feeder_anon_rolling_stop_finishes_running_and_keeps_fv1(anon_wave):
+    api, canary, _, bookings, peaks, submits = anon_wave
+    assert hasattr(api, 'anon_peak'), 'feature absent: sampled anon admission'
+    peaks['module-B'] = 4 * 2**30 + 1
+    api.run(canary, bookings)
+    events = [json.loads(line) for line in (canary/'counted-feeder.jsonl').read_text().splitlines()]
+    stop = next(i for i, e in enumerate(events) if e['event'] == 'STOP')
+    assert any(e['event'] == 'END' and e.get('module') == 'module-C' and e.get('phase') == 'prepare' for e in events[stop:])
+    assert all(name == 'fv1' for module, phase, name in submits if module in ('module-F', 'module-G'))
+    assert api.read(canary/'counted-feeder-state.json')['fv1e_admission'] == 'stopped'
+    assert events[-1]['event'] == 'COMPLETE'
+
+
+def test_feeder_fv1e_pause_holds_first_and_preserves_saved_instances(anon_wave, monkeypatch):
+    api, canary, rows, bookings, _, submits = anon_wave
+    assert hasattr(api, 'anon_peak'), 'feature absent: sampled anon admission'
+    pause = canary/'pause-fv1e-sparklina'
+    pause.touch()
+    def release(seconds):
+        assert all(n == 'fv1' for _, p, n in submits if p == 'prepare')
+        assert not (Path(rows['module-A'])/'prepare/jobid').exists()
+        pause.unlink()
+    monkeypatch.setattr(api.time, 'sleep', release)
+    api.run(canary, bookings)
+    assert next(m for m, p, n in submits if p == 'prepare' and n != 'fv1') == 'module-A'
+    before = list(submits)
+    pause.touch()
+    api.run(canary, bookings)
+    assert submits == before
+    assert api.read(Path(rows['module-A'])/'prepare/instance.json')['name'] == 'fv1e-sparklina'
 
 
 @pytest.mark.parametrize("field", ("inner-timeout", "walltime", "shape"))

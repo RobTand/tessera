@@ -101,6 +101,32 @@ def undrain_ecores(host, reason):
         subprocess.run([FXE, host, 'resource', 'undrain', '0', reason], check=True, timeout=timeout)
 
 
+def anon_peak(jobid, name, settings):
+    """Return the largest valid sampled anon peak, or no admission evidence."""
+    try:
+        runtime = float(subprocess.check_output([*client(name), 'jobs', '-n', '-o', '{runtime:.6f}', jobid], text=True))
+        if not 0 < runtime < float('inf'):
+            return None
+        prefix = '' if name == 'fv1' else name + '-'
+        rows = []
+        for directory in settings['fv1e_jobmem_row_dirs']:
+            rows = list(Path(directory).glob(prefix + jobid + '-*.tsv'))
+            if rows:
+                break
+        peaks = []
+        for row in rows:
+            fields = row.read_text().split()
+            if len(fields) < 11 or fields[10] != 'ok':
+                return None
+            peak = int(fields[settings['fv1e_anon_peak_column'] - 1])
+            if not 0 <= peak <= int(fields[5]) or int(fields[9]) < 0.5 * runtime:
+                return None
+            peaks.append(peak)
+        return max(peaks) if peaks else None
+    except (OSError, ValueError, IndexError, subprocess.SubprocessError):
+        return None
+
+
 def run(canary, bookings):
     canary = Path(canary)
     settings = read(SETTINGS)
@@ -149,9 +175,12 @@ def run(canary, bookings):
         drain = next((v.get('fv1e_drain') for v in state['jobs'].values() if v['directory'] == str(job)), None)
         if (job / 'jobid').exists():
             jobid = (job / 'jobid').read_text().strip()
+            name = read(job/'instance.json')['name']
             if not re.fullmatch(r'f[1-9A-HJ-NP-Za-km-z]+', jobid):
                 raise FeederError('SUBMISSION_ID_AMBIGUOUS')
         else:
+            if name != 'fv1' and (state['fv1e_admission'] != 'admitted' or (canary/('pause-fv1e-' + host)).exists()):
+                return False
             shape = dict(requested[module][phase])
             if name != 'fv1':
                 shape['memory_gib'] = settings['fv1e_prepare_memory_gib']
@@ -181,7 +210,7 @@ def run(canary, bookings):
         state['jobs'][key] = {'id': jobid, 'instance': bound, 'directory': str(job), 'fv1e_drain': drain}
         event('WAIT', module=module, phase=phase, id=jobid)
         if not collect:
-            return
+            return True
         subprocess.run([*client(name), 'job', 'wait-event', jobid, 'clean'], check=True, stdout=subprocess.DEVNULL)
         native = int(subprocess.check_output([*client(name), 'jobs', '-n', '-o', '{returncode}', jobid], text=True).strip())
         exits = {label: (job / path).read_text().strip() for label, path in (
@@ -195,45 +224,80 @@ def run(canary, bookings):
             raise FeederError('COUNTED_PHASE_UNFINISHED')
         if drain:
             undrain_ecores(**drain)
+        if phase == 'prepare':
+            review_peak(jobid, name)
+        return True
 
     first = read(canary/'campaign.json')['module']
     modules = [first, *(m for m in rows if m != first)]
+    def review_peak(jobid, name):
+        if state['fv1e_admission'] == 'stopped':
+            return
+        peak = anon_peak(jobid, name, settings)
+        if peak is not None and peak > settings['fv1e_anon_peak_limit_gib'] * 2**30:
+            state['fv1e_admission'] = 'stopped'
+            event('STOP', instance=name, id=jobid, anon_peak_bytes=peak, scope='new fv1e prepares only')
+        elif peak is not None and state['fv1e_admission'] == 'pending':
+            lanes = []
+            for host in ('sparklina', 'sparky'):
+                try:
+                    observe('fv1e-' + host)
+                except (OSError, subprocess.SubprocessError):
+                    continue
+                slots = min(settings['fv1e_max_prepares_per_spark'], settings['fv1e_pool_memory_gib']//settings['fv1e_prepare_memory_gib'])
+                lanes += [('fv1e-' + host, host)] * slots
+            if lanes:
+                state['lanes'] = lanes + fv1_lanes
+                state['fv1e_admission'] = 'admitted'
+                event('PLACEMENT', instance=name, id=jobid, anon_peak_bytes=peak, policy=policy)
+
+    fv1_lanes = [('fv1', host) for host in ('sparklina', 'sparky') for _ in range(settings['fv1_max_prepares_per_spark'])]
+    policy = ('Anon peak is a sampled LOWER bound, admitted with a margin. Prepare page cache is reclaimable and excluded. '
+              'Per-job MemoryMax and the 108 GiB slice cap are the backstops.')
     if 'lanes' not in state:
-        jobid = (canary/'prepare/jobid').read_text().strip()
-        peaks = [int(line.split()[5]) for p in Path('/mnt/shared/flux-migration/fleet-qual/jobmem/rows').glob(jobid + '-*.tsv') for line in p.read_text().splitlines()]
-        if not peaks or not 0 < max(peaks) <= settings['fv1e_canary_prepare_peak_limit_gib'] * 2**30:
-            raise FeederError('FV1_CANARY_PREPARE_PEAK_REFUSES_FV1E')
-        lanes = []
-        for host in ('sparklina', 'sparky'):
-            try:
-                observe('fv1e-' + host)
-            except (OSError, subprocess.SubprocessError):
+        state.update(lanes=fv1_lanes, fv1e_admission='pending')
+        event('PLACEMENT', policy=policy)
+    review_peak((canary/'prepare/jobid').read_text().strip(), 'fv1')
+    pending = list(modules)
+    while pending:
+        e_lanes = [lane for lane in state['lanes'] if lane[0] != 'fv1' and not (canary/('pause-fv1e-' + lane[1])).exists()]
+        if state['fv1e_admission'] == 'admitted' and 'ep_tensor_check' not in state and e_lanes:
+            if not phase_job(first, 'prepare', *e_lanes[0]):
                 continue
-            slots = min(settings['fv1e_max_prepares_per_spark'], settings['fv1e_pool_memory_gib']//settings['fv1e_prepare_memory_gib'])
-            lanes += [('fv1e-' + host, host)] * slots
-        if not lanes:
-            raise FeederError('NO_FV1E_PREPARE_INSTANCE')
-        state['lanes'] = lanes + [('fv1', host) for host in ('sparklina', 'sparky') for _ in range(settings['fv1_max_prepares_per_spark'])]
-        event('PLACEMENT')
-    lanes = state['lanes']
-    phase_job(first, 'prepare', *lanes[0])
-    from experiments.numerics_rows.phase_artifact import tensor_subset_equal
-    state['ep_tensor_check'] = tensor_subset_equal(canary/'prepare/results/prepare', Path(rows[first])/'prepare/results/prepare')
-    event('EP_TENSOR_EQUAL', **state['ep_tensor_check'])
-    for start in range(0, len(modules), len(lanes)):
-        wave = list(zip(modules[start:start+len(lanes)], lanes))
-        for module, (name, host) in wave:
-            phase_job(module, 'prepare', name, host, collect=False)
-        for module, (name, host) in wave:
-            if module != first:
+            from experiments.numerics_rows.phase_artifact import tensor_subset_equal
+            state['ep_tensor_check'] = tensor_subset_equal(canary/'prepare/results/prepare', Path(rows[first])/'prepare/results/prepare')
+            event('EP_TENSOR_EQUAL', **state['ep_tensor_check'])
+        if state['fv1e_admission'] == 'stopped' and 'ep_tensor_check' not in state:
+            state['ep_tensor_check'] = {'ran': False, 'reason': 'no fv1e in this wave'}
+            event('EP_NOT_RUN', **state['ep_tensor_check'])
+        eligible = [m for m in pending if m != first]
+        if 'ep_tensor_check' in state and first in pending:
+            eligible = eligible + [first] if state['fv1e_admission'] == 'stopped' else [first] + eligible
+        # Collect saved jobs before new submits. A resume keeps their bound instances.
+        saved = [m for m in eligible if (Path(rows[m])/'prepare/jobid').exists()]
+        lanes = (e_lanes if state['fv1e_admission'] == 'admitted' and 'ep_tensor_check' in state else []) + fv1_lanes
+        wave = [(m, ('fv1', 'sparklina')) for m in saved] if saved else list(zip(eligible, lanes))
+        if not wave:
+            event('HOLD', reason='canary counted row awaits fv1e admission or pause release')
+            time.sleep(settings['pending_poll_seconds'])
+            review_peak((canary/'prepare/jobid').read_text().strip(), 'fv1')
+            for module in modules:
+                job = Path(rows[module])/'prepare'
+                if (job/'jobid').exists() and read(job/'instance.json')['name'] == 'fv1':
+                    review_peak((job/'jobid').read_text().strip(), 'fv1')
+            continue
+        started = [(module, lane) for module, lane in wave if phase_job(module, 'prepare', *lane, collect=False)]
+        for module, (name, host) in started:
+            # The first fv1e prepare was collected for the E/P check above.
+            if module != first or state['ep_tensor_check'].get('ran') is False:
                 phase_job(module, 'prepare', name, host)
             for phase in ('capture', 'compare'):
                 phase_job(module, phase)
-            directory = Path(rows[module])
-            receipt = read(directory / 'compare/results/numerics_row.json')
+            receipt = read(Path(rows[module])/'compare/results/numerics_row.json')
             event('ROW', module=module, outcome=receipt['row']['outcome'])
             if not receipt['row'].get('finalization_finished') or receipt['row']['outcome'] != 'PASS':
                 raise FeederError('COUNTED_COMPARE_NOT_PASS')
+            pending.remove(module)
     event('COMPLETE', modules=len(rows))
 
 
