@@ -27,7 +27,7 @@ This establishes local inputs by source inspection. The E/P check must still ver
 Each phase adds these fields under row.phase_jobs.PHASE:
 
 - name, one of fv1, fv1e-sparklina or fv1e-sparky.
-- config_sha256, the SHA-256 of the live config as sorted compact JSON.
+- config_sha256, the SHA-256 of the rank-zero config as sorted compact JSON.
 - broker_starttime, read from rank zero.
 - uri, the live rank-zero local-uri. This is the broker endpoint, not a saved client environment.
 - job_id, normalized to f58plain.
@@ -41,6 +41,7 @@ This is case metadata. No tensor, numeric value, rule or pass condition changes.
 The submit record is PHASE/instance.json. The job writes its checked copy to PHASE/results/instance.json.
 Submission uses urgency zero until the instance and job ID are recorded.
 The helper checks the instance again before it restores the requested urgency.
+Both observations read config.get and attr.get from broker rank zero.
 The job checks its actual Flux connection before it starts the container.
 The INSTANCE file supplies only the native client installation prefix during that check.
 Its file hash and the fv1 resolver no longer choose or bind a phase instance.
@@ -86,6 +87,9 @@ Tensor file paths do not enter the comparison. Payload hashes, dtypes and shapes
 New tests are test_prepare_capture_bind_instances_and_hold_until_recorded and
 test_ep_tensor_subset_ignores_records_and_refuses_tensor_changes.
 The latter has byte, dtype, shape and seed mutations. Different ordinals, identities and times pass.
+test_observe_uses_rank_zero_config executes the RPC code with stub brokers.
+The submit and job brokers have different local configs and the same rank-zero config.
+Both observations must give the same identity and the rank-zero config hash.
 A foreign-cut case is ignored. A changed key or tensor refuses the comparison.
 The existing feeder fixtures now save instance-local job IDs and identities.
 

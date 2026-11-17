@@ -2,6 +2,8 @@
 import copy
 import hashlib
 import json
+import sys
+from types import SimpleNamespace
 import pytest
 from experiments.numerics_rows import phase_instance as api
 from experiments.numerics_rows.phase_artifact import tensor_subset_equal
@@ -13,9 +15,7 @@ def test_prepare_capture_bind_instances_and_hold_until_recorded(tmp_path, monkey
         name = live[0] if command[0] == 'env' else 'fv1e-' + command[1] if len(command) == 2 else 'fv1'
         calls.append((name, args))
         if args[0] == 'python':
-            return json.dumps({'broker.starttime': name, 'local-uri': 'local://' + name})
-        if args[:2] == ('config', 'get'):
-            return '{}'
+            return '{}' if 'config.get' in args[2] else json.dumps({'broker.starttime': name, 'local-uri': 'local://' + name})
         if args[0] == 'submit':
             assert '--urgency=0' in args
             return 'f123'
@@ -42,6 +42,24 @@ def test_prepare_capture_bind_instances_and_hold_until_recorded(tmp_path, monkey
     with pytest.raises(ValueError, match='cannot mix'):
         api.bind({}, 'capture', row['phase_jobs']['prepare'])
     assert any(args == ('job', 'urgency', 'f123', '8') for _, args in calls)
+
+
+def test_observe_uses_rank_zero_config(monkeypatch, capsys):
+    local = ['submit-broker']
+    def rpc(topic, payload=None, nodeid=None):
+        value = {'broker': 'rank-zero' if nodeid == 0 else local[0]} if topic == 'config.get' else {'value': payload['name']}
+        return SimpleNamespace(get=lambda: value)
+    monkeypatch.setitem(sys.modules, 'flux', SimpleNamespace(Flux=lambda: SimpleNamespace(rpc=rpc)))
+    def query(command, *args):
+        if args[:2] == ('config', 'get'):
+            return json.dumps({'broker': local[0]})
+        exec(args[2], {})
+        return capsys.readouterr().out
+    monkeypatch.setattr(api, 'query', query)
+    submitted = api.observe('fv1')
+    local[0] = 'job-broker'
+    assert api.observe('fv1', ['job-client']) == submitted
+    assert submitted['config_sha256'] == hashlib.sha256(b'{"broker":"rank-zero"}').hexdigest()
 
 
 @pytest.mark.parametrize('change', ['bytes', 'dtype', 'shape', 'seed'])

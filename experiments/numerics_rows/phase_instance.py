@@ -25,7 +25,7 @@ def observe(name, command=None):
     command = command or client(name)
     rpc = ['python', '-c', 'import flux,json;f=flux.Flux();print(json.dumps({k:f.rpc("attr.get",{"name":k},nodeid=0).get()["value"] for k in ("broker.starttime","local-uri")}))']
     before = json.loads(query(command, *rpc))
-    config = json.dumps(json.loads(query(command, 'config', 'get')), sort_keys=True, separators=(',', ':'))
+    config = json.dumps(json.loads(query(command, 'python', '-c', 'import flux,json;print(json.dumps(flux.Flux().rpc("config.get",nodeid=0).get()))')), sort_keys=True, separators=(',', ':'))
     if json.loads(query(command, *rpc)) != before or not all(before.values()):
         raise ValueError('phase instance changed during observation')
     return {'name': name, 'config_sha256': hashlib.sha256(config.encode()).hexdigest(),
