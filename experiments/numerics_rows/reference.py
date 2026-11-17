@@ -29,10 +29,23 @@ class FiniteBound:
     def exact_sum(values, axis):
         import numpy as np
         import torch
-        array = values.detach().double().cpu().numpy()
-        def total(row):
-            return outward(sum((F(float(x)) for x in row), F(0))) if np.isfinite(row).all() else math.inf
-        return torch.as_tensor(np.apply_along_axis(total, axis, array), device=values.device)
+        array = np.moveaxis(values.detach().double().cpu().numpy(), axis, -1)
+        finite = np.isfinite(array).all(-1)
+        result = np.full(array.shape[:-1], math.inf)
+        bits = array[finite].view(np.uint64)
+        # Normal significands have 52 fraction bits and an exponent bias of 1023.
+        exponent = ((bits >> 52) & 2047).astype(np.int64)
+        mantissa = ((bits & (2**52 - 1)) | ((exponent != 0).astype(np.uint64) << 52)).astype(np.int64)
+        mantissa = np.where(bits >> 63, -mantissa, mantissa)
+        exponent = np.maximum(exponent, 1)
+        base = np.min(np.where(mantissa != 0, exponent, 2047), axis=-1, keepdims=True, initial=2047)
+        integers = mantissa.astype(object) << np.maximum(exponent - base, 0).astype(object)
+        totals = integers.sum(-1)
+        def rounded(integer, exponent):
+            exponent = int(exponent) - 1075
+            return outward(F(int(integer) << max(exponent, 0), 1 << max(-exponent, 0)))
+        result[finite] = [rounded(n, e) for n, e in zip(totals, base[:, 0])]
+        return torch.as_tensor(result, device=values.device)
 
     @staticmethod
     def up(value):

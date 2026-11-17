@@ -512,6 +512,49 @@ def test_certificate_exact_dot_sum_is_rounded_outward():
     assert F(math.nextafter(bound, -math.inf)) < exact <= F(bound)
 
 
+def fraction_sum_oracle(values, axis):
+    import numpy as np
+    from experiments.numerics_rows.reference import outward
+    array = values.detach().double().cpu().numpy()
+    def total(row):
+        return outward(sum((F(float(x)) for x in row), F(0))) if np.isfinite(row).all() else math.inf
+    return torch.as_tensor(np.apply_along_axis(total, axis, array), device=values.device)
+
+
+@pytest.mark.parametrize("dtype", [torch.float64, torch.float32])
+def test_certificate_exact_sum_matches_fraction_bytes(dtype):
+    import numpy as np
+    rng = np.random.default_rng(1717)
+    bits = rng.integers(0, 2**64, size=(128, 32), dtype=np.uint64)
+    random_rows = bits.view(np.float64)
+    largest, smallest = np.finfo(np.float64).max, np.nextafter(0.0, 1.0)
+    edges = [[-0.0], [smallest, -smallest], [smallest, smallest, -smallest],
+             [largest, -largest, smallest], [largest, -largest, -smallest],
+             [1.0, -math.nextafter(1.0, 0.0), smallest], [2.0**1023, -(2.0**1023), 1.0],
+             [largest, largest], [-largest, -largest], [math.inf], [-math.inf], [math.nan],
+             [math.inf, -math.inf], [smallest, np.finfo(np.float64).tiny]]
+    tiny32 = float(np.nextafter(np.float32(0), np.float32(1)))
+    edges += [[tiny32, -tiny32], [tiny32, float(np.finfo(np.float32).tiny)],
+              [float(np.finfo(np.float32).max), -float(np.finfo(np.float32).max), tiny32]]
+    rows = [np.pad(row, (0, 32-len(row))) for row in edges] + list(random_rows)
+    for row in rows:
+        values = torch.from_numpy(row.copy()).to(dtype).reshape(1, -1)
+        for axis in (0, -1):
+            try:
+                expected = fraction_sum_oracle(values, axis)
+            except OverflowError:
+                with pytest.raises(OverflowError):
+                    FiniteBound.exact_sum(values, axis)
+                continue
+            actual = FiniteBound.exact_sum(values, axis)
+            assert actual.shape == expected.shape and actual.dtype == expected.dtype
+            assert actual.contiguous().view(torch.uint8).numpy().tobytes() == expected.contiguous().view(torch.uint8).numpy().tobytes()
+    values = torch.tensor([[[1.0, -0.0], [2.0**60, 1.0]], [[-1.0, 0.0], [-2.0**60, -1.0]]], dtype=dtype)
+    for axis in (0, 1, -1):
+        actual, expected = FiniteBound.exact_sum(values.transpose(0, 1), axis), fraction_sum_oracle(values.transpose(0, 1), axis)
+        assert actual.contiguous().view(torch.uint8).numpy().tobytes() == expected.contiguous().view(torch.uint8).numpy().tobytes()
+
+
 @pytest.mark.parametrize("k,splits,top_k,held", [(1, 1, 0, True), (2**20-2, 1, 1, False)])
 def test_certificate_checks_manifest_operation_limit(k, splits, top_k, held):
     bound = FiniteBound.dot(torch.tensor([[1.0]], dtype=torch.float64), k, splits, top_k)
