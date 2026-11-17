@@ -44,6 +44,18 @@ def test_prepare_capture_bind_instances_and_hold_until_recorded(tmp_path, monkey
     assert any(args == ('job', 'urgency', 'f123', '8') for _, args in calls)
 
 
+@pytest.mark.parametrize('name', ['fv1e-sparklina', 'fv1e-sparky'])
+def test_canary_prepare_refuses_fv1e_at_submit_and_bind(tmp_path, monkeypatch, name):
+    job = tmp_path/'prepare'; job.mkdir()
+    (job/'instance-name.txt').write_text(name)
+    (tmp_path/'campaign.json').write_text('{"canary":true}')
+    monkeypatch.setattr(api, 'query', lambda *args: pytest.fail('canary must refuse before any Flux query'))
+    with pytest.raises(ValueError, match='only counted prepare'):
+        api.submit(job, ['submit', 'payload'])
+    with pytest.raises(ValueError, match='cannot mix'):
+        api.bind({}, 'prepare', {'name': name}, canary=True)
+
+
 def test_observe_uses_rank_zero_config(monkeypatch, capsys):
     local = ['submit-broker']
     def rpc(topic, payload=None, nodeid=None):
