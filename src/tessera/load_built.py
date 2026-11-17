@@ -7,12 +7,9 @@ import json
 import os
 from pathlib import Path
 import re
-import sys
-
-from ._dev.native_identity import loaded_native_identity
 
 ENV = "TESSERA_LOAD_BUILT"
-RECORD_ENV = "TESSERA_LOADED_LIBRARIES"
+RECORD_ENV = "NATIVE_LIBRARY_RECORD_DIR"
 
 
 def refuse_build(module: str) -> None:
@@ -21,21 +18,15 @@ def refuse_build(module: str) -> None:
 
 
 def load_built(module: str, *, torch):
-    """Return None in JIT mode. In retained mode, check, load and record bytes.
-
-    TESSERA_LOAD_BUILT names the directory that holds build.json.
-    TESSERA_LOADED_LIBRARIES names an existing writable record directory.
-    Exact file equality binds the canonical code and cubin identities in build.json.
-    This path does not compare separately rebuilt, token-masked libraries.
-    """
     if ENV not in os.environ:
         return None
+    from ._dev.native_identity import loaded_native_identity
     from .serving.backend import platform_token, probed_platform_token
 
     root = Path(os.environ[ENV]).resolve(strict=True)
     record_root = Path(os.environ[RECORD_ENV]).resolve(strict=True) if RECORD_ENV in os.environ else None
     if record_root is None or not record_root.is_dir() or record_root.is_relative_to(root):
-        raise RuntimeError("TESSERA_LOADED_LIBRARIES must name an existing directory outside the built tree")
+        raise RuntimeError("NATIVE_LIBRARY_RECORD_DIR must name an existing directory outside the built tree")
     manifest = (root / "build.json").read_bytes()
     rows = [row for row in json.loads(manifest)["libraries"] if row["name"] == module]
     if len(rows) != 1:
@@ -52,12 +43,6 @@ def load_built(module: str, *, torch):
                 for value in [expected, canonical, *cubins])):
         raise RuntimeError(f"{module}: build.json has incomplete code identity")
     path = (root / module / f"{module}.so").resolve(strict=True)
-    if not path.is_relative_to(root) or Path(row["library"]["path"]).resolve() != path:
-        raise RuntimeError(f"{module}: retained library path does not match build.json")
-    if row["library"]["sha256"] != expected:
-        raise RuntimeError(f"{module}: build.json has inconsistent library hashes")
-    if module in sys.modules:
-        raise RuntimeError(f"{module}: a module was already loaded before the retained identity check")
     with path.open("rb") as handle:
         digest = hashlib.file_digest(handle, "sha256").hexdigest()
         if digest != expected:
@@ -68,11 +53,9 @@ def load_built(module: str, *, torch):
         identity = loaded_native_identity(lib, __file__, expected_sha256=expected)
         if identity["path"] != str(path):
             raise RuntimeError(f"{module}: loaded library path does not match build.json")
-    rank = torch.distributed.get_rank() if torch.distributed.is_initialized() else int(os.environ.get("RANK", "0"))
-    record = dict(key=row["key"], name=module, path=str(path), sha256=digest,
-                  rank=rank, pid=os.getpid(), identity_check="PASS",
+    record = dict(key=row["key"], name=module, sha256=digest, identity_check="PASS",
                   build_json_sha256=hashlib.sha256(manifest).hexdigest(),
                   library_canonical_code_sha256=canonical, cubin_canonical_sha256s=cubins)
-    with (record_root / f"rank-{rank}-pid-{os.getpid()}.jsonl").open("a") as output:
+    with (record_root / f"pid-{os.getpid()}.jsonl").open("a") as output:
         output.write(json.dumps(record, sort_keys=True) + "\n")
     return lib

@@ -89,7 +89,6 @@ class MlaPrefillBuild:
     def __init__(self, build_directory, *, mutation=False, p0_buffers=False,
                  p0_wrong_pass=False, require_retained=False, retained_manifest_sha256=None):
         from tessera.load_built import refuse_build
-
         refuse_build("tessera_mla_prefill")
         from flashinfer.jit.env import FLASHINFER_INCLUDE_DIR, CCCL_INCLUDE_DIRS
         self.flags = select_flags(mutation=mutation, p0_buffers=p0_buffers,

@@ -130,11 +130,8 @@ def _ext():
         offload_flags,
     )
     from .jit_build_lock import GUARDED_BUILD_SUFFIX, jit_build_lock
-
     from .load_built import load_built
-
-    retained = load_built("tessera_regdirect_routed", torch=torch)
-    if retained is not None:
+    if (retained := load_built("tessera_regdirect_routed", torch=torch)) is not None:
         return retained
 
     ensure_toolchain_on_path(torch)
