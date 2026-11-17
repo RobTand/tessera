@@ -37,7 +37,7 @@
 //experiments:moe_write_readback_check
 //experiments:numerics_rows/build_cycle
 //experiments:numerics_rows/job_receipt
-//experiments:numerics_rows/sass_slice
+//experiments:numerics_rows/reference
 //experiments:original_wire_generation
 //experiments:pq2459/preflight
 //experiments:qualify_native_artifact_operator

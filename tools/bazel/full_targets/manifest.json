@@ -43,7 +43,7 @@
           "//experiments:moe_write_readback_check",
           "//experiments:numerics_rows/build_cycle",
           "//experiments:numerics_rows/job_receipt",
-          "//experiments:numerics_rows/sass_slice",
+          "//experiments:numerics_rows/reference",
           "//experiments:original_wire_generation",
           "//experiments:pq2459/preflight",
           "//experiments:qualify_native_artifact_operator",
@@ -520,7 +520,7 @@
         "estimated_seconds": 1990.6999999999991,
         "index": 0,
         "file": "tools/bazel/full_targets/amd64-0.targets",
-        "sha256": "0f0fd1e2cf06f149b9df732ec4b078fac5e7b6a47c580fffc03fc4a266073757"
+        "sha256": "84cd1c12d79cfe3305bda909d763cc08ce570599cde3cc6edf057e680f1229f0"
       },
       {
         "rules": [
@@ -559,7 +559,7 @@
           "//experiments:native_operator_resources",
           "//experiments:numerics_rows/c1_campaign",
           "//experiments:numerics_rows/join",
-          "//experiments:numerics_rows/scope",
+          "//experiments:numerics_rows/sass_slice",
           "//experiments:pad_canonicality_census",
           "//experiments:pq2459/producer_authority",
           "//experiments:qualify_native_operator",
@@ -1044,7 +1044,7 @@
         "estimated_seconds": 1989.6999999999991,
         "index": 1,
         "file": "tools/bazel/full_targets/amd64-1.targets",
-        "sha256": "93d98c695d988651c1500b629f0addc361100c1b1c0a09338d211dbdc85070ec"
+        "sha256": "1d5e83a7b6beb83c9141f61723e2095fb54060aff1c0b018bfaced7a7ecc2704"
       },
       {
         "rules": [
@@ -1081,7 +1081,7 @@
           "//experiments:moe_source_encode_preflight",
           "//experiments:native_test_source",
           "//experiments:numerics_rows/cases_cycle",
-          "//experiments:numerics_rows/prepare_job",
+          "//experiments:numerics_rows/launch_state",
           "//experiments:numerics_rows/synthetic",
           "//experiments:pair",
           "//experiments:profile_torch",
@@ -1569,7 +1569,7 @@
         "estimated_seconds": 1989.5999999999995,
         "index": 2,
         "file": "tools/bazel/full_targets/amd64-2.targets",
-        "sha256": "6a2f82a68b93e58b3aaca13edb6fbda17d3fda70732fe23c60bb7a8f5d767769"
+        "sha256": "2501ba531193a1453e46f3aa967d8ca7c6512526b56cb3fc68dc64d1e2b736d9"
       },
       {
         "rules": [
@@ -1604,7 +1604,7 @@
           "//experiments:moe_stack_plan",
           "//experiments:ncu_blockc",
           "//experiments:numerics_rows/common",
-          "//experiments:numerics_rows/profile_c1",
+          "//experiments:numerics_rows/prepare_job",
           "//experiments:nvfp4_moe_oracle_probe",
           "//experiments:pair_grid_audit",
           "//experiments:profile_window_gemm_arithmetic",
@@ -2095,7 +2095,7 @@
         "estimated_seconds": 1991.7999999999993,
         "index": 3,
         "file": "tools/bazel/full_targets/amd64-3.targets",
-        "sha256": "7459372c9bedef076e5723ee832ec976bd4670f0a88aa32639f4130fda2f84c4"
+        "sha256": "bc06377d73b839631ee98a74489306f9c71cfc5afb8e84a8f3a9fc3e97085e15"
       },
       {
         "rules": [
@@ -2131,7 +2131,7 @@
           "//experiments:moe_wire_loader_probe",
           "//experiments:ncu_window_gemv_target",
           "//experiments:numerics_rows/cpu_checks",
-          "//experiments:numerics_rows/quantizers",
+          "//experiments:numerics_rows/profile_c1",
           "//experiments:nvfp4_moe_route_load_probe",
           "//experiments:pair_report",
           "//experiments:qualify_full_engine_observers",
@@ -2620,7 +2620,7 @@
         "estimated_seconds": 1989.6,
         "index": 4,
         "file": "tools/bazel/full_targets/amd64-4.targets",
-        "sha256": "eb8af5a7f0bee42b8e1bccad906b3b7bccc1eb1e3ee2440cd40871abcdab7bdc"
+        "sha256": "1fa7b0be6ab65d77f8019e8f52c4204e848119895eccf9d9bb36e34138a0ff84"
       },
       {
         "rules": [
@@ -2656,7 +2656,7 @@
           "//experiments:moe_wire_weight_error",
           "//experiments:ncu_window_target",
           "//experiments:numerics_rows/gpu_time",
-          "//experiments:numerics_rows/reference",
+          "//experiments:numerics_rows/quantizers",
           "//experiments:original_wire_checkpoint",
           "//experiments:plan_from_layer_config",
           "//experiments:qualify_historical_selected_wires",
@@ -3145,7 +3145,7 @@
         "estimated_seconds": 1989.6000000000001,
         "index": 5,
         "file": "tools/bazel/full_targets/amd64-5.targets",
-        "sha256": "2beea9bac2959d75737e430c4a5836a13752dae756d28e71ff2c57ff4cadac23"
+        "sha256": "b392b1212fef824567076f8ff2a2ced19fbdf1e5a98c88f148beb629caa1c6f3"
       }
     ],
     "arm64": [
@@ -3191,7 +3191,7 @@
           "//experiments:moe_wire_loader_probe",
           "//experiments:ncu_window_gemv_target",
           "//experiments:numerics_rows/cpu_checks",
-          "//experiments:numerics_rows/quantizers",
+          "//experiments:numerics_rows/profile_c1",
           "//experiments:nvfp4_moe_route_load_probe",
           "//experiments:pair_report",
           "//experiments:qualify_full_engine_observers",
@@ -3658,7 +3658,7 @@
         "estimated_seconds": 1885.9,
         "index": 0,
         "file": "tools/bazel/full_targets/arm64-0.targets",
-        "sha256": "20ca02d33819e2087ca6bb87e680e825b8ca64d314db7a1cda6d4db425bbf0a7"
+        "sha256": "703bb0699f811aef7861bde81231046cb2c37c9be8198738adda8f25949cb35c"
       },
       {
         "rules": [
@@ -3696,7 +3696,7 @@
           "//experiments:moe_wire_weight_error",
           "//experiments:ncu_window_target",
           "//experiments:numerics_rows/gpu_time",
-          "//experiments:numerics_rows/reference",
+          "//experiments:numerics_rows/quantizers",
           "//experiments:original_wire_checkpoint",
           "//experiments:plan_from_layer_config",
           "//experiments:qualify_historical_selected_wires",
@@ -4175,7 +4175,7 @@
         "estimated_seconds": 1888.0000000000002,
         "index": 1,
         "file": "tools/bazel/full_targets/arm64-1.targets",
-        "sha256": "c0b27dcc98eee2f089f47182b0daaf97ec1bb0364596de150cda9f90441bbf88"
+        "sha256": "739218863adcbffd1b55790a94ce40c480b444b681f104644440df936fe7ff6e"
       },
       {
         "rules": [
@@ -4212,7 +4212,7 @@
           "//experiments:moe_write_readback_check",
           "//experiments:numerics_rows/build_cycle",
           "//experiments:numerics_rows/job_receipt",
-          "//experiments:numerics_rows/sass_slice",
+          "//experiments:numerics_rows/reference",
           "//experiments:original_wire_generation",
           "//experiments:pq2459/preflight",
           "//experiments:qualify_native_artifact_operator",
@@ -4693,7 +4693,7 @@
         "estimated_seconds": 1888.0000000000002,
         "index": 2,
         "file": "tools/bazel/full_targets/arm64-2.targets",
-        "sha256": "d9f475a7bc39d8f6cfaff3142ad746ff3f5001bba336492ffc8c91272cf0fb89"
+        "sha256": "6b58d9185c28cf25996d0e87c0d0632a09b62c82b1220c39a6af7d842e82b7de"
       },
       {
         "rules": [
@@ -4729,7 +4729,7 @@
           "//experiments:native_operator_resources",
           "//experiments:numerics_rows/c1_campaign",
           "//experiments:numerics_rows/join",
-          "//experiments:numerics_rows/scope",
+          "//experiments:numerics_rows/sass_slice",
           "//experiments:pad_canonicality_census",
           "//experiments:pq2459/producer_authority",
           "//experiments:qualify_native_operator",
@@ -5212,7 +5212,7 @@
         "estimated_seconds": 1888.0999999999995,
         "index": 3,
         "file": "tools/bazel/full_targets/arm64-3.targets",
-        "sha256": "cd4cf81dd43de15bd03f1e0cbb016d51e530de1e5e089c90d4f13eb6f70fbe06"
+        "sha256": "393088aebf3a494994b4c205314ff64c7329db7b7ef266320807c347c0dcea6c"
       },
       {
         "rules": [
@@ -5247,7 +5247,7 @@
           "//experiments:moe_source_encode_preflight",
           "//experiments:native_test_source",
           "//experiments:numerics_rows/cases_cycle",
-          "//experiments:numerics_rows/prepare_job",
+          "//experiments:numerics_rows/launch_state",
           "//experiments:numerics_rows/synthetic",
           "//experiments:pair",
           "//experiments:profile_torch",
@@ -5731,7 +5731,7 @@
         "estimated_seconds": 1888.0000000000002,
         "index": 4,
         "file": "tools/bazel/full_targets/arm64-4.targets",
-        "sha256": "6a3aa4c07ea2d4d0bdccea680951d0c3d01c207dbaa8feb9bfc251cc8bcfec7d"
+        "sha256": "ec3e3cfee087459c4b537a5ef81d8ca074c132267f19e2a4ab7264031c7e6c3a"
       },
       {
         "rules": [
@@ -5767,7 +5767,7 @@
           "//experiments:moe_stack_plan",
           "//experiments:ncu_blockc",
           "//experiments:numerics_rows/common",
-          "//experiments:numerics_rows/profile_c1",
+          "//experiments:numerics_rows/prepare_job",
           "//experiments:nvfp4_moe_oracle_probe",
           "//experiments:pair_grid_audit",
           "//experiments:profile_window_gemm_arithmetic",
@@ -6248,7 +6248,7 @@
         "estimated_seconds": 1885.8999999999994,
         "index": 5,
         "file": "tools/bazel/full_targets/arm64-5.targets",
-        "sha256": "53e499f938bd9eed6ee131950945117e55bde62927ed89ece36e86b59c886f9e"
+        "sha256": "9eada60703644b23e5b2f93aac36efadc3f042ef69a2e84f0313db0070ea98dc"
       }
     ]
   }

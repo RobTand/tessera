@@ -30,7 +30,7 @@
 //experiments:native_operator_resources
 //experiments:numerics_rows/c1_campaign
 //experiments:numerics_rows/join
-//experiments:numerics_rows/scope
+//experiments:numerics_rows/sass_slice
 //experiments:pad_canonicality_census
 //experiments:pq2459/producer_authority
 //experiments:qualify_native_operator

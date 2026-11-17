@@ -32,7 +32,7 @@
 //experiments:moe_wire_weight_error
 //experiments:ncu_window_target
 //experiments:numerics_rows/gpu_time
-//experiments:numerics_rows/reference
+//experiments:numerics_rows/quantizers
 //experiments:original_wire_checkpoint
 //experiments:plan_from_layer_config
 //experiments:qualify_historical_selected_wires

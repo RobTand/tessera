@@ -30,7 +30,7 @@
 //experiments:moe_stack_plan
 //experiments:ncu_blockc
 //experiments:numerics_rows/common
-//experiments:numerics_rows/profile_c1
+//experiments:numerics_rows/prepare_job
 //experiments:nvfp4_moe_oracle_probe
 //experiments:pair_grid_audit
 //experiments:profile_window_gemm_arithmetic

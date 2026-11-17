@@ -30,7 +30,7 @@
 //experiments:moe_wire_loader_probe
 //experiments:ncu_window_gemv_target
 //experiments:numerics_rows/cpu_checks
-//experiments:numerics_rows/quantizers
+//experiments:numerics_rows/profile_c1
 //experiments:nvfp4_moe_route_load_probe
 //experiments:pair_report
 //experiments:qualify_full_engine_observers

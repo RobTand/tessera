@@ -29,7 +29,7 @@
 //experiments:moe_source_encode_preflight
 //experiments:native_test_source
 //experiments:numerics_rows/cases_cycle
-//experiments:numerics_rows/prepare_job
+//experiments:numerics_rows/launch_state
 //experiments:numerics_rows/synthetic
 //experiments:pair
 //experiments:profile_torch
