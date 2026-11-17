@@ -14933,6 +14933,7 @@ ts_py_library(
         "//experiments:numerics_rows/cases_cycle",
         "//experiments:numerics_rows/common",
         "//experiments:numerics_rows/gpu_time",
+        "//experiments:numerics_rows/prepare_split",
         "//experiments:numerics_rows/reference",
         "//experiments:pair",
         "//experiments:routed_pair_oracle",

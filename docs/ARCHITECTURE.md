@@ -11,6 +11,8 @@ Composition mismatches fail on exact and realistic inputs in both row paths.
 The capture writes a gate checkpoint before diagnostics. Phase records, diagnostic
 reference profiles, NVML power and resident time, and cgroup peak memory expose
 host work and interrupted cases. These tools change no serving default or arithmetic.
+The split generator keeps counted module jobs held behind a finished PASS canary.
+Each capture job checks its own GPU, power and whole-job memory measurements.
 
 Re-stamped 2026-11-17 for the #1717 frozen rule v2 worker policy.
 The tool binds the whole worker start environment, with exact frozen exclusions.

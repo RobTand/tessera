@@ -305,5 +305,12 @@
     "nodes": [
       "test_image_symbol_audit_reads_files_without_loading_driver"
     ]
+  },
+  "pre-fix-counted-split-prep": {
+    "file": "test_numerics_rows_phases.py",
+    "expected": 3,
+    "nodes": [
+      "test_counted_split_launch_selects_a_whole_module_and_preserves_artifact_inputs"
+    ]
   }
 }

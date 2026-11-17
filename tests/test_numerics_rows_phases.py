@@ -422,3 +422,72 @@ def test_lever_addendum_refuses_another_path_with_identical_bytes(tmp_path, monk
     other = tmp_path / "copied-addendum.json"; other.write_bytes(addendum.read_bytes())
     with pytest.raises(Invalid, match="fixed rule path"):
         row.bind_freeze_addendum({}, freeze, rule, other)
+
+
+@pytest.mark.parametrize("phase", ("prepare", "capture", "compare"))
+def test_counted_split_launch_selects_a_whole_module_and_preserves_artifact_inputs(tmp_path, phase):
+    import shlex
+    from experiments.numerics_rows import prepare_split as api
+    assert hasattr(api, "row_arguments"), "feature absent: counted whole-module split preparation"
+    paths = {"source": "/retained/F", "manifest": "/shared/C1.json", "build": "/shared/build.json"}
+    config = {"module": "module-A", "canary": False}
+    command = shlex.split(api.row_arguments(config, tmp_path, Path(paths["source"]), "/signed/population.json", paths, phase))
+    assert command[command.index("--module") + 1] == "module-A"
+    assert not {"--tp-size", "--tp-rank", "--canary"} & set(command)
+    assert ("--prepare-artifact" in command) == (phase != "prepare")
+    assert ("--capture-artifact" in command) == (phase == "compare")
+    canary = shlex.split(api.row_arguments({**config, "canary": True}, tmp_path, Path(paths["source"]), "/signed/population.json", paths, phase))
+    assert "--canary" in canary and canary[canary.index("--tp-size") + 1] == "2"
+    assert canary[canary.index("--tp-rank") + 1] == "0"
+
+
+@pytest.fixture
+def split_canary_evidence(tmp_path):
+    from experiments.numerics_rows import prepare_split as api
+    from experiments.numerics_rows.common import sha256, write_json
+    paths = {key: tmp_path / key for key in api.INPUTS}
+    for path in paths.values():
+        path.write_text("bound bytes")
+    directory = tmp_path / "canary"
+    directory.mkdir()
+    write_json(directory / "campaign.json", {"canary": True, "tool_commit": "tool", "paths": {k: str(v) for k, v in paths.items()},
+        "digests": {k: sha256(v) for k, v in paths.items() if k != "source"}})
+    for phase in ("prepare", "capture", "compare"):
+        (directory / phase / "results").mkdir(parents=True)
+        (directory / phase / "tool-exit.txt").write_text("0\n")
+    receipt = {"canary": True, "tool": {"commit": "tool"}, "tessera": {"commit": api.SOURCE}, "rule": {"sha256": api.RULE_SHA},
+        "row": {"outcome": "PASS", "exit_status": 0, "finalization_finished": True}, "units": [{"outcome": "PASS"}]}
+    write_json(directory / "compare/results/numerics_row.json", receipt)
+    meter = {"wall_minutes": 1, "gpu_busy_minutes": 0.2, "peak_device_memory_mib": 800, "peak_power_watts": 15,
+        "mean_sample_power_watts": 12, "whole_job_peak_memory_bytes": 2**30, "sampled_seconds": 60,
+        "busy_sampled_seconds": 60, "samples": [{}, {}], "errors": []}
+    write_json(directory / "capture/results/numerics_row.json", {"row": {"gpu_minutes": meter}})
+    return api, directory, paths, receipt, meter
+
+
+@pytest.mark.parametrize("mutation", ("unfinished", "fail", "tool", "source", "input", "exit"))
+def test_counted_split_refuses_an_unfinished_failed_or_mixed_canary(split_canary_evidence, mutation):
+    from experiments.numerics_rows.common import write_json
+    api, directory, paths, receipt, _ = split_canary_evidence
+    api.check_canary(directory, "tool", paths)
+    if mutation == "unfinished": receipt["row"]["finalization_finished"] = False
+    elif mutation == "fail": receipt["units"][0]["outcome"] = "FAIL"
+    elif mutation == "tool": receipt["tool"]["commit"] = "other"
+    elif mutation == "source": receipt["tessera"]["commit"] = "other"
+    elif mutation == "input": paths["build"].write_text("changed bytes")
+    else: (directory / "capture/tool-exit.txt").write_text("3\n")
+    write_json(directory / "compare/results/numerics_row.json", receipt)
+    with pytest.raises(Invalid, match="canary|F chain"):
+        api.check_canary(directory, "tool", paths)
+
+
+@pytest.mark.parametrize("field", ("gpu_busy_minutes", "peak_device_memory_mib", "peak_power_watts", "whole_job_peak_memory_bytes", "busy_sampled_seconds"))
+def test_capture_job_refuses_success_without_its_own_telemetry(split_canary_evidence, field):
+    from experiments.numerics_rows.common import write_json
+    api, directory, _, _, meter = split_canary_evidence
+    path = directory / "capture/results/numerics_row.json"
+    api.check_telemetry(path)
+    meter[field] = None
+    write_json(path, {"row": {"gpu_minutes": meter}})
+    with pytest.raises(Invalid, match="capture telemetry"):
+        api.check_telemetry(path)
