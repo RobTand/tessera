@@ -1740,7 +1740,7 @@ def test_gpu_sampler_keeps_power_and_compute_app_memory_when_memory_used_is_na(m
     lines = iter(("GPU-GB10, 0, 10.0, [N/A]\n", "GPU-GB10, [N/A], 10.7, [N/A]\n"))
     def query(command, **kwargs):
         assert command[0] == "nvidia-smi" and command[-1] == "--format=csv,noheader,nounits"
-        return "128\n220\n" if "--query-compute-apps=used_memory" in command else next(lines)
+        return "701, 128\n702, 220\n" if "--query-compute-apps=pid,used_memory" in command else next(lines)
     monkeypatch.setattr(gpu_time.subprocess, "check_output", query)
     monkeypatch.setattr(torch.cuda, "is_initialized", lambda: True)
     monkeypatch.setattr(torch.cuda, "max_memory_allocated", lambda: 1024)
@@ -1759,7 +1759,7 @@ def test_gpu_memory_query_failure_preserves_power_and_recovers(monkeypatch):
 
     meter = gpu_time.RowMeter.__new__(gpu_time.RowMeter)
     meter.samples, meter.errors = [], []
-    stop, values = iter((False, True)), iter((TimeoutError("compute query timed out"), "16\n32\n"))
+    stop, values = iter((False, True)), iter((TimeoutError("compute query timed out"), "701, 16\n702, 32\n"))
     meter.done = SimpleNamespace(wait=lambda seconds: next(stop))
     def query(command):
         if "--query-gpu=" in command:
@@ -1773,6 +1773,95 @@ def test_gpu_memory_query_failure_preserves_power_and_recovers(monkeypatch):
     assert len(meter.samples) == 2 and meter.errors == ["compute query timed out"]
     assert [s["power_watts"] for s in meter.samples] == [10.0, 10.0]
     assert [s["compute_apps_memory_mib"] for s in meter.samples] == [None, 48]
+
+
+def test_gpu_sampler_zeroes_stuck_counter_without_compute_process(monkeypatch):
+    from experiments.numerics_rows import gpu_time
+
+    meter = gpu_time.RowMeter.__new__(gpu_time.RowMeter)
+    meter.samples, meter.errors = [], []
+    stop, times = iter((False, True)), iter((10, 20))
+    meter.done = SimpleNamespace(wait=lambda seconds: next(stop))
+    monkeypatch.setattr(gpu_time.time, "monotonic", lambda: next(times))
+    meter.query = lambda request: "GPU-GB10, 96, 10, [N/A]" if request.startswith("--query-gpu=") else ""
+    meter.sample()
+    result = gpu_time.summarize(meter.samples, 0, 30)
+    assert result["gpu_busy_minutes"] == 0
+    assert all(s.get("compute_process_count") == 0 and s.get("compute_apps_memory_mib") == 0
+               and s.get("nvml_busy_percent") == 96 and s["busy_percent"] == 0 for s in result["samples"])
+
+
+def test_gpu_sampler_uses_any_compute_process_and_records_pids_once(monkeypatch):
+    import os
+    from experiments.numerics_rows import gpu_time
+
+    meter = gpu_time.RowMeter.__new__(gpu_time.RowMeter)
+    meter.start, meter.samples, meter.errors = 0, [], []
+    stop, times, apps = iter((False, True)), iter((10, 20, 30)), iter(("123456789, 128", "123456790, 256"))
+    meter.done = SimpleNamespace(wait=lambda seconds: next(stop), set=lambda: None)
+    meter.thread = SimpleNamespace(join=lambda **kwargs: None, is_alive=lambda: False)
+    monkeypatch.setattr(gpu_time.time, "monotonic", lambda: next(times))
+    meter.query = lambda request: "GPU-GB10, 96, 10, [N/A]" if request.startswith("--query-gpu=") else next(apps)
+    meter.sample()
+    result = meter.finish()
+    assert result["gpu_busy_minutes"] == pytest.approx(0.16)
+    assert result.get("pid_diagnostic", {}).get("nvml_pids") == [123456789]
+    assert result["pid_diagnostic"]["in_container_pid"] == os.getpid()
+    assert [s.get("compute_process_memory_mib") for s in result["samples"]] == [[128], [256]]
+    assert all(s.get("compute_process_count") == 1 and "pid" not in s and "nvml_pids" not in s for s in result["samples"])
+
+
+@pytest.mark.parametrize("apps,memory,servers,verdict", [
+    ("", "[N/A]", [], "FREE"), ("", "307.19", [], "FREE"),
+    ("", "307.2", [], "STOPPED"), ("701, 128", "[N/A]", [], "STOPPED"),
+    ("", "[N/A]", [701], "STOPPED"), ("", "-1", [], "STOPPED")],
+    ids=("empty-gb10", "below-limit", "at-limit", "compute-process", "vllm", "negative-memory"))
+def test_capture_preflight_requires_free_memory_no_compute_and_no_vllm(apps, memory, servers, verdict):
+    from experiments.numerics_rows import gpu_time
+
+    assert hasattr(gpu_time, "preflight"), "feature absent: GPU-free capture preflight"
+    def query(request):
+        return f"GPU-GB10, 96, 10, {memory}" if request.startswith("--query-gpu=") else apps
+    result = gpu_time.preflight(query, lambda: servers)
+    assert result["verdict"] == verdict
+    assert result["compute_process_count"] == bool(apps)
+
+
+def test_capture_preflight_detects_vllm_without_a_cuda_context(tmp_path):
+    from experiments.numerics_rows import gpu_time
+
+    assert hasattr(gpu_time, "vllm_processes"), "feature absent: host vLLM preflight"
+    for pid, name, command in ((701, "python", b"python\0-m\0vllm.entrypoints.openai.api_server\0"),
+                               (702, "VLLM::EngineCore", b"python\0"),
+                               (703, "python", b"python\0capture.py\0/vllm/config.json\0")):
+        directory = tmp_path / str(pid)
+        directory.mkdir()
+        (directory / "comm").write_text(name)
+        (directory / "cmdline").write_bytes(command)
+    assert sorted(gpu_time.vllm_processes(tmp_path)) == [701, 702]
+
+
+def test_capture_preflight_stops_before_first_device_call(tmp_path, monkeypatch):
+    from experiments.numerics_rows import gpu_time, launch_state
+
+    argv = ["row", "--image", "N", "--name", "preflight", "--out", str(tmp_path), "--phase", "capture"]
+    for name in ("source", "manifest", "population", "build", "build-provenance", "q1", "h1", "rule", "freeze"):
+        argv.extend(("--" + name, str(tmp_path / name)))
+    monkeypatch.setattr(sys, "argv", argv)
+    monkeypatch.setattr(gpu_time, "RowMeter", lambda: SimpleNamespace(finish=lambda: {}))
+    monkeypatch.setattr(launch_state, "LaunchState", lambda *a, **kw: SimpleNamespace(fields=lambda: {"launch_levers_sha256": "a" * 64}))
+    calls, free = [], True
+    monkeypatch.setattr(gpu_time, "preflight", lambda: {"verdict": "FREE" if free else "STOPPED"}, raising=False)
+    monkeypatch.setattr(row, "run", lambda *args: calls.append("first-device-call"))
+    row.main()
+    assert calls == ["first-device-call"]
+    calls.clear()
+    free = False
+    with pytest.raises(SystemExit) as stopped:
+        row.main()
+    assert stopped.value.code == 3 and not calls
+    saved = json.loads((tmp_path / "numerics_row.json").read_text())
+    assert saved["row"]["outcome"] == "STOPPED" and saved["row"]["finalization_finished"] is False
 
 
 def test_missing_gpu_fields_do_not_invent_zero_memory_or_activity():

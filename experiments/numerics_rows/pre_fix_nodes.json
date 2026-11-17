@@ -312,5 +312,21 @@
     "nodes": [
       "test_counted_split_launch_selects_a_whole_module_and_preserves_artifact_inputs"
     ]
+  },
+  "pre-fix-capture-telemetry": {
+    "file": "test_numerics_rows_receipts.py",
+    "expected": 10,
+    "nodes": [
+      "test_gpu_sampler_zeroes_stuck_counter_without_compute_process",
+      "test_gpu_sampler_uses_any_compute_process_and_records_pids_once",
+      "test_capture_preflight_requires_free_memory_no_compute_and_no_vllm[empty-gb10]",
+      "test_capture_preflight_requires_free_memory_no_compute_and_no_vllm[below-limit]",
+      "test_capture_preflight_requires_free_memory_no_compute_and_no_vllm[at-limit]",
+      "test_capture_preflight_requires_free_memory_no_compute_and_no_vllm[compute-process]",
+      "test_capture_preflight_requires_free_memory_no_compute_and_no_vllm[vllm]",
+      "test_capture_preflight_requires_free_memory_no_compute_and_no_vllm[negative-memory]",
+      "test_capture_preflight_detects_vllm_without_a_cuda_context",
+      "test_capture_preflight_stops_before_first_device_call"
+    ]
   }
 }

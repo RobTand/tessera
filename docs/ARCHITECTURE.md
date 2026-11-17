@@ -13,6 +13,11 @@ reference profiles, NVML power and resident time, and cgroup peak memory expose
 host work and interrupted cases. These tools change no serving default or arithmetic.
 The split generator keeps counted module jobs held behind a finished PASS canary.
 Each capture job checks its own GPU, power and whole-job memory measurements.
+Capture refuses a busy GPU before its first device call. Host preflight also
+checks for vLLM processes. Missing measurements stop capture.
+NVML activity counts only while a compute process is listed. Raw PID values are
+diagnostic because NVML reports host PIDs across the container PID boundary.
+Canary CPU phases use one core. Separate host and device peaks set later bookings.
 
 Re-stamped 2026-11-17 for the #1717 frozen rule v2 worker policy.
 The tool binds the whole worker start environment, with exact frozen exclusions.

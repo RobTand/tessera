@@ -134,17 +134,18 @@ def prepare(cpu_check, *, module=MODULE, canary=True, canary_directory=None):
         "canary_directory": str(canary_directory) if canary_directory else None,
         "paths": dict.fromkeys(INPUTS), "cpu_check": str(cpu_check)})
     shutil.copyfile(__file__, out / "prepare.py")
-    cores = 4 if canary else 1
-    for phase, minutes in (("prepare", 1440), ("capture", 15 if canary else 60), ("compare", 120 if canary else 360)):
+    for phase, minutes in (("prepare", 360 if canary else 1440), ("capture", 15 if canary else 60), ("compare", 120 if canary else 360)):
         job = out / phase
         job.mkdir()
         gpu = phase == "capture"
+        cores = 4 if canary and gpu else 1
         options = shlex.join(container_options("$task_scratch")).replace("'$task_scratch", '"$task_scratch').replace(":rw'", ':rw"').replace(":ro'", ':ro"')
         bootstrap = f"PYTHONPATH={job}/code python3 -m experiments.numerics_rows.prepare_split --verify {out}"
         prerequisites = ""
         for prior in (("prepare",) if gpu else ("prepare", "capture") if phase == "compare" else ()):
             prerequisites += f"test -s {out}/{prior}/results/{prior}/phase.json\n"
         telemetry = f"PYTHONPATH=code python3 -m experiments.numerics_rows.prepare_split --check-telemetry {job}/results/numerics_row.json > results/telemetry-check.json\n" if gpu else ""
+        preflight = f"PYTHONPATH=code python3 -m experiments.numerics_rows.gpu_time --preflight results/gpu-preflight-host.json {'--canary' if canary else ''}\n" if gpu else ""
         (job / "job.sh").write_text(f'''#!/bin/bash
 set -euo pipefail
 umask 077
@@ -160,7 +161,7 @@ git clone --shared {repository} code
 git -C code checkout --detach {revision}
 test "$(git -C code rev-parse HEAD)" = {revision}
 {bootstrap}
-{prerequisites}podman image inspect acc684c06ec7 > "$task_scratch/image-inspect.json"
+{prerequisites}{preflight}podman image inspect acc684c06ec7 > "$task_scratch/image-inspect.json"
 # The population draft mount is supplied from the bound, reviewed campaign file.
 mapfile -t population_mount < <(PYTHONPATH=code python3 -c 'import json,shlex; print("\\n".join(shlex.split(json.load(open("{out}/campaign.json"))["population_mount"])))')
 rc=0
@@ -205,9 +206,9 @@ phase exits, with the same tool, rule, population, build, Q1, H1 and addendum.
 
 | Job | Cores | Memory GiB | GPU | Limit | Time basis |
 |---|---:|---:|---:|---|---|
-| prepare | {cores} | 32 | 0 | 24 h | Unknown. Old host work exceeded 88 min and was unfinished. |
-| capture | {cores} | 32 | 1 | {15 if canary else 60} min | Provisional; three-cut rows need the canary measurements. |
-| compare | {cores} | 32 | 0 | {120 if canary else 360} min | Unknown. Streamed comparisons, no reference construction. |
+| prepare | 1 | 32 | 0 | {360 if canary else 1440} min | No separate peak. Old whole-row cgroup peak was 4.93 GiB. |
+| capture | {4 if canary else 1} | 32 | 1 | {15 if canary else 60} min | Old one-cut device peak was 0.86 GiB; F remains unmeasured. |
+| compare | 1 | 32 | 0 | {120 if canary else 360} min | No separate peak. Keep the canary booking until measured. |
 
 All jobs use aarch64 IMG-N on sparklina. These are prepared limits, not new measurements.
 No case, M, distribution or seed is removed. Prepare records an in-process

@@ -644,7 +644,7 @@ def main():
                        "finalization_finished": False},
                "tool": {}, "rule": {}, "runtime": {}, "tessera": {}, "probe": {}, "inputs": {},
                "modules": [], "units": [], "negative_controls": [], "diagnostic_cells": [], "findings": []}
-    from experiments.numerics_rows.gpu_time import RowMeter
+    from experiments.numerics_rows.gpu_time import RowMeter, preflight
 
     meter = RowMeter() if args.phase not in ("prepare", "compare") else None
     args.meter = meter
@@ -656,6 +656,10 @@ def main():
         fields = args.launch_state.fields()
         receipt["runtime"].update({k: v for k, v in fields.items() if k != "launch_levers_sha256"})
         receipt["inputs"]["launch_levers_sha256"] = fields["launch_levers_sha256"]
+        if args.phase == "capture":
+            receipt["row"]["gpu_preflight"] = preflight()
+            if receipt["row"]["gpu_preflight"]["verdict"] != "FREE":
+                raise RuntimeError("GPU preflight not free")
         run(args, receipt)
     except Exception as error:
         receipt["row"].update(utc_end=datetime.now(timezone.utc).isoformat(), exit_status=3, stop_cause=error_text(error), finalization_finished=False)
