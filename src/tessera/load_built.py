@@ -20,7 +20,7 @@ def refuse_build(module: str) -> None:
 def load_built(module: str, *, torch):
     if ENV not in os.environ:
         return None
-    from ._dev.native_identity import loaded_native_identity
+    from .native_identity import loaded_native_identity
     from .serving.backend import platform_token, probed_platform_token
 
     root = Path(os.environ[ENV]).resolve(strict=True)

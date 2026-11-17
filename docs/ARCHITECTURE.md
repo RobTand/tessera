@@ -1,12 +1,12 @@
 # Tessera plan-to-serve architecture
 
-Re-stamped 2026-11-17T12:18:45Z for retained native library loading.
+Re-stamped 2026-11-17T12:42:09Z for retained native library loading.
 `TESSERA_LOAD_BUILT` names a build.json directory. Unset preserves native JIT.
 Set loads native extensions without compilation, locks or directory creation.
 Triton still compiles. This identity record covers native extension libraries only.
 Routed, E2M1, window-GEMV and register-direct use it; MLA-prefill and mHC refuse.
 Missing libraries, wrong platforms and raw SHA-256 mismatches refuse before loading.
-The source-tree inode reader checks executable mappings; retained mode needs that source tree.
+The shipped inode reader checks executable mappings. Retained mode also works from the wheel.
 `NATIVE_LIBRARY_RECORD_DIR` names an existing writable directory outside the build tree.
 Each process appends names, hashes and check results to `pid-<pid>.jsonl`, without environment values.
 Exact file equality binds canonical code and cubin identities, including the masked nvcc PID token.

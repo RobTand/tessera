@@ -382,7 +382,7 @@ class NativeCallback:
     def attest_mapped(self, module):
         """Diagnostic mapping proof using the held artifact FD, never path rereads."""
         self.bind(module)
-        from tessera._dev.native_identity import mapped_file_device
+        from tessera.native_identity import mapped_file_device
         info = os.fstat(self.fd)
         device = mapped_file_device(self.fd)
         mapped_path = os.readlink(f"/proc/self/fd/{self.fd}")

@@ -52,7 +52,6 @@ import time
 import types
 
 import pytest
-import torch
 import torch.utils.cpp_extension as cpp_extension
 
 from tessera import jit_build_lock as jbl
@@ -417,16 +416,6 @@ def test_record_directory_must_exist_outside_build_tree(tmp_path, monkeypatch):
     monkeypatch.setenv(retained.RECORD_ENV, str(built[0]))
     with pytest.raises(RuntimeError, match="outside the built tree"):
         load()
-
-
-def test_default_loader_needs_no_unshipped_dev_package(monkeypatch):
-    monkeypatch.delenv(retained.ENV, raising=False)
-    monkeypatch.setitem(sys.modules, "tessera._dev.native_identity", None)
-    spec = importlib.util.spec_from_file_location("tessera.wheel_load_built", retained.__file__)
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    assert module.load_built("example", torch=None) is None
-    assert module.refuse_build("example") is None
 
 
 def test_special_builds_refuse_in_retained_mode(tmp_path, monkeypatch):

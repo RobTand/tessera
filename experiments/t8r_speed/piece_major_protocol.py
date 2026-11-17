@@ -6,7 +6,7 @@ import json
 import os
 from pathlib import Path
 
-from tessera._dev.native_identity import mapped_file_device
+from tessera.native_identity import mapped_file_device
 
 SCHEMA = "tessera.routed_piece_major_comparison.v1"
 REPEAT_SCHEMA = "tessera.routed_piece_major_repeatability.v1"

@@ -467,7 +467,7 @@ def test_hidden_submount_is_judged_by_the_mount_the_descriptor_serves(
         tmp_path, monkeypatch, cache_mount_table):
     """A later, shallower mount can hide an earlier submount entirely; the
     opened descriptor's mount id, not the deepest mount point, decides (#949)."""
-    from tessera._dev import native_identity
+    from tessera import native_identity
 
     data = tmp_path / "data"
     hidden = data / "cache"
@@ -484,7 +484,7 @@ def test_hidden_submount_is_judged_by_the_mount_the_descriptor_serves(
 
 def test_visible_refused_submount_is_still_refused(tmp_path, monkeypatch, cache_mount_table):
     """Without a later covering mount, the refused submount itself decides."""
-    from tessera._dev import native_identity
+    from tessera import native_identity
 
     data = tmp_path / "data"
     sub = data / "cache"
