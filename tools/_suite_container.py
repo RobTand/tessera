@@ -40,7 +40,7 @@ def require_local_cache(path):
     The mount owner has no exhaustive local filesystem classification, so
     refuse known network types and unresolved automounts, not a local roster.
     """
-    from tessera._dev.native_identity import native_cache_mount
+    from tessera.native_identity import native_cache_mount
 
     option = "--cache-dir (merge-suite --gpu-cache-dir)"
     try:

@@ -951,7 +951,7 @@ def test_a_refused_explicit_toolkit_does_not_leave_another_one_compiling(tmp_pat
 
 def test_mapped_file_device_uses_exact_held_fd_mount(monkeypatch):
     """Kernel superblock device, not a filesystem's virtual st_dev (#915)."""
-    from tessera._dev.native_identity import mapped_file_device
+    from tessera.native_identity import mapped_file_device
     metadata = {"/proc/self/fdinfo/17": "pos:\t0\nmnt_id:\t42\n",
                 "/proc/self/mountinfo": "9 1 8:2 / /other rw - ext4 /dev/other rw\n42 1 0:30 / / rw - btrfs /dev/root rw\n"}
     monkeypatch.setattr(Path, "read_text", lambda path: metadata[str(path)])
@@ -967,7 +967,7 @@ def test_mapped_file_device_uses_exact_held_fd_mount(monkeypatch):
     ("mnt_id:\t42\n", "42 1 30 / / rw\n"),
 ])
 def test_mapped_file_device_refuses_missing_or_ambiguous_mount_provenance(monkeypatch, fdinfo, mountinfo):
-    from tessera._dev.native_identity import mapped_file_device
+    from tessera.native_identity import mapped_file_device
     metadata = {"/proc/self/fdinfo/17": fdinfo, "/proc/self/mountinfo": mountinfo}
     monkeypatch.setattr(Path, "read_text", lambda path: metadata[str(path)])
     with pytest.raises(RuntimeError, match="mount"):
@@ -976,7 +976,7 @@ def test_mapped_file_device_refuses_missing_or_ambiguous_mount_provenance(monkey
 
 def test_mapped_file_device_reads_the_fd_mount_id_once(monkeypatch):
     """The descriptor's identity is one read, not one per mountinfo line (#949)."""
-    from tessera._dev.native_identity import mapped_file_device
+    from tessera.native_identity import mapped_file_device
     metadata = {"/proc/self/fdinfo/17": "pos:\t0\nmnt_id:\t42\n",
                 "/proc/self/mountinfo": "9 1 8:2 / /a rw - ext4 /dev/a rw\n"
                                         "10 1 8:3 / /b rw - ext4 /dev/b rw\n"
@@ -994,7 +994,7 @@ def test_mapped_file_device_reads_the_fd_mount_id_once(monkeypatch):
 
 def test_mapped_file_device_names_an_incomplete_fd_identity_with_no_mounts(monkeypatch):
     """An unreadable descriptor identity is refused as such, whatever the table holds."""
-    from tessera._dev.native_identity import mapped_file_device
+    from tessera.native_identity import mapped_file_device
     metadata = {"/proc/self/fdinfo/17": "pos:\t0\n", "/proc/self/mountinfo": ""}
     monkeypatch.setattr(Path, "read_text", lambda path: metadata[str(path)])
     with pytest.raises(RuntimeError, match="native file mount identity is incomplete"):

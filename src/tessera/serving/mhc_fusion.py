@@ -121,6 +121,8 @@ class MhcFusedLibrary:
     """The JIT-built kernel, identified by its source, flags and compiler."""
 
     def __init__(self, build_directory: str | None = None):
+        from tessera.load_built import refuse_build
+        refuse_build("tessera_mhc_fused")
         import torch
         from torch.utils.cpp_extension import load
 

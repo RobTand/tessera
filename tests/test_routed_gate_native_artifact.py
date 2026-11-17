@@ -122,7 +122,7 @@ def test_multi_arm_load_path_fds_remain_distinct_until_teardown(tmp_path, monkey
 def test_mapping_attestation_requires_held_inode(tmp_path, monkeypatch, fault):
     owner, reader, staged, rf, original, calls = owner_fixture(tmp_path, monkeypatch)
     lib = rf.build_library(owner.MODULE, owner.MODULE, lambda *a: pytest.fail("no JIT"))
-    from tessera._dev.native_identity import mapped_file_device
+    from tessera.native_identity import mapped_file_device
     info = os.fstat(owner.fd)
     device = mapped_file_device(owner.fd)
     inode = info.st_ino + (fault == "inode")
