@@ -339,14 +339,16 @@ def test_load_after_a_killed_builder_finishes(tmp_path, monkeypatch):
     assert not (directory / jbl.TORCH_BATON_NAME).exists()
 
 
-@pytest.fixture
-def built(tmp_path, monkeypatch):
+def create_built(tmp_path, monkeypatch):
     root = tmp_path / "built"
-    library = root / "math" / "math.so"
+    library = root / "_speedups" / "_speedups.so"
     library.parent.mkdir(parents=True)
-    shutil.copyfile(importlib.util.find_spec("math").origin, library)
+    assert importlib.util.find_spec("markupsafe") is not None, "the gate requires MarkupSafe"
+    spec = importlib.util.find_spec("markupsafe._speedups")
+    assert spec is not None and spec.origin and spec.origin.endswith(".so") and Path(spec.origin).is_file(), "MarkupSafe must provide a shared extension file"
+    shutil.copyfile(spec.origin, library)
     digest = hashlib.sha256(library.read_bytes()).hexdigest()
-    row = dict(key="cpu-control", name="math", cflags=["-gencode", "arch=compute_121,code=sm_121"],
+    row = dict(key="cpu-control", name="_speedups", cflags=["-gencode", "arch=compute_121,code=sm_121"],
                library=dict(path=str(library), sha256=digest), library_so_sha256=digest,
                library_canonical_code_sha256="1" * 64, cubin_canonical_sha256s=["2" * 64])
     manifest = root / "build.json"
@@ -355,7 +357,7 @@ def built(tmp_path, monkeypatch):
     records.mkdir()
     monkeypatch.setenv(retained.ENV, str(root))
     monkeypatch.setenv(retained.RECORD_ENV, str(records))
-    monkeypatch.delitem(sys.modules, "math")
+    monkeypatch.delitem(sys.modules, "_speedups")
     monkeypatch.setattr(backend, "platform_token", lambda **kw: "sm_121")
     monkeypatch.setattr(backend, "probed_platform_token", lambda **kw: "sm_121")
     monkeypatch.setattr(cpp_extension, "load", lambda **kw: pytest.fail("compile called"))
@@ -364,60 +366,43 @@ def built(tmp_path, monkeypatch):
 
 
 def load():
-    return routed_fused.build_library("math", "unused", lambda *a: pytest.fail("compile callback called"))
+    return routed_fused.build_library("_speedups", "unused", lambda *a: pytest.fail("compile callback called"))
 
 
-def test_loads_exact_bytes_without_compile_and_records_each_rank(built, monkeypatch):
-    root, library, manifest, records, row = built
-    monkeypatch.setenv("PRIVATE_TEST_VALUE", "must-not-appear")
-    monkeypatch.setattr(torch.distributed, "is_initialized", lambda: True)
-    for rank in (0, 1):
-        monkeypatch.setattr(torch.distributed, "get_rank", lambda: rank)
-        assert load().sqrt(9) == 3
-    data = [json.loads(path.read_text()) for path in sorted(records.glob("*.jsonl"))]
-    assert [item["rank"] for item in data] == [0, 1]
-    for item in data:
-        assert item == dict(key="cpu-control", name="math", path=str(library), sha256=row["library_so_sha256"],
-                            rank=item["rank"], pid=os.getpid(), identity_check="PASS",
-                            build_json_sha256=hashlib.sha256(manifest.read_bytes()).hexdigest(),
-                            library_canonical_code_sha256="1" * 64, cubin_canonical_sha256s=["2" * 64])
-    assert "must-not-appear" not in str(data)
-
-
-def test_missing_library_refuses_without_compile(built):
-    built[1].unlink()
-    with pytest.raises(FileNotFoundError, match="math.so"):
+@pytest.mark.parametrize("fault,error,message", [
+    ("missing", FileNotFoundError, "_speedups.so"),
+    ("hash", RuntimeError, "sha256 does not match"),
+    ("entry", RuntimeError, "exactly one retained library"),
+])
+def test_refuses_missing_or_changed_libraries(tmp_path, monkeypatch, fault, error, message):
+    root, library, manifest, records, row = create_built(tmp_path, monkeypatch)
+    if fault == "missing":
+        library.unlink()
+    elif fault == "hash":
+        library.write_bytes(b"wrong library")
+    else:
+        manifest.write_text('{"libraries": []}')
+    with pytest.raises(error, match=message):
         load()
-    assert list(built[3].iterdir()) == []
+    assert list(records.iterdir()) == []
 
 
-def test_hash_mismatch_refuses_before_load(built):
-    built[1].write_bytes(b"wrong library")
-    with pytest.raises(RuntimeError, match="sha256 does not match"):
-        load()
-    assert list(built[3].iterdir()) == []
-
-
-def test_missing_manifest_entry_refuses(built):
-    built[2].write_text('{"libraries": []}')
-    with pytest.raises(RuntimeError, match="exactly one retained library"):
-        load()
-
-
-def test_wrong_platform_refuses(built, monkeypatch):
+def test_wrong_platform_refuses(tmp_path, monkeypatch):
+    built = create_built(tmp_path, monkeypatch)
     monkeypatch.setattr(backend, "probed_platform_token", lambda **kw: "sm_120")
     with pytest.raises(RuntimeError, match="platform does not match"):
         load()
 
 
-def test_already_loaded_module_refuses(built, monkeypatch):
-    monkeypatch.setitem(sys.modules, "math", object())
+def test_already_loaded_module_refuses(tmp_path, monkeypatch):
+    built = create_built(tmp_path, monkeypatch)
+    monkeypatch.setitem(sys.modules, "_speedups", object())
     with pytest.raises(RuntimeError, match="already loaded"):
         load()
 
 
-def test_read_only_tree_needs_no_write_or_lock(built, monkeypatch):
-    root, library, manifest, records, row = built
+def test_read_only_load_checks_bytes_and_records_each_rank(tmp_path, monkeypatch):
+    root, library, manifest, records, row = create_built(tmp_path, monkeypatch)
     before = {p.relative_to(root): p.read_bytes() for p in root.rglob("*") if p.is_file()}
     library.chmod(0o444)
     manifest.chmod(0o444)
@@ -428,14 +413,25 @@ def test_read_only_tree_needs_no_write_or_lock(built, monkeypatch):
     monkeypatch.setattr(os, "makedirs", lambda *a, **kw: pytest.fail("makedirs called"))
     monkeypatch.setattr(Path, "mkdir", lambda *a, **kw: pytest.fail("mkdir called"))
     try:
-        assert load().sqrt(16) == 4
+        monkeypatch.setattr(torch.distributed, "is_initialized", lambda: True)
+        for rank in (0, 1):
+            monkeypatch.setattr(torch.distributed, "get_rank", lambda: rank)
+            assert load()._escape_inner("<") == "&lt;"
+        data = [json.loads(path.read_text()) for path in sorted(records.glob("*.jsonl"))]
+        assert [item["rank"] for item in data] == [0, 1]
+        for item in data:
+            assert item == dict(key="cpu-control", name="_speedups", path=str(library), sha256=row["library_so_sha256"],
+                                rank=item["rank"], pid=os.getpid(), identity_check="PASS",
+                                build_json_sha256=hashlib.sha256(manifest.read_bytes()).hexdigest(),
+                                library_canonical_code_sha256="1" * 64, cubin_canonical_sha256s=["2" * 64])
         assert {p.relative_to(root): p.read_bytes() for p in root.rglob("*") if p.is_file()} == before
     finally:
         root.chmod(0o755)
         library.parent.chmod(0o755)
 
 
-def test_record_directory_must_exist_outside_build_tree(built, monkeypatch):
+def test_record_directory_must_exist_outside_build_tree(tmp_path, monkeypatch):
+    built = create_built(tmp_path, monkeypatch)
     monkeypatch.setenv(retained.RECORD_ENV, str(built[0]))
     with pytest.raises(RuntimeError, match="outside the built tree"):
         load()
@@ -464,7 +460,8 @@ def test_default_build_path_keeps_callback_and_guard(tmp_path, monkeypatch):
 
 
 @pytest.mark.parametrize("module", ["tessera_mla_prefill", "tessera_mhc_fused"])
-def test_special_builds_refuse_in_retained_mode(built, module):
+def test_special_builds_refuse_in_retained_mode(tmp_path, monkeypatch, module):
+    monkeypatch.setenv(retained.ENV, str(tmp_path))
     with pytest.raises(RuntimeError, match="no retained loader"):
         if module == "tessera_mla_prefill":
             from tessera.serving.mla_prefill import MlaPrefillBuild
