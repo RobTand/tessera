@@ -2069,9 +2069,11 @@ def test_row_refuses_missing_required_residency_selector(row_execution, monkeypa
     from experiments.numerics_rows.launch_state import LaunchState
     monkeypatch.delenv("TESSERA_SERVE_MODE", raising=False)
     args.launch_state = LaunchState()
-    manifest = json.loads(args.manifest.read_text())
-    manifest.update(args.launch_state.fields())
-    write_json(args.manifest, manifest)
+    # The positive control binds both prerequisite records to this worker.
+    for path in (args.manifest, args.h1):
+        record = json.loads(path.read_text())
+        record.update(args.launch_state.fields())
+        write_json(path, record)
     with pytest.raises(SystemExit) as positive:
         row.run(args, receipt)
     assert positive.value.code == 0
@@ -2290,3 +2292,30 @@ def test_profile_copy_and_memset_events_are_diagnostics_only():
     records = kernel_table(profile, device_only=True, diagnostics=counts)
     assert [r["name"] for r in records] == ["native_kernel"]
     assert counts == {"memcpy": 2, "memset": 1}
+
+
+def test_fixed_worker_launcher_reads_a_private_script_from_an_existing_mount(tmp_path):
+    import subprocess
+    from pathlib import Path
+    from experiments.numerics_rows.start_env import container_options, worker_command
+    options = container_options(str(tmp_path))
+    workdir, = [v.split("=", 1)[1] for v in options if v.startswith("--workdir=")]
+    mounts = [options[i + 1].rsplit(":", 2) for i, v in enumerate(options) if v == "-v"]
+    locations = [Path(source) for source, target, mode in mounts if target == workdir]
+    assert len(locations) == 1 and locations[0].is_dir(), "fixed work directory must be an existing mount"
+    source = tmp_path / "cell with spaces"
+    module = source / "src" / "launcher_fixture.py"
+    module.parent.mkdir(parents=True)
+    module.write_text("import json,sys\nfrom pathlib import Path\nPath(sys.argv[1]).write_text(json.dumps(sys.argv[2:]))\n")
+    output = tmp_path / "arguments.json"
+    expected = ["one value", "literal '$()' and ;"]
+    command = worker_command(source, "launcher_fixture", [str(output), *expected])
+    script = tmp_path / "row.sh"
+    script.write_text("#!/bin/bash\nset -euo pipefail\nexec " + command + "\n")
+    tmp_path.chmod(0o700)
+    script.chmod(0o600)
+    result = subprocess.run(["/bin/bash", "-euo", "pipefail", str(script)], cwd=locations[0],
+                            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=10)
+    assert result.returncode == 0
+    assert json.loads(output.read_text()) == expected
+    assert script.stat().st_mode & 0o111 == 0

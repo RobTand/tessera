@@ -26,7 +26,7 @@ def specification_sha256():
 
 def container_options(scratch):
     """Use fixed worker paths. Host scratch paths never enter the environment."""
-    return ["--ipc=host", "--hostname=tessera-worker", "--workdir=/work",
+    return ["--ipc=host", "--hostname=tessera-worker", "--workdir=/ext",
             "-v", f"{scratch}:/ext:rw", "-v", f"{scratch}/home:/root:rw",
             "-v", f"{scratch}/image-inspect.json:/run/numerics/image-inspect.json:ro",
             *[arg for k, v in ENV.items() for arg in ("--env", f"{k}={v}")]]
@@ -35,7 +35,7 @@ def container_options(scratch):
 def lane_extra():
     """Arguments that the serving lane must add to its own four selector inputs."""
     lane = {"TORCH_EXTENSIONS_DIR", "TMPDIR", "TESSERA_SERVE_MODE", "TESSERA_GPU_MEM_UTIL"}
-    return shlex.join(["--workdir=/work", "--hostname=tessera-worker",
+    return shlex.join(["--workdir=/ext", "--hostname=tessera-worker",
                        *[arg for k, v in ENV.items() if k not in lane for arg in ("--env", f"{k}={v}")]])
 
 

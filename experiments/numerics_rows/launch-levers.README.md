@@ -40,8 +40,11 @@ Effective torch math settings remain fixed and bound in C1, H1, rows and the ser
 The tool does not add the serve validator to Tessera's plugin.
 
 The serving launcher must set TESSERA_LANE_DOCKER_EXTRA to start_env.lane_extra().
-It includes --workdir=/work and --hostname=tessera-worker with the fixed thread and OCI inputs.
+It includes --workdir=/ext and --hostname=tessera-worker with the fixed thread and OCI inputs.
 The serve-spec proof arm uses this shared recipe and checks the lane source. It is not an independent runtime implementation.
+IMG-N has no /work. [Podman 4.9.3 resolveWorkDir](https://github.com/containers/podman/blob/v4.9.3/libpod/container_internal_common.go#L740-L779)
+refuses that missing directory before startup. The existing /ext mount avoids this refusal.
+This changes the serve-spec digest. C1, H1, rows and the serve must use the new recipe.
 
 
 The output sites for the Opus security review are LaunchState.fields,

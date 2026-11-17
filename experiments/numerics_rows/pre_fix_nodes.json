@@ -273,5 +273,12 @@
     "nodes": [
       "test_row_refuses_a_different_h1_launch_binding_before_cases"
     ]
+  },
+  "pre-fix-worker-workdir": {
+    "file": "test_numerics_rows_receipts.py",
+    "expected": 1,
+    "nodes": [
+      "test_fixed_worker_launcher_reads_a_private_script_from_an_existing_mount"
+    ]
   }
 }

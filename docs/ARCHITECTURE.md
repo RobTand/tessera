@@ -15,6 +15,7 @@ The tool binds the whole worker start environment, with exact frozen exclusions.
 It stores names and one digest. Values remain in worker memory, except named public selectors.
 Workers reject changed or removed captured inputs. Later-added names are diagnostic.
 C1, H1 and rows use fixed container paths from the serve environment specification.
+The work directory is the existing /ext mount; the serve uses the same constant.
 The environment proof checks those starts without GPU work or environment-value output.
 The source-read audit is diagnostic and cannot block attestation.
 Effective math settings, actual Triton identities and every-kernel origin checks remain required.
