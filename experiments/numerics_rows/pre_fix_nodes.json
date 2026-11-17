@@ -291,5 +291,12 @@
       "test_split_compare_binds_its_artifact_before_finalization",
       "test_lever_addendum_refuses_another_path_with_identical_bytes"
     ]
+  },
+  "pre-fix-file-symbol-audit": {
+    "file": "test_numerics_rows_dependency_code.py",
+    "expected": 1,
+    "nodes": [
+      "test_image_symbol_audit_reads_files_without_loading_driver"
+    ]
   }
 }

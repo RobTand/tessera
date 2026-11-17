@@ -180,6 +180,79 @@ def test_canary_kernel_origins_cover_vllm_aten_native_and_scaled_mm(profiled):
     assert origins == dict(zip(CANARY + [CUTLASS], ["image", "image", "tessera", "tessera", "image"]))
 
 
+@pytest.fixture
+def offline_image_audit(code, tmp_path, monkeypatch):
+    import ctypes
+    import sys
+    from experiments.numerics_rows import dependency_audit as audit
+
+    libraries = []
+    names = {}
+    for suffix, symbol, name in (("vllm/_C_stable_libtorch.abi3.so", "_Zquant", CANARY[0]),
+                                 ("torch/lib/libtorch_cuda.so", "_Zfill", CANARY[1]),
+                                 ("vllm/_moe_C_stable_libtorch.abi3.so", "_Zmoe", "moe_kernel")):
+        path = tmp_path / suffix
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(b"pinned library bytes: " + symbol.encode())
+        libraries.append({"path": str(path), "sha256": common.sha256(path)})
+        names[str(path)] = (symbol, name)
+    inventory = tmp_path / "inventory.json"
+    inventory.write_text(json.dumps({"image_digest": "pinned-image", "libraries": libraries}))
+    monkeypatch.setattr(code, "IMAGE_CODE", inventory)
+    monkeypatch.setattr(audit, "image_inputs", lambda out: {"runtime": {"image_digest": "pinned-image"}})
+    def no_driver(*args, **kwargs):
+        raise OSError("libcuda.so.1: cannot open shared object file")
+    monkeypatch.setattr(ctypes, "CDLL", no_driver)
+    monkeypatch.setattr(code.CodeAudit, "install", lambda *args: pytest.fail("offline inspection installed a runtime observer"))
+    inspected = []
+    def symbols(command, **kwargs):
+        assert command[:2] == ["cuobjdump", "-symbols"]
+        path = command[2]
+        inspected.append(path)
+        return SimpleNamespace(returncode=0, stdout="STT_FUNC STB_GLOBAL STO_ENTRY " + names[path][0] + "\n", stderr="")
+    monkeypatch.setattr(code.subprocess, "run", symbols)
+    def demangle(command, **kwargs):
+        assert command == ["c++filt"]
+        table = {symbol: name for symbol, name in names.values()}
+        return "\n".join(table[s] for s in kwargs["input"].splitlines()) + "\n"
+    monkeypatch.setattr(code.subprocess, "check_output", demangle)
+    out = tmp_path / "out"
+    monkeypatch.setattr(sys, "argv", ["dependency_audit", "--out", str(out), "--code-rosters"])
+    return audit.main, out, inventory, libraries, names, inspected
+
+
+def test_image_symbol_audit_reads_files_without_loading_driver(offline_image_audit):
+    run, out, _, libraries, _, inspected = offline_image_audit
+    run()
+    result = json.loads((out / "image-code-rosters.json").read_text())
+    assert inspected == [r["path"] for r in libraries]
+    assert result["device_launches"] == 0
+    for key, marker in (("quantizer", "vllm::dynamic_per_token_scaled_fp8_quant_kernel_strided"), ("fill", "FillFunctor")):
+        witness = result["canary_2_image_witnesses"][key]
+        assert any(marker in r["demangled"] for r in witness["symbols"])
+        assert any((r["path"], r["sha256"]) == (witness["path"], witness["sha256"]) for r in libraries)
+
+
+@pytest.mark.parametrize("mutation", ["image", "bytes", "quantizer", "fill"])
+def test_image_symbol_audit_refuses_changed_or_missing_code(offline_image_audit, mutation):
+    run, out, inventory, libraries, names, _ = offline_image_audit
+    run()
+    target = out / "image-code-rosters.json"
+    target.unlink()
+    if mutation == "image":
+        record = json.loads(inventory.read_text())
+        record["image_digest"] = "another-image"
+        inventory.write_text(json.dumps(record))
+    elif mutation == "bytes":
+        Path(libraries[0]["path"]).write_bytes(b"changed library")
+    else:
+        path = libraries[0 if mutation == "quantizer" else 1]["path"]
+        names[path] = (names[path][0], "another_kernel")
+    with pytest.raises((Invalid, RuntimeError), match="inventory|identity|roster"):
+        run()
+    assert not target.exists()
+
+
 @pytest.mark.parametrize("mutation", ("unknown", "image_missing", "ambiguous"))
 def test_profile_refuses_a_kernel_without_a_unique_code_owner(profiled, mutation):
     run, names, image, _ = profiled

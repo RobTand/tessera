@@ -15,7 +15,7 @@ import os
 from pathlib import Path
 import subprocess
 
-from experiments.numerics_rows.common import check_runtime, sha256, write_json
+from experiments.numerics_rows.common import Invalid, check_runtime, sha256, write_json
 from experiments.numerics_rows.launch_state import LaunchState
 
 
@@ -81,28 +81,29 @@ def main():
     args.out.mkdir(parents=True, exist_ok=True)
     report = image_inputs(args.out)
     if args.code_rosters:
-        import ctypes
-        from experiments.numerics_rows.dependency_code import CodeAudit, IMAGE_CODE
+        from experiments.numerics_rows.dependency_code import IMAGE_CODE, image_symbols
 
         inventory = json.loads(IMAGE_CODE.read_text())
-        handles = [ctypes.CDLL(r["path"]) for r in inventory["libraries"]]
-        audit = CodeAudit(report["runtime"]["image_digest"], args.out / "compiled-code").install()
-        try:
-            libraries = audit.image_libraries()
-            if len(libraries) != len(handles) or any(not r["symbols"] for r in libraries):
-                raise RuntimeError("pinned image CUDA function roster is missing or empty")
-            witnesses = {}
-            for name, suffix, marker in (("quantizer", "/vllm/_C_stable_libtorch.abi3.so", "dynamic_per_token_scaled_fp8_quant_kernel_strided"),
-                                         ("fill", "/torch/lib/libtorch_cuda.so", "FillFunctor")):
-                owner, = [r for r in libraries if r["path"].endswith(suffix)]
-                symbols = [s for s in owner["symbols"] if marker in s["demangled"]]
-                if not symbols:
-                    raise RuntimeError("canary image kernel roster is missing: " + name)
-                witnesses[name] = {"path": owner["path"], "sha256": owner["sha256"], "symbols": symbols}
-            write_json(args.out / "image-code-rosters.json", {"runtime": report["runtime"], "libraries": libraries,
-                       "canary_2_image_witnesses": witnesses, "triton_load_run_observer_installed": True, "device_launches": 0})
-        finally:
-            audit.close()
+        if inventory["image_digest"] != report["runtime"]["image_digest"]:
+            raise Invalid("kernel inventory belongs to a different image")
+        libraries = []
+        for record in inventory["libraries"]:
+            path = record["path"]
+            if str(Path(path).resolve()) != path or sha256(path) != record["sha256"]:
+                raise Invalid("image library identity differs from inventory: " + path)
+            libraries.append({**record, "origin": "image", "symbols": image_symbols(path)})
+        if not libraries or any(not r["symbols"] for r in libraries):
+            raise RuntimeError("pinned image CUDA function roster is missing or empty")
+        witnesses = {}
+        for name, suffix, marker in (("quantizer", "/vllm/_C_stable_libtorch.abi3.so", "vllm::dynamic_per_token_scaled_fp8_quant_kernel_strided"),
+                                     ("fill", "/torch/lib/libtorch_cuda.so", "FillFunctor")):
+            owner, = [r for r in libraries if r["path"].endswith(suffix)]
+            symbols = [s for s in owner["symbols"] if marker in s["demangled"]]
+            if not symbols:
+                raise RuntimeError("canary image kernel roster is missing: " + name)
+            witnesses[name] = {"path": owner["path"], "sha256": owner["sha256"], "symbols": symbols}
+        write_json(args.out / "image-code-rosters.json", {"runtime": report["runtime"], "libraries": libraries,
+                   "canary_2_image_witnesses": witnesses, "inspection": "file-only cuobjdump -symbols", "device_launches": 0})
     write_json(args.out / "dependency-audit.json", report)
 
 
