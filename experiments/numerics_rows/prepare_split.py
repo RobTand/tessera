@@ -29,8 +29,10 @@ def check_telemetry(path):
     fields = ("wall_minutes", "gpu_busy_minutes", "peak_device_memory_mib", "peak_power_watts",
               "mean_sample_power_watts", "whole_job_peak_memory_bytes")
     if (any(type(meter.get(k)) not in (int, float) or not math.isfinite(meter[k]) or meter[k] < 0 for k in fields)
-            or not meter["whole_job_peak_memory_bytes"] or not meter.get("busy_sampled_seconds") or len(meter.get("samples", [])) < 2):
-        raise Invalid("capture telemetry is missing GPU busy, memory, power or whole-job memory evidence")
+            or not meter["whole_job_peak_memory_bytes"] or not meter["peak_device_memory_mib"]
+            or not meter.get("busy_sampled_seconds") or len(meter.get("samples", [])) < 2
+            or not any(type(s.get("compute_process_count")) is int and s["compute_process_count"] >= 1 for s in meter.get("samples", []))):
+        raise Invalid("capture telemetry is missing compute-process visibility, GPU busy, memory, power or whole-job memory evidence")
     return {k: meter[k] for k in fields} | {"sampled_seconds": meter["sampled_seconds"], "errors": meter["errors"]}
 
 

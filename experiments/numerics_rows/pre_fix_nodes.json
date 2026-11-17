@@ -313,6 +313,24 @@
       "test_counted_split_launch_selects_a_whole_module_and_preserves_artifact_inputs"
     ]
   },
+  "pre-fix-capture-visibility": {
+    "file": "test_numerics_rows_receipts.py",
+    "expected": 2,
+    "nodes": [
+      "test_capture_self_visibility_stops_before_row_setup[empty]",
+      "test_capture_self_visibility_stops_before_row_setup[query-error]"
+    ]
+  },
+  "pre-fix-capture-visibility-telemetry": {
+    "file": "test_numerics_rows_phases.py",
+    "expected": 4,
+    "nodes": [
+      "test_capture_job_refuses_unobserved_compute_process_or_zero_memory[no-process]",
+      "test_capture_job_refuses_unobserved_compute_process_or_zero_memory[unknown-process]",
+      "test_capture_job_refuses_unobserved_compute_process_or_zero_memory[zero-memory]",
+      "test_capture_job_refuses_unobserved_compute_process_or_zero_memory[false-zero]"
+    ]
+  },
   "pre-fix-capture-telemetry": {
     "file": "test_numerics_rows_receipts.py",
     "expected": 10,

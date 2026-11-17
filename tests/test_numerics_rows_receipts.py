@@ -1852,6 +1852,7 @@ def test_capture_preflight_stops_before_first_device_call(tmp_path, monkeypatch)
     monkeypatch.setattr(launch_state, "LaunchState", lambda *a, **kw: SimpleNamespace(fields=lambda: {"launch_levers_sha256": "a" * 64}))
     calls, free = [], True
     monkeypatch.setattr(gpu_time, "preflight", lambda: {"verdict": "FREE" if free else "STOPPED"}, raising=False)
+    monkeypatch.setattr(gpu_time, "self_visibility", lambda torch: {"verdict": "VISIBLE"}, raising=False)
     monkeypatch.setattr(row, "run", lambda *args: calls.append("first-device-call"))
     row.main()
     assert calls == ["first-device-call"]
@@ -1862,6 +1863,43 @@ def test_capture_preflight_stops_before_first_device_call(tmp_path, monkeypatch)
     assert stopped.value.code == 3 and not calls
     saved = json.loads((tmp_path / "numerics_row.json").read_text())
     assert saved["row"]["outcome"] == "STOPPED" and saved["row"]["finalization_finished"] is False
+
+
+@pytest.mark.parametrize("failure", ("empty", "query-error"))
+def test_capture_self_visibility_stops_before_row_setup(tmp_path, monkeypatch, failure):
+    import torch
+    from experiments.numerics_rows import gpu_time, launch_state
+
+    argv = ["row", "--image", "N", "--name", "visibility", "--out", str(tmp_path), "--phase", "capture"]
+    for name in ("source", "manifest", "population", "build", "build-provenance", "q1", "h1", "rule", "freeze"):
+        argv.extend(("--" + name, str(tmp_path / name)))
+    monkeypatch.setattr(sys, "argv", argv)
+    monkeypatch.setattr(gpu_time, "RowMeter", lambda: SimpleNamespace(finish=lambda: {}))
+    monkeypatch.setattr(launch_state, "LaunchState", lambda *a, **kw: SimpleNamespace(fields=lambda: {"launch_levers_sha256": "a" * 64}))
+    monkeypatch.setattr(gpu_time, "preflight", lambda: {"verdict": "FREE"})
+    calls, visible = [], True
+    monkeypatch.setattr(torch, "empty", lambda count, *, device: calls.append(("allocation", count, device)) or object())
+    monkeypatch.setattr(torch.cuda, "synchronize", lambda: calls.append("synchronize"))
+    def query(request):
+        calls.append(request)
+        if visible:
+            return "987654321, 32"
+        if failure == "query-error":
+            raise OSError("NVML query failed")
+        return ""
+    monkeypatch.setattr(gpu_time, "query", query)
+    monkeypatch.setattr(row, "run", lambda *args: calls.append("row-setup"))
+    row.main()
+    assert calls == [("allocation", 1, "cuda"), "synchronize", "--query-compute-apps=pid,used_memory", "row-setup"]
+    visible = False
+    calls.clear()
+    with pytest.raises(SystemExit) as stopped:
+        row.main()
+    assert stopped.value.code == 3 and "row-setup" not in calls
+    saved = json.loads((tmp_path / "numerics_row.json").read_text())
+    assert saved["row"]["outcome"] == "STOPPED" and saved["row"]["finalization_finished"] is False
+    assert "NVML self-visibility" in saved["row"]["stop_cause"]
+    assert saved["row"]["gpu_self_visibility"]["verdict"] == "STOPPED"
 
 
 def test_missing_gpu_fields_do_not_invent_zero_memory_or_activity():

@@ -13,6 +13,9 @@ reference profiles, NVML power and resident time, and cgroup peak memory expose
 host work and interrupted cases. These tools change no serving default or arithmetic.
 The split generator keeps counted module jobs held behind a finished PASS canary.
 Each capture job checks its own GPU, power and whole-job memory measurements.
+Capture creates a tiny CUDA allocation and checks NVML self-visibility before row setup.
+An empty or failed compute-process query writes STOPPED. Capture telemetry must
+show a compute process and a positive device-memory peak before job success.
 Capture refuses a busy GPU before its first device call. Host preflight also
 checks for vLLM processes. Missing measurements stop capture.
 NVML activity counts only while a compute process is listed. Raw PID values are

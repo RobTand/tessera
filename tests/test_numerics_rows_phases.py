@@ -460,7 +460,7 @@ def split_canary_evidence(tmp_path):
     write_json(directory / "compare/results/numerics_row.json", receipt)
     meter = {"wall_minutes": 1, "gpu_busy_minutes": 0.2, "peak_device_memory_mib": 800, "peak_power_watts": 15,
         "mean_sample_power_watts": 12, "whole_job_peak_memory_bytes": 2**30, "sampled_seconds": 60,
-        "busy_sampled_seconds": 60, "samples": [{}, {}], "errors": []}
+        "busy_sampled_seconds": 60, "samples": [{"compute_process_count": 1}, {"compute_process_count": 1}], "errors": []}
     write_json(directory / "capture/results/numerics_row.json", {"row": {"gpu_minutes": meter}})
     return api, directory, paths, receipt, meter
 
@@ -488,6 +488,23 @@ def test_capture_job_refuses_success_without_its_own_telemetry(split_canary_evid
     path = directory / "capture/results/numerics_row.json"
     api.check_telemetry(path)
     meter[field] = None
+    write_json(path, {"row": {"gpu_minutes": meter}})
+    with pytest.raises(Invalid, match="capture telemetry"):
+        api.check_telemetry(path)
+
+
+@pytest.mark.parametrize("mutation", ("no-process", "unknown-process", "zero-memory", "false-zero"))
+def test_capture_job_refuses_unobserved_compute_process_or_zero_memory(split_canary_evidence, mutation):
+    from experiments.numerics_rows.common import write_json
+    api, directory, _, _, meter = split_canary_evidence
+    path = directory / "capture/results/numerics_row.json"
+    meter["gpu_busy_minutes"] = 0
+    write_json(path, {"row": {"gpu_minutes": meter}})
+    api.check_telemetry(path)
+    if mutation in ("no-process", "unknown-process", "false-zero"):
+        meter["samples"] = [{"compute_process_count": None if mutation == "unknown-process" else 0}] * 2
+    if mutation in ("zero-memory", "false-zero"):
+        meter["peak_device_memory_mib"] = 0
     write_json(path, {"row": {"gpu_minutes": meter}})
     with pytest.raises(Invalid, match="capture telemetry"):
         api.check_telemetry(path)

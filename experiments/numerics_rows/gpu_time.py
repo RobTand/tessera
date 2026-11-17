@@ -94,6 +94,17 @@ def active_busy(sample):
     return None if count is None else 0 if count == 0 else sample.get("nvml_busy_percent", sample["busy_percent"])
 
 
+def self_visibility(torch):
+    _allocation = torch.empty(1, device="cuda")
+    torch.cuda.synchronize()
+    try:
+        apps = compute_processes(query("--query-compute-apps=pid,used_memory"))
+    except Exception as error:
+        return {"verdict": "STOPPED", "reason": "NVML self-visibility query failed", "exception_type": type(error).__name__}
+    return {"verdict": "VISIBLE" if apps else "STOPPED", "reason": None if apps else "NVML self-visibility found no compute process",
+            "compute_process_count": len(apps), "compute_apps_memory_mib": process_memory(apps)}
+
+
 def summarize(samples, start, end, errors=()):
     samples = [{**s, "busy_percent": active_busy(s)} for s in samples if start <= s["t"] <= end]
     intervals = [(a, b) for a, b in zip(samples, samples[1:]) if a["busy_percent"] is not None and b["busy_percent"] is not None]
