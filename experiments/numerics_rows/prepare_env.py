@@ -60,6 +60,9 @@ These are bookings. No wall-time or memory measurement exists for this proof.
 
 The job compares row, C1 and a serve-spec start. It imports torch,
 Triton, vLLM and Tessera in the row worker, then checks captured names again.
+It also imports H1's vllm.config and vllm.distributed dependencies and cv2.
+This reaches the OpenCV LD_LIBRARY_PATH writer without a GPU. The proof records
+each environment writer's name and source location, without values.
 The result contains names and one launch-state digest. It contains no values
 or per-name value hashes. Temporary comparison digests use a Unix socket only.
 Import stdout and stderr are discarded. Import status names the module and error type.

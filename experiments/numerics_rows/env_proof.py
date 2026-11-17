@@ -10,6 +10,7 @@ import argparse
 import hashlib
 import importlib
 import json
+import os
 from pathlib import Path
 import socket
 import subprocess
@@ -19,6 +20,34 @@ import time
 from experiments.numerics_rows.common import IMAGES, sha256, write_json
 from experiments.numerics_rows.launch_state import LaunchState
 from experiments.numerics_rows.start_env import container_options, worker_command, specification_sha256
+
+IMPORT_PATHS = ("torch", "triton", "vllm", "tessera", "vllm.config", "vllm.distributed", "cv2")
+
+
+def import_dependencies(state, progress):
+    """Exercise H1's lazy imports and attribute environment writes without values."""
+    imports, writes = [], []
+    environment = type(os.environ)
+    original = environment.__setitem__
+    def record(mapping, name, value):
+        if mapping is os.environ and mapping.get(name) != value:
+            caller = sys._getframe(1)
+            writes.append({"name": name, "file": caller.f_code.co_filename, "line": caller.f_lineno})
+        return original(mapping, name, value)
+    environment.__setitem__ = record
+    try:
+        for name in IMPORT_PATHS:
+            progress("import-" + name)
+            try:
+                module = importlib.import_module(name)
+                if name == "torch":
+                    state.bind_math(module)
+                imports.append({"module": name, "imported": True})
+            except Exception as error:
+                imports.append({"module": name, "imported": False, "exception_type": type(error).__name__})
+    finally:
+        environment.__setitem__ = original
+    return imports, writes
 
 
 def comparison_names(left, right):
@@ -39,15 +68,7 @@ def worker(imports):
                                    for k, v in state.current().items()}}
         data = {"start": snapshot(), "imports": []}
         if imports:
-            for name in ("torch", "triton", "vllm", "tessera"):
-                send({"stage": "import-" + name})
-                try:
-                    module = importlib.import_module(name)
-                    if name == "torch":
-                        state.bind_math(module)
-                    data["imports"].append({"module": name, "imported": True})
-                except Exception as error:
-                    data["imports"].append({"module": name, "imported": False, "exception_type": type(error).__name__})
+            data["imports"], data["environment_writes"] = import_dependencies(state, lambda stage: send({"stage": stage}))
             data["after_imports"] = snapshot()
         data["diagnostics"] = state.diagnostics()
         send({"stage": "snapshot", "data": data})
@@ -83,7 +104,7 @@ def receive(listener, process, progress, *, clock=time.monotonic, timeout=240):
                 raise RuntimeError("environment proof worker closed before snapshot")
             event = json.loads(line)
             stage = event["stage"]
-            if stage not in ("worker-start", "import-torch", "import-triton", "import-vllm", "import-tessera", "snapshot"):
+            if stage not in ("worker-start", "snapshot", *("import-" + name for name in IMPORT_PATHS)):
                 raise RuntimeError("unknown environment proof stage")
             progress(stage)
             if stage == "snapshot":
@@ -171,6 +192,7 @@ def run_arms(root, scratch, report, progress):
                 after = data["after_imports"]
                 before = data["start"]["comparison"]
                 report["imports"] = data["imports"]
+                report["environment_writes"] = data["environment_writes"]
                 report["snapshots"]["row-after-imports"] = {**after["fields"], "current_names": after["names"]}
                 report["changed_or_removed_after_imports"] = sorted(k for k, v in before.items() if after["comparison"].get(k) != v)
                 report["environment_diagnostics"] = data["diagnostics"]

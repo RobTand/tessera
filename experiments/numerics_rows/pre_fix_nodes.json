@@ -292,6 +292,13 @@
       "test_lever_addendum_refuses_another_path_with_identical_bytes"
     ]
   },
+  "pre-fix-lazy-environment-proof": {
+    "file": "test_numerics_rows_receipts.py",
+    "expected": 1,
+    "nodes": [
+      "test_environment_proof_exercises_h1_lazy_imports_and_records_writers"
+    ]
+  },
   "pre-fix-file-symbol-audit": {
     "file": "test_numerics_rows_dependency_code.py",
     "expected": 1,

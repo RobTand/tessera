@@ -2237,6 +2237,48 @@ def test_environment_proof_records_import_stage_before_read_timeout():
     assert events == ["import-vllm"]
 
 
+def test_environment_proof_exercises_h1_lazy_imports_and_records_writers(monkeypatch):
+    import os
+    from experiments.numerics_rows import env_proof
+
+    assert hasattr(env_proof, "import_dependencies"), "feature absent: lazy H1 import and environment-writer proof"
+    private = "private-library-search-value"
+    monkeypatch.setenv("LD_LIBRARY_PATH", private)
+    original = type(os.environ).__setitem__
+    loaded, stages = [], []
+    def importer(name):
+        loaded.append(name)
+        if name == "cv2":
+            os.environ["LD_LIBRARY_PATH"] = "/image/lib64:" + os.environ.get("LD_LIBRARY_PATH", "")
+        return SimpleNamespace()
+    monkeypatch.setattr(env_proof.importlib, "import_module", importer)
+    imports, writes = env_proof.import_dependencies(SimpleNamespace(bind_math=lambda _: None), stages.append)
+    assert loaded == ["torch", "triton", "vllm", "tessera", "vllm.config", "vllm.distributed", "cv2"]
+    assert stages == ["import-" + name for name in loaded]
+    assert all(r["imported"] for r in imports)
+    assert len(writes) == 1 and writes[0]["name"] == "LD_LIBRARY_PATH"
+    assert writes[0]["file"] == __file__ and writes[0]["line"] > 0
+    assert type(os.environ).__setitem__ is original
+    if private in json.dumps([imports, writes]):
+        pytest.fail("environment writer proof disclosed a value", pytrace=False)
+
+
+def test_library_search_path_exclusion_does_not_exclude_other_inputs(monkeypatch):
+    from experiments.numerics_rows.launch_state import LaunchState
+
+    monkeypatch.setenv("LD_LIBRARY_PATH", "start")
+    monkeypatch.setenv("UNLISTED_LIBRARY_CONTROL", "start")
+    state = LaunchState()
+    state.check()
+    assert "LD_LIBRARY_PATH" not in state.fields()["launch_state_names"]
+    monkeypatch.setenv("LD_LIBRARY_PATH", "changed-by-opencv")
+    state.check()
+    assert "LD_LIBRARY_PATH" in state.diagnostics()["excluded_names"]
+    monkeypatch.setenv("UNLISTED_LIBRARY_CONTROL", "changed")
+    with pytest.raises(Invalid, match="UNLISTED_LIBRARY_CONTROL"):
+        state.check()
+
+
 @pytest.mark.parametrize("field", ("launch_state_sha256", "start_environment_spec_sha256", "launch_levers_sha256"))
 def test_row_refuses_a_different_h1_launch_binding_before_cases(row_execution, field):
     args, receipt, _, events, _ = row_execution

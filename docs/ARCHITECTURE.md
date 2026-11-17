@@ -19,6 +19,9 @@ Workers reject changed or removed captured inputs. Later-added names are diagnos
 C1, H1 and rows use fixed container paths from the serve environment specification.
 The work directory is the existing /ext mount; the serve uses the same constant.
 The environment proof checks those starts without GPU work or environment-value output.
+It exercises H1's lazy vLLM dependencies and attributes environment writes by name
+and source location. LD_LIBRARY_PATH is an exact toolchain exclusion, conditional
+on loaded-library and kernel-origin audits. IMG-N OpenCV prepends it unconditionally.
 The source-read audit is diagnostic and cannot block attestation.
 Effective math settings, actual Triton identities and every-kernel origin checks remain required.
 The origin check includes unaudited mapped device-code owners. Shared names and

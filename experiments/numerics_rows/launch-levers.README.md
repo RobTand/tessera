@@ -14,6 +14,9 @@ The deterministic build-identity switch stays unset. Optional Tessera levers sta
 No A8S release worker environment was observed or saved. The specified serve environment replaces that missing observation.
 `prepare_env.py` prepares a CPU-only comparison of row, C1 and serve-spec starts using the shared recipe.
 The proof also imports torch, Triton, vLLM and Tessera in the row worker.
+It then imports vllm.config and vllm.distributed, as H1 does, and the OpenCV
+loader that the lazy multimodal path imports. No device call is required.
+It records environment writer names and source locations, without values.
 It compares captured names after those imports. Added names are diagnostic.
 A changed or removed captured input is INVALID before another native call.
 The CPU proof cannot establish Docker GPU injection versus Podman CDI equivalence.
@@ -33,6 +36,11 @@ The cited paths use local signed wires, not Hub authentication.
 Unlisted names count. A new credential exclusion requires an exact entry and source evidence.
 
 The loaded-library audit conditions every toolchain exclusion. It checks the actual mapped bytes.
+LD_LIBRARY_PATH is an exact library-search-path exclusion. IMG-N OpenCV
+cv2/__init__.py:147 unconditionally prepends the directories from config.py:3-5.
+Setting the final path in the launcher cannot prevent another prepend.
+The row and serve must still audit the loaded Tessera bytes and resolve every
+kernel to an unchanged image file or a bound compiled identity.
 Each Triton specialization binds its cubin, entry, target, constants and launch parameters.
 Each profiled kernel must have one audited native, unchanged image-file or compiled-code origin.
 Unknown or ambiguous origins remain UNATTESTED. No source-read completeness gate remains.
