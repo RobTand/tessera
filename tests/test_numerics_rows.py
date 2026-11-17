@@ -282,6 +282,32 @@ def test_scale_cases_need_only_the_first_coordinate_per_group(monkeypatch, famil
         assert [(c["output_row"], c["column"]) for c in plan["read_cases"]] == expected * plan["array"]["M"]
 
 
+@pytest.mark.parametrize("stage", ("down", "gate"))
+def test_routed_row_plan_metadata_keeps_its_own_coding_domain(monkeypatch, stage):
+    from experiments.numerics_rows.cases import scale_index_manifest
+    from experiments.numerics_rows import scale_index
+    row_plan = scale_index.make_plan
+    monkeypatch.setattr(scale_index, "make_plan", lambda scale, *args, **kw:
+        row_plan(scale, *args, **kw) if scale == "row" else {"scale": scale})
+    class Quantizer:
+        gs, normal_j = 1.0, 0
+        def __call__(self, value):
+            return value, 1.0
+    weight, scale = torch.ones(2, 16), torch.ones(2)
+    gate = stage == "gate"
+    configs = [{"M": m} for m in (1, 2, 8, 32, 64, 65, 128, 512, 2048)]
+    plans = scale_index_manifest(weight, scale, "e4m3", stage, Table() if gate else None,
+        (weight, scale) if gate else None, scale if gate else None,
+        Quantizer(), 16, 0, configs)
+    for config in configs:
+        selected = [p for p in plans if p["scale"] == "row" and p["array"].get("M", config["M"]) == config["M"]]
+        assert len(selected) == 1
+        plan = selected[0]
+        assert plan["array"]["target"] == "row"
+        assert plan["array"]["N"] == 16 * weight.shape[0] * (2 if gate else 1)
+        assert plan["coding"] and all(c["n"] == plan["array"]["N"] for c in plan["coding"])
+
+
 def test_generator_reports_a_weight_without_separation():
     import numpy as np
     from experiments.numerics_rows.cases import column_coverage
@@ -553,6 +579,17 @@ def test_certificate_exact_sum_matches_fraction_bytes(dtype):
     for axis in (0, 1, -1):
         actual, expected = FiniteBound.exact_sum(values.transpose(0, 1), axis), fraction_sum_oracle(values.transpose(0, 1), axis)
         assert actual.contiguous().view(torch.uint8).numpy().tobytes() == expected.contiguous().view(torch.uint8).numpy().tobytes()
+    for row in rows:
+        values = torch.from_numpy(row.copy()).to(dtype)
+        try:
+            expected = fraction_sum_oracle(values, 0)
+        except OverflowError:
+            with pytest.raises(OverflowError):
+                FiniteBound.exact_sum(values, 0)
+            continue
+        actual = FiniteBound.exact_sum(values, 0)
+        assert actual.shape == expected.shape == torch.Size([])
+        assert actual.numpy().tobytes() == expected.numpy().tobytes()
 
 
 @pytest.mark.parametrize("k,splits,top_k,held", [(1, 1, 0, True), (2**20-2, 1, 1, False)])

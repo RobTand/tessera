@@ -107,21 +107,30 @@ def f32_value(bits):
 
 
 def rn_bits(value, precision=24, emin=-126, emax=127):
-    """Round a rational with integer arithmetic, including ties and subnormals."""
+    """Round integer ratios once, including int, float, Fraction and NumPy scalars.
+
+    The rounded integer has at most 24 significant bits for fp32, bf16 and fp16.
+    Its scaled value is exact in binary64 and binary32; ldexp and packing are exact.
+    """
     negative_zero = isinstance(value, float) and value == 0 and math.copysign(1.0, value) < 0
-    value = F(value)
-    sign = int(value < 0 or negative_zero)
-    value = abs(value)
-    if not value:
+    numerator, denominator = value.as_integer_ratio() if hasattr(value, 'as_integer_ratio') else F(value).as_integer_ratio()
+    return ratio_bits(numerator, denominator, precision, emin, emax, negative_zero)
+
+
+def ratio_bits(numerator, denominator, precision=24, emin=-126, emax=127, negative_zero=False):
+    sign = int(numerator < 0 or negative_zero)
+    numerator = abs(numerator)
+    if not numerator:
         return sign << 31
-    exponent = value.numerator.bit_length() - value.denominator.bit_length()
-    exponent -= value < power(exponent)
-    quantum = power(max(exponent, emin) - precision + 1)
-    quotient, remainder = divmod(value / quantum, 1)
-    integer = int(quotient) + (remainder > F(1, 2) or remainder == F(1, 2) and int(quotient) & 1)
-    rounded = integer * quantum
-    if rounded >= power(emax + 1):
+    exponent = numerator.bit_length() - denominator.bit_length()
+    exponent -= numerator < denominator << exponent if exponent >= 0 else numerator << -exponent < denominator
+    shift = max(exponent, emin) - precision + 1
+    divisor = denominator << shift if shift >= 0 else denominator
+    quotient, remainder = divmod(numerator if shift >= 0 else numerator << -shift, divisor)
+    quotient += 2 * remainder > divisor or 2 * remainder == divisor and quotient & 1
+    if quotient and quotient.bit_length() - 1 + shift > emax:
         return (sign << 31) | 0x7F800000
+    rounded = math.ldexp(float(quotient), shift)
     return f32_bits(-float(rounded) if sign else float(rounded))
 
 
@@ -138,10 +147,15 @@ def bf16(value):
 
 
 def multiply(a, b):
-    product = F(a) * F(b)
-    if not product:
+    """Keep products exact; two binary64 operands can need 106 bits.
+
+    as_integer_ratio keeps the Fraction refusal for inf and NaN.
+    """
+    an, ad = a.as_integer_ratio() if hasattr(a, 'as_integer_ratio') else F(a).as_integer_ratio()
+    bn, bd = b.as_integer_ratio() if hasattr(b, 'as_integer_ratio') else F(b).as_integer_ratio()
+    if not an or not bn:
         return math.copysign(0.0, math.copysign(1.0, a) * math.copysign(1.0, b))
-    return rn32(product)
+    return f32_value(ratio_bits(an * bn, ad * bd))
 
 
 def exact_input(products):

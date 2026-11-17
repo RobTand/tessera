@@ -1,10 +1,14 @@
 """Index-coding passes and the draft-7 joint-read check."""
 from __future__ import annotations
 
+from collections import OrderedDict
 from collections.abc import Sequence
 from functools import lru_cache
 import math
+import json
+from itertools import islice
 import struct
+import sys
 
 from experiments.numerics_rows.reference import bf16, multiply
 
@@ -16,8 +20,6 @@ def digits(n, base):
     while capacity < n:
         count, capacity = count + 1, capacity * base
     return [[(index // base**p) % base for index in range(n)] for p in range(count)]
-
-
 
 class CodingValues(Sequence):
     def __init__(self, entry):
@@ -60,10 +62,8 @@ def passes(n, low, high, *, gate=(), up=(), gate_constant=1.0, up_constant=1.0, 
             "coding": result}
 
 
-def joint_coverage(reads, coding, evaluate, n):
-    """Check all tuples. The evaluator depends on indices only through their scale values."""
+def coding_groups(arrays):
     groups = []
-    arrays = [scale_values(entry) for entry in coding]
     for values in arrays:
         by_value = {}
         for index, value in enumerate(values):
@@ -71,6 +71,43 @@ def joint_coverage(reads, coding, evaluate, n):
                 by_value[value] = [index, 0]
             by_value[value][1] |= 1 << index
         groups.append(list(by_value.values()))
+    return groups
+
+
+def matching_pairs(read, arrays, groups, same, n, batch=None):
+    if len(read) == 1:
+        possible = (1 << n) - 1
+        for position, group in enumerate(groups):
+            possible &= sum(mask for index, mask in group if same((index,), position))
+        while possible:
+            bit = possible & -possible
+            yield (bit.bit_length() - 1,)
+            possible ^= bit
+    else:
+        allowed = []
+        for position, group in enumerate(groups):
+            if batch is None:
+                allowed.append({arrays[position][first]: sum(mask for second, mask in group if same((first, second), position))
+                                for first, _ in group})
+            else:
+                equal = batch(position, group)
+                allowed.append({arrays[position][first]: sum(mask for (_, mask), keep in zip(group, row) if keep)
+                                for (first, _), row in zip(group, equal)})
+        for first in range(n):
+            possible = (1 << n) - 1
+            for position, masks in enumerate(allowed):
+                possible &= masks[arrays[position][first]]
+                if not possible: break
+            while possible:
+                bit = possible & -possible
+                yield first, bit.bit_length() - 1
+                possible ^= bit
+
+
+def joint_coverage(reads, coding, evaluate, n, *, memo=None, progress=None):
+    """Check all tuples. Indices affect evaluation only through scale values."""
+    arrays = [scale_values(entry) for entry in coding]
+    groups = memo.groups(coding, arrays) if memo else coding_groups(arrays)
     covered, uncovered = 0, []
     for read in reads:
         read = tuple(read)
@@ -84,38 +121,16 @@ def joint_coverage(reads, coding, evaluate, n):
             if not math.isfinite(value):
                 raise ValueError("mutated scale reference is not finite")
             return value == own[position]
-        collision = None
-        if len(read) == 1:
-            possible = (1 << n) - 1
-            for position, group in enumerate(groups):
-                possible &= sum(mask for index, mask in group if same((index,), position))
-            possible &= ~(1 << read[0])
-            if possible:
-                collision = ((possible & -possible).bit_length() - 1,)
-        else:
-            # Each pass has <= b+1 scale values. Resolve their Cartesian product once.
-            # Bit sets retain all second indices, including pairs in the wrong family.
-            allowed = []
-            for position, group in enumerate(groups):
-                masks = {}
-                for first, _ in group:
-                    masks[arrays[position][first]] = sum(mask for second, mask in group if same((first, second), position))
-                allowed.append(masks)
-            for first in range(n):
-                possible = (1 << n) - 1
-                for position, masks in enumerate(allowed):
-                    possible &= masks[arrays[position][first]]
-                    if not possible:
-                        break
-                if first == read[0]:
-                    possible &= ~(1 << read[1])
-                if possible:
-                    collision = (first, (possible & -possible).bit_length() - 1)
-                    break
+        batch = (lambda position, group: evaluate.matches(read, arrays[position], group, own[position])) if hasattr(evaluate, 'matches') else None
+        search = lambda: matching_pairs(read, arrays, groups, same, n, batch=batch)
+        candidates = memo.matches(evaluate.keys[read], own, search) if memo else search()
+        collision = next((pair for pair in candidates if pair != read), None)
         if collision is None:
             covered += 1
         else:
             uncovered.append({"read": list(read), "aliases": list(collision)})
+        if progress is not None:
+            progress({"reads": covered + len(uncovered), "reads_covered": covered, "uncovered_reads": uncovered})
     return {"reads": len(reads), "reads_covered": covered, "uncovered_reads": uncovered}
 
 
@@ -148,7 +163,7 @@ class CachedEvaluator:
     The LRU bounds memory; optional tuple counts use one bit per value-code pair
     per operand signature, so evictions do not inflate the distinct-input count.
     """
-    def __init__(self, read_cases, table=None, *, coding=(), metrics=None, maxsize=2**18):
+    def __init__(self, read_cases, table=None, *, coding=(), metrics=None, maxsize=2**18, cached=None):
         self.keys, self.cases, self.seen = {}, {}, {}
         self.metrics, self.previous = metrics, None
         bits = lambda value: struct.pack("<d", value)
@@ -175,12 +190,15 @@ class CachedEvaluator:
             self.codes = {value: i for i, value in enumerate(sorted(alphabet))}
             self.stride = len(self.codes)
             metrics.update(operand_signatures=len(self.cases), scale_value_codes=self.stride, completed_reads=0)
-        cases_by_key = self.cases
+        shared = cached
         @lru_cache(maxsize=maxsize)
         def cached(key, values):
             decoded = [struct.unpack("<d", value)[0] for value in values]
-            return evaluate(cases_by_key[key], range(len(values)), decoded, table)
-        self.cached = cached
+            scale, arity, operands = key
+            case = {"read": list(range(arity)), "scale": scale, "g_scale": 1.0, "u_scale": 1.0,
+                    **{name: struct.unpack("<d", value)[0] for name, value in operands}}
+            return evaluate(case, range(arity), decoded, table)
+        self.cached = shared or cached
 
     def __call__(self, read, wrong, values):
         key = self.keys[tuple(read)]
@@ -202,7 +220,62 @@ class CachedEvaluator:
                 "distinct_evaluate_tuples": sum(mask.bit_count() for mask in self.seen.values()) if self.metrics is not None else None}
 
 
-def make_plan(scale, n, read_cases, *, table=None, gate=(), up=(), ue4m3=False, metadata=None, memoize=False, metrics=None):
+class ModuleMemo:
+    """Keep one table and bounded coding, evaluator and alias caches."""
+    def __init__(self, table, *, vectorized=True):
+        self.table, self.cached, self.descriptor = table, None, None
+        self.vectorized = vectorized
+        self.group_cache, self.group_bytes = OrderedDict(), 0
+        self.group_hits = self.group_misses = 0
+        self._matches = lru_cache(maxsize=2**16)(self._remember)
+
+    def groups(self, coding, arrays):
+        descriptor = json.dumps(coding, sort_keys=True, separators=(",", ":"))
+        self.descriptor = descriptor
+        if descriptor in self.group_cache:
+            self.group_hits += 1
+            self.group_cache.move_to_end(descriptor)
+            return self.group_cache[descriptor][0]
+        self.group_misses += 1
+        groups = coding_groups(arrays)
+        size = sum(sys.getsizeof(group) + sum(sys.getsizeof(pair) + sum(map(sys.getsizeof, pair))
+                                            for pair in group) for group in groups)
+        while self.group_cache and self.group_bytes + size > 128 * 2**20:
+            _, (_, removed) = self.group_cache.popitem(last=False)
+            self.group_bytes -= removed
+        if size <= 128 * 2**20:
+            self.group_cache[descriptor] = groups, size
+            self.group_bytes += size
+        return groups
+
+    def _remember(self, descriptor, signature, own):
+        return tuple(islice(self.search(), 2))
+
+    def matches(self, signature, own, search):
+        # Two least pairs suffice: excluding one correct pair leaves the least alias.
+        self.search = search
+        try:
+            return self._matches(self.descriptor, signature, tuple(struct.pack("<d", v) for v in own))
+        finally:
+            self.search = None
+
+    def evaluator(self, read_cases, coding, metrics):
+        evaluator_type = CachedEvaluator
+        if self.vectorized:
+            from experiments.numerics_rows.batch_evaluator import BatchEvaluator
+            evaluator_type = BatchEvaluator
+        evaluator = evaluator_type(read_cases, self.table, coding=coding, metrics=metrics, cached=self.cached)
+        self.cached = evaluator.cached
+        return evaluator
+
+    def report(self):
+        return {"evaluate": self.cached.cache_info()._asdict() if self.cached is not None else {},
+                "matches": self._matches.cache_info()._asdict(),
+                "group_hits": self.group_hits, "group_misses": self.group_misses,
+                "group_entries": len(self.group_cache), "group_bytes": self.group_bytes}
+
+
+def make_plan(scale, n, read_cases, *, table=None, gate=(), up=(), ue4m3=False, metadata=None, memoize=False, metrics=None, memo=None):
     """Choose a normal power range. Check each output before claiming coverage."""
     def operand(c, side):
         value = c[side]
@@ -238,14 +311,19 @@ def make_plan(scale, n, read_cases, *, table=None, gate=(), up=(), ue4m3=False, 
     plan = passes(n, low, high, gate=gate, up=up,
                   gate_constant=held(gmin) if mode0 else 1.0, up_constant=held(umin) if mode0 else 1.0, compact=True)
     cases = {tuple(c["read"]): c for c in read_cases}
-    evaluator = CachedEvaluator(cases.values(), table, coding=plan["coding"], metrics=metrics) if memoize else None
+    if memo is not None and memo.table is not table:
+        raise ValueError("module memo belongs to another measured D table")
+    evaluator = memo.evaluator(cases.values(), plan["coding"], metrics) if memo is not None else (
+        CachedEvaluator(cases.values(), table, coding=plan["coding"], metrics=metrics) if memoize else None)
     if metrics is not None:
         metrics["coding"] = plan["coding"]
     try:
-        result = joint_coverage(list(cases), plan["coding"], evaluator or (lambda read, wrong, values: evaluate(cases[read], wrong, values, table)), n)
+        result = joint_coverage(list(cases), plan["coding"], evaluator or (lambda read, wrong, values: evaluate(cases[read], wrong, values, table)), n, memo=memo,
+                                progress=(lambda result: metrics.update(completed_result=result)) if metrics is not None else None)
     finally:
         if evaluator is not None and metrics is not None:
             metrics.update(evaluator.report())
+            metrics["completed_reads"] = metrics.get("completed_result", {}).get("reads", 0)
     if evaluator is not None and metrics is not None:
         metrics["completed_reads"] = result["reads"]
     return {"scale": scale, **plan, **result, "mismatches": 0, "read_cases": read_cases, "array": metadata or {}}

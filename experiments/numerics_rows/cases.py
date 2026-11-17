@@ -16,6 +16,8 @@ import time
 from experiments.numerics_rows.common import IMAGES, Invalid, artifact_limit, check_runtime, check_source, sha256, write_json
 from experiments.numerics_rows.quantizers import PHASES
 from experiments.numerics_rows.reference import bf16, bf16_array, f32_bits, f32_value, multiply
+from experiments.numerics_rows.module_io import RoleFile, write_manifest
+from experiments.numerics_rows.scale_index import ModuleMemo
 
 D2 = (1, 2, 8, 64, 65, 128, 512, 2048)
 TP_CUTS = ((1, 0), (2, 0), (2, 1))
@@ -481,6 +483,7 @@ def main():
         table = DTable(next(t for t in q1["tables"] if t["key"] == entry["library"])) if structure == "routed_moe" else None
         if table is not None and table.limit != artifact_limit(entry["root"]):
             raise ValueError("artifact swiglu_limit differs from the Q1 D table")
+        memo = ModuleMemo(table)
         facts["cuts"] = []
         for size, rank in (TP_CUTS if selected_cut is None else (selected_cut,)):
             local = {"structure": structure, "family": family, "tp": {"size": size, "rank": rank}, "roles": [], "complete": True}
@@ -550,13 +553,13 @@ def main():
                     launch_state.check()
                     torch.save({"weight": weight, "scale": scale}, file)
                     index_start = time.monotonic()
-                    index = scale_index_manifest(weight, ratio, family, stage, table, peer, peer_scale, quantizer, facts["experts"], expert, local["m_configs"])
+                    index = scale_index_manifest(weight, ratio, family, stage, table, peer, peer_scale, quantizer, facts["experts"], expert, local["m_configs"], memo=memo)
                     launch_state.check()
                     index_seconds = time.monotonic() - index_start
-                    local["roles"].append({"name": name, "expert": expert, "gs": gs, "reader_path": str(file), "reader_sha256": sha256(file),
+                    local["roles"].append(RoleFile(file, {"name": name, "expert": expert, "gs": gs, "reader_path": str(file), "reader_sha256": sha256(file),
                         "wire_stamp": stamp, "matches_attested_wire": stamped, "rows": weight.shape[0], "cols": weight.shape[1],
                         **rate_layout(parsed.unit.rates), "lut": lut, **plans[name],
-                        "separation": separated, "scale_index": index, "chunks": chunks})
+                        "separation": separated, "scale_index": index, "chunks": chunks}))
                     local["complete"] &= stamped and separated["complete"] and all(i["reads"] == i["reads_covered"] for i in index) and all(c["holds_for_a_row"] for c in chunks)
                     facts["q256"] = stamp["q256"]
                     item = {"module": entry["name"], "expert": expert, "role": name, "tp": local["tp"],
@@ -568,7 +571,7 @@ def main():
                     manifest["items"].append(item)
                     print(json.dumps(item), flush=True)
             facts["complete"] &= local["complete"]
-            write_json(args.out / "case_manifest.json", manifest)
+            write_manifest(args.out / "case_manifest.json", manifest)
         manifest["complete"] &= facts["complete"]
         write_json(args.out / "progress.json", {"arm": population.get("arm", args.population.stem),
             "modules_completed": len(manifest["modules"]), "last_module": entry["name"],
@@ -582,13 +585,15 @@ def main():
         manifest["sample"].update(items=len(manifest["items"]), sample_scope_only=True, measured_item_seconds=seconds / len(manifest["items"]),
                                    measured_wall_seconds=manifest["reference_seconds"],
                                    module_items=facts["experts"] * 3 * len(TP_CUTS))
-    write_json(args.out / "case_manifest.json", manifest)
+    write_manifest(args.out / "case_manifest.json", manifest)
 
 
-def scale_index_manifest(weight, scale, family, stage, table, peer, peer_scale, quantizer, experts, expert, configs):
+def scale_index_manifest(weight, scale, family, stage, table, peer, peer_scale, quantizer, experts, expert, configs, *, memo=None):
     """Generate read tuples on exact one-hot cases, including activation scale arrays."""
     import numpy as np
+    from functools import partial
     from experiments.numerics_rows.scale_index import make_plan
+    make_plan = partial(make_plan, memo=memo)
     from experiments.numerics_rows.reference import rn32
 
     w = weight.numpy()
@@ -673,10 +678,10 @@ def scale_index_manifest(weight, scale, family, stage, table, peer, peer_scale, 
                                        "g_scale": float(scales[min(row, len(scales)-1)]), "u_scale": float(other_scales[min(row, len(other_scales)-1)]) if mode0 else 1.0,
                                        "scale": name, "column": column, "input": source, "output_row": row, "input_row": input_row,
                                        "router_weight": f32_value(f32_bits(router_weights[input_row]))})
-            metadata = {"N": routes * groups, "M": m, "target": name, "mode": 0 if mode0 else 2,
+            activation_metadata = {"N": routes * groups, "M": m, "target": name, "mode": 0 if mode0 else 2,
                         "expert": expert, "projection": "gate_proj" if mode0 else "down_proj", "shared": mode0,
                         **({"route_experts": list(range(8))} if experts > 1 and not mode0 else {})}
-            plans.append(make_plan(name, routes * groups, read_cases, table=table, ue4m3=name == "sfa", metadata=metadata))
+            plans.append(make_plan(name, routes * groups, read_cases, table=table, ue4m3=name == "sfa", metadata=activation_metadata))
     return plans
 
 

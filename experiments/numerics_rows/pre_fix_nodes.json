@@ -396,5 +396,20 @@
       "test_capture_preflight_detects_vllm_without_a_cuda_context",
       "test_capture_preflight_stops_before_first_device_call"
     ]
+  },
+  "pre-fix-row-plan-metadata": {
+    "file": "test_numerics_rows.py",
+    "expected": 1,
+    "nodes": [
+      "test_routed_row_plan_metadata_keeps_its_own_coding_domain[down]"
+    ]
+  },
+  "pre-fix-dense-admission": {
+    "file": "test_numerics_rows_phases.py",
+    "expected": 2,
+    "nodes": [
+      "test_dense_prepare_waits_for_pending_aarch64_jobs",
+      "test_dense_prepare_booking_and_low_urgency"
+    ]
   }
 }

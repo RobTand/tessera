@@ -176,39 +176,68 @@ def prepare(cpu_check, *, module=MODULE, canary=True, canary_directory=None):
         "canary_directory": str(canary_directory) if canary_directory else None,
         "paths": dict.fromkeys(INPUTS), "cpu_check": str(cpu_check)})
     shutil.copyfile(__file__, out / "prepare.py")
+    shutil.copyfile(ROOT / 'experiments/numerics_rows/counted_feeder.py', out / 'admission.py')
     capture_cores = 4 if canary else 1
-    for phase, minutes in (("prepare", 360 if canary else 1440), ("capture", 15 if canary else 60), ("compare", 120 if canary else 360)):
+    for phase, minutes in (("prepare", 360 if canary else 1440), ("capture", 15), ("compare", 120 if canary else 360)):
         job = out / phase
         job.mkdir()
         gpu = phase == "capture"
         cores = capture_cores if gpu else 1
         options = shlex.join(container_options("$task_scratch")).replace("'$task_scratch", '"$task_scratch').replace(":rw'", ':rw"').replace(":ro'", ':ro"')
-        bootstrap = f"PYTHONPATH={job}/code python3 -m experiments.numerics_rows.prepare_split --verify {out}"
+        bootstrap = f'PYTHONPATH="$task_scratch/code" python3 -m experiments.numerics_rows.prepare_split --verify {out}'
         prerequisites = ""
         for prior in (("prepare",) if gpu else ("prepare", "capture") if phase == "compare" else ()):
             prerequisites += f"test -s {out}/{prior}/results/{prior}/phase.json\n"
-        telemetry = f"PYTHONPATH=code python3 -m experiments.numerics_rows.prepare_split --check-telemetry {job}/results/numerics_row.json > results/telemetry-check.json\n" if gpu else ""
-        preflight = "PYTHONPATH=code python3 -m experiments.numerics_rows.gpu_time --preflight results/gpu-preflight-host.json\n" if gpu else ""
+        telemetry = f'PYTHONPATH="$task_scratch/code" python3 -m experiments.numerics_rows.prepare_split --check-telemetry {job}/results/numerics_row.json > results/telemetry-check.json\n' if gpu else ""
+        preflight = 'PYTHONPATH="$task_scratch/code" python3 -m experiments.numerics_rows.gpu_time --preflight results/gpu-preflight-host.json\n' if gpu else ""
         (job / "job.sh").write_text(f'''#!/bin/bash
 set -euo pipefail
 umask 077
 cd {job}
-task_scratch=$(mktemp -d /var/tmp/tessera-dense-phase.XXXXXX)
+task_scratch="${{FLUX_SCRATCH:?}}/${{FLUX_JOB_ID:?}}"
 name=tessera-dense-{phase}-"$FLUX_JOB_ID"
-trap 'rc=$?; podman rm -f "$name" >/dev/null 2>&1 || true; rm -rf -- "$task_scratch"; printf "%s\\n" "$rc" > tool-exit.txt; exit "$rc"' EXIT
-trap 'exit 143' TERM
-trap 'exit 130' INT
-mkdir -p results "$task_scratch/home"
+child=
+cleanup() {{
+  rc=$?
+  trap - EXIT
+  if test -s "$task_scratch/containers.conf"; then
+    podman rm -f "$name" >/dev/null 2>&1 || true
+    podman unshare rm -rf -- "$task_scratch/podman-storage" "$task_scratch/podman-run" >/dev/null 2>&1 || true
+  fi
+  rm -rf -- "$task_scratch" || rc=3
+  test ! -e "$task_scratch" || rc=3
+  printf '%s\\n' "$rc" > tool-exit.txt
+  exit "$rc"
+}}
+stop() {{
+  trap '' TERM INT
+  if test -n "$child"; then kill -TERM "$child" 2>/dev/null || true; fi
+  if test -s "$task_scratch/containers.conf"; then podman stop --time 1 "$name" >/dev/null 2>&1 || true; fi
+  exit "$1"
+}}
+trap cleanup EXIT
+trap 'stop 143' TERM
+trap 'stop 130' INT
+export HOME="$task_scratch/home" TMPDIR="$task_scratch/tmp"
+export XDG_CACHE_HOME="$task_scratch/cache" XDG_CONFIG_HOME="$task_scratch/config" XDG_DATA_HOME="$task_scratch/data"
+export PYTHONPYCACHEPREFIX="$task_scratch/host-pycache"
+mkdir -p results "$HOME" "$TMPDIR" "$XDG_CACHE_HOME" "$XDG_CONFIG_HOME" "$XDG_DATA_HOME"
+export CONTAINERS_STORAGE_CONF="$task_scratch/storage.conf" CONTAINERS_CONF="$task_scratch/containers.conf"
+printf '[storage]\\ndriver = "overlay"\\nrunroot = "%s/podman-run"\\ngraphroot = "%s/podman-storage"\\n[storage.options]\\nadditionalimagestores = ["/home/rob/.local/share/containers/storage"]\\n' "$task_scratch" "$task_scratch" > "$CONTAINERS_STORAGE_CONF"
+printf '[engine]\\ntmp_dir = "%s/podman-tmp"\\n' "$task_scratch" > "$CONTAINERS_CONF"
 grep Cpus_allowed_list /proc/self/status > results/affinity.txt
-git clone --shared {repository} code
-git -C code checkout --detach {revision}
-test "$(git -C code rev-parse HEAD)" = {revision}
+git clone --shared {repository} "$task_scratch/code"
+git -C "$task_scratch/code" checkout --detach {revision}
+test "$(git -C "$task_scratch/code" rev-parse HEAD)" = {revision}
 {bootstrap}
 {prerequisites}{preflight}podman image inspect acc684c06ec7 > "$task_scratch/image-inspect.json"
 # The population draft mount is supplied from the bound, reviewed campaign file.
-mapfile -t population_mount < <(PYTHONPATH=code python3 -c 'import json,shlex; print("\\n".join(shlex.split(json.load(open("{out}/campaign.json"))["population_mount"])))')
+mapfile -t population_mount < <(PYTHONPATH="$task_scratch/code" python3 -c 'import json,shlex; print("\\n".join(shlex.split(json.load(open("{out}/campaign.json"))["population_mount"])))')
 rc=0
-timeout --signal=TERM --kill-after=20s {minutes * 60 - 60}s podman run --rm --name "$name" --pull=never --cgroups=disabled --network=none {'--device nvidia.com/gpu=all' if gpu else ''} -v /mnt/shared:/mnt/shared:ro -v {job}:{job}:rw -v {job}/code:/numerics:ro "${{population_mount[@]}}" {options} --entrypoint /bin/bash acc684c06ec7 -euo pipefail {job}/payload.sh > results/payload.stdout 2> results/payload.stderr || rc=$?
+timeout --signal=TERM --kill-after=20s {minutes * 60 - 60}s podman run --rm --name "$name" --pull=never --cgroups=disabled --network=none {'--device nvidia.com/gpu=all' if gpu else ''} -v /mnt/shared:/mnt/shared:ro -v {job}:{job}:rw -v "$task_scratch/code:/numerics:ro" "${{population_mount[@]}}" {options} --entrypoint /bin/bash acc684c06ec7 -euo pipefail {job}/payload.sh > results/payload.stdout 2> results/payload.stderr &
+child=$!
+wait "$child" || rc=$?
+child=
 printf '%s\\n' "$rc" > results/podman-exit.txt
 printf '%s\\n' "$rc" > results/payload-exit.txt
 test "$rc" -eq 0
@@ -217,7 +246,10 @@ test -s results/{phase}/phase.json
         base = Path("/mnt/shared/flux-jobs/tessera-1717-RECEIPT-CPU-7d69093d-20261116T235639Z")
         submit = (base / "submit-after-review.sh").read_text().replace(str(base), str(job))
         submit = submit.replace("tessera-1717-RECEIPT-CPU", "tessera-1717-DENSE-" + phase.upper())
-        submit = submit.replace("-t30m", f"-t{minutes}m").replace("core=4;memory=16", f"core={cores};memory=32" + (";gpu=1" if gpu else "")).replace("host:dl380g10", "host:sparklina")
+        submit = submit.replace('flux submit ', 'flux submit --urgency=8 ')
+        submit = submit.replace('flux submit ', f'python3 {out}/admission.py --wait-dense-slot\nflux submit ', 1)
+        submit = submit.replace('--env=FLUX_SCRATCH=/var/tmp ', '--env=FLUX_SCRATCH=/var/tmp/flux-rob ')
+        submit = submit.replace("-t30m", f"-t{minutes}m").replace("core=4;memory=16", f"core={cores};memory={8 if phase == 'prepare' else 32}" + (";gpu=1" if gpu else "")).replace("host:dl380g10", "host:sparklina")
         (job / "submit-after-review.sh").write_text(submit)
     (out / "bind-inputs.py").write_text(f'''import argparse, json, sys
 from pathlib import Path
@@ -249,8 +281,8 @@ phase exits, with the same tool, rule, population, build, Q1, H1 and addendum.
 
 | Job | Cores | Memory GiB | GPU | Limit | Time basis |
 |---|---:|---:|---:|---|---|
-| prepare | 1 | 32 | 0 | {360 if canary else 1440} min | Lead-selected limit; no split timing. Old host work exceeded 88 minutes. No separate memory peak; old whole-row peak 4.93 GiB. |
-| capture | {capture_cores} | 32 | 1 | {15 if canary else 60} min | Old one-cut device peak was 0.86 GiB; F remains unmeasured. |
+| prepare | 1 | 8 | 0 | {360 if canary else 1440} min | Fleet shape. Exact-sum CPU peak was 3.05 GiB; old whole-row peak was 4.93 GiB. |
+| capture | {capture_cores} | 32 | 1 | 15 min | Old one-cut device peak was 0.86 GiB; F remains unmeasured. |
 | compare | 1 | 32 | 0 | {120 if canary else 360} min | No separate peak. Keep the canary booking until measured. |
 
 All jobs use aarch64 IMG-N on sparklina. These are prepared limits, not new measurements.

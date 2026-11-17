@@ -1,5 +1,20 @@
 # Tessera plan-to-serve architecture
 
+Re-stamped 2026-11-17 for the #1717 joined reference tool.
+Finite bounds sum exact dyadic integers. Scalar rounding uses exact integer ratios.
+C1 and row scale-index checks use one table-owned memo and batch binary32 candidates by default.
+Other operands use the scalar integer evaluator. Every read retains its ordered alias check.
+Routed row-scale plans keep their own domain metadata across all M configurations.
+The strict C1 scope keeps every required role, expert and TP cut. Role files stream into the manifest.
+The measurement-only launchers and sampled manifest schema are not part of this tool.
+These changes do not change rule v2, served arithmetic or receipt fields.
+Dense prepare books one core and 8 GiB. Dense submissions use urgency 8.
+The sequential feeder holds every dense submission while any aarch64 or portable job is pending.
+Capture has a 15-minute limit. Prepare is limited to one per Spark and two total.
+The sequential feeder uses at most one globally, for every TL3b W.
+It runs at most one dense phase at a time, below the three-per-Spark ceiling.
+Canary launchers use scratch HOME before scratch Podman storage and wait on a background child.
+
 Re-stamped 2026-11-17 for the #1717 dense row phase split under frozen rule v2.
 CPU prepare uses the existing exact case generators and reference evaluator.
 GPU capture checks the bound input and actual quantizer bytes before native use.

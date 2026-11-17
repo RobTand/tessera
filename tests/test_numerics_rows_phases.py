@@ -543,7 +543,7 @@ def feeder_booking(tmp_path, monkeypatch):
     write(canary / "campaign.json", {"tool_commit": "tool"})
     write(rowdir / "campaign.json", {"bound": True})
     bookings = tmp_path / "bookings.json"
-    write(bookings, {"module-A": {phase: {"memory_gib": 5, "minutes": 10} for phase in ("prepare", "capture", "compare")}})
+    write(bookings, {"module-A": {phase: {"memory_gib": 8 if phase == "prepare" else 5, "minutes": 15 if phase == "capture" else 10} for phase in ("prepare", "capture", "compare")}})
     for phase in ("prepare", "capture", "compare"):
         job = rowdir / phase
         (job / "results" / phase).mkdir(parents=True)
@@ -561,6 +561,7 @@ def feeder_booking(tmp_path, monkeypatch):
             (Path(command[1]).parent / "jobid").write_text("f123")
     monkeypatch.setattr(api.subprocess, "run", run)
     monkeypatch.setattr(api.subprocess, "check_output", lambda *a, **kw: "0")
+    monkeypatch.setattr(api, "wait_dense_slot", lambda: None, raising=False)
     return api, canary, rowdir, bookings
 
 
@@ -573,12 +574,45 @@ def test_feeder_refuses_missing_or_ambiguous_booking_fields(feeder_booking, fiel
         path.unlink()
     job = rowdir / "prepare" / ("job.sh" if field == "inner-timeout" else "submit-after-review.sh")
     text = job.read_text()
-    token = {"inner-timeout": "--kill-after=20s 540s ", "walltime": " -t10m ", "shape": "slot/[core=1;memory=5]"}[field]
+    token = {"inner-timeout": "--kill-after=20s 540s ", "walltime": " -t10m ", "shape": "slot/[core=1;memory=8]"}[field]
     assert token in text
     job.write_text(text.replace(token, "missing" if mutation == "missing" else token + token))
     with pytest.raises(ValueError, match="EXACTLY_ONE_MATCH"):
         api.run(canary, bookings)
     assert not list(rowdir.glob("*/jobid"))
+
+
+def test_dense_prepare_waits_for_pending_aarch64_jobs(monkeypatch):
+    from experiments.numerics_rows import counted_feeder as api
+    assert hasattr(api, 'wait_dense_slot'), 'feature absent: dense prepare admission'
+    replies = iter([{'jobs': [{'id': 1}]}, {'attributes': {'system': {'constraints': {'properties': ['aarch64']}}}}, {'jobs': []}])
+    monkeypatch.setattr(api.subprocess, 'check_output', lambda *a, **kw: json.dumps(next(replies)))
+    pauses = []
+    monkeypatch.setattr(api.time, 'sleep', pauses.append)
+    api.wait_dense_slot()
+    assert pauses == [15]
+    assert api.excludes_sparks({'properties': ['host:dl380g10']})
+    assert not api.excludes_sparks({})
+    assert not api.excludes_sparks({'or': [{'properties': ['amd64']}, {'properties': ['aarch64']}]})
+
+
+def test_dense_prepare_booking_and_low_urgency(feeder_booking):
+    api, canary, rowdir, bookings = feeder_booking
+    waits = []
+    api.wait_dense_slot = lambda: waits.append(True)
+    api.run(canary, bookings)
+    assert len(waits) == 3
+    assert all('--urgency=8' in p.read_text() for p in rowdir.glob('*/submit-after-review.sh'))
+    bad = json.loads(bookings.read_text())
+    bad['module-A']['prepare']['memory_gib'] = 32
+    bookings.write_text(json.dumps(bad))
+    with pytest.raises(ValueError, match='REQUIRES_8_GIB'):
+        api.run(canary, bookings)
+    bad['module-A']['prepare']['memory_gib'] = 8
+    bad['module-A']['capture']['minutes'] = 60
+    bookings.write_text(json.dumps(bad))
+    with pytest.raises(ValueError, match='REQUIRES_15_MINUTES'):
+        api.run(canary, bookings)
 
 
 def test_counted_feeder_stop_command_keeps_exit_and_last_error(tmp_path):

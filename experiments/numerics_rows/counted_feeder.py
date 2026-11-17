@@ -8,6 +8,7 @@ from pathlib import Path
 import re
 import subprocess
 import sys
+import time
 
 
 def sha(path):
@@ -30,6 +31,25 @@ def replace_once(pattern, value, text):
     return text
 
 
+def excludes_sparks(constraints):
+    """Only a known x86 restriction proves a pending job cannot use a Spark."""
+    if 'and' in constraints:
+        return any(excludes_sparks(c) for c in constraints['and'])
+    if 'or' in constraints:
+        return bool(constraints['or']) and all(excludes_sparks(c) for c in constraints['or'])
+    return any(p in ('amd64', 'x86_64', 'host:dl380g10') for p in constraints.get('properties', []))
+
+
+def wait_dense_slot():
+    while True:
+        jobs = json.loads(subprocess.check_output(['flux', 'jobs', '--json', '--filter=pending'], text=True))['jobs']
+        specs = [json.loads(subprocess.check_output(['flux', 'job', 'info', str(j['id']), 'jobspec'], text=True)) for j in jobs]
+        if all(excludes_sparks(s.get('attributes', {}).get('system', {}).get('constraints', {})) for s in specs):
+            return
+        print('DEFER_DENSE_SUBMIT: pending aarch64 or portable job', flush=True)
+        time.sleep(15)
+
+
 def run(canary, bookings):
     canary = Path(canary)
     lock = (canary / 'counted-feeder.lock').open('w')
@@ -45,6 +65,10 @@ def run(canary, bookings):
             if (set(shape) != {'memory_gib', 'minutes'} or any(type(v) is not int for v in shape.values())
                     or shape['memory_gib'] <= 0 or shape['minutes'] <= 1):
                 raise FeederError('BOOKING_SHAPE_INVALID')
+        if phases['prepare']['memory_gib'] != 8:
+            raise FeederError('DENSE_PREPARE_REQUIRES_8_GIB')
+        if phases['capture']['minutes'] != 15:
+            raise FeederError('DENSE_CAPTURE_REQUIRES_15_MINUTES')
     state_path = canary / 'counted-feeder-state.json'
     state = read(state_path) if state_path.exists() else {'bookings_sha256': sha(bookings), 'instance_sha256': sha('/mnt/shared/flux-migration/INSTANCE'), 'jobs': {}}
     if state['bookings_sha256'] != sha(bookings) or state['instance_sha256'] != sha('/mnt/shared/flux-migration/INSTANCE'):
@@ -83,10 +107,12 @@ def run(canary, bookings):
                 submit = replace_once(r' -t\d+m ', f' -t{shape["minutes"]}m ', submit)
                 submit = replace_once(r'slot/\[core=1;memory=\d+(;gpu=1)?\]',
                     'slot/[core=1;memory=' + str(shape['memory_gib']) + (';gpu=1]' if phase == 'capture' else ']'), submit)
+                submit = replace_once(r'--urgency=\d+', '--urgency=8', submit) if '--urgency=' in submit else replace_once(r'flux submit\b', 'flux submit --urgency=8', submit)
                 (job / 'job.sh').write_text(script)
                 (job / 'submit-after-review.sh').write_text(submit)
                 files = [*directory.glob('*.py'), *directory.glob('*/*.sh')]
                 (directory / 'transport-preparation.sha256').write_text(''.join(f'{sha(p)}  {p}\n' for p in sorted(files)))
+                wait_dense_slot()
                 subprocess.run(['bash', str(job / 'submit-after-review.sh')], check=True)
                 jobid = (job / 'jobid').read_text().strip()
             state['jobs'][key] = {'id': jobid, 'directory': str(job)}
@@ -111,10 +137,16 @@ def run(canary, bookings):
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--canary', type=Path, required=True)
-    parser.add_argument('--bookings', type=Path, required=True)
-    parser.add_argument('--result-directory', type=Path, required=True)
+    parser.add_argument('--wait-dense-slot', action='store_true')
+    parser.add_argument('--canary', type=Path)
+    parser.add_argument('--bookings', type=Path)
+    parser.add_argument('--result-directory', type=Path)
     args = parser.parse_args()
+    if args.wait_dense_slot:
+        wait_dense_slot()
+        raise SystemExit(0)
+    if not all((args.canary, args.bookings, args.result_directory)):
+        parser.error('provide --canary, --bookings and --result-directory')
     try:
         run(args.canary, args.bookings)
         (args.result_directory / 'last-error.txt').write_text('last_error=none\n')

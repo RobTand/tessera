@@ -8,7 +8,7 @@ from fractions import Fraction as F
 
 from experiments.numerics_rows.common import Invalid
 from experiments.numerics_rows.reference import FiniteBound, exact_input, f32_bits, multiply
-from experiments.numerics_rows.scale_index import evaluate, joint_coverage, scale_values
+from experiments.numerics_rows.scale_index import ModuleMemo, evaluate, joint_coverage, scale_values
 
 
 def coded_native(native, target, values, mode):
@@ -145,6 +145,7 @@ def check(adapter, unit, manifest, recorder):
 
     routed = manifest["structure"] == "routed_moe"
     m = unit["m_config"]["M"]
+    memo = ModuleMemo(adapter.table if routed else None)
     for role in manifest["roles"]:
         for plan in role["scale_index"]:
             meta = plan["array"]
@@ -153,7 +154,8 @@ def check(adapter, unit, manifest, recorder):
             cases = {tuple(c["read"]): c for c in plan["read_cases"]}
             table = adapter.table if routed else None
             # Recompute coverage from the outputs, not C1's coverage count.
-            verified = joint_coverage(list(cases), plan["coding"], lambda read, wrong, values: evaluate(cases[read], wrong, values, table), meta["N"])
+            evaluator = memo.evaluator(cases.values(), plan["coding"], None)
+            verified = joint_coverage(list(cases), plan["coding"], evaluator, meta["N"], memo=memo)
             complete = verified["reads"] == verified["reads_covered"]
             coverage(unit, "scale-index", complete, plan["reads"] == plan["reads_covered"])
             record = {k: plan[k] for k in ("scale", "base", "families", "passes_per_family", "passes_total")}
