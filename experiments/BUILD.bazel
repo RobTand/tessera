@@ -2054,6 +2054,17 @@ ts_py_library(
 )
 
 ts_py_library(
+    name = "numerics_rows/dependency_audit",
+    srcs = [
+        "numerics_rows/dependency_audit.py",
+    ],
+    deps = [
+        ":numerics_rows/common",
+        ":numerics_rows/launch_state",
+    ],
+)
+
+ts_py_library(
     name = "numerics_rows/gpu_time",
     srcs = [
         "numerics_rows/gpu_time.py",
