@@ -207,7 +207,7 @@ def dispatch(unit, expected, emitted, loaded, lane_reason=None):
 
 
 def coverage(unit, section, complete, claimed):
-    if complete:
+    if complete and claimed:
         return
     if claimed:
         unit["invalid"].append(f"C1 claimed complete {section} coverage")

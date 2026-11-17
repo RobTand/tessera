@@ -90,6 +90,17 @@ def test_incomplete_coverage(section, claimed, expected):
     assert outcome(scope) == expected
 
 
+@pytest.mark.parametrize("section", ("separation", "scale-index"))
+def test_c1_incomplete_coverage_cannot_be_promoted_by_recompute(section):
+    scope = unit()
+    coverage(scope, section, True, True)
+    assert outcome(scope) == "PASS"
+    coverage(scope, section, True, False)
+    assert outcome(scope) == "UNATTESTED"
+    assert scope["unattested"] == [f"incomplete {section} coverage before the freeze"]
+    assert not scope["invalid"]
+
+
 def test_wrong_scale_index_fails():
     coding = passes(4, 0, 1)
     check = joint_coverage([(2,)], coding["coding"], lambda read, wrong, values: values[wrong[0]], 4)
