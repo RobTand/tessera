@@ -16,7 +16,7 @@ import sys
 import subprocess
 import traceback
 
-from experiments.numerics_rows.common import BoundaryError, BoundaryRecorder, Invalid, IMAGES, KERNEL_SHA256, check_runtime, check_source, sha256, write_json
+from experiments.numerics_rows.common import BoundaryError, BoundaryRecorder, Invalid, Unattested, IMAGES, KERNEL_SHA256, check_runtime, check_source, sha256, write_json
 from experiments.numerics_rows.build import IDENTITY_FIELDS, library_identity
 from experiments.numerics_rows.canonical import CANONICAL_FIELDS
 from experiments.numerics_rows.reference import FiniteBound, compare, selftest
@@ -650,8 +650,12 @@ def main():
 def run(args, receipt):
     from experiments.numerics_rows.gpu_time import PhaseTimes
 
-    with PhaseTimes(receipt["row"]) as phases:
-        run_row(args, receipt, phases)
+    try:
+        with PhaseTimes(receipt["row"]) as phases:
+            run_row(args, receipt, phases)
+    finally:
+        if getattr(args, "code_audit", None) is not None:
+            args.code_audit.close()
 
 
 def run_row(args, receipt, phases):
@@ -667,6 +671,8 @@ def run_row(args, receipt, phases):
     sys.path.insert(0, str(args.source / "src"))
     import torch
     launch_state.bind_math(torch)
+    from experiments.numerics_rows.dependency_code import CodeAudit
+    code_audit = args.code_audit = CodeAudit(runtime["image_digest"], args.out / "compiled-code").install()
     runtime.update({k: v for k, v in launch_state.fields().items() if k != "launch_levers_sha256"})
     receipt["runtime"] = runtime
     from experiments.numerics_rows.serving_build import check_compile_paths, check_retained_source
@@ -700,6 +706,7 @@ def run_row(args, receipt, phases):
     check_rule_freeze(args.rule, freeze, canary=getattr(args, "canary", False), launch_levers_sha256=launch_state.levers_sha256)
     receipt["canary"] = getattr(args, "canary", False)
     manifest, built, h1 = (json.loads(path.read_text()) for path in (args.manifest, args.build, args.h1))
+    code_audit.p2 = h1.get("P2", {}).get("triton_specializations", [])
     check_binding(manifest, launch_state.fields())
     check_math_binding(manifest, launch_state.fields())
     check_math_binding(h1, launch_state.fields())
@@ -774,7 +781,12 @@ def run_row(args, receipt, phases):
                         write_json(args.out / "numerics_row.json", receipt)
                         continue
                     with phases.measure("setup"):
-                        adapter = Routed(entry, cut, module, table) if routed else Dense(entry, cut, module)
+                        code_audit.unit = None
+                        start = len(code_audit.records)
+                        with torch.profiler.profile(activities=[torch.profiler.ProfilerActivity.CPU, torch.profiler.ProfilerActivity.CUDA]) as prepared_profile:
+                            adapter = Routed(entry, cut, module, table) if routed else Dense(entry, cut, module)
+                        from experiments.routed_pair_oracle import kernel_table
+                        preparation_kernels = kernel_table(prepared_profile, limit=100000, device_only=True)
                     if phase == "gate_cases":
                         receipt["modules"].append(module_receipt(module, adapter, routed))
                     for unit in units:
@@ -783,6 +795,15 @@ def run_row(args, receipt, phases):
                         adapter.splits = unit["m_config"]["k_split"]
                         recorder = BoundaryRecorder(torch.cuda.synchronize, unit["boundaries"])
                         recorder.before_call = launch_state.check
+                        recorder.context = code_audit.context
+                        recorder.code_audit = code_audit
+                        code_audit.unit = unit
+                        unit["unit_id"] = unit_identity(unit)
+                        from experiments.numerics_rows.dependency_code import binding
+                        unit.setdefault("triton_specializations", []).extend(
+                            binding(unit["unit_id"], r["case"], r["identity"]) for r in code_audit.records[start:]
+                            if binding(unit["unit_id"], r["case"], r["identity"]) not in unit.get("triton_specializations", []))
+                        unit["arm"].setdefault("preparation_kernels", []).extend(preparation_kernels)
                         try:
                             launch_state.check()
                             unit["tp"].update(tp_facts(adapter, module, routed))
@@ -803,6 +824,8 @@ def run_row(args, receipt, phases):
                                     record_cuda_error(unit, error)
                                 except Invalid as error:
                                     unit["invalid"].append(str(error))
+                                except Unattested as error:
+                                    unit["unattested"].append(str(error))
                                 except Exception as error:
                                     record_diagnostic_error(receipt, unit, error)
                                 finally:
@@ -826,12 +849,12 @@ def run_row(args, receipt, phases):
                                 cases_completed = False
                                 try:
                                     with native_boundaries({key: actual} if actual is not None else {}, recorder):
+                                        profile_unit(adapter, unit, recorder, routed=routed)
                                         if routed:
                                             run_routed.run(adapter, unit, module, recorder)
                                         else:
                                             dense_cases(adapter, unit, module, recorder)
                                         scale_index_checks(adapter, unit, module, recorder)
-                                        profile_unit(adapter, unit, recorder, routed=routed)
                                     cases_completed = True
                                 except BoundaryError as error:
                                     record_cuda_error(unit, error)
@@ -847,6 +870,9 @@ def run_row(args, receipt, phases):
                             record_cuda_error(unit, error)
                         except Invalid as error:
                             unit["invalid"].append(str(error))
+                            unit["completed"] = True
+                        except Unattested as error:
+                            unit["unattested"].append(str(error))
                             unit["completed"] = True
                         finally:
                             unit["flags_latched_diagnostic"] = dict(getattr(sys.modules.get("tessera.serving.flags"), "_LATCHED", {}))
@@ -968,7 +994,7 @@ def resolve_symbols(functions, names, demangled):
         matches = aliases.get(normalize(name), set())
         if len(matches) == 1:
             found.append({"profiler_name": name, "symbol": next(iter(matches))})
-        elif any(part in name for part in ("routed", "dense", "window", "token_sum")):
+        else:
             unresolved.append(name)
     return sorted(found, key=lambda r: (r["symbol"], r["profiler_name"])), sorted(unresolved)
 
@@ -1015,6 +1041,9 @@ def profile_unit(adapter, unit, recorder, *, routed):
     from experiments.routed_pair_oracle import kernel_table
     from experiments.numerics_rows.cases import routing
 
+    audit = getattr(recorder, "code_audit", None)
+    if audit is not None:
+        audit.image_libraries()
     m = unit["m_config"]["M"]
     x = torch.zeros(m, adapter.cols, dtype=torch.bfloat16, device="cuda")
     kernels, launches = {}, []
@@ -1027,25 +1056,30 @@ def profile_unit(adapter, unit, recorder, *, routed):
             call = lambda: adapter.apply(x)
         with torch.profiler.profile(activities=[torch.profiler.ProfilerActivity.CPU, torch.profiler.ProfilerActivity.CUDA]) as profile:
             recorder.call("dispatch-profiler:apply", "apply", lambda: opaque_apply(call, recorder))
-        records = kernel_table(profile, limit=100000)
+        records = kernel_table(profile, limit=100000, device_only=True)
         launches.append({"route_count": count, "profiler_names": [r["name"] for r in records]})
         kernels.update({r["name"]: r for r in records})
     unit["arm"]["profiler_launches"] = launches
     unit["arm"]["profiler_kernels"] = list(kernels.values())
     unit["m_config"]["compiled_kernel_symbols"] = []
-    if not routed and adapter.library == "triton":
-        return
     library = adapter.served_identity
-    if sha256(library["sass"]["path"]) != library["sass"]["sha256"]:
-        raise Invalid("SASS symbol list changed")
     from experiments.t4_code.sass_dump import parse_sass
 
-    functions = sorted(parse_sass(Path(library["sass"]["path"]).read_text()))
-    demangled = subprocess.check_output(["c++filt"], input="\n".join(functions) + "\n", text=True).splitlines()
+    if library and sha256(library["sass"]["path"]) != library["sass"]["sha256"]:
+        raise Invalid("SASS symbol list changed")
+    functions = sorted(parse_sass(Path(library["sass"]["path"]).read_text())) if library else []
+    demangled = subprocess.check_output(["c++filt"], input="\n".join(functions) + "\n", text=True).splitlines() if functions else []
     symbols, unresolved = resolve_symbols(functions, [r["name"] for r in unit["arm"]["profiler_kernels"]], demangled)
     names = dict(zip(functions, demangled, strict=True))
     unit["m_config"]["compiled_kernel_symbols"] = [{**record, "demangled_symbol": names[record["symbol"]], **{k: library[k] for k in IDENTITY_FIELDS if k != "library_code_sections"}} for record in symbols]
+    # Auxiliary image kernels have their own origins; they are not PM evidence.
     unit["arm"]["unresolved_kernel_names"] = unresolved
+    if audit is not None:
+        native = [{"origin": "tessera", "path": library["path"], "sha256": library["library_so_sha256"],
+                   "symbols": [{"symbol": s, "demangled": n} for s, n in zip(functions, demangled, strict=True)]}] if library else []
+        all_names = [r["name"] for r in unit["arm"]["profiler_kernels"] + unit["arm"].get("preparation_kernels", [])]
+        audit.bind_profile(unit, all_names, native)
+        unit["arm"]["unresolved_kernel_names"] = [r["name"] for r in unit["unresolved_kernel_origins"]]
     if routed:
         check_routed_layout(adapter, unit)
 

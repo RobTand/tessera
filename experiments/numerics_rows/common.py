@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import hashlib
+from contextlib import nullcontext
 import importlib.metadata
 import json
 import math
@@ -107,6 +108,10 @@ class Invalid(ValueError):
     pass
 
 
+class Unattested(ValueError):
+    pass
+
+
 class BoundaryError(RuntimeError):
     def __init__(self, record, error):
         self.record = record
@@ -122,8 +127,13 @@ class BoundaryRecorder:
         self.enabled = True
         self.attribute = True
         self.before_call = lambda: None
+        self.context = lambda name: nullcontext()
 
     def call(self, name, kind, function):
+        with self.context(name):
+            return self._call(name, kind, function)
+
+    def _call(self, name, kind, function):
         self.before_call()
         if not self.enabled:
             return function()
@@ -148,7 +158,7 @@ class BoundaryRecorder:
         except Exception as error:
             record["sync_after"] = False
             failure = error
-        if isinstance(failure, Invalid):
+        if isinstance(failure, (Invalid, Unattested)):
             raise failure
         if failure is not None:
             record["message"] = str(failure)

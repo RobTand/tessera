@@ -615,7 +615,7 @@ def test_profiler_names_resolve_to_exact_sass_symbols():
         ["void routed_fused_kernel<0>( Params )", "quantizer", "_Zkernel2"],
         ["void routed_fused_kernel<0>(Params)", "void routed_fused_kernel<2>(Params)"])
     assert symbols == [{"profiler_name": "void routed_fused_kernel<0>( Params )", "symbol": "_Zkernel0"},
-                       {"profiler_name": "_Zkernel2", "symbol": "_Zkernel2"}] and unresolved == []
+                       {"profiler_name": "_Zkernel2", "symbol": "_Zkernel2"}] and unresolved == ["quantizer"]
     assert row.resolve_symbols(["_Zkernel0"], ["void routed_fused_kernel<1>(Params)"],
         ["void routed_fused_kernel<0>(Params)"]) == ([], ["void routed_fused_kernel<1>(Params)"])
 
@@ -1140,6 +1140,15 @@ def row_execution(tmp_path, monkeypatch):
     import torch
     from experiments import dense_fused_oracle as dense
     from experiments.numerics_rows import cases, common, population, sass_slice, scale_launch
+    try:
+        from experiments.numerics_rows import dependency_code
+    except ImportError:
+        pass
+    else:
+        monkeypatch.setattr(dependency_code.CodeAudit, "install", lambda self: self)
+    from experiments import routed_pair_oracle
+    monkeypatch.setattr(torch.profiler, "profile", lambda **kwargs: nullcontext())
+    monkeypatch.setattr(routed_pair_oracle, "kernel_table", lambda *args, **kwargs: [])
 
     args = SimpleNamespace(**{name: tmp_path / name for name in
         ("source", "out", "population", "manifest", "build", "build_provenance", "q1", "h1", "rule", "freeze")}, image="N", module=[])
@@ -1382,6 +1391,8 @@ def joined_inputs(monkeypatch):
         owned = [u for _, _, _, group in units for u in group]
         for unit in owned:
             unit.update(outcome="PASS", launch_state_sha256=state["launch_state_sha256"])
+            unit.update(triton_specializations=[], kernel_origins=[], unresolved_kernel_origins=[],
+                        dependency_code={"observation_complete": True, "dependency_audit_complete": True})
             unit.update({k: v for k, v in state.items() if k.startswith("dependency_math")})
             unit["unit_id"] = row.unit_identity(unit)
         receipts.append(("row-" + name, {"inputs": {"population_sha256": "signed", "selected_modules": [name],

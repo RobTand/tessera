@@ -2131,6 +2131,7 @@ ts_py_library(
         "test_nope_execution_identity.py",
         "test_numerics_rows.py",
         "test_numerics_rows_canonical.py",
+        "test_numerics_rows_dependency_code.py",
         "test_numerics_rows_join.py",
         "test_numerics_rows_receipts.py",
         "test_numerics_rows_sass.py",
@@ -10388,6 +10389,7 @@ ts_py_library(
         "test_nope_execution_identity.py",
         "test_numerics_rows.py",
         "test_numerics_rows_canonical.py",
+        "test_numerics_rows_dependency_code.py",
         "test_numerics_rows_join.py",
         "test_numerics_rows_receipts.py",
         "test_numerics_rows_sass.py",
@@ -14665,6 +14667,70 @@ ts_py_library(
 )
 
 ts_py_test(
+    name = "test_numerics_rows_dependency_code",
+    path = "tests/test_numerics_rows_dependency_code.py",
+    library = ":test_numerics_rows_dependency_code_lib",
+    data = [
+        "//:pyproject.toml",
+        "//experiments:t8r_speed/bench_t8r.sh",
+        "//experiments:t8r_speed/build_ext.sh",
+    ],
+    deps = [
+        "//experiments:t8r_speed/bench_class_dispatch",
+        "//experiments:t8r_speed/bench_uniform_production_arm",
+        "//experiments:t8r_speed/finalize_native_build",
+        "//src/tessera:identity",
+        ":test_d41_e2m1_geometry_lib",
+        ":test_fp4_arithmetic_attestation_lib",
+    ],
+    lane = "torch",
+    args = [
+        "--budget='{\"enforce\":true,\"seconds\":80,\"slow\":{}}'",
+    ],
+    timeout = "moderate",
+)
+
+ts_py_test(
+    name = "test_numerics_rows_dependency_code.bytes",
+    path = "tests/test_numerics_rows_dependency_code.py",
+    library = ":test_numerics_rows_dependency_code_lib",
+    data = [
+        "//:pyproject.toml",
+        "//experiments:t8r_speed/bench_t8r.sh",
+        "//experiments:t8r_speed/build_ext.sh",
+    ],
+    deps = [
+        "//experiments:t8r_speed/bench_class_dispatch",
+        "//experiments:t8r_speed/bench_uniform_production_arm",
+        "//experiments:t8r_speed/finalize_native_build",
+        "//src/tessera:identity",
+        ":test_d41_e2m1_geometry_lib",
+        ":test_fp4_arithmetic_attestation_lib",
+    ],
+    lane = "bytes",
+    args = [
+        "--budget='{\"enforce\":true,\"seconds\":80,\"slow\":{}}'",
+    ],
+    timeout = "moderate",
+)
+
+ts_py_library(
+    name = "test_numerics_rows_dependency_code_lib",
+    srcs = [
+        "test_numerics_rows_dependency_code.py",
+    ],
+    deps = [
+        "//experiments:numerics_rows/cases_cycle",
+        "//experiments:numerics_rows/common",
+        "//experiments:numerics_rows/dependency_code",
+        "//experiments:numerics_rows/join",
+        "//experiments:routed_pair_oracle",
+        "//experiments:t4_code/sass_dump",
+        ":test_numerics_rows_receipts_lib",
+    ],
+)
+
+ts_py_test(
     name = "test_numerics_rows_join",
     path = "tests/test_numerics_rows_join.py",
     library = ":test_numerics_rows_join_lib",
@@ -14815,6 +14881,7 @@ ts_py_library(
         "//experiments:numerics_rows/build_cycle",
         "//experiments:numerics_rows/cases_cycle",
         "//experiments:numerics_rows/common",
+        "//experiments:numerics_rows/dependency_code",
         "//experiments:numerics_rows/gpu_time",
         "//experiments:numerics_rows/job_receipt",
         "//experiments:numerics_rows/join",

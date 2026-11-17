@@ -11,6 +11,7 @@ import ast
 from datetime import datetime, timezone
 import hashlib
 import importlib.metadata
+import json
 import os
 from pathlib import Path
 import re
@@ -128,9 +129,25 @@ def main():
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument("--out", type=Path, required=True)
     p.add_argument("--serve-artifact")
+    p.add_argument("--code-rosters", action="store_true")
     args = p.parse_args()
     args.out.mkdir(parents=True, exist_ok=True)
     report = serve_inputs(args.serve_artifact) if args.serve_artifact else image_inputs(args.out)
+    if args.code_rosters:
+        import ctypes
+        from experiments.numerics_rows.dependency_code import CodeAudit, IMAGE_CODE
+
+        inventory = json.loads(IMAGE_CODE.read_text())
+        handles = [ctypes.CDLL(r["path"]) for r in inventory["libraries"]]
+        audit = CodeAudit(report["runtime"]["image_digest"], args.out / "compiled-code").install()
+        try:
+            libraries = audit.image_libraries()
+            if len(libraries) != len(handles) or any(not r["symbols"] for r in libraries):
+                raise RuntimeError("pinned image CUDA function roster is missing or empty")
+            write_json(args.out / "image-code-rosters.json", {"runtime": report["runtime"], "libraries": libraries,
+                       "triton_load_run_observer_installed": True, "device_launches": 0})
+        finally:
+            audit.close()
     write_json(args.out / "dependency-audit.json", report)
 
 

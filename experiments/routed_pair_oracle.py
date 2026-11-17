@@ -1240,9 +1240,13 @@ class PowerSampler(threading.Thread):
                 "min_w": min(vals), "mean_fraction_of_140w_envelope": sum(vals) / len(vals) / 140.0}
 
 
-def kernel_table(prof, limit=25):
+def kernel_table(prof, limit=25, *, device_only=False):
     rows = []
-    for evt in prof.key_averages():
+    events = prof.key_averages()
+    if device_only:
+        import torch
+        events = [evt for evt in prof.events() if evt.device_type == torch.autograd.DeviceType.CUDA]
+    for evt in events:
         dev = getattr(evt, "self_device_time_total", None)
         if dev is None:
             dev = getattr(evt, "self_cuda_time_total", 0.0)

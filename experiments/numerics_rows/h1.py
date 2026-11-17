@@ -395,6 +395,9 @@ def run_checks(args, report):
     sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "tests"))
     import torch
     args.launch_state.bind_math(torch)
+    from experiments.numerics_rows.dependency_code import CodeAudit
+    args.code_audit = CodeAudit(report["runtime"]["image_digest"], args.out / "compiled-code").install()
+    report["triton_specializations"] = args.code_audit.records
     report.update(args.launch_state.fields())
     report["environment_diagnostics"] = args.launch_state.diagnostics()
     import tessera
@@ -412,6 +415,7 @@ def run_checks(args, report):
     save()
     recorder = BoundaryRecorder(torch.cuda.synchronize, report["boundaries"])
     recorder.before_call = args.launch_state.check_math
+    recorder.context = args.code_audit.context
     loaded = install_libraries(built["libraries"])
     report["P3"] = {}
     for record in built["libraries"]:
@@ -419,6 +423,7 @@ def run_checks(args, report):
         save()
     with init_vllm_world1():
         report["P2"] = p2_ties(recorder) if set(loaded) != {"value"} else {"result": "not applicable to value-only build"}
+        report["P2"]["triton_specializations"] = [r for r in args.code_audit.records if r["case"].startswith("P2:")]
         save()
         for key, lib in loaded.items():
             entry = report["libraries"].setdefault(key, {})
@@ -483,6 +488,8 @@ def main():
         report["preconditions_confirmed"] = False
         report["error"] = {"type": type(error).__name__, "message": str(error), "traceback": traceback.format_exc()}
     finally:
+        if getattr(args, "code_audit", None) is not None:
+            args.code_audit.close()
         write_json(args.out / "h1.json", report)
     raise SystemExit(0 if report["preconditions_confirmed"] else 3)
 

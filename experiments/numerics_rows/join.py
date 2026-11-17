@@ -154,6 +154,9 @@ def _join(population, digest, manifests, receipts, contract):
                 raise Invalid("row unit key or outcome is invalid")
             if unit["role"] != "unit" or unit["admitted_by_v68"] is not True:
                 continue
+            if unit["outcome"] == "PASS":
+                from experiments.numerics_rows.dependency_code import check_unit_code
+                check_unit_code(unit, receipt["runtime"]["image_digest"])
             check_math_binding(unit, receipt["runtime"])
             module = unit.get("module")
             if module is None and len(selection) == 1:

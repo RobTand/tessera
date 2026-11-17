@@ -18,8 +18,12 @@ MATH_PATHS = (
     "backends.cuda.matmul.allow_tf32", "backends.cudnn.allow_tf32",
     "backends.cuda.matmul.allow_fp16_reduced_precision_reduction",
     "backends.cuda.matmul.allow_bf16_reduced_precision_reduction",
+    "backends.cuda.matmul.allow_fp16_reduced_precision_reduction_split_k",
+    "backends.cuda.matmul.allow_bf16_reduced_precision_reduction_split_k",
     "backends.cuda.matmul.allow_fp16_accumulation",
     "backends.cudnn.deterministic", "backends.cudnn.benchmark",
+    "backends.fp32_precision", "backends.cuda.matmul.fp32_precision",
+    "backends.cudnn.conv.fp32_precision", "backends.cudnn.rnn.fp32_precision",
 )
 
 
@@ -38,6 +42,10 @@ def math_settings(torch):
             value = getattr(value, part, None)
         if value is not None:
             settings[path] = value
+    cuda = getattr(getattr(torch, "backends", None), "cuda", None)
+    preferred = getattr(cuda, "preferred_blas_library", None)
+    if callable(preferred):
+        settings["preferred_blas_library"] = str(preferred())
     return settings
 
 

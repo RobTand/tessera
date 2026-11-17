@@ -12,3 +12,5 @@
 //tests:test_numerics_rows_join.bytes
 //tests:test_numerics_rows_canonical
 //tests:test_numerics_rows_canonical.bytes
+//tests:test_numerics_rows_dependency_code
+//tests:test_numerics_rows_dependency_code.bytes

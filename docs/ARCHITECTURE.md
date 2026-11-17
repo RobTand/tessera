@@ -5,8 +5,13 @@ Worker inputs include the dependency environment prefixes. The seven named
 toolchain inputs are diagnostics. C1, H1 and row receipts record effective
 torch math settings. The worker refuses a changed setting before a native
 call. The join checks these settings per unit, beside its 11 global bindings.
-The pinned-image dependency audit and compiled-code bindings remain pending.
-No counted v2 row can use this incomplete policy.
+The attestation tool now binds actual Triton cubins, entries, targets, constants
+and launch parameters per unit and case. It checks every profiled CUDA kernel
+against audited native code, an unchanged mapped image library, or bound
+compiled code. Unknown owners are UNATTESTED. The join refuses incomplete PASS
+evidence. The lever policy binds the dependency source review. That review
+still records two unresolved scopes, so counted v2 attestation remains held.
+This tool changes no serving default or kernel arithmetic.
 
 Re-stamped 2026-11-16 for the #1717 rule v2 attestation tool.
 The tool binds worker-start environment inputs and the frozen lever file in C1,

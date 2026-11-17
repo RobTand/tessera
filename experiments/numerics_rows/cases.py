@@ -440,6 +440,7 @@ def main():
     check_selectors(contract, population, launch_state.mapping)
     launch_state.check()
     manifest = {"schema": "tessera.numerics_cases.v1", "environment_diagnostics": launch_state.diagnostics(), "population_path": str(args.population),
+                "device_code": {"backend": "cpu", "triton_specializations": [], "device_launches": 0},
                 "population_sha256": population_digest, "population_review": population["review"],
                 "q1_table_sha256": sha256(args.q1), "source_commit": source_revision, **launch_state.fields(),
                 "contract_sha256": sha256(args.source / "src/tessera/serving/runtime_contract.json"),

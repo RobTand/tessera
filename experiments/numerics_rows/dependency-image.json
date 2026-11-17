@@ -1,0 +1,48 @@
+{
+  "schema": "tessera.numerics_image_code.v1",
+  "image_digest": "sha256:5be13705acaecc7b4aaf342a84f80d67844c9970ff8375bf9fbeecc9c98ce84a",
+  "audit_path": "/mnt/shared/flux-jobs/tessera-1717-DEPENDENCY-AUDIT-N-82efe289-20261117T004452Z/results/dependency-audit.json",
+  "audit_sha256": "30c497cec8f9392d7606a99adc5eb724c618b36aef04a863a313604ad1126f7f",
+  "packages": {
+    "torch": {
+      "version": "2.13.0+cu130",
+      "root": "/usr/local/lib/python3.12/dist-packages/torch"
+    },
+    "triton": {
+      "version": "3.7.1",
+      "root": "/usr/local/lib/python3.12/dist-packages/triton"
+    },
+    "vllm": {
+      "version": "0.30.1rc1.dev336+gaf5b4857e.d20260929",
+      "root": "/usr/local/lib/python3.12/dist-packages/vllm"
+    },
+    "nvidia-cublas-cu13": {
+      "absent": true
+    },
+    "nvidia-cudnn-cu13": {
+      "version": "9.20.0.48",
+      "root": "/usr/local/lib/python3.12/dist-packages/nvidia_cudnn_cu13"
+    }
+  },
+  "libraries": [
+    {
+      "package": "torch",
+      "path": "/usr/local/lib/python3.12/dist-packages/torch/lib/libtorch_cuda.so",
+      "bytes": 430140497,
+      "sha256": "3db19ad428ce41d67d5267cae04872e101a4cf72449eee27cfc4c424f6eb50b7"
+    },
+    {
+      "package": "vllm",
+      "path": "/usr/local/lib/python3.12/dist-packages/vllm/_C_stable_libtorch.abi3.so",
+      "bytes": 168409072,
+      "sha256": "7ed2091c53a4d803b3309f8db6735a764b8cdbe484c4098c272cce5035c8416d"
+    },
+    {
+      "package": "vllm",
+      "path": "/usr/local/lib/python3.12/dist-packages/vllm/_moe_C_stable_libtorch.abi3.so",
+      "bytes": 38755400,
+      "sha256": "9e545df73f096fbba671a45d8072be69dbf686ab44a3fb7159990cd2f1a99880"
+    }
+  ],
+  "scope": "A8S eager dense/routed quantizer and torch CUDA operators; other libraries need an extended audit"
+}
