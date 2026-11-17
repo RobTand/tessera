@@ -1807,7 +1807,7 @@ def test_row_refuses_c1_launch_state_or_policy_before_cases(row_execution, field
     assert positive.value.code == 0
     events.clear()
     manifest = json.loads(args.manifest.read_text())
-    manifest[field] = {"TESSERA_CHANGED": "1"} if field == "launch_state" else "different"
+    manifest[field] = {"TESSERA_CHANGED": "1"} if field == "launch_state" else "b" * 64
     write_json(args.manifest, manifest)
     with pytest.raises(Invalid, match="C1 launch state"):
         row.run(args, receipt)
