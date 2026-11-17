@@ -13,7 +13,7 @@ import resource
 import sys
 import time
 
-from experiments.numerics_rows.common import Invalid, artifact_limit, check_runtime, check_source, sha256, write_json
+from experiments.numerics_rows.common import IMAGES, Invalid, artifact_limit, check_runtime, check_source, sha256, write_json
 from experiments.numerics_rows.quantizers import PHASES
 from experiments.numerics_rows.reference import bf16, bf16_array, f32_bits, f32_value, multiply
 
@@ -436,7 +436,6 @@ def main():
     q1 = json.loads(args.q1.read_text())
     contract = json.loads((args.source / "src/tessera/serving/runtime_contract.json").read_text())
     from experiments.numerics_rows.scope import check_population_cells, check_selectors
-    from experiments.numerics_rows.common import IMAGES
     check_population_cells(contract, IMAGES[args.image]["image_digest"], population)
     check_selectors(contract, population, launch_state.mapping)
     launch_state.check()

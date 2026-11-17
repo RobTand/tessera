@@ -77,6 +77,8 @@ def check_population_cells(contract, image, population):
 
 
 def check_selectors(contract, population, mapping):
+    if any(mapping.get(k) != v for entry in population["modules"] for k, v in entry.get("selector_env", {}).items()):
+        raise Invalid("population selector differs from the launch state")
     selected = {name for entry in population["modules"] for name in entry["cell_ids"]}
     for cell in contract["lane_eligibility"]["cells"]:
         if cell["id"] not in selected:

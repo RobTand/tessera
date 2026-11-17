@@ -262,6 +262,36 @@ def test_generated_job_refuses_another_source_commit_before_podman(tmp_path, mon
     assert (out / "tool-exit.txt").read_text().strip() != "0"
 
 
+@pytest.mark.parametrize("step", ("C1-N", "ROW-N"))
+def test_generated_rows_use_only_the_required_resident_selector(tmp_path, monkeypatch, step):
+    from experiments.numerics_rows import prepare_job
+
+    monkeypatch.setattr(prepare_job, "Path", lambda value: tmp_path / Path(value).name
+                        if str(value).startswith("/mnt/shared/flux-jobs/") else Path(value))
+    monkeypatch.setattr(prepare_job.subprocess, "check_output", lambda *a, **kw: "a" * 40)
+    monkeypatch.setattr(prepare_job.subprocess, "run", lambda *a, **kw: None)
+    monkeypatch.setattr(prepare_job, "stage_population", lambda path, out: (path, ""))
+    monkeypatch.setattr(prepare_job, "source_layout", lambda *a: (tmp_path / "retained", None))
+    out = prepare_job.prepare(step, "N", ("--population", str(tmp_path / "population.json"),
+        "--build", str(tmp_path / "build.json"), "--build-provenance", str(tmp_path / "provenance.json")), source_revision="b" * 40)
+    script = (out / "job.sh").read_text()
+    assert "--env TESSERA_SERVE_MODE=resident" in script
+    assert "--env TESSERA_PLATFORM_TOKEN=" not in script and "--env TESSERA_FUSED_E4M3_MMA=" not in script
+    assert "--env NUMERICS_IMAGE_INSPECT=" in script and "TESSERA_NUMERICS_IMAGE_INSPECT" not in script
+
+
+@pytest.mark.parametrize("dev_mode", ("0", "1"))
+def test_population_selector_refuses_in_both_dev_modes(monkeypatch, dev_mode):
+    from experiments.numerics_rows.scope import check_selectors
+
+    monkeypatch.setenv("PRISMAQUANT_DEV_MODE", dev_mode)
+    population = {"modules": [{"cell_ids": [], "selector_env": {"TESSERA_DENSE_FUSED": "0"}}]}
+    contract = {"lane_eligibility": {"cells": []}}
+    check_selectors(contract, population, {"TESSERA_DENSE_FUSED": "0"})
+    with pytest.raises(Invalid, match="population selector"):
+        check_selectors(contract, population, {"TESSERA_DENSE_FUSED": "1"})
+
+
 @pytest.fixture
 def finished_job(tmp_path):
     import struct
@@ -557,10 +587,10 @@ def test_runtime_checks_the_observed_image(tmp_path, monkeypatch, mutation):
         record["Digest"] = "sha256:wrong-digest"
     path = tmp_path / "inspect.json"
     path.write_text(json.dumps([record]))
-    monkeypatch.setenv("TESSERA_NUMERICS_IMAGE_INSPECT", str(path))
+    monkeypatch.setenv("NUMERICS_IMAGE_INSPECT", str(path))
     monkeypatch.setattr("importlib.metadata.version", lambda name: "wrong-version" if mutation == "version" else expected[name])
     if mutation == "missing":
-        monkeypatch.delenv("TESSERA_NUMERICS_IMAGE_INSPECT")
+        monkeypatch.delenv("NUMERICS_IMAGE_INSPECT")
     if mutation is None:
         result = check_runtime("G")
         assert result["local_id"] == record["Id"][7:] and result["image_inspect_sha256"]
@@ -1936,7 +1966,7 @@ def test_separation_cannot_borrow_across_cell_or_launch_state(field):
     assert target["m_config"]["separation_source"] is None and target["unattested"]
 
 
-@pytest.mark.parametrize("mutation", (None, "gate", "up", "down", "missing", "ambiguous", "unsupported", "missing_count"))
+@pytest.mark.parametrize("mutation", (None, "gate", "up", "down", "missing", "ambiguous", "unsupported", "missing_count", "pm_false", "pm_false_on_piece_major", "duplicate_demangled"))
 def test_profile_checks_prepared_layout_against_exact_compiled_symbols(tmp_path, monkeypatch, mutation):
     import torch
     from contextlib import nullcontext
@@ -1949,6 +1979,11 @@ def test_profile_checks_prepared_layout_against_exact_compiled_symbols(tmp_path,
     modes = (0, 2)
     names = [f"void routed_fused_kernel<true, {mode}, false, false, 4, false, 64, true, false>(Params)" for mode in modes]
     functions = ["_Zgate", "_Zdown"]
+    if mutation in ("pm_false", "pm_false_on_piece_major"):
+        names = [name.replace("64, true, false", "64, false, false") for name in names]
+    if mutation == "duplicate_demangled":
+        functions.append("_Zgate_alias")
+        names.append(names[0])
     if mutation == "unsupported":
         names[0] = names[0].replace("64, true, false", "64, unknown, false")
     profiler_names = names if mutation != "ambiguous" else ["routed_fused_kernel<...>"]
@@ -1967,6 +2002,9 @@ def test_profile_checks_prepared_layout_against_exact_compiled_symbols(tmp_path,
     library = {"sass": {"path": str(path), "sha256": hashlib.sha256(path.read_bytes()).hexdigest()},
                "library_so_sha256": "a" * 64, "library_code_sha256": "b" * 64, "cubin_sha256s": []}
     native = SimpleNamespace(**{role: SimpleNamespace(word_layout="piece_major") for role in ("gate", "up", "down")})
+    if mutation == "pm_false":
+        for role in ("gate", "up", "down"):
+            getattr(native, role).word_layout = "legacy"
     if mutation in ("gate", "up", "down"):
         getattr(native, mutation).word_layout = "legacy"
     elif mutation == "missing":
@@ -1974,12 +2012,12 @@ def test_profile_checks_prepared_layout_against_exact_compiled_symbols(tmp_path,
     adapter = SimpleNamespace(native=native, cols=2, experts=16, served_identity=library, apply=lambda *args: None)
     unit = row.new_unit({"m_config": {"M": 2, "route_counts": [1, 2]}, "arm": {}})
     row.profile_unit(adapter, unit, BoundaryRecorder(lambda: None, []), routed=True)
-    if mutation in ("gate", "up", "down"):
+    if mutation in ("gate", "up", "down", "pm_false_on_piece_major"):
         assert unit["findings"] and not unit["unattested"]
-    elif mutation:
+    elif mutation not in (None, "pm_false"):
         assert unit["unattested"] and not unit["findings"]
     else:
-        assert unit.get("prepared_layouts") == {r: "piece_major" for r in ("gate", "up", "down")}
+        assert unit.get("prepared_layouts") == {r: "legacy" if mutation == "pm_false" else "piece_major" for r in ("gate", "up", "down")}
         assert len(unit["layout_symbol_proof"]) == 2 and not unit["findings"] and not unit["unattested"]
         assert [r["route_count"] for r in unit["arm"]["profiler_launches"]] == [1, 2]
 

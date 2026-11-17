@@ -62,9 +62,9 @@ def _join(population, digest, manifests, receipts, contract):
     launch = ({**{k: receipts[0][1]["runtime"][k] for k in ("launch_state", "launch_state_sha256")},
                "launch_levers_sha256": receipts[0][1]["inputs"]["launch_levers_sha256"]} if receipts else
               {k: manifests[0][1][k] for k in ("launch_state", "launch_state_sha256", "launch_levers_sha256")} if manifests else None)
-    if launch is not None and state_digest(launch["launch_state"]) != launch["launch_state_sha256"]:
-        raise Invalid("launch state object differs from its digest")
     if launch is not None:
+        if state_digest(launch["launch_state"]) != launch["launch_state_sha256"]:
+            raise Invalid("launch state object differs from its digest")
         scope.check_selectors(contract, population, launch["launch_state"])
     state = launch["launch_state_sha256"] if launch is not None else None
     names = [e["name"] for e in population["modules"]]

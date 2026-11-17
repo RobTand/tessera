@@ -163,7 +163,7 @@ def test_runtime_version_mismatch_is_an_invalid_precondition(tmp_path, monkeypat
     expected = common.IMAGES["N"]
     inspect = tmp_path / "inspect.json"
     inspect.write_text(json.dumps([{"Id": expected["local_id"], "Digest": expected["image_digest"]}]))
-    monkeypatch.setenv("TESSERA_NUMERICS_IMAGE_INSPECT", str(inspect))
+    monkeypatch.setenv("NUMERICS_IMAGE_INSPECT", str(inspect))
     monkeypatch.setattr(common.importlib.metadata, "version", lambda name: expected[name])
     assert common.check_runtime("N")["torch"] == expected["torch"]
     monkeypatch.setattr(common.importlib.metadata, "version", lambda name: "wrong")

@@ -664,10 +664,11 @@ def run_row(args, receipt, phases):
     population, population_digest = load_signed_population(args.population)
     population = select_modules(population, args.module)
     runtime = check_runtime(args.image)
-    runtime.update({k: v for k, v in launch_state.fields().items() if k != "launch_levers_sha256"})
     sys.path.insert(0, str(args.source / "src"))
     import torch
     launch_state.bind_math(torch)
+    runtime.update({k: v for k, v in launch_state.fields().items() if k != "launch_levers_sha256"})
+    receipt["runtime"] = runtime
     from experiments.numerics_rows.serving_build import check_compile_paths, check_retained_source
 
     retained_source = check_retained_source(args.source, args.build, args.build_provenance)
@@ -736,7 +737,7 @@ def run_row(args, receipt, phases):
     library, = [r for r in built["libraries"] if r["key"] == key]
     d, = [t for t in q1["tables"] if t["key"] == key]
     receipt.update({"rule": rule_receipt(args.rule, freeze, h1, args.h1),
-               "runtime": {**runtime, **{k: v for k, v in launch_state.fields().items() if k != "launch_levers_sha256"}, "device": torch.cuda.get_device_name(), "capability": list(torch.cuda.get_device_capability()),
+               "runtime": {**runtime, "device": torch.cuda.get_device_name(), "capability": list(torch.cuda.get_device_capability()),
                            "driver": __import__("subprocess").check_output(["nvidia-smi", "--query-gpu=driver_version", "--format=csv,noheader"], text=True).strip()},
                "tessera": {"commit": commit, "contract_sha256": sha256(args.source / "src/tessera/serving/runtime_contract.json"), "src_tree_sha256": source_digest(args.source), "kernel_source_sha256": KERNEL_SHA256,
                            "serving_compile": compile_paths, "retained_source": retained_source, "build_provenance_sha256": sha256(args.build_provenance),
@@ -782,7 +783,6 @@ def run_row(args, receipt, phases):
                         adapter.splits = unit["m_config"]["k_split"]
                         recorder = BoundaryRecorder(torch.cuda.synchronize, unit["boundaries"])
                         recorder.before_call = launch_state.check
-                        unit["flags_latched_diagnostic"] = dict(getattr(sys.modules.get("tessera.serving.flags"), "_LATCHED", {}))
                         try:
                             launch_state.check()
                             unit["tp"].update(tp_facts(adapter, module, routed))

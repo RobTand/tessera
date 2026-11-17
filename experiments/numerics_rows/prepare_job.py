@@ -61,6 +61,7 @@ def prepare(step, image, extra=(), *, source_revision):
         inputs = parser.parse_known_args(extra)[0]
         source, _ = source_layout(inputs.build, inputs.build_provenance)
     gpu = step.startswith(("Q1", "H1", "ROW"))
+    selector = "--env TESSERA_SERVE_MODE=resident" if command in ("cases", "row") else "--env TESSERA_PLATFORM_TOKEN=sm_121"
     shape, minutes = ("core=2;memory=16;gpu=1", 9) if gpu else ("core=4;memory=8", 20)
     host = "sparklina"
     if command == "cases":
@@ -94,10 +95,10 @@ exit "$rc"
                  f"--env HOME={out}/home --env TMPDIR={out}/scratch --env XDG_CACHE_HOME={out}/cache "
                  f"--env CUDA_CACHE_PATH={out}/cuda-cache --env VLLM_CACHE_ROOT={out}/vllm-cache "
                  f"--env TORCH_EXTENSIONS_DIR={out}/extensions --env TRITON_CACHE_DIR={out}/triton "
-                 f"--env TESSERA_NUMERICS_IMAGE_INSPECT={out}/image-inspect.json "
+                 f"--env NUMERICS_IMAGE_INSPECT={out}/image-inspect.json "
                  '--env FLUX_JOB_ID="$FLUX_JOB_ID" '
                  "--env OMP_NUM_THREADS=1 --env MKL_NUM_THREADS=1 --env OPENBLAS_NUM_THREADS=1 "
-                 f"--env MAX_JOBS={2 if gpu else 4} --env TESSERA_PLATFORM_TOKEN=sm_121 --env GIT_OPTIONAL_LOCKS=0 "
+                 f"--env MAX_JOBS={2 if gpu else 4} {selector} --env GIT_OPTIONAL_LOCKS=0 "
                  f"--entrypoint /bin/bash {IMAGES[image]['local_id']} -euo pipefail -c {shlex.quote(payload)}")
     if gpu:
         container = f'''rc=0
