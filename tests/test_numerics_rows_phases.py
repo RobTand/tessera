@@ -266,7 +266,7 @@ def test_separation_claim_is_independent_of_incomplete_scale_plan(monkeypatch, s
         record['complete'] = record_complete
         manifest['complete'] = module_complete
         manifest['roles'][0]['scale_index'][0]['reads_covered'] = int(module_complete)
-        unit = row.new_unit({'m_config': {'M': 1, 'chunk_size': 1, 'k_split': 1, 'route_counts': [1]}})
+        unit = row.new_unit({'m_config': {'M': 1, 'chunk_size': 1, 'k_split': 1, 'superblock_width': 1, 'route_counts': [1]}})
         (row.dense_cases if structure == 'dense' else run_routed.run)(adapter, unit, manifest, None)
         assert bool(unit['unattested']) == (not record_complete and not module_complete), 'wrong local separation attestation'
         assert bool(unit['invalid']) == (not record_complete and module_complete), 'C1 false complete claim must be INVALID'

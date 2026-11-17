@@ -653,6 +653,8 @@ def main():
     signals = handled_signals(receipt, args.out, lambda: args.progress.checkpoint() if getattr(args, "progress", None) else None)
     signals.__enter__()
     try:
+        if args.phase and args.phase_instance is None:
+            raise Invalid("split phase requires --phase-instance")
         if args.phase or args.phase_instance:
             from experiments.numerics_rows.phase_instance import bind
             bind(receipt['row'], args.phase or 'timed', json.loads(args.phase_instance.read_text()), args.canary)

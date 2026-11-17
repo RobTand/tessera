@@ -1156,6 +1156,7 @@ def row_execution(tmp_path, monkeypatch):
     import _pytest.runner
     monkeypatch.setattr(_pytest.runner, "_update_current_test_var", lambda *args: None)
     from experiments.numerics_rows.launch_state import LaunchState
+    monkeypatch.setenv("TESSERA_SERVE_MODE", "resident")
     args.launch_state = LaunchState()
     args.launch_state.bind_math(torch)
     args.out.mkdir()
@@ -1844,15 +1845,37 @@ def test_capture_preflight_detects_vllm_without_a_cuda_context(tmp_path):
     assert sorted(gpu_time.vllm_processes(tmp_path)) == [701, 702]
 
 
-def test_capture_preflight_stops_before_first_device_call(tmp_path, monkeypatch):
+@pytest.fixture
+def capture_worker(tmp_path, monkeypatch):
     from experiments.numerics_rows import gpu_time, launch_state
 
-    argv = ["row", "--image", "N", "--name", "preflight", "--out", str(tmp_path), "--phase", "capture"]
+    instance = tmp_path / "instance.json"
+    write_json(instance, {"name": "fv1"})
+    argv = ["row", "--image", "N", "--name", "capture", "--out", str(tmp_path), "--phase", "capture"]
     for name in ("source", "manifest", "population", "build", "build-provenance", "q1", "h1", "rule", "freeze"):
         argv.extend(("--" + name, str(tmp_path / name)))
+    argv.extend(("--phase-instance", str(instance)))
     monkeypatch.setattr(sys, "argv", argv)
     monkeypatch.setattr(gpu_time, "RowMeter", lambda: SimpleNamespace(finish=lambda: {}))
     monkeypatch.setattr(launch_state, "LaunchState", lambda *a, **kw: SimpleNamespace(fields=lambda: {"launch_levers_sha256": "a" * 64}))
+    return argv
+
+
+@pytest.mark.parametrize("phase", ("prepare", "capture", "compare"))
+def test_split_phase_requires_instance_record(capture_worker, tmp_path, monkeypatch, phase):
+    del capture_worker[-2:]
+    capture_worker[capture_worker.index("--phase") + 1] = phase
+    monkeypatch.setattr(row, "run", lambda *args: pytest.fail("missing instance reached row setup"))
+    with pytest.raises(SystemExit) as stopped:
+        row.main()
+    saved = json.loads((tmp_path / "numerics_row.json").read_text())
+    assert stopped.value.code == 3 and saved["row"]["outcome"] == "INVALID"
+    assert saved["row"]["stop_cause"] == "split phase requires --phase-instance"
+
+
+def test_capture_preflight_stops_before_first_device_call(capture_worker, tmp_path, monkeypatch):
+    from experiments.numerics_rows import gpu_time
+
     calls, free = [], True
     monkeypatch.setattr(gpu_time, "preflight", lambda **kw: {"verdict": "FREE" if free else "STOPPED"}, raising=False)
     monkeypatch.setattr(gpu_time, "self_visibility", lambda torch: {"verdict": "VISIBLE"}, raising=False)
@@ -1869,16 +1892,10 @@ def test_capture_preflight_stops_before_first_device_call(tmp_path, monkeypatch)
 
 
 @pytest.mark.parametrize("failure", ("empty", "query-error", "unknown-memory", "zero-memory"))
-def test_capture_self_visibility_stops_before_row_setup(tmp_path, monkeypatch, failure):
+def test_capture_self_visibility_stops_before_row_setup(capture_worker, tmp_path, monkeypatch, failure):
     import torch
-    from experiments.numerics_rows import gpu_time, launch_state
+    from experiments.numerics_rows import gpu_time
 
-    argv = ["row", "--image", "N", "--name", "visibility", "--out", str(tmp_path), "--phase", "capture"]
-    for name in ("source", "manifest", "population", "build", "build-provenance", "q1", "h1", "rule", "freeze"):
-        argv.extend(("--" + name, str(tmp_path / name)))
-    monkeypatch.setattr(sys, "argv", argv)
-    monkeypatch.setattr(gpu_time, "RowMeter", lambda: SimpleNamespace(finish=lambda: {}))
-    monkeypatch.setattr(launch_state, "LaunchState", lambda *a, **kw: SimpleNamespace(fields=lambda: {"launch_levers_sha256": "a" * 64}))
     monkeypatch.setattr(gpu_time, "preflight", lambda **kw: {"verdict": "FREE"})
     monkeypatch.setattr(gpu_time.time, "sleep", lambda seconds: None)
     calls, visible = [], True
