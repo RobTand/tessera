@@ -246,7 +246,10 @@ def check(adapter, unit, manifest, recorder):
                                 raise Invalid("C1 scale read has no matching route")
                             output_row = int(positions[0])
                     else:
-                        out = dense_launch(adapter, role, qq, ss, plan["scale"], vals, recorder)
+                        if hasattr(adapter, "case_writer"):
+                            out = adapter.case_writer.scale(adapter, unit, x, q, sf, ss, role, plan, coding, case, expected, bound, vals)
+                        else:
+                            out = dense_launch(adapter, role, qq, ss, plan["scale"], vals, recorder)
                         output_row = case["input_row"]
                     finite_outputs(unit, "scale-index:all-outputs", out, bound)
                     record["launches"] += 1

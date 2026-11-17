@@ -55,7 +55,8 @@ def summarize(samples, start, end, errors=()):
 
 class PhaseTimes:
     """Accumulate exclusive monotonic wall seconds, including exceptional exits."""
-    def __init__(self, row):
+    def __init__(self, row, meter=None):
+        self.meter = meter
         self.seconds = row["phase_wall_seconds"] = dict.fromkeys(("setup", "identity_audit", "gate_cases", "diagnostics"), 0.0)
         self.current, self.since = None, time.monotonic()
 
@@ -64,6 +65,8 @@ class PhaseTimes:
         if self.current is not None:
             self.seconds[self.current] += now - self.since
         self.current, self.since = name, now
+        if self.meter is not None:
+            self.meter.phase = name or "finalization"
 
     def __enter__(self):
         self.change("setup")
@@ -85,6 +88,7 @@ class PhaseTimes:
 class RowMeter:
     def __init__(self):
         self.start = time.monotonic()
+        self.phase = "setup"
         self.samples, self.errors = [], []
         self.done = threading.Event()
         self.thread = threading.Thread(target=self.sample, daemon=True)
@@ -99,7 +103,7 @@ class RowMeter:
                 reading = gpu_reading(self.query("--query-gpu=uuid,utilization.gpu,power.draw,memory.used"))
                 if self.samples and reading["uuid"] != self.samples[0]["uuid"]:
                     raise ValueError("changed GPU telemetry device")
-                reading.update(t=time.monotonic(), compute_apps_memory_mib=None)
+                reading.update(t=time.monotonic(), compute_apps_memory_mib=None, phase=getattr(self, "phase", "setup"))
                 try:
                     reading["compute_apps_memory_mib"] = compute_memory(self.query("--query-compute-apps=used_memory"))
                 except Exception as error:
@@ -110,20 +114,48 @@ class RowMeter:
             if self.done.wait(1):
                 break
 
+    def snapshot(self, *, include_samples=True):
+        end = time.monotonic()
+        samples = list(self.samples)
+        result = summarize(samples, self.start, end, self.errors)
+        result["phases"] = {}
+        for phase in sorted({s.get("phase", "setup") for s in samples}):
+            pairs = [(a, b) for a, b in zip(samples, samples[1:]) if a.get("phase", "setup") == b.get("phase", "setup") == phase]
+            valid = [(a, b) for a, b in pairs if a["busy_percent"] is not None and b["busy_percent"] is not None]
+            resident = sum((b["t"] - a["t"]) * (a["busy_percent"] + b["busy_percent"]) / 200 for a, b in valid)
+            wall = sum(b["t"] - a["t"] for a, b in pairs)
+            result["phases"][phase] = {"sampled_wall_seconds": wall, "gpu_resident_seconds": resident if valid else None,
+                "wall_without_resident_kernels_seconds": wall - resident if valid else None,
+                "method": "same-phase adjacent NVML samples; wall minus kernel-resident time, not CPU utilization"}
+        if not include_samples:
+            result.pop("samples")
+        result["peak_host_rss_bytes"] = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss * 1024
+        result["whole_job_peak_memory_bytes"] = cgroup_peak()
+        result["whole_job_peak_memory_method"] = "memory.peak of the inherited Flux cgroup; null if unavailable"
+        result.update(torch_peak_allocated_bytes=None, torch_peak_reserved_bytes=None)
+        torch = __import__("sys").modules.get("torch")
+        if torch is not None and torch.cuda.is_initialized():
+            result.update(torch_peak_allocated_bytes=torch.cuda.max_memory_allocated(),
+                          torch_peak_reserved_bytes=torch.cuda.max_memory_reserved())
+        return result
+
     def finish(self):
+        if hasattr(self, "result"):
+            return self.result
         self.done.set()
         self.thread.join(timeout=11)
         if self.thread.is_alive():
             self.errors.append("GPU telemetry did not stop within its command timeout")
-        result = summarize(self.samples, self.start, time.monotonic(), self.errors)
-        result["peak_host_rss_bytes"] = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss * 1024
-        result.update(torch_peak_allocated_bytes=None, torch_peak_reserved_bytes=None)
-        try:
-            import torch
+        self.result = self.snapshot()
+        return self.result
 
-            if torch.cuda.is_initialized():
-                result.update(torch_peak_allocated_bytes=torch.cuda.max_memory_allocated(),
-                              torch_peak_reserved_bytes=torch.cuda.max_memory_reserved())
-        except Exception as error:
-            result["errors"].append(f"torch allocator peaks: {error}")
-        return result
+
+def cgroup_peak(root="/sys/fs/cgroup", membership="/proc/self/cgroup"):
+    """Read the inherited Flux cgroup peak, which includes the container children."""
+    from pathlib import Path
+    for line in Path(membership).read_text().splitlines():
+        if line.startswith("0::"):
+            path = Path(root) / line[3:].lstrip("/") / "memory.peak"
+            if path.is_file():
+                return int(path.read_text())
+    return None

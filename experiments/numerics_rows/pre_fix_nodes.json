@@ -1,25 +1,277 @@
 {
-  "pre-fix-argv": {"file": "test_numerics_rows.py", "expected": 1, "nodes": ["test_setup_failure_writes_stopped_receipt"]},
-  "pre-fix-B1": {"file": "test_numerics_rows_receipts.py", "expected": 3, "nodes": ["test_run_refuses_a_changed_compile_path_before_any_case", "test_run_identity_runtime_error_is_an_invalid_unit", "test_run_library_change_after_cases_is_invalid"]},
-  "pre-fix-nits": {"file": "test_numerics_rows_receipts.py", "expected": 6, "nodes": ["test_served_native_empty_and_triton_exemption", "test_dense_library_selection_comes_from_the_served_role", "test_unit_libraries_uses_bound_snapshot_and_rechecks_on_cache_hits", "test_run_checks_identity_before_every_case_and_rechecks_after"]},
-  "pre-fix-coverage": {"file": "test_numerics_rows_receipts.py", "expected": 24, "nodes": ["test_run_refuses_a_c1_source_mismatch", "test_unfinished_c1_is_refused", "test_manifest_requires_every_declared_expert_role", "test_join_refuses_missing_repeated_or_unfinished_signed_modules", "test_join_uses_the_worst_module_outcome", "test_routed_sample_guard_accepts_tp1_and_refuses_invalid_scopes", "test_two_sample_rate_includes_tp1_and_all_2592_items"]},
-  "pre-fix-join-SB1": {"file": "test_numerics_rows_receipts.py", "expected": 16, "nodes": ["test_join_refuses_mixed_execution_identity", "test_join_refuses_mixed_manifest_identity", "test_join_refuses_unfinished_rows", "test_join_projects_launch_configuration_and_tp_rank_instead_of_tensor_geometry", "test_unattributed_cuda_error_rechecks_identity_without_dispatch_failure"]},
-  "pre-fix-canonical-verifier": {"file": "test_numerics_rows_receipts.py", "expected": 2, "nodes": ["test_row_refuses_served_code_identity_before_output_checks"]},
-  "pre-fix-double-error": {"file": "test_numerics_rows_receipts.py", "expected": 1, "nodes": ["test_attributed_cuda_error_survives_a_failed_post_case_identity_read"]},
-  "pre-fix-fixture": {"file": "test_numerics_rows_canonical.py", "expected": 1, "nodes": ["test_each_requested_negative_control_changes_canonical_identity"]},
-  "pre-fix-alias": {"file": "test_numerics_rows_canonical.py", "expected": 5, "nodes": ["test_exact_payload_alias_keeps_both_full_headers", "test_partial_payload_overlap_names_both_sections_types_and_ranges", "test_one_byte_in_an_aliased_payload_changes_identity", "test_nobits_and_zero_size_have_no_file_payload"]},
-  "pre-fix-symbol-order": {"file": "test_numerics_rows_canonical.py", "expected": 5, "nodes": ["test_only_pid_digits_may_change_symbol_records", "test_symbol_swap_with_unchanged_relocation_is_different"]},
-  "pre-fix-finalization-audit": {"file": "test_numerics_rows_receipts.py", "expected": 6, "nodes": ["test_join_refuses_failed_finalization", "test_row_marks_finalization_only_after_all_steps", "test_row_audits_served_bytes_before_first_case"]},
-  "pre-fix-ptx-header": {"file": "test_numerics_rows_canonical.py", "expected": 1, "nodes": ["test_ptx_fatbin_header_is_not_a_program[header-only]"]},
-  "pre-fix-draft17": {"file": "test_numerics_rows_draft17_before.py", "expected": 7, "nodes": ["test_missing_evidence_contributes_unattested", "test_observation_is_not_attestation", "test_stop_precedes_invalid", "test_canary_cannot_be_joined"]},
-  "pre-fix-draft17-narrow": {"file": "test_numerics_rows_join.py", "expected": 7, "nodes": ["test_join_refuses_an_unfrozen_rule", "test_join_refuses_overlapping_row_modules_even_without_overlapping_units"]},
-  "pre-fix-canary": {"file": "test_numerics_rows_receipts.py", "expected": 3, "nodes": ["test_dense_graph_capture_prepares_metadata_before_capture", "test_all_gate_cases_precede_diagnostics_and_diagnostic_errors_do_not_stop_them", "test_gpu_sampler_keeps_power_and_compute_app_memory_when_memory_used_is_na"]},
-  "pre-fix-campaign-revision": {"file": "test_numerics_rows_receipts.py", "expected": 5, "nodes": ["test_source_check_has_no_implicit_commit", "test_p_accepts_the_explicit_campaign_commit", "test_gpu_checks_use_the_p_commit", "test_p_uses_the_original_serving_flags"]},
-  "pre-fix-launch-worker": {"file": "test_numerics_rows_receipts.py", "expected": 22, "nodes": ["test_worker_refuses_a_tessera_import_before_capture", "test_changed_worker_input_refuses_before_the_next_native_call", "test_row_refuses_input_changed_during_prepare", "test_row_refuses_c1_launch_state_or_policy_before_cases[launch_state_names]", "test_row_refuses_c1_launch_state_or_policy_before_cases[launch_state_sha256]", "test_row_refuses_c1_launch_state_or_policy_before_cases[launch_levers_sha256]", "test_population_and_c1_require_full_source_cell_ids[cell_ids]", "test_population_and_c1_require_full_source_cell_ids[manifest_cell_ids]", "test_separation_cannot_borrow_across_cell_or_launch_state[cell]", "test_separation_cannot_borrow_across_cell_or_launch_state[launch_state_sha256]", "test_profile_checks_prepared_layout_against_exact_compiled_symbols[gate]", "test_profile_checks_prepared_layout_against_exact_compiled_symbols[up]", "test_profile_checks_prepared_layout_against_exact_compiled_symbols[down]", "test_profile_checks_prepared_layout_against_exact_compiled_symbols[missing]", "test_profile_checks_prepared_layout_against_exact_compiled_symbols[ambiguous]", "test_profile_checks_prepared_layout_against_exact_compiled_symbols[unsupported]", "test_unit_key_contains_launch_state", "test_row_refuses_a_different_frozen_lever_file", "test_row_refuses_missing_required_residency_selector", "test_changed_launch_state_inside_a_nested_boundary_stays_invalid", "test_changed_launch_state_refuses_before_graph_replay", "test_profile_checks_prepared_layout_against_exact_compiled_symbols[missing_count]"]},
-  "pre-fix-launch-join": {"file": "test_numerics_rows_join.py", "expected": 5, "nodes": ["test_join_refuses_mixed_launch_state_and_lever_policy[row]", "test_join_refuses_mixed_launch_state_and_lever_policy[unit]", "test_join_refuses_mixed_launch_state_and_lever_policy[manifest]", "test_join_refuses_mixed_launch_state_and_lever_policy[object]", "test_join_refuses_mixed_launch_state_and_lever_policy[policy]"]},
-  "pre-fix-dependency-worker": {"file": "test_numerics_rows_receipts.py", "expected": 24, "nodes": ["test_dependency_environment_refusal_in_both_dev_modes", "test_math_mutation_refuses_before_native_call", "test_row_refuses_foreign_math_settings_before_cases"]},
-  "pre-fix-dependency-join": {"file": "test_numerics_rows_join.py", "expected": 3, "nodes": ["test_join_refuses_missing_dependency_math_binding"]},
-  "pre-fix-dependency-review": {"file": "test_numerics_rows_receipts.py", "expected": 7, "nodes": ["test_worker_capture_refuses_each_prior_dependency_import[torch]", "test_worker_capture_refuses_each_prior_dependency_import[triton]", "test_worker_capture_refuses_each_prior_dependency_import[vllm]", "test_generated_rows_use_only_the_required_resident_selector", "test_population_selector_refuses_in_both_dev_modes"]},
-  "pre-fix-dependency-code": {"file": "test_numerics_rows_dependency_code.py", "expected": 22, "nodes": ["test_unattested_code_survives_native_boundary", "test_profile_refuses_a_kernel_without_a_unique_code_owner", "test_profile_checks_image_file_identity_before_accepting_origin", "test_join_refuses_incomplete_unit_code_bindings", "test_join_refuses_changed_or_missing_specialization_bindings"]},
-  "pre-fix-draft4-environment": {"file": "test_numerics_rows_receipts.py", "expected": 6, "nodes": ["test_whole_start_environment_refuses_uncatalogued_input", "test_code_added_names_do_not_change_the_start_binding", "test_environment_records_never_write_private_values_or_per_name_hashes"]}
+  "pre-fix-argv": {
+    "file": "test_numerics_rows.py",
+    "expected": 1,
+    "nodes": [
+      "test_setup_failure_writes_stopped_receipt"
+    ]
+  },
+  "pre-fix-B1": {
+    "file": "test_numerics_rows_receipts.py",
+    "expected": 3,
+    "nodes": [
+      "test_run_refuses_a_changed_compile_path_before_any_case",
+      "test_run_identity_runtime_error_is_an_invalid_unit",
+      "test_run_library_change_after_cases_is_invalid"
+    ]
+  },
+  "pre-fix-nits": {
+    "file": "test_numerics_rows_receipts.py",
+    "expected": 6,
+    "nodes": [
+      "test_served_native_empty_and_triton_exemption",
+      "test_dense_library_selection_comes_from_the_served_role",
+      "test_unit_libraries_uses_bound_snapshot_and_rechecks_on_cache_hits",
+      "test_run_checks_identity_before_every_case_and_rechecks_after"
+    ]
+  },
+  "pre-fix-coverage": {
+    "file": "test_numerics_rows_receipts.py",
+    "expected": 24,
+    "nodes": [
+      "test_run_refuses_a_c1_source_mismatch",
+      "test_unfinished_c1_is_refused",
+      "test_manifest_requires_every_declared_expert_role",
+      "test_join_refuses_missing_repeated_or_unfinished_signed_modules",
+      "test_join_uses_the_worst_module_outcome",
+      "test_routed_sample_guard_accepts_tp1_and_refuses_invalid_scopes",
+      "test_two_sample_rate_includes_tp1_and_all_2592_items"
+    ]
+  },
+  "pre-fix-join-SB1": {
+    "file": "test_numerics_rows_receipts.py",
+    "expected": 16,
+    "nodes": [
+      "test_join_refuses_mixed_execution_identity",
+      "test_join_refuses_mixed_manifest_identity",
+      "test_join_refuses_unfinished_rows",
+      "test_join_projects_launch_configuration_and_tp_rank_instead_of_tensor_geometry",
+      "test_unattributed_cuda_error_rechecks_identity_without_dispatch_failure"
+    ]
+  },
+  "pre-fix-canonical-verifier": {
+    "file": "test_numerics_rows_receipts.py",
+    "expected": 2,
+    "nodes": [
+      "test_row_refuses_served_code_identity_before_output_checks"
+    ]
+  },
+  "pre-fix-double-error": {
+    "file": "test_numerics_rows_receipts.py",
+    "expected": 1,
+    "nodes": [
+      "test_attributed_cuda_error_survives_a_failed_post_case_identity_read"
+    ]
+  },
+  "pre-fix-fixture": {
+    "file": "test_numerics_rows_canonical.py",
+    "expected": 1,
+    "nodes": [
+      "test_each_requested_negative_control_changes_canonical_identity"
+    ]
+  },
+  "pre-fix-alias": {
+    "file": "test_numerics_rows_canonical.py",
+    "expected": 5,
+    "nodes": [
+      "test_exact_payload_alias_keeps_both_full_headers",
+      "test_partial_payload_overlap_names_both_sections_types_and_ranges",
+      "test_one_byte_in_an_aliased_payload_changes_identity",
+      "test_nobits_and_zero_size_have_no_file_payload"
+    ]
+  },
+  "pre-fix-symbol-order": {
+    "file": "test_numerics_rows_canonical.py",
+    "expected": 5,
+    "nodes": [
+      "test_only_pid_digits_may_change_symbol_records",
+      "test_symbol_swap_with_unchanged_relocation_is_different"
+    ]
+  },
+  "pre-fix-finalization-audit": {
+    "file": "test_numerics_rows_receipts.py",
+    "expected": 6,
+    "nodes": [
+      "test_join_refuses_failed_finalization",
+      "test_row_marks_finalization_only_after_all_steps",
+      "test_row_audits_served_bytes_before_first_case"
+    ]
+  },
+  "pre-fix-ptx-header": {
+    "file": "test_numerics_rows_canonical.py",
+    "expected": 1,
+    "nodes": [
+      "test_ptx_fatbin_header_is_not_a_program[header-only]"
+    ]
+  },
+  "pre-fix-draft17": {
+    "file": "test_numerics_rows_draft17_before.py",
+    "expected": 7,
+    "nodes": [
+      "test_missing_evidence_contributes_unattested",
+      "test_observation_is_not_attestation",
+      "test_stop_precedes_invalid",
+      "test_canary_cannot_be_joined"
+    ]
+  },
+  "pre-fix-draft17-narrow": {
+    "file": "test_numerics_rows_join.py",
+    "expected": 7,
+    "nodes": [
+      "test_join_refuses_an_unfrozen_rule",
+      "test_join_refuses_overlapping_row_modules_even_without_overlapping_units"
+    ]
+  },
+  "pre-fix-canary": {
+    "file": "test_numerics_rows_receipts.py",
+    "expected": 3,
+    "nodes": [
+      "test_dense_graph_capture_prepares_metadata_before_capture",
+      "test_all_gate_cases_precede_diagnostics_and_diagnostic_errors_do_not_stop_them",
+      "test_gpu_sampler_keeps_power_and_compute_app_memory_when_memory_used_is_na"
+    ]
+  },
+  "pre-fix-campaign-revision": {
+    "file": "test_numerics_rows_receipts.py",
+    "expected": 5,
+    "nodes": [
+      "test_source_check_has_no_implicit_commit",
+      "test_p_accepts_the_explicit_campaign_commit",
+      "test_gpu_checks_use_the_p_commit",
+      "test_p_uses_the_original_serving_flags"
+    ]
+  },
+  "pre-fix-launch-worker": {
+    "file": "test_numerics_rows_receipts.py",
+    "expected": 22,
+    "nodes": [
+      "test_worker_refuses_a_tessera_import_before_capture",
+      "test_changed_worker_input_refuses_before_the_next_native_call",
+      "test_row_refuses_input_changed_during_prepare",
+      "test_row_refuses_c1_launch_state_or_policy_before_cases[launch_state_names]",
+      "test_row_refuses_c1_launch_state_or_policy_before_cases[launch_state_sha256]",
+      "test_row_refuses_c1_launch_state_or_policy_before_cases[launch_levers_sha256]",
+      "test_population_and_c1_require_full_source_cell_ids[cell_ids]",
+      "test_population_and_c1_require_full_source_cell_ids[manifest_cell_ids]",
+      "test_separation_cannot_borrow_across_cell_or_launch_state[cell]",
+      "test_separation_cannot_borrow_across_cell_or_launch_state[launch_state_sha256]",
+      "test_profile_checks_prepared_layout_against_exact_compiled_symbols[gate]",
+      "test_profile_checks_prepared_layout_against_exact_compiled_symbols[up]",
+      "test_profile_checks_prepared_layout_against_exact_compiled_symbols[down]",
+      "test_profile_checks_prepared_layout_against_exact_compiled_symbols[missing]",
+      "test_profile_checks_prepared_layout_against_exact_compiled_symbols[ambiguous]",
+      "test_profile_checks_prepared_layout_against_exact_compiled_symbols[unsupported]",
+      "test_unit_key_contains_launch_state",
+      "test_row_refuses_a_different_frozen_lever_file",
+      "test_row_refuses_missing_required_residency_selector",
+      "test_changed_launch_state_inside_a_nested_boundary_stays_invalid",
+      "test_changed_launch_state_refuses_before_graph_replay",
+      "test_profile_checks_prepared_layout_against_exact_compiled_symbols[missing_count]"
+    ]
+  },
+  "pre-fix-launch-join": {
+    "file": "test_numerics_rows_join.py",
+    "expected": 5,
+    "nodes": [
+      "test_join_refuses_mixed_launch_state_and_lever_policy[row]",
+      "test_join_refuses_mixed_launch_state_and_lever_policy[unit]",
+      "test_join_refuses_mixed_launch_state_and_lever_policy[manifest]",
+      "test_join_refuses_mixed_launch_state_and_lever_policy[object]",
+      "test_join_refuses_mixed_launch_state_and_lever_policy[policy]"
+    ]
+  },
+  "pre-fix-dependency-worker": {
+    "file": "test_numerics_rows_receipts.py",
+    "expected": 24,
+    "nodes": [
+      "test_dependency_environment_refusal_in_both_dev_modes",
+      "test_math_mutation_refuses_before_native_call",
+      "test_row_refuses_foreign_math_settings_before_cases"
+    ]
+  },
+  "pre-fix-dependency-join": {
+    "file": "test_numerics_rows_join.py",
+    "expected": 3,
+    "nodes": [
+      "test_join_refuses_missing_dependency_math_binding"
+    ]
+  },
+  "pre-fix-dependency-review": {
+    "file": "test_numerics_rows_receipts.py",
+    "expected": 7,
+    "nodes": [
+      "test_worker_capture_refuses_each_prior_dependency_import[torch]",
+      "test_worker_capture_refuses_each_prior_dependency_import[triton]",
+      "test_worker_capture_refuses_each_prior_dependency_import[vllm]",
+      "test_generated_rows_use_only_the_required_resident_selector",
+      "test_population_selector_refuses_in_both_dev_modes"
+    ]
+  },
+  "pre-fix-dependency-code": {
+    "file": "test_numerics_rows_dependency_code.py",
+    "expected": 22,
+    "nodes": [
+      "test_unattested_code_survives_native_boundary",
+      "test_profile_refuses_a_kernel_without_a_unique_code_owner",
+      "test_profile_checks_image_file_identity_before_accepting_origin",
+      "test_join_refuses_incomplete_unit_code_bindings",
+      "test_join_refuses_changed_or_missing_specialization_bindings"
+    ]
+  },
+  "pre-fix-draft4-environment": {
+    "file": "test_numerics_rows_receipts.py",
+    "expected": 6,
+    "nodes": [
+      "test_whole_start_environment_refuses_uncatalogued_input",
+      "test_code_added_names_do_not_change_the_start_binding",
+      "test_environment_records_never_write_private_values_or_per_name_hashes"
+    ]
+  },
+  "pre-fix-env-proof": {
+    "file": "test_numerics_rows_receipts.py",
+    "expected": 2,
+    "nodes": [
+      "test_environment_proof_checks_container_exit_before_socket_wait",
+      "test_environment_proof_records_import_stage_before_read_timeout"
+    ]
+  },
+  "pre-fix-dense-phases": {
+    "file": "test_numerics_rows_phases.py",
+    "expected": 26,
+    "nodes": [
+      "test_old_phase_pair_cannot_be_attached_to_another_module",
+      "test_inner_phase_scope_cannot_be_relabelled",
+      "test_capture_must_consume_the_exact_prepare_digest",
+      "test_compare_requires_each_case_exactly_once",
+      "test_phase_payload_bytes_and_configuration_are_bound",
+      "test_unfinished_prepare_cannot_authorize_capture",
+      "test_prepared_quantizer_mismatch_refuses_before_native_call",
+      "test_quantizer_inside_apply_is_checked_again",
+      "test_handled_signal_writes_stopped_and_preserves_fail",
+      "test_progress_checkpoint_precedes_diagnostics",
+      "test_whole_job_peak_reads_flux_cgroup",
+      "test_frozen_canary_remains_marked_uncounted",
+      "test_lever_addendum_binds_the_frozen_record_without_rewriting_it",
+      "test_device_capture_uses_prepared_bytes_without_a_host_reference",
+      "test_shared_dense_roster_prepares_every_case_without_native_calls",
+      "test_capture_refusal_for_a_nonfinite_prepared_reference",
+      "test_host_phase_negative_reference_control_allocates_no_device",
+      "test_payload_hash_covers_the_same_read_that_is_decoded",
+      "test_split_diagnostic_composition_is_recorded_without_a_gate_verdict"
+    ]
+  },
+  "pre-fix-review-M1": {
+    "file": "test_numerics_rows_dependency_code.py",
+    "expected": 4,
+    "nodes": [
+      "test_profile_refuses_unaudited_mapped_device_owners"
+    ]
+  },
+  "pre-fix-review-M2": {
+    "file": "test_numerics_rows_receipts.py",
+    "expected": 3,
+    "nodes": [
+      "test_row_refuses_a_different_h1_launch_binding_before_cases"
+    ]
+  }
 }

@@ -1,6 +1,8 @@
 """Check the numerics preconditions on synthetic wires before the freeze."""
 from __future__ import annotations
 
+from experiments.numerics_rows.common import error_text, error_trace
+
 import argparse
 import dataclasses
 import importlib.util
@@ -9,7 +11,6 @@ import os
 from pathlib import Path
 import subprocess
 import sys
-import traceback
 
 from experiments.numerics_rows.common import BoundaryError, BoundaryRecorder, check_runtime, check_source, load_build, register_native_ops, sha256, write_json
 from experiments.numerics_rows.reference import compare, selftest
@@ -169,10 +170,10 @@ def wrong_scale_index(key, recorder):
             and compare(wrong, reference.roll(1, 1))["equal"] and compare(wrong, reference)["mismatches"] == reference.numel()}
 
 
-def negative_controls():
+def negative_controls(*, device="cuda"):
     import torch
 
-    wanted = torch.tensor([1.0, -2.0, 3.0], dtype=torch.bfloat16, device="cuda")
+    wanted = torch.tensor([1.0, -2.0, 3.0], dtype=torch.bfloat16, device=device)
     controls = []
     for index in range(wanted.numel()):
         mutation = wanted.clone()
@@ -386,6 +387,7 @@ def confirm_p3(report, records):
 
 def run_checks(args, report):
     def save():
+        report["environment_diagnostics"] = args.launch_state.diagnostics()
         write_json(args.out / "h1.json", report)
 
     report["runtime"] = check_runtime(args.image)
@@ -399,7 +401,6 @@ def run_checks(args, report):
     args.code_audit = CodeAudit(report["runtime"]["image_digest"], args.out / "compiled-code").install()
     report["triton_specializations"] = args.code_audit.records
     report.update(args.launch_state.fields())
-    report["environment_diagnostics"] = args.launch_state.diagnostics()
     import tessera
     from experiments.dense_fused_oracle import e4m3_instruction, init_vllm_world1
     from experiments.numerics_rows.sass_slice import match_library
@@ -436,7 +437,7 @@ def run_checks(args, report):
                     if key != "e2m1":
                         report["negative_controls"].append(wrong_scale_index(key, recorder))
             except Exception as error:
-                entry.update(error=str(error), traceback=traceback.format_exc())
+                entry.update(error=error_text(error), traceback=error_trace(error))
             finally:
                 save()
     for where in ("inside", "outside"):
@@ -472,7 +473,7 @@ def main():
                                     "flux_job_id": jobid.read_text().strip() if jobid.is_file() else None}
             report["gpu_receipt"] = {"path": str(args.gpu_receipt), "sha256": sha256(args.gpu_receipt)}
         except Exception as error:
-            report["error"] = {"type": type(error).__name__, "message": str(error), "traceback": traceback.format_exc()}
+            report["error"] = {"type": type(error).__name__, "message": error_text(error), "traceback": error_trace(error)}
         finally:
             write_json(args.out / "h1.json", report)
         raise SystemExit(0 if report["preconditions_confirmed"] else 3)
@@ -485,7 +486,7 @@ def main():
         run_checks(args, report)
     except Exception as error:
         report["preconditions_confirmed"] = False
-        report["error"] = {"type": type(error).__name__, "message": str(error), "traceback": traceback.format_exc()}
+        report["error"] = {"type": type(error).__name__, "message": error_text(error), "traceback": error_trace(error)}
     finally:
         if getattr(args, "code_audit", None) is not None:
             args.code_audit.close()

@@ -1,6 +1,6 @@
 # Launch input policy
 
-Rule v2 draft 4 freezes `launch-levers.tsv`. Every worker records its digest.
+Frozen rule v2 freezes `launch-levers.tsv`. Every worker records its digest.
 The worker captures its whole start environment before any dependency import.
 Only exact excluded names do not count. Prefixes do not control inclusion.
 The source-read audit is diagnostic. Its incomplete scopes cannot block PASS.
@@ -12,7 +12,7 @@ The serving launcher must supply the same OCI constants through its existing ext
 The deterministic build-identity switch stays unset. Optional Tessera levers stay unset.
 
 No A8S release worker environment was observed or saved. The specified serve environment replaces that missing observation.
-`prepare_env.py` prepares a CPU-only comparison of row, C1 and independent serve-spec starts.
+`prepare_env.py` prepares a CPU-only comparison of row, C1 and serve-spec starts using the shared recipe.
 The proof also imports torch, Triton, vLLM and Tessera in the row worker.
 It compares captured names after those imports. Added names are diagnostic.
 A changed or removed captured input is INVALID before another native call.
@@ -22,12 +22,14 @@ NVIDIA_VISIBLE_DEVICES remains included. No OCI exclusion forces a match.
 
 Environment values stay in worker memory. Receipts contain sorted names and one digest.
 The exact digest encoding stays in `launch_state.digest`.
-The only public values are frozen Tessera lever names and PRISMAQUANT_DEV_MODE.
+Only boolean or enumerated Tessera selectors and levers, and PRISMAQUANT_DEV_MODE, can have public values.
+The TSV public_values column names each permitted value. Paths and commands are never public.
 Excluded-name and added-name diagnostics contain names only. Latched flags use the same public-value policy.
 The environment proof writes no values or per-name hashes, including in its differences.
 Its temporary comparison digests use a Unix socket and never enter files or logs.
 Raw image inspection stays in private /var/tmp scratch. Results list image environment names only.
-The TSV excludes VLLM_API_KEY by exact name, citing the pinned image's authentication-only source.
+The TSV excludes VLLM_API_KEY, HF_TOKEN and HUGGING_FACE_HUB_TOKEN by exact name.
+The cited paths use local signed wires, not Hub authentication.
 Unlisted names count. A new credential exclusion requires an exact entry and source evidence.
 
 The loaded-library audit conditions every toolchain exclusion. It checks the actual mapped bytes.
@@ -37,5 +39,18 @@ Unknown or ambiguous origins remain UNATTESTED. No source-read completeness gate
 Effective torch math settings remain fixed and bound in C1, H1, rows and the serve.
 The tool does not add the serve validator to Tessera's plugin.
 
-`environment-writes.tsv` lists environment-reading sites for the Opus review.
-It separates in-memory reads, child-process inputs and receipt output.
+The serving launcher must set TESSERA_LANE_DOCKER_EXTRA to start_env.lane_extra().
+It includes --workdir=/work and --hostname=tessera-worker with the fixed thread and OCI inputs.
+The serve-spec proof arm uses this shared recipe and checks the lane source. It is not an independent runtime implementation.
+
+
+The output sites for the Opus security review are LaunchState.fields,
+LaunchState.diagnostics and LaunchState.latched_diagnostic. Row, C1 and H1 call
+those methods. env_proof.worker sends temporary comparison digests on a private
+socket. env_proof.run_arms writes names and one launch-state hash.
+dependency_audit.image_inputs writes image names only. common.check_runtime
+reads private image inspection and records the image identity, without a second
+hash over Env. Flag-parser exceptions use error_text and error_trace, which
+record only the exception type. Other exception records retain code errors.
+No producer writes the LaunchState.mapping object. The generator keeps raw
+inspection in private /var/tmp scratch and removes it on exit.

@@ -36,7 +36,10 @@ def write_json(path, value):
             return item.item()
         raise TypeError(f"Object of type {type(item).__name__} is not JSON serializable")
 
-    Path(path).write_text(json.dumps(value, indent=2, allow_nan=False, default=numpy_value) + "\n")
+    path = Path(path)
+    temporary = path.with_name(path.name + ".pending")
+    temporary.write_text(json.dumps(value, indent=2, allow_nan=False, default=numpy_value) + "\n")
+    temporary.replace(path)
 
 
 def check_source(root, revision):
@@ -63,7 +66,7 @@ def check_runtime(image):
     actual = {name: importlib.metadata.version(name) for name in ("torch", "vllm")}
     if any(actual[name] != expected[name] for name in actual):
         raise Invalid(f"runtime differs from the cell: {actual}")
-    return {**expected, **actual, "local_id": local, "image_inspect_sha256": sha256(path)}
+    return {**expected, **actual, "local_id": local}
 
 
 def artifact_limit(root):
@@ -112,11 +115,34 @@ class Unattested(ValueError):
     pass
 
 
+def flag_error(error):
+    """Flag parsers can include both environment values in exception text."""
+    seen = set()
+    while error is not None and id(error) not in seen:
+        seen.add(id(error))
+        frame = error.__traceback__
+        while frame is not None:
+            if frame.tb_frame.f_code.co_filename.replace("\\", "/").endswith(("tessera/serving/flags.py", "tessera/flags.py")):
+                return True
+            frame = frame.tb_next
+        error = error.__cause__ or error.__context__
+    return False
+
+
+def error_text(error):
+    return type(error).__name__ if flag_error(error) else str(error)
+
+
+def error_trace(error):
+    import traceback
+    return type(error).__name__ if flag_error(error) else traceback.format_exc()
+
+
 class BoundaryError(RuntimeError):
     def __init__(self, record, error):
         self.record = record
         self.attributed_to = record["call"] if record["kind"] == "tessera" and record["sync_before"] and record["sync_after"] is False else None
-        super().__init__(str(error))
+        super().__init__(error_text(error))
 
 
 class BoundaryRecorder:
@@ -144,7 +170,7 @@ class BoundaryRecorder:
             record["sync_before"] = True
         except Exception as error:
             record["sync_before"] = False
-            record["message"] = str(error)
+            record["message"] = error_text(error)
             raise BoundaryError(record, error) from error
         failure = None
         try:
@@ -161,13 +187,16 @@ class BoundaryRecorder:
         if isinstance(failure, (Invalid, Unattested)):
             raise failure
         if failure is not None:
-            record["message"] = str(failure)
+            record["message"] = error_text(failure)
             error = nested or BoundaryError(record, failure)
             if not self.attribute:
                 error.attributed_to = None
             if nested is not None:
                 raise nested
             raise error from failure
+        validator = getattr(self, "quantizer_result", None)
+        if kind == "quantizer" and validator is not None:
+            validator(result)
         return result
 
 

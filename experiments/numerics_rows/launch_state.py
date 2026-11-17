@@ -64,7 +64,7 @@ class LaunchState:
         imported = sorted({name.split(".")[0] for name in sys.modules if name.split(".")[0] in IMPORTS})
         if fresh and imported:
             raise Invalid("launch state requires a fresh worker before its first Tessera import or torch, Triton or vLLM import: " + ", ".join(imported))
-        self.path, self.policy = Path(path), {}
+        self.path, self.policy, self.public = Path(path), {}, {}
         for row in csv.DictReader(self.path.read_text().splitlines(), delimiter="\t"):
             name, policy = row.get("name"), row.get("launch_state")
             if not isinstance(name, str) or not name:
@@ -74,6 +74,14 @@ class LaunchState:
             if policy == "exclude" and not all(row.get(k) not in (None, "", "-") for k in ("exclusion_reason", "evidence", "file:line")):
                 raise Invalid("launch exclusion has no cited reason: " + name)
             self.policy[name] = policy
+            values = row.get("public_values", "-")
+            if values != "-":
+                allowed = json.loads(values)
+                if policy != "include" or not (name.startswith("TESSERA_") or name == "PRISMAQUANT_DEV_MODE") or not isinstance(allowed, list) or any(not isinstance(v, str) for v in allowed):
+                    raise Invalid("malformed non-secret enum policy: " + name)
+                if name in self.public and self.public[name] != allowed:
+                    raise Invalid("inconsistent non-secret enum policy: " + name)
+                self.public[name] = allowed
         if not self.policy or self.policy.get("TESSERA_SERVE_MODE") != "include":
             raise Invalid("launch lever policy must retain the residency selector")
         if any(self.policy.get(name) != "exclude" for name in TOOLCHAIN):
@@ -128,9 +136,8 @@ class LaunchState:
                 "added_names": sorted(set(os.environ) - self.start_names)}
 
     def public_values(self, mapping):
-        """Expose only frozen Tessera lever names and the admission-policy switch."""
-        return {k: mapping[k] for k in sorted(mapping) if k == "PRISMAQUANT_DEV_MODE" or (
-            k.startswith("TESSERA_") and self.policy.get(k) == "include")}
+        """Expose only exact boolean/enumerated values named by the frozen policy."""
+        return {k: mapping[k] for k in sorted(mapping) if k in self.public and mapping[k] in self.public[k]}
 
     def latched_diagnostic(self, mapping):
         return {"names": sorted(mapping), "non_secret_values": self.public_values(mapping)}
@@ -150,9 +157,8 @@ def check_fields(record):
     selectors = record.get("launch_selectors")
     if not isinstance(selectors, dict) or set(selectors) - set(names):
         raise Invalid("launch state selectors are missing or malformed")
-    policy = LaunchState().policy
-    if any(not isinstance(v, str) or not (k == "PRISMAQUANT_DEV_MODE" or k.startswith("TESSERA_") and policy.get(k) == "include")
-           for k, v in selectors.items()):
+    public = LaunchState().public
+    if any(not isinstance(v, str) or k not in public or v not in public[k] for k, v in selectors.items()):
         raise Invalid("launch state diagnostic contains a name outside the non-secret list")
 
 

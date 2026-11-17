@@ -597,7 +597,7 @@ def test_runtime_checks_the_observed_image(tmp_path, monkeypatch, mutation):
         monkeypatch.delenv("NUMERICS_IMAGE_INSPECT")
     if mutation is None:
         result = check_runtime("G")
-        assert result["local_id"] == record["Id"][7:] and result["image_inspect_sha256"]
+        assert result["local_id"] == record["Id"][7:]
     else:
         with pytest.raises(ValueError):
             check_runtime("G")
@@ -1663,6 +1663,7 @@ def test_dense_graph_capture_prepares_metadata_before_capture(monkeypatch):
         function = getattr(torch, name)
         monkeypatch.setattr(torch, name, lambda *args, _function=function, **kwargs: _function(*args, **{**kwargs, "device": "cpu"}))
     adapter = row.Dense.__new__(row.Dense)
+    adapter.device = "cpu"
     adapter.family, adapter.library, adapter.rows, adapter.cols = "value", "value", 2, 2
     adapter.layer = SimpleNamespace(tessera_native=SimpleNamespace(role_bundles=[SimpleNamespace(rows=2)]))
     adapter.roles = [("down", torch.zeros(2, 2, dtype=torch.float64), torch.tensor(1.0), None)]
@@ -2190,10 +2191,102 @@ def test_environment_records_never_write_private_values_or_per_name_hashes(monke
 
 def test_start_environment_recipe_has_no_job_values():
     from experiments.numerics_rows.start_env import container_options, worker_command
-    from experiments.numerics_rows.env_proof import serve_options
 
     first, second = container_options("/var/tmp/job-a"), container_options("/var/tmp/job-b")
-    assert first == serve_options("/var/tmp/job-a")
     assert [v for v in first if "=" in v] == [v for v in second if "=" in v]
     assert "--device" not in first
     assert "--env PYTHONPATH=" not in worker_command("/retained/cell", "module", [])
+
+
+def test_environment_proof_checks_container_exit_before_socket_wait():
+    from experiments.numerics_rows import env_proof
+    assert hasattr(env_proof, "receive"), "feature absent: environment proof process and stage monitor"
+    receive = env_proof.receive
+    from types import SimpleNamespace
+
+    events = []
+    listener = SimpleNamespace(settimeout=lambda _: None,
+                               accept=lambda: pytest.fail("waited for a dead container"))
+    with pytest.raises(RuntimeError, match="before worker connection"):
+        receive(listener, SimpleNamespace(poll=lambda: 125), lambda stage, **data: events.append((stage, data)))
+    assert events == [("container-exit", {"container_exit": 125})]
+
+
+def test_environment_proof_records_import_stage_before_read_timeout():
+    from experiments.numerics_rows import env_proof
+    assert hasattr(env_proof, "receive"), "feature absent: environment proof process and stage monitor"
+    receive = env_proof.receive
+    from types import SimpleNamespace
+
+    class Channel:
+        def __enter__(self): return self
+        def __exit__(self, *_): pass
+        def settimeout(self, _): pass
+        def makefile(self, _): return self
+        def readline(self):
+            if not hasattr(self, "sent"):
+                self.sent = True
+                return b'{"stage":"import-vllm"}\n'
+            raise TimeoutError()
+    events = []
+    listener = SimpleNamespace(settimeout=lambda _: None, accept=lambda: (Channel(), None))
+    with pytest.raises(TimeoutError):
+        receive(listener, SimpleNamespace(poll=lambda: None), lambda stage: events.append(stage))
+    assert events == ["import-vllm"]
+
+
+@pytest.mark.parametrize("field", ("launch_state_sha256", "start_environment_spec_sha256", "launch_levers_sha256"))
+def test_row_refuses_a_different_h1_launch_binding_before_cases(row_execution, field):
+    args, receipt, _, events, _ = row_execution
+    with pytest.raises(SystemExit) as positive:
+        row.run(args, receipt)
+    assert positive.value.code == 0
+    events.clear()
+    doc = json.loads(args.h1.read_text())
+    doc[field] = "b" * 64
+    write_json(args.h1, doc)
+    with pytest.raises(Invalid, match="launch state or lever file"):
+        row.run(args, receipt)
+    assert not events
+
+
+def test_public_environment_values_exclude_paths_commands_and_invalid_enums(monkeypatch):
+    from experiments.numerics_rows.launch_state import LaunchState, check_fields
+    private = "private-path-or-command"
+    for name in ("TESSERA_EXT_DIR", "TESSERA_SOURCE_VERIFIER", "TESSERA_PRODUCER_SOURCE", "TESSERA_GIT", "TESSERA_SERVE_MODE"):
+        monkeypatch.setenv(name, private)
+    state = LaunchState()
+    fields = state.fields()
+    if private in json.dumps([fields, state.latched_diagnostic(state.mapping)]):
+        pytest.fail("non-secret enum policy wrote a private value", pytrace=False)
+    check_fields(fields)
+    fields["launch_selectors"]["TESSERA_EXT_DIR"] = private
+    with pytest.raises(Invalid, match="non-secret"):
+        check_fields(fields)
+
+
+def test_latched_flag_error_records_only_the_type():
+    from tessera.serving import flags
+    from experiments.numerics_rows.common import BoundaryRecorder, error_text, error_trace
+    flags.reset_for_tests("TESSERA_ROUTE_TRACE")
+    flags._latch("TESSERA_ROUTE_TRACE", "private-old-path")
+    records = []
+    try:
+        with pytest.raises(Exception) as caught:
+            BoundaryRecorder(lambda: None, records).call("flag", "tessera", lambda: flags._latch("TESSERA_ROUTE_TRACE", "private-new-path"))
+        rendered = json.dumps([records, error_text(caught.value), error_trace(caught.value)])
+        assert "private-old-path" not in rendered and "private-new-path" not in rendered
+    finally:
+        flags.reset_for_tests("TESSERA_ROUTE_TRACE")
+
+
+def test_profile_copy_and_memset_events_are_diagnostics_only():
+    import torch
+    from experiments.routed_pair_oracle import kernel_table
+    names = ["Memcpy HtoD (Pageable -> Device)", "Memcpy DtoD (Device -> Device)", "Memset (Device)", "native_kernel"]
+    events = [SimpleNamespace(key=n, count=1, device_type=torch.autograd.DeviceType.CUDA, self_device_time_total=7) for n in names]
+    profile = SimpleNamespace(key_averages=lambda: events, events=lambda: events)
+    counts = {}
+    records = kernel_table(profile, device_only=True, diagnostics=counts)
+    assert [r["name"] for r in records] == ["native_kernel"]
+    assert counts == {"memcpy": 2, "memset": 1}

@@ -32,6 +32,13 @@ def container_options(scratch):
             *[arg for k, v in ENV.items() for arg in ("--env", f"{k}={v}")]]
 
 
+def lane_extra():
+    """Arguments that the serving lane must add to its own four selector inputs."""
+    lane = {"TORCH_EXTENSIONS_DIR", "TMPDIR", "TESSERA_SERVE_MODE", "TESSERA_GPU_MEM_UTIL"}
+    return shlex.join(["--workdir=/work", "--hostname=tessera-worker",
+                       *[arg for k, v in ENV.items() if k not in lane for arg in ("--env", f"{k}={v}")]])
+
+
 def worker_command(source, module, arguments):
     """Set Python import paths as arguments, without a per-job PYTHONPATH."""
     boot = "import sys,runpy;sys.path[:0]=sys.argv[1:3];sys.argv=sys.argv[3:];runpy.run_module(sys.argv[0],run_name='__main__')"

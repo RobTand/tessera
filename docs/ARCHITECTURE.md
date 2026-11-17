@@ -1,6 +1,16 @@
 # Tessera plan-to-serve architecture
 
-Re-stamped 2026-11-17 for the #1717 rule v2 draft 4 worker policy.
+Re-stamped 2026-11-17 for the #1717 dense row phase split under frozen rule v2.
+CPU prepare uses the existing exact case generators and reference evaluator.
+GPU capture checks the bound input and actual quantizer bytes before native use.
+CPU compare checks every case once and is the only phase that can finish a row.
+Each artifact binds the full unit key, common identities and raw tensor hashes.
+An unfinished capture remains STOPPED. A known FAIL remains FAIL.
+The capture writes a gate checkpoint before diagnostics. Phase records, diagnostic
+reference profiles, NVML power and resident time, and cgroup peak memory expose
+host work and interrupted cases. These tools change no serving default or arithmetic.
+
+Re-stamped 2026-11-17 for the #1717 frozen rule v2 worker policy.
 The tool binds the whole worker start environment, with exact frozen exclusions.
 It stores names and one digest. Values remain in worker memory, except named public selectors.
 Workers reject changed or removed captured inputs. Later-added names are diagnostic.
@@ -8,6 +18,9 @@ C1, H1 and rows use fixed container paths from the serve environment specificati
 The environment proof checks those starts without GPU work or environment-value output.
 The source-read audit is diagnostic and cannot block attestation.
 Effective math settings, actual Triton identities and every-kernel origin checks remain required.
+The origin check includes unaudited mapped device-code owners. Shared names and
+unreadable rosters are UNATTESTED. H1 and C1 must match the row start state.
+Public environment values are restricted to the frozen boolean and enum list.
 Unknown code origins are UNATTESTED. No serving default or kernel arithmetic changes.
 
 Re-stamped 2026-11-16 for the #1717 rule v2 attestation tool.

@@ -58,7 +58,7 @@ Tool {revision}; source {source_revision}. Each clone refuses another commit.
 Shape: sparklina, core=1, memory=4 GiB, limit 20 min. No GPU device and no network.
 These are bookings. No wall-time or memory measurement exists for this proof.
 
-The job compares row, C1 and an independent serve-spec start. It imports torch,
+The job compares row, C1 and an serve-spec start. It imports torch,
 Triton, vLLM and Tessera in the row worker, then checks captured names again.
 The result contains names and one launch-state digest. It contains no values
 or per-name value hashes. Temporary comparison digests use a Unix socket only.
@@ -66,7 +66,7 @@ Import stdout and stderr are discarded. Import status names the module and error
 Raw image inspection stays in /var/tmp scratch. Cleanup removes that scratch.
 The image environment result contains names only.
 
-The serve-spec arm repeats tessera_plugin_served.sh's -e set without optional levers.
+The serve-spec arm uses the shared recipe and checks tessera_plugin_served.sh's -e set.
 Both sides add the fixed OCI constants from start_env.py. The serving launcher
 must receive these through TESSERA_LANE_DOCKER_EXTRA. The policy excludes none
 of these names. The build-identity deterministic switch stays unset.

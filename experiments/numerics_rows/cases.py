@@ -439,7 +439,7 @@ def main():
     check_population_cells(contract, IMAGES[args.image]["image_digest"], population)
     check_selectors(contract, population, launch_state.mapping)
     launch_state.check()
-    manifest = {"schema": "tessera.numerics_cases.v1", "environment_diagnostics": launch_state.diagnostics(), "population_path": str(args.population),
+    manifest = {"schema": "tessera.numerics_cases.v1", "population_path": str(args.population),
                 "device_code": {"backend": "cpu", "triton_specializations": [], "device_launches": 0},
                 "population_sha256": population_digest, "population_review": population["review"],
                 "q1_table_sha256": sha256(args.q1), "source_commit": source_revision, **launch_state.fields(),
@@ -575,7 +575,7 @@ def main():
             "reference_seconds": time.monotonic() - started,
             "host_peak_bytes": resource.getrusage(resource.RUSAGE_SELF).ru_maxrss * 1024})
     launch_state.check()
-    manifest.update(reference_seconds=time.monotonic() - started,
+    manifest.update(environment_diagnostics=launch_state.diagnostics(), reference_seconds=time.monotonic() - started,
                     host_peak_bytes=resource.getrusage(resource.RUSAGE_SELF).ru_maxrss * 1024, generation_finished=True)
     if args.sample_expert is not None:
         seconds = manifest["reference_seconds"]

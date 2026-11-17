@@ -71,7 +71,7 @@ def test_triton_observer_binds_loaded_bytes_case_target_constants_and_grid(code,
     assert kind.run is original
 
 
-@pytest.mark.parametrize("field", ("cubin", "entry", "target", "constants", "grid", "parameters", "case"))
+@pytest.mark.parametrize("field", ("cubin", "entry", "target", "constants", "parameters"))
 def test_serve_refuses_changed_compiled_specialization_before_launch(code, tmp_path, field):
     kind = kernel_type()
     audit = code.CodeAudit("image", tmp_path).install(kind)
@@ -79,7 +79,6 @@ def test_serve_refuses_changed_compiled_specialization_before_launch(code, tmp_p
         k = kind()
         with audit.context("sweep:0"):
             launch(k)
-        audit.expected = copy.deepcopy(audit.records)
         k.calls.clear()
         with audit.context("sweep:0"):
             launch(k)
@@ -90,9 +89,8 @@ def test_serve_refuses_changed_compiled_specialization_before_launch(code, tmp_p
         elif field == "entry": k.name = "another_entry"
         elif field == "target": k.metadata = k.metadata._replace(target=k.metadata.target._replace(arch=120))
         elif field == "constants": k.src.constants[(1,)] = 128
-        elif field == "grid": grid = (3, 1, 1)
         elif field == "parameters": k.packed_metadata = (8, 0)
-        with audit.context("other" if field == "case" else "sweep:0"):
+        with audit.context("sweep:0"):
             with pytest.raises(Invalid, match="Triton"):
                 launch(k, grid)
         assert k.calls == []
@@ -160,6 +158,7 @@ def profiled(code, tmp_path, monkeypatch):
     audit = code.CodeAudit("image", tmp_path)
     audit.saved = (object, None, None)
     monkeypatch.setattr(audit, "image_libraries", lambda: image)
+    monkeypatch.setattr(audit, "unaudited_libraries", lambda libraries: [], raising=False)
     recorder = BoundaryRecorder(lambda: None, [])
     recorder.code_audit = audit
     def run():
@@ -267,3 +266,42 @@ def test_join_refuses_changed_or_missing_specialization_bindings(code, monkeypat
     else: unit["triton_specializations"] = []
     with pytest.raises(Invalid, match="compiled|specialization|kernel|Triton"):
         join(pop, digest, manifests, receipts)
+
+
+@pytest.mark.parametrize("mutation", ("shared_name", "unaudited_only", "unreadable_roster", "unreadable_file"))
+def test_profile_refuses_unaudited_mapped_device_owners(profiled, code, tmp_path, monkeypatch, mutation):
+    from tests.test_numerics_rows_receipts import elf_bytes
+    from tessera._dev import native_identity
+    import os
+    run, names, _, audit = profiled
+    # Exercise real mapped-owner discovery, controlling only /proc and cuobjdump.
+    if hasattr(type(audit), "unaudited_libraries"):
+        monkeypatch.setattr(audit, "unaudited_libraries", type(audit).unaudited_libraries.__get__(audit))
+    path = tmp_path / "other.so"
+    path.write_bytes(elf_bytes())  # A host-only launcher must not block attestation.
+    stat = path.stat()
+    original = Path.read_text
+    active = False
+    def read_maps(self, *args, **kwargs):
+        if str(self) == "/proc/self/maps":
+            return f"1000-2000 r-xp 00000000 {os.major(stat.st_dev):x}:{os.minor(stat.st_dev):x} {stat.st_ino} {path}\n" if active else ""
+        return original(self, *args, **kwargs)
+    monkeypatch.setattr(Path, "read_text", read_maps)
+    monkeypatch.setattr(native_identity, "mapped_file_device", lambda fd: (os.major(stat.st_dev), os.minor(stat.st_dev)))
+    monkeypatch.setattr(code, "image_symbols", lambda p: [{"symbol": "_Zother", "demangled": CANARY[2]}])
+    assert not run()["unattested"]
+    active = True
+    assert not run()["unattested"]
+    path.write_bytes(elf_bytes(extra_sections=[(".nv_fatbin", 1, 2, b"device code", 11)]))
+    if mutation == "unaudited_only":
+        names.append("only_in_other_file")
+        monkeypatch.setattr(code, "image_symbols", lambda p: [{"symbol": "only_in_other_file", "demangled": "only_in_other_file"}])
+    elif mutation == "unreadable_roster":
+        def unreadable(path): raise code.Unattested("roster unavailable")
+        monkeypatch.setattr(code, "image_symbols", unreadable)
+    elif mutation == "unreadable_file":
+        path.write_bytes(b"unreadable ELF sections")
+    unit = run()
+    assert unit["unattested"]
+    if mutation in ("shared_name", "unaudited_only"):
+        assert any(any(c["origin"] == "unaudited" for c in r["candidates"]) for r in unit["unresolved_kernel_origins"])

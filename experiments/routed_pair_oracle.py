@@ -97,6 +97,7 @@ import os
 import socket
 import subprocess
 import sys
+import re
 import threading
 import time
 import traceback
@@ -1240,13 +1241,18 @@ class PowerSampler(threading.Thread):
                 "min_w": min(vals), "mean_fraction_of_140w_envelope": sum(vals) / len(vals) / 140.0}
 
 
-def kernel_table(prof, limit=25, *, device_only=False):
+def kernel_table(prof, limit=25, *, device_only=False, diagnostics=None):
     rows = []
     events = prof.key_averages()
     if device_only:
         import torch
         events = [evt for evt in prof.events() if evt.device_type == torch.autograd.DeviceType.CUDA]
     for evt in events:
+        if device_only and re.fullmatch(r"Memcpy (?:HtoD|DtoH|DtoD|HtoH|PtoP) \([A-Za-z ]+ -> [A-Za-z ]+\)|Memset \([A-Za-z ]+\)", evt.key):
+            if diagnostics is not None:
+                kind = "memcpy" if evt.key.startswith("Memcpy ") else "memset"
+                diagnostics[kind] = diagnostics.get(kind, 0) + int(evt.count)
+            continue
         dev = getattr(evt, "self_device_time_total", None)
         if dev is None:
             dev = getattr(evt, "self_cuda_time_total", 0.0)

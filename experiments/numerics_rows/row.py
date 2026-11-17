@@ -1,6 +1,8 @@
 """Run eager numerics units. Check bounded finiteness on exact and diagnostic inputs."""
 from __future__ import annotations
 
+from experiments.numerics_rows.common import error_text, error_trace
+
 import argparse
 import contextlib
 import copy
@@ -12,7 +14,6 @@ from pathlib import Path
 import re
 import sys
 import subprocess
-import traceback
 
 from experiments.numerics_rows.common import BoundaryError, BoundaryRecorder, Invalid, Unattested, IMAGES, KERNEL_SHA256, check_runtime, check_source, sha256, write_json
 from experiments.numerics_rows.build import IDENTITY_FIELDS, library_identity
@@ -331,7 +332,7 @@ class Dense:
         self.name, self.library = entry["name"], entry["library"]
         self.layer, self.method, self.info = dense.build_served(
             self.store, self.name, mode="resident", tp_rank=cut["rank"], tp_size=cut["size"],
-            fused=None, instruction=None)
+            fused=None)
         self.scheme = self.store.schemes[self.name]
         wire = self.store.wire(self.name).contiguous().numpy().tobytes()
         if hashlib.sha256(wire).hexdigest() != manifest["wire_sha256"]:
@@ -427,18 +428,22 @@ class Dense:
         return all(torch.equal(bundle.scale.reshape(-1).view(torch.int32), scale.reshape(-1).view(torch.int32)) for bundle, (_, _, scale, _) in zip(bundles, self.roles))
 
 
-def run_dense_case(adapter, unit, recipe, recorder, *, exact=True):
+def run_dense_case(adapter, unit, recipe, recorder, *, exact=True, category="sweep"):
     import torch
 
     m = unit["m_config"]["M"]
-    x = torch.zeros(m, adapter.cols, dtype=torch.bfloat16, device="cuda")
+    x = torch.zeros(m, adapter.cols, dtype=torch.bfloat16, device=adapter.device)
     for row, columns, values in recipe:
-        x[row % m, columns] = torch.tensor(values, dtype=torch.bfloat16, device="cuda")
+        x[row % m, columns] = torch.tensor(values, dtype=torch.bfloat16, device=adapter.device)
     q, sf, a, a_scale = adapter.quantized(x, recorder)
     reference, mask, bound = adapter.reference(a, a_scale, exact=exact, splits=unit["m_config"]["k_split"])
     finite_reference(reference)
     if exact:
         require_x(mask, sweep=all(len(columns) <= 1 for _, columns, _ in recipe))
+    if hasattr(adapter, "case_writer"):
+        adapter.case_writer.dense(adapter, unit, x, q, sf, reference, mask, bound, category=category)
+        unit["exact"]["composition"]["cases"] += 1
+        return compare_output(unit, str(recipe), reference, reference, mask)
     try:
         got = recorder.call("dense:apply", "apply", lambda: opaque_apply(adapter.apply, recorder, x))
     except BoundaryError as error:
@@ -482,13 +487,13 @@ def dense_cases(adapter, unit, manifest, recorder):
             unit["exact"]["sweep"]["elements"] += len(batch) * adapter.rows
             unit["exact"]["sweep"]["mismatches"] += result["mismatches"]
     for pair in chunk_pairs(adapter.cols, unit["m_config"]["chunk_size"]):
-        result = run_dense_case(adapter, unit, [(row, list(pair), [1, 1]) for row in range(m)], recorder)
+        result = run_dense_case(adapter, unit, [(row, list(pair), [1, 1]) for row in range(m)], recorder, category="chunk_pairs")
         unit["exact"]["chunk_pairs"]["rows"] += m
         unit["exact"]["chunk_pairs"]["x_elements"] += result.get("elements", 0)
         unit["exact"]["chunk_pairs"]["mismatches"] += result["mismatches"]
     if unit["m_config"]["k_split"] > 1:
         columns = split_columns(adapter.cols, unit["m_config"]["chunk_size"], unit["m_config"]["k_split"])
-        run_dense_case(adapter, unit, [(row, columns, [1] * len(columns)) for row in range(m)], recorder)
+        run_dense_case(adapter, unit, [(row, columns, [1] * len(columns)) for row in range(m)], recorder, category="split_columns")
 
 
 def diagnostic_cells(units):
@@ -579,11 +584,23 @@ def check_rule_freeze(rule, freeze, *, canary=False, launch_levers_sha256=None):
         raise Invalid("launch lever file is not the frozen file")
     if freeze.get("sha256") != sha256(rule) or not freeze.get("reviewer"):
         raise Invalid("rule is not the reviewed rule")
-    if canary:
-        if freeze.get("canary") is not True or freeze.get("frozen_utc") is not None:
+    if canary and freeze.get("canary") is True:
+        if freeze.get("frozen_utc") is not None:
             raise Invalid("canary record must say canary=true and frozen_utc=null")
     elif freeze.get("canary") or not freeze.get("frozen_utc"):
         raise Invalid("rule is not the reviewed, frozen rule")
+
+
+def bind_freeze_addendum(freeze, freeze_path, rule_path, addendum_path):
+    addendum = json.loads(Path(addendum_path).read_text())
+    if addendum.get("freeze_record_sha256") != sha256(freeze_path) or addendum.get("rule_sha256") != sha256(rule_path) or not addendum.get("reviewer") or not addendum.get("frozen_utc"):
+        raise Invalid("lever freeze addendum does not bind this frozen record and rule")
+    digest = addendum.get("launch_levers_sha256")
+    if not isinstance(digest, str) or not re.fullmatch("[0-9a-f]{64}", digest):
+        raise Invalid("lever freeze addendum has no lever-file digest")
+    if freeze.get("launch_levers_sha256", digest) != digest:
+        raise Invalid("lever freeze addendum differs from frozen lever binding")
+    return {**freeze, "launch_levers_sha256": digest, "freeze_addendum_sha256": sha256(addendum_path)}
 
 
 def selected_groups(groups, size=None, rank=None):
@@ -604,10 +621,14 @@ def main():
     p.add_argument("--image", choices=("G", "N"), required=True)
     p.add_argument("--name", required=True)
     p.add_argument("--build-provenance", type=Path, required=True)
+    p.add_argument("--freeze-addendum", type=Path)
     from experiments.numerics_rows.launch_state import LEVERS, LaunchState
     p.add_argument("--launch-levers", type=Path, default=LEVERS)
     p.add_argument("--module", action="append", default=[], help="Explicit module name in the signed population; repeat for a subset")
     p.add_argument("--canary", action="store_true", help="Uncounted pre-freeze run; its receipt cannot be joined")
+    p.add_argument("--phase", choices=("prepare", "capture", "compare"))
+    p.add_argument("--prepare-artifact", type=Path)
+    p.add_argument("--capture-artifact", type=Path)
     p.add_argument("--tp-size", type=int, choices=(1, 2))
     p.add_argument("--tp-rank", type=int, choices=(0, 1))
     args = p.parse_args()
@@ -620,7 +641,11 @@ def main():
                "modules": [], "units": [], "negative_controls": [], "diagnostic_cells": [], "findings": []}
     from experiments.numerics_rows.gpu_time import RowMeter
 
-    meter = RowMeter()
+    meter = RowMeter() if args.phase not in ("prepare", "compare") else None
+    args.meter = meter
+    from experiments.numerics_rows.phase_lifecycle import handled_signals
+    signals = handled_signals(receipt, args.out, lambda: args.progress.checkpoint() if getattr(args, "progress", None) else None)
+    signals.__enter__()
     try:
         args.launch_state = LaunchState(args.launch_levers, fresh=True)
         fields = args.launch_state.fields()
@@ -628,20 +653,23 @@ def main():
         receipt["inputs"]["launch_levers_sha256"] = fields["launch_levers_sha256"]
         run(args, receipt)
     except Exception as error:
-        receipt["row"].update(utc_end=datetime.now(timezone.utc).isoformat(), exit_status=3, stop_cause=str(error), finalization_finished=False)
+        receipt["row"].update(utc_end=datetime.now(timezone.utc).isoformat(), exit_status=3, stop_cause=error_text(error), finalization_finished=False)
         if isinstance(error, Invalid):
             receipt["row"]["outcome"] = "INVALID"
             for unit in receipt["units"]:
-                unit["invalid"].append(str(error))
+                unit["invalid"].append(error_text(error))
                 unit["completed"] = True
-        receipt["findings"].append(traceback.format_exc())
+        receipt["row"]["outcome"] = "FAIL" if any(u["findings"] for u in receipt["units"]) else ("INVALID" if isinstance(error, Invalid) else "STOPPED")
+        receipt["findings"].append(error_trace(error))
         for unit in receipt["units"]:
             finish_unit(unit)
         receipt["diagnostic_cells"] = diagnostic_cells(receipt["units"])
         write_json(args.out / "numerics_row.json", receipt)
         raise SystemExit(3) from error
     finally:
-        receipt["row"]["gpu_minutes"] = meter.finish()
+        signals.__exit__(None, None, None)
+        if meter is not None:
+            receipt["row"]["gpu_minutes"] = meter.finish()
         write_json(args.out / "numerics_row.json", receipt)
 
 
@@ -649,7 +677,7 @@ def run(args, receipt):
     from experiments.numerics_rows.gpu_time import PhaseTimes
 
     try:
-        with PhaseTimes(receipt["row"]) as phases:
+        with PhaseTimes(receipt["row"], getattr(args, "meter", None)) as phases:
             run_row(args, receipt, phases)
     finally:
         if getattr(args, "code_audit", None) is not None:
@@ -698,9 +726,12 @@ def run_row(args, receipt, phases):
     launch_state.check()
     receipt["runtime"] = runtime
     write_json(args.out / "native_ops.json", runtime["native_ops"])
-    if torch.cuda.get_device_capability() != (12, 1):
+    host_phase = getattr(args, "phase", None) in ("prepare", "compare")
+    if not host_phase and torch.cuda.get_device_capability() != (12, 1):
         raise Invalid("device capability differs from the sm_121 cell")
     freeze = json.loads(args.freeze.read_text())
+    if getattr(args, "freeze_addendum", None) is not None:
+        freeze = bind_freeze_addendum(freeze, args.freeze, args.rule, args.freeze_addendum)
     check_rule_freeze(args.rule, freeze, canary=getattr(args, "canary", False), launch_levers_sha256=launch_state.levers_sha256)
     receipt["canary"] = getattr(args, "canary", False)
     manifest, built, h1 = (json.loads(path.read_text()) for path in (args.manifest, args.build, args.h1))
@@ -708,6 +739,7 @@ def run_row(args, receipt, phases):
     check_binding(manifest, launch_state.fields())
     check_math_binding(manifest, launch_state.fields())
     check_math_binding(h1, launch_state.fields())
+    check_binding(h1, launch_state.fields())
     check_manifest_source(manifest, commit, args.source / "src/tessera/serving/runtime_contract.json")
     if manifest["population_sha256"] != population_digest or manifest["q1_table_sha256"] != sha256(args.q1):
         raise Invalid("case manifest input identity differs")
@@ -742,8 +774,8 @@ def run_row(args, receipt, phases):
     library, = [r for r in built["libraries"] if r["key"] == key]
     d, = [t for t in q1["tables"] if t["key"] == key]
     receipt.update({"rule": rule_receipt(args.rule, freeze, h1, args.h1),
-               "runtime": {**runtime, "device": torch.cuda.get_device_name(), "capability": list(torch.cuda.get_device_capability()),
-                           "driver": __import__("subprocess").check_output(["nvidia-smi", "--query-gpu=driver_version", "--format=csv,noheader"], text=True).strip()},
+               "runtime": {**runtime, **({} if host_phase else {"device": torch.cuda.get_device_name(), "capability": list(torch.cuda.get_device_capability()),
+                           "driver": subprocess.check_output(["nvidia-smi", "--query-gpu=driver_version", "--format=csv,noheader"], text=True).strip()})},
                "tessera": {"commit": commit, "contract_sha256": sha256(args.source / "src/tessera/serving/runtime_contract.json"), "src_tree_sha256": source_digest(args.source), "kernel_source_sha256": KERNEL_SHA256,
                            "serving_compile": compile_paths, "retained_source": retained_source, "build_provenance_sha256": sha256(args.build_provenance),
                            "build_provenance": str(args.build_provenance),
@@ -755,8 +787,12 @@ def run_row(args, receipt, phases):
                "inputs": {"population_sha256": population_digest, "build_sha256": sha256(args.build), "case_manifest_sha256": sha256(args.manifest),
                           "selected_modules": [entry["name"] for entry in population["modules"]],
                           "selected_cuts": [dict(cut) for _, _, cut, _ in groups],
-                          "q1_table_sha256": sha256(args.q1), "launch_levers_sha256": launch_state.levers_sha256, "reference_selftest": selftest(device="cuda")},
-               "negative_controls": negative_controls()})
+                          "q1_table_sha256": sha256(args.q1), "launch_levers_sha256": launch_state.levers_sha256, "reference_selftest": selftest(device="cpu" if getattr(args, "phase", None) else "cuda")},
+               "negative_controls": negative_controls(device="cpu") if getattr(args, "phase", None) else negative_controls()})
+    if getattr(args, "phase", None):
+        from experiments.numerics_rows.dense_phases import run_phase
+        run_phase(args, receipt, phases, groups, library, q1, compile_paths)
+        return
     exit_status = 0
     served_cache = {}
     try:
@@ -773,7 +809,7 @@ def run_row(args, receipt, phases):
                         launch_state.check()
                     except Invalid as error:
                         for unit in units:
-                            unit["invalid"].append(str(error))
+                            unit["invalid"].append(error_text(error))
                             unit["completed"] = True
                             finish_unit(unit)
                         write_json(args.out / "numerics_row.json", receipt)
@@ -784,7 +820,8 @@ def run_row(args, receipt, phases):
                         with torch.profiler.profile(activities=[torch.profiler.ProfilerActivity.CPU, torch.profiler.ProfilerActivity.CUDA]) as prepared_profile:
                             adapter = Routed(entry, cut, module, table) if routed else Dense(entry, cut, module)
                         from experiments.routed_pair_oracle import kernel_table
-                        preparation_kernels = kernel_table(prepared_profile, limit=100000, device_only=True)
+                        transfer_events = {}
+                        preparation_kernels = kernel_table(prepared_profile, limit=100000, device_only=True, diagnostics=transfer_events)
                     if phase == "gate_cases":
                         receipt["modules"].append(module_receipt(module, adapter, routed))
                     for unit in units:
@@ -798,10 +835,10 @@ def run_row(args, receipt, phases):
                         code_audit.unit = unit
                         unit["unit_id"] = unit_identity(unit)
                         from experiments.numerics_rows.dependency_code import binding
-                        unit.setdefault("triton_specializations", []).extend(
-                            binding(unit["unit_id"], r["case"], r["identity"]) for r in code_audit.records[start:]
-                            if binding(unit["unit_id"], r["case"], r["identity"]) not in unit.get("triton_specializations", []))
+                        records = [binding(unit["unit_id"], r["case"], r["identity"]) for r in code_audit.records[start:]]
+                        unit.setdefault("triton_specializations", []).extend(r for r in records if r not in unit["triton_specializations"])
                         unit["arm"].setdefault("preparation_kernels", []).extend(preparation_kernels)
+                        unit["arm"]["preparation_transfer_events"] = dict(transfer_events)
                         try:
                             launch_state.check()
                             unit["tp"].update(tp_facts(adapter, module, routed))
@@ -821,9 +858,9 @@ def run_row(args, receipt, phases):
                                 except BoundaryError as error:
                                     record_cuda_error(unit, error)
                                 except Invalid as error:
-                                    unit["invalid"].append(str(error))
+                                    unit["invalid"].append(error_text(error))
                                 except Unattested as error:
-                                    unit["unattested"].append(str(error))
+                                    unit["unattested"].append(error_text(error))
                                 except Exception as error:
                                     record_diagnostic_error(receipt, unit, error)
                                 finally:
@@ -867,10 +904,10 @@ def run_row(args, receipt, phases):
                         except BoundaryError as error:
                             record_cuda_error(unit, error)
                         except Invalid as error:
-                            unit["invalid"].append(str(error))
+                            unit["invalid"].append(error_text(error))
                             unit["completed"] = True
                         except Unattested as error:
-                            unit["unattested"].append(str(error))
+                            unit["unattested"].append(error_text(error))
                             unit["completed"] = True
                         finally:
                             unit["flags_latched_diagnostic"] = launch_state.latched_diagnostic(getattr(sys.modules.get("tessera.serving.flags"), "_LATCHED", {}))
@@ -879,8 +916,8 @@ def run_row(args, receipt, phases):
                             write_json(args.out / "numerics_row.json", receipt)
                     del adapter
     except Exception as error:
-        receipt["row"]["stop_cause"] = str(error)
-        receipt["findings"].append(traceback.format_exc())
+        receipt["row"]["stop_cause"] = error_text(error)
+        receipt["findings"].append(error_trace(error))
         exit_status = 3
     if not receipt["units"]:
         receipt["row"]["stop_cause"] = receipt["row"]["stop_cause"] or "no population units ran"
@@ -902,7 +939,7 @@ def run_row(args, receipt, phases):
 
 
 def record_diagnostic_error(receipt, unit, error):
-    message = f"diagnostic {type(error).__name__}: {error}"
+    message = f"diagnostic {type(error).__name__}: {error_text(error)}"
     unit.setdefault("diagnostic_errors", []).append(message)
     receipt["findings"].append(message)
 
@@ -915,21 +952,19 @@ def dense_diagnostics(adapter, unit, recorder):
     graph = None
     for seed in (0, 1, 2):
         for distribution in ("gauss", "outlier", "zero"):
-            x = torch.randn(m, adapter.cols, device="cuda", generator=torch.Generator(device="cuda").manual_seed(seed)).bfloat16()
+            if hasattr(adapter, "case_writer"):
+                adapter.case_writer.begin(unit, f"diagnostic:{distribution}:{seed}:reference")
+            x = torch.randn(m, adapter.cols, device=adapter.device, generator=torch.Generator(device=adapter.device).manual_seed(seed)).bfloat16()
             if distribution == "zero":
                 x.zero_()
             elif distribution == "outlier":
                 x.flatten()[::256] *= 128
-                x = (x.float() * torch.exp2(torch.linspace(-8, 8, m, device="cuda"))[:, None]).bfloat16()
+                x = (x.float() * torch.exp2(torch.linspace(-8, 8, m, device=adapter.device))[:, None]).bfloat16()
                 if adapter.family == "e2m1":
                     x = (x.float() * min(1.0, 6 * 448 / (float(x.abs().max()) * adapter.gs))).bfloat16()
             q, sf, a, a_scale = adapter.quantized(x, recorder)
             ordered, _, certificate = adapter.reference(a, a_scale, exact=False, splits=unit["m_config"]["k_split"])
             finite_reference(ordered)
-            got = recorder.call("diagnostic:apply", "apply", lambda: opaque_apply(adapter.apply, recorder, x))
-            staged = adapter.staged(q, sf, recorder)
-            if not compare(got, staged)["equal"]:
-                unit["findings"].append("realistic apply differs from its staged composition")
             reference, totals = [], []
             for _, weight, scale, _ in adapter.roles:
                 c = (scale.float() / torch.tensor(adapter.gs, dtype=torch.float32, device=scale.device)).double() if adapter.family == "e2m1" else scale.double()
@@ -937,6 +972,15 @@ def dense_diagnostics(adapter, unit, recorder):
                 reference.append((aa @ weight.double().T) * c)
                 totals.append((aa.abs() @ weight.double().abs().T) * c.abs())
             bound = torch.cat(totals, 1)
+            if hasattr(adapter, "case_writer"):
+                adapter.case_writer.dense(adapter, unit, x, q, sf, ordered, None, certificate,
+                    category="diagnostic", distribution=distribution, seed=seed,
+                    diagnostic_reference=torch.cat(reference, 1), products_abs=bound)
+                continue
+            got = recorder.call("diagnostic:apply", "apply", lambda: opaque_apply(adapter.apply, recorder, x))
+            staged = adapter.staged(q, sf, recorder)
+            if not compare(got, staged)["equal"]:
+                unit["findings"].append("realistic apply differs from its staged composition")
             finite_outputs(unit, f"diagnostic:{distribution}:{seed}:apply", got, certificate)
             finite_outputs(unit, f"diagnostic:{distribution}:{seed}:staged", staged, certificate)
             unit["exact"]["composition"]["cases"] += 1
@@ -945,6 +989,8 @@ def dense_diagnostics(adapter, unit, recorder):
                                                  unit["m_config"]["k_split"], distribution, seed))
             if seed == 0 and distribution == "gauss":
                 graph = adapter.prepare_staged(q, sf, recorder)
+    if hasattr(adapter, "case_writer"):
+        return
     launch, buffer = graph
     graph_record(unit, "dense-staged", launch, buffer, recorder)
 
@@ -1040,8 +1086,6 @@ def profile_unit(adapter, unit, recorder, *, routed):
     from experiments.numerics_rows.cases import routing
 
     audit = getattr(recorder, "code_audit", None)
-    if audit is not None:
-        audit.image_libraries()
     m = unit["m_config"]["M"]
     x = torch.zeros(m, adapter.cols, dtype=torch.bfloat16, device="cuda")
     kernels, launches = {}, []
@@ -1054,10 +1098,16 @@ def profile_unit(adapter, unit, recorder, *, routed):
             call = lambda: adapter.apply(x)
         with torch.profiler.profile(activities=[torch.profiler.ProfilerActivity.CPU, torch.profiler.ProfilerActivity.CUDA]) as profile:
             recorder.call("dispatch-profiler:apply", "apply", lambda: opaque_apply(call, recorder))
-        records = kernel_table(profile, limit=100000, device_only=True)
+        records = kernel_table(profile, limit=100000, device_only=True, diagnostics=unit["arm"].setdefault("cuda_transfer_events", {}))
         launches.append({"route_count": count, "profiler_names": [r["name"] for r in records]})
         kernels.update({r["name"]: r for r in records})
-    unit["arm"]["profiler_launches"] = launches
+    bind_kernel_profile(adapter, unit, recorder, list(kernels.values()), launches, routed=routed)
+
+
+def bind_kernel_profile(adapter, unit, recorder, records, launches, *, routed):
+    audit = getattr(recorder, "code_audit", None)
+    kernels = {r["name"]: r for r in unit["arm"].get("profiler_kernels", []) + records}
+    unit["arm"].setdefault("profiler_launches", []).extend(launches)
     unit["arm"]["profiler_kernels"] = list(kernels.values())
     unit["m_config"]["compiled_kernel_symbols"] = []
     library = adapter.served_identity
@@ -1261,7 +1311,7 @@ def check_preconditions(unit, *, scale_equal, routed=False, slice_matched=True, 
 
 
 def record_cuda_error(unit, error):
-    unit["cuda_errors"].append({"call": error.record["call"], "attributed_to": error.attributed_to, "message": str(error)})
+    unit["cuda_errors"].append({"call": error.record["call"], "attributed_to": error.attributed_to, "message": error_text(error)})
     if error.attributed_to:
         unit["findings"].append("CUDA error attributed to a Tessera launch")
     else:

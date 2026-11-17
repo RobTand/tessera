@@ -1984,7 +1984,10 @@ ts_py_library(
     name = "numerics_rows/cases_cycle",
     srcs = [
         "numerics_rows/cases.py",
+        "numerics_rows/dense_phases.py",
         "numerics_rows/h1.py",
+        "numerics_rows/phase_artifact.py",
+        "numerics_rows/phase_lifecycle.py",
         "numerics_rows/population.py",
         "numerics_rows/routed.py",
         "numerics_rows/row.py",
@@ -2078,6 +2081,7 @@ ts_py_library(
         "//src/tessera:__init___cycle",
         "//src/tessera:_dev/__init__",
         "//src/tessera:_dev/native_identity",
+        ":numerics_rows/build_cycle",
         ":numerics_rows/common",
         ":numerics_rows/launch_state",
     ],
@@ -2166,6 +2170,23 @@ ts_py_library(
     deps = [
         ":numerics_rows/cases_cycle",
         ":numerics_rows/common",
+        ":numerics_rows/start_env",
+    ],
+)
+
+ts_py_library(
+    name = "numerics_rows/prepare_split",
+    srcs = [
+        "numerics_rows/prepare_split.py",
+    ],
+    data = [
+        "numerics_rows/README.md",
+    ],
+    deps = [
+        ":numerics_rows/cases_cycle",
+        ":numerics_rows/common",
+        ":numerics_rows/launch_state",
+        ":numerics_rows/prepare_job",
         ":numerics_rows/start_env",
     ],
 )

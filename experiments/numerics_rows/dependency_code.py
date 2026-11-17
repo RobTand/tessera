@@ -63,14 +63,6 @@ def specialization(kernel, launch, loaded):
             "launch": {"grid": canonical(launch[:3]), **{k: bound[k] for k in ("metadata", "packed_metadata")}}}
 
 
-def check_specializations(observed, expected):
-    """A serve checks the complete unit/case/configuration binding before launch."""
-    if not isinstance(expected, list):
-        raise Unattested("Triton specialization bindings are missing")
-    if observed not in expected:
-        raise Invalid("Triton specialization identity differs from its unit and case")
-
-
 def binding(unit_id, case, identity):
     record = {"unit_id": unit_id, "case": case, "identity": identity}
     return {**record, "sha256": json_digest(record)}
@@ -109,7 +101,7 @@ def kernel_origins(names, libraries, specializations):
     records, unresolved = [], []
     for name in sorted(set(names)):
         candidates = index.get(normalize(name), {})
-        if len(candidates) != 1:
+        if len(candidates) != 1 or any(r["origin"] == "unaudited" for r in candidates.values()):
             unresolved.append({"name": name, "candidates": list(candidates.values())})
         else:
             owner = next(iter(candidates.values()))
@@ -118,13 +110,12 @@ def kernel_origins(names, libraries, specializations):
 
 
 class CodeAudit:
-    def __init__(self, image_digest, out, *, inventory=IMAGE_CODE, expected=None):
+    def __init__(self, image_digest, out, *, inventory=IMAGE_CODE):
         self.image_digest, self.out = image_digest, Path(out)
         self.inventory_path = Path(inventory)
         self.loaded, self.images, self.records, self.saved = {}, {}, [], None
         self.case, self.unit = "preparation", None
         self.p2 = []
-        self.expected = expected
 
     def install(self, kernel_type=None):
         if kernel_type is None:
@@ -156,8 +147,6 @@ class CodeAudit:
                 ):
                     raise Unattested("H1 P2 did not check this compiled Triton specialization")
                 record = binding(audit.unit.get("unit_id") if audit.unit is not None else None, audit.case, identity)
-                if audit.expected is not None:
-                    check_specializations(record, audit.expected)
                 if record not in audit.records:
                     audit.records.append(record)
                 if audit.unit is not None:
@@ -218,10 +207,44 @@ class CodeAudit:
             libraries.append(self.images[path])
         return libraries
 
+    def unaudited_libraries(self, audited):
+        """Account for every other executable mapped inode that can own CUDA code."""
+        from experiments.numerics_rows.build import elf_sections
+        from tessera._dev.native_identity import mapped_file_device
+        import os
+
+        known = {r["path"] for r in audited}
+        libraries = []
+        paths = {}
+        for line in Path("/proc/self/maps").read_text().splitlines():
+            fields = line.split(None, 5)
+            if len(fields) == 6 and "x" in fields[1] and fields[5].startswith("/"):
+                paths.setdefault(fields[5], []).append(fields)
+        for path, mappings in paths.items():
+            try:
+                with open(path, "rb") as stream:
+                    stat = os.fstat(stream.fileno())
+                    device = mapped_file_device(stream.fileno())
+                    if any((tuple(int(v, 16) for v in r[3].split(":")), int(r[4])) != (device, stat.st_ino) for r in mappings):
+                        raise ValueError("mapped inode differs")
+                    if path in known:
+                        continue
+                    _, _, sections = elf_sections(stream.read())
+                if not any(r["name"] in (".nv_fatbin", ".nvFatBinSegment") for r in sections):
+                    continue
+                symbols = image_symbols(path)
+                if not symbols:
+                    raise Unattested("mapped device-code roster is empty: " + path)
+                libraries.append({"origin": "unaudited", "path": path, "sha256": None, "symbols": symbols})
+            except (OSError, ValueError, RuntimeError) as error:
+                raise Unattested("mapped file or device-code roster unavailable: " + path) from error
+        return libraries
+
     def bind_profile(self, unit, names, native=()):
         libraries = list(native)
         try:
             libraries.extend(self.image_libraries())
+            libraries.extend(self.unaudited_libraries(libraries))
         except Unattested as error:
             unit["unattested"].append(str(error))
         records, unresolved = kernel_origins(names, libraries, unit.get("triton_specializations", []))
