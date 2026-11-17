@@ -225,7 +225,8 @@ def test_the_workflow_keeps_its_check_names_refs_and_scopes():
     text = (ROOT / '.github/workflows/gate.yml').read_text()
     assert '    name: pr-gate\n' in text and '    name: gate\n' in text
     assert 'action: scopes-git-refs' in text and 'action: scopes-upload' in text
-    assert "cron: '17 3-23/6 * * *'" in text and 'workflow_dispatch:' in text
+    assert 'schedule:' not in text and 'workflow_dispatch:' in text  # a timer on dl380g10 starts the record (#1739)
+    assert "    if: github.event_name == 'workflow_dispatch'\n    runs-on: ubuntu-24.04\n    timeout-minutes: 335" in text
     assert 'labeled' not in text
     assert 'check_no_secret_leak.py' in text or 'check-no-secret-leak' in text
 
