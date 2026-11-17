@@ -103,10 +103,14 @@ def require_scan_python():
         raise GateError(f'scanner bootstrap failed: {type(error).__name__}') from error
 
 
-# fnmatch's * also crosses '/', so 'tools/bazel/*' covers the whole tree.
+# fnmatch's * also crosses '/', so 'tools/bazel/*' covers the whole tree. These two only add data to
+# existing rules, whose hashes bazel-diff compares; the inputs check verifies the shard lists every gate.
+IMPACT_INPUTS = ['tools/bazel/full_targets/*', 'tools/bazel/test_inputs.bzl']
+
+
 def fallback_files(changed):
-    return sorted(path for path in changed if any(
-        fnmatch(path, pattern) if '/' in pattern else path == pattern for pattern in FALLBACK))
+    return sorted(path for path in changed if not any(fnmatch(path, pattern) for pattern in IMPACT_INPUTS)
+                  and any(fnmatch(path, pattern) if '/' in pattern else path == pattern for pattern in FALLBACK))
 
 
 def build_graph(path):

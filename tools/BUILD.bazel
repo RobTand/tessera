@@ -105,6 +105,7 @@ ts_py_library(
         "//:.github/workflows/gate.yml",
         "//tools/bazel:build_files.py",
         "//tools/bazel:requirements.py",
+        "//tools/bazel:test_inputs.bzl",
     ],
     deps = [
         ":ci/check_no_secret_leak",
