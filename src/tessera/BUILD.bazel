@@ -87,7 +87,6 @@ ts_py_library(
         "kernel_window.py",
         "kernel_window_gemv.py",
         "lane_planes.py",
-        "load_built.py",
         "moe_execution.py",
         "moe_layout.py",
         "native_window_moe.py",
@@ -161,8 +160,8 @@ ts_py_library(
         ":kernel_roster",
         ":kernel_wire",
         ":layout",
+        ":load_built",
         ":metadata",
-        ":native_identity",
         ":routed_class_dispatch",
         ":scale_channel",
         ":serving/activation_attestation",
@@ -557,6 +556,17 @@ ts_py_library(
 )
 
 ts_py_library(
+    name = "load_built",
+    srcs = [
+        "load_built.py",
+    ],
+    deps = [
+        ":__init___cycle",
+        ":native_identity",
+    ],
+)
+
+ts_py_library(
     name = "metadata",
     srcs = [
         "metadata.py",
@@ -646,6 +656,7 @@ ts_py_library(
         ":errors",
         ":fragment_wire",
         ":jit_build_lock",
+        ":load_built",
         ":window_geometry",
     ],
 )

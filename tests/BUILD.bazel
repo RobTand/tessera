@@ -10731,6 +10731,7 @@ ts_py_library(
         "//src/tessera:__init___cycle",
         "//src/tessera:bf16_route_cycle",
         "//src/tessera:jit_build_lock",
+        "//src/tessera:load_built",
     ],
 )
 
