@@ -14,9 +14,7 @@ name: hosted gate
     # requests, and each would rerun pr-gate, which the queue requires.
     types: [opened, synchronize, reopened]
   # The full record runs every 6 hours (offset 3 h from PrismaQuant's), not on each merge.
-  schedule:
-  - cron: '17 3-23/6 * * *'
-  workflow_dispatch:
+  workflow_dispatch:  # the post-merge record: a timer on dl380g10 starts it (docs/ci_gate.md)
 
 permissions:
   contents: read
@@ -238,7 +236,7 @@ jobs:
 
   post-merge:
     name: Post-merge full run
-    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    if: github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-24.04
     timeout-minutes: 335
     permissions:
@@ -251,15 +249,10 @@ jobs:
           persist-credentials: false
       - id: window
         name: Record window
-        # A schedule records only when master moved within the interval and a margin; the window
-        # starts at master's head of 7 hours ago, so every merge falls in at least one window.
-        run: |
-          recent="$(git log -1 --since='7 hours ago' --format=%H)"
-          if [ "$GITHUB_EVENT_NAME" != schedule ] || [ -n "$recent" ]; then echo run=true >> "$GITHUB_OUTPUT"; fi
-          echo "before=$(git rev-list -1 --first-parent --before='7 hours ago' HEAD)" >> "$GITHUB_OUTPUT"
+        # The window starts at master's head of 7 hours ago, so with a record every 6 hours every merge falls in one.
+        run: echo "before=$(git rev-list -1 --first-parent --before='7 hours ago' HEAD)" >> "$GITHUB_OUTPUT"
       - id: prs
         name: Merged pull requests
-        if: steps.window.outputs.run == 'true'
         env:
           GH_TOKEN: ${{ github.token }}
           BEFORE: ${{ steps.window.outputs.before }}
@@ -272,7 +265,6 @@ jobs:
           echo "prs=$prs" >> "$GITHUB_OUTPUT"
       - id: full
         name: Test everything on amd64 and arm64
-        if: steps.window.outputs.run == 'true'
         env:
           BUILDBUDDY_API_KEY: ${{ secrets.BUILDBUDDY_API_KEY }}
           BEFORE: ${{ steps.window.outputs.before }}
