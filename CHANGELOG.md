@@ -1,5 +1,11 @@
 # Changelog
 
+## 2026-11-16: restore default-off decode-once E4M3 prefill, issue #1736
+
+Leave TESSERA_E4M3_DECODE_ONCE unset to keep the packed window pair at every M.
+Explicit 1 retains the experimental eager resident lane and its compiled-forward refusal.
+No contract cell, launch pair set, kernel or MIN_M changes.
+
 ## 2026-11-16: qualify IMG-N routed E4M3 scope, contract v70, issue #1699
 
 Name the current class pair at the four existing rungs in decode and batch.

@@ -34,7 +34,7 @@ __all__ = ["DecodedE4M3", "FLAG", "MIN_M", "decode_e4m3", "enabled", "prefill_ap
 
 E4M3 = torch.float8_e4m3fn
 
-#: Default on for resident modules with an eager forward. Explicit 0 opts out.
+#: Default off. Explicit 1 enables resident modules with an eager forward.
 #: Decode once at load and serve M >= MIN_M from the resident copy.
 FLAG = "TESSERA_E4M3_DECODE_ONCE"
 
@@ -50,7 +50,7 @@ def enabled() -> bool:
     """``TESSERA_E4M3_DECODE_ONCE``, strictly parsed and latched per process."""
     from .flags import latched_bool
 
-    return latched_bool(FLAG, default=True, meaning="the decode-once E4M3 dense prefill lane")
+    return latched_bool(FLAG, default=False, meaning="the decode-once E4M3 dense prefill lane")
 
 
 @dataclasses.dataclass(frozen=True)

@@ -198,8 +198,8 @@ def _route_layer(monkeypatch, flag, mode, seed, vllm_mode="NONE", roles=ROLES):
 @cuda
 @pytest.mark.parametrize("roles", [ROLES, [("gate_proj", 128), ("up_proj", 128)],
                                   [("down_proj", 128)]], ids=["dense", "shared-gate-up", "shared-down"])
-@pytest.mark.parametrize("flag,mode,attached", [(None, "resident", True), ("1", "resident", True),
-                                                ("", "resident", True), ("0", "resident", False),
+@pytest.mark.parametrize("flag,mode,attached", [(None, "resident", False), ("1", "resident", True),
+                                                ("", "resident", False), ("0", "resident", False),
                                                 (None, "streamed", False), ("1", "streamed", False)])
 def test_the_fp8_route_attaches_only_under_the_flag_and_resident(monkeypatch, flag, mode, attached, roles):
     """The real load and forward cover dense and shared projection modules."""
@@ -292,7 +292,7 @@ def test_the_decode_once_lane_refuses_a_compiled_forward_and_the_window_lane_doe
 
 # CPU policy lifecycle: external vLLM/CUDA preparation seams are stand-ins;
 # the route, compile owner, decoded-copy attachment and accounting are real.
-def _cpu_load_entry(monkeypatch, flag, mode, vllm_mode):
+def _cpu_load_entry(monkeypatch, flag, mode, vllm_mode, fused=False):
     from types import SimpleNamespace
 
     from test_piece_major_reader_boundaries import prepared
@@ -306,9 +306,17 @@ def _cpu_load_entry(monkeypatch, flag, mode, vllm_mode):
     else:
         monkeypatch.setenv(e4m3_prefill.FLAG, flag)
     bundle = prepared()
+    fused_roles = None
+    if fused:
+        from tessera import routed_fused
+        monkeypatch.setattr(routed_fused, "fused_dense_window_supported", lambda bundle: None)
+        monkeypatch.setattr(routed_fused, "_ext", lambda library: None)
+        monkeypatch.setattr(routed_fused, "library_for", lambda family: "e4m3mma")
+        fused_roles = [routed_fused.prepare_dense_role(bundle)]
     native = PreparedDenseNativeModule(
         [SimpleNamespace(name="weight", rows=bundle.rows, bundle=bundle)],
-        rows=bundle.rows, columns=bundle.cols, device=bundle.device, family=bundle.family)
+        rows=bundle.rows, columns=bundle.cols, device=bundle.device, family=bundle.family,
+        lane="fused" if fused else "triton", fused_roles=fused_roles)
     monkeypatch.setattr(fp8_route, "parse_compact_blob_for_scheme", lambda *a, **k: ())
     monkeypatch.setattr(fp8_route, "prepare_dense_native_module", lambda *a, **k: native)
     monkeypatch.setattr(native_ops, "require_native_fp8_quant", lambda *a: None)
@@ -364,8 +372,8 @@ def test_declared_compiled_forward_refuses_decode_once_after_config_exits(cpu_lo
 
 
 @pytest.mark.parametrize("flag,mode,vllm_mode,attached", [
-    (None, "resident", "NONE", True),
-    ("", "resident", "NONE", True),
+    (None, "resident", "NONE", False),
+    ("", "resident", "NONE", False),
     (None, "resident", "VLLM_COMPILE", False),
     ("", "resident", "VLLM_COMPILE", False),
     ("0", "resident", "VLLM_COMPILE", False),
@@ -376,11 +384,12 @@ def test_declared_compiled_forward_refuses_decode_once_after_config_exits(cpu_lo
 ])
 def test_load_boundaries_survive_the_current_config_exiting(
         cpu_load_entry, flag, mode, vllm_mode, attached):
-    from tessera.serving import compile_identity
+    from tessera.serving import compile_identity, e4m3_prefill
     from tessera.serving.scheme import DECODE_ONCE_DENSE_SYMBOL
 
     method, layer, native, _config, decoded_roles = cpu_load_entry(
         flag=flag, mode=mode, vllm_mode=vllm_mode)
+    assert e4m3_prefill.enabled() is (flag == "1")
     before = native.packed_bytes()
     method.process_weights_after_loading(layer)
     assert layer.tessera_native is native and not hasattr(layer, "wire_bytes")
@@ -408,3 +417,26 @@ def test_decode_once_forward_backstop_remains_after_eager_load(cpu_load_entry, m
     monkeypatch.setattr(torch.compiler, "is_compiling", lambda: True)
     with pytest.raises(RuntimeError, match=f"eager-only.*{FLAG}"):
         method.apply(layer, torch.zeros(1, native.columns, dtype=torch.bfloat16))
+
+
+@pytest.mark.parametrize("flag", [None, "1"])
+@pytest.mark.parametrize("m", [256, 512])
+def test_eager_resident_prefill_uses_the_admitted_pair_unless_enabled(cpu_load_entry, monkeypatch, flag, m):
+    from tessera.serving import native_ops, native_window, telemetry
+
+    method, layer, native, _config, _decoded_roles = cpu_load_entry(
+        flag=flag, mode="resident", vllm_mode="NONE", fused=True)
+    method.process_weights_after_loading(layer)
+    calls = []
+    result = torch.zeros(m, native.rows, dtype=torch.bfloat16)
+
+    monkeypatch.setattr(native_ops, "native_fp8_quant",
+                        lambda x: (x.to(torch.float8_e4m3fn), torch.ones(x.shape[0])))
+    monkeypatch.setattr(native_window, "_fused_window_dense", lambda *a: calls.append("fused") or result)
+    monkeypatch.setattr(torch, "_scaled_mm", lambda *a, **k: calls.append("decode-once") or result)
+    assert torch.equal(method.apply(layer, torch.zeros(m, native.columns, dtype=torch.bfloat16)), result)
+    record = telemetry.read_route(layer)
+    assert (record["symbol"], record["decoder"]) == (
+        ("tessera.serving.e4m3_prefill.prefill_apply", "native_window_decode_once_e4m3")
+        if flag == "1" else ("tessera::fused_window_dense", "native_fused_window_dense_e4m3mma"))
+    assert calls == (["decode-once"] if flag == "1" else ["fused"])
