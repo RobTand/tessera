@@ -43,13 +43,6 @@ ts_py_library(
 )
 
 ts_py_library(
-    name = "_dev/native_identity",
-    srcs = [
-        "_dev/native_identity.py",
-    ],
-)
-
-ts_py_library(
     name = "_dev/source_dependencies",
     srcs = [
         "_dev/source_dependencies.py",
@@ -150,8 +143,6 @@ ts_py_library(
     ],
     deps = [
         ":__init___cycle",
-        ":_dev/__init__",
-        ":_dev/native_identity",
         ":calculator",
         ":compensate",
         ":container",
@@ -171,6 +162,7 @@ ts_py_library(
         ":kernel_wire",
         ":layout",
         ":metadata",
+        ":native_identity",
         ":routed_class_dispatch",
         ":scale_channel",
         ":serving/activation_attestation",
@@ -572,6 +564,13 @@ ts_py_library(
     deps = [
         ":__init___cycle",
         ":structure",
+    ],
+)
+
+ts_py_library(
+    name = "native_identity",
+    srcs = [
+        "native_identity.py",
     ],
 )
 

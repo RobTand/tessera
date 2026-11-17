@@ -6452,7 +6452,6 @@ ts_py_library(
     ],
     deps = [
         "//src/tessera:__init___cycle",
-        "//src/tessera:_dev/native_identity",
         "//src/tessera:_dev/suite_source",
         "//src/tessera:bf16_route_cycle",
         "//src/tessera:exact",
@@ -9945,6 +9944,7 @@ ts_py_library(
         "//src/tessera:metadata.py",
         "//src/tessera:moe_execution.py",
         "//src/tessera:moe_layout.py",
+        "//src/tessera:native_identity.py",
         "//src/tessera:native_window_moe.py",
         "//src/tessera:planes.py",
         "//src/tessera:producer_authority.py",
@@ -12471,8 +12471,8 @@ ts_py_library(
     deps = [
         "//src/tessera:__init___cycle",
         "//src/tessera:_dev/__init__",
-        "//src/tessera:_dev/native_identity",
         "//src/tessera:_dev/surface_publication",
+        "//src/tessera:native_identity",
         "//tools:_suite_container",
         "//tools:_suite_runtime",
         "//tools:merge_suite",
@@ -18501,12 +18501,11 @@ ts_py_library(
     deps = [
         "//experiments:t4_code/fused_e2m1_check",
         "//src/tessera:__init___cycle",
-        "//src/tessera:_dev/__init__",
-        "//src/tessera:_dev/native_identity",
         "//src/tessera:bf16_route_cycle",
         "//src/tessera:decode",
         "//src/tessera:errors",
         "//src/tessera:kernel_a4",
+        "//src/tessera:native_identity",
         ":test_resident_tensor_protocol_lib",
     ],
 )
@@ -18704,8 +18703,7 @@ ts_py_library(
     ],
     deps = [
         "//src/tessera:__init___cycle",
-        "//src/tessera:_dev/__init__",
-        "//src/tessera:_dev/native_identity",
+        "//src/tessera:native_identity",
         ":routed_native_support",
     ],
 )
@@ -19076,10 +19074,9 @@ ts_py_library(
     ],
     deps = [
         "//src/tessera:__init___cycle",
-        "//src/tessera:_dev/__init__",
-        "//src/tessera:_dev/native_identity",
         "//src/tessera:bf16_route_cycle",
         "//src/tessera:kernel_a4",
+        "//src/tessera:native_identity",
         ":test_dense_fused_window_lib",
         ":test_routed_fused_e2m1_lib",
     ],
@@ -22998,9 +22995,8 @@ ts_py_library(
     ],
     deps = [
         "//src/tessera:__init___cycle",
-        "//src/tessera:_dev/__init__",
-        "//src/tessera:_dev/native_identity",
         "//src/tessera:bf16_route_cycle",
+        "//src/tessera:native_identity",
     ],
 )
 

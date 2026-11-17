@@ -72,13 +72,13 @@
           "//experiments:ts89_band_predictors",
           "//experiments:window_gemv_latency_ratio",
           "//experiments:window_viterbi_scan_unroll_sweep",
-          "//src/tessera:_dev/source_dependencies",
-          "//src/tessera:codebook",
-          "//src/tessera:encode_cycle",
-          "//src/tessera:files",
-          "//src/tessera:fragment_wire",
-          "//src/tessera:identity",
-          "//src/tessera:kernel_a4_wire",
+          "//src/tessera:_dev/suite_deadline",
+          "//src/tessera:compensate",
+          "//src/tessera:endpoint_observer",
+          "//src/tessera:files/serving",
+          "//src/tessera:fused",
+          "//src/tessera:image_metadata",
+          "//src/tessera:kernel_bits",
           "//src/tessera:producer_authority",
           "//src/tessera:residency_plan",
           "//src/tessera:serving/build_identity",
@@ -513,7 +513,7 @@
         "estimated_seconds": 1963.3,
         "index": 0,
         "file": "tools/bazel/full_targets/amd64-0.targets",
-        "sha256": "628eb9ef9d91a7bd5b94038ca1f2adab23817a981d9f36e5909e24c20dccf050"
+        "sha256": "1e4e2d2e320242130e1bd344331a5348056a0251f5bd75534aa4c9ec4bd1358f"
       },
       {
         "rules": [
@@ -580,13 +580,13 @@
           "//experiments:ts89_dyadic_reach",
           "//experiments:window_gemv_load",
           "//experiments:window_viterbi_two_step",
-          "//src/tessera:_dev/suite_deadline",
-          "//src/tessera:compensate",
-          "//src/tessera:endpoint_observer",
-          "//src/tessera:files/serving",
-          "//src/tessera:fused",
-          "//src/tessera:image_metadata",
-          "//src/tessera:kernel_bits",
+          "//src/tessera:_dev/suite_source",
+          "//src/tessera:container",
+          "//src/tessera:endpoint_witness",
+          "//src/tessera:files/serving/csrc",
+          "//src/tessera:fused_frame",
+          "//src/tessera:jit_build_lock",
+          "//src/tessera:kernel_roster",
           "//src/tessera:producer_plan",
           "//src/tessera:routed_class_dispatch",
           "//src/tessera:serving/census_plan",
@@ -1031,7 +1031,7 @@
         "estimated_seconds": 1964.9999999999995,
         "index": 1,
         "file": "tools/bazel/full_targets/amd64-1.targets",
-        "sha256": "33cdbde83d2b2e47b231e5f05e0b1bb046e22eb83ffe1f14f3633eccd25078f1"
+        "sha256": "e4db5e1f3445055cf96f92f95f0b4708a7318dc7bebca59d7223fea0f01ae4aa"
       },
       {
         "rules": [
@@ -1097,13 +1097,13 @@
           "//experiments:ts89_residue_ladder",
           "//experiments:window_gemv_trace_summary",
           "//src/tessera:__init___cycle",
-          "//src/tessera:_dev/suite_source",
-          "//src/tessera:container",
-          "//src/tessera:endpoint_witness",
-          "//src/tessera:files/serving/csrc",
-          "//src/tessera:fused_frame",
-          "//src/tessera:jit_build_lock",
-          "//src/tessera:kernel_roster",
+          "//src/tessera:_dev/surface_publication",
+          "//src/tessera:decode",
+          "//src/tessera:errors",
+          "//src/tessera:fixture_build",
+          "//src/tessera:graph_equality",
+          "//src/tessera:job_metadata",
+          "//src/tessera:kernel_wire",
           "//src/tessera:projection",
           "//src/tessera:rung_allowability",
           "//src/tessera:serving/dense_ownership",
@@ -1550,7 +1550,7 @@
         "estimated_seconds": 1964.9999999999998,
         "index": 2,
         "file": "tools/bazel/full_targets/amd64-2.targets",
-        "sha256": "abc31c76c9e912f535a99cf6f8a94fdd4913ae4dcfe68ebefe7705aeccd2a362"
+        "sha256": "7816f47c227f5c8b10f7f6d728ec4bb253b397234b0602cc293b0a846c72bce2"
       },
       {
         "rules": [
@@ -1615,13 +1615,13 @@
           "//experiments:ts89_table_surgery",
           "//experiments:window_viterbi_bench",
           "//src/tessera:_dev/__init__",
-          "//src/tessera:_dev/surface_publication",
-          "//src/tessera:decode",
-          "//src/tessera:errors",
-          "//src/tessera:fixture_build",
-          "//src/tessera:graph_equality",
-          "//src/tessera:job_metadata",
-          "//src/tessera:kernel_wire",
+          "//src/tessera:bf16_route_cycle",
+          "//src/tessera:dev_mode",
+          "//src/tessera:exact",
+          "//src/tessera:footprint",
+          "//src/tessera:graph_receipt",
+          "//src/tessera:kernel",
+          "//src/tessera:layout",
           "//src/tessera:provenance",
           "//src/tessera:runtime_contract_paths",
           "//src/tessera:serving/endpoint_runtime",
@@ -2070,7 +2070,7 @@
         "estimated_seconds": 1964.9999999999989,
         "index": 3,
         "file": "tools/bazel/full_targets/amd64-3.targets",
-        "sha256": "3426d6cd6c0d1f0fb284f795ae143e12b4e2932bcdbf7607952d50c65b16eefe"
+        "sha256": "2f934bae4d70253bcc84c287ba8549095cb04814efc043bba3eac8244fc51f08"
       },
       {
         "rules": [
@@ -2135,13 +2135,13 @@
           "//experiments:vllm_module_name_distance",
           "//experiments:window_viterbi_cpu_bench",
           "//src/tessera:_dev/durable_progress",
-          "//src/tessera:bf16_route_cycle",
-          "//src/tessera:dev_mode",
-          "//src/tessera:exact",
-          "//src/tessera:footprint",
-          "//src/tessera:graph_receipt",
-          "//src/tessera:kernel",
-          "//src/tessera:layout",
+          "//src/tessera:calculator",
+          "//src/tessera:diagonals",
+          "//src/tessera:export_serving",
+          "//src/tessera:fp4_arithmetic",
+          "//src/tessera:historical_producer",
+          "//src/tessera:kernel_a4",
+          "//src/tessera:metadata",
           "//src/tessera:regdirect_op",
           "//src/tessera:scale_channel",
           "//src/tessera:serving/flags",
@@ -2590,7 +2590,7 @@
         "estimated_seconds": 1964.8999999999999,
         "index": 4,
         "file": "tools/bazel/full_targets/amd64-4.targets",
-        "sha256": "282f0ff4d4ef118bc3bb1a5338e3ca37d5bb0310818b9f6540c0c525934453e2"
+        "sha256": "a8fb88ee5feb42b6010bb8f6df7d777149efacc59607ff642c2f11c4b2376d47"
       },
       {
         "rules": [
@@ -2654,14 +2654,14 @@
           "//experiments:ts5_stage_cleanup",
           "//experiments:window_gemv_a_side",
           "//experiments:window_viterbi_r8_diagnosis",
-          "//src/tessera:_dev/native_identity",
-          "//src/tessera:calculator",
-          "//src/tessera:diagonals",
-          "//src/tessera:export_serving",
-          "//src/tessera:fp4_arithmetic",
-          "//src/tessera:historical_producer",
-          "//src/tessera:kernel_a4",
-          "//src/tessera:metadata",
+          "//src/tessera:_dev/source_dependencies",
+          "//src/tessera:codebook",
+          "//src/tessera:encode_cycle",
+          "//src/tessera:files",
+          "//src/tessera:fragment_wire",
+          "//src/tessera:identity",
+          "//src/tessera:kernel_a4_wire",
+          "//src/tessera:native_identity",
           "//src/tessera:regdirect_routed",
           "//src/tessera:serving/activation_attestation",
           "//src/tessera:serving/glm53_nope",
@@ -3109,7 +3109,7 @@
         "estimated_seconds": 1964.9999999999998,
         "index": 5,
         "file": "tools/bazel/full_targets/amd64-5.targets",
-        "sha256": "c19a871ba62b0c2a35b37470d0abd63457dc785ec67c9b7a270bdcf7a371b7d2"
+        "sha256": "7aae8c4afff3b7bc53cf6d90c49a020b8b5007007bbcc579521d9dbd1298b24c"
       }
     ],
     "arm64": [
@@ -3183,13 +3183,13 @@
           "//experiments:vllm_module_name_distance",
           "//experiments:window_viterbi_cpu_bench",
           "//src/tessera:_dev/durable_progress",
-          "//src/tessera:bf16_route_cycle",
-          "//src/tessera:dev_mode",
-          "//src/tessera:exact",
-          "//src/tessera:footprint",
-          "//src/tessera:graph_receipt",
-          "//src/tessera:kernel",
-          "//src/tessera:layout",
+          "//src/tessera:calculator",
+          "//src/tessera:diagonals",
+          "//src/tessera:export_serving",
+          "//src/tessera:fp4_arithmetic",
+          "//src/tessera:historical_producer",
+          "//src/tessera:kernel_a4",
+          "//src/tessera:metadata",
           "//src/tessera:regdirect_op",
           "//src/tessera:scale_channel",
           "//src/tessera:serving/flags",
@@ -3618,7 +3618,7 @@
         "estimated_seconds": 1863.2999999999993,
         "index": 0,
         "file": "tools/bazel/full_targets/arm64-0.targets",
-        "sha256": "3394b728eae4011eba17a5f3474e3688582d5d31ce31a445b9b602fdeed82e43"
+        "sha256": "41948ac3d9f5f7a825c6a1a4804aeeaa6295c6af453abea5c725fc9ef5bfb5a2"
       },
       {
         "rules": [
@@ -3685,14 +3685,14 @@
           "//experiments:ts5_stage_cleanup",
           "//experiments:window_gemv_a_side",
           "//experiments:window_viterbi_r8_diagnosis",
-          "//src/tessera:_dev/native_identity",
-          "//src/tessera:calculator",
-          "//src/tessera:diagonals",
-          "//src/tessera:export_serving",
-          "//src/tessera:fp4_arithmetic",
-          "//src/tessera:historical_producer",
-          "//src/tessera:kernel_a4",
-          "//src/tessera:metadata",
+          "//src/tessera:_dev/source_dependencies",
+          "//src/tessera:codebook",
+          "//src/tessera:encode_cycle",
+          "//src/tessera:files",
+          "//src/tessera:fragment_wire",
+          "//src/tessera:identity",
+          "//src/tessera:kernel_a4_wire",
+          "//src/tessera:native_identity",
           "//src/tessera:regdirect_routed",
           "//src/tessera:serving/activation_attestation",
           "//src/tessera:serving/glm53_nope",
@@ -4128,7 +4128,7 @@
         "estimated_seconds": 1861.1999999999987,
         "index": 1,
         "file": "tools/bazel/full_targets/arm64-1.targets",
-        "sha256": "bbad32074ad1866e3d998e18a918f3ad7715436524f00dce669ac87ae0207ba2"
+        "sha256": "15f1ada935dbd0a26ed1a40262851dd5ed7dc00c9e3ea3a58e6639daee2bf6bd"
       },
       {
         "rules": [
@@ -4194,13 +4194,13 @@
           "//experiments:ts89_band_predictors",
           "//experiments:window_gemv_latency_ratio",
           "//experiments:window_viterbi_scan_unroll_sweep",
-          "//src/tessera:_dev/source_dependencies",
-          "//src/tessera:codebook",
-          "//src/tessera:encode_cycle",
-          "//src/tessera:files",
-          "//src/tessera:fragment_wire",
-          "//src/tessera:identity",
-          "//src/tessera:kernel_a4_wire",
+          "//src/tessera:_dev/suite_deadline",
+          "//src/tessera:compensate",
+          "//src/tessera:endpoint_observer",
+          "//src/tessera:files/serving",
+          "//src/tessera:fused",
+          "//src/tessera:image_metadata",
+          "//src/tessera:kernel_bits",
           "//src/tessera:producer_authority",
           "//src/tessera:residency_plan",
           "//src/tessera:serving/build_identity",
@@ -4639,7 +4639,7 @@
         "estimated_seconds": 1861.1000000000008,
         "index": 2,
         "file": "tools/bazel/full_targets/arm64-2.targets",
-        "sha256": "afcda39be5da13084d300c3bbf1d7521e86de77dc591c26d43fbdd4943b8e4f7"
+        "sha256": "d86d83da66bd11851c57f444ab3f675bf3f61c228d25f9d6f71fb2fadbc8ea16"
       },
       {
         "rules": [
@@ -4703,13 +4703,13 @@
           "//experiments:ts89_dyadic_reach",
           "//experiments:window_gemv_load",
           "//experiments:window_viterbi_two_step",
-          "//src/tessera:_dev/suite_deadline",
-          "//src/tessera:compensate",
-          "//src/tessera:endpoint_observer",
-          "//src/tessera:files/serving",
-          "//src/tessera:fused",
-          "//src/tessera:image_metadata",
-          "//src/tessera:kernel_bits",
+          "//src/tessera:_dev/suite_source",
+          "//src/tessera:container",
+          "//src/tessera:endpoint_witness",
+          "//src/tessera:files/serving/csrc",
+          "//src/tessera:fused_frame",
+          "//src/tessera:jit_build_lock",
+          "//src/tessera:kernel_roster",
           "//src/tessera:producer_plan",
           "//src/tessera:routed_class_dispatch",
           "//src/tessera:serving/census_plan",
@@ -5152,7 +5152,7 @@
         "estimated_seconds": 1863.2999999999997,
         "index": 3,
         "file": "tools/bazel/full_targets/arm64-3.targets",
-        "sha256": "cf972fd7effd2bbddd56652bc9be38555ae515b185dc2952911e2dca18d14139"
+        "sha256": "46d83fb006f261da3fa019c816f5255d341d6552142b3e08cca144a91cabab9d"
       },
       {
         "rules": [
@@ -5217,13 +5217,13 @@
           "//experiments:ts89_residue_ladder",
           "//experiments:window_gemv_trace_summary",
           "//src/tessera:__init___cycle",
-          "//src/tessera:_dev/suite_source",
-          "//src/tessera:container",
-          "//src/tessera:endpoint_witness",
-          "//src/tessera:files/serving/csrc",
-          "//src/tessera:fused_frame",
-          "//src/tessera:jit_build_lock",
-          "//src/tessera:kernel_roster",
+          "//src/tessera:_dev/surface_publication",
+          "//src/tessera:decode",
+          "//src/tessera:errors",
+          "//src/tessera:fixture_build",
+          "//src/tessera:graph_equality",
+          "//src/tessera:job_metadata",
+          "//src/tessera:kernel_wire",
           "//src/tessera:projection",
           "//src/tessera:rung_allowability",
           "//src/tessera:serving/dense_ownership",
@@ -5664,7 +5664,7 @@
         "estimated_seconds": 1861.1000000000004,
         "index": 4,
         "file": "tools/bazel/full_targets/arm64-4.targets",
-        "sha256": "937b01b54f5a0290bb2f9cab0f1a085e071246d8ce9ea708499ac1c86d57b384"
+        "sha256": "ac08cfec11ea674992fe23a91ca0e75a17c4e1cb0f0b7b1f1a45944c445b8a82"
       },
       {
         "rules": [
@@ -5729,13 +5729,13 @@
           "//experiments:ts89_table_surgery",
           "//experiments:window_viterbi_bench",
           "//src/tessera:_dev/__init__",
-          "//src/tessera:_dev/surface_publication",
-          "//src/tessera:decode",
-          "//src/tessera:errors",
-          "//src/tessera:fixture_build",
-          "//src/tessera:graph_equality",
-          "//src/tessera:job_metadata",
-          "//src/tessera:kernel_wire",
+          "//src/tessera:bf16_route_cycle",
+          "//src/tessera:dev_mode",
+          "//src/tessera:exact",
+          "//src/tessera:footprint",
+          "//src/tessera:graph_receipt",
+          "//src/tessera:kernel",
+          "//src/tessera:layout",
           "//src/tessera:provenance",
           "//src/tessera:runtime_contract_paths",
           "//src/tessera:serving/endpoint_runtime",
@@ -6176,7 +6176,7 @@
         "estimated_seconds": 1861.1000000000006,
         "index": 5,
         "file": "tools/bazel/full_targets/arm64-5.targets",
-        "sha256": "711443a6b9e0520b0b9bebfdfa0354f8a121232362420f60cb4d3771b2e162f8"
+        "sha256": "6451e7194e374e7c871dd5bbbcc8ecf3e5276629b9dbf333ea19c9cc8d2b6fda"
       }
     ]
   }
