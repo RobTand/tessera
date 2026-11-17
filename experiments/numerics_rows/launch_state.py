@@ -12,6 +12,34 @@ import sys
 from experiments.numerics_rows.common import Invalid, sha256
 
 LEVERS = Path(__file__).with_name("launch-levers.tsv")
+PREFIXES = ("TESSERA_", "TRITON_", "TORCH_", "PYTORCH_", "CUBLAS_", "CUBLASLT_", "CUDNN_", "NVIDIA_")
+IMPORTS = ("tessera", "torch", "triton", "vllm")
+TOOLCHAIN = ("PATH", "CUDA_HOME", "CUDA_PATH", "PYTORCH_NVCC", "PYTORCH_ROCM_ARCH", "ROCM_HOME", "ROCM_PATH")
+MATH_PATHS = (
+    "backends.cuda.matmul.allow_tf32", "backends.cudnn.allow_tf32",
+    "backends.cuda.matmul.allow_fp16_reduced_precision_reduction",
+    "backends.cuda.matmul.allow_bf16_reduced_precision_reduction",
+    "backends.cuda.matmul.allow_fp16_accumulation",
+    "backends.cudnn.deterministic", "backends.cudnn.benchmark",
+)
+
+
+def json_digest(value):
+    return hashlib.sha256(json.dumps(value, sort_keys=True, ensure_ascii=True, allow_nan=False,
+                                     separators=(",", ":")).encode("ascii")).hexdigest()
+
+
+def math_settings(torch):
+    settings = {"float32_matmul_precision": torch.get_float32_matmul_precision(),
+                "deterministic_algorithms": torch.are_deterministic_algorithms_enabled(),
+                "deterministic_warn_only": torch.is_deterministic_algorithms_warn_only_enabled()}
+    for path in MATH_PATHS:
+        value = torch
+        for part in path.split("."):
+            value = getattr(value, part, None)
+        if value is not None:
+            settings[path] = value
+    return settings
 
 
 def digest(mapping):
@@ -22,13 +50,14 @@ def digest(mapping):
     """
     if not isinstance(mapping, dict) or any(not isinstance(k, str) or not isinstance(v, str) for k, v in mapping.items()):
         raise Invalid("launch state must map names to exact strings")
-    return hashlib.sha256(json.dumps(mapping, sort_keys=True, ensure_ascii=True, separators=(",", ":")).encode("ascii")).hexdigest()
+    return json_digest(mapping)
 
 
 class LaunchState:
     def __init__(self, path=LEVERS, *, fresh=False):
-        if fresh and any(name == "tessera" or name.startswith("tessera.") for name in sys.modules):
-            raise Invalid("launch state requires a fresh worker before its first Tessera import")
+        imported = sorted({name.split(".")[0] for name in sys.modules if name.split(".")[0] in IMPORTS})
+        if fresh and imported:
+            raise Invalid("launch state requires a fresh worker before its first Tessera import or torch, Triton or vLLM import: " + ", ".join(imported))
         self.path, self.policy = Path(path), {}
         for row in csv.DictReader(self.path.read_text().splitlines(), delimiter="\t"):
             name, policy = row.get("name"), row.get("launch_state")
@@ -39,21 +68,50 @@ class LaunchState:
             self.policy[name] = policy
         if not self.policy or self.policy.get("TESSERA_SERVE_MODE") != "include":
             raise Invalid("launch lever policy must retain the residency selector")
+        if any(self.policy.get(name) != "exclude" for name in TOOLCHAIN):
+            raise Invalid("launch lever policy must exclude the seven toolchain diagnostics")
+        if self.policy.get("PRISMAQUANT_DEV_MODE") != "include":
+            raise Invalid("launch lever policy must include PRISMAQUANT_DEV_MODE")
         self.levers_sha256 = sha256(self.path)
         self.mapping = self.current()
         self.sha256 = digest(self.mapping)
+        self.torch = None
+
+    def bind_math(self, torch):
+        """Snapshot effective settings after torch import, before Tessera import.
+
+        Keep the settings fixed, without changing the pinned image's defaults.
+        Every caller uses check() before preparation and native execution.
+        """
+        if self.torch is not None:
+            self.check()
+            return
+        self.torch = torch
+        self.math = math_settings(torch)
+        self.math_sha256 = json_digest(self.math)
 
     def current(self):
         return {k: v for k, v in sorted(os.environ.items()) if (
-            k.startswith("TESSERA_") and self.policy.get(k) != "exclude" or self.policy.get(k) == "include")}
+            self.policy.get(k) != "exclude" and (k.startswith(PREFIXES) or self.policy.get(k) == "include"))}
 
     def check(self):
         if self.current() != self.mapping:
             raise Invalid("launch state changed after worker start")
+        self.check_math()
+
+    def check_math(self):
+        if self.torch is not None and math_settings(self.torch) != self.math:
+            raise Invalid("dependency math settings changed after worker start")
 
     def fields(self):
-        return {"launch_state": dict(self.mapping), "launch_state_sha256": self.sha256,
-                "launch_levers_sha256": self.levers_sha256}
+        result = {"launch_state": dict(self.mapping), "launch_state_sha256": self.sha256,
+                  "launch_levers_sha256": self.levers_sha256}
+        if self.torch is not None:
+            result.update(dependency_math=dict(self.math), dependency_math_sha256=self.math_sha256)
+        return result
+
+    def diagnostics(self):
+        return {name: os.environ[name] for name in sorted(self.policy) if self.policy[name] == "exclude" and name in os.environ}
 
 
 def check_binding(record, expected):
@@ -64,3 +122,11 @@ def check_binding(record, expected):
             raise Invalid(f"C1 launch state or lever file differs: {field}")
     if digest(record["launch_state"]) != record["launch_state_sha256"]:
         raise Invalid("launch state object does not match its digest")
+
+
+def check_math_binding(record, expected):
+    settings = record.get("dependency_math")
+    if not isinstance(settings, dict) or not settings or json_digest(settings) != record.get("dependency_math_sha256"):
+        raise Invalid("dependency math settings are missing or malformed")
+    if any(record.get(k) != expected.get(k) for k in ("dependency_math", "dependency_math_sha256")):
+        raise Invalid("dependency math settings differ")

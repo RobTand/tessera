@@ -9,6 +9,16 @@ from experiments.numerics_rows.join import join, rule_unit_id
 from tests.test_numerics_rows_receipts import joined_inputs
 
 
+@pytest.mark.parametrize("target", ("manifest", "runtime", "unit"))
+def test_join_refuses_missing_dependency_math_binding(monkeypatch, target):
+    population, digest, manifests, receipts = joined_inputs(monkeypatch)
+    assert join(population, digest, manifests, receipts)["verdict"] == "PASS"
+    record = manifests[0][1] if target == "manifest" else receipts[0][1]["runtime"] if target == "runtime" else receipts[0][1]["units"][0]
+    del record["dependency_math_sha256"]
+    with pytest.raises(Invalid, match="math settings"):
+        join(population, digest, manifests, receipts)
+
+
 @pytest.mark.parametrize("known,expected", [("FAIL", "FAIL"), ("STOPPED", "STOPPED"), ("INVALID", "INVALID"), ("PASS", "UNATTESTED")])
 @pytest.mark.parametrize("missing", ["manifest", "row", "both", "key"])
 def test_missing_required_pair_preserves_a_worse_known_outcome(monkeypatch, known, expected, missing):

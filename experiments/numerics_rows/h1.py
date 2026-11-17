@@ -393,8 +393,11 @@ def run_checks(args, report):
     check_source(args.source, built["commit"])
     sys.path.insert(0, str(args.source / "src"))
     sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "tests"))
-    import tessera
     import torch
+    args.launch_state.bind_math(torch)
+    report.update(args.launch_state.fields())
+    report["environment_diagnostics"] = args.launch_state.diagnostics()
+    import tessera
     from experiments.dense_fused_oracle import e4m3_instruction, init_vllm_world1
     from experiments.numerics_rows.sass_slice import match_library
 
@@ -408,6 +411,7 @@ def run_checks(args, report):
     report["negative_controls"] = negative_controls()
     save()
     recorder = BoundaryRecorder(torch.cuda.synchronize, report["boundaries"])
+    recorder.before_call = args.launch_state.check_math
     loaded = install_libraries(built["libraries"])
     report["P3"] = {}
     for record in built["libraries"]:
@@ -472,6 +476,8 @@ def main():
               "preconditions_confirmed": False}
     write_json(args.out / "h1.json", report)
     try:
+        from experiments.numerics_rows.launch_state import LEVERS, LaunchState
+        args.launch_state = LaunchState(LEVERS, fresh=True)
         run_checks(args, report)
     except Exception as error:
         report["preconditions_confirmed"] = False

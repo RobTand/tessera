@@ -54,7 +54,7 @@ def _join(population, digest, manifests, receipts, contract):
     from experiments.numerics_rows.common import IMAGES
     from experiments.numerics_rows.population import select_modules
     from experiments.numerics_rows.row import planned_units, unit_identity
-    from experiments.numerics_rows.launch_state import check_binding, digest as state_digest
+    from experiments.numerics_rows.launch_state import check_binding, check_math_binding, digest as state_digest
 
     contract, contract_hash = scope.contract_document(contract)
     image = IMAGES[population["image"]]["image_digest"]
@@ -88,6 +88,7 @@ def _join(population, digest, manifests, receipts, contract):
     cases, case_modules, case_identity = {}, set(), None
     for case_sha, case in manifests:
         check_binding(case, launch)
+        check_math_binding(case, case)
         selection = case["selected_modules"]
         if case_sha in cases or len(selection) != len(set(selection)) or not selection or set(selection) - set(names) or case_modules.intersection(selection):
             raise Invalid("duplicate or unknown C1 module selection")
@@ -110,6 +111,7 @@ def _join(population, digest, manifests, receipts, contract):
         case_modules.update(selection)
         cases[case_sha] = case
     evidence, execution, seen_receipts, seen_full, row_modules = {}, None, set(), set(), set()
+    key_math = {}
     for receipt_sha, receipt in receipts:
         if receipt_sha in seen_receipts:
             raise Invalid("duplicate row receipt")
@@ -122,6 +124,7 @@ def _join(population, digest, manifests, receipts, contract):
         if not receipt["row"].get("utc_end") or type(receipt["row"].get("exit_status")) is not int or receipt["row"].get("finalization_finished") is not True:
             raise Invalid("join requires finished row receipts")
         identity = execution_identity(receipt)
+        check_math_binding(receipt["runtime"], receipt["runtime"])
         check_binding({**receipt["runtime"], "launch_levers_sha256": receipt["inputs"]["launch_levers_sha256"]}, launch)
         if execution is not None and execution != identity:
             raise Invalid("joined rows have different execution identities")
@@ -139,11 +142,13 @@ def _join(population, digest, manifests, receipts, contract):
         row_modules.update(selection)
         case = cases.get(inputs["case_manifest_sha256"])
         if case is not None:
+            check_math_binding(receipt["runtime"], case)
             if case["selected_modules"] != selection:
                 raise Invalid("row and C1 selected modules differ")
             if any(case.get(k) != identity[k] for k in ("source_commit", "contract_sha256", "q1_table_sha256")):
                 raise Invalid("joined C1 and row execution identities differ")
         for unit in receipt["units"]:
+            check_math_binding(unit, receipt["runtime"])
             if unit.get("launch_state_sha256") != state:
                 raise Invalid("row unit launch state differs from its worker")
             if unit["unit_id"] != unit_identity(unit) or unit["outcome"] not in OUTCOMES or unit["role"] not in ("unit", "observation") or type(unit["admitted_by_v68"]) is not bool:
@@ -154,6 +159,7 @@ def _join(population, digest, manifests, receipts, contract):
             if module is None and len(selection) == 1:
                 module = selection[0]
             key = pack(rule_unit_id(unit))
+            check_math_binding(unit, key_math.setdefault(key, unit))
             full = pack(unit_identity({**unit, "tp": {k: unit["tp"][k] for k in ("size", "rank")}}))
             if module not in selection or full not in allowed.get((module, key), ()):
                 raise Invalid("row unit is outside the required signed scope")

@@ -1111,6 +1111,7 @@ def row_execution(tmp_path, monkeypatch):
         ("source", "out", "population", "manifest", "build", "build_provenance", "q1", "h1", "rule", "freeze")}, image="N", module=[])
     from experiments.numerics_rows.launch_state import LaunchState
     args.launch_state = LaunchState()
+    args.launch_state.bind_math(torch)
     args.out.mkdir()
     contract, pop, manifest = population_cases()
     pop["modules"] = pop["modules"][:1]
@@ -1129,7 +1130,7 @@ def row_execution(tmp_path, monkeypatch):
     write_json(args.freeze, {"sha256": common.sha256(args.rule), "launch_levers_sha256": args.launch_state.levers_sha256, "frozen_utc": "now", "reviewer": "reviewer", "decisions": {f"D{i}": "yes" for i in range(1, 10)}})
     write_json(args.q1, {"tables": [{"key": "e4m3", "library_so_sha256": "a" * 64, "probe_sha256": "p" * 64,
         "L_bits": 0, "dom_size": 1, "d_table_sha256": "d", "d_nondecreasing_0_L": True}]})
-    write_json(args.h1, {"preconditions_confirmed": True, "build_sha256": common.sha256(args.build), "P1": {"mismatches": 0},
+    write_json(args.h1, {**args.launch_state.fields(), "preconditions_confirmed": True, "build_sha256": common.sha256(args.build), "P1": {"mismatches": 0},
         "P2": {"result": "PASS"}, "P3": {"e4m3": identity}, "libraries": {"e4m3": {"P4": True, "P5": True}}, "flux_job_id": "h1-job"})
     write_json(args.manifest, {"population_sha256": "population-hash", "q1_table_sha256": common.sha256(args.q1), **args.launch_state.fields(), "modules": [module]})
     contract_path = args.source / "src/tessera/serving/runtime_contract.json"
@@ -1323,7 +1324,10 @@ def joined_inputs(monkeypatch):
     from experiments.numerics_rows import scope
     from experiments.numerics_rows.common import IMAGES
     from experiments.numerics_rows.launch_state import LaunchState
-    state = LaunchState().fields()
+    import torch
+    worker = LaunchState()
+    worker.bind_math(torch)
+    state = worker.fields()
 
     contract, population, manifest = population_cases()
     population["image"] = "N"
@@ -1344,6 +1348,7 @@ def joined_inputs(monkeypatch):
         owned = [u for _, _, _, group in units for u in group]
         for unit in owned:
             unit.update(outcome="PASS", launch_state_sha256=state["launch_state_sha256"])
+            unit.update({k: v for k, v in state.items() if k.startswith("dependency_math")})
             unit["unit_id"] = row.unit_identity(unit)
         receipts.append(("row-" + name, {"inputs": {"population_sha256": "signed", "selected_modules": [name],
             "case_manifest_sha256": "c1-" + name, "build_sha256": "build", "q1_table_sha256": "q1", "launch_levers_sha256": state["launch_levers_sha256"]},
@@ -1750,6 +1755,97 @@ def test_worker_launch_state_encoding_and_named_exclusions(monkeypatch):
     assert digest({}) != digest({"TESSERA_EMPTY": ""})
     with pytest.raises(Invalid, match="exact strings"):
         digest({"TESSERA_BAD": 1})
+
+
+@pytest.mark.parametrize("prefix", ("TRITON_", "TORCH_", "PYTORCH_", "CUBLAS_", "CUBLASLT_", "CUDNN_", "NVIDIA_"))
+@pytest.mark.parametrize("dev_mode", ("0", "1"))
+def test_dependency_environment_refusal_in_both_dev_modes(monkeypatch, prefix, dev_mode):
+    from experiments.numerics_rows.launch_state import LaunchState
+    from experiments.numerics_rows.common import BoundaryRecorder
+
+    monkeypatch.setenv("PRISMAQUANT_DEV_MODE", dev_mode)
+    name = prefix + "UNLISTED_CONTROL"
+    monkeypatch.setenv(name, "")
+    state, calls = LaunchState(), []
+    assert state.mapping[name] == "" and state.mapping["PRISMAQUANT_DEV_MODE"] == dev_mode
+    recorder = BoundaryRecorder(lambda: None, [])
+    recorder.before_call = state.check
+    recorder.call("positive", "tessera", lambda: calls.append("positive"))
+    monkeypatch.setenv(name, "changed")
+    with pytest.raises(Invalid, match="launch state changed"):
+        recorder.call("changed", "tessera", lambda: calls.append("changed"))
+    assert calls == ["positive"]
+
+
+@pytest.mark.parametrize("name", ("PATH", "CUDA_HOME", "CUDA_PATH", "PYTORCH_NVCC", "PYTORCH_ROCM_ARCH", "ROCM_HOME", "ROCM_PATH"))
+def test_toolchain_changes_are_recorded_as_diagnostics(monkeypatch, name):
+    from experiments.numerics_rows.launch_state import LaunchState
+
+    monkeypatch.setenv(name, "/original")
+    state = LaunchState()
+    assert name not in state.mapping and state.diagnostics()[name] == "/original"
+    monkeypatch.setenv(name, "/changed")
+    state.check()
+    assert state.diagnostics()[name] == "/changed"
+
+
+@pytest.mark.parametrize("package", ("tessera", "torch", "triton", "vllm"))
+def test_worker_capture_refuses_each_prior_dependency_import(monkeypatch, package):
+    from experiments.numerics_rows import launch_state
+
+    monkeypatch.setattr(launch_state, "sys", SimpleNamespace(modules={}))
+    launch_state.LaunchState(fresh=True)
+    launch_state.sys.modules[package + ".submodule"] = object()
+    with pytest.raises(Invalid, match="fresh worker"):
+        launch_state.LaunchState(fresh=True)
+
+
+@pytest.mark.parametrize("dev_mode", ("0", "1"))
+@pytest.mark.parametrize("setting", ("get_float32_matmul_precision", "are_deterministic_algorithms_enabled", "is_deterministic_algorithms_warn_only_enabled"))
+def test_math_mutation_refuses_before_native_call(row_execution, monkeypatch, dev_mode, setting):
+    import torch
+    from experiments.numerics_rows.common import BoundaryRecorder
+
+    monkeypatch.setenv("PRISMAQUANT_DEV_MODE", dev_mode)
+    from experiments.numerics_rows.launch_state import LaunchState
+    worker, calls = LaunchState(), []
+    worker.bind_math(torch)
+    recorder = BoundaryRecorder(lambda: None, [])
+    recorder.before_call = worker.check
+    recorder.call("positive", "tessera", lambda: calls.append("positive"))
+    previous = getattr(torch, setting)()
+    monkeypatch.setattr(torch, setting, lambda: "high" if previous != "high" and isinstance(previous, str) else "highest" if isinstance(previous, str) else not previous)
+    with pytest.raises(Invalid, match="math settings changed"):
+        recorder.call("changed", "tessera", lambda: calls.append("changed"))
+    assert calls == ["positive"]
+
+
+@pytest.mark.parametrize("source", ("manifest", "h1"))
+@pytest.mark.parametrize("dev_mode", ("0", "1"))
+def test_row_refuses_foreign_math_settings_before_cases(row_execution, monkeypatch, source, dev_mode):
+    from experiments.numerics_rows.launch_state import LaunchState, json_digest
+    import torch
+
+    args, receipt, _, events, _ = row_execution
+    monkeypatch.setenv("PRISMAQUANT_DEV_MODE", dev_mode)
+    args.launch_state = LaunchState()
+    args.launch_state.bind_math(torch)
+    for path in (args.manifest, args.h1):
+        record = json.loads(path.read_text())
+        record.update(args.launch_state.fields())
+        write_json(path, record)
+    with pytest.raises(SystemExit) as positive:
+        row.run(args, receipt)
+    assert positive.value.code == 0
+    events.clear()
+    path = getattr(args, source)
+    record = json.loads(path.read_text())
+    record["dependency_math"]["deterministic_algorithms"] = not record["dependency_math"]["deterministic_algorithms"]
+    record["dependency_math_sha256"] = json_digest(record["dependency_math"])
+    write_json(path, record)
+    with pytest.raises(Invalid, match="math settings differ"):
+        row.run(args, receipt)
+    assert not events
 
 
 def test_worker_refuses_a_tessera_import_before_capture(tmp_path, monkeypatch):

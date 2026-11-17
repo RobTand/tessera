@@ -423,6 +423,7 @@ def main():
     check_runtime(args.image)
     sys.path.insert(0, str(args.source / "src"))
     import torch
+    launch_state.bind_math(torch)
     from experiments.numerics_rows.population import load_signed_population, select_modules, store_for
     from tessera.lane_planes import lut_scale_bytes
 
@@ -439,7 +440,7 @@ def main():
     check_population_cells(contract, IMAGES[args.image]["image_digest"], population)
     check_selectors(contract, population, launch_state.mapping)
     launch_state.check()
-    manifest = {"schema": "tessera.numerics_cases.v1", "population_path": str(args.population),
+    manifest = {"schema": "tessera.numerics_cases.v1", "environment_diagnostics": launch_state.diagnostics(), "population_path": str(args.population),
                 "population_sha256": population_digest, "population_review": population["review"],
                 "q1_table_sha256": sha256(args.q1), "source_commit": source_revision, **launch_state.fields(),
                 "contract_sha256": sha256(args.source / "src/tessera/serving/runtime_contract.json"),

@@ -658,7 +658,7 @@ def run_row(args, receipt, phases):
     from experiments.numerics_rows.population import load_signed_population, select_modules
 
     receipt["row"]["finalization_finished"] = False
-    from experiments.numerics_rows.launch_state import check_binding
+    from experiments.numerics_rows.launch_state import check_binding, check_math_binding
     launch_state = args.launch_state
     launch_state.check()
     population, population_digest = load_signed_population(args.population)
@@ -666,6 +666,8 @@ def run_row(args, receipt, phases):
     runtime = check_runtime(args.image)
     runtime.update({k: v for k, v in launch_state.fields().items() if k != "launch_levers_sha256"})
     sys.path.insert(0, str(args.source / "src"))
+    import torch
+    launch_state.bind_math(torch)
     from experiments.numerics_rows.serving_build import check_compile_paths, check_retained_source
 
     retained_source = check_retained_source(args.source, args.build, args.build_provenance)
@@ -674,7 +676,6 @@ def run_row(args, receipt, phases):
     compile_paths = check_compile_paths(args.build, args.build_provenance)
     receipt["tessera"]["serving_compile"] = compile_paths
     import tessera
-    import torch
     from experiments import dense_fused_oracle as dense
     from experiments.numerics_rows.h1 import negative_controls
     from experiments.numerics_rows.cases import DTable
@@ -689,6 +690,7 @@ def run_row(args, receipt, phases):
                        "tree_sha256": source_digest(tool_root, ".")}
     torch.set_num_threads(1)
     runtime["native_ops"] = register_native_ops(args.image)
+    launch_state.check()
     receipt["runtime"] = runtime
     write_json(args.out / "native_ops.json", runtime["native_ops"])
     if torch.cuda.get_device_capability() != (12, 1):
@@ -698,6 +700,8 @@ def run_row(args, receipt, phases):
     receipt["canary"] = getattr(args, "canary", False)
     manifest, built, h1 = (json.loads(path.read_text()) for path in (args.manifest, args.build, args.h1))
     check_binding(manifest, launch_state.fields())
+    check_math_binding(manifest, launch_state.fields())
+    check_math_binding(h1, launch_state.fields())
     check_manifest_source(manifest, commit, args.source / "src/tessera/serving/runtime_contract.json")
     if manifest["population_sha256"] != population_digest or manifest["q1_table_sha256"] != sha256(args.q1):
         raise Invalid("case manifest input identity differs")
@@ -718,6 +722,7 @@ def run_row(args, receipt, phases):
     receipt["units"] = [unit for _, _, _, units in groups for unit in units]
     for unit in receipt["units"]:
         unit["launch_state_sha256"] = launch_state.sha256
+        unit.update({k: v for k, v in launch_state.fields().items() if k.startswith("dependency_math")})
     write_json(args.out / "numerics_row.json", receipt)
     if built["commit"] != commit or built["runtime"]["image_digest"] != runtime["image_digest"]:
         raise Invalid("library build does not match the cell")
@@ -845,6 +850,7 @@ def run_row(args, receipt, phases):
                             unit["completed"] = True
                         finally:
                             unit["flags_latched_diagnostic"] = dict(getattr(sys.modules.get("tessera.serving.flags"), "_LATCHED", {}))
+                            receipt["runtime"]["environment_diagnostics"] = launch_state.diagnostics()
                             finish_unit(unit)
                             write_json(args.out / "numerics_row.json", receipt)
                     del adapter
