@@ -64,6 +64,7 @@ def check_canary(directory, revision, paths):
 
 def row_arguments(config, root, source, population, paths, phase):
     arguments = ["--image", "N", "--name", config["module"], "--phase", phase,
+                 "--phase-instance", str(root / phase / "results/instance.json"),
                  "--out", str(root / phase / "results"), "--rule", str(RULE), "--freeze", str(FREEZE),
                  "--module", config["module"]]
     if config["canary"]:
@@ -132,10 +133,6 @@ set -euo pipefail
 umask 077
 cd {out}
 sha256sum -c transport-preparation.sha256 > /dev/null
-read -r FLUX_PREFIX FLUX_RUN < /mnt/shared/flux-migration/INSTANCE
-export PATH=$FLUX_PREFIX/install/bin:$FLUX_PREFIX/deps/bin:/usr/bin:/bin
-export LD_LIBRARY_PATH=$FLUX_PREFIX/install/lib:$FLUX_PREFIX/deps/lib
-export FLUX_URI=$(/mnt/shared/flux-migration/flux-uri.sh)
 export FLUX_F58_FORCE_ASCII=1
 git clone --shared {out}/repository.git "$2/code"
 git -C "$2/code" checkout --detach {revision}
@@ -176,6 +173,7 @@ def prepare(cpu_check, *, module=MODULE, canary=True, canary_directory=None):
         "canary_directory": str(canary_directory) if canary_directory else None,
         "paths": dict.fromkeys(INPUTS), "cpu_check": str(cpu_check)})
     shutil.copyfile(__file__, out / "prepare.py")
+    shutil.copyfile(Path(__file__).with_name('phase_instance.py'), out / 'instance.py')
     shutil.copyfile(ROOT / 'experiments/numerics_rows/counted_feeder.py', out / 'admission.py')
     shutil.copyfile(ROOT / 'experiments/numerics_rows/feeder-settings.json', out / 'feeder-settings.json')
     capture_cores = 4 if canary else 1
@@ -223,6 +221,7 @@ export HOME="$task_scratch/home" TMPDIR="$task_scratch/tmp"
 export XDG_CACHE_HOME="$task_scratch/cache" XDG_CONFIG_HOME="$task_scratch/config" XDG_DATA_HOME="$task_scratch/data"
 export PYTHONPYCACHEPREFIX="$task_scratch/host-pycache"
 mkdir -p results "$HOME" "$TMPDIR" "$XDG_CACHE_HOME" "$XDG_CONFIG_HOME" "$XDG_DATA_HOME"
+python3 {out}/instance.py check {job} > results/instance.json
 export CONTAINERS_STORAGE_CONF="$task_scratch/storage.conf" CONTAINERS_CONF="$task_scratch/containers.conf"
 printf '[storage]\\ndriver = "overlay"\\nrunroot = "%s/podman-run"\\ngraphroot = "%s/podman-storage"\\n[storage.options]\\nadditionalimagestores = ["/home/rob/.local/share/containers/storage"]\\n' "$task_scratch" "$task_scratch" > "$CONTAINERS_STORAGE_CONF"
 printf '[engine]\\ntmp_dir = "%s/podman-tmp"\\n' "$task_scratch" > "$CONTAINERS_CONF"
@@ -246,9 +245,13 @@ test -s results/{phase}/phase.json
 {telemetry}''')
         base = Path("/mnt/shared/flux-jobs/tessera-1717-RECEIPT-CPU-7d69093d-20261116T235639Z")
         submit = (base / "submit-after-review.sh").read_text().replace(str(base), str(job))
+        start = submit.index('read -r FLUX_PREFIX')
+        end = submit.index('flux submit', start)
+        submit = submit[:start] + f'flux() {{ python3 {out}/instance.py submit "$root" "$@"; }}\n' + submit[end:]
+        submit = submit.replace(f' > {job}/jobid', '')
         submit = submit.replace("tessera-1717-RECEIPT-CPU", "tessera-1717-DENSE-" + phase.upper())
         submit = submit.replace('flux submit ', 'flux submit --urgency=8 ')
-        submit = submit.replace('flux submit ', f'python3 {out}/admission.py --wait-dense-slot\nflux submit ', 1)
+        submit = submit.replace('flux submit ', f'if test "$(cat {job}/instance-name.txt 2>/dev/null || echo fv1)" = fv1; then python3 {out}/admission.py --wait-dense-slot; fi\nflux submit ', 1)
         submit = submit.replace('--env=FLUX_SCRATCH=/var/tmp ', '--env=FLUX_SCRATCH=/var/tmp/flux-rob ')
         submit = submit.replace("-t30m", f"-t{minutes}m").replace("core=4;memory=16", f"core={cores};memory={8 if phase == 'prepare' else 32}" + (";gpu=1" if gpu else "")).replace("host:dl380g10", "host:sparklina")
         (job / "submit-after-review.sh").write_text(submit)

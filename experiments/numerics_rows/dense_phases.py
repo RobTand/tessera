@@ -432,6 +432,8 @@ def host_compare(args, receipt, phases, groups):
     receipt.update(final)
     receipt["row"]["phase_jobs"] = {"prepare": copy.deepcopy(prepared["receipt"]["row"]),
         "capture": copy.deepcopy(captured["receipt"]["row"]), "compare": compare_row}
+    for phase, record in receipt['row']['phase_jobs'].items():
+        record.update(record.pop('phase_jobs', {}).get(phase, {}))
     progress = args.progress = Progress(args.out, receipt, phases)
     known = {json.dumps(row.unit_identity(u), sort_keys=True): u for u in base["units"]}
     for unit in receipt["units"]:

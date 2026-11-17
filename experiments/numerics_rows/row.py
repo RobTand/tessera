@@ -441,7 +441,7 @@ def run_dense_case(adapter, unit, recipe, recorder, *, exact=True, category="swe
     if exact:
         require_x(mask, sweep=all(len(columns) <= 1 for _, columns, _ in recipe))
     if hasattr(adapter, "case_writer"):
-        adapter.case_writer.dense(adapter, unit, x, q, sf, reference, mask, bound, category=category)
+        adapter.case_writer.dense(adapter, unit, x, q, sf, reference, mask, bound, category=category, recipe=recipe)
         unit["exact"]["composition"]["cases"] += 1
         return compare_output(unit, str(recipe), reference, reference, mask)
     try:
@@ -632,6 +632,7 @@ def main():
     p.add_argument("--module", action="append", default=[], help="Explicit module name in the signed population; repeat for a subset")
     p.add_argument("--canary", action="store_true", help="Uncounted pre-freeze run; its receipt cannot be joined")
     p.add_argument("--phase", choices=("prepare", "capture", "compare"))
+    p.add_argument("--phase-instance", type=Path)
     p.add_argument("--prepare-artifact", type=Path)
     p.add_argument("--capture-artifact", type=Path)
     p.add_argument("--tp-size", type=int, choices=(1, 2))
@@ -652,6 +653,9 @@ def main():
     signals = handled_signals(receipt, args.out, lambda: args.progress.checkpoint() if getattr(args, "progress", None) else None)
     signals.__enter__()
     try:
+        if args.phase or args.phase_instance:
+            from experiments.numerics_rows.phase_instance import bind
+            bind(receipt['row'], args.phase or 'timed', json.loads(args.phase_instance.read_text()), args.canary)
         args.launch_state = LaunchState(args.launch_levers, fresh=True)
         fields = args.launch_state.fields()
         receipt["runtime"].update({k: v for k, v in fields.items() if k != "launch_levers_sha256"})

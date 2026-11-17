@@ -71,6 +71,8 @@ def prepare(step, image, extra=(), *, source_revision):
     if command == "cpu_checks":
         shape, minutes, host = "core=4;memory=16", 30, "dl380g10"
     arguments = ["--source", str(source), "--image", image, "--out", str(out / "results"), *extra]
+    if command == "row":
+        arguments += ["--phase-instance", str(out / "results/instance.json")]
     payload = worker_command(source, f"experiments.numerics_rows.{command}", arguments)
     if gpu:
         parser = argparse.ArgumentParser(add_help=False)
@@ -119,6 +121,7 @@ export PYTHONPYCACHEPREFIX={out}/cache/pycache
 export PYTHONPATH={source}/src:{out}/code
 export OMP_NUM_THREADS=1 MKL_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 MAX_JOBS={2 if gpu else 4}
 mkdir -p cache results home "$task_scratch/home"
+python3 instance.py check {out} > results/instance.json
 # The cell source stays separate from the implementation source.
 git clone --shared repository.git code
 git -C code checkout --detach {revision}
@@ -136,7 +139,7 @@ printf '%s  %s\\n' 8a1536dfbc3df70edbdc37001a0db6947e97d9263926bc85a4d4d3ca231ea
               "--env=HOME=/home/rob --env=XDG_RUNTIME_DIR=/run/user/1000 "
               "--env=FLUX_F58_FORCE_ASCII=1 --env=FLUX_SCRATCH=/var/tmp "
               "--env=OMP_NUM_THREADS=1 --env=MKL_NUM_THREADS=1 --env=OPENBLAS_NUM_THREADS=1 "
-              f"--output={out}/stdout --error={out}/stderr /bin/bash {out}/job.sh > {out}/jobid")
+              f"--output={out}/stdout --error={out}/stderr /bin/bash {out}/job.sh")
     (out / "README.md").write_text(
         f"# {step}\n\nTool: {revision}. Tessera: {source_revision}. No work has been submitted.\n\n"
         "The lead must obtain Fleet OK before submission.\n"
@@ -145,15 +148,12 @@ printf '%s  %s\\n' 8a1536dfbc3df70edbdc37001a0db6947e97d9263926bc85a4d4d3ca231ea
     (out / "submit-after-review.sh").write_text(f'''#!/bin/bash
 set -euo pipefail
 root={out}
-read -r FLUX_PREFIX FLUX_RUN < /mnt/shared/flux-migration/INSTANCE
-export PATH=$FLUX_PREFIX/install/bin:$FLUX_PREFIX/deps/bin:/usr/bin:/bin
-export LD_LIBRARY_PATH=$FLUX_PREFIX/install/lib:$FLUX_PREFIX/deps/lib
-export FLUX_URI=$(/mnt/shared/flux-migration/flux-uri.sh)
+flux() {{ python3 "$root/instance.py" submit "$root" "$@"; }}
 test ! -e "$root/jobid"
-cp /mnt/shared/flux-migration/INSTANCE "$root/instance.txt"
 {submit} 2> "$root/submit.stderr"
 cat "$root/jobid"
 ''')
+    shutil.copyfile(Path(__file__).with_name('phase_instance.py'), out / 'instance.py')
     print(out)
     return out
 

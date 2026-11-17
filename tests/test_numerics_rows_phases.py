@@ -561,7 +561,7 @@ def feeder_booking(tmp_path, monkeypatch):
         path.write_text(json.dumps(value))
     write(canary / "counted-rows.json", {"module-A": str(rowdir)})
     write(canary / "counted-chain-inputs.json", {"module-A": {}})
-    write(canary / "campaign.json", {"tool_commit": "tool"})
+    write(canary / "campaign.json", {"tool_commit": "tool", "module": "module-A"})
     write(rowdir / "campaign.json", {"bound": True})
     bookings = tmp_path / "bookings.json"
     write(bookings, {"module-A": {phase: {"memory_gib": 8 if phase == "prepare" else 5, "minutes": 15 if phase == "capture" else 10} for phase in ("prepare", "capture", "compare")}})
@@ -569,7 +569,7 @@ def feeder_booking(tmp_path, monkeypatch):
         job = rowdir / phase
         (job / "results" / phase).mkdir(parents=True)
         (job / "job.sh").write_text("timeout --kill-after=20s 100s command\n")
-        (job / "submit-after-review.sh").write_text("flux submit -t5m --resources-shape='slot/[core=1;memory=4]' command\n")
+        (job / "submit-after-review.sh").write_text("flux submit -t5m --resources-shape='slot/[core=1;memory=4]' --requires=host:sparklina command\n")
         (job / "tool-exit.txt").write_text("0")
         for kind in ("payload", "podman"):
             (job / f"results/{kind}-exit.txt").write_text("0")
@@ -577,9 +577,18 @@ def feeder_booking(tmp_path, monkeypatch):
     write(rowdir / "compare/results/numerics_row.json", {"row": {"outcome": "PASS", "finalization_finished": True}})
     monkeypatch.setattr(prepare_split, "check_canary", lambda *a: None)
     monkeypatch.setattr(api, "sha", lambda path: "a" * 64)
+    write(canary/'counted-feeder-state.json', {'bookings_sha256': 'a'*64, 'settings_sha256': 'a'*64,
+          'jobs': {}, 'lanes': [['fv1e-sparklina', 'sparklina']]})
+    monkeypatch.setattr(api, 'client', lambda name: ['flux'])
+    monkeypatch.setattr(api, 'observe', lambda name: {'name': name})
+    from experiments.numerics_rows import phase_artifact
+    monkeypatch.setattr(phase_artifact, 'tensor_subset_equal', lambda *a: {'cases': 1})
     def run(command, **kw):
         if command[0] == "bash":
-            (Path(command[1]).parent / "jobid").write_text("f123")
+            job = Path(command[1]).parent
+            jobid = {'prepare': 'f123', 'capture': 'f124', 'compare': 'f125'}[job.name]
+            (job/'jobid').write_text(jobid)
+            write(job/'instance.json', {'name': (job/'instance-name.txt').read_text().strip(), 'job_id': jobid})
     monkeypatch.setattr(api.subprocess, "run", run)
     monkeypatch.setattr(api.subprocess, "check_output", lambda *a, **kw: "0")
     monkeypatch.setattr(api, "wait_dense_slot", lambda: None, raising=False)
@@ -595,7 +604,7 @@ def test_feeder_refuses_missing_or_ambiguous_booking_fields(feeder_booking, fiel
         path.unlink()
     job = rowdir / "prepare" / ("job.sh" if field == "inner-timeout" else "submit-after-review.sh")
     text = job.read_text()
-    token = {"inner-timeout": "--kill-after=20s 540s ", "walltime": " -t10m ", "shape": "slot/[core=1;memory=8]"}[field]
+    token = {"inner-timeout": "--kill-after=20s 540s ", "walltime": " -t10m ", "shape": "slot/[core=1;memory=6]"}[field]
     assert token in text
     job.write_text(text.replace(token, "missing" if mutation == "missing" else token + token))
     with pytest.raises(ValueError, match="EXACTLY_ONE_MATCH"):
@@ -767,7 +776,7 @@ def test_dense_prepare_booking_and_low_urgency(feeder_booking):
     waits = []
     api.wait_dense_slot = lambda: waits.append(True)
     api.run(canary, bookings)
-    assert len(waits) == 3
+    assert len(waits) == 2
     assert all('--urgency=8' in p.read_text() for p in rowdir.glob('*/submit-after-review.sh'))
     bad = json.loads(bookings.read_text())
     bad['module-A']['prepare']['memory_gib'] = 32

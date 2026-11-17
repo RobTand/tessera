@@ -136,3 +136,32 @@ def check_capture(prepare, capture, prepare_digest):
         if any(case.get(name) != wanted.get(name) for name in ("scope", "configuration", "kind", "identities")):
             raise Invalid("captured case is attached to another unit")
     return [(case, observed[case["id"]]) for case in prepare["cases"]]
+
+
+def tensor_subset_equal(canary, counted):
+    """Match local case parameters. Check all referenced tensor bytes, dtypes and shapes."""
+    roots = [Path(canary), Path(counted)]
+    documents = [json.loads((root/'phase.json').read_text()) for root in roots]
+    scopes = {json_digest(s) for s in documents[0]['scopes']}
+    excluded = {'id', 'ordinal', 'identities', 'tensors', 'seconds', 'utc_start', 'utc_end',
+                'elapsed_seconds', 'worker_elapsed_seconds', 'host', 'hostname', 'job_id', 'flux_job_id', 'instance'}
+    compared = []
+    for root, document in zip(roots, documents):
+        if document.get('completion') is not True:
+            raise Invalid('E/P prepare is unfinished')
+        cases = {}
+        for case in document['cases']:
+            if json_digest(case['scope']) not in scopes:
+                continue
+            key = json_digest({k: v for k, v in case.items() if k not in excluded})
+            tensors = {}
+            for name, ref in case['tensors'].items():
+                path = (root/ref['file']).resolve()
+                if not path.is_relative_to(root.resolve()) or sha256(path) != ref['sha256']:
+                    raise Invalid('E/P tensor bytes differ from their hash')
+                tensors[name] = {k: ref[k] for k in ('sha256', 'dtype', 'shape')}
+            cases.setdefault(key, []).append(json_digest(tensors))
+        compared.append({k: sorted(v) for k, v in cases.items()})
+    if not compared[0] or compared[0] != compared[1]:
+        raise Invalid('E/P scope-local cases or tensor bytes differ')
+    return {'cases': sum(map(len, compared[0].values())), 'tensor_map_sha256': json_digest(compared[0])}

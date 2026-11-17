@@ -1,6 +1,5 @@
 """Run every counted module through Flux. Resume saved IDs without resubmission."""
 import argparse
-from datetime import datetime, timezone
 import fcntl
 import hashlib
 import json
@@ -9,6 +8,11 @@ import re
 import subprocess
 import sys
 import time
+
+if __package__:
+    from .phase_instance import client, observe
+else:
+    from instance import client, observe
 
 FXE = '/mnt/shared/flux-migration/lead-1114/tools/fxe.sh'
 SETTINGS = Path(__file__).with_name('feeder-settings.json')
@@ -47,12 +51,12 @@ def wait_dense_slot():
     settings = read(SETTINGS)
     started, reported = time.monotonic(), False
     while True:
-        jobs = json.loads(subprocess.check_output(['flux', 'jobs', '--json', '--filter=pending'], text=True))['jobs']
+        jobs = json.loads(subprocess.check_output([*client('fv1'), 'jobs', '--json', '--filter=pending'], text=True))['jobs']
         blocking = []
         for job in jobs:
             if job.get('urgency') == 0:
                 continue
-            spec = json.loads(subprocess.check_output(['flux', 'job', 'info', str(job['id']), 'jobspec'], text=True))
+            spec = json.loads(subprocess.check_output([*client('fv1'), 'job', 'info', str(job['id']), 'jobspec'], text=True))
             if not excludes_sparks(spec.get('attributes', {}).get('system', {}).get('constraints', {})):
                 blocking.append(str(job['id']))
         if not blocking:
@@ -118,11 +122,11 @@ def run(canary, bookings):
         if phases['capture']['minutes'] != settings['capture_minutes']:
             raise FeederError(f"DENSE_CAPTURE_REQUIRES_{settings['capture_minutes']}_MINUTES")
     state_path = canary / 'counted-feeder-state.json'
-    state = read(state_path) if state_path.exists() else {'bookings_sha256': sha(bookings), 'instance_sha256': sha('/mnt/shared/flux-migration/INSTANCE'), 'jobs': {}}
-    if state['bookings_sha256'] != sha(bookings) or state['instance_sha256'] != sha('/mnt/shared/flux-migration/INSTANCE'):
+    state = read(state_path) if state_path.exists() else {'bookings_sha256': sha(bookings), 'settings_sha256': sha(SETTINGS), 'jobs': {}}
+    if state['bookings_sha256'] != sha(bookings) or state['settings_sha256'] != sha(SETTINGS):
         raise FeederError('RESUME_INPUTS_DIFFER')
     def event(kind, **fields):
-        record = {'utc': datetime.now(timezone.utc).isoformat(), 'event': kind, **fields}
+        record = {'utc': subprocess.check_output(['date', '-u', '+%Y-%m-%dT%H:%M:%SZ'], text=True).strip(), 'event': kind, **fields}
         with (canary / 'counted-feeder.jsonl').open('a') as stream:
             stream.write(json.dumps(record, sort_keys=True) + '\n')
         temporary = state_path.with_suffix('.pending')
@@ -133,58 +137,103 @@ def run(canary, bookings):
     revision = read(canary / 'campaign.json')['tool_commit']
     from experiments.numerics_rows.prepare_split import check_canary
     check_canary(canary, revision, inputs[next(iter(rows))])
-    for module, directory in rows.items():
+    def phase_job(module, phase, name='fv1', host='sparklina', collect=True):
+        directory = rows[module]
         directory = Path(directory)
-        settings = read(directory / 'campaign.json')
-        if not settings.get('bound'):
+        config = read(directory / 'campaign.json')
+        if not config.get('bound'):
             paths = directory / 'chain-inputs.json'
             paths.write_text(json.dumps(inputs[module], indent=2) + '\n')
             subprocess.run(['python3', str(directory / 'bind-inputs.py'), str(paths)], check=True)
-        for phase in ('prepare', 'capture', 'compare'):
-            job = directory / phase
-            key = module + ':' + phase
-            drain = state['jobs'].get(key, {}).get('fv1e_drain')
-            if (job / 'jobid').exists():
-                jobid = (job / 'jobid').read_text().strip()
-                if not re.fullmatch(r'f[1-9A-HJ-NP-Za-km-z]+', jobid):
-                    raise FeederError('SUBMISSION_ID_AMBIGUOUS')
-            else:
-                shape = requested[module][phase]
-                script = (job / 'job.sh').read_text()
-                script = replace_once(r'--kill-after=20s \d+s ', f'--kill-after=20s {shape["minutes"] * 60 - 60}s ', script)
-                submit = (job / 'submit-after-review.sh').read_text()
-                submit = replace_once(r' -t\d+m ', f' -t{shape["minutes"]}m ', submit)
-                submit = replace_once(r'slot/\[core=1;memory=\d+(;gpu=1)?\]',
-                    'slot/[core=1;memory=' + str(shape['memory_gib']) + (';gpu=1]' if phase == 'capture' else ']'), submit)
-                urgency = '--urgency=' + str(settings['urgency'])
-                submit = replace_once(r'--urgency=\d+', urgency, submit) if '--urgency=' in submit else replace_once(r'flux submit\b', 'flux submit ' + urgency, submit)
-                (job / 'job.sh').write_text(script)
-                (job / 'submit-after-review.sh').write_text(submit)
-                files = [*directory.glob('*.py'), *directory.glob('*/*.sh')]
-                (directory / 'transport-preparation.sha256').write_text(''.join(f'{sha(p)}  {p}\n' for p in sorted(files)))
+        job = directory / phase
+        drain = next((v.get('fv1e_drain') for v in state['jobs'].values() if v['directory'] == str(job)), None)
+        if (job / 'jobid').exists():
+            jobid = (job / 'jobid').read_text().strip()
+            if not re.fullmatch(r'f[1-9A-HJ-NP-Za-km-z]+', jobid):
+                raise FeederError('SUBMISSION_ID_AMBIGUOUS')
+        else:
+            shape = dict(requested[module][phase])
+            if name != 'fv1':
+                shape['memory_gib'] = settings['fv1e_prepare_memory_gib']
+            (job/'instance-name.txt').write_text(name + '\n')
+            script = (job / 'job.sh').read_text()
+            script = replace_once(r'--kill-after=20s \d+s ', f'--kill-after=20s {shape["minutes"] * 60 - 60}s ', script)
+            submit = (job / 'submit-after-review.sh').read_text()
+            submit = replace_once(r'--requires=host:[\w-]+', '--requires=host:' + host, submit)
+            submit = replace_once(r' -t\d+m ', f' -t{shape["minutes"]}m ', submit)
+            submit = replace_once(r'slot/\[core=1;memory=\d+(;gpu=1)?\]',
+                'slot/[core=1;memory=' + str(shape['memory_gib']) + (';gpu=1]' if phase == 'capture' else ']'), submit)
+            urgency = '--urgency=' + str(settings['urgency'])
+            submit = replace_once(r'--urgency=\d+', urgency, submit) if '--urgency=' in submit else replace_once(r'flux submit\b', 'flux submit ' + urgency, submit)
+            (job / 'job.sh').write_text(script)
+            (job / 'submit-after-review.sh').write_text(submit)
+            files = [*directory.glob('*.py'), *directory.glob('*/*.sh')]
+            (directory / 'transport-preparation.sha256').write_text(''.join(f'{sha(p)}  {p}\n' for p in sorted(files)))
+            if name == 'fv1':
                 wait_dense_slot()
-                drain = drain_ecores_before_submit(shape['memory_gib'], submit, 'tessera-1717:' + str(job))
-                subprocess.run(['bash', str(job / 'submit-after-review.sh')], check=True)
-                jobid = (job / 'jobid').read_text().strip()
-            state['jobs'][key] = {'id': jobid, 'directory': str(job), 'fv1e_drain': drain}
-            event('WAIT', module=module, phase=phase, id=jobid)
-            subprocess.run(['flux', 'job', 'wait-event', jobid, 'clean'], check=True, stdout=subprocess.DEVNULL)
-            native = int(subprocess.check_output(['flux', 'jobs', '-n', '-o', '{returncode}', jobid], text=True).strip())
-            exits = {label: (job / path).read_text().strip() for label, path in (
-                ('tool', 'tool-exit.txt'), ('payload', 'results/payload-exit.txt'), ('podman', 'results/podman-exit.txt'))}
-            logs = {str(p): sha(p) for p in (job / 'stdout', job / 'stderr', job / 'results/payload.stdout', job / 'results/payload.stderr') if p.is_file()}
-            event('END', module=module, phase=phase, id=jobid, native_exit=native, exits=exits, logs=logs)
-            if native != 0 or any(value != '0' for value in exits.values()):
-                raise FeederError('COUNTED_PHASE_FAILED')
-            artifact = read(job / 'results' / phase / 'phase.json')
-            if artifact.get('completion') is not True:
-                raise FeederError('COUNTED_PHASE_UNFINISHED')
-            if drain:
-                undrain_ecores(**drain)
-        receipt = read(directory / 'compare/results/numerics_row.json')
-        event('ROW', module=module, outcome=receipt['row']['outcome'])
-        if not receipt['row'].get('finalization_finished') or receipt['row']['outcome'] != 'PASS':
-            raise FeederError('COUNTED_COMPARE_NOT_PASS')
+            drain = drain_ecores_before_submit(shape['memory_gib'], submit, 'tessera-1717:' + str(job))
+            subprocess.run(['bash', str(job / 'submit-after-review.sh')], check=True)
+            jobid = (job / 'jobid').read_text().strip()
+        bound = read(job/'instance.json')
+        if bound['name'] != name or bound['job_id'] != jobid or observe(name) != {k: v for k, v in bound.items() if k != 'job_id'}:
+            raise FeederError('RESUME_PHASE_INSTANCE_DIFFERS')
+        key = name + ':' + jobid
+        state['jobs'][key] = {'id': jobid, 'instance': bound, 'directory': str(job), 'fv1e_drain': drain}
+        event('WAIT', module=module, phase=phase, id=jobid)
+        if not collect:
+            return
+        subprocess.run([*client(name), 'job', 'wait-event', jobid, 'clean'], check=True, stdout=subprocess.DEVNULL)
+        native = int(subprocess.check_output([*client(name), 'jobs', '-n', '-o', '{returncode}', jobid], text=True).strip())
+        exits = {label: (job / path).read_text().strip() for label, path in (
+            ('tool', 'tool-exit.txt'), ('payload', 'results/payload-exit.txt'), ('podman', 'results/podman-exit.txt'))}
+        logs = {str(p): sha(p) for p in (job / 'stdout', job / 'stderr', job / 'results/payload.stdout', job / 'results/payload.stderr') if p.is_file()}
+        event('END', module=module, phase=phase, id=jobid, native_exit=native, exits=exits, logs=logs)
+        if native != 0 or any(value != '0' for value in exits.values()):
+            raise FeederError('COUNTED_PHASE_FAILED')
+        artifact = read(job / 'results' / phase / 'phase.json')
+        if artifact.get('completion') is not True:
+            raise FeederError('COUNTED_PHASE_UNFINISHED')
+        if drain:
+            undrain_ecores(**drain)
+
+    first = read(canary/'campaign.json')['module']
+    modules = [first, *(m for m in rows if m != first)]
+    if 'lanes' not in state:
+        jobid = (canary/'prepare/jobid').read_text().strip()
+        peaks = [int(line.split()[5]) for p in Path('/mnt/shared/flux-migration/fleet-qual/jobmem/rows').glob(jobid + '-*.tsv') for line in p.read_text().splitlines()]
+        if not peaks or not 0 < max(peaks) <= settings['fv1e_canary_prepare_peak_limit_gib'] * 2**30:
+            raise FeederError('FV1_CANARY_PREPARE_PEAK_REFUSES_FV1E')
+        lanes = []
+        for host in ('sparklina', 'sparky'):
+            try:
+                observe('fv1e-' + host)
+            except (OSError, subprocess.SubprocessError):
+                continue
+            slots = min(settings['fv1e_max_prepares_per_spark'], settings['fv1e_pool_memory_gib']//settings['fv1e_prepare_memory_gib'])
+            lanes += [('fv1e-' + host, host)] * slots
+        if not lanes:
+            raise FeederError('NO_FV1E_PREPARE_INSTANCE')
+        state['lanes'] = lanes + [('fv1', host) for host in ('sparklina', 'sparky') for _ in range(settings['fv1_max_prepares_per_spark'])]
+        event('PLACEMENT')
+    lanes = state['lanes']
+    phase_job(first, 'prepare', *lanes[0])
+    from experiments.numerics_rows.phase_artifact import tensor_subset_equal
+    state['ep_tensor_check'] = tensor_subset_equal(canary/'prepare/results/prepare', Path(rows[first])/'prepare/results/prepare')
+    event('EP_TENSOR_EQUAL', **state['ep_tensor_check'])
+    for start in range(0, len(modules), len(lanes)):
+        wave = list(zip(modules[start:start+len(lanes)], lanes))
+        for module, (name, host) in wave:
+            phase_job(module, 'prepare', name, host, collect=False)
+        for module, (name, host) in wave:
+            if module != first:
+                phase_job(module, 'prepare', name, host)
+            for phase in ('capture', 'compare'):
+                phase_job(module, phase)
+            directory = Path(rows[module])
+            receipt = read(directory / 'compare/results/numerics_row.json')
+            event('ROW', module=module, outcome=receipt['row']['outcome'])
+            if not receipt['row'].get('finalization_finished') or receipt['row']['outcome'] != 'PASS':
+                raise FeederError('COUNTED_COMPARE_NOT_PASS')
     event('COMPLETE', modules=len(rows))
 
 
