@@ -357,7 +357,7 @@ def create_built(tmp_path, monkeypatch):
     records.mkdir()
     monkeypatch.setenv(retained.ENV, str(root))
     monkeypatch.setenv(retained.RECORD_ENV, str(records))
-    monkeypatch.delitem(sys.modules, "_speedups")
+    monkeypatch.delitem(sys.modules, row["name"], raising=False)
     monkeypatch.setattr(backend, "platform_token", lambda **kw: "sm_121")
     monkeypatch.setattr(backend, "probed_platform_token", lambda **kw: "sm_121")
     monkeypatch.setattr(cpp_extension, "load", lambda **kw: pytest.fail("compile called"))
@@ -396,7 +396,7 @@ def test_wrong_platform_refuses(tmp_path, monkeypatch):
 
 def test_already_loaded_module_refuses(tmp_path, monkeypatch):
     built = create_built(tmp_path, monkeypatch)
-    monkeypatch.setitem(sys.modules, "_speedups", object())
+    monkeypatch.setitem(sys.modules, built[4]["name"], object())
     with pytest.raises(RuntimeError, match="already loaded"):
         load()
 
