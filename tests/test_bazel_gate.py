@@ -55,6 +55,12 @@ def test_build_lock_and_gate_workflow_changes_test_everything(path):
     assert decision['build'] == ['//...'] and decision['all_scopes']
 
 
+@pytest.mark.parametrize('path', ['tools/bazel/full_targets/amd64-0.targets', 'tools/bazel/test_inputs.bzl'])
+def test_shard_lists_and_test_inputs_select_by_impact(path):
+    decision = plan([path], ['//tests:test_export'])
+    assert decision['selection'] == 'impacted' and decision['selected'] == ['//tests:test_export']
+
+
 def test_another_workflow_is_an_ordinary_input():
     """ci.yml is read by the tests that check it, so only they rerun."""
     decision = plan(['.github/workflows/ci.yml'], ['//tests:test_export'])

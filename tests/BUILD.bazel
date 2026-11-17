@@ -1318,6 +1318,7 @@ ts_py_library(
         "//:MODULE.bazel.lock",
         "//:docs/ARCHITECTURE.md",
         "//:files/.github/workflows",
+        "//tools/bazel:full_targets/amd64-0.targets",
         "//tools/bazel:generate.sh",
         "//tools/bazel:nonhermetic.bzl",
         "//tools/bazel:python.bzl",
