@@ -3101,9 +3101,8 @@ ts_py_library(
     ],
     deps = [
         "//src/tessera:__init___cycle",
-        "//src/tessera:_dev/__init__",
-        "//src/tessera:_dev/native_identity",
         "//src/tessera:fused_frame",
+        "//src/tessera:native_identity",
     ],
 )
 
@@ -3227,8 +3226,7 @@ ts_py_library(
     ],
     deps = [
         "//src/tessera:__init___cycle",
-        "//src/tessera:_dev/__init__",
-        "//src/tessera:_dev/native_identity",
+        "//src/tessera:native_identity",
     ],
 )
 

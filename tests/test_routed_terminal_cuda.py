@@ -33,7 +33,7 @@ CASES = [
 
 
 def record_loaded_native(lib, library):
-    from tessera._dev.native_identity import loaded_native_identity
+    from tessera.native_identity import loaded_native_identity
 
     source = Path(rf.__file__).parent / 'serving/csrc/routed_fused_window.cu'
     identity = dict(library=library, **loaded_native_identity(lib, source))

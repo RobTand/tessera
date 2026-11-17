@@ -38,8 +38,12 @@ its own unit with its own contract, not only ``_ext()``'s plumbing.
 from __future__ import annotations
 
 import fcntl
+import hashlib
+import importlib.util
+import json
 import os
 from pathlib import Path
+import shutil
 import signal
 import subprocess
 import sys
@@ -51,6 +55,9 @@ import pytest
 import torch.utils.cpp_extension as cpp_extension
 
 from tessera import jit_build_lock as jbl
+from tessera import load_built as retained
+from tessera import routed_fused
+from tessera.serving import backend
 
 ROOT = Path(__file__).resolve().parents[1]
 SRC = ROOT / "src"
@@ -328,3 +335,94 @@ def test_load_after_a_killed_builder_finishes(tmp_path, monkeypatch):
         cpp_extension.load(name="pkg")
     assert calls == ["pkg"]
     assert not (directory / jbl.TORCH_BATON_NAME).exists()
+
+
+def create_built(tmp_path, monkeypatch):
+    root = tmp_path / "built"
+    library = root / "_speedups" / "_speedups.so"
+    library.parent.mkdir(parents=True)
+    spec = importlib.util.find_spec("markupsafe._speedups")
+    assert spec is not None and spec.origin and spec.origin.endswith(".so") and Path(spec.origin).is_file(), "MarkupSafe must provide a shared extension file"
+    shutil.copyfile(spec.origin, library)
+    digest = hashlib.sha256(library.read_bytes()).hexdigest()
+    row = dict(key="cpu-control", name="_speedups", cflags=["-gencode", "arch=compute_121,code=sm_121"],
+               library=dict(path="/original/mount/_speedups.so", sha256=digest), library_so_sha256=digest,
+               library_canonical_code_sha256="1" * 64, cubin_canonical_sha256s=["2" * 64])
+    manifest = root / "build.json"
+    manifest.write_text(json.dumps(dict(libraries=[row])))
+    records = tmp_path / "records"
+    records.mkdir()
+    monkeypatch.setenv(retained.ENV, str(root))
+    monkeypatch.setenv(retained.RECORD_ENV, str(records))
+    monkeypatch.setattr(backend, "platform_token", lambda **kw: "sm_121")
+    monkeypatch.setattr(backend, "probed_platform_token", lambda **kw: "sm_121")
+    monkeypatch.setattr(cpp_extension, "load", lambda **kw: pytest.fail("compile called"))
+    return root, library, manifest, records, row
+
+
+def load():
+    return routed_fused.build_library("_speedups", "unused", lambda *a: pytest.fail("compile callback called"))
+
+
+@pytest.mark.parametrize("fault,error,message", [
+    ("missing", FileNotFoundError, "_speedups.so"),
+    ("hash", RuntimeError, "sha256 does not match"),
+    ("entry", RuntimeError, "exactly one retained library"),
+])
+def test_refuses_missing_or_changed_libraries(tmp_path, monkeypatch, fault, error, message):
+    root, library, manifest, records, row = create_built(tmp_path, monkeypatch)
+    if fault == "missing":
+        library.unlink()
+    elif fault == "hash":
+        library.write_bytes(b"wrong library")
+    else:
+        manifest.write_text('{"libraries": []}')
+    with pytest.raises(error, match=message):
+        load()
+    assert list(records.iterdir()) == []
+
+
+def test_wrong_platform_refuses(tmp_path, monkeypatch):
+    built = create_built(tmp_path, monkeypatch)
+    monkeypatch.setattr(backend, "probed_platform_token", lambda **kw: "sm_120")
+    with pytest.raises(RuntimeError, match="platform does not match"):
+        load()
+
+
+def test_read_only_relocated_load_checks_bytes_and_record(tmp_path, monkeypatch):
+    root, library, manifest, records, row = create_built(tmp_path, monkeypatch)
+    before = {p.relative_to(root): p.read_bytes() for p in root.rglob("*") if p.is_file()}
+    library.chmod(0o444)
+    manifest.chmod(0o444)
+    library.parent.chmod(0o555)
+    root.chmod(0o555)
+    monkeypatch.setattr(os, "makedirs", lambda *a, **kw: pytest.fail("makedirs called"))
+    monkeypatch.setattr(Path, "mkdir", lambda *a, **kw: pytest.fail("mkdir called"))
+    try:
+        monkeypatch.setenv("RANK", "private-rank-value")
+        assert load()._escape_inner("<") == "&lt;"
+        data = [json.loads(path.read_text()) for path in records.glob("*.jsonl")]
+        assert data == [dict(key="cpu-control", name="_speedups", sha256=row["library_so_sha256"],
+                            identity_check="PASS", build_json_sha256=hashlib.sha256(manifest.read_bytes()).hexdigest(),
+                            library_canonical_code_sha256="1" * 64, cubin_canonical_sha256s=["2" * 64])]
+        assert {p.relative_to(root): p.read_bytes() for p in root.rglob("*") if p.is_file()} == before
+    finally:
+        root.chmod(0o755)
+        library.parent.chmod(0o755)
+
+
+def test_record_directory_must_exist_outside_build_tree(tmp_path, monkeypatch):
+    built = create_built(tmp_path, monkeypatch)
+    monkeypatch.setenv(retained.RECORD_ENV, str(built[0]))
+    with pytest.raises(RuntimeError, match="outside the built tree"):
+        load()
+
+
+def test_special_builds_refuse_in_retained_mode(tmp_path, monkeypatch):
+    from tessera.serving.mla_prefill import MlaPrefillBuild
+    from tessera.serving.mhc_fusion import MhcFusedLibrary
+    monkeypatch.setenv(retained.ENV, str(tmp_path))
+    with pytest.raises(RuntimeError, match="no retained loader"):
+        MlaPrefillBuild(None)
+    with pytest.raises(RuntimeError, match="no retained loader"):
+        MhcFusedLibrary()

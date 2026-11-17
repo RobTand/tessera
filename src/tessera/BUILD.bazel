@@ -43,13 +43,6 @@ ts_py_library(
 )
 
 ts_py_library(
-    name = "_dev/native_identity",
-    srcs = [
-        "_dev/native_identity.py",
-    ],
-)
-
-ts_py_library(
     name = "_dev/source_dependencies",
     srcs = [
         "_dev/source_dependencies.py",
@@ -167,6 +160,7 @@ ts_py_library(
         ":kernel_roster",
         ":kernel_wire",
         ":layout",
+        ":load_built",
         ":metadata",
         ":routed_class_dispatch",
         ":scale_channel",
@@ -562,6 +556,17 @@ ts_py_library(
 )
 
 ts_py_library(
+    name = "load_built",
+    srcs = [
+        "load_built.py",
+    ],
+    deps = [
+        ":__init___cycle",
+        ":native_identity",
+    ],
+)
+
+ts_py_library(
     name = "metadata",
     srcs = [
         "metadata.py",
@@ -569,6 +574,13 @@ ts_py_library(
     deps = [
         ":__init___cycle",
         ":structure",
+    ],
+)
+
+ts_py_library(
+    name = "native_identity",
+    srcs = [
+        "native_identity.py",
     ],
 )
 
@@ -644,6 +656,7 @@ ts_py_library(
         ":errors",
         ":fragment_wire",
         ":jit_build_lock",
+        ":load_built",
         ":window_geometry",
     ],
 )
