@@ -18013,6 +18013,10 @@
     "state": "CLOSED",
     "title": "Check the routed-MoE packed 3-D write path at value level"
    },
+   "1736": {
+    "state": "OPEN",
+    "title": "Turn the decode-once E4M3 prefill default off again, as the contract says"
+   },
    "174": {
     "state": "CLOSED",
     "title": "Guard the fused decode chain by the bytes it carries, not by a rate"

@@ -378,7 +378,7 @@ class PreparedDenseNativeModule:
 
         Once per module, E4M3 family only, shape-checked against the module;
         the route decides whether to attach (``e4m3_prefill.enabled`` and the
-        resident mode)."""
+        resident mode; default off, explicit ``TESSERA_E4M3_DECODE_ONCE=1``)."""
         if self.__family != "e4m3":
             raise ValueError(f"a decode-once copy serves the E4M3 family, not {self.__family!r}")
         if self.__decoded is not None:
