@@ -262,13 +262,14 @@ def test_separation_claim_is_independent_of_incomplete_scale_plan(monkeypatch, s
     for name in ('tensor', 'zeros'):
         original = getattr(torch, name)
         monkeypatch.setattr(torch, name, lambda *a, _call=original, **kw: _call(*a, **{**kw, 'device': 'cpu'}))
-    for scale_complete in (True, False):
-        manifest['complete'] = scale_complete
-        manifest['roles'][0]['scale_index'][0]['reads_covered'] = int(scale_complete)
+    for record_complete, module_complete in ((True, True), (True, False), (False, True), (False, False)):
+        record['complete'] = record_complete
+        manifest['complete'] = module_complete
+        manifest['roles'][0]['scale_index'][0]['reads_covered'] = int(module_complete)
         unit = row.new_unit({'m_config': {'M': 1, 'chunk_size': 1, 'k_split': 1, 'route_counts': [1]}})
         (row.dense_cases if structure == 'dense' else run_routed.run)(adapter, unit, manifest, None)
-        assert not unit['unattested'], 'complete separation must not inherit another section\'s incomplete claim'
-        assert not unit['invalid']
+        assert bool(unit['unattested']) == (not record_complete and not module_complete), 'wrong local separation attestation'
+        assert bool(unit['invalid']) == (not record_complete and module_complete), 'C1 false complete claim must be INVALID'
 
 
 def test_capture_refusal_for_a_nonfinite_prepared_reference(tmp_path):
@@ -660,6 +661,7 @@ def fv1e_client(tmp_path, monkeypatch):
         'if test "$2 $3" = "resource drain"; then\n'
         '  if test "$4" = 0; then printf "%s\\n" "$5" > ' + shlex.quote(str(reason)) + ';\n'
         '  else cat ' + shlex.quote(str(reason)) + '; fi\nfi\n'
+        'if test "$2 $3" = "resource undrain"; then rm ' + shlex.quote(str(reason)) + '; fi\n'
         'if test "$2" = jobs; then\n'
         '  if test -e ' + shlex.quote(str(state)) + '; then echo \'{"jobs":[]}\';\n'
         '  else touch ' + shlex.quote(str(state)) + '; echo \'{"jobs":[{"id":1}]}\'; fi\nfi\n')
@@ -697,14 +699,27 @@ def test_fv1e_large_job_requires_one_spark(fv1e_client):
     assert not log.exists() and not pauses
 
 
-def test_fv1e_drain_refuses_when_jobs_do_not_end(fv1e_client, monkeypatch):
+@pytest.mark.parametrize('error', ('deadline', 'query-timeout', 'query-error', 'parse-error'))
+def test_fv1e_drain_refuses_when_jobs_do_not_end(fv1e_client, monkeypatch, error):
     api, log, pauses = fv1e_client
     assert hasattr(api, 'drain_ecores_before_submit'), 'feature absent: fv1e memory admission'
-    monkeypatch.setattr(api.subprocess, 'check_output', lambda *a, **kw: '{"jobs":[{"id":1}]}')
-    with pytest.raises(api.FeederError, match='FV1E_DRAIN_TIMEOUT'):
+    original = api.subprocess.check_output
+    def query(command, **kw):
+        if command[2] != 'jobs':
+            return original(command, **kw)
+        if error == 'query-timeout':
+            raise api.subprocess.TimeoutExpired(command, 1)
+        if error == 'query-error':
+            raise RuntimeError('query failed')
+        return 'not JSON' if error == 'parse-error' else '{"jobs":[{"id":1}]}'
+    monkeypatch.setattr(api.subprocess, 'check_output', query)
+    expected = RuntimeError if error == 'query-error' else json.JSONDecodeError if error == 'parse-error' else api.FeederError
+    with pytest.raises(expected):
         api.drain_ecores_before_submit(37, 'flux submit --requires=host:sparky command', 'test-drain')
     assert log.read_text().startswith('sparky resource drain 0 ')
-    assert 0 < sum(pauses) <= 300
+    assert log.read_text().splitlines()[-1] == 'sparky resource undrain 0 test-drain', 'failed drain must release its own reason'
+    assert not (log.parent / 'reason').exists()
+    assert 0 <= sum(pauses) <= 300
 
 
 @pytest.mark.parametrize('reason', ('test-drain', 'TP2 smoke'))

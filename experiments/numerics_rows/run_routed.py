@@ -118,7 +118,7 @@ def run(adapter, unit, manifest, recorder):
                 separated = role["separation"]
                 if "by_m" in separated:
                     separated = next((r for r in separated["by_m"] if r["route"]["M"] == m), separated["by_m"][0])
-                coverage(unit, "separation", separated["complete"], separated["complete"])
+                coverage(unit, "separation", separated["complete"], separated["complete"] or manifest["complete"])
                 if count == 1:
                     unit["exact"]["separation"]["records"].append({k: v for k, v in separated.items() if k not in ("recipes", "uncovered", "by_m")})
                 for recipe in separated["recipes"]:

@@ -477,7 +477,7 @@ def dense_cases(adapter, unit, manifest, recorder):
     m = unit["m_config"]["M"]
     for role in manifest["roles"]:
         record = role["separation"]
-        coverage(unit, "separation", record["complete"], record["complete"])
+        coverage(unit, "separation", record["complete"], record["complete"] or manifest["complete"])
         unit["exact"]["separation"]["records"].append({k: v for k, v in record.items() if k not in ("recipes", "uncovered")})
         pending = [(recipe["column"], activation) for recipe in record["recipes"] for activation in recipe["values"]]
         for start in range(0, len(pending), m):

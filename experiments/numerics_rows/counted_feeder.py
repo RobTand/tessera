@@ -72,18 +72,22 @@ def drain_ecores_before_submit(memory_gib, submit, reason):
         raise FeederError('FV1E_REQUIRES_ONE_SPARK_HOST')
     host = hosts[0]
     subprocess.run([FXE, host, 'resource', 'drain', '0', reason], check=True, timeout=settings['client_timeout_seconds'])
-    deadline = time.monotonic() + settings['drain_timeout_seconds']
-    while True:
-        remaining = deadline - time.monotonic()
-        if remaining <= 0:
-            raise FeederError('FV1E_DRAIN_TIMEOUT')
-        try:
-            jobs = json.loads(subprocess.check_output([FXE, host, 'jobs', '--json'], text=True, timeout=min(remaining, settings['client_timeout_seconds'])))['jobs']
-        except subprocess.TimeoutExpired:
-            raise FeederError('FV1E_DRAIN_TIMEOUT') from None
-        if not jobs:
-            return {'host': host, 'reason': reason}
-        time.sleep(min(max(0, deadline - time.monotonic()), settings['drain_poll_seconds']))
+    try:
+        deadline = time.monotonic() + settings['drain_timeout_seconds']
+        while True:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise FeederError('FV1E_DRAIN_TIMEOUT')
+            try:
+                jobs = json.loads(subprocess.check_output([FXE, host, 'jobs', '--json'], text=True, timeout=min(remaining, settings['client_timeout_seconds'])))['jobs']
+            except subprocess.TimeoutExpired:
+                raise FeederError('FV1E_DRAIN_TIMEOUT') from None
+            if not jobs:
+                return {'host': host, 'reason': reason}
+            time.sleep(min(max(0, deadline - time.monotonic()), settings['drain_poll_seconds']))
+    except BaseException:
+        undrain_ecores(host, reason)
+        raise
 
 
 def undrain_ecores(host, reason):
