@@ -313,6 +313,41 @@
       "test_counted_split_launch_selects_a_whole_module_and_preserves_artifact_inputs"
     ]
   },
+  "pre-fix-canary-review": {
+    "file": "test_numerics_rows_receipts.py",
+    "expected": 4,
+    "nodes": [
+      "test_capture_preflight_requires_free_memory_no_compute_and_no_vllm[empty-gb10]",
+      "test_gpu_phase_idle_excludes_unknown_sample_intervals",
+      "test_capture_self_visibility_retries_before_stopping[empty]",
+      "test_capture_self_visibility_retries_before_stopping[query-error]"
+    ]
+  },
+  "pre-fix-unknown-compute": {
+    "file": "test_numerics_rows_receipts.py",
+    "expected": 1,
+    "nodes": ["test_unknown_compute_count_under_stuck_counter_stays_unknown"]
+  },
+  "pre-fix-foreign-compute": {
+    "file": "test_numerics_rows_phases.py",
+    "expected": 2,
+    "nodes": [
+      "test_capture_telemetry_refuses_foreign_or_unresolved_processes[foreign]",
+      "test_capture_telemetry_refuses_foreign_or_unresolved_processes[unresolved]"
+    ]
+  },
+  "pre-fix-feeder-bookings": {
+    "file": "test_numerics_rows_phases.py",
+    "expected": 6,
+    "nodes": [
+      "test_feeder_refuses_missing_or_ambiguous_booking_fields[missing-inner-timeout]",
+      "test_feeder_refuses_missing_or_ambiguous_booking_fields[missing-walltime]",
+      "test_feeder_refuses_missing_or_ambiguous_booking_fields[missing-shape]",
+      "test_feeder_refuses_missing_or_ambiguous_booking_fields[duplicate-inner-timeout]",
+      "test_feeder_refuses_missing_or_ambiguous_booking_fields[duplicate-walltime]",
+      "test_feeder_refuses_missing_or_ambiguous_booking_fields[duplicate-shape]"
+    ]
+  },
   "pre-fix-capture-visibility": {
     "file": "test_numerics_rows_receipts.py",
     "expected": 2,

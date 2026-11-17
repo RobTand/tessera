@@ -1783,7 +1783,7 @@ def test_gpu_sampler_zeroes_stuck_counter_without_compute_process(monkeypatch):
     stop, times = iter((False, True)), iter((10, 20))
     meter.done = SimpleNamespace(wait=lambda seconds: next(stop))
     monkeypatch.setattr(gpu_time.time, "monotonic", lambda: next(times))
-    meter.query = lambda request: "GPU-GB10, 96, 10, [N/A]" if request.startswith("--query-gpu=") else ""
+    monkeypatch.setattr(gpu_time.subprocess, "check_output", lambda command, **kw: "GPU-GB10, 96, 10, [N/A]" if command[1].startswith("--query-gpu=") else "")
     meter.sample()
     result = gpu_time.summarize(meter.samples, 0, 30)
     assert result["gpu_busy_minutes"] == 0
@@ -1801,7 +1801,7 @@ def test_gpu_sampler_uses_any_compute_process_and_records_pids_once(monkeypatch)
     meter.done = SimpleNamespace(wait=lambda seconds: next(stop), set=lambda: None)
     meter.thread = SimpleNamespace(join=lambda **kwargs: None, is_alive=lambda: False)
     monkeypatch.setattr(gpu_time.time, "monotonic", lambda: next(times))
-    meter.query = lambda request: "GPU-GB10, 96, 10, [N/A]" if request.startswith("--query-gpu=") else next(apps)
+    monkeypatch.setattr(gpu_time.subprocess, "check_output", lambda command, **kw: "GPU-GB10, 96, 10, [N/A]" if command[1].startswith("--query-gpu=") else next(apps))
     meter.sample()
     result = meter.finish()
     assert result["gpu_busy_minutes"] == pytest.approx(0.16)
@@ -1824,7 +1824,10 @@ def test_capture_preflight_requires_free_memory_no_compute_and_no_vllm(apps, mem
         return f"GPU-GB10, 96, 10, {memory}" if request.startswith("--query-gpu=") else apps
     result = gpu_time.preflight(query, lambda: servers)
     assert result["verdict"] == verdict
-    assert result["compute_process_count"] == bool(apps)
+    assert result["compute_process_count"] == (1 if apps else 0)
+    if memory == "[N/A]":
+        assert result["device_memory_mib"] is None
+        assert result.get("memory_check") == "waived: GB10 reports memory.used as [N/A]; free judged by zero compute processes (lead decision 2026-11-17)"
 
 
 def test_capture_preflight_detects_vllm_without_a_cuda_context(tmp_path):
@@ -1833,7 +1836,7 @@ def test_capture_preflight_detects_vllm_without_a_cuda_context(tmp_path):
     assert hasattr(gpu_time, "vllm_processes"), "feature absent: host vLLM preflight"
     for pid, name, command in ((701, "python", b"python\0-m\0vllm.entrypoints.openai.api_server\0"),
                                (702, "VLLM::EngineCore", b"python\0"),
-                               (703, "python", b"python\0capture.py\0/vllm/config.json\0")):
+                               (703, "python", b"python\0capture.py\0vllm.log\0/path/vllm\0")):
         directory = tmp_path / str(pid)
         directory.mkdir()
         (directory / "comm").write_text(name)
@@ -1851,7 +1854,8 @@ def test_capture_preflight_stops_before_first_device_call(tmp_path, monkeypatch)
     monkeypatch.setattr(gpu_time, "RowMeter", lambda: SimpleNamespace(finish=lambda: {}))
     monkeypatch.setattr(launch_state, "LaunchState", lambda *a, **kw: SimpleNamespace(fields=lambda: {"launch_levers_sha256": "a" * 64}))
     calls, free = [], True
-    monkeypatch.setattr(gpu_time, "preflight", lambda: {"verdict": "FREE" if free else "STOPPED"}, raising=False)
+    monkeypatch.setattr(gpu_time, "preflight", lambda **kw: {"verdict": "FREE" if free else "STOPPED"}, raising=False)
+    monkeypatch.setattr(gpu_time, "ProcessOwner", SimpleNamespace(wait=lambda: SimpleNamespace(pid=701)), raising=False)
     monkeypatch.setattr(gpu_time, "self_visibility", lambda torch: {"verdict": "VISIBLE"}, raising=False)
     monkeypatch.setattr(row, "run", lambda *args: calls.append("first-device-call"))
     row.main()
@@ -1876,12 +1880,16 @@ def test_capture_self_visibility_stops_before_row_setup(tmp_path, monkeypatch, f
     monkeypatch.setattr(sys, "argv", argv)
     monkeypatch.setattr(gpu_time, "RowMeter", lambda: SimpleNamespace(finish=lambda: {}))
     monkeypatch.setattr(launch_state, "LaunchState", lambda *a, **kw: SimpleNamespace(fields=lambda: {"launch_levers_sha256": "a" * 64}))
-    monkeypatch.setattr(gpu_time, "preflight", lambda: {"verdict": "FREE"})
+    monkeypatch.setattr(gpu_time, "preflight", lambda **kw: {"verdict": "FREE"})
+    monkeypatch.setattr(gpu_time, "ProcessOwner", SimpleNamespace(wait=lambda: SimpleNamespace(pid=701)), raising=False)
+    monkeypatch.setattr(gpu_time.time, "sleep", lambda seconds: None)
     calls, visible = [], True
     monkeypatch.setattr(torch, "empty", lambda count, *, device: calls.append(("allocation", count, device)) or object())
     monkeypatch.setattr(torch.cuda, "synchronize", lambda: calls.append("synchronize"))
     def query(request):
         calls.append(request)
+        if request.startswith("--query-gpu="):
+            return "GPU-GB10, 96, 10, [N/A]"
         if visible:
             return "987654321, 32"
         if failure == "query-error":
@@ -1890,7 +1898,8 @@ def test_capture_self_visibility_stops_before_row_setup(tmp_path, monkeypatch, f
     monkeypatch.setattr(gpu_time, "query", query)
     monkeypatch.setattr(row, "run", lambda *args: calls.append("row-setup"))
     row.main()
-    assert calls == [("allocation", 1, "cuda"), "synchronize", "--query-compute-apps=pid,used_memory", "row-setup"]
+    assert calls == [("allocation", 1, "cuda"), "synchronize", "--query-compute-apps=pid,used_memory",
+                     "--query-gpu=uuid,utilization.gpu,power.draw,memory.used", "row-setup"]
     visible = False
     calls.clear()
     with pytest.raises(SystemExit) as stopped:
@@ -1903,14 +1912,89 @@ def test_capture_self_visibility_stops_before_row_setup(tmp_path, monkeypatch, f
 
 
 def test_missing_gpu_fields_do_not_invent_zero_memory_or_activity():
-    from experiments.numerics_rows.gpu_time import compute_memory, gpu_reading, summarize
+    from experiments.numerics_rows.gpu_time import gpu_reading, summarize
 
     reading = gpu_reading("GPU-GB10, [N/A], 10.7, [N/A]")
     result = summarize([{**reading, "t": 1, "compute_apps_memory_mib": None},
                         {**reading, "t": 2, "compute_apps_memory_mib": None}], 0, 3)
     assert result["gpu_busy_minutes"] is None and result["peak_device_memory_mib"] is None
-    assert result["peak_power_watts"] == 10.7 and compute_memory("[N/A]\n") is None
-    assert compute_memory("") == 0
+    assert result["peak_power_watts"] == 10.7
+
+
+def test_unknown_compute_count_under_stuck_counter_stays_unknown(monkeypatch):
+    from experiments.numerics_rows import gpu_time
+    meter = gpu_time.RowMeter.__new__(gpu_time.RowMeter)
+    meter.samples, meter.errors = [], []
+    stop, times = iter((False, True)), iter((10, 20))
+    meter.done = SimpleNamespace(wait=lambda seconds: next(stop))
+    monkeypatch.setattr(gpu_time.time, "monotonic", lambda: next(times))
+    def query(command, **kw):
+        if command[1].startswith("--query-gpu="):
+            return "GPU-GB10, 96, 10, [N/A]"
+        raise TimeoutError("NVML compute query failed")
+    monkeypatch.setattr(gpu_time.subprocess, "check_output", query)
+    meter.sample()
+    result = gpu_time.summarize(meter.samples, 0, 30)
+    assert result["gpu_busy_minutes"] is None and result["busy_sampled_seconds"] == 0
+    assert all(s.get("compute_process_count") is None and s["busy_percent"] is None for s in result["samples"])
+
+
+def test_gpu_phase_idle_excludes_unknown_sample_intervals(monkeypatch):
+    from experiments.numerics_rows import gpu_time
+    meter = gpu_time.RowMeter.__new__(gpu_time.RowMeter)
+    meter.start, meter.errors = 0, []
+    meter.samples = [{"t": t, "phase": "gate_cases", "busy_percent": 96, "nvml_busy_percent": 96,
+                      "compute_process_count": count} for t, count in ((0, None), (10, 0), (20, 0))]
+    monkeypatch.setattr(gpu_time.time, "monotonic", lambda: 30)
+    result = meter.snapshot()["phases"]["gate_cases"]
+    assert result["wall_without_resident_kernels_seconds"] == 10
+    assert result["known_sampled_wall_seconds"] == 10 and result["unknown_sampled_wall_seconds"] == 10
+    assert result["max_compute_process_count"] == 0
+
+
+@pytest.mark.parametrize("failure", ("empty", "query-error"))
+def test_capture_self_visibility_retries_before_stopping(monkeypatch, failure):
+    from experiments.numerics_rows import gpu_time
+    calls, delays = [], []
+    fake_torch = SimpleNamespace(empty=lambda *a, **kw: object(), cuda=SimpleNamespace(synchronize=lambda: None))
+    def query(request):
+        if request.startswith("--query-gpu="):
+            return "GPU-GB10, 96, 10, [N/A]"
+        calls.append(request)
+        if len(calls) == 3:
+            return "701, 128"
+        if failure == "query-error":
+            raise TimeoutError("NVML compute query failed")
+        return ""
+    monkeypatch.setattr(gpu_time, "query", query)
+    monkeypatch.setattr(gpu_time.time, "sleep", delays.append)
+    report = gpu_time.self_visibility(fake_torch)
+    assert report["verdict"] == "VISIBLE" and report["compute_process_count"] == 1
+    assert report["nvml_busy_percent"] == 96 and report["attempts"] == 3
+    assert len(calls) == 3 and delays == [1, 1]
+
+
+def test_host_preflight_main_writes_stopped_on_query_error(tmp_path, monkeypatch):
+    import runpy
+    from experiments.numerics_rows import gpu_time
+    path = tmp_path / "gpu-preflight-host.json"
+    monkeypatch.setattr(sys, "argv", ["gpu_time", "--preflight", str(path)])
+    def query(*a, **kw):
+        raise TimeoutError("NVML query failed")
+    monkeypatch.setattr(gpu_time.subprocess, "check_output", query)
+    with pytest.raises(SystemExit) as stopped:
+        runpy.run_path(gpu_time.__file__, run_name="__main__")
+    assert stopped.value.code == 3
+    assert json.loads(path.read_text()) == {"verdict": "STOPPED", "exception_type": "TimeoutError"}
+
+
+def test_worker_preflight_names_its_limited_vllm_scope():
+    from experiments.numerics_rows import gpu_time
+    def query(request):
+        return "GPU-GB10, 96, 10, [N/A]" if request.startswith("--query-gpu=") else ""
+    report = gpu_time.preflight(query, processes=None)
+    assert report["verdict"] == "FREE" and report["vllm_process_count"] is None
+    assert report["nvml_busy_percent"] == 96 and "container PID namespace only" in report["vllm_check_scope"]
 
 
 def test_worker_launch_state_encoding_and_named_exclusions(monkeypatch):
@@ -1970,8 +2054,9 @@ def test_worker_capture_refuses_each_prior_dependency_import(monkeypatch, packag
     from experiments.numerics_rows import launch_state
 
     monkeypatch.setattr(launch_state, "sys", SimpleNamespace(modules={}))
-    launch_state.LaunchState(fresh=True)
+    state = launch_state.LaunchState(fresh=True)
     launch_state.sys.modules[package + ".submodule"] = object()
+    state.check()
     with pytest.raises(Invalid, match="fresh worker"):
         launch_state.LaunchState(fresh=True)
 

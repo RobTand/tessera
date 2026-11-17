@@ -17,9 +17,15 @@ Capture creates a tiny CUDA allocation and checks NVML self-visibility before ro
 An empty or failed compute-process query writes STOPPED. Capture telemetry must
 show a compute process and a positive device-memory peak before job success.
 Capture refuses a busy GPU before its first device call. Host preflight also
-checks for vLLM processes. Missing measurements stop capture.
+checks for vLLM processes. GB10 memory.used is unavailable. The lead waived that
+preflight memory check on 2026-11-17. Its value stays null; zero compute processes
+and no host vLLM are still required. The worker names its limited PID namespace.
 NVML activity counts only while a compute process is listed. Raw PID values are
 diagnostic because NVML reports host PIDs across the container PID boundary.
+The launcher records podman's host worker PID and its start time. The sampler
+reads the mounted host process tree. Worker descendants are attributable;
+foreign or unresolved compute processes refuse telemetry success. Unknown
+sample intervals are separate from idle time. Phase reports include process peaks.
 Canary CPU phases use one core. Separate host and device peaks set later bookings.
 
 Re-stamped 2026-11-17 for the #1717 frozen rule v2 worker policy.

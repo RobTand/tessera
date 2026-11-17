@@ -460,7 +460,8 @@ def split_canary_evidence(tmp_path):
     write_json(directory / "compare/results/numerics_row.json", receipt)
     meter = {"wall_minutes": 1, "gpu_busy_minutes": 0.2, "peak_device_memory_mib": 800, "peak_power_watts": 15,
         "mean_sample_power_watts": 12, "whole_job_peak_memory_bytes": 2**30, "sampled_seconds": 60,
-        "busy_sampled_seconds": 60, "samples": [{"compute_process_count": 1}, {"compute_process_count": 1}], "errors": []}
+        "busy_sampled_seconds": 60, "samples": [{"compute_process_count": 1, "owned_compute_process_count": 1,
+            "foreign_compute_process_count": 0, "unresolved_compute_process_count": 0}] * 2, "errors": []}
     write_json(directory / "capture/results/numerics_row.json", {"row": {"gpu_minutes": meter}})
     return api, directory, paths, receipt, meter
 
@@ -508,3 +509,151 @@ def test_capture_job_refuses_unobserved_compute_process_or_zero_memory(split_can
     write_json(path, {"row": {"gpu_minutes": meter}})
     with pytest.raises(Invalid, match="capture telemetry"):
         api.check_telemetry(path)
+
+
+@pytest.mark.parametrize("owner", ("foreign", "unresolved"))
+def test_capture_telemetry_refuses_foreign_or_unresolved_processes(split_canary_evidence, owner):
+    from experiments.numerics_rows.common import write_json
+    api, directory, _, _, meter = split_canary_evidence
+    path = directory / "capture/results/numerics_row.json"
+    meter["samples"] = [{"compute_process_count": 2, "owned_compute_process_count": 2,
+                         "foreign_compute_process_count": 0, "unresolved_compute_process_count": 0}] * 2
+    write_json(path, {"row": {"gpu_minutes": meter}})
+    result = api.check_telemetry(path)
+    assert result.get("max_compute_process_count", 2) == 2
+    meter["samples"] = [{"compute_process_count": 2, "owned_compute_process_count": 1,
+                         "foreign_compute_process_count": int(owner == "foreign"),
+                         "unresolved_compute_process_count": int(owner == "unresolved")}]
+    meter["samples"] *= 2
+    write_json(path, {"row": {"gpu_minutes": meter}})
+    with pytest.raises(Invalid, match="foreign compute process|ownership is unresolved"):
+        api.check_telemetry(path)
+
+
+def test_capture_telemetry_records_known_sample_coverage(split_canary_evidence):
+    api, directory, _, _, _ = split_canary_evidence
+    result = api.check_telemetry(directory / "capture/results/numerics_row.json")
+    assert result["known_sample_coverage_fraction"] == 1 and result["busy_sampled_seconds"] == 60
+
+
+def test_nvml_host_pids_resolve_worker_children_foreign_and_missing(tmp_path):
+    from experiments.numerics_rows.gpu_owner import ProcessOwner
+    def stat(pid, parent, start=10):
+        path = tmp_path / str(pid)
+        path.mkdir(exist_ok=True)
+        (path / "stat").write_text(f"{pid} (worker name) " + " ".join(["S", str(parent)] + ["0"] * 17 + [str(start)]))
+    for pid, parent in ((700, 1), (701, 700), (702, 701), (800, 1)):
+        stat(pid, parent)
+    owner = ProcessOwner({"host_pid": 700, "start_ticks": 10}, tmp_path)
+    assert owner.counts([{"pid": p} for p in (700, 701, 702, 800, 900)]) == {
+        "owned_compute_process_count": 3, "foreign_compute_process_count": 1, "unresolved_compute_process_count": 1}
+    stat(700, 1, start=11)
+    assert owner.counts([{"pid": 701}])["unresolved_compute_process_count"] == 1
+
+
+def test_container_launcher_records_podman_host_pid_before_wait(tmp_path, monkeypatch):
+    from experiments.numerics_rows import gpu_owner
+    calls, exited = [], False
+    def wait(**kw):
+        nonlocal exited
+        assert json.loads((tmp_path / "worker.json").read_text()) == {"host_pid": 700, "start_ticks": 10}
+        exited = True
+        return 0
+    child = SimpleNamespace(poll=lambda: 0 if exited else None, wait=wait)
+    monkeypatch.setattr(gpu_owner.subprocess, "Popen", lambda command: calls.append(command) or child)
+    monkeypatch.setattr(gpu_owner.subprocess, "check_output", lambda command, **kw: calls.append(command) or "700\n")
+    monkeypatch.setattr(gpu_owner, "process", lambda pid, root: (1, 10))
+    assert gpu_owner.run_container("row", tmp_path, ["podman", "run", "image"]) == 0
+    assert calls == [["podman", "run", "image"], ["podman", "inspect", "--format", "{{.State.Pid}}", "row"]]
+
+
+def test_container_owner_entrypoint_passes_command_and_exit_status(tmp_path, monkeypatch):
+    import runpy
+    import sys
+    from experiments.numerics_rows import gpu_owner
+    calls = []
+    monkeypatch.setattr(gpu_owner, "run_container", lambda *args: calls.append(args) or 7)
+    monkeypatch.setattr(sys, "argv", ["gpu_time", "--container-owner", "row", "--owner-directory", str(tmp_path),
+                                    "--", "podman", "run", "image"])
+    with pytest.raises(SystemExit) as stopped:
+        runpy.run_module("experiments.numerics_rows.gpu_time", run_name="__main__")
+    assert stopped.value.code == 7
+    assert calls == [("row", tmp_path, ["podman", "run", "image"])]
+
+
+@pytest.fixture
+def feeder_booking(tmp_path, monkeypatch):
+    from experiments.numerics_rows import counted_feeder as api, prepare_split
+    canary, rowdir = tmp_path / "canary", tmp_path / "row"
+    canary.mkdir(); rowdir.mkdir(); (canary / "feeder-code").mkdir()
+    def write(path, value):
+        path.write_text(json.dumps(value))
+    write(canary / "counted-rows.json", {"module-A": str(rowdir)})
+    write(canary / "counted-chain-inputs.json", {"module-A": {}})
+    write(canary / "campaign.json", {"tool_commit": "tool"})
+    write(rowdir / "campaign.json", {"bound": True})
+    bookings = tmp_path / "bookings.json"
+    write(bookings, {"module-A": {phase: {"memory_gib": 5, "minutes": 10} for phase in ("prepare", "capture", "compare")}})
+    for phase in ("prepare", "capture", "compare"):
+        job = rowdir / phase
+        (job / "results" / phase).mkdir(parents=True)
+        (job / "job.sh").write_text("timeout --kill-after=20s 100s command\n")
+        (job / "submit-after-review.sh").write_text("flux submit -t5m --resources-shape='slot/[core=1;memory=4]' command\n")
+        (job / "tool-exit.txt").write_text("0")
+        for kind in ("payload", "podman"):
+            (job / f"results/{kind}-exit.txt").write_text("0")
+        write(job / "results" / phase / "phase.json", {"completion": True})
+    write(rowdir / "compare/results/numerics_row.json", {"row": {"outcome": "PASS", "finalization_finished": True}})
+    monkeypatch.setattr(prepare_split, "check_canary", lambda *a: None)
+    monkeypatch.setattr(api, "sha", lambda path: "a" * 64)
+    monkeypatch.setattr(api.sys, "path", list(api.sys.path))
+    def run(command, **kw):
+        if command[0] == "bash":
+            (Path(command[1]).parent / "jobid").write_text("f123")
+    monkeypatch.setattr(api.subprocess, "run", run)
+    monkeypatch.setattr(api.subprocess, "check_output", lambda *a, **kw: "0")
+    return api, canary, rowdir, bookings
+
+
+@pytest.mark.parametrize("field", ("inner-timeout", "walltime", "shape"))
+@pytest.mark.parametrize("mutation", ("missing", "duplicate"))
+def test_feeder_refuses_missing_or_ambiguous_booking_fields(feeder_booking, field, mutation):
+    api, canary, rowdir, bookings = feeder_booking
+    api.run(canary, bookings)
+    for path in rowdir.glob("*/jobid"):
+        path.unlink()
+    job = rowdir / "prepare" / ("job.sh" if field == "inner-timeout" else "submit-after-review.sh")
+    text = job.read_text()
+    token = {"inner-timeout": "--kill-after=20s 540s ", "walltime": " -t10m ", "shape": "slot/[core=1;memory=5]"}[field]
+    assert token in text
+    job.write_text(text.replace(token, "missing" if mutation == "missing" else token + token))
+    with pytest.raises(ValueError, match="EXACTLY_ONE_MATCH"):
+        api.run(canary, bookings)
+    assert not list(rowdir.glob("*/jobid"))
+
+
+def test_counted_feeder_stop_command_keeps_exit_and_last_error(tmp_path):
+    import shlex
+    import subprocess
+    from experiments.numerics_rows.prepare_split import prepare_feeder
+    prepare_feeder(tmp_path, "a" * 40)
+    commands = tmp_path / "commands"
+    commands.mkdir()
+    record = tmp_path / "systemd-arguments.txt"
+    for name, body in {"loginctl": "echo yes\n", "systemd-run": "printf '%s\\n' \"$@\" > " + shlex.quote(str(record)) + "\n"}.items():
+        path = commands / name
+        path.write_text("#!/bin/sh\n" + body)
+        path.chmod(0o700)
+    bookings = tmp_path / "bookings.json"
+    bookings.write_text("{}")
+    subprocess.run(["bash", str(tmp_path / "start-counted-feeder.sh"), str(bookings)], check=True,
+                   env={"PATH": str(commands) + ":/usr/bin:/bin", "HOME": str(tmp_path)}, capture_output=True)
+    arguments = record.read_text().splitlines()
+    post = next(a.split("ExecStopPost=", 1)[1] for a in arguments if a.startswith("--property=ExecStopPost="))
+    assert "$$SERVICE_RESULT" in post and "$$EXIT_STATUS" in post
+    run_dir, = (tmp_path / "feeder-runs").iterdir()
+    (run_dir / "last-error.txt").write_text("last_error=BOOKING_REQUIRES_EXACTLY_ONE_MATCH\n")
+    subprocess.run(shlex.split(post.replace("$$", "$")), check=True,
+                   env={"SERVICE_RESULT": "exit-code", "EXIT_CODE": "exited", "EXIT_STATUS": "3"})
+    assert (run_dir / "result.txt").read_text().splitlines() == [
+        "service_result=exit-code exit_code=exited exit_status=3", "last_error=BOOKING_REQUIRES_EXACTLY_ONE_MATCH"]

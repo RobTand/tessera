@@ -2044,6 +2044,16 @@ ts_py_library(
 )
 
 ts_py_library(
+    name = "numerics_rows/counted_feeder",
+    srcs = [
+        "numerics_rows/counted_feeder.py",
+    ],
+    deps = [
+        ":numerics_rows/prepare_split",
+    ],
+)
+
+ts_py_library(
     name = "numerics_rows/cpu_checks",
     srcs = [
         "numerics_rows/cpu_checks.py",
@@ -2104,9 +2114,19 @@ ts_py_library(
 )
 
 ts_py_library(
+    name = "numerics_rows/gpu_owner",
+    srcs = [
+        "numerics_rows/gpu_owner.py",
+    ],
+)
+
+ts_py_library(
     name = "numerics_rows/gpu_time",
     srcs = [
         "numerics_rows/gpu_time.py",
+    ],
+    deps = [
+        ":numerics_rows/gpu_owner",
     ],
 )
 

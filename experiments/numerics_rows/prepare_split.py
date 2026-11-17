@@ -33,7 +33,15 @@ def check_telemetry(path):
             or not meter.get("busy_sampled_seconds") or len(meter.get("samples", [])) < 2
             or not any(type(s.get("compute_process_count")) is int and s["compute_process_count"] >= 1 for s in meter.get("samples", []))):
         raise Invalid("capture telemetry is missing compute-process visibility, GPU busy, memory, power or whole-job memory evidence")
-    return {k: meter[k] for k in fields} | {"sampled_seconds": meter["sampled_seconds"], "errors": meter["errors"]}
+    active = [s for s in meter["samples"] if type(s.get("compute_process_count")) is int and s["compute_process_count"] > 0]
+    if any(s.get("foreign_compute_process_count", 0) > 0 for s in active):
+        raise Invalid("capture telemetry is not attributable: foreign compute process")
+    if any(s.get("unresolved_compute_process_count") != 0 or s.get("owned_compute_process_count") != s["compute_process_count"] for s in active):
+        raise Invalid("capture telemetry process ownership is unresolved")
+    return {k: meter[k] for k in fields} | {"sampled_seconds": meter["sampled_seconds"],
+        "busy_sampled_seconds": meter["busy_sampled_seconds"],
+        "known_sample_coverage_fraction": meter["busy_sampled_seconds"] / meter["sampled_seconds"] if meter["sampled_seconds"] else None,
+        "max_compute_process_count": max(s["compute_process_count"] for s in active), "errors": meter["errors"]}
 
 
 def check_canary(directory, revision, paths):
@@ -120,6 +128,41 @@ def verify(root):
     return config
 
 
+def prepare_feeder(out, revision):
+    out = Path(out)
+    (out / 'feeder-entry.sh').write_text(f'''#!/bin/bash
+set -euo pipefail
+umask 077
+cd {out}
+sha256sum -c transport-preparation.sha256 > /dev/null
+read -r FLUX_PREFIX FLUX_RUN < /mnt/shared/flux-migration/INSTANCE
+export PATH=$FLUX_PREFIX/install/bin:$FLUX_PREFIX/deps/bin:/usr/bin:/bin
+export LD_LIBRARY_PATH=$FLUX_PREFIX/install/lib:$FLUX_PREFIX/deps/lib
+export FLUX_URI=$(/mnt/shared/flux-migration/flux-uri.sh)
+export FLUX_F58_FORCE_ASCII=1
+git clone --shared {out}/repository.git "$2/code"
+git -C "$2/code" checkout --detach {revision}
+PYTHONPATH="$2/code" exec python3 -m experiments.numerics_rows.counted_feeder --canary {out} --bookings "$1" --result-directory "$2"
+''')
+    (out / 'start-counted-feeder.sh').write_text(f'''#!/bin/bash
+set -euo pipefail
+umask 077
+test "$#" -eq 1 || {{ echo 'Usage: start-counted-feeder.sh /absolute/Fleet-bookings.json' >&2; exit 2; }}
+test -f "$1"
+test "$(loginctl show-user "$(id -u)" -p Linger --value)" = yes || {{ echo 'User lingering is required for session-independent execution.' >&2; exit 3; }}
+unit=tessera-1717-rows-$(date -u +%Y%m%dT%H%M%S%NZ)
+run_dir={out}/feeder-runs/$unit
+mkdir -p "$run_dir"
+printf '%s\\n' "$unit" > "$run_dir/unit-name.txt"
+systemd-run --user --unit="$unit" --collect --property=Type=exec --property=Restart=no --property=UMask=0077 \\
+ --property=StandardInput=null --property=StandardOutput=append:"$run_dir/stdout" --property=StandardError=append:"$run_dir/stderr" \\
+ --property="ExecStopPost=/bin/sh -c 'echo service_result=\\$\\$SERVICE_RESULT exit_code=\\$\\$EXIT_CODE exit_status=\\$\\$EXIT_STATUS > \\"$run_dir/result.txt\\"; if test -f \\"$run_dir/last-error.txt\\"; then cat \\"$run_dir/last-error.txt\\" >> \\"$run_dir/result.txt\\"; else echo last_error=unrecorded >> \\"$run_dir/result.txt\\"; fi'" \\
+ /usr/bin/env -i HOME=/home/rob PATH=/usr/bin:/bin XDG_RUNTIME_DIR=/run/user/1000 \\
+ /bin/bash {out}/feeder-entry.sh "$(realpath "$1")" "$run_dir"
+printf '%s\\n' "$unit"
+''')
+
+
 def prepare(cpu_check, *, module=MODULE, canary=True, canary_directory=None):
     revision = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=ROOT, text=True).strip()
     stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
@@ -136,18 +179,21 @@ def prepare(cpu_check, *, module=MODULE, canary=True, canary_directory=None):
         "canary_directory": str(canary_directory) if canary_directory else None,
         "paths": dict.fromkeys(INPUTS), "cpu_check": str(cpu_check)})
     shutil.copyfile(__file__, out / "prepare.py")
+    capture_cores = 4 if canary else 1
     for phase, minutes in (("prepare", 360 if canary else 1440), ("capture", 15 if canary else 60), ("compare", 120 if canary else 360)):
         job = out / phase
         job.mkdir()
         gpu = phase == "capture"
-        cores = 4 if canary and gpu else 1
+        cores = capture_cores if gpu else 1
         options = shlex.join(container_options("$task_scratch")).replace("'$task_scratch", '"$task_scratch').replace(":rw'", ':rw"').replace(":ro'", ':ro"')
         bootstrap = f"PYTHONPATH={job}/code python3 -m experiments.numerics_rows.prepare_split --verify {out}"
         prerequisites = ""
         for prior in (("prepare",) if gpu else ("prepare", "capture") if phase == "compare" else ()):
             prerequisites += f"test -s {out}/{prior}/results/{prior}/phase.json\n"
         telemetry = f"PYTHONPATH=code python3 -m experiments.numerics_rows.prepare_split --check-telemetry {job}/results/numerics_row.json > results/telemetry-check.json\n" if gpu else ""
-        preflight = f"PYTHONPATH=code python3 -m experiments.numerics_rows.gpu_time --preflight results/gpu-preflight-host.json {'--canary' if canary else ''}\n" if gpu else ""
+        preflight = "PYTHONPATH=code python3 -m experiments.numerics_rows.gpu_time --preflight results/gpu-preflight-host.json\n" if gpu else ""
+        container = 'env PYTHONPATH=code python3 -m experiments.numerics_rows.gpu_time --container-owner "$name" --owner-directory "$task_scratch/gpu-owner" -- ' if gpu else ''
+        ownership_mounts = '-v /proc:/run/numerics/host-proc:ro -v "$task_scratch/gpu-owner:/run/numerics/gpu-owner:ro"' if gpu else ''
         (job / "job.sh").write_text(f'''#!/bin/bash
 set -euo pipefail
 umask 077
@@ -167,7 +213,7 @@ test "$(git -C code rev-parse HEAD)" = {revision}
 # The population draft mount is supplied from the bound, reviewed campaign file.
 mapfile -t population_mount < <(PYTHONPATH=code python3 -c 'import json,shlex; print("\\n".join(shlex.split(json.load(open("{out}/campaign.json"))["population_mount"])))')
 rc=0
-timeout --signal=TERM --kill-after=20s {minutes * 60 - 60}s podman run --rm --name "$name" --pull=never --cgroups=disabled --network=none {'--device nvidia.com/gpu=all' if gpu else ''} -v /mnt/shared:/mnt/shared:ro -v {job}:{job}:rw -v {job}/code:/numerics:ro "${{population_mount[@]}}" {options} --entrypoint /bin/bash acc684c06ec7 -euo pipefail {job}/payload.sh > results/payload.stdout 2> results/payload.stderr || rc=$?
+timeout --signal=TERM --kill-after=20s {minutes * 60 - 60}s {container}podman run --rm --name "$name" --pull=never --cgroups=disabled --network=none {'--device nvidia.com/gpu=all' if gpu else ''} {ownership_mounts} -v /mnt/shared:/mnt/shared:ro -v {job}:{job}:rw -v {job}/code:/numerics:ro "${{population_mount[@]}}" {options} --entrypoint /bin/bash acc684c06ec7 -euo pipefail {job}/payload.sh > results/payload.stdout 2> results/payload.stderr || rc=$?
 printf '%s\\n' "$rc" > results/podman-exit.txt
 printf '%s\\n' "$rc" > results/payload-exit.txt
 test "$rc" -eq 0
@@ -208,8 +254,8 @@ phase exits, with the same tool, rule, population, build, Q1, H1 and addendum.
 
 | Job | Cores | Memory GiB | GPU | Limit | Time basis |
 |---|---:|---:|---:|---|---|
-| prepare | 1 | 32 | 0 | {360 if canary else 1440} min | No separate peak. Old whole-row cgroup peak was 4.93 GiB. |
-| capture | {4 if canary else 1} | 32 | 1 | {15 if canary else 60} min | Old one-cut device peak was 0.86 GiB; F remains unmeasured. |
+| prepare | 1 | 32 | 0 | {360 if canary else 1440} min | Lead-selected limit; no split timing. Old host work exceeded 88 minutes. No separate memory peak; old whole-row peak 4.93 GiB. |
+| capture | {capture_cores} | 32 | 1 | {15 if canary else 60} min | Old one-cut device peak was 0.86 GiB; F remains unmeasured. |
 | compare | 1 | 32 | 0 | {120 if canary else 360} min | No separate peak. Keep the canary booking until measured. |
 
 All jobs use aarch64 IMG-N on sparklina. These are prepared limits, not new measurements.
