@@ -94,6 +94,7 @@ ts_py_library(
         "kernel_window.py",
         "kernel_window_gemv.py",
         "lane_planes.py",
+        "load_built.py",
         "moe_execution.py",
         "moe_layout.py",
         "native_window_moe.py",
@@ -149,6 +150,8 @@ ts_py_library(
     ],
     deps = [
         ":__init___cycle",
+        ":_dev/__init__",
+        ":_dev/native_identity",
         ":calculator",
         ":compensate",
         ":container",

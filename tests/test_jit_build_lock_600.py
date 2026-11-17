@@ -38,6 +38,15 @@ its own unit with its own contract, not only ``_ext()``'s plumbing.
 from __future__ import annotations
 
 import fcntl
+import hashlib
+import importlib.util
+import json
+import shutil
+import torch
+
+from tessera import load_built as retained
+from tessera import routed_fused
+from tessera.serving import backend
 import os
 from pathlib import Path
 import signal
@@ -328,3 +337,138 @@ def test_load_after_a_killed_builder_finishes(tmp_path, monkeypatch):
         cpp_extension.load(name="pkg")
     assert calls == ["pkg"]
     assert not (directory / jbl.TORCH_BATON_NAME).exists()
+
+
+@pytest.fixture
+def built(tmp_path, monkeypatch):
+    root = tmp_path / "built"
+    library = root / "math" / "math.so"
+    library.parent.mkdir(parents=True)
+    shutil.copyfile(importlib.util.find_spec("math").origin, library)
+    digest = hashlib.sha256(library.read_bytes()).hexdigest()
+    row = dict(key="cpu-control", name="math", cflags=["-gencode", "arch=compute_121,code=sm_121"],
+               library=dict(path=str(library), sha256=digest), library_so_sha256=digest,
+               library_canonical_code_sha256="1" * 64, cubin_canonical_sha256s=["2" * 64])
+    manifest = root / "build.json"
+    manifest.write_text(json.dumps(dict(libraries=[row])))
+    records = tmp_path / "records"
+    records.mkdir()
+    monkeypatch.setenv(retained.ENV, str(root))
+    monkeypatch.setenv(retained.RECORD_ENV, str(records))
+    monkeypatch.delitem(sys.modules, "math")
+    monkeypatch.setattr(backend, "platform_token", lambda **kw: "sm_121")
+    monkeypatch.setattr(backend, "probed_platform_token", lambda **kw: "sm_121")
+    monkeypatch.setattr(cpp_extension, "load", lambda **kw: pytest.fail("compile called"))
+    monkeypatch.setattr(backend, "ensure_toolchain_on_path", lambda *a: pytest.fail("toolchain called"))
+    return root, library, manifest, records, row
+
+
+def load():
+    return routed_fused.build_library("math", "unused", lambda *a: pytest.fail("compile callback called"))
+
+
+def test_loads_exact_bytes_without_compile_and_records_each_rank(built, monkeypatch):
+    root, library, manifest, records, row = built
+    monkeypatch.setenv("PRIVATE_TEST_VALUE", "must-not-appear")
+    monkeypatch.setattr(torch.distributed, "is_initialized", lambda: True)
+    for rank in (0, 1):
+        monkeypatch.setattr(torch.distributed, "get_rank", lambda: rank)
+        assert load().sqrt(9) == 3
+    data = [json.loads(path.read_text()) for path in sorted(records.glob("*.jsonl"))]
+    assert [item["rank"] for item in data] == [0, 1]
+    for item in data:
+        assert item == dict(key="cpu-control", name="math", path=str(library), sha256=row["library_so_sha256"],
+                            rank=item["rank"], pid=os.getpid(), identity_check="PASS",
+                            build_json_sha256=hashlib.sha256(manifest.read_bytes()).hexdigest(),
+                            library_canonical_code_sha256="1" * 64, cubin_canonical_sha256s=["2" * 64])
+    assert "must-not-appear" not in str(data)
+
+
+def test_missing_library_refuses_without_compile(built):
+    built[1].unlink()
+    with pytest.raises(FileNotFoundError, match="math.so"):
+        load()
+    assert list(built[3].iterdir()) == []
+
+
+def test_hash_mismatch_refuses_before_load(built):
+    built[1].write_bytes(b"wrong library")
+    with pytest.raises(RuntimeError, match="sha256 does not match"):
+        load()
+    assert list(built[3].iterdir()) == []
+
+
+def test_missing_manifest_entry_refuses(built):
+    built[2].write_text('{"libraries": []}')
+    with pytest.raises(RuntimeError, match="exactly one retained library"):
+        load()
+
+
+def test_wrong_platform_refuses(built, monkeypatch):
+    monkeypatch.setattr(backend, "probed_platform_token", lambda **kw: "sm_120")
+    with pytest.raises(RuntimeError, match="platform does not match"):
+        load()
+
+
+def test_already_loaded_module_refuses(built, monkeypatch):
+    monkeypatch.setitem(sys.modules, "math", object())
+    with pytest.raises(RuntimeError, match="already loaded"):
+        load()
+
+
+def test_read_only_tree_needs_no_write_or_lock(built, monkeypatch):
+    root, library, manifest, records, row = built
+    before = {p.relative_to(root): p.read_bytes() for p in root.rglob("*") if p.is_file()}
+    library.chmod(0o444)
+    manifest.chmod(0o444)
+    library.parent.chmod(0o555)
+    root.chmod(0o555)
+    from tessera import jit_build_lock
+    monkeypatch.setattr(jit_build_lock, "jit_build_lock", lambda *a: pytest.fail("lock called"))
+    monkeypatch.setattr(os, "makedirs", lambda *a, **kw: pytest.fail("makedirs called"))
+    monkeypatch.setattr(Path, "mkdir", lambda *a, **kw: pytest.fail("mkdir called"))
+    try:
+        assert load().sqrt(16) == 4
+        assert {p.relative_to(root): p.read_bytes() for p in root.rglob("*") if p.is_file()} == before
+    finally:
+        root.chmod(0o755)
+        library.parent.chmod(0o755)
+
+
+def test_record_directory_must_exist_outside_build_tree(built, monkeypatch):
+    monkeypatch.setenv(retained.RECORD_ENV, str(built[0]))
+    with pytest.raises(RuntimeError, match="outside the built tree"):
+        load()
+
+
+def test_default_build_path_keeps_callback_and_guard(tmp_path, monkeypatch):
+    from tessera import jit_build_lock
+    from tessera.serving import ext
+    monkeypatch.delenv(retained.ENV, raising=False)
+    monkeypatch.setenv("TORCH_EXTENSIONS_DIR", str(tmp_path))
+    monkeypatch.setattr(backend, "ensure_toolchain_on_path", lambda *a: None)
+    monkeypatch.setattr(backend, "backend", lambda *a: "cuda")
+    monkeypatch.setattr(backend, "platform_token", lambda **kw: "sm_121")
+    monkeypatch.setattr(backend, "probed_platform_token", lambda **kw: "sm_121")
+    monkeypatch.setattr(backend, "pin_build_arch", lambda *a: None)
+    monkeypatch.setattr(ext, "native_source_path", lambda module: "unchanged.cu")
+    calls = []
+    lib = object()
+    def compile_fn(*args):
+        calls.append(args)
+        assert (Path(args[1]) / jit_build_lock.GUARD_NAME).is_file()
+        return lib
+    assert routed_fused.build_library("example", "source", compile_fn) is lib
+    assert calls == [("unchanged.cu", str(tmp_path / "example_sm_121_tessera_guarded_v1"),
+                      "sm_121", bool(os.environ.get("TESSERA_ROUTED_FUSED_VERBOSE")))]
+
+
+@pytest.mark.parametrize("module", ["tessera_mla_prefill", "tessera_mhc_fused"])
+def test_special_builds_refuse_in_retained_mode(built, module):
+    with pytest.raises(RuntimeError, match="no retained loader"):
+        if module == "tessera_mla_prefill":
+            from tessera.serving.mla_prefill import MlaPrefillBuild
+            MlaPrefillBuild(None)
+        else:
+            from tessera.serving.mhc_fusion import MhcFusedLibrary
+            MhcFusedLibrary()

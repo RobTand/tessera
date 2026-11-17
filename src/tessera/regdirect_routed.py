@@ -131,6 +131,12 @@ def _ext():
     )
     from .jit_build_lock import GUARDED_BUILD_SUFFIX, jit_build_lock
 
+    from .load_built import load_built
+
+    retained = load_built("tessera_regdirect_routed", torch=torch)
+    if retained is not None:
+        return retained
+
     ensure_toolchain_on_path(torch)
     if detect_backend(torch) != "cuda":
         raise RuntimeError("the register-direct routed kernel is CUDA (mma.sync, cp.async)")

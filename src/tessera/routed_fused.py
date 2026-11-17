@@ -578,6 +578,12 @@ def build_library(module: str, source_module: str, compile_fn):
 
     from .jit_build_lock import GUARDED_BUILD_SUFFIX, jit_build_lock
 
+    from .load_built import load_built
+
+    retained = load_built(module, torch=torch)
+    if retained is not None:
+        return retained
+
     ensure_toolchain_on_path(torch)
     src = serving_ext.native_source_path(source_module)
     if detect_backend(torch) != "cuda":

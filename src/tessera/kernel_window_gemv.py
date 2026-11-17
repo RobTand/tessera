@@ -366,6 +366,12 @@ def _ext():
 
     from .jit_build_lock import GUARDED_BUILD_SUFFIX, jit_build_lock
 
+    from .load_built import load_built
+
+    retained = load_built("tessera_window_gemv", torch=torch)
+    if retained is not None:
+        return retained
+
     _ensure_toolchain_on_path()
     # The one source, resolved from the contract's native-extension table: the
     # path the contract publishes IS the file compiled here (#134).

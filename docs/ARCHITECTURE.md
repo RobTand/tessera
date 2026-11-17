@@ -1,5 +1,29 @@
 # Tessera plan-to-serve architecture
 
+Re-stamped 2026-11-17T11:26:35Z for retained native library loading.
+`TESSERA_LOAD_BUILT` names a directory with `build.json` and native libraries.
+Unset preserves the JIT path. Set selects loading only, without compilation,
+locks or directory creation. Routed, E2M1, window-GEMV and register-direct
+loaders use the shared loader. MLA-prefill and mHC build owners refuse this
+mode until they have retained loaders. Missing libraries and wrong device
+platforms refuse. The loader opens `<name>/<name>.so` directly in that directory.
+It compares exact file SHA-256 with `library_so_sha256` and `library.sha256`.
+It checks the loaded executable mapping with the existing inode identity reader.
+`TESSERA_LOADED_LIBRARIES` must name an existing writable directory outside
+that tree. Each process appends JSON lines to `rank-<rank>-pid-<pid>.jsonl`.
+Each line has the library key, path, raw SHA-256, rank, process ID, build.json
+SHA-256, canonical code hash, ordered canonical cubin hashes and check result.
+It contains no environment object or environment values.
+
+Exact retained bytes are a stricter selection than canonical equivalence.
+The numerics rule compares `library_canonical_code_sha256` and ordered
+`cubin_canonical_sha256s`. Its only mask removes the specified nvcc PID token.
+This loader accepts no rebuilt file, including one that differs only by that
+token. Exact raw equality binds the loaded file to those canonical identities
+in the hashed build record. It does not recompute the separate canonical audit.
+A validator must bind that build record to its accepted numerics receipt.
+No arithmetic qualification or serving-cell admission changes.
+
 Re-stamped 2026-11-16 for #1699. Contract v70 names the IMG-N routed E4M3 class decoder.
 The two eager resident cells retain R896, R928, R1024 and R1088.
 The TP2 census records both ranks and all four rungs.

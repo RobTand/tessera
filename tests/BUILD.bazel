@@ -9939,6 +9939,7 @@ ts_py_library(
         "//src/tessera:kernel_wire.py",
         "//src/tessera:lane_planes.py",
         "//src/tessera:layout.py",
+        "//src/tessera:load_built.py",
         "//src/tessera:lut_fused.py",
         "//src/tessera:manifest.py",
         "//src/tessera:metadata.py",
