@@ -13,7 +13,6 @@ name: hosted gate
     # No label triggers: Mergify adds and removes its own labels on queued pull
     # requests, and each would rerun pr-gate, which the queue requires.
     types: [opened, synchronize, reopened]
-  # The full record runs every 6 hours (offset 3 h from PrismaQuant's), not on each merge.
   workflow_dispatch:  # the post-merge record: a timer on dl380g10 starts it (docs/ci_gate.md)
 
 permissions:
