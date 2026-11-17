@@ -2175,7 +2175,8 @@ def test_environment_records_never_write_private_values_or_per_name_hashes(monke
     monkeypatch.setenv("VLLM_API_KEY", private)
     state = LaunchState()
     fields = state.fields()
-    assert private not in json.dumps([fields, state.diagnostics()])
+    if private in json.dumps([fields, state.diagnostics()]):
+        pytest.fail("environment record contains a private value; contents suppressed", pytrace=False)
     assert "UNCLASSIFIED_VENDOR_CONTROL" in fields["launch_state_names"]
     assert "VLLM_API_KEY" not in state.mapping
     assert fields["launch_state_sha256"] == digest(state.mapping)
