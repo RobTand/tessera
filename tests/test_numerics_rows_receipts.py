@@ -58,6 +58,9 @@ def test_nonfinite_numpy_values_do_not_replace_a_finished_receipt(tmp_path, valu
 
 
 def test_later_h1_error_keeps_finished_sections(tmp_path, monkeypatch):
+    from experiments.numerics_rows import launch_state
+    captured = launch_state.LaunchState()
+    monkeypatch.setattr(launch_state, "LaunchState", lambda *args, **kwargs: captured)
     def checks(args, report):
         report["P1"] = {"samples": np.int64(1_000_000), "mismatches": np.int64(0)}
         report["preconditions_confirmed"] = True
@@ -264,6 +267,7 @@ def test_generated_job_refuses_another_source_commit_before_podman(tmp_path, mon
 
 @pytest.mark.parametrize("step", ("C1-N", "ROW-N"))
 def test_generated_rows_use_only_the_required_resident_selector(tmp_path, monkeypatch, step):
+    from pathlib import Path
     from experiments.numerics_rows import prepare_job
 
     monkeypatch.setattr(prepare_job, "Path", lambda value: tmp_path / Path(value).name

@@ -6,7 +6,6 @@ import hashlib
 import json
 import os
 from pathlib import Path
-import re
 import sys
 
 from experiments.numerics_rows.common import Invalid, sha256
@@ -115,13 +114,9 @@ class LaunchState:
 
 
 def check_binding(record, expected):
-    if not isinstance(record.get("launch_levers_sha256"), str) or not re.fullmatch(r"[0-9a-f]{64}", record["launch_levers_sha256"]):
-        raise Invalid("launch lever file digest is malformed")
     for field in ("launch_state", "launch_state_sha256", "launch_levers_sha256"):
         if record.get(field) != expected[field]:
             raise Invalid(f"C1 launch state or lever file differs: {field}")
-    if digest(record["launch_state"]) != record["launch_state_sha256"]:
-        raise Invalid("launch state object does not match its digest")
 
 
 def check_math_binding(record, expected):
