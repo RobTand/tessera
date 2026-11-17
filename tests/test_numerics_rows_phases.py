@@ -460,8 +460,7 @@ def split_canary_evidence(tmp_path):
     write_json(directory / "compare/results/numerics_row.json", receipt)
     meter = {"wall_minutes": 1, "gpu_busy_minutes": 0.2, "peak_device_memory_mib": 800, "peak_power_watts": 15,
         "mean_sample_power_watts": 12, "whole_job_peak_memory_bytes": 2**30, "sampled_seconds": 60,
-        "busy_sampled_seconds": 60, "samples": [{"compute_process_count": 1, "owned_compute_process_count": 1,
-            "foreign_compute_process_count": 0, "unresolved_compute_process_count": 0}] * 2, "errors": []}
+        "busy_sampled_seconds": 60, "samples": [{"compute_process_count": 1}] * 2, "errors": []}
     write_json(directory / "capture/results/numerics_row.json", {"row": {"gpu_minutes": meter}})
     return api, directory, paths, receipt, meter
 
@@ -511,74 +510,24 @@ def test_capture_job_refuses_unobserved_compute_process_or_zero_memory(split_can
         api.check_telemetry(path)
 
 
-@pytest.mark.parametrize("owner", ("foreign", "unresolved"))
-def test_capture_telemetry_refuses_foreign_or_unresolved_processes(split_canary_evidence, owner):
+def test_capture_telemetry_flags_multiple_processes_without_refusal(split_canary_evidence):
     from experiments.numerics_rows.common import write_json
+    from experiments.numerics_rows.gpu_time import summarize
     api, directory, _, _, meter = split_canary_evidence
     path = directory / "capture/results/numerics_row.json"
-    meter["samples"] = [{"compute_process_count": 2, "owned_compute_process_count": 2,
-                         "foreign_compute_process_count": 0, "unresolved_compute_process_count": 0}] * 2
+    meter["samples"] = [{"compute_process_count": 2}] * 2
     write_json(path, {"row": {"gpu_minutes": meter}})
     result = api.check_telemetry(path)
-    assert result.get("max_compute_process_count", 2) == 2
-    meter["samples"] = [{"compute_process_count": 2, "owned_compute_process_count": 1,
-                         "foreign_compute_process_count": int(owner == "foreign"),
-                         "unresolved_compute_process_count": int(owner == "unresolved")}]
-    meter["samples"] *= 2
-    write_json(path, {"row": {"gpu_minutes": meter}})
-    with pytest.raises(Invalid, match="foreign compute process|ownership is unresolved"):
-        api.check_telemetry(path)
+    assert result.get("max_compute_process_count") == 2 and result.get("flag") == "count_above_1"
+    samples = [{"t": t, "compute_process_count": 2, "busy_percent": 96} for t in (0, 1)]
+    result = summarize(samples, 0, 1)
+    assert result.get("max_compute_process_count") == 2 and result.get("flag") == "count_above_1"
 
 
 def test_capture_telemetry_records_known_sample_coverage(split_canary_evidence):
     api, directory, _, _, _ = split_canary_evidence
     result = api.check_telemetry(directory / "capture/results/numerics_row.json")
     assert result["known_sample_coverage_fraction"] == 1 and result["busy_sampled_seconds"] == 60
-
-
-def test_nvml_host_pids_resolve_worker_children_foreign_and_missing(tmp_path):
-    from experiments.numerics_rows.gpu_owner import ProcessOwner
-    def stat(pid, parent, start=10):
-        path = tmp_path / str(pid)
-        path.mkdir(exist_ok=True)
-        (path / "stat").write_text(f"{pid} (worker name) " + " ".join(["S", str(parent)] + ["0"] * 17 + [str(start)]))
-    for pid, parent in ((700, 1), (701, 700), (702, 701), (800, 1)):
-        stat(pid, parent)
-    owner = ProcessOwner({"host_pid": 700, "start_ticks": 10}, tmp_path)
-    assert owner.counts([{"pid": p} for p in (700, 701, 702, 800, 900)]) == {
-        "owned_compute_process_count": 3, "foreign_compute_process_count": 1, "unresolved_compute_process_count": 1}
-    stat(700, 1, start=11)
-    assert owner.counts([{"pid": 701}])["unresolved_compute_process_count"] == 1
-
-
-def test_container_launcher_records_podman_host_pid_before_wait(tmp_path, monkeypatch):
-    from experiments.numerics_rows import gpu_owner
-    calls, exited = [], False
-    def wait(**kw):
-        nonlocal exited
-        assert json.loads((tmp_path / "worker.json").read_text()) == {"host_pid": 700, "start_ticks": 10}
-        exited = True
-        return 0
-    child = SimpleNamespace(poll=lambda: 0 if exited else None, wait=wait)
-    monkeypatch.setattr(gpu_owner.subprocess, "Popen", lambda command: calls.append(command) or child)
-    monkeypatch.setattr(gpu_owner.subprocess, "check_output", lambda command, **kw: calls.append(command) or "700\n")
-    monkeypatch.setattr(gpu_owner, "process", lambda pid, root: (1, 10))
-    assert gpu_owner.run_container("row", tmp_path, ["podman", "run", "image"]) == 0
-    assert calls == [["podman", "run", "image"], ["podman", "inspect", "--format", "{{.State.Pid}}", "row"]]
-
-
-def test_container_owner_entrypoint_passes_command_and_exit_status(tmp_path, monkeypatch):
-    import runpy
-    import sys
-    from experiments.numerics_rows import gpu_owner
-    calls = []
-    monkeypatch.setattr(gpu_owner, "run_container", lambda *args: calls.append(args) or 7)
-    monkeypatch.setattr(sys, "argv", ["gpu_time", "--container-owner", "row", "--owner-directory", str(tmp_path),
-                                    "--", "podman", "run", "image"])
-    with pytest.raises(SystemExit) as stopped:
-        runpy.run_module("experiments.numerics_rows.gpu_time", run_name="__main__")
-    assert stopped.value.code == 7
-    assert calls == [("row", tmp_path, ["podman", "run", "image"])]
 
 
 @pytest.fixture

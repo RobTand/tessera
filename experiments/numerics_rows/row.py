@@ -644,7 +644,7 @@ def main():
                        "finalization_finished": False},
                "tool": {}, "rule": {}, "runtime": {}, "tessera": {}, "probe": {}, "inputs": {},
                "modules": [], "units": [], "negative_controls": [], "diagnostic_cells": [], "findings": []}
-    from experiments.numerics_rows.gpu_time import ProcessOwner, RowMeter, preflight, self_visibility
+    from experiments.numerics_rows.gpu_time import RowMeter, preflight, self_visibility
 
     meter = RowMeter() if args.phase not in ("prepare", "compare") else None
     args.meter = meter
@@ -660,7 +660,6 @@ def main():
             receipt["row"]["gpu_preflight"] = preflight(processes=None)
             if receipt["row"]["gpu_preflight"]["verdict"] != "FREE":
                 raise RuntimeError("GPU preflight not free")
-            meter.owner = ProcessOwner.wait()
             import torch
             receipt["row"]["gpu_self_visibility"] = self_visibility(torch)
             if receipt["row"]["gpu_self_visibility"]["verdict"] != "VISIBLE":

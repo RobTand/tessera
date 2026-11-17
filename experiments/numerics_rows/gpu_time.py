@@ -4,7 +4,7 @@ utilization.gpu is the percent of a sample interval with a resident kernel. It
 is not SM throughput. Integrate adjacent samples by the trapezoidal rule; keep
 sample coverage and errors so an incomplete measurement cannot claim zero use.
 GB10 can retain a stale utilization counter after all compute processes exit.
-No process means zero busy time. Host ancestry identifies worker-owned processes.
+No process means zero busy time. Process counts above one flag a Fleet review.
 The row owns the Flux GPU slot and checks that it starts free.
 """
 from __future__ import annotations
@@ -17,7 +17,6 @@ import resource
 import subprocess
 import threading
 import time
-from experiments.numerics_rows.gpu_owner import ProcessOwner
 
 
 def number(value):
@@ -118,8 +117,10 @@ def summarize(samples, start, end, errors=()):
     busy = sum((b["t"] - a["t"]) * (a["busy_percent"] + b["busy_percent"]) / 200 for a, b in intervals)
     power = [s["power_watts"] for s in samples if s.get("power_watts") is not None]
     memory = [s["compute_apps_memory_mib"] for s in samples if s.get("compute_apps_memory_mib") is not None]
+    count = max((s["compute_process_count"] for s in samples if type(s.get("compute_process_count")) is int), default=None)
     return {"wall_minutes": (end - start) / 60, "gpu_busy_minutes": busy / 60 if intervals else None,
-            "method": "NVML resident percent gated by any compute process; trapezoidal integral; no PID matching; not SM throughput",
+            "method": "NVML resident percent gated by any compute process; trapezoidal integral; no process attribution; not SM throughput",
+            "max_compute_process_count": count, "flag": "count_above_1" if count is not None and count > 1 else None,
             "sample_interval_seconds": 1, "sampled_seconds": samples[-1]["t"] - samples[0]["t"] if len(samples) > 1 else 0,
             "busy_sampled_seconds": sum(b["t"] - a["t"] for a, b in intervals),
             "peak_device_memory_mib": max(memory, default=None), "device_memory_method": "sum of NVML compute-apps used_memory",
@@ -166,7 +167,6 @@ class RowMeter:
         self.phase = "setup"
         self.samples, self.errors = [], []
         self.nvml_pids = None
-        self.owner = None
         self.done = threading.Event()
         self.thread = threading.Thread(target=self.sample, daemon=True)
         self.thread.start()
@@ -184,10 +184,6 @@ class RowMeter:
                     reading["compute_process_count"] = len(apps)
                     reading["compute_process_memory_mib"] = [a["memory_mib"] for a in apps]
                     reading["compute_apps_memory_mib"] = process_memory(apps)
-                    owner = getattr(self, "owner", None)
-                    reading.update(owner.counts(apps) if owner is not None else {
-                        "owned_compute_process_count": 0, "foreign_compute_process_count": 0,
-                        "unresolved_compute_process_count": len(apps)})
                     if apps and getattr(self, "nvml_pids", None) is None:
                         self.nvml_pids = [a["pid"] for a in apps]
                 except Exception as error:
@@ -203,8 +199,6 @@ class RowMeter:
         result = summarize(self.samples, self.start, end, self.errors)
         samples = result["samples"]
         result["pid_diagnostic"] = {"in_container_pid": os.getpid(), "nvml_pids": getattr(self, "nvml_pids", None) or [],
-                                    "host_worker_pid": self.owner.pid if getattr(self, "owner", None) is not None else None,
-                                    "host_worker_start_ticks": self.owner.start if getattr(self, "owner", None) is not None else None,
                                     "scope": "first nonempty NVML sample; diagnostic only; no PID matching"}
         result["phases"] = {}
         for phase in sorted({s.get("phase", "setup") for s in samples}):
@@ -217,8 +211,6 @@ class RowMeter:
                 "unknown_sampled_wall_seconds": total - wall, "gpu_resident_seconds": resident if valid else None,
                 "wall_without_resident_kernels_seconds": wall - resident if valid else None,
                 "max_compute_process_count": max((s["compute_process_count"] for s in samples if s.get("phase", "setup") == phase and type(s.get("compute_process_count")) is int), default=None),
-                "max_foreign_compute_process_count": max((s.get("foreign_compute_process_count", 0) for s in samples if s.get("phase", "setup") == phase), default=0),
-                "max_unresolved_compute_process_count": max((s.get("unresolved_compute_process_count", 0) for s in samples if s.get("phase", "setup") == phase), default=0),
                 "method": "same-phase adjacent NVML samples; wall minus kernel-resident time, not CPU utilization"}
         if not include_samples:
             result.pop("samples")
@@ -259,17 +251,8 @@ if __name__ == "__main__":
     import json
 
     parser = argparse.ArgumentParser(description=__doc__)
-    mode = parser.add_mutually_exclusive_group(required=True)
-    mode.add_argument("--preflight", type=Path)
-    mode.add_argument("--container-owner")
-    parser.add_argument("--owner-directory", type=Path)
-    parser.add_argument("command", nargs=argparse.REMAINDER)
+    parser.add_argument("--preflight", type=Path, required=True)
     args = parser.parse_args()
-    if args.container_owner:
-        from experiments.numerics_rows.gpu_owner import run_container
-        if not args.owner_directory or not args.command or args.command[0] != "--":
-            parser.error("container ownership needs a directory and command after --")
-        raise SystemExit(run_container(args.container_owner, args.owner_directory, args.command[1:]))
     try:
         report = preflight()
     except Exception as error:

@@ -22,10 +22,9 @@ preflight memory check on 2026-11-17. Its value stays null; zero compute process
 and no host vLLM are still required. The worker names its limited PID namespace.
 NVML activity counts only while a compute process is listed. Raw PID values are
 diagnostic because NVML reports host PIDs across the container PID boundary.
-The launcher records podman's host worker PID and its start time. The sampler
-reads the mounted host process tree. Worker descendants are attributable;
-foreign or unresolved compute processes refuse telemetry success. Unknown
-sample intervals are separate from idle time. Phase reports include process peaks.
+Counts above one carry a `count_above_1` flag for Fleet review. They do not
+refuse telemetry success. Unknown sample intervals are separate from idle time.
+Phase reports include process peaks. The container has no host process-tree mount.
 Canary CPU phases use one core. Separate host and device peaks set later bookings.
 
 Re-stamped 2026-11-17 for the #1717 frozen rule v2 worker policy.

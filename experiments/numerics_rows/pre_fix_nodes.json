@@ -328,12 +328,11 @@
     "expected": 1,
     "nodes": ["test_unknown_compute_count_under_stuck_counter_stays_unknown"]
   },
-  "pre-fix-foreign-compute": {
+  "pre-fix-compute-count-flag": {
     "file": "test_numerics_rows_phases.py",
-    "expected": 2,
+    "expected": 1,
     "nodes": [
-      "test_capture_telemetry_refuses_foreign_or_unresolved_processes[foreign]",
-      "test_capture_telemetry_refuses_foreign_or_unresolved_processes[unresolved]"
+      "test_capture_telemetry_flags_multiple_processes_without_refusal"
     ]
   },
   "pre-fix-feeder-bookings": {

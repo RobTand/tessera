@@ -1855,7 +1855,6 @@ def test_capture_preflight_stops_before_first_device_call(tmp_path, monkeypatch)
     monkeypatch.setattr(launch_state, "LaunchState", lambda *a, **kw: SimpleNamespace(fields=lambda: {"launch_levers_sha256": "a" * 64}))
     calls, free = [], True
     monkeypatch.setattr(gpu_time, "preflight", lambda **kw: {"verdict": "FREE" if free else "STOPPED"}, raising=False)
-    monkeypatch.setattr(gpu_time, "ProcessOwner", SimpleNamespace(wait=lambda: SimpleNamespace(pid=701)), raising=False)
     monkeypatch.setattr(gpu_time, "self_visibility", lambda torch: {"verdict": "VISIBLE"}, raising=False)
     monkeypatch.setattr(row, "run", lambda *args: calls.append("first-device-call"))
     row.main()
@@ -1881,7 +1880,6 @@ def test_capture_self_visibility_stops_before_row_setup(tmp_path, monkeypatch, f
     monkeypatch.setattr(gpu_time, "RowMeter", lambda: SimpleNamespace(finish=lambda: {}))
     monkeypatch.setattr(launch_state, "LaunchState", lambda *a, **kw: SimpleNamespace(fields=lambda: {"launch_levers_sha256": "a" * 64}))
     monkeypatch.setattr(gpu_time, "preflight", lambda **kw: {"verdict": "FREE"})
-    monkeypatch.setattr(gpu_time, "ProcessOwner", SimpleNamespace(wait=lambda: SimpleNamespace(pid=701)), raising=False)
     monkeypatch.setattr(gpu_time.time, "sleep", lambda seconds: None)
     calls, visible = [], True
     monkeypatch.setattr(torch, "empty", lambda count, *, device: calls.append(("allocation", count, device)) or object())

@@ -34,14 +34,11 @@ def check_telemetry(path):
             or not any(type(s.get("compute_process_count")) is int and s["compute_process_count"] >= 1 for s in meter.get("samples", []))):
         raise Invalid("capture telemetry is missing compute-process visibility, GPU busy, memory, power or whole-job memory evidence")
     active = [s for s in meter["samples"] if type(s.get("compute_process_count")) is int and s["compute_process_count"] > 0]
-    if any(s.get("foreign_compute_process_count", 0) > 0 for s in active):
-        raise Invalid("capture telemetry is not attributable: foreign compute process")
-    if any(s.get("unresolved_compute_process_count") != 0 or s.get("owned_compute_process_count") != s["compute_process_count"] for s in active):
-        raise Invalid("capture telemetry process ownership is unresolved")
+    count = max(s["compute_process_count"] for s in active)
     return {k: meter[k] for k in fields} | {"sampled_seconds": meter["sampled_seconds"],
         "busy_sampled_seconds": meter["busy_sampled_seconds"],
         "known_sample_coverage_fraction": meter["busy_sampled_seconds"] / meter["sampled_seconds"] if meter["sampled_seconds"] else None,
-        "max_compute_process_count": max(s["compute_process_count"] for s in active), "errors": meter["errors"]}
+        "max_compute_process_count": count, "flag": "count_above_1" if count > 1 else None, "errors": meter["errors"]}
 
 
 def check_canary(directory, revision, paths):
@@ -192,8 +189,6 @@ def prepare(cpu_check, *, module=MODULE, canary=True, canary_directory=None):
             prerequisites += f"test -s {out}/{prior}/results/{prior}/phase.json\n"
         telemetry = f"PYTHONPATH=code python3 -m experiments.numerics_rows.prepare_split --check-telemetry {job}/results/numerics_row.json > results/telemetry-check.json\n" if gpu else ""
         preflight = "PYTHONPATH=code python3 -m experiments.numerics_rows.gpu_time --preflight results/gpu-preflight-host.json\n" if gpu else ""
-        container = 'env PYTHONPATH=code python3 -m experiments.numerics_rows.gpu_time --container-owner "$name" --owner-directory "$task_scratch/gpu-owner" -- ' if gpu else ''
-        ownership_mounts = '-v /proc:/run/numerics/host-proc:ro -v "$task_scratch/gpu-owner:/run/numerics/gpu-owner:ro"' if gpu else ''
         (job / "job.sh").write_text(f'''#!/bin/bash
 set -euo pipefail
 umask 077
@@ -213,7 +208,7 @@ test "$(git -C code rev-parse HEAD)" = {revision}
 # The population draft mount is supplied from the bound, reviewed campaign file.
 mapfile -t population_mount < <(PYTHONPATH=code python3 -c 'import json,shlex; print("\\n".join(shlex.split(json.load(open("{out}/campaign.json"))["population_mount"])))')
 rc=0
-timeout --signal=TERM --kill-after=20s {minutes * 60 - 60}s {container}podman run --rm --name "$name" --pull=never --cgroups=disabled --network=none {'--device nvidia.com/gpu=all' if gpu else ''} {ownership_mounts} -v /mnt/shared:/mnt/shared:ro -v {job}:{job}:rw -v {job}/code:/numerics:ro "${{population_mount[@]}}" {options} --entrypoint /bin/bash acc684c06ec7 -euo pipefail {job}/payload.sh > results/payload.stdout 2> results/payload.stderr || rc=$?
+timeout --signal=TERM --kill-after=20s {minutes * 60 - 60}s podman run --rm --name "$name" --pull=never --cgroups=disabled --network=none {'--device nvidia.com/gpu=all' if gpu else ''} -v /mnt/shared:/mnt/shared:ro -v {job}:{job}:rw -v {job}/code:/numerics:ro "${{population_mount[@]}}" {options} --entrypoint /bin/bash acc684c06ec7 -euo pipefail {job}/payload.sh > results/payload.stdout 2> results/payload.stderr || rc=$?
 printf '%s\\n' "$rc" > results/podman-exit.txt
 printf '%s\\n' "$rc" > results/payload-exit.txt
 test "$rc" -eq 0
