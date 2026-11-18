@@ -2211,6 +2211,7 @@ ts_py_library(
     data = [
         "numerics_rows/README.md",
         "numerics_rows/feeder-settings.json",
+        "numerics_rows/templates/job.sh",
     ],
     deps = [
         ":numerics_rows/batch_evaluator_cycle",

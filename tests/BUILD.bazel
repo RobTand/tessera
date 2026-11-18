@@ -14608,6 +14608,7 @@ ts_py_test(
     library = ":test_numerics_capture_templates_lib",
     data = [
         "//:pyproject.toml",
+        "//experiments:numerics_rows/templates/job.sh",
         "//experiments:t8r_speed/bench_t8r.sh",
         "//experiments:t8r_speed/build_ext.sh",
     ],
@@ -14633,6 +14634,7 @@ ts_py_test(
     library = ":test_numerics_capture_templates_lib",
     data = [
         "//:pyproject.toml",
+        "//experiments:numerics_rows/templates/job.sh",
         "//experiments:t8r_speed/bench_t8r.sh",
         "//experiments:t8r_speed/build_ext.sh",
     ],
@@ -14755,6 +14757,7 @@ ts_py_test(
     library = ":test_numerics_dense_streams_lib",
     data = [
         "//:pyproject.toml",
+        "//experiments:numerics_rows/templates/job.sh",
         "//experiments:t8r_speed/bench_t8r.sh",
         "//experiments:t8r_speed/build_ext.sh",
     ],
@@ -14780,6 +14783,7 @@ ts_py_test(
     library = ":test_numerics_dense_streams_lib",
     data = [
         "//:pyproject.toml",
+        "//experiments:numerics_rows/templates/job.sh",
         "//experiments:t8r_speed/bench_t8r.sh",
         "//experiments:t8r_speed/build_ext.sh",
     ],
@@ -14821,6 +14825,7 @@ ts_py_test(
     data = [
         "//:pyproject.toml",
         "//experiments:build_identity.sh",
+        "//experiments:numerics_rows/templates/job.sh",
         "//experiments:runtime_image.sh",
         "//experiments:serve_and_dump_kl.sh",
         "//experiments:serve_lock.sh",
@@ -14855,6 +14860,7 @@ ts_py_test(
     data = [
         "//:pyproject.toml",
         "//experiments:build_identity.sh",
+        "//experiments:numerics_rows/templates/job.sh",
         "//experiments:runtime_image.sh",
         "//experiments:serve_and_dump_kl.sh",
         "//experiments:serve_lock.sh",
@@ -14902,6 +14908,7 @@ ts_py_test(
     library = ":test_numerics_feeder_graph_lib",
     data = [
         "//:pyproject.toml",
+        "//experiments:numerics_rows/templates/job.sh",
         "//experiments:t8r_speed/bench_t8r.sh",
         "//experiments:t8r_speed/build_ext.sh",
     ],
@@ -14927,6 +14934,7 @@ ts_py_test(
     library = ":test_numerics_feeder_graph_lib",
     data = [
         "//:pyproject.toml",
+        "//experiments:numerics_rows/templates/job.sh",
         "//experiments:t8r_speed/bench_t8r.sh",
         "//experiments:t8r_speed/build_ext.sh",
     ],
@@ -15144,6 +15152,7 @@ ts_py_test(
     library = ":test_numerics_phase_instance_lib",
     data = [
         "//:pyproject.toml",
+        "//experiments:numerics_rows/templates/job.sh",
         "//experiments:t8r_speed/bench_t8r.sh",
         "//experiments:t8r_speed/build_ext.sh",
     ],
@@ -15169,6 +15178,7 @@ ts_py_test(
     library = ":test_numerics_phase_instance_lib",
     data = [
         "//:pyproject.toml",
+        "//experiments:numerics_rows/templates/job.sh",
         "//experiments:t8r_speed/bench_t8r.sh",
         "//experiments:t8r_speed/build_ext.sh",
     ],
@@ -15519,6 +15529,7 @@ ts_py_test(
     library = ":test_numerics_rows_phases_lib",
     data = [
         "//:pyproject.toml",
+        "//experiments:numerics_rows/templates/job.sh",
         "//experiments:t8r_speed/bench_t8r.sh",
         "//experiments:t8r_speed/build_ext.sh",
     ],
@@ -15544,6 +15555,7 @@ ts_py_test(
     library = ":test_numerics_rows_phases_lib",
     data = [
         "//:pyproject.toml",
+        "//experiments:numerics_rows/templates/job.sh",
         "//experiments:t8r_speed/bench_t8r.sh",
         "//experiments:t8r_speed/build_ext.sh",
     ],
@@ -15771,6 +15783,7 @@ ts_py_test(
     library = ":test_numerics_unit_templates_lib",
     data = [
         "//:pyproject.toml",
+        "//experiments:numerics_rows/templates/job.sh",
         "//experiments:t8r_speed/bench_t8r.sh",
         "//experiments:t8r_speed/build_ext.sh",
     ],
@@ -15796,6 +15809,7 @@ ts_py_test(
     library = ":test_numerics_unit_templates_lib",
     data = [
         "//:pyproject.toml",
+        "//experiments:numerics_rows/templates/job.sh",
         "//experiments:t8r_speed/bench_t8r.sh",
         "//experiments:t8r_speed/build_ext.sh",
     ],
