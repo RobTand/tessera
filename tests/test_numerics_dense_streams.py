@@ -113,15 +113,15 @@ def test_group_uses_k_processes_and_waits_for_all_exits(tmp_path, monkeypatch):
     assert importlib.util.find_spec("experiments.numerics_rows.capture_group") is not None, "feature absent: K capture processes"
     from experiments.numerics_rows import capture_group as group, gpu_time
     monkeypatch.setattr(gpu_time, "preflight", lambda: {"verdict": "FREE"})
-    import threading
-    barrier = threading.Barrier(3)
     calls = []
     def child(command, **kwargs):
         calls.append(command)
-        barrier.wait(timeout=10)
         assert "--capture-group-proof" in command
-        return SimpleNamespace(returncode=3 if "failed" in command else 0)
-    monkeypatch.setattr(group.subprocess, "run", child)
+        def wait():
+            assert len(calls) == 3
+            return 3 if "failed" in command else 0
+        return SimpleNamespace(wait=wait)
+    monkeypatch.setattr(group.subprocess, "Popen", child)
     units = [{"out": str(tmp_path / name), "command": ["python3", name, "--phase", "capture", "--out", str(tmp_path / name)]}
              for name in ("first", "failed", "last")]
     assert group.capture_group(3, units) == 3
@@ -151,7 +151,7 @@ def test_group_validates_all_commands_before_any_process(tmp_path, monkeypatch, 
     from experiments.numerics_rows import capture_group as group, gpu_time
     calls = []
     monkeypatch.setattr(gpu_time, "preflight", lambda: calls.append("preflight"))
-    monkeypatch.setattr(group.subprocess, "run", lambda *a, **k: calls.append("child"))
+    monkeypatch.setattr(group.subprocess, "Popen", lambda *a, **k: calls.append("child"))
     units = [{"out": str(tmp_path / name), "command": ["python3", "--out", str(tmp_path / name)] + flags}
              for name, flags in (("valid", ["--phase", "capture"]), ("bad", tail))]
     with pytest.raises(Invalid, match="capture phase"):

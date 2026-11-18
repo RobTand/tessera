@@ -1,12 +1,10 @@
 """Run K capture processes within one admitted GPU job. Submit nothing."""
 import argparse
-from concurrent.futures import ThreadPoolExecutor
 import json
 import os
 from pathlib import Path
 import signal
 import subprocess
-from threading import Lock
 
 from experiments.numerics_rows.common import Invalid, write_json
 
@@ -28,36 +26,32 @@ def capture_group(k, units, *, claimed=False):
     proof = {"parent_pid": os.getpid(), "out": outputs, "preflight": preflight()}
     if proof["preflight"]["verdict"] != "FREE":
         raise Invalid("capture group requires a free GPU before all processes")
-    children, lock, stopped = {}, Lock(), []
+    children, stopped = [], []
     def stop(signum, _frame):
         for sig in (signal.SIGTERM, signal.SIGINT):
             signal.signal(sig, signal.SIG_IGN)
-        with lock:
-            stopped.append(signum)
-            for process in children.values():
-                if process.poll() is None:
-                    process.terminate()
+        stopped.append(signum)
+        for _, process in children:
+            if process is not None and process.poll() is None:
+                process.terminate()
     previous = {sig: signal.signal(sig, stop) for sig in (signal.SIGTERM, signal.SIGINT)} if claimed else {}
-    def run_unit(item):
-        target = Path(item["out"]) / "capture" if claimed else Path(item["out"])
-        if not claimed:
-            target.mkdir(parents=True)
-        write_json(target / "slot.json", proof)
-        command = item["command"] + ["--capture-group-proof", str(target / "slot.json")]
-        with (target / "stdout").open("w") as output, (target / "stderr").open("w") as errors:
-            if claimed:
-                with lock:
-                    process = None if stopped else subprocess.Popen(command, stdout=output, stderr=errors)
-                    if process is not None:
-                        children[item["out"]] = process
-                status = process.wait() if process is not None else 128 + stopped[0]
-            else:
-                status = subprocess.run(command, stdout=output, stderr=errors).returncode
-        write_json(target / "exit.json", {"exit_status": status})
-        return status
     try:
-        with ThreadPoolExecutor(max_workers=k) as workers:
-            statuses = list(workers.map(run_unit, units))
+        for item in units:
+            target = Path(item["out"]) / "capture" if claimed else Path(item["out"])
+            if not claimed:
+                target.mkdir(parents=True)
+            write_json(target / "slot.json", proof)
+            command = item["command"] + ["--capture-group-proof", str(target / "slot.json")]
+            with (target / "stdout").open("w") as output, (target / "stderr").open("w") as errors:
+                process = None if stopped else subprocess.Popen(command, stdout=output, stderr=errors)
+            children.append((target, process))
+            if stopped and process is not None and process.poll() is None:
+                process.terminate()
+        statuses = []
+        for target, process in children:
+            status = process.wait() if process is not None else 128 + stopped[0]
+            write_json(target / "exit.json", {"exit_status": status})
+            statuses.append(status)
         return 128 + stopped[0] if stopped else max(statuses, key=lambda value: value != 0)
     finally:
         for sig, handler in previous.items():

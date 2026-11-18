@@ -338,7 +338,8 @@ def run(canary, bookings, retries=None):
             table = read(template / 'table.json')
             spec = dry_run(template, arguments, name, host)
             memory = sum(r['count'] for r in table['instances'][name]['shapes'][0][0]['with'] if r['type'] == 'memory')
-            drain = drain_ecores_before_submit(memory, '--requires=host:' + host, 'tessera-1717:' + str(jobs[0]))
+            drain = ({'host': host, 'reason': 'tessera-1717:' + str(jobs[0])}
+                     if memory > settings['fv1_memory_without_fv1e_drain_gib'] else None)
             bound = observe(name)
             intent = {'instance': bound, 'arguments': list(map(str, arguments)), 'fv1e_drain': drain,
                       'jobspec_sha256': hashlib.sha256(spec.encode('utf-8')).hexdigest(),
@@ -353,6 +354,7 @@ def run(canary, bookings, retries=None):
                     stream.write(json.dumps(intent) + '\n')
                     stream.flush()
                 event('SUBMIT_INTENT', module=module, phase=phase, unit=key)
+                drain_ecores_before_submit(memory, '--requires=host:' + host, 'tessera-1717:' + str(jobs[0]))
                 with TemporaryDirectory(prefix='.counted-feeder-', dir=canary) as scratch:
                     with NamedTemporaryFile(mode='w', encoding='utf-8', dir=scratch) as jobspec:
                         jobspec.write(spec)
@@ -394,6 +396,8 @@ def run(canary, bookings, retries=None):
         native = int(subprocess.check_output([*client(name), 'jobs', '-n', '-o', '{returncode}', jobid], text=True).strip())
         kvs = subprocess.check_output([*client(name), 'job', 'info', jobid, 'guest.output'])
         logs = {'flux-kvs': hashlib.sha256(kvs).hexdigest()}
+        member_exits = {str(job.parent): read(job / 'exit.json')['exit_status'] if (job / 'exit.json').is_file() else None
+                        for job in jobs} if len(jobs) > 1 else {}
         for job in jobs:
             exits = {label: (job / (label + '-exit.txt')).read_text().strip()
                      if (job / (label + '-exit.txt')).is_file() else None for label in ('tool', 'payload', 'podman')}
@@ -405,7 +409,7 @@ def run(canary, bookings, retries=None):
             job_failed = (status.returncode != 0 or native != 0 or any(v != '0' for v in exits.values())) and not finalized
             if job_failed:
                 state['jobs'][str(job)]['failed'] = True
-            event('END', module=module, phase=phase, id=jobid, native_exit=native, exits=exits, logs=logs)
+            event('END', module=module, phase=phase, id=jobid, native_exit=native, exits=exits, member_exits=member_exits, logs=logs)
             if job_failed:
                 if receipt.get('row', {}).get('outcome') == 'FAIL' or any(u.get('findings') or u.get('outcome') == 'FAIL' for u in receipt.get('units', [])):
                     raise FeederError('COUNTED_PHASE_FINDING')

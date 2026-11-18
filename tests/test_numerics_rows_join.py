@@ -1,5 +1,6 @@
 """Per-key module coverage has an independent signed-wire expectation set."""
 import copy
+from inspect import getmodule, getsource
 
 import pytest
 
@@ -7,6 +8,22 @@ from experiments.numerics_rows import row
 from experiments.numerics_rows.common import Invalid
 from experiments.numerics_rows.join import join, rule_unit_id
 from tests.test_numerics_rows_receipts import joined_inputs
+
+
+def test_join_refuses_img_g_e4m3_until_d5(monkeypatch):
+    assert "IMG-G E4M3" in getsource(getmodule(join)._join), "feature absent: IMG-G E4M3 joins require D5 cell withdrawal"
+    from experiments.numerics_rows import scope
+    from experiments.numerics_rows.common import IMAGES
+    population, digest, manifests, receipts = joined_inputs(monkeypatch)
+    assert join(population, digest, manifests, receipts)["verdict"] == "PASS"
+    population["image"] = "G"
+    contract, _ = scope.contract_document()
+    for cell in contract["lane_eligibility"]["cells"]:
+        cell["runtime"]["image"] = IMAGES["G"]["image_digest"]
+    for _, receipt in receipts:
+        receipt["runtime"]["image_digest"] = IMAGES["G"]["image_digest"]
+    with pytest.raises(Invalid, match="IMG-G E4M3.*D5"):
+        join(population, digest, manifests, receipts)
 
 
 def test_join_keeps_stopped_per_key_below_fail(monkeypatch):

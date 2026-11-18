@@ -55,6 +55,8 @@ def _join(population, digest, manifests, receipts, contract):
     contract, contract_hash = scope.contract_document(contract)
     image = IMAGES[population["image"]]["image_digest"]
     scope.check_population_cells(contract, image, population)
+    if population["image"] == "G" and any(entry["contract_family"] == "TESSERA_E4M3_K1" for entry in population["modules"]):
+        raise Invalid("IMG-G E4M3 join requires D5 cell withdrawal code")
     launch = ({**{k: receipts[0][1]["runtime"][k] for k in ("launch_state_names", "launch_state_sha256", "launch_selectors", "start_environment_spec_sha256")},
                "launch_levers_sha256": receipts[0][1]["inputs"]["launch_levers_sha256"]} if receipts else
               {k: manifests[0][1][k] for k in ("launch_state_names", "launch_state_sha256", "launch_selectors", "start_environment_spec_sha256", "launch_levers_sha256")} if manifests else None)

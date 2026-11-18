@@ -104,6 +104,8 @@ elif args[:2] == ['job', 'submit']:
                     'case_set': 'diagnostics' if '-diagnostics-' in argument else 'gate', 'ordinal_start': 0,
                     'streams': {'cases': {'count': 0, 'sha256': empty_digest}}, 'case_ids_sha256': empty_digest}
         (job / 'phase.json').write_text(json.dumps(document))
+        if phase == 'capture' and not rule.get('missing_member_exit'):
+            (job / 'exit.json').write_text(json.dumps({'exit_status': rc}))
         (job / 'cases.jsonl').touch()
         (job / 'payload.stdout').write_text('payload log')
         (job / 'payload.stderr').write_text('')
@@ -661,22 +663,29 @@ def test_feeder_crossing_uses_saved_producer_instance(tmp_path, monkeypatch):
         assert trace[consumer]['spec']['attributes']['system']['dependencies'] == [{'scheme': 'singleton', 'value': ''}]
 
 
-def test_feeder_capture_group_uses_ordered_arguments_and_recovers_id(tmp_path, monkeypatch):
-    assert hasattr(api, 'attempt_jobs'), 'feature absent: grouped capture saves and reuses every member job id'
+def group_graph(tmp_path, monkeypatch, k=2):
     import shutil
     canary, bookings, configs = graph = make_graph(tmp_path, monkeypatch)
     config = configs['module-A']
     directory = canary.parent / 'module-A'
     shutil.rmtree(directory / 'templates')
     settings = api.read(directory / 'feeder-settings.json')
-    settings['capture_group_canary'] = {'cores_per_capture': 1, 'anon_peak_gib_per_capture': 2, 'margin_gib': 1, 'max_k': 2}
+    settings['capture_group_canary'] = {'cores_per_capture': 1, 'anon_peak_gib_per_capture': 2, 'margin_gib': 1, 'max_k': k}
     (directory / 'feeder-settings.json').write_text(json.dumps(settings))
-    keys = config['unit_keys'][:2]
+    keys = config['unit_keys'][:k]
     config['capture_groups'] = [{'key': 'group-A', 'unit_keys': keys}]
     prepare_split.write_templates(directory, config, directory / 'repository.git')
     prepare_split.bind_templates(directory, config)
+    return graph, directory, keys
+
+
+def test_feeder_capture_group_uses_ordered_arguments_and_recovers_id(tmp_path, monkeypatch):
+    assert hasattr(api, 'attempt_jobs'), 'feature absent: grouped capture saves and reuses every member job id'
+    graph, directory, keys = group_graph(tmp_path, monkeypatch)
+    canary, bookings, _ = graph
     api.run(canary, bookings)
-    grouped, = [c for c in calls(graph) if c['action'] == 'gate' and '/group-A/' in c['template']]
+    key = 'group-' + json_digest(['module-A', keys])
+    grouped, = [c for c in calls(graph) if c['action'] == 'gate' and f'/{key}/' in c['template']]
     arguments = grouped['spec']['tasks'][0]['command'][1:]
     assert arguments == [str(directory / 'units' / key / 'attempts/1') for key in keys]
     ids = [Path(argument) / 'capture-jobid' for argument in arguments]
@@ -686,6 +695,63 @@ def test_feeder_capture_group_uses_ordered_arguments_and_recovers_id(tmp_path, m
     api.run(canary, bookings)
     assert [c for c in calls(graph) if c['action'] == 'submit'] == before
     assert ids[0].read_text() == ids[1].read_text()
+
+
+@pytest.mark.parametrize('failed_member', (0, 2))
+@pytest.mark.parametrize('missing', (False, True))
+def test_feeder_end_records_each_capture_member_exit(tmp_path, monkeypatch, failed_member, missing):
+    assert 'member_exits' in inspect.getsource(api.run), 'feature absent: END records every capture member exit'
+    graph, directory, keys = group_graph(tmp_path, monkeypatch, k=3)
+    canary, bookings, _ = graph
+    (tmp_path / 'job-outcomes.json').write_text(json.dumps([
+        {'module': 'module-A', 'key': keys[failed_member], 'phase': 'capture', 'exit': 7,
+         'missing_member_exit': missing, 'attempts': [1, 2]}]))
+    with pytest.raises(api.FeederError, match='COUNTED_PHASE_.*module-A'):
+        api.run(canary, bookings)
+    endings = [event for event in feeder_events(canary) if event['event'] == 'END' and event['member_exits']]
+    assert endings
+    for event in endings:
+        assert event['native_exit'] == 7
+        members = event['member_exits']
+        assert {Path(attempt).parents[1].name for attempt in members} == set(keys)
+        for attempt, status in members.items():
+            assert status == ((None if missing else 7) if Path(attempt).parents[1].name == keys[failed_member] else 0)
+            if status is not None:
+                assert status == api.read(Path(attempt) / 'capture/exit.json')['exit_status']
+
+
+@pytest.mark.parametrize('interrupt', (False, True))
+def test_feeder_records_drain_intent_before_drain(tmp_path, monkeypatch, interrupt):
+    assert inspect.getsource(api.run).index("event('SUBMIT_INTENT'") < inspect.getsource(api.run).index('drain_ecores_before_submit(memory'), 'feature absent: E-core drain follows its saved intent'
+    canary, bookings, _ = graph = make_graph(tmp_path, monkeypatch)
+    for table_path in tmp_path.glob('module-*/templates/*/capture/table.json'):
+        table = api.read(table_path)
+        next(resource for resource in table['instances']['fv1']['shapes'][0][0]['with'] if resource['type'] == 'memory')['count'] = 37
+        table_path.write_text(json.dumps(table))
+    drains = []
+    def drain(memory, submit, reason):
+        if memory <= 36:
+            return None
+        target = Path(reason.removeprefix('tessera-1717:'))
+        intent = api.read(target.parent / 'capture-intent.json')
+        assert intent['fv1e_drain'] == {'host': 'sparklina', 'reason': reason}
+        assert intent['arguments'] == [str(target.parent)]
+        assert feeder_events(canary)[-1]['event'] == 'SUBMIT_INTENT'
+        assert not any(call['action'] == 'gate' and str(target.parent) in call['spec']['tasks'][0]['command'][1:]
+                       and Path(call['template']).name == 'capture' for call in calls(graph))
+        drains.append(intent['fv1e_drain'])
+        if interrupt:
+            raise RuntimeError('drain interrupted')
+        return intent['fv1e_drain']
+    monkeypatch.setattr(api, 'drain_ecores_before_submit', drain)
+    monkeypatch.setattr(api, 'undrain_ecores', lambda **kwargs: None)
+    if interrupt:
+        with pytest.raises(RuntimeError, match='drain interrupted'):
+            api.run(canary, bookings)
+        assert not any(call['action'] == 'gate' and Path(call['template']).name == 'capture' for call in calls(graph))
+    else:
+        api.run(canary, bookings)
+    assert drains
 
 
 @pytest.mark.parametrize('fault', ['native', 'tool', 'payload', 'podman', 'log', 'artifact', 'instance'])

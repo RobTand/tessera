@@ -1,4 +1,5 @@
 """Check capture groups with local files and fake payloads. Submit nothing."""
+import inspect
 import json
 import os
 from pathlib import Path
@@ -11,20 +12,20 @@ import sys
 
 import pytest
 
-from experiments.numerics_rows import prepare_split
+from experiments.numerics_rows import capture_group, prepare_split
 from experiments.numerics_rows.common import Invalid
 from experiments.numerics_rows.launch_state import json_digest
 from tests.test_numerics_unit_templates import job_world, prepared, snapshot, templates
 
 
-def inputs(root):
+def inputs(root, module="module-A"):
     root.mkdir()
     source = Path(prepare_split.__file__).parent
     for name, target in (("phase_instance.py", "instance.py"), ("feeder-settings.json", "feeder-settings.json")):
         shutil.copyfile(source / name, root / target)
-    keys = [f"tp{size}-{part}-" + json_digest(["module-A", size, part])
+    keys = [f"tp{size}-{part}-" + json_digest([module, size, part])
             for size in (1, 2) for part in ("gate", "diagnostics")]
-    return {"module": "module-A", "tool_commit": "a" * 40, "canary": False,
+    return {"module": module, "tool_commit": "a" * 40, "canary": False,
             "paths": {"source": str(root / "source")}, "staged_population": str(root / "population.json"),
             "capture_groups": [{"key": "group-A", "unit_keys": keys[:3]}]}
 
@@ -41,7 +42,7 @@ def build_group(root):
     set_canary(root)
     prepare_split.write_templates(root, config, root / "repository.git")
     prepare_split.bind_templates(root, config)
-    directory = root / "templates/group-A/capture"
+    directory = root / "templates" / ("group-" + json_digest([config["module"], config["capture_groups"][0]["unit_keys"]])) / "capture"
     attempts = [root / "units" / key / "attempts/1" for key in config["capture_groups"][0]["unit_keys"]]
     for attempt in attempts:
         attempt.mkdir(parents=True)
@@ -171,16 +172,17 @@ def test_group_uses_canary_shape_and_fleet_table(tmp_path, max_k):
         return
     prepare_split.write_templates(root, config, root / "repository.git")
     prepare_split.bind_templates(root, config)
-    directory = root / "templates/group-A/capture"
+    key = "group-" + json_digest([config["module"], config["capture_groups"][0]["unit_keys"]])
+    directory = root / "templates" / key / "capture"
     table = json.loads((directory / "table.json").read_text())
     assert table == {"schema": 1, "instances": {"fv1": {"constraints": [{"hostlist": ["sparky"]}, {"hostlist": ["sparklina"]}],
                      "shapes": [[{"type": "slot", "count": 1, "label": "task", "with":
                                  [{"type": "core", "count": 6}, {"type": "memory", "count": 9}, {"type": "gpu", "count": 1}]}]],
-                     "max_duration_s": 36000}}, "job_name": "tessera-1717-group-A-capture", "args": 3,
+                     "max_duration_s": 36000}}, "job_name": f"tessera-1717-{key}-capture", "args": 3,
                      "max_attempts": 5, "urgency": 8, "cwd": str(directory),
                      "env_names": ["PATH", "HOME", "XDG_RUNTIME_DIR", "FLUX_F58_FORCE_ASCII", "FLUX_SCRATCH",
                                    "OMP_NUM_THREADS", "MKL_NUM_THREADS", "OPENBLAS_NUM_THREADS"]}
-    grouped, = [item for item in config["templates"] if item["key"] == "group-A"]
+    grouped, = [item for item in config["templates"] if item["key"] == key]
     assert grouped["shape"] == "slot=1/[core=6;memory=9;gpu=1]"
     captures = [key for item in config["templates"] if item["phase"] == "capture" for key in item.get("unit_keys", [item["key"]])]
     assert sorted(captures) == sorted(config["unit_keys"]) and len(set(captures)) == 4
@@ -209,7 +211,6 @@ def test_group_leaves_attempt_cap_to_fleet(tmp_path):
 @pytest.mark.parametrize("terminate", (False, True))
 def test_group_term_reaches_all_children_and_waits_for_exits(tmp_path, terminate):
     assert hasattr(prepare_split, "capture_templates"), "feature absent: capture group forwards TERM to every child"
-    from experiments.numerics_rows import capture_group
     _, directory, attempts = build_group(tmp_path / "module")
     for attempt in attempts:
         (attempt / "capture").mkdir()
@@ -278,3 +279,61 @@ if 'wait' in sys.argv:
             process.wait(timeout=20)
         for descriptor in readers:
             os.close(descriptor)
+
+
+@pytest.mark.parametrize("reverse", (False, True))
+def test_group_name_binds_module_and_ordered_members(tmp_path, reverse):
+    assert "module" in inspect.signature(prepare_split.capture_templates).parameters, "feature absent: group names bind module and ordered members"
+    names = []
+    for module in ("module-A", "module-B"):
+        root = tmp_path / module
+        config = inputs(root, module)
+        set_canary(root)
+        ordered = config["capture_groups"][0]["unit_keys"]
+        if reverse:
+            ordered.reverse()
+        prepare_split.write_templates(root, config, root / "repository.git")
+        grouped, = [unit for unit in config["templates"] if "unit_keys" in unit]
+        expected = "group-" + json_digest([module, ordered])
+        assert grouped["key"] == expected
+        table = json.loads((root / "templates" / expected / "capture/table.json").read_text())
+        assert table["job_name"] == f"tessera-1717-{expected}-capture"
+        names.append(table["job_name"])
+    assert names[0] != names[1]
+
+
+@pytest.mark.parametrize("signum", (None, signal.SIGTERM, signal.SIGINT))
+def test_group_starts_children_before_ordered_waits_without_threads(tmp_path, monkeypatch, signum):
+    assert not hasattr(capture_group, "ThreadPoolExecutor"), "feature absent: capture groups start processes without a thread pool"
+    from types import SimpleNamespace
+    from experiments.numerics_rows import gpu_time
+    monkeypatch.setattr(gpu_time, "preflight", lambda: {"verdict": "FREE"})
+    handlers, launched, waited, terminated = {}, [], [], []
+    def handler(sig, action):
+        handlers[sig] = action
+        return signal.SIG_DFL
+    monkeypatch.setattr(capture_group.signal, "signal", handler)
+    def start(command, **kwargs):
+        index = len(launched)
+        launched.append(command)
+        def terminate():
+            terminated.append(index)
+        def wait():
+            assert len(launched) == 3
+            waited.append(index)
+            return -signum if index in terminated else 7 if index == 1 else 0
+        child = SimpleNamespace(terminate=terminate, wait=wait, poll=lambda: -signum if index in terminated else None)
+        if signum is not None and index == 2:
+            handlers[signum](signum, None)
+        return child
+    monkeypatch.setattr(capture_group.subprocess, "Popen", start)
+    units = []
+    for name in ("first", "failed", "last"):
+        attempt = tmp_path / name
+        (attempt / "capture").mkdir(parents=True)
+        units.append({"out": str(attempt), "command": ["python3", name, "--phase", "capture", "--out", str(attempt)]})
+    assert capture_group.capture_group(3, units, claimed=True) == (128 + signum if signum is not None else 7)
+    assert waited == [0, 1, 2]
+    assert terminated == ([0, 1, 2] if signum is not None else [])
+    assert [json.loads((Path(unit["out"]) / "capture/exit.json").read_text())["exit_status"] for unit in units] == (
+        [-signum] * 3 if signum is not None else [0, 7, 0])

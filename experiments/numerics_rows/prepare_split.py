@@ -192,8 +192,9 @@ def seal_template(directory):
     (directory / "template.sha256").write_text("".join(f"{sha256(p)}  {p.name if p.parent == directory else p}\n" for p in files))
 
 
-def capture_templates(units, groups, table):
+def capture_templates(units, groups, table, *, module):
     """Fix group membership and shape before the generator writes a template."""
+    from experiments.numerics_rows.launch_state import json_digest
     members = {unit["key"]: unit for unit in units}
     seen, keys, result = set(), set(members), []
     for group in groups:
@@ -215,7 +216,8 @@ def capture_templates(units, groups, table):
         shape = f"slot=1/[core={cores};memory={memory};gpu=1]"
         resources = [{"type": "slot", "count": 1, "label": "task", "with":
                       [{"type": "core", "count": cores}, {"type": "memory", "count": memory}, {"type": "gpu", "count": 1}]}]
-        result.append(dict(group, phase="capture", members=[members[item] for item in ordered], shape=shape, resources=resources))
+        result.append(dict(group, key="group-" + json_digest([module, ordered]), phase="capture",
+                           members=[members[item] for item in ordered], shape=shape, resources=resources))
         seen.update(ordered)
         keys.add(key)
     return [dict(unit, phase=phase) for unit in units for phase in ("prepare", "capture")
@@ -231,7 +233,7 @@ def write_templates(root, config, repository):
     units = [{"key": f"tp{size}-{part}-" + json_digest([config["module"], size, part]), "size": size, "case_set": part}
              for size in (1, 2) for part in ("gate", "diagnostics")]
     config["unit_keys"] = [unit["key"] for unit in units]
-    config["templates"] = capture_templates(units, config.get("capture_groups", []), settings["capture_group_canary"])
+    config["templates"] = capture_templates(units, config.get("capture_groups", []), settings["capture_group_canary"], module=config["module"])
     config["templates"].append({"key": "compare-" + json_digest([config["module"], "compare"]), "phase": "compare", "case_set": "all"})
     write_json(root / "campaign.json", config)
     options = shlex.join(container_options("$task_scratch")).replace("'$task_scratch", '\"$task_scratch').replace(":rw'", ':rw\"').replace(":ro'", ':ro\"')

@@ -1,6 +1,6 @@
 # Tessera plan-to-serve architecture
 
-Re-stamped 2026-11-18 for #1717 RC: document refusals before claims and compare writes.
+Re-stamped 2026-11-18 for #1717 RD: document capture groups, drain intent, and the D5 refusal.
 Each module has prepare and capture templates per TP unit and case set, plus one compare template.
 The generator accepts an explicit campaign output root and refuses an existing root. Without that parameter, it keeps the dated shared path.
 The CLI accepts `--output-root` and `--module` for canary generation.
@@ -15,6 +15,7 @@ The verifier reads that tree with `git ls-tree`. The BEFORE record keeps its ori
 An optional capture group replaces its members' single capture templates. Each unit belongs to exactly one capture template.
 Prepare, compare, and single capture templates take one canonical attempt path with a fixed module and unit key.
 Each group fixes K ordered unit keys and takes exactly K canonical attempt paths within its fixed module root.
+Its key is `group-` plus `json_digest([module, ordered members])`. The Fleet job name uses that key.
 The group validates every argument and prepare hash before any claim. A failed claim removes only this job's empty claims.
 Groups require measured cores, anonymous peak memory, margin, and admitted K in `feeder-settings.json`; unset values refuse generation.
 The group shape is `slot=1/[core=C;memory=M;gpu=1]`. C and M cover all K captures under the canary table.
@@ -25,7 +26,8 @@ Instance lists come from `feeder-settings.json` by template kind. Each table ins
 Counted prepare defaults to fv1 with 8 GiB, and both fv1e instances with 9 GiB and their own host constraints.
 Counted compare, canary, and capture default to fv1. Dense tables carry exact urgency 8.
 The job hashes its runtime inputs and helpers. Fleet holds job hashes; the runtime manifest excludes job.sh and table.json.
-The existing capture manager uses the claimed capture directories, waits for every child, and retains each child's exit status.
+The capture manager starts each child with `Popen`, then waits in member order without a thread pool or lock.
+It uses the claimed capture directories and retains each child's exit status.
 The job's stop path sends TERM through the container to the manager. The manager sends TERM to every active child.
 The job checks its runtime manifest, cloned source, bound campaign, and every saved instance before the atomic phase claims.
 Instance records stay in scratch until all claims succeed. The job then moves each record into its phase directory.
@@ -47,6 +49,8 @@ One feeder fills bounded prepare batches across modules. It submits the next bat
 Captures use fixed template order. Compare waits for all module captures.
 Attempt directories are the inventory. The feeder holds its lock and recovers saved job IDs and instance identities.
 Submit intent precedes the gate call. A blocking intent-file lock keeps the worker behind complete job metadata.
+The saved intent records the E-core drain host and reason before the feeder drains those cores.
+Each group END event records every member's status from its `capture/exit.json`, including when another member fails.
 A restart reuses running and finished jobs. An unknown submit result requires an audit and prevents a duplicate.
 Singleton names prevent two attempts of one unit and phase from running at the same time.
 An explicit `--retry UNIT=N` selects only the next attempt after earlier jobs end. FAIL attempts remain.
@@ -94,6 +98,7 @@ FAIL and STOPPED remain per unit across all attempts and case sets. FAIL takes p
 An open STOPPED without a finding remains STOPPED in a finalized module receipt, with `completed` false and the named attempt.
 A part without a finished attempt leaves each unit without a FAIL in that part STOPPED.
 The join blocks a STOPPED key below FAIL. A STOPPED attempt with a recorded cause permits a later finished result.
+The join refuses an IMG-G E4M3 population until D5 cell withdrawal has code. IMG-N keeps its existing join policy.
 The lead writes `lead-cause.json` with `unit`, integer `attempt`, and nonempty `cause` fields in that STOPPED attempt directory.
 Compare refuses a cause record for a finished attempt, an attempt with every unit FAIL, or a record with another attempt id.
 In a mixed FAIL and STOPPED attempt, a cause record releases only the units without a FAIL.
