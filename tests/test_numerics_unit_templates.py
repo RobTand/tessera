@@ -148,9 +148,10 @@ def test_capture_template_requires_complete_prepare(tmp_path, state):
 @pytest.mark.parametrize("canary", (False, True))
 @pytest.mark.parametrize("prepare_instances", (None, ["fv1"], ["fv1e-sparky"], ["fv1", "fv1e-sparklina"]))
 def test_every_template_uses_fleet_table_schema(tmp_path, canary, prepare_instances):
+    assert "template_instances" in json.loads(Path(prepare_split.__file__).with_name("feeder-settings.json").read_text()), "feature absent: every template uses Fleet table schema"
     placement = {"canary": ["fv1"], "prepare": prepare_instances, "capture": ["fv1"], "compare": ["fv1e-sparklina"]}
     _, directories = templates(tmp_path / "module", canary, placement if prepare_instances is not None else None)
-    for directory in directories:
+    for attempt_id, directory in enumerate(directories, start=4):
         assert (directory / "table.json").is_file(), "feature absent: every template uses Fleet table schema"
         phase = directory.name
         fields = json.loads((directory / "table.json").read_text())
@@ -175,7 +176,7 @@ def test_every_template_uses_fleet_table_schema(tmp_path, canary, prepare_instan
                           "shell_options": {}}
         assert not {"policy.json", "submit-after-review.sh", "submit-reviewed.sh"} & {p.name for p in directory.iterdir()}
         assert (directory / "job.sh").stat().st_mode & 0o100
-        attempt = tmp_path / "module/units" / directory.parent.name / "attempts/4"
+        attempt = tmp_path / "module/units" / directory.parent.name / f"attempts/{attempt_id}"
         attempt.mkdir(parents=True)
         if phase == "capture":
             prepared(attempt)
