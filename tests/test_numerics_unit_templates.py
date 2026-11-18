@@ -292,6 +292,7 @@ def test_compare_exit_three_keeps_checked_completion_hashes(tmp_path, outcome, f
 @pytest.mark.parametrize("phase", ("prepare", "capture"))
 def test_phase_local_outputs_keep_partial_fail_evidence(tmp_path, phase):
     assert hasattr(prepare_split, "write_templates"), "feature absent: phase-local files retain partial FAIL and artifact paths"
+    pytest.importorskip("torch")
     from experiments.numerics_rows import row
     from experiments.numerics_rows.gpu_time import PhaseTimes
     from tests.test_numerics_rows_phases import retry_phase_attempts
