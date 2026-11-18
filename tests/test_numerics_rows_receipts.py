@@ -1115,14 +1115,13 @@ def test_compile_path_refusal_is_bound_to_the_retained_p_json(tmp_path, monkeypa
     source.write_bytes(b"pinned test kernel")
     digest = hashlib.sha256(source.read_bytes()).hexdigest()
     monkeypatch.setattr(serving_build, "KERNEL_SHA256", digest)
-    ninja = tmp_path / "build.ninja"
-    ninja.write_text(f"build kernel.cuda.o: cuda_compile {source}\n")
     record = {"key": "value", "name": "tessera_routed_fused_value", "cflags": ["retained flags"],
               "library": {"path": str(tmp_path / "library.so"), "sha256": "a" * 64}}
     build, proof = tmp_path / "build.json", tmp_path / "p.json"
     write_json(build, {"libraries": [record]})
     original = build.read_bytes()
-    serving_build.source_provenance(build, proof)
+    write_json(proof, {"build_sha256": hashlib.sha256(original).hexdigest(),
+                       "libraries": [{**record, "native_source_path": str(source), "native_source_sha256": digest}]})
     assert build.read_bytes() == original
     assert serving_build.source_layout(build, proof)[0] == source.parents[4]
     monkeypatch.setattr(ext, "native_source_path", lambda name: str(source))

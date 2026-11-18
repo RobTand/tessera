@@ -126,37 +126,6 @@ def verify(root):
     return config
 
 
-def prepare_feeder(out, revision):
-    out = Path(out)
-    (out / 'feeder-entry.sh').write_text(f'''#!/bin/bash
-set -euo pipefail
-umask 077
-cd {out}
-sha256sum -c transport-preparation.sha256 > /dev/null
-export FLUX_F58_FORCE_ASCII=1
-git clone --shared {out}/repository.git "$2/code"
-git -C "$2/code" checkout --detach {revision}
-PYTHONPATH="$2/code" exec python3 -m experiments.numerics_rows.counted_feeder --canary {out} --bookings "$1" --result-directory "$2"
-''')
-    (out / 'start-counted-feeder.sh').write_text(f'''#!/bin/bash
-set -euo pipefail
-umask 077
-test "$#" -eq 1 || {{ echo 'Usage: start-counted-feeder.sh /absolute/Fleet-bookings.json' >&2; exit 2; }}
-test -f "$1"
-test "$(loginctl show-user "$(id -u)" -p Linger --value)" = yes || {{ echo 'User lingering is required for session-independent execution.' >&2; exit 3; }}
-unit=tessera-1717-rows-$(date -u +%Y%m%dT%H%M%S%NZ)
-run_dir={out}/feeder-runs/$unit
-mkdir -p "$run_dir"
-printf '%s\\n' "$unit" > "$run_dir/unit-name.txt"
-systemd-run --user --unit="$unit" --collect --property=Type=exec --property=Restart=no --property=UMask=0077 \\
- --property=StandardInput=null --property=StandardOutput=append:"$run_dir/stdout" --property=StandardError=append:"$run_dir/stderr" \\
- --property="ExecStopPost=/bin/sh -c 'echo service_result=\\$\\$SERVICE_RESULT exit_code=\\$\\$EXIT_CODE exit_status=\\$\\$EXIT_STATUS > \\"$run_dir/result.txt\\"; if test -f \\"$run_dir/last-error.txt\\"; then cat \\"$run_dir/last-error.txt\\" >> \\"$run_dir/result.txt\\"; else echo last_error=unrecorded >> \\"$run_dir/result.txt\\"; fi'" \\
- /usr/bin/env -i HOME=/home/rob PATH=/usr/bin:/bin XDG_RUNTIME_DIR=/run/user/1000 \\
- /bin/bash {out}/feeder-entry.sh "$(realpath "$1")" "$run_dir"
-printf '%s\\n' "$unit"
-''')
-
-
 def prepare(cpu_check, *, module=MODULE, canary=True, canary_directory=None):
     revision = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=ROOT, text=True).strip()
     stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")

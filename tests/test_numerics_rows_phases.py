@@ -1063,30 +1063,3 @@ def test_dense_prepare_booking_and_low_urgency(feeder_booking):
     bookings.write_text(json.dumps(bad))
     with pytest.raises(ValueError, match='REQUIRES_15_MINUTES'):
         api.run(canary, bookings)
-
-
-def test_counted_feeder_stop_command_keeps_exit_and_last_error(tmp_path):
-    import shlex
-    import subprocess
-    from experiments.numerics_rows.prepare_split import prepare_feeder
-    prepare_feeder(tmp_path, "a" * 40)
-    commands = tmp_path / "commands"
-    commands.mkdir()
-    record = tmp_path / "systemd-arguments.txt"
-    for name, body in {"loginctl": "echo yes\n", "systemd-run": "printf '%s\\n' \"$@\" > " + shlex.quote(str(record)) + "\n"}.items():
-        path = commands / name
-        path.write_text("#!/bin/sh\n" + body)
-        path.chmod(0o700)
-    bookings = tmp_path / "bookings.json"
-    bookings.write_text("{}")
-    subprocess.run(["bash", str(tmp_path / "start-counted-feeder.sh"), str(bookings)], check=True,
-                   env={"PATH": str(commands) + ":/usr/bin:/bin", "HOME": str(tmp_path)}, capture_output=True)
-    arguments = record.read_text().splitlines()
-    post = next(a.split("ExecStopPost=", 1)[1] for a in arguments if a.startswith("--property=ExecStopPost="))
-    assert "$$SERVICE_RESULT" in post and "$$EXIT_STATUS" in post
-    run_dir, = (tmp_path / "feeder-runs").iterdir()
-    (run_dir / "last-error.txt").write_text("last_error=BOOKING_REQUIRES_EXACTLY_ONE_MATCH\n")
-    subprocess.run(shlex.split(post.replace("$$", "$")), check=True,
-                   env={"SERVICE_RESULT": "exit-code", "EXIT_CODE": "exited", "EXIT_STATUS": "3"})
-    assert (run_dir / "result.txt").read_text().splitlines() == [
-        "service_result=exit-code exit_code=exited exit_status=3", "last_error=BOOKING_REQUIRES_EXACTLY_ONE_MATCH"]

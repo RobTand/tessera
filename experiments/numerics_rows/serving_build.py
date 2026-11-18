@@ -12,21 +12,6 @@ import sys
 from experiments.numerics_rows.common import Invalid, KERNEL, KERNEL_SHA256, check_runtime, check_source, sha256, write_json
 
 
-def source_provenance(build_path, out):
-    """Copy P metadata and add the literal compile input from its build.ninja."""
-    built = json.loads(Path(build_path).read_text())
-    for record in built["libraries"]:
-        ninja = Path(record["library"]["path"]).parent / "build.ninja"
-        source, = [line.split(": cuda_compile ", 1)[1] for line in ninja.read_text().splitlines() if ": cuda_compile " in line]
-        if not Path(source).is_absolute() or "$" in source or not source.endswith("/" + KERNEL) or sha256(source) != KERNEL_SHA256:
-            raise Invalid("P build has no literal, pinned kernel compile input")
-        record.update(native_source_path=source, native_source_sha256=KERNEL_SHA256,
-                      build_ninja={"path": str(ninja), "sha256": sha256(ninja)})
-    built.update(build_path=str(build_path), build_sha256=sha256(build_path))
-    write_json(out, built)
-    return built
-
-
 def source_layout(build_path, provenance_path):
     """Require an unchanged P copy with one absolute source root for the mount."""
     built = json.loads(Path(build_path).read_text())

@@ -12,7 +12,7 @@ from experiments.numerics_rows.row import (
     Invalid, check_preconditions, compare_output, coverage, dispatch, new_unit,
     finite_outputs, opaque_apply, outcome, record_cuda_error, require_x, x_products,
 )
-from experiments.numerics_rows.scale_index import digits, evaluate, joint_coverage, passes
+from experiments.numerics_rows.scale_index import evaluate, joint_coverage, passes
 
 
 def unit():
@@ -163,9 +163,7 @@ def test_joint_check_matches_independent_exhaustive_population():
     assert {tuple(r["read"]) for r in actual["uncovered_reads"]} == set(reads) - set(expected)
 
 
-def test_digit_order_and_one_element_array():
-    assert digits(5, 2) == [[0, 1, 0, 1, 0], [0, 0, 1, 1, 0], [0, 0, 0, 0, 1]]
-    assert digits(1, 2) == []
+def test_one_element_array_needs_no_coding_pass():
     assert joint_coverage([(0,)], [], lambda *_: 1, 1)["reads_covered"] == 1
 
 

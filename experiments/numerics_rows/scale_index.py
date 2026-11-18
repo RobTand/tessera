@@ -13,14 +13,6 @@ import sys
 from experiments.numerics_rows.reference import bf16, multiply
 
 
-def digits(n, base):
-    if n < 1 or not 2 <= base <= 121:
-        raise ValueError("index coding requires N >= 1 and 2 <= base <= 121")
-    count, capacity = 0, 1
-    while capacity < n:
-        count, capacity = count + 1, capacity * base
-    return [[(index // base**p) % base for index in range(n)] for p in range(count)]
-
 class CodingValues(Sequence):
     def __init__(self, entry):
         self.entry = entry

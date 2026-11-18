@@ -16,5 +16,3 @@
 //tests:test_numerics_rows_dependency_code.bytes
 //tests:test_numerics_rows_phases
 //tests:test_numerics_rows_phases.bytes
-//tests:test_numerics_rows_pre_fix
-//tests:test_numerics_rows_pre_fix.bytes
