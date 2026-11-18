@@ -1959,6 +1959,7 @@ ts_py_library(
         "numerics_rows/batch_evaluator.py",
         "numerics_rows/cases.py",
         "numerics_rows/dense_phases.py",
+        "numerics_rows/dependency_code.py",
         "numerics_rows/h1.py",
         "numerics_rows/phase_artifact.py",
         "numerics_rows/phase_lifecycle.py",
@@ -1973,6 +1974,7 @@ ts_py_library(
     ],
     data = [
         "//src/tessera:serving/runtime_contract.json",
+        "numerics_rows/dependency-image.json",
     ],
     deps = [
         "//src/tessera:__init___cycle",
@@ -1988,8 +1990,8 @@ ts_py_library(
         "//tests:window_gemm_grouped_support",
         ":dense_fused_oracle",
         ":numerics_rows/build_cycle",
+        ":numerics_rows/capture_group",
         ":numerics_rows/common",
-        ":numerics_rows/dependency_code",
         ":numerics_rows/gpu_time",
         ":numerics_rows/launch_state",
         ":numerics_rows/module_io",
@@ -2029,6 +2031,17 @@ ts_py_library(
     deps = [
         ":numerics_rows/batch_evaluator_cycle",
         ":numerics_rows/common",
+    ],
+)
+
+ts_py_library(
+    name = "numerics_rows/capture_group",
+    srcs = [
+        "numerics_rows/capture_group.py",
+    ],
+    deps = [
+        ":numerics_rows/common",
+        ":numerics_rows/gpu_time",
     ],
 )
 
@@ -2081,25 +2094,7 @@ ts_py_library(
         "numerics_rows/dependency_audit.py",
     ],
     deps = [
-        ":numerics_rows/common",
-        ":numerics_rows/dependency_code",
-        ":numerics_rows/launch_state",
-    ],
-)
-
-ts_py_library(
-    name = "numerics_rows/dependency_code",
-    srcs = [
-        "numerics_rows/dependency_code.py",
-    ],
-    data = [
-        "numerics_rows/dependency-image.json",
-    ],
-    deps = [
-        "//src/tessera:__init___cycle",
-        "//src/tessera:_dev/__init__",
-        "//src/tessera:_dev/native_identity",
-        ":numerics_rows/build_cycle",
+        ":numerics_rows/batch_evaluator_cycle",
         ":numerics_rows/common",
         ":numerics_rows/launch_state",
     ],
@@ -2148,7 +2143,6 @@ ts_py_library(
     deps = [
         ":numerics_rows/batch_evaluator_cycle",
         ":numerics_rows/common",
-        ":numerics_rows/dependency_code",
         ":numerics_rows/launch_state",
     ],
 )
@@ -2259,6 +2253,7 @@ ts_py_library(
         "numerics_rows/reference.py",
     ],
     deps = [
+        ":numerics_rows/common",
         ":t4_code/fp4_arithmetic_attest",
     ],
 )
