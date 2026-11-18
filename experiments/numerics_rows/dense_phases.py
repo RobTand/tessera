@@ -263,6 +263,9 @@ def device_capture(args, receipt, phases, groups, library, compile_paths):
     check_range(args, groups, prepared)
     if prepared["case_set"] != getattr(args, "case_set", "all"):
         raise Invalid("capture case set differs from prepare")
+    for unit, previous in zip(receipt["units"], prepared["receipt"]["units"]):
+        for field in ("findings", "invalid", "unattested"):
+            unit[field] = (unit[field] + previous[field])[:1]
     progress = args.progress = Progress(args.out, receipt, phases, args.meter)
     artifact = Artifact(args.out / "capture", "capture", common)
     artifact.document.update(scopes=expected_scopes, prepare_digest=prepare_digest,
@@ -322,6 +325,7 @@ def device_capture(args, receipt, phases, groups, library, compile_paths):
                             [{"case": case["id"], "route_count": None, "profiler_names": [r["name"] for r in events]}], routed=False)
                         captured.update(profiler_names=[r["name"] for r in events], emitted_pairs=adapter.pairs(),
                             tensors={k: artifact.tensor(v) for k, v in sorted(outputs.items())}, completion=True)
+                        unit["arm"]["case_completed"] = True
                         row.dispatch(unit, entry["pair"], adapter.pairs(), served, adapter.info.get("lane_reason"))
                         captured["code"] = {k: copy.deepcopy(unit[k]) for k in ("unit_id", "arm", "triton_specializations", "kernel_origins", "unresolved_kernel_origins", "dependency_code") if k in unit}
                         captured["kernel_origins"] = [r for r in unit.get("kernel_origins", []) if r["profiler_name"] in captured["profiler_names"]]
@@ -350,7 +354,8 @@ def device_capture(args, receipt, phases, groups, library, compile_paths):
             _, after = row.identify_served(adapter, False, native_source, args.out / "served-binaries", cache)
             for unit in units:
                 row.check_served_after(unit, served, after)
-                row.dispatch(unit, entry["pair"], adapter.pairs(), after, adapter.info.get("lane_reason"))
+                if unit["arm"].get("case_completed"):
+                    row.dispatch(unit, entry["pair"], adapter.pairs(), after, adapter.info.get("lane_reason"))
                 unit["completed"] = False
                 import sys
                 unit["flags_latched_diagnostic"] = args.launch_state.latched_diagnostic(getattr(sys.modules.get("tessera.serving.flags"), "_LATCHED", {}))
@@ -422,6 +427,12 @@ def host_compare(args, receipt, phases, groups):
     for prepare_root, capture_root in zip(prepare_paths, capture_paths):
         prepared, pd = read(prepare_root, "prepare", common, expected_scopes)
         if not (capture_root / "phase.json").is_file():
+            partial = capture_root.parent / "numerics_row.json"
+            if partial.is_file():
+                status = json.loads(partial.read_text())
+                if identities(status) != common:
+                    raise Invalid("unfinished capture belongs to another row")
+                receipt.update(status)
             raise RuntimeError("capture is unfinished; compare cannot finish this row")
         captured, cd = read(capture_root, "capture", common, expected_scopes)
         bound.append((prepare_root, capture_root, prepared, captured, pd, cd))
@@ -451,9 +462,9 @@ def host_compare(args, receipt, phases, groups):
             receipt["phase_artifacts"][part + ":" + phase] = {"path": str(root_path / "phase.json"), "sha256": digest}
             receipt["row"]["phase_jobs"][part + ":" + phase] = document["receipt"]["row"]
         artifact.document["ranges"].append([prepared["ordinal_start"], prepared["streams"]["cases"]["count"]])
-        for unit, current in zip(receipt["units"], captured["receipt"]["units"]):
+        for unit, current, previous in zip(receipt["units"], captured["receipt"]["units"], prepared["receipt"]["units"]):
             for field in ("findings", "invalid", "unattested", "cuda_errors"):
-                unit[field] = (unit[field] + current[field])[:1]
+                unit[field] = (unit[field] + previous[field] + current[field])[:1]
             unit["cuda_unattributed"] |= current["cuda_unattributed"]
             unit["graph_replay_equal"] = current["graph_replay_equal"] or unit["graph_replay_equal"]
         arrays = iter(records(prepare_root, "arrays", prepared)) if "arrays" in prepared["streams"] else iter(())

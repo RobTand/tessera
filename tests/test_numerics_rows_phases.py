@@ -374,7 +374,7 @@ def split_capture(tmp_path, monkeypatch):
     def bind_profile(adapter, unit, recorder, records, profiles, **kw):
         unit["kernel_origins"] = [{"profiler_name": "kernel", "origin": "tessera"}]
     monkeypatch.setattr(row, "bind_kernel_profile", bind_profile)
-    def run(error=None, index=0, *, bind_error=False, partition=False, selection=None):
+    def run(error=None, index=0, *, bind_error=False, partition=False, selection=None, prepare_refusal=False):
         if partition:
             assert hasattr(dp, "cases"), "feature absent: gate and diagnostics stream union"
         root = tmp_path / str(len(runs)); runs.append(root)
@@ -397,7 +397,10 @@ def split_capture(tmp_path, monkeypatch):
             prepared.add(scope, row.unit_identity(unit)[4], "dense", {"input": x, "q": x, "sf": sf, "reference": x * 2,
                 "x_mask": torch.ones_like(x, dtype=torch.bool), "finite_value": sf * 10, "finite_held": sf.bool(),
                 "diagnostic_reference": sf * 2, "products_abs": sf}, category=category, distribution="gauss", seed=1)
+        if prepare_refusal:
+            unit["unattested"].append("incomplete scale-index coverage before the freeze")
         prepared.finish(receipt=copy.deepcopy(receipt))
+        unit["unattested"].clear()
         calls = []
         def capture(adapter, current, case, tensors, recorder):
             calls.append(case["id"])
@@ -497,6 +500,13 @@ def test_split_gate_and_diagnostics_finish_one_receipt(split_capture):
 def test_split_compare_refuses_a_partial_or_duplicate_case_set(split_capture, selection):
     receipt, _ = split_capture(partition=True, selection=selection)
     assert not receipt["row"]["finalization_finished"]
+
+
+def test_split_preserves_prepare_refusals_before_capture_and_compare(split_capture):
+    receipt, captured = split_capture(prepare_refusal=True)
+    assert receipt["row"]["finalization_finished"] and receipt["row"]["outcome"] == "UNATTESTED"
+    assert all(case["not_run"] and not case["completion"] for case in captured["cases"])
+    assert receipt["units"][0]["unattested"] == ["incomplete scale-index coverage before the freeze"]
 
 def test_lever_addendum_refuses_another_path_with_identical_bytes(tmp_path, monkeypatch):
     from experiments.numerics_rows.common import sha256
