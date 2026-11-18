@@ -420,6 +420,30 @@ def unit_map(units):
     return result
 
 
+def attempt_paths(directory):
+    attempts = list(directory.iterdir()) if directory.is_dir() else []
+    if any(not p.is_dir() or p.is_symlink() for p in attempts) or {p.name for p in attempts} != {str(n) for n in range(1, len(attempts) + 1)}:
+        raise Invalid(f"attempt ids have a gap or invalid name: {directory.parent.name}")
+    return [directory / str(number) for number in range(1, len(attempts) + 1)]
+
+
+def read_compare_attempts(directory, receipt, module):
+    key = "compare-" + json_digest([module, "compare"])
+    listing, failures = [], {}
+    for attempt in attempt_paths(directory / key / "attempts"):
+        path = attempt / "compare/numerics_row.json"
+        listing.append({"unit": key, "attempt": int(attempt.name), "receipt_sha256": sha256(path) if path.is_file() else None})
+        if not path.is_file():
+            continue
+        previous = json.loads(path.read_text())
+        if identities(previous) != identities(receipt) or unit_map(previous["units"]).keys() != unit_map(receipt["units"]).keys():
+            raise Invalid("compare attempt receipt identities or units differ from the module")
+        for identity, unit in unit_map(previous["units"]).items():
+            if unit.get("findings") or unit.get("outcome") == "FAIL":
+                failures.setdefault(identity, f"FAIL compare attempt {key}/{attempt.name}")
+    return listing, failures
+
+
 def read_attempts(args, groups, prepare_root, capture_root, common, part):
     expected = scopes(groups)
     key = f'tp{expected[0]["cut"]["size"]}-{part}-' + json_digest([expected[0]["module"], expected[0]["cut"]["size"], part])
@@ -427,13 +451,10 @@ def read_attempts(args, groups, prepare_root, capture_root, common, part):
     if (part not in ("all", "gate", "diagnostics") or directory.name != "attempts" or directory.parent.name != key or directory.parent.parent.name != "units"
             or prepare_root.name != "prepare" or capture_root != prepare_root.parent / "capture"):
         raise Invalid("phase paths differ from the validated unit attempt layout")
-    attempts = list(directory.iterdir())
-    if any(not p.is_dir() or p.is_symlink() for p in attempts) or {p.name for p in attempts} != {str(n) for n in range(1, len(attempts) + 1)}:
-        raise Invalid(f"attempt ids have a gap or invalid name: {key}")
-    listing, failures, stopped, newest = [], {}, [], None
+    listing, failures, stopped, newest = [], {}, {}, None
     expected_keys = {json.dumps([s["module"], s["unit_key"]], sort_keys=True) for s in expected}
-    for number in range(1, len(attempts) + 1):
-        attempt = directory / str(number)
+    for attempt in attempt_paths(directory):
+        number = int(attempt.name)
         documents, evidence, found, finished = {}, {}, {}, True
         for phase in ("prepare", "capture"):
             root = attempt / phase
@@ -469,39 +490,30 @@ def read_attempts(args, groups, prepare_root, capture_root, common, part):
                 if phase == "capture" and not case.get("completion") and not any(state.get(f) for f in ("findings", "invalid", "unattested")):
                     finished = False
             evidence[phase + "_cases"] = sha256(root / "cases.jsonl") if (root / "cases.jsonl").is_file() else None
-        partial = attempt / "numerics_row.json"
-        if partial.is_file():
-            status = json.loads(partial.read_text())
-            if identities(status) != common or unit_map(status["units"]).keys() != expected_keys:
-                raise Invalid("unfinished capture belongs to another row")
-            found.update({k: f"FAIL attempt {key}/{number}" for k, u in unit_map(status["units"]).items() if u.get("findings") or u.get("outcome") == "FAIL"})
         cause = attempt / "lead-cause.json"
         if cause.is_file():
             record = json.loads(cause.read_text())
             if (set(record) != {"unit", "attempt", "cause"} or record["unit"] != key or type(record["attempt"]) is not int
                     or record["attempt"] != number or not isinstance(record["cause"], str) or not record["cause"].strip()):
                 raise Invalid(f"invalid lead cause record: {key}/{number}")
-            if finished or found:
+            if finished or found.keys() == expected_keys:
                 raise Invalid(f"lead cause record requires STOPPED attempt: {key}/{number}")
         if finished:
             newest = (attempt / "prepare", attempt / "capture", documents["prepare"], documents["capture"], evidence["prepare"], evidence["capture"])
-        elif not found and not cause.is_file():
-            stopped.append(f"open STOPPED attempt {key}/{number}")
+        elif not cause.is_file():
+            stopped.update({identity: f"open STOPPED attempt {key}/{number}" for identity in expected_keys - found.keys()})
         failures.update(found)
         listing.append({"unit": key, "attempt": number, "state": "FAIL" if found else "FINISHED" if finished else "STOPPED", "phases": evidence,
-            "partial_sha256": sha256(partial) if partial.is_file() else None,
             "cause_record": {"path": str(cause), "sha256": sha256(cause)} if cause.is_file() else None})
-    if stopped and not failures:
-        raise Invalid(stopped[0])
-    if newest is None and not failures:
-        raise Invalid(f"no finished attempt: {key}")
-    return newest, listing, failures
+    if newest is None:
+        stopped.update({identity: f"no finished attempt: {key}" for identity in expected_keys - failures.keys() - stopped.keys()})
+    return newest, listing, failures, stopped
 
 
 def host_compare(args, receipt, phases, groups):
     if args.prepare_artifact is None or args.capture_artifact is None or len(args.prepare_artifact) != len(args.capture_artifact):
         raise Invalid("compare requires both phase artifacts with matching gate and diagnostics artifacts")
-    bound, listing, failures, selected = [], [], {}, {(g[0]["name"], g[2]["size"], g[2]["rank"]): [] for g in groups}
+    bound, listing, failures, stopped, selected = [], [], {}, {}, {(g[0]["name"], g[2]["size"], g[2]["rank"]): [] for g in groups}
     for prepare_root, capture_root in zip(args.prepare_artifact, args.capture_artifact):
         selection = json.loads((prepare_root / "phase.json").read_text())
         matched = [unit for unit in phase_units(groups) if scopes(unit) == selection.get("scopes")]
@@ -511,13 +523,17 @@ def host_compare(args, receipt, phases, groups):
         common = identities({**receipt, "inputs": {**receipt.get("inputs", {}), "selected_cuts": [g[2] for g in unit_groups]}})
         for entry, _, cut, _ in unit_groups:
             selected[(entry["name"], cut["size"], cut["rank"])].append(selection["case_set"])
-        newest, attempts, failed = read_attempts(args, unit_groups, prepare_root, capture_root, common, selection["case_set"])
+        newest, attempts, failed, unfinished = read_attempts(args, unit_groups, prepare_root, capture_root, common, selection["case_set"])
         listing.extend(attempts)
         failures.update(failed)
+        stopped.update(unfinished)
         if newest is not None:
             bound.append((*newest, unit_groups))
     if any(sorted(parts) not in (["all"], ["diagnostics", "gate"]) for parts in selected.values()):
         raise Invalid("compare requires the full gate and diagnostics union exactly once")
+    earlier, failed = read_compare_attempts(args.prepare_artifact[0].parents[3], receipt, groups[0][0]["name"])
+    listing.extend(earlier)
+    failures.update(failed)
     bound = [(prepare_root, capture_root, prepared, captured, pd, cd,
               unit_map(prepared["receipt"]["units"]), unit_map(captured["receipt"]["units"]),
               check_pair(args, unit_groups, prepared, captured, pd, prepare_root, capture_root))
@@ -591,7 +607,12 @@ def host_compare(args, receipt, phases, groups):
         if not units[identity]["findings"]:
             units[identity]["findings"].append(reason)
     for unit in receipt["units"]:
+        identity = json.dumps([unit["module"], row.unit_identity(unit)], sort_keys=True)
+        if identity in stopped and identity not in failures and not unit["findings"]:
+            unit["completed"] = False
         row.finish_unit(unit)
+        if unit["outcome"] == "STOPPED" and identity in stopped:
+            unit["reasons"].append(stopped[identity])
     compare_row.update(utc_end=datetime.now(timezone.utc).isoformat())
     receipt["row"].update(utc_end=compare_row["utc_end"], outcome=min((u["outcome"] for u in receipt["units"]), key=OUTCOMES.index),
         exit_status=3 if any(u["outcome"] in ("FAIL", "STOPPED", "INVALID") for u in receipt["units"]) else 0)
