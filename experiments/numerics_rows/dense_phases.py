@@ -342,7 +342,9 @@ def device_capture(args, receipt, phases, groups, library, compile_paths):
                     recorder.quantizer_result = None
                     del tensors, recorder
                 complete &= captured["completion"]
+                captured["status"] = {field: unit[field][-1:] for field in ("findings", "invalid", "unattested", "cuda_errors")}
                 artifact.record("cases", captured)
+                unit.update(captured["status"])
                 for field in ("triton_specializations", "kernel_origins", "unresolved_kernel_origins"):
                     unit.pop(field, None)
                 unit["boundaries"].clear()

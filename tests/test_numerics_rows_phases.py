@@ -374,7 +374,9 @@ def split_capture(tmp_path, monkeypatch):
     def bind_profile(adapter, unit, recorder, records, profiles, **kw):
         unit["kernel_origins"] = [{"profiler_name": "kernel", "origin": "tessera"}]
     monkeypatch.setattr(row, "bind_kernel_profile", bind_profile)
-    def run(error=None, index=0, *, bind_error=False, partition=False, selection=None, prepare_refusal=False):
+    def run(error=None, index=0, *, bind_error=False, partition=False, selection=None, prepare_refusal=False, capture_findings=False):
+        if capture_findings:
+            assert hasattr(dp, "cases"), "feature absent: ordered case streams"
         if partition:
             assert hasattr(dp, "cases"), "feature absent: gate and diagnostics stream union"
         if prepare_refusal:
@@ -406,6 +408,8 @@ def split_capture(tmp_path, monkeypatch):
         calls = []
         def capture(adapter, current, case, tensors, recorder):
             calls.append(case["id"])
+            if capture_findings:
+                current["findings"].append(case["id"])
             if error and len(calls) == index + 1:
                 if error == "cuda":
                     raise BoundaryError({"call": "native", "kind": "tessera", "sync_before": True, "sync_after": False}, RuntimeError("CUDA error"))
@@ -509,6 +513,13 @@ def test_split_preserves_prepare_refusals_before_capture_and_compare(split_captu
     assert receipt["row"]["finalization_finished"] and receipt["row"]["outcome"] == "UNATTESTED"
     assert all(case["not_run"] and not case["completion"] for case in captured["cases"])
     assert receipt["units"][0]["unattested"] == ["incomplete scale-index coverage before the freeze"]
+
+
+def test_capture_keeps_case_findings_in_records_and_a_bounded_summary(split_capture):
+    receipt, captured = split_capture(capture_findings=True)
+    assert receipt["row"]["outcome"] == "FAIL"
+    assert len(captured["receipt"]["units"][0]["findings"]) == 1
+    assert all(case["status"]["findings"] == [case["id"]] for case in captured["cases"])
 
 def test_lever_addendum_refuses_another_path_with_identical_bytes(tmp_path, monkeypatch):
     from experiments.numerics_rows.common import sha256
