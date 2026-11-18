@@ -15,6 +15,13 @@ def capture_group(k, units):
     outputs = [str(Path(u["out"]).resolve()) for u in units]
     if len(set(outputs)) != k or any(Path(p).exists() for p in outputs):
         raise Invalid("each capture process requires a new output directory")
+    for item in units:
+        command = item["command"]
+        if not isinstance(command, list) or not command or not all(isinstance(arg, str) for arg in command):
+            raise Invalid("each command must select the capture phase")
+        if any(command.count(flag) != 1 or command[command.index(flag) + 1:command.index(flag) + 2] != [value]
+               for flag, value in (("--phase", "capture"), ("--out", item["out"]))) or "--capture-group-proof" in command:
+            raise Invalid("each command must select the capture phase")
     from experiments.numerics_rows.gpu_time import preflight
     proof = {"parent_pid": os.getpid(), "out": outputs, "preflight": preflight()}
     if proof["preflight"]["verdict"] != "FREE":
@@ -22,11 +29,8 @@ def capture_group(k, units):
     def run_unit(item):
         target = Path(item["out"])
         target.mkdir(parents=True)
-        command = item["command"]
-        if not isinstance(command, list) or not all(isinstance(arg, str) for arg in command) or command.count("--phase") != 1 or command[command.index("--phase") + 1] != "capture" or command.count("--out") != 1 or Path(command[command.index("--out") + 1]).resolve() != target.resolve():
-            raise Invalid("each command must select the capture phase")
         write_json(target / "slot.json", proof)
-        command = command + ["--capture-group-proof", str(target / "slot.json")]
+        command = item["command"] + ["--capture-group-proof", str(target / "slot.json")]
         with (target / "stdout").open("w") as output, (target / "stderr").open("w") as errors:
             status = subprocess.run(command, stdout=output, stderr=errors).returncode
         write_json(target / "exit.json", {"exit_status": status})

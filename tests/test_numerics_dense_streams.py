@@ -124,6 +124,21 @@ def test_stream_reader_checks_the_bytes_it_consumes(tmp_path):
         list(streams.cases(artifact.root, loaded))
 
 
+@pytest.mark.parametrize("tail", (["--phase"], ["--phase", "compare"], ["--phase", "capture", "--capture-group-proof", "other"]))
+def test_group_validates_all_commands_before_any_process(tmp_path, monkeypatch, tail):
+    import importlib.util
+    assert importlib.util.find_spec("experiments.numerics_rows.capture_group") is not None, "feature absent: K capture processes"
+    from experiments.numerics_rows import capture_group as group, gpu_time
+    calls = []
+    monkeypatch.setattr(gpu_time, "preflight", lambda: calls.append("preflight"))
+    monkeypatch.setattr(group.subprocess, "run", lambda *a, **k: calls.append("child"))
+    units = [{"out": str(tmp_path / name), "command": ["python3", "--out", str(tmp_path / name)] + flags}
+             for name, flags in (("valid", ["--phase", "capture"]), ("bad", tail))]
+    with pytest.raises(Invalid, match="capture phase"):
+        group.capture_group(2, units)
+    assert calls == [] and not any(Path(item["out"]).exists() for item in units)
+
+
 @pytest.mark.parametrize("mutation", (None, "output", "array-index", "extra-array"))
 def test_streamed_scale_arrays_keep_mismatch_counts_and_scope(tmp_path, monkeypatch, mutation):
     stream_feature(tmp_path)
