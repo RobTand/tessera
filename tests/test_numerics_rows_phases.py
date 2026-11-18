@@ -1324,7 +1324,7 @@ def test_attempt_fail_stands_beside_a_later_pass(tmp_path, finding):
     dp, api, args, receipt, groups, attempt = retry_phase_attempts(tmp_path)
     path = attempt / "capture/phase.json"
     document = json.loads(path.read_text())
-    wanted = document["receipt"]["units"][0]["unit_id"]
+    wanted = row.unit_identity(document["receipt"]["units"][0])
     if finding in ("unit", "unit-outcome", "stopped-unit"):
         document["receipt"]["units"][0]["outcome"] = "FAIL"
         if finding != "unit-outcome":
@@ -1370,14 +1370,35 @@ def test_open_stopped_attempt_refuses_with_its_name(tmp_path, incomplete_manifes
     assert not receipt["row"]["finalization_finished"] and not (args.out / "numerics_row.json").exists()
 
 
-def test_stopped_attempt_with_lead_cause_allows_a_later_pass(tmp_path):
+@pytest.mark.parametrize("state", ["stopped", "finished", "fail", "stopped-fail", "case-fail", "partial-fail", "other-id", "missing-id"])
+def test_stopped_attempt_with_lead_cause_allows_a_later_pass(tmp_path, state):
     from experiments.numerics_rows import dense_phases
     assert hasattr(dense_phases, "read_attempts"), "feature absent: recorded STOPPED cause permits retry"
     from experiments.numerics_rows.gpu_time import PhaseTimes
     dp, api, args, receipt, groups, attempt = retry_phase_attempts(tmp_path)
-    (attempt / "capture/phase.json").unlink()
+    path = attempt / "capture/phase.json"
+    document = json.loads(path.read_text())
+    if state in ("fail", "stopped-fail", "partial-fail"):
+        document["receipt"]["units"][0]["outcome"] = "FAIL"
+        path.write_text(json.dumps(document))
+    if state == "partial-fail":
+        (attempt / "numerics_row.json").write_text(json.dumps(document["receipt"]))
+    if state == "case-fail":
+        stream = attempt / "capture/cases.jsonl"
+        rows = list(api.records(stream.parent, "cases", document))
+        rows[0]["status"] = {"findings": ["known mismatch"]}
+        stream.write_text("".join(json.dumps(case) + "\n" for case in rows))
+    if state not in ("finished", "fail"):
+        path.unlink()
     cause = attempt / "lead-cause.json"
-    cause.write_text(json.dumps({"unit": attempt.parent.parent.name, "attempt": 1, "cause": "The lead confirmed job termination."}))
+    cause.write_text(json.dumps({"unit": attempt.parent.parent.name, "attempt": 2 if state == "other-id" else 3 if state == "missing-id" else 1,
+                                "cause": "The lead confirmed job termination."}))
+    if state != "stopped":
+        reason = "invalid lead cause record" if state in ("other-id", "missing-id") else "lead cause record requires STOPPED attempt"
+        with pytest.raises(Invalid, match=f"^{reason}: {attempt.parent.parent.name}/1$"):
+            dp.host_compare(args, receipt, PhaseTimes({}), groups)
+        assert not receipt["row"]["finalization_finished"] and not (args.out / "numerics_row.json").exists()
+        return
     dp.host_compare(args, receipt, PhaseTimes({}), groups)
     assert receipt["row"]["finalization_finished"] and receipt["row"]["outcome"] == "PASS"
     assert all(u["outcome"] == "PASS" for u in receipt["units"])

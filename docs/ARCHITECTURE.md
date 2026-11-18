@@ -1,17 +1,19 @@
 # Tessera plan-to-serve architecture
 
-Re-stamped 2026-11-18 for the #1717 dense v2 attempt reader under rule v2 L219-221 and L267.
+Re-stamped 2026-11-18 for the #1717 dense v2 attempt checks under rule v2 L219-221 and L267.
 Dense phase artifacts use ordered JSON lines for cases, scale arrays and file hashes.
 Each record binds its original full-row ordinal. A cut selection does not change its case IDs.
 Gate and diagnostics jobs each cover one module TP unit, with every required M configuration.
 TP1 holds rank 0. TP2 holds both ranks in one process, as rule P5 requires.
 Compare requires all declared cuts before it creates one finished receipt for the module.
-Each unit supplies one all-case pair or one gate pair and one diagnostics pair. Compare checks each rank's contiguous range union.
+Each unit supplies one all-case pair or one gate pair and one diagnostics pair.
+`dense_phases.check_pair` checks each rank's contiguous range union before it checks the phase pair.
 Compare binds each phase digest and merges units by full identity. Compare records bind the module identities.
 Phase pairs locate `units/<validated key>/attempts/<id>/{prepare,capture}/`. Attempt ids start at 1 without a gap.
 Compare reads every attempt and uses the newest finished pair for each unit and case set.
 An earlier FAIL remains FAIL. An open STOPPED blocks comparison until the lead records its cause.
-The lead writes `lead-cause.json` with `unit`, integer `attempt`, and nonempty `cause` fields in that attempt directory.
+The lead writes `lead-cause.json` with `unit`, integer `attempt`, and nonempty `cause` fields in that STOPPED attempt directory.
+Compare refuses a cause record for a finished or FAIL attempt, or a record that names another attempt id.
 The receipt binds the full listing, phase digests, partial evidence digests and cause record digests through one listing SHA-256.
 Case tensors, profiler records and code bindings are written before the next case.
 Only compare can finish a split dense receipt. A stopped capture cannot establish PASS.

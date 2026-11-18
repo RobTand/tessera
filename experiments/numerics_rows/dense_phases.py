@@ -150,6 +150,11 @@ def scopes(groups):
     return [unit_scope(u, module["wire_sha256"]) for _, module, _, units in groups for u in units]
 
 
+def check_pair(args, groups, prepared, captured, digest, prepare_root, capture_root):
+    check_range(args, groups, prepared)
+    return check_capture(prepared, captured, digest, prepare_root, capture_root)
+
+
 def host_prepare(args, receipt, phases, groups):
     from experiments.numerics_rows.scale_launch import check as scale_checks
     progress = args.progress = Progress(args.out, receipt, phases)
@@ -415,7 +420,8 @@ def unit_map(units):
     return result
 
 
-def read_attempts(prepare_root, capture_root, common, expected, part):
+def read_attempts(args, groups, prepare_root, capture_root, common, part):
+    expected = scopes(groups)
     key = f'tp{expected[0]["cut"]["size"]}-{part}-' + json_digest([expected[0]["module"], expected[0]["cut"]["size"], part])
     directory = prepare_root.parent.parent
     if (part not in ("all", "gate", "diagnostics") or directory.name != "attempts" or directory.parent.name != key or directory.parent.parent.name != "units"
@@ -470,8 +476,10 @@ def read_attempts(prepare_root, capture_root, common, expected, part):
             if (set(record) != {"unit", "attempt", "cause"} or record["unit"] != key or type(record["attempt"]) is not int
                     or record["attempt"] != number or not isinstance(record["cause"], str) or not record["cause"].strip()):
                 raise Invalid(f"invalid lead cause record: {key}/{number}")
+            if finished or found:
+                raise Invalid(f"lead cause record requires STOPPED attempt: {key}/{number}")
         if finished:
-            for _ in check_capture(documents["prepare"], documents["capture"], evidence["prepare"], attempt / "prepare", attempt / "capture"):
+            for _ in check_pair(args, groups, documents["prepare"], documents["capture"], evidence["prepare"], attempt / "prepare", attempt / "capture"):
                 pass
             newest = (attempt / "prepare", attempt / "capture", documents["prepare"], documents["capture"], evidence["prepare"], evidence["capture"])
         elif not found and not cause.is_file():
@@ -497,15 +505,14 @@ def host_compare(args, receipt, phases, groups):
         if len(matched) != 1:
             raise Invalid("phase artifact has a foreign module or cut; " + row.P5)
         unit_groups, = matched
-        common, expected = identities({**receipt, "inputs": {**receipt.get("inputs", {}), "selected_cuts": [g[2] for g in unit_groups]}}), scopes(unit_groups)
+        common = identities({**receipt, "inputs": {**receipt.get("inputs", {}), "selected_cuts": [g[2] for g in unit_groups]}})
         for entry, _, cut, _ in unit_groups:
             selected[(entry["name"], cut["size"], cut["rank"])].append(selection["case_set"])
-        newest, attempts, failed = read_attempts(prepare_root, capture_root, common, expected, selection["case_set"])
+        newest, attempts, failed = read_attempts(args, unit_groups, prepare_root, capture_root, common, selection["case_set"])
         listing.extend(attempts)
         failures.update(failed)
         if newest is not None:
-            check_range(args, unit_groups, newest[2])
-            bound.append(newest)
+            bound.append((*newest, unit_groups))
     if any(sorted(parts) not in (["all"], ["diagnostics", "gate"]) for parts in selected.values()):
         raise Invalid("compare requires the full gate and diagnostics union exactly once")
     bound.sort(key=lambda p: p[2]["ordinal_start"])
@@ -522,7 +529,7 @@ def host_compare(args, receipt, phases, groups):
     progress = args.progress = Progress(args.out, receipt, phases)
     for unit in units.values():
         unit["completed"] = True
-    for prepare_root, capture_root, prepared, captured, pd, cd in bound:
+    for prepare_root, capture_root, prepared, captured, pd, cd, unit_groups in bound:
         part = prepared["case_set"]
         receipt["modules"].extend(copy.deepcopy(m) for m in captured["receipt"]["modules"] if m not in receipt["modules"])
         scope = prepared["scopes"][0]
@@ -546,7 +553,7 @@ def host_compare(args, receipt, phases, groups):
             unit["cuda_unattributed"] |= current["cuda_unattributed"]
             unit["graph_replay_equal"] = current["graph_replay_equal"] or unit["graph_replay_equal"]
         arrays = iter(records(prepare_root, "arrays", prepared)) if "arrays" in prepared["streams"] else iter(())
-        pairs = check_capture(prepared, captured, pd, prepare_root, capture_root)
+        pairs = check_pair(args, unit_groups, prepared, captured, pd, prepare_root, capture_root)
         for _, batch in groupby(pairs, lambda pair: (pair[0]["scope"]["module"], pair[0]["scope"]["unit_key"], pair[0].get("array_index"))):
             case, observed = next(batch)
             unit = units[json.dumps([case["scope"]["module"], case["scope"]["unit_key"]], sort_keys=True)]

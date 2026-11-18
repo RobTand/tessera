@@ -173,7 +173,8 @@ def test_streamed_scale_arrays_keep_mismatch_counts_and_scope(tmp_path, monkeypa
     receipt = {"row": {"utc_start": "start", "finalization_finished": False}, "units": [unit], "runtime": {}, "modules": []}
     monkeypatch.setattr(dense, "identities", lambda record: {})
     scope = streams.unit_scope(unit, "wire")
-    prepared = streams.Artifact(tmp_path / "source-prepare", "prepare", {})
+    attempt = tmp_path / "units" / ("tp1-all-" + dense.json_digest(["A", 1, "all"])) / "attempts/1"
+    prepared = streams.Artifact(attempt / "prepare", "prepare", {})
     prepared.document["scopes"] = [scope]
     x, scale = torch.ones(1, 1, dtype=torch.bfloat16), torch.ones(1, 1)
     base = {"input": x, "q": x, "sf": scale, "reference": x * 2,
@@ -186,7 +187,7 @@ def test_streamed_scale_arrays_keep_mismatch_counts_and_scope(tmp_path, monkeypa
     prepared.record("arrays", array)
     if mutation == "extra-array": prepared.record("arrays", {**array, "array_index": 1})
     digest = prepared.finish(receipt=copy.deepcopy(receipt))
-    captured = streams.Artifact(tmp_path / "source-capture", "capture", {})
+    captured = streams.Artifact(attempt / "capture", "capture", {})
     captured.document.update(scopes=[scope], prepare_digest=digest)
     for kind in ("dense", "scale"):
         output = x * (3 if mutation == "output" and kind == "scale" else 2)
