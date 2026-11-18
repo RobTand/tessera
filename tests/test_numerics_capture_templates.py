@@ -197,8 +197,8 @@ def test_group_leaves_attempt_cap_to_fleet(tmp_path):
     assert hasattr(prepare_split, "capture_templates"), "feature absent: capture group leaves attempt cap to Fleet"
     _, directory, attempts = build_group(tmp_path / "module")
     for index, attempt in enumerate(attempts):
-        attempt.rename(attempt.with_name("4"))
-        attempts[index] = attempt.with_name("4")
+        attempt.rename(attempt.with_name("6"))
+        attempts[index] = attempt.with_name("6")
     assert json.loads((directory / "table.json").read_text())["max_attempts"] == 5
     assert "MAX_ATTEMPTS" not in (directory / "job.sh").read_text()
     environment, calls = job_world(tmp_path)

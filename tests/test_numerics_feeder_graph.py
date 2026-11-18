@@ -34,7 +34,11 @@ if pathlib.Path(sys.argv[0]).name == 'stub-gate':
     system = spec['attributes']['system']
     placement = table['instances'].get(name)
     reason = None
-    if not placement: reason = 'instance'
+    if (set(table) != {'schema', 'instances', 'job_name', 'args', 'max_attempts', 'urgency', 'cwd', 'env_names'}
+            or not set(table['instances']) <= {'fv1', 'fv1e-sparky', 'fv1e-sparklina'}
+            or any(set(entry) != {'constraints', 'shapes', 'max_duration_s'} for entry in table['instances'].values())):
+        reason = 'table'
+    elif not placement: reason = 'instance'
     elif int(urgency) != table['urgency']: reason = 'urgency'
     elif spec['resources'] not in placement['shapes']: reason = 'shape'
     elif system['constraints'] not in placement['constraints']: reason = 'host'
@@ -70,7 +74,7 @@ if args[:2] == ['submit', '--dry-run']:
               'cwd': option('--cwd='), 'dependencies': [{'scheme': 'singleton', 'value': ''}],
               'duration': int(option('-t').rstrip('s')), 'job': {'name': option('--job-name=')},
               'environment': {a[6:].split('=', 1)[0]: '' for a in args if a.startswith('--env=') and a != '--env=-*'}}}}
-    if '--rlimit=-*' not in args:
+    if '--rlimit=-*' not in args or any(a.startswith('-o') for a in args):
         spec['attributes']['system']['shell'] = {'options': {'rlimit': {'cpu': 1}}}
     if (root / 'mutate').exists():
         field = (root / 'mutate').read_text()
