@@ -394,7 +394,9 @@ def split_capture(tmp_path, monkeypatch):
                    "units": [unit], "modules": [], "runtime": {}}
         groups = [({"name": "A", "pair": ["dense", "native"]}, {"wire_sha256": "w", "launch_geometry": {}}, unit["tp"], [unit])]
         scope = dp.scopes(groups)[0]
-        prepared = dp.Artifact(root / "prepare", "prepare", common)
+        key = "tp2-all-" + phase_api().json_digest(["A", 2, "all"])
+        attempt = root / "units" / key / "attempts/1"
+        prepared = dp.Artifact(attempt / "prepare", "prepare", common)
         prepared.document["scopes"] = [scope]
         x = torch.ones(1, 1, dtype=torch.bfloat16); sf = torch.ones(1, 1)
         for category in ("sweep", "sweep", "diagnostic"):
@@ -417,7 +419,7 @@ def split_capture(tmp_path, monkeypatch):
             current["boundaries"].extend([{"kind": "quantizer", "sync_before": True, "sync_after": True}] * 2)
             return {"output": x * 2, "staged": x * 2, "quantizer_q": x, "quantizer_sf": sf}
         monkeypatch.setattr(dp, "capture_case", capture)
-        out = root / "capture-job"; out.mkdir()
+        out = attempt
         args = SimpleNamespace(out=out, prepare_artifact=[prepared.root],
             code_audit=SimpleNamespace(records=[], unit=None, context=lambda *a: nullcontext()),
             meter=SimpleNamespace(snapshot=lambda **kw: {}, finish=lambda: {}),
@@ -430,7 +432,9 @@ def split_capture(tmp_path, monkeypatch):
             original_prepare = list(dp.cases(prepared.root, prepared.document))
             original_capture = list(dp.cases(args.capture_artifact[0], json.loads((args.capture_artifact[0] / "phase.json").read_text())))
             for part, indices in (("gate", [0, 1]), ("diagnostics", [2])):
-                prep = dp.Artifact(root / part / "prepare", "prepare", common)
+                part_key = f"tp2-{part}-" + phase_api().json_digest(["A", 2, part])
+                job = root / "partition/units" / part_key / "attempts/1"
+                prep = dp.Artifact(job / "prepare", "prepare", common)
                 prep.document.update(scopes=[scope], case_set=part, ordinal_start=indices[0])
                 copytree(prepared.root / "bytes", prep.root / "bytes")
                 for position in indices:
@@ -438,7 +442,7 @@ def split_capture(tmp_path, monkeypatch):
                         prep.file(reference["file"])
                     prep.record("cases", original_prepare[position])
                 part_digest = prep.finish(receipt=copy.deepcopy(prepared.document["receipt"]))
-                cap = dp.Artifact(root / part / "capture", "capture", common)
+                cap = dp.Artifact(job / "capture", "capture", common)
                 cap.document.update(scopes=[scope], case_set=part, ordinal_start=indices[0], prepare_digest=part_digest)
                 copytree(args.capture_artifact[0] / "bytes", cap.root / "bytes")
                 for position in indices:
@@ -557,7 +561,8 @@ def module_phase_pairs(root, *, case_sets=("gate", "diagnostics"), cuts=None, fi
         selected_cuts, units = [g[2] for g in selected], [u for g in selected for u in g[3]]
         common = api.identities({**receipt, "inputs": {**receipt["inputs"], "selected_cuts": selected_cuts}})
         for part in case_sets:
-            job = root / str(index) / part
+            key = f'tp{selected_cuts[0]["size"]}-{part}-' + api.json_digest(["A", selected_cuts[0]["size"], part])
+            job = root / "units" / key / "attempts/1"
             start = cuts.index(selected_cuts[0]) * (4 if part == "all" else 2) + (len(groups) * 2 if part == "diagnostics" else 0)
             prepared = api.Artifact(job / "prepare", "prepare", common)
             prepared.document.update(scopes=dense_phases.scopes(selected), case_set=part, ordinal_start=start)
@@ -1295,3 +1300,124 @@ def test_dense_prepare_booking_and_low_urgency(feeder_booking):
     bookings.write_text(json.dumps(bad))
     with pytest.raises(ValueError, match='REQUIRES_15_MINUTES'):
         api.run(canary, bookings)
+
+
+def retry_phase_attempts(root):
+    from shutil import copytree
+    from experiments.numerics_rows.gpu_time import PhaseTimes
+    dp, api, args, receipt, groups = module_phase_pairs(root)
+    initial = copy.deepcopy(receipt)
+    dp.host_compare(args, receipt, PhaseTimes({}), groups)
+    assert receipt["row"]["finalization_finished"] and receipt["row"]["outcome"] == "PASS"
+    args.out = root / "retry-compare"
+    args.out.mkdir()
+    attempt = next(p.parent for p in args.prepare_artifact if json.loads((p / "phase.json").read_text())["case_set"] == "gate")
+    copytree(attempt, attempt.with_name("2"))
+    return dp, api, args, initial, groups, attempt
+
+
+@pytest.mark.parametrize("finding", ["unit", "unit-outcome", "case", "stopped-case", "stopped-unit", "stopped-case-only"])
+def test_attempt_fail_stands_beside_a_later_pass(tmp_path, finding):
+    from experiments.numerics_rows import dense_phases
+    assert hasattr(dense_phases, "read_attempts"), "feature absent: every attempt retains FAIL"
+    from experiments.numerics_rows.gpu_time import PhaseTimes
+    dp, api, args, receipt, groups, attempt = retry_phase_attempts(tmp_path)
+    path = attempt / "capture/phase.json"
+    document = json.loads(path.read_text())
+    wanted = document["receipt"]["units"][0]["unit_id"]
+    if finding in ("unit", "unit-outcome", "stopped-unit"):
+        document["receipt"]["units"][0]["outcome"] = "FAIL"
+        if finding != "unit-outcome":
+            document["receipt"]["units"][0]["findings"] = ["known mismatch"]
+    else:
+        stream = attempt / "capture/cases.jsonl"
+        rows = list(api.records(stream.parent, "cases", document))
+        rows[0]["status"] = {"findings": ["known mismatch"]}
+        stream.write_text("".join(json.dumps(case) + "\n" for case in rows))
+        document["streams"]["cases"]["sha256"] = row.sha256(stream)
+    path.write_text(json.dumps(document))
+    if finding.startswith("stopped"):
+        path.unlink()
+    if finding == "stopped-unit":
+        (attempt / "numerics_row.json").write_text(json.dumps(document["receipt"]))
+    if finding == "stopped-case-only":
+        from shutil import rmtree
+        rmtree(attempt.with_name("2"))
+    dp.host_compare(args, receipt, PhaseTimes({}), groups)
+    failed = next(u for u in receipt["units"] if row.unit_identity(u) == wanted)
+    name = attempt.parent.parent.name
+    assert receipt["row"]["finalization_finished"] and receipt["row"]["outcome"] == failed["outcome"] == "FAIL"
+    assert failed["failed_attempts"] == [f"FAIL attempt {name}/1"]
+    assert any(a["unit"] == name and a["attempt"] == 1 and a["state"] == "FAIL" for a in receipt["attempts"]["listing"])
+    api.read(args.out / "compare", "compare", api.identities(receipt), dp.scopes(groups))
+
+
+@pytest.mark.parametrize("incomplete_manifest", [False, True])
+def test_open_stopped_attempt_refuses_with_its_name(tmp_path, incomplete_manifest):
+    from experiments.numerics_rows import dense_phases
+    assert hasattr(dense_phases, "read_attempts"), "feature absent: open STOPPED names its attempt"
+    from experiments.numerics_rows.gpu_time import PhaseTimes
+    dp, _, args, receipt, groups, attempt = retry_phase_attempts(tmp_path)
+    path = attempt / "capture/phase.json"
+    if incomplete_manifest:
+        document = json.loads(path.read_text())
+        document["completion"] = False
+        path.write_text(json.dumps(document))
+    else:
+        path.unlink()
+    with pytest.raises(Invalid, match=f"^open STOPPED attempt {attempt.parent.parent.name}/1$"):
+        dp.host_compare(args, receipt, PhaseTimes({}), groups)
+    assert not receipt["row"]["finalization_finished"] and not (args.out / "numerics_row.json").exists()
+
+
+def test_stopped_attempt_with_lead_cause_allows_a_later_pass(tmp_path):
+    from experiments.numerics_rows import dense_phases
+    assert hasattr(dense_phases, "read_attempts"), "feature absent: recorded STOPPED cause permits retry"
+    from experiments.numerics_rows.gpu_time import PhaseTimes
+    dp, api, args, receipt, groups, attempt = retry_phase_attempts(tmp_path)
+    (attempt / "capture/phase.json").unlink()
+    cause = attempt / "lead-cause.json"
+    cause.write_text(json.dumps({"unit": attempt.parent.parent.name, "attempt": 1, "cause": "The lead confirmed job termination."}))
+    dp.host_compare(args, receipt, PhaseTimes({}), groups)
+    assert receipt["row"]["finalization_finished"] and receipt["row"]["outcome"] == "PASS"
+    assert all(u["outcome"] == "PASS" for u in receipt["units"])
+    stopped = next(a for a in receipt["attempts"]["listing"] if a["state"] == "STOPPED")
+    assert stopped["unit"] == attempt.parent.parent.name and stopped["attempt"] == 1
+    assert stopped["cause_record"] == {"path": str(cause), "sha256": row.sha256(cause)}
+    selected = receipt["phase_artifacts"]["A:tp2r0:gate:capture"]
+    assert selected["path"] == str(attempt.with_name("2") / "capture/phase.json")
+    document, _ = api.read(args.out / "compare", "compare", api.identities(receipt), dp.scopes(groups))
+    assert document["receipt"]["attempts"] == receipt["attempts"]
+
+
+def test_attempt_id_gap_refuses_with_its_reason(tmp_path):
+    from experiments.numerics_rows import dense_phases
+    assert hasattr(dense_phases, "read_attempts"), "feature absent: attempt id gaps refuse"
+    from experiments.numerics_rows.gpu_time import PhaseTimes
+    dp, _, args, receipt, groups, attempt = retry_phase_attempts(tmp_path)
+    attempt.with_name("2").rename(attempt.with_name("3"))
+    with pytest.raises(Invalid, match=f"^attempt ids have a gap or invalid name: {attempt.parent.parent.name}$"):
+        dp.host_compare(args, receipt, PhaseTimes({}), groups)
+    assert not receipt["row"]["finalization_finished"]
+
+
+def test_module_receipt_binds_the_attempt_listing_digest(tmp_path):
+    from experiments.numerics_rows import dense_phases
+    assert hasattr(dense_phases, "read_attempts"), "feature absent: receipt binds every attempt listing"
+    from shutil import copytree
+    from experiments.numerics_rows.gpu_time import PhaseTimes
+    dp, api, args, receipt, groups = module_phase_pairs(tmp_path)
+    initial = copy.deepcopy(receipt)
+    dp.host_compare(args, receipt, PhaseTimes({}), groups)
+    first = receipt["attempts"]
+    assert first["sha256"] == api.json_digest(first["listing"])
+    attempt = args.prepare_artifact[0].parent
+    copytree(attempt, attempt.with_name("2"))
+    args.out = tmp_path / "second-compare"
+    args.out.mkdir()
+    dp.host_compare(args, initial, PhaseTimes({}), groups)
+    second = initial["attempts"]
+    assert second["sha256"] == api.json_digest(second["listing"]) and second["sha256"] != first["sha256"]
+    assert len(second["listing"]) == len(first["listing"]) + 1
+    document, _ = api.read(args.out / "compare", "compare", api.identities(initial), dp.scopes(groups))
+    assert document["receipt"]["attempts"] == second
