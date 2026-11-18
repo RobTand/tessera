@@ -125,7 +125,7 @@ The strict C1 scope keeps every required role, expert and TP cut. Role files str
 The measurement-only launchers and sampled manifest schema are not part of this tool.
 Rule v2 and served arithmetic do not change. Dense submissions use urgency 8.
 The feeder holds new fv1 submissions while any aarch64 or portable job is pending.
-Capture has a 15-minute limit. fv1 prepare admission retains one lane per Spark and two total.
+The reviewed Fleet table sets each capture limit. fv1 prepare admission retains one lane per Spark and two total.
 The fv1e prepare lanes use the live Fleet limits and the anonymous-memory admission check.
 These admission limits are separate from the three-per-Spark TL3b W ceiling.
 Canary launchers use scratch HOME before scratch Podman storage and wait on a background child.

@@ -199,8 +199,6 @@ def run(canary, bookings, retries=None):
                 raise FeederError('BOOKING_SHAPE_INVALID')
         if phases['prepare']['memory_gib'] != settings['fv1_prepare_memory_gib']:
             raise FeederError(f"DENSE_PREPARE_REQUIRES_{settings['fv1_prepare_memory_gib']}_GIB")
-        if phases['capture']['minutes'] != settings['capture_minutes']:
-            raise FeederError(f"DENSE_CAPTURE_REQUIRES_{settings['capture_minutes']}_MINUTES")
     state_path = canary / 'counted-feeder-state.json'
     state = read(state_path) if state_path.exists() else {'bookings_sha256': sha(bookings), 'settings_sha256': sha(SETTINGS), 'jobs': {}}
     if state['bookings_sha256'] != sha(bookings) or state['settings_sha256'] != sha(SETTINGS):

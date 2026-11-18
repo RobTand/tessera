@@ -23,7 +23,6 @@
   "fv1_max_prepares_per_spark": 1,
   "fv1_prepare_memory_gib": 8,
   "fv1_prepare_tl3b_w_limit": 3,
-  "capture_minutes": 15,
   "urgency": 8,
   "pending_poll_seconds": 15,
   "stall_seconds": 1800,

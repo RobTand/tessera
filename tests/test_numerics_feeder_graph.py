@@ -644,11 +644,20 @@ def test_feeder_gate_keeps_booking_checks_and_dense_admission(tmp_path, monkeypa
     bookings.write_text(json.dumps(values))
     with pytest.raises(ValueError, match='REQUIRES_8_GIB'):
         api.run(canary, bookings)
-    values['module-A']['prepare']['memory_gib'] = 8
+
+
+def test_feeder_accepts_capture_booking_without_legacy_limit(tmp_path, monkeypatch):
+    assert 'capture_minutes' not in api.read(api.SETTINGS), 'DENSE_CAPTURE_REQUIRES_15_MINUTES: the legacy capture limit is still set'
+    canary, bookings, _ = graph = make_graph(tmp_path, monkeypatch, modules=('module-A',))
+    values = api.read(bookings)
     values['module-A']['capture']['minutes'] = 60
     bookings.write_text(json.dumps(values))
-    with pytest.raises(ValueError, match='REQUIRES_15_MINUTES'):
-        api.run(canary, bookings)
+    state_path = canary / 'counted-feeder-state.json'
+    state = api.read(state_path)
+    state['bookings_sha256'] = api.sha(bookings)
+    state_path.write_text(json.dumps(state))
+    api.run(canary, bookings)
+    assert sum(event['action'] == 'submit' and event['phase'] == 'capture' for event in calls(graph)) == 4
 
 
 def test_feeder_restart_in_blocking_wait_submits_no_duplicate(tmp_path, monkeypatch):
