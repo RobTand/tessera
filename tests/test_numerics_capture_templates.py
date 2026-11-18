@@ -188,7 +188,7 @@ def test_group_uses_canary_shape_and_fleet_table(tmp_path, max_k):
     assert sorted(captures) == sorted(config["unit_keys"]) and len(set(captures)) == 4
     assert not (directory / "submit-after-review.sh").exists() and not (directory / "policy.json").exists()
     assert (directory / "job.sh").stat().st_mode & 0o100
-    assert "  job.sh\n" not in (directory / "template.sha256").read_text()
+    assert "  job.sh\n" in (directory / "template.sha256").read_text(), "group capture manifest omits job.sh"
     command = json.loads((directory / "commands.json").read_text())[0]["command"]
     assert command[command.index("--out") + 1] == "__ATTEMPT__" and "--phase-local-output" in command
 

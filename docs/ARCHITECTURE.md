@@ -135,7 +135,7 @@ CPU prepare uses the existing exact case generators and reference evaluator.
 GPU capture checks the bound input and actual quantizer bytes before native use.
 CPU compare checks every case once and is the only phase that can finish a row.
 CPU phases replay the NVIDIA CDI environment through the C1 helper. The helper keeps values in private host scratch with mode `0600`.
-GPU capture requests the NVIDIA CDI device.
+GPU capture requests the NVIDIA CDI device. Each template checksum list includes `job.sh`.
 Each artifact binds the full unit key, common identities and raw tensor hashes.
 An unfinished capture remains STOPPED. A known FAIL remains FAIL.
 Capture records unrun cases. Compare preserves refusals and finalizes after its artifact binding.

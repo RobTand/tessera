@@ -185,7 +185,7 @@ def verify(root):
 
 
 def seal_template(directory):
-    excluded = {"template.sha256", "job.sh", "table.json"}
+    excluded = {"template.sha256", "table.json"}
     files = sorted(p for p in directory.iterdir() if p.name not in excluded)
     root = directory.parents[2]
     files += [root / name for name in ("instance.py", "campaign.json", "feeder-settings.json")]

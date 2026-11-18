@@ -125,7 +125,8 @@ def test_templates_cover_units_phases_and_manifest(tmp_path):
         assert "  payload.sh\n" in manifest
         assert all("  " + str(tmp_path / "module" / name) + "\n" in manifest
                    for name in ("instance.py", "campaign.json", "feeder-settings.json"))
-        assert all("  " + name + "\n" not in manifest for name in ("job.sh", "table.json"))
+        assert "  job.sh\n" in manifest, "template manifest omits job.sh"
+        assert "  table.json\n" not in manifest
         result = subprocess.run(["sha256sum", "-c", "template.sha256"], cwd=directory, capture_output=True)
         assert result.returncode == 0, result.stderr
     assert not (tmp_path / "module/units").exists()
