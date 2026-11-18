@@ -109,3 +109,67 @@ def test_group_uses_k_processes_and_waits_for_all_exits(tmp_path, monkeypatch):
     assert [json.loads((Path(u["out"]) / "exit.json").read_text())["exit_status"] for u in units] == [0, 3, 0]
     with pytest.raises(Invalid, match="K must equal"):
         group.capture_group(2, units)
+
+
+def test_stream_reader_checks_the_bytes_it_consumes(tmp_path):
+    artifact = stream_feature(tmp_path)
+    scope = streams.unit_scope(row.new_unit({"m_config": {"M": 1}}), "wire")
+    artifact.document["scopes"] = [scope]
+    case = artifact.add(scope, {"M": 1}, "dense", {}, category="sweep")
+    artifact.finish()
+    loaded, _ = streams.read(artifact.root, "prepare", {}, [scope])
+    case["category"] = "diagnostic"
+    (artifact.root / "cases.jsonl").write_text(json.dumps(case) + "\n")
+    with pytest.raises(Invalid, match="stream digest"):
+        list(streams.cases(artifact.root, loaded))
+
+
+@pytest.mark.parametrize("mutation", (None, "output", "array-index", "extra-array"))
+def test_streamed_scale_arrays_keep_mismatch_counts_and_scope(tmp_path, monkeypatch, mutation):
+    stream_feature(tmp_path)
+    from experiments.numerics_rows import dense_phases as dense
+    from experiments.numerics_rows.gpu_time import PhaseTimes
+    unit = row.new_unit({"cell": "cell", "module": "A", "role": "unit", "arm": {},
+                         "m_config": {"M": 1}, "tp": {"size": 1, "rank": 0}})
+    unit["exact"]["separation"]["records"] = [{"both": 1}]
+    unit["exact"]["sweep"]["elements"] = unit["exact"]["chunk_pairs"]["x_elements"] = 1
+    unit["exact"]["scale_index"].update(streamed=True, launches=1)
+    row.finish_unit(unit)
+    receipt = {"row": {"utc_start": "start", "finalization_finished": False}, "units": [unit], "runtime": {}, "modules": []}
+    monkeypatch.setattr(dense, "identities", lambda record: {})
+    scope = streams.unit_scope(unit, "wire")
+    prepared = streams.Artifact(tmp_path / "source-prepare", "prepare", {})
+    prepared.document["scopes"] = [scope]
+    x, scale = torch.ones(1, 1, dtype=torch.bfloat16), torch.ones(1, 1)
+    base = {"input": x, "q": x, "sf": scale, "reference": x * 2,
+            "finite_value": scale * 10, "finite_held": scale.bool(), "x_mask": scale.bool()}
+    prepared.add(scope, {"M": 1}, "dense", base, category="sweep")
+    prepared.add(scope, {"M": 1}, "scale", {**base, "reference": (x * 2).reshape(1)},
+                 category="scale_index", array_index=int(mutation == "array-index"), output_index=[0, 0])
+    array = {"scope": scope, "array_index": 0, "record": {"scale": "row", "base": 2, "families": [],
+             "passes_total": 1, "reads": 1, "reads_covered": 1, "launches": 1, "mismatches": 0}}
+    prepared.record("arrays", array)
+    if mutation == "extra-array": prepared.record("arrays", {**array, "array_index": 1})
+    digest = prepared.finish(receipt=copy.deepcopy(receipt))
+    captured = streams.Artifact(tmp_path / "source-capture", "capture", {})
+    captured.document.update(scopes=[scope], prepare_digest=digest)
+    for kind in ("dense", "scale"):
+        output = x * (3 if mutation == "output" and kind == "scale" else 2)
+        captured.add(scope, {"M": 1}, kind, {"output": output, "staged": output, "quantizer_q": x, "quantizer_sf": scale},
+                     category="sweep" if kind == "dense" else "scale_index", completion=True,
+                     boundaries=[{"kind": "quantizer", "sync_before": True, "sync_after": True}] * 2,
+                     profiler_names=["kernel"], kernel_origins=[{"profiler_name": "kernel"}])
+    captured.finish(receipt=copy.deepcopy(receipt))
+    out = tmp_path / "compare-job"; out.mkdir()
+    arguments = SimpleNamespace(out=out, prepare_artifact=[prepared.root], capture_artifact=[captured.root])
+    groups = [({"name": "A"}, {"wire_sha256": "wire"}, unit["tp"], [unit])]
+    if mutation in ("array-index", "extra-array"):
+        with pytest.raises(Invalid, match="ordered array|extra scale arrays"):
+            dense.host_compare(arguments, receipt, PhaseTimes({}), groups)
+        assert not receipt["row"]["finalization_finished"]
+    else:
+        dense.host_compare(arguments, receipt, PhaseTimes({}), groups)
+        final = receipt["units"][0]
+        assert receipt["row"]["finalization_finished"] and final["outcome"] == ("FAIL" if mutation else "PASS")
+        assert final["exact"]["scale_index"]["mismatches"] == int(mutation == "output")
+        assert final["exact"]["scale_index"]["arrays"] == []

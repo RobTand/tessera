@@ -377,6 +377,8 @@ def split_capture(tmp_path, monkeypatch):
     def run(error=None, index=0, *, bind_error=False, partition=False, selection=None, prepare_refusal=False):
         if partition:
             assert hasattr(dp, "cases"), "feature absent: gate and diagnostics stream union"
+        if prepare_refusal:
+            assert hasattr(dp, "cases"), "feature absent: prepared stream refusals"
         root = tmp_path / str(len(runs)); runs.append(root)
         unit = row.new_unit({"cell": "dense", "module": "A", "role": "unit", "admitted_by_v68": True,
             "symbol": "dense", "decoder": "native", "rung": 1024, "launch_state_sha256": "a" * 64,
