@@ -1,4 +1,4 @@
-"""Check the feeder with a stub gate and fake Flux on PATH."""
+"""Check the feeder with a stub gate and fake Flux."""
 import hashlib
 import inspect
 import json
@@ -16,142 +16,142 @@ from experiments.numerics_rows import counted_feeder as api, phase_instance, pre
 from experiments.numerics_rows.launch_state import json_digest
 
 
-FAKE = r'''#!/usr/bin/env python3
-import hashlib, json, os, pathlib, sys, time
-root = pathlib.Path(os.environ['FAKE_ROOT'])
-args = sys.argv[1:]
-state_path = root / 'fake-state.json'
-state = json.loads(state_path.read_text()) if state_path.exists() else {'jobs': {}}
-def record(value):
-    with (root / 'calls.jsonl').open('a') as stream:
-        stream.write(json.dumps(value) + '\n')
-def save():
-    state_path.write_text(json.dumps(state))
-if pathlib.Path(sys.argv[0]).name == 'stub-gate':
-    name, template, urgency, spec_path = args
-    table = json.loads((pathlib.Path(template) / 'table.json').read_text())
-    spec = json.loads(pathlib.Path(spec_path).read_text())
-    system = spec['attributes']['system']
-    placement = table['instances'].get(name)
-    reason = None
-    if (set(table) != {'schema', 'instances', 'job_name', 'args', 'max_attempts', 'urgency', 'cwd', 'env_names'}
-            or not set(table['instances']) <= {'fv1', 'fv1e-sparky', 'fv1e-sparklina'}
-            or any(set(entry) != {'constraints', 'shapes', 'max_duration_s'} for entry in table['instances'].values())):
-        reason = 'table'
-    elif not placement: reason = 'instance'
-    elif int(urgency) != table['urgency']: reason = 'urgency'
-    elif spec['resources'] not in placement['shapes']: reason = 'shape'
-    elif system['constraints'] not in placement['constraints']: reason = 'host'
-    elif system['duration'] > placement['max_duration_s']: reason = 'duration'
-    elif system['job']['name'] != table['job_name']: reason = 'name'
-    elif system['dependencies'] != [{'scheme': 'singleton', 'value': ''}]: reason = 'dependencies'
-    elif system['cwd'] != table['cwd']: reason = 'cwd'
-    elif set(system['environment']) != set(table['env_names']): reason = 'environment'
-    elif set(system) != {'constraints', 'cwd', 'dependencies', 'duration', 'environment', 'job'}: reason = 'system keys'
-    elif spec['tasks'][0]['command'][0] != str(pathlib.Path(template) / 'job.sh'): reason = 'command'
-    elif len(spec['tasks'][0]['command']) != table['args'] + 1: reason = 'arguments'
-    if (root / 'refuse').exists() and (root / 'refuse').read_text() in template:
-        reason = 'review record'
-    if reason:
-        record({'action': 'refuse', 'template': template, 'reason': reason})
-        print('REFUSED: ' + reason)
-        sys.exit(3)
-    record({'action': 'gate', 'instance': name, 'template': template, 'spec': spec, 'urgency': urgency})
-    import subprocess
-    result = subprocess.run(['flux', name, 'job', 'submit', spec_path], text=True, capture_output=True)
-    print(result.stdout.strip())
-    sys.exit(result.returncode)
-name, *args = args
-if args[:2] == ['submit', '--dry-run']:
-    def option(prefix): return next(a[len(prefix):] for a in args if a.startswith(prefix))
-    shape = option('--resources-shape=')
-    count, fields = shape.removeprefix('slot=').split('/[')
-    resources = [{'type': 'slot', 'count': int(count), 'label': 'task', 'with':
-                  [{'type': key, 'count': int(value)} for key, value in (p.split('=') for p in fields.rstrip(']').split(';'))]}]
-    command_index = next(i for i, a in enumerate(args) if a.endswith('/job.sh'))
-    spec = {'version': 1, 'resources': resources, 'tasks': [{'command': args[command_index:], 'slot': 'task', 'count': {'per_slot': 1}}],
-            'attributes': {'system': {'constraints': {'hostlist': [option('--requires=host:')]},
-              'cwd': option('--cwd='), 'dependencies': [{'scheme': 'singleton', 'value': ''}],
-              'duration': int(option('-t').rstrip('s')), 'job': {'name': option('--job-name=')},
-              'environment': {a[6:].split('=', 1)[0]: '' for a in args if a.startswith('--env=') and a != '--env=-*'}}}}
-    if '--rlimit=-*' not in args or any(a.startswith('-o') for a in args):
-        spec['attributes']['system']['shell'] = {'options': {'rlimit': {'cpu': 1}}}
-    if (root / 'mutate').exists():
-        field = (root / 'mutate').read_text()
-        if field == 'shape': spec['resources'][0]['with'][1]['count'] += 1
-        elif field == 'urgency': pass
-        elif field == 'dependencies': spec['attributes']['system'][field].append({'scheme': 'afterok', 'value': 'foreign'})
-        elif field == 'duration': spec['attributes']['system'][field] += 1
-        elif field == 'job': spec['attributes']['system'][field] = {'name': 'changed'}
-        else: spec['attributes']['system'][field] = {} if field == 'environment' else 'changed'
-    print(json.dumps(spec))
-elif args[:2] == ['job', 'submit']:
-    spec = json.loads(pathlib.Path(args[2]).read_text())
-    jobid = 'fAAA' + 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz'[len(state['jobs'])]
-    command = spec['tasks'][0]['command']
-    phase = pathlib.Path(command[0]).parent.name
-    state['jobs'][jobid] = {'instance': name, 'phase': phase, 'arguments': command[1:], 'returncode': 0}
-    rules = json.loads((root / 'job-outcomes.json').read_text()) if (root / 'job-outcomes.json').exists() else []
-    for argument in command[1:]:
-        job = pathlib.Path(argument) / phase
-        rule = next((r for r in rules if r['module'] == pathlib.Path(argument).parents[3].name and r['phase'] == phase
-                     and int(pathlib.Path(argument).name) in r.get('attempts', [1])
-                     and r.get('key', pathlib.Path(argument).parents[1].name) == pathlib.Path(argument).parents[1].name), {})
-        rc = rule.get('exit', 0)
-        state['jobs'][jobid]['returncode'] = max(state['jobs'][jobid]['returncode'], rc)
-        job.mkdir()
-        for label in ('tool', 'payload', 'podman'): (job / (label + '-exit.txt')).write_text(str(rc))
+def fake_command(root, command):
+    executable, name, *args = command
+    state_path = root / 'fake-state.json'
+    state = json.loads(state_path.read_text()) if state_path.exists() else {}
+    def record(value):
+        with (root / 'calls.jsonl').open('a') as stream:
+            stream.write(json.dumps(value) + '\n')
+    if Path(executable).name == 'stub-gate':
+        template, urgency, spec_path = args
+        table = json.loads((Path(template) / 'table.json').read_text())
+        spec = json.loads(Path(spec_path).read_text())
+        system = spec['attributes']['system']
+        placement = table['instances'].get(name)
+        reason = None
+        if (set(table) != {'schema', 'instances', 'job_name', 'args', 'max_attempts', 'urgency', 'cwd', 'env_names'}
+                or not set(table['instances']) <= {'fv1', 'fv1e-sparky', 'fv1e-sparklina'}
+                or any(set(entry) != {'constraints', 'shapes', 'max_duration_s'} for entry in table['instances'].values())):
+            reason = 'table'
+        elif not placement: reason = 'instance'
+        elif int(urgency) != table['urgency']: reason = 'urgency'
+        elif spec['resources'] not in placement['shapes']: reason = 'shape'
+        elif system['constraints'] not in placement['constraints']: reason = 'host'
+        elif system['duration'] > placement['max_duration_s']: reason = 'duration'
+        elif system['job']['name'] != table['job_name']: reason = 'name'
+        elif system['dependencies'] != [{'scheme': 'singleton', 'value': ''}]: reason = 'dependencies'
+        elif system['cwd'] != table['cwd']: reason = 'cwd'
+        elif set(system['environment']) != set(table['env_names']): reason = 'environment'
+        elif set(system) != {'constraints', 'cwd', 'dependencies', 'duration', 'environment', 'job'}: reason = 'system keys'
+        elif spec['tasks'][0]['command'][0] != str(Path(template) / 'job.sh'): reason = 'command'
+        elif len(spec['tasks'][0]['command']) != table['args'] + 1: reason = 'arguments'
+        if (root / 'refuse').exists() and (root / 'refuse').read_text() in template:
+            reason = 'review record'
+        if reason:
+            record({'action': 'refuse', 'template': template, 'reason': reason})
+            return 3, 'REFUSED: ' + reason + '\n'
+        record({'action': 'gate', 'instance': name, 'template': template, 'spec': spec, 'urgency': urgency})
+        jobid = 'fAAA' + 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz'[len(state)]
+        command = spec['tasks'][0]['command']
+        phase = Path(command[0]).parent.name
+        state[jobid] = 0
+        rules = json.loads((root / 'job-outcomes.json').read_text()) if (root / 'job-outcomes.json').exists() else []
         empty_digest = hashlib.sha256(b'').hexdigest()
-        document = {'schema': 'tessera.dense_row_phase.v2', 'phase': phase, 'completion': rule.get('completion', True),
-                    'identities': {}, 'scopes': [{'module': pathlib.Path(argument).parents[3].name,
-                                                'unit_key': pathlib.Path(argument).parents[1].name}],
-                    'case_set': 'diagnostics' if '-diagnostics-' in argument else 'gate', 'ordinal_start': 0,
-                    'streams': {'cases': {'count': 0, 'sha256': empty_digest}}, 'case_ids_sha256': empty_digest}
-        (job / 'phase.json').write_text(json.dumps(document))
-        if phase == 'capture' and not rule.get('missing_member_exit'):
-            (job / 'exit.json').write_text(json.dumps({'exit_status': rc}))
-        (job / 'cases.jsonl').touch()
-        (job / 'payload.stdout').write_text('payload log')
-        (job / 'payload.stderr').write_text('')
-        if phase == 'compare' or 'outcome' in rule:
-            (job / 'numerics_row.json').write_text(json.dumps({'row': {'outcome': rule.get('outcome', 'PASS'),
-                'finalization_finished': rule.get('finalized', phase == 'compare')}}))
-        files = sorted(job.iterdir())
-        (job / 'completion.sha256').write_text(''.join(hashlib.sha256(p.read_bytes()).hexdigest() + '  ' + p.name + '\n' for p in files))
-        if rule.get('completion') is False:
-            (job / 'completion.sha256').unlink()
-    save()
-    record({'action': 'submit', 'instance': name, 'id': jobid, 'phase': phase, 'arguments': command[1:]})
-    print(jobid)
-elif args[:2] == ['job', 'status']:
-    record({'action': 'status', 'instance': name, 'id': args[-1]})
-    if (root / 'block').exists():
-        with (root / 'wait-fifo').open('w') as stream: stream.write(args[-1] + '\n')
-        while not (root / 'release').exists(): time.sleep(0.01)
-    sys.exit(state['jobs'][args[-1]].get('returncode', 0))
-elif args[:2] == ['job', 'info']:
-    print('KVS stdout and stderr')
-elif '--json' in args:
-    print(json.dumps({'jobs': []}))
-elif '{runtime:.6f}' in args:
-    print('100')
-elif '{returncode}' in args:
-    print(state['jobs'][args[-1]].get('returncode', 0))
-else:
-    sys.exit('unexpected fake Flux call')
-'''
+        for attempt in map(Path, command[1:]):
+            job, module, key = attempt / phase, attempt.parents[3].name, attempt.parents[1].name
+            rule = next((r for r in rules if r['module'] == module and r['phase'] == phase
+                         and int(attempt.name) in r.get('attempts', [1]) and r.get('key', key) == key), {})
+            rc = rule.get('exit', 0)
+            state[jobid] = max(state[jobid], rc)
+            job.mkdir()
+            for label in ('tool', 'payload', 'podman'): (job / (label + '-exit.txt')).write_text(str(rc))
+            document = {'schema': 'tessera.dense_row_phase.v2', 'phase': phase, 'completion': rule.get('completion', True),
+                        'identities': {}, 'scopes': [{'module': module, 'unit_key': key}],
+                        'case_set': 'diagnostics' if '-diagnostics-' in str(attempt) else 'gate', 'ordinal_start': 0,
+                        'streams': {'cases': {'count': 0, 'sha256': empty_digest}}, 'case_ids_sha256': empty_digest}
+            (job / 'phase.json').write_text(json.dumps(document))
+            if phase == 'capture' and not rule.get('missing_member_exit'):
+                (job / 'exit.json').write_text(json.dumps({'exit_status': rc}))
+            (job / 'cases.jsonl').touch()
+            (job / 'payload.stdout').write_text('payload log')
+            (job / 'payload.stderr').write_text('')
+            if phase == 'compare' or 'outcome' in rule:
+                (job / 'numerics_row.json').write_text(json.dumps({'row': {'outcome': rule.get('outcome', 'PASS'),
+                    'finalization_finished': rule.get('finalized', phase == 'compare')}}))
+            if rule.get('completion') is not False:
+                (job / 'completion.sha256').write_text(''.join(
+                    hashlib.sha256(p.read_bytes()).hexdigest() + '  ' + p.name + '\n' for p in sorted(job.iterdir())))
+        state_path.write_text(json.dumps(state))
+        record({'action': 'submit', 'instance': name, 'id': jobid, 'phase': phase, 'arguments': command[1:]})
+        return 0, jobid + '\n'
+    elif args[:2] == ['submit', '--dry-run']:
+        def option(prefix): return next(a[len(prefix):] for a in args if a.startswith(prefix))
+        shape = option('--resources-shape=')
+        count, fields = shape.removeprefix('slot=').split('/[')
+        resources = [{'type': 'slot', 'count': int(count), 'label': 'task', 'with':
+                      [{'type': key, 'count': int(value)} for key, value in (p.split('=') for p in fields.rstrip(']').split(';'))]}]
+        command_index = next(i for i, a in enumerate(args) if a.endswith('/job.sh'))
+        spec = {'version': 1, 'resources': resources, 'tasks': [{'command': args[command_index:], 'slot': 'task', 'count': {'per_slot': 1}}],
+                'attributes': {'system': {'constraints': {'hostlist': [option('--requires=host:')]},
+                  'cwd': option('--cwd='), 'dependencies': [{'scheme': 'singleton', 'value': ''}],
+                  'duration': int(option('-t').rstrip('s')), 'job': {'name': option('--job-name=')},
+                  'environment': {a[6:].split('=', 1)[0]: '' for a in args if a.startswith('--env=') and a != '--env=-*'}}}}
+        if '--rlimit=-*' not in args or any(a.startswith('-o') for a in args):
+            spec['attributes']['system']['shell'] = {'options': {'rlimit': {'cpu': 1}}}
+        if (root / 'mutate').exists():
+            field = (root / 'mutate').read_text()
+            if field == 'shape': spec['resources'][0]['with'][1]['count'] += 1
+            elif field == 'dependencies': spec['attributes']['system'][field].append({'scheme': 'afterok', 'value': 'foreign'})
+            elif field == 'duration': spec['attributes']['system'][field] += 1
+            elif field == 'job': spec['attributes']['system'][field] = {'name': 'changed'}
+            elif field != 'urgency': spec['attributes']['system'][field] = {} if field == 'environment' else 'changed'
+        return 0, json.dumps(spec) + '\n'
+    elif args[:2] == ['job', 'status']:
+        record({'action': 'status', 'instance': name, 'id': args[-1]})
+        if (root / 'block').exists():
+            with (root / 'wait-fifo').open('w') as stream: stream.write(args[-1] + '\n')
+            signal.pause()
+        return state[args[-1]], ''
+    elif args[:2] == ['job', 'info']:
+        return 0, 'KVS stdout and stderr\n'
+    elif '--json' in args:
+        return 0, '{"jobs": []}\n'
+    elif '{runtime:.6f}' in args:
+        return 0, '100\n'
+    elif '{returncode}' in args:
+        return 0, str(state[args[-1]]) + '\n'
+    raise ValueError('unexpected fake Flux call')
 
 
-def make_graph(tmp_path, monkeypatch, modules=('module-A', 'module-B')):
+def make_graph(tmp_path, monkeypatch, modules=('module-A', 'module-B'), *, external=False):
     from tests.test_numerics_unit_templates import templates
-    bin_dir = tmp_path / 'bin'
-    bin_dir.mkdir()
-    for name in ('flux', 'stub-gate'):
-        executable = bin_dir / name
-        executable.write_text(FAKE)
-        executable.chmod(0o700)
-    monkeypatch.setenv('PATH', str(bin_dir) + os.pathsep + os.environ['PATH'])
-    monkeypatch.setenv('FAKE_ROOT', str(tmp_path))
+    gate = str(tmp_path / 'stub-gate')
+    if external:
+        script = ('#!/usr/bin/env python3\nimport hashlib, json, signal, sys\nfrom pathlib import Path\n'
+                  + inspect.getsource(fake_command)
+                  + "code, output = fake_command(Path(__file__).parent, sys.argv)\n"
+                  + "sys.stdout.write(output)\nsys.exit(code)\n")
+        for executable in (tmp_path / 'flux', Path(gate)):
+            executable.write_text(script)
+            executable.chmod(0o700)
+        monkeypatch.setenv('PATH', str(tmp_path), prepend=os.pathsep)
+    else:
+        run = subprocess.run
+
+        def fake_run(command, **kwargs):
+            if command[0] not in ('flux', gate):
+                return run(command, **kwargs)
+            code, output = fake_command(tmp_path, command)
+            captured = kwargs.get('capture_output') or kwargs.get('stdout') == subprocess.PIPE
+            stdout = (output if kwargs.get('text') else output.encode()) if captured else None
+            stderr = ('' if kwargs.get('text') else b'') if kwargs.get('capture_output') else None
+            result = subprocess.CompletedProcess(command, code, stdout, stderr)
+            if kwargs.get('check'):
+                result.check_returncode()
+            return result
+
+        monkeypatch.setattr(subprocess, 'run', fake_run)
     canary = tmp_path / 'canary'
     (canary / 'prepare').mkdir(parents=True)
     rows, configs = {}, {}
@@ -162,7 +162,7 @@ def make_graph(tmp_path, monkeypatch, modules=('module-A', 'module-B')):
         (directory / 'campaign.json').write_text(json.dumps(config))
         rows[module], configs[module] = str(directory), config
     settings = api.read(api.SETTINGS)
-    settings.update(fleet_submit_gate=str(bin_dir / 'stub-gate'), fv1e_jobmem_row_dirs=[str(tmp_path / 'samples')])
+    settings.update(fleet_submit_gate=gate, fv1e_jobmem_row_dirs=[str(tmp_path / 'samples')], pending_poll_seconds=0)
     settings_path = tmp_path / 'settings.json'
     settings_path.write_text(json.dumps(settings))
     monkeypatch.setattr(api, 'SETTINGS', settings_path)
@@ -355,7 +355,7 @@ def test_feeder_removes_stale_private_scratch_under_its_lock(tmp_path, monkeypat
 @pytest.mark.parametrize('ending', ('submit', 'refused', 'error'))
 def test_feeder_keeps_environment_values_out_of_attempt_records(tmp_path, monkeypatch, ending):
     assert hasattr(api, 'NamedTemporaryFile'), 'feature absent: no environment values in attempt records'
-    canary, bookings, _ = make_graph(tmp_path, monkeypatch, ('module-A',))
+    canary, bookings, _ = make_graph(tmp_path, monkeypatch, ('module-A',), external=True)
     original_dry_run, original_run = api.dry_run, api.subprocess.run
     checked, private_values = [], set()
 
@@ -410,7 +410,7 @@ def test_feeder_keeps_environment_values_out_of_attempt_records(tmp_path, monkey
 
 def test_feeder_uses_gate_table_and_producer_status(tmp_path, monkeypatch):
     assert hasattr(api, 'dry_run'), 'feature absent: gate table and producer status on every edge'
-    canary, bookings, _ = graph = make_graph(tmp_path, monkeypatch)
+    canary, bookings, _ = graph = make_graph(tmp_path, monkeypatch, external=True)
     api.run(canary, bookings)
     trace = calls(graph)
     submits = [row for row in trace if row['action'] == 'submit']
@@ -460,7 +460,7 @@ def test_feeder_gate_refusal_stops_unit_and_keeps_other_units(tmp_path, monkeypa
     trace = calls(graph)
     assert any(c['action'] == 'submit' and c['phase'] == 'compare' and 'module-B' in c['arguments'][0] for c in trace)
     assert not any(c['action'] == 'submit' and key in c['arguments'][0] and 'module-A' in c['arguments'][0] for c in trace)
-    events = [json.loads(line) for line in (canary / 'counted-feeder.jsonl').read_text().splitlines()]
+    events = feeder_events(canary)
     assert any(e['event'] == 'REFUSED' and e['reason'] == 'REFUSED: review record' for e in events)
     # A changed jobspec also fails the same stub gate before a submit.
     template = canary.parent / 'module-B/templates' / configs['module-B']['unit_keys'][0] / 'prepare'
@@ -608,7 +608,7 @@ def test_feeder_gate_keeps_booking_checks_and_dense_admission(tmp_path, monkeypa
 
 def test_feeder_restart_in_blocking_wait_submits_no_duplicate(tmp_path, monkeypatch):
     assert hasattr(api, 'attempt_jobs'), 'feature absent: restart in native wait reuses the saved job'
-    canary, bookings, _ = graph = make_graph(tmp_path, monkeypatch)
+    canary, bookings, _ = graph = make_graph(tmp_path, monkeypatch, external=True)
     root = canary.parent
     fifo = root / 'wait-fifo'
     os.mkfifo(fifo)
@@ -635,7 +635,6 @@ def test_feeder_restart_in_blocking_wait_submits_no_duplicate(tmp_path, monkeypa
             if process.poll() is None:
                 os.killpg(process.pid, signal.SIGKILL)
                 process.wait(timeout=10)
-    (root / 'release').touch()
     (root / 'block').unlink()
     result = subprocess.run([sys.executable, str(driver)], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, timeout=30)
     assert result.returncode == 0, result.stderr
