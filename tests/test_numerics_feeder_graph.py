@@ -117,8 +117,7 @@ else:
 '''
 
 
-@pytest.fixture
-def graph(tmp_path, monkeypatch):
+def make_graph(tmp_path, monkeypatch, modules=('module-A', 'module-B')):
     from tests.test_numerics_unit_templates import templates
     bin_dir = tmp_path / 'bin'
     bin_dir.mkdir()
@@ -129,9 +128,9 @@ def graph(tmp_path, monkeypatch):
     monkeypatch.setenv('PATH', str(bin_dir) + os.pathsep + os.environ['PATH'])
     monkeypatch.setenv('FAKE_ROOT', str(tmp_path))
     canary = tmp_path / 'canary'
-    canary.mkdir()
+    (canary / 'prepare').mkdir(parents=True)
     rows, configs = {}, {}
-    for module in ('module-A', 'module-B'):
+    for module in modules:
         directory = tmp_path / module
         config, _ = templates(directory, module=module)
         config.update(module=module, bound=True)
@@ -146,8 +145,7 @@ def graph(tmp_path, monkeypatch):
     monkeypatch.setattr(api, 'observe', lambda name: {'name': name, 'generation': 1})
     monkeypatch.setattr(api, 'wait_dense_slot', lambda: None)
     monkeypatch.setattr(prepare_split, 'check_canary', lambda *args: None)
-    (canary / 'campaign.json').write_text(json.dumps({'module': 'module-A', 'tool_commit': 'tool'}))
-    (canary / 'prepare').mkdir()
+    (canary / 'campaign.json').write_text(json.dumps({'module': modules[0], 'tool_commit': 'tool'}))
     (canary / 'prepare/jobid').write_text('f111')
     (canary / 'counted-rows.json').write_text(json.dumps(rows))
     (canary / 'counted-chain-inputs.json').write_text(json.dumps(dict.fromkeys(rows, {})))
@@ -165,9 +163,9 @@ def calls(graph):
     return [json.loads(line) for line in (graph[0].parent / 'calls.jsonl').read_text().splitlines()]
 
 
-def test_feeder_uses_gate_table_and_producer_status(graph):
+def test_feeder_uses_gate_table_and_producer_status(tmp_path, monkeypatch):
     assert hasattr(api, 'dry_run'), 'feature absent: gate table and producer status on every edge'
-    canary, bookings, _ = graph
+    canary, bookings, _ = graph = make_graph(tmp_path, monkeypatch)
     api.run(canary, bookings)
     trace = calls(graph)
     submits = [row for row in trace if row['action'] == 'submit']
@@ -194,8 +192,9 @@ def test_feeder_uses_gate_table_and_producer_status(graph):
             assert checks == [{'action': 'status', 'instance': producer['instance'], 'id': producer['id']}]
 
 
-def test_feeder_prepares_other_modules_before_capture_wait(graph):
+def test_feeder_prepares_other_modules_before_capture_wait(tmp_path, monkeypatch):
     assert hasattr(api, 'dry_run'), 'feature absent: module overlap without worker threads'
+    graph = make_graph(tmp_path, monkeypatch, ('module-canary', 'module-A', 'module-B'))
     api.run(graph[0], graph[1])
     trace = calls(graph)
     capture = next(row for row in trace if row['action'] == 'submit' and row['phase'] == 'capture')
@@ -205,9 +204,9 @@ def test_feeder_prepares_other_modules_before_capture_wait(graph):
 
 
 @pytest.mark.parametrize('field', ['shape', 'dependencies', 'duration', 'job', 'cwd', 'environment', 'urgency'])
-def test_feeder_gate_refusal_stops_unit_and_keeps_other_units(graph, field):
+def test_feeder_gate_refusal_stops_unit_and_keeps_other_units(tmp_path, monkeypatch, field):
     assert hasattr(api, 'dry_run'), 'feature absent: gate refusal stops a unit and records its reason'
-    canary, bookings, configs = graph
+    canary, bookings, configs = graph = make_graph(tmp_path, monkeypatch)
     # Refuse one reviewed template. Other units must still complete their captures.
     key = configs['module-A']['unit_keys'][0]
     (canary.parent / 'refuse').write_text('module-A/templates/' + key + '/prepare')
@@ -229,9 +228,9 @@ def test_feeder_gate_refusal_stops_unit_and_keeps_other_units(graph, field):
     assert not argument.exists()
 
 
-def test_feeder_restart_reuses_finished_attempts_and_saved_ids(graph):
+def test_feeder_restart_reuses_finished_attempts_and_saved_ids(tmp_path, monkeypatch):
     assert hasattr(api, 'attempt_jobs'), 'feature absent: finished attempts and saved ids are reused'
-    canary, bookings, _ = graph
+    canary, bookings, _ = graph = make_graph(tmp_path, monkeypatch)
     api.run(canary, bookings)
     before = [c for c in calls(graph) if c['action'] == 'submit']
     # Recover one lost job-id file from saved state, with the original instance.
@@ -242,9 +241,9 @@ def test_feeder_restart_reuses_finished_attempts_and_saved_ids(graph):
 
 
 @pytest.mark.parametrize('claim', ['intent', 'phase'])
-def test_feeder_holds_ambiguous_attempt_for_audit(graph, claim):
+def test_feeder_holds_ambiguous_attempt_for_audit(tmp_path, monkeypatch, claim):
     assert hasattr(api, 'attempt_jobs'), 'feature absent: claimed attempt without saved id requires audit'
-    canary, bookings, configs = graph
+    canary, bookings, configs = graph = make_graph(tmp_path, monkeypatch)
     key = configs['module-B']['unit_keys'][0]
     attempt = canary.parent / 'module-B/units' / key / 'attempts/1'
     attempt.mkdir(parents=True)
@@ -258,9 +257,9 @@ def test_feeder_holds_ambiguous_attempt_for_audit(graph, claim):
     assert not attempt.with_name('2').exists()
 
 
-def test_feeder_explicit_retry_is_next_attempt_and_keeps_fail(graph):
+def test_feeder_explicit_retry_is_next_attempt_and_keeps_fail(tmp_path, monkeypatch):
     assert hasattr(api, 'attempt_jobs'), 'feature absent: explicit retry is contiguous and keeps FAIL'
-    canary, bookings, configs = graph
+    canary, bookings, configs = graph = make_graph(tmp_path, monkeypatch)
     api.run(canary, bookings)
     key = configs['module-B']['unit_keys'][0]
     first = canary.parent / 'module-B/units' / key / 'attempts/1'
@@ -278,9 +277,9 @@ def test_feeder_explicit_retry_is_next_attempt_and_keeps_fail(graph):
         api.run(canary, bookings)
 
 
-def test_feeder_rechecks_instance_and_bind_refuses_wrong_identity(graph, monkeypatch):
+def test_feeder_rechecks_instance_and_bind_refuses_wrong_identity(tmp_path, monkeypatch):
     assert hasattr(api, 'dry_run'), 'feature absent: saved producer instance identity is checked'
-    canary, bookings, _ = graph
+    canary, bookings, _ = graph = make_graph(tmp_path, monkeypatch)
     api.run(canary, bookings)
     count = len([c for c in calls(graph) if c['action'] == 'submit'])
     monkeypatch.setattr(api, 'observe', lambda name: {'name': name, 'generation': 2})
@@ -319,11 +318,11 @@ def test_generator_keeps_nine_gib_and_exact_dense_urgency(tmp_path):
     assert all(api.read(d / 'table.json')['instances']['fv1']['max_duration_s'] == 900 for d in directories if d.name == 'capture')
 
 
-def test_feeder_gate_keeps_booking_checks_and_dense_admission(graph, monkeypatch):
+def test_feeder_gate_keeps_booking_checks_and_dense_admission(tmp_path, monkeypatch):
     assert hasattr(api, 'dry_run'), 'feature absent: gate path keeps booking and dense admission checks'
+    canary, bookings, _ = graph = make_graph(tmp_path, monkeypatch)
     waits = []
     monkeypatch.setattr(api, 'wait_dense_slot', lambda: waits.append(True))
-    canary, bookings, _ = graph
     api.run(canary, bookings)
     assert len(waits) == 18
     values = api.read(bookings)
@@ -338,9 +337,9 @@ def test_feeder_gate_keeps_booking_checks_and_dense_admission(graph, monkeypatch
         api.run(canary, bookings)
 
 
-def test_feeder_restart_in_blocking_wait_submits_no_duplicate(graph):
+def test_feeder_restart_in_blocking_wait_submits_no_duplicate(tmp_path, monkeypatch):
     assert hasattr(api, 'attempt_jobs'), 'feature absent: restart in native wait reuses the saved job'
-    canary, bookings, _ = graph
+    canary, bookings, _ = graph = make_graph(tmp_path, monkeypatch)
     root = canary.parent
     fifo = root / 'wait-fifo'
     os.mkfifo(fifo)
@@ -377,9 +376,9 @@ def test_feeder_restart_in_blocking_wait_submits_no_duplicate(graph):
     assert len([c for c in calls(graph) if c['action'] == 'status' and c['id'] == saved_id]) == 2
 
 
-def test_feeder_crossing_uses_saved_producer_instance(graph):
+def test_feeder_crossing_uses_saved_producer_instance(tmp_path, monkeypatch):
     assert hasattr(api, 'dry_run'), 'feature absent: crossing waits on the producing instance'
-    canary, bookings, _ = graph
+    canary, bookings, _ = graph = make_graph(tmp_path, monkeypatch)
     state = api.read(canary / 'counted-feeder-state.json')
     state.update(fv1e_admission='admitted', lanes=[['fv1e-sparklina', 'sparklina']])
     (canary / 'counted-feeder-state.json').write_text(json.dumps(state))
@@ -399,10 +398,10 @@ def test_feeder_crossing_uses_saved_producer_instance(graph):
         assert trace[consumer]['spec']['attributes']['system']['dependencies'] == [{'scheme': 'singleton', 'value': ''}]
 
 
-def test_feeder_capture_group_uses_ordered_arguments_and_recovers_id(graph):
+def test_feeder_capture_group_uses_ordered_arguments_and_recovers_id(tmp_path, monkeypatch):
     assert hasattr(api, 'attempt_jobs'), 'feature absent: grouped capture saves and reuses every member job id'
     import shutil
-    canary, bookings, configs = graph
+    canary, bookings, configs = graph = make_graph(tmp_path, monkeypatch)
     config = configs['module-A']
     directory = canary.parent / 'module-A'
     shutil.rmtree(directory / 'templates')
@@ -427,9 +426,9 @@ def test_feeder_capture_group_uses_ordered_arguments_and_recovers_id(graph):
 
 
 @pytest.mark.parametrize('fault', ['native', 'tool', 'payload', 'podman', 'log', 'artifact', 'instance'])
-def test_feeder_keeps_predecessor_evidence_checks(graph, monkeypatch, fault):
+def test_feeder_keeps_predecessor_evidence_checks(tmp_path, monkeypatch, fault):
     assert hasattr(api, 'dry_run'), 'feature absent: native exits and log hashes gate dependent submit'
-    canary, bookings, _ = graph
+    canary, bookings, _ = graph = make_graph(tmp_path, monkeypatch)
     api.run(canary, bookings)
     job = next(canary.parent.glob('module-B/units/*/attempts/1/prepare'))
     if fault in ('tool', 'payload', 'podman'):
@@ -491,9 +490,9 @@ def test_worker_blocks_until_submit_metadata_is_complete(tmp_path, monkeypatch):
                 process.communicate(timeout=10)
 
 
-def test_feeder_canary_gate_refusal_keeps_ecore_admission_closed(graph):
+def test_feeder_canary_gate_refusal_keeps_ecore_admission_closed(tmp_path, monkeypatch):
     assert hasattr(api, 'dry_run'), 'feature absent: canary gate refusal keeps E-core admission closed'
-    canary, bookings, configs = graph
+    canary, bookings, configs = graph = make_graph(tmp_path, monkeypatch)
     state = api.read(canary / 'counted-feeder-state.json')
     state.pop('ep_tensor_check')
     state.update(fv1e_admission='admitted', lanes=[['fv1e-sparklina', 'sparklina']])
