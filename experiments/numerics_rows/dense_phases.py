@@ -513,7 +513,10 @@ def host_compare(args, receipt, phases, groups):
             bound.append((*newest, unit_groups))
     if any(sorted(parts) not in (["all"], ["diagnostics", "gate"]) for parts in selected.values()):
         raise Invalid("compare requires the full gate and diagnostics union exactly once")
-    bound.sort(key=lambda p: p[2]["ordinal_start"])
+    bound = [(prepare_root, capture_root, prepared, captured, pd, cd,
+              unit_map(prepared["receipt"]["units"]), unit_map(captured["receipt"]["units"]),
+              check_pair(args, unit_groups, prepared, captured, pd, prepare_root, capture_root))
+             for prepare_root, capture_root, prepared, captured, pd, cd, unit_groups in sorted(bound, key=lambda p: p[2]["ordinal_start"])]
     common, units = identities(receipt), unit_map(receipt["units"])
     listing.sort(key=lambda item: (item["unit"], item["attempt"]))
     receipt["attempts"] = {"listing": listing, "sha256": json_digest(listing)}
@@ -527,7 +530,7 @@ def host_compare(args, receipt, phases, groups):
     progress = args.progress = Progress(args.out, receipt, phases)
     for unit in units.values():
         unit["completed"] = True
-    for prepare_root, capture_root, prepared, captured, pd, cd, unit_groups in bound:
+    for prepare_root, capture_root, prepared, captured, pd, cd, previous_units, current_units, pairs in bound:
         part = prepared["case_set"]
         receipt["modules"].extend(copy.deepcopy(m) for m in captured["receipt"]["modules"] if m not in receipt["modules"])
         scope = prepared["scopes"][0]
@@ -536,8 +539,7 @@ def host_compare(args, receipt, phases, groups):
             receipt["phase_artifacts"][key + phase] = {"path": str(root_path / "phase.json"), "sha256": digest}
             receipt["row"]["phase_jobs"][key + phase] = document["receipt"]["row"]
         artifact.document["ranges"].append([prepared["ordinal_start"], prepared["streams"]["cases"]["count"]])
-        previous_units = unit_map(prepared["receipt"]["units"])
-        for identity, current in unit_map(captured["receipt"]["units"]).items():
+        for identity, current in current_units.items():
             unit, previous = units[identity], previous_units[identity]
             unit.update(copy.deepcopy({k: v for k, v in current.items() if k not in (
                 "exact", "completed", "findings", "invalid", "unattested", "cuda_errors", "cuda_unattributed", "graph_replay_equal", "first_mismatch")}))
@@ -551,7 +553,6 @@ def host_compare(args, receipt, phases, groups):
             unit["cuda_unattributed"] |= current["cuda_unattributed"]
             unit["graph_replay_equal"] = current["graph_replay_equal"] or unit["graph_replay_equal"]
         arrays = iter(records(prepare_root, "arrays", prepared)) if "arrays" in prepared["streams"] else iter(())
-        pairs = check_pair(args, unit_groups, prepared, captured, pd, prepare_root, capture_root)
         for _, batch in groupby(pairs, lambda pair: (pair[0]["scope"]["module"], pair[0]["scope"]["unit_key"], pair[0].get("array_index"))):
             case, observed = next(batch)
             unit = units[json.dumps([case["scope"]["module"], case["scope"]["unit_key"]], sort_keys=True)]

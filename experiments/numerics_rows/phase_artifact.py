@@ -168,11 +168,13 @@ def check_capture(prepare, capture, prepare_digest, prepare_root, capture_root):
         raise Invalid("capture consumed a different prepare artifact")
     if any(capture.get(k) != prepare.get(k) for k in ("identities", "scopes", "ordinal_start", "case_set")):
         raise Invalid("prepare and capture identities differ")
-    for wanted, observed in zip_longest(cases(prepare_root, prepare), cases(capture_root, capture)):
-        if wanted is None or observed is None or any(observed.get(k) != wanted.get(k) for k in
-                ("id", "ordinal", "scope", "configuration", "kind", "identities", "category")):
-            raise Invalid("capture must contain each prepared case exactly once")
-        yield wanted, observed
+    def pairs():
+        for wanted, observed in zip_longest(cases(prepare_root, prepare), cases(capture_root, capture)):
+            if wanted is None or observed is None or any(observed.get(k) != wanted.get(k) for k in
+                    ("id", "ordinal", "scope", "configuration", "kind", "identities", "category")):
+                raise Invalid("capture must contain each prepared case exactly once")
+            yield wanted, observed
+    return pairs()
 
 
 def tensor_subset_equal(canary, counted):
