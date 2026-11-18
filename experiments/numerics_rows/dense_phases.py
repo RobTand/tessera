@@ -542,7 +542,7 @@ def bind_evidence(out, artifact):
     import shutil
     for name in ("binary-identity", "served-binaries", "served-comparisons", "compiled-code", "native_ops.json", "phase-events.jsonl"):
         source = out / name
-        for path in sorted(source.rglob("*")) if source.is_dir() else [source]:
+        for path in source.rglob("*") if source.is_dir() else [source]:
             if not path.is_file():
                 continue
             relative = Path("evidence") / path.relative_to(out)

@@ -39,6 +39,23 @@ def test_stream_releases_each_tensor_before_the_next_case(tmp_path):
         streams.Artifact(artifact.root, "prepare", {})
 
 
+def test_evidence_copy_consumes_one_file_name_at_a_time(tmp_path, monkeypatch):
+    artifact = stream_feature(tmp_path)
+    from experiments.numerics_rows.dense_phases import bind_evidence
+    source = tmp_path / "compiled-code"
+    source.mkdir()
+    for name in ("first", "second"):
+        (source / name).write_text(name)
+    def evidence_paths(directory, pattern):
+        assert directory == source
+        yield source / "first"
+        assert (artifact.root / "evidence/compiled-code/first").is_file()
+        yield source / "second"
+    monkeypatch.setattr(Path, "rglob", evidence_paths)
+    bind_evidence(tmp_path, artifact)
+    assert len(list(streams.records(artifact.root, "files"))) == 2
+
+
 def test_cut_and_diagnostics_keep_full_enumeration_ordinals(tmp_path):
     from experiments.numerics_rows import dense_phases as dense
     assert hasattr(dense, "case_ranges"), "feature absent: full row ordinal ranges"
