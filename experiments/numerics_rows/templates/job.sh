@@ -15,7 +15,8 @@ test "$(realpath -e -- "$attempt")" = "$attempt" || refuse 'attempt path is not 
 @ABSENT@
 done
 claimed=() phase_mounts=()
-task_scratch="${FLUX_SCRATCH:?}/${FLUX_JOB_ID:?}"
+task_root="${FLUX_SCRATCH:?}/${FLUX_JOB_ID:?}"
+task_scratch="$task_root@SCRATCH_SUBDIR@"
 name=tessera-dense-@PHASE@-"$FLUX_JOB_ID"
 child=
 cleanup() {
@@ -25,8 +26,8 @@ cleanup() {
     podman rm -f "$name" >/dev/null 2>&1 || true
     podman unshare rm -rf -- "$task_scratch/podman-storage" "$task_scratch/podman-run" >/dev/null 2>&1 || true
   fi
-  rm -rf -- "$task_scratch" || rc=3
-  test ! -e "$task_scratch" || rc=3
+  rm -rf -- "$task_root" || rc=3
+  test ! -e "$task_root" || rc=3
   for output in "${claimed[@]}"; do printf '%s\n' "$rc" > "$output/tool-exit.txt"; done
   exit "$rc"
 }
@@ -67,7 +68,7 @@ grep Cpus_allowed_list /proc/self/status > affinity.txt
 podman image inspect acc684c06ec7 > "$task_scratch/image-inspect.json"
 mapfile -t population_mount < <(PYTHONPATH="$task_scratch/code" python3 -c 'import json,shlex; print("\n".join(shlex.split(json.load(open("@ROOT_RAW@/campaign.json"))["population_mount"])))')
 rc=0
-timeout --signal=TERM --kill-after=20s @SECONDS@s podman run --rm --name "$name" --pull=never --cgroups=disabled --network=none @GPU@ -v /mnt/shared:/mnt/shared:ro "${phase_mounts[@]}" -v "$task_scratch/code:/numerics:ro" "${population_mount[@]}" @OPTIONS@ --entrypoint /bin/bash acc684c06ec7 -euo pipefail @TEMPLATE@/payload.sh "${attempts[@]}" > payload.stdout 2> payload.stderr &
+timeout --signal=TERM --kill-after=20s @SECONDS@s @CPU_LAUNCH@podman run --rm --name "$name" --pull=never --cgroups=disabled --network=none @GPU@ -v /mnt/shared:/mnt/shared:ro "${phase_mounts[@]}" -v "$task_scratch/code:/numerics:ro" "${population_mount[@]}" @OPTIONS@ --entrypoint /bin/bash acc684c06ec7 -euo pipefail @TEMPLATE@/payload.sh "${attempts[@]}" > payload.stdout 2> payload.stderr &
 child=$!
 wait "$child" || rc=$?
 child=

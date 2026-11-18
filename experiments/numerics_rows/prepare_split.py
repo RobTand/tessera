@@ -272,6 +272,8 @@ def write_templates(root, config, repository):
                   "ABSENT": 'test ! -e "$attempt/capture" && test ! -L "$attempt/capture" || refuse \'phase claim already exists or failed\'' if len(ordered) > 1 else "",
                   "PREREQUISITES": prerequisites,
                   "SECONDS": str(minutes * 60 - 60), "OPTIONS": options,
+                  "SCRATCH_SUBDIR": "" if phase == "capture" else "/work",
+                  "CPU_LAUNCH": '' if phase == "capture" else 'python3 "$task_scratch/code/experiments/numerics_rows/cdi_env.py" --scratch "$task_root" --record "$task_root/cdi.json" -- ',
                   "GPU": "--device nvidia.com/gpu=all" if phase == "capture" else "",
                   "PREFLIGHT": 'PYTHONPATH="$task_scratch/code" python3 -m experiments.numerics_rows.gpu_time --preflight gpu-preflight-host.json' if phase == "capture" else "",
                   "TELEMETRY": 'PYTHONPATH="$task_scratch/code" python3 -m experiments.numerics_rows.prepare_split --check-telemetry numerics_row.json > telemetry-check.json' if phase == "capture" else ""}

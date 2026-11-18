@@ -57,7 +57,8 @@ def job_world(root, fault=""):
     scratch.mkdir()
     scripts = {
         "git": '[[ "$*" != *rev-parse* ]] || printf "%s\\n" ' + "a" * 40,
-        "python3": f'''if [[ "$*" == *--verify* ]]; then step=verify; elif [[ "$2" == check ]]; then step=instance; else exit 0; fi
+        "python3": f'''if [[ "$1" == */cdi_env.py ]]; then shift 6; exec "$@"; fi
+if [[ "$*" == *--verify* ]]; then step=verify; elif [[ "$2" == check ]]; then step=instance; else exit 0; fi
 printf '%s\\n' "$step" >> {shlex.quote(str(calls))}
 [[ "$step" != {shlex.quote(fault)} ]] || {{ echo "refused $step" >&2; exit 3; }}
 [[ "$step" != instance ]] || printf '{{"checked":true}}\\n'
@@ -89,6 +90,18 @@ def test_job_checks_documents_before_claim(tmp_path, fault):
         assert snapshot(tmp_path / "module") == before
     else:
         assert json.loads((attempt / "prepare/instance.json").read_text()) == {"checked": True}
+
+
+def test_every_template_uses_cdi_replay_or_gpu_device(tmp_path):
+    _, directories = templates(tmp_path / "module")
+    for directory in directories:
+        launch, = [line for line in (directory / "job.sh").read_text().splitlines() if line.startswith("timeout ")]
+        replay = "/experiments/numerics_rows/cdi_env.py" in launch
+        device = "--device nvidia.com/gpu=all" in launch
+        if directory.name == "capture":
+            assert device and not replay, "capture must request the CDI GPU device"
+        else:
+            assert replay and not device, f"{directory.name} lacks CPU CDI replay"
 
 
 def test_templates_cover_units_phases_and_manifest(tmp_path):
@@ -277,7 +290,7 @@ def test_compare_exit_three_keeps_checked_completion_hashes(tmp_path, outcome, f
     receipt.write_text(json.dumps({'row': {'outcome': outcome, 'finalization_finished': finalized}}))
     tail = 'rc=0\n' + (directory / 'job.sh').read_text().split('rc=0\n', 1)[1]
     script = 'set -euo pipefail\ntimeout() { return 3; }\n'
-    script += 'task_scratch=$PWD\nname=stub\nphase_mounts=()\npopulation_mount=()\nclaimed=("$PWD")\n' + tail
+    script += 'task_root=$PWD\ntask_scratch=$PWD\nname=stub\nphase_mounts=()\npopulation_mount=()\nclaimed=("$PWD")\n' + tail
     result = subprocess.run(['bash', '-c', script], cwd=job, text=True, capture_output=True)
     assert result.returncode == 3
     assert (job / 'completion.sha256').exists() is finalized
@@ -368,7 +381,7 @@ def test_phase_durations_from_settings_reach_table_and_job(tmp_path, canary):
             seconds = expected[unit["phase"]][unit["case_set"]] * 60
             table = json.loads((directory / "table.json").read_text())
             assert all(instance["max_duration_s"] == seconds for instance in table["instances"].values())
-            assert f"timeout --signal=TERM --kill-after=20s {seconds - 60}s podman run" in (directory / "job.sh").read_text()
+            assert f"timeout --signal=TERM --kill-after=20s {seconds - 60}s " in (directory / "job.sh").read_text()
 
 
 def cpu_campaign(tmp_path, monkeypatch):
