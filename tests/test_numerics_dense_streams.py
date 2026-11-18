@@ -21,7 +21,7 @@ def stream_feature(tmp_path):
 
 def test_stream_releases_each_tensor_before_the_next_case(tmp_path):
     artifact = stream_feature(tmp_path)
-    scope = streams.unit_scope(row.new_unit({"m_config": {"M": 1}}), "wire")
+    scope = streams.unit_scope(row.new_unit({"module": "A", "tp": {"size": 1, "rank": 0}, "m_config": {"M": 1}}), "wire")
     artifact.document["scopes"] = [scope]
     for index in range(1000):
         value = torch.tensor([index])
@@ -79,7 +79,7 @@ def test_cut_and_diagnostics_keep_full_enumeration_ordinals(tmp_path):
 @pytest.mark.parametrize("change", ("duplicate", "overlap", "gap", "id", "bytes", "stream", "count", "configuration", "unfinished"))
 def test_stream_refuses_changed_order_and_bytes(tmp_path, change):
     artifact = stream_feature(tmp_path)
-    scope = streams.unit_scope(row.new_unit({"m_config": {"M": 1}}), "wire")
+    scope = streams.unit_scope(row.new_unit({"module": "A", "tp": {"size": 1, "rank": 0}, "m_config": {"M": 1}}), "wire")
     artifact.document["scopes"] = [scope]
     case = artifact.add(scope, {"M": 1}, "dense", {"input": torch.ones(1)}, category="sweep")
     artifact.finish()
@@ -133,7 +133,7 @@ def test_group_uses_k_processes_and_waits_for_all_exits(tmp_path, monkeypatch):
 
 def test_stream_reader_checks_the_bytes_it_consumes(tmp_path):
     artifact = stream_feature(tmp_path)
-    scope = streams.unit_scope(row.new_unit({"m_config": {"M": 1}}), "wire")
+    scope = streams.unit_scope(row.new_unit({"module": "A", "tp": {"size": 1, "rank": 0}, "m_config": {"M": 1}}), "wire")
     artifact.document["scopes"] = [scope]
     case = artifact.add(scope, {"M": 1}, "dense", {}, category="sweep")
     artifact.finish()
