@@ -318,7 +318,6 @@ def device_capture(args, receipt, phases, groups, library, compile_paths):
                     except (Invalid, Unattested) as error:
                         field = "invalid" if isinstance(error, Invalid) else "unattested"
                         unit[field].append(error_text(error))
-                        captured[field] = error_text(error)
                     captured.update(elapsed_seconds=time.monotonic() - before, boundaries=unit["boundaries"])
                     recorder.quantizer_result = None
                     del tensors, recorder
@@ -463,13 +462,13 @@ def host_compare(args, receipt, phases, groups):
                 progress.record("diagnostics" if case["category"] == "diagnostic" else "gate_cases", unit, case["id"])
                 previous = {field: unit[field] for field in ("findings", "invalid", "unattested")}
                 for field in previous:
-                    unit[field] = []
+                    unit[field] = observed.get("status", {}).get(field, [])
                 compare_case(case, observed, prepare_root, capture_root, unit)
                 result = {k: case[k] for k in ("id", "ordinal", "identities", "scope", "configuration", "kind", "category")}
                 result.update({field: unit[field] for field in previous}, diagnostic=unit["diagnostic"],
                               first_mismatch=unit["first_mismatch"], completion=observed.get("completion"), code=observed.get("code"),
                               counts={k: v for k, v in unit["exact"].items() if k not in ("scale_index", "separation")},
-                              outcome="FAIL" if unit["findings"] else "UNATTESTED" if unit["unattested"] else "PASS" if observed.get("completion") else "STOPPED")
+                              outcome="FAIL" if unit["findings"] else "INVALID" if unit["invalid"] else "UNATTESTED" if unit["unattested"] else "PASS" if observed.get("completion") else "STOPPED")
                 artifact.record("cases", result)
                 for field in previous:
                     unit[field] = (previous[field] + unit[field])[:1]

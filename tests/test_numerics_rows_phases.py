@@ -515,6 +515,20 @@ def test_split_preserves_prepare_refusals_before_capture_and_compare(split_captu
     assert receipt["units"][0]["unattested"] == ["incomplete scale-index coverage before the freeze"]
 
 
+@pytest.mark.parametrize("error,refusal_index", [(error, refusal_index) for error in ("invalid", "unattested") for refusal_index in range(3)] + [("prepare", 0)])
+def test_split_compare_keeps_each_refusal_in_its_case_record(split_capture, error, refusal_index):
+    receipt, captured = split_capture(prepare_refusal=True) if error == "prepare" else split_capture(error, index=refusal_index)
+    field = "unattested" if error == "prepare" else error
+    reason = "incomplete scale-index coverage before the freeze" if error == "prepare" else "refused capture"
+    api = phase_api()
+    root = Path(receipt["phase_artifacts"]["compare"]["path"]).parent
+    compared = list(api.cases(root, json.loads((root / "phase.json").read_text())))
+    for source, result in zip(captured["cases"][refusal_index:], compared[refusal_index:], strict=True):
+        assert result[field] == source["status"][field] == [reason]
+        assert result["outcome"] == field.upper()
+    assert receipt["units"][0]["outcome"] == receipt["row"]["outcome"] == field.upper()
+
+
 def test_capture_keeps_case_findings_in_records_and_a_bounded_summary(split_capture):
     receipt, captured = split_capture(capture_findings=True)
     assert receipt["row"]["outcome"] == "FAIL"
