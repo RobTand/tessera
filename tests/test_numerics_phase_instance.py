@@ -29,6 +29,7 @@ def test_observe_uses_rank_zero_config(monkeypatch, capsys):
 
 @pytest.mark.parametrize('change', ['bytes', 'dtype', 'shape', 'seed'])
 def test_ep_tensor_subset_ignores_records_and_refuses_tensor_changes(tmp_path, change):
+    pytest.importorskip("torch")
     from experiments.numerics_rows.phase_artifact import Artifact, records
     from tests.test_numerics_rows_phases import rewrite_stream
     scopes = [{'unit_key': ['cell', 'symbol', 'decoder', 1024, {'M': 1}], 'cut': {'size': 2, 'rank': 0}}]

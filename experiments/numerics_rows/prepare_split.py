@@ -275,7 +275,7 @@ def write_templates(root, config, repository):
                   "GPU": "--device nvidia.com/gpu=all" if phase == "capture" else "",
                   "PREFLIGHT": 'PYTHONPATH="$task_scratch/code" python3 -m experiments.numerics_rows.gpu_time --preflight gpu-preflight-host.json' if phase == "capture" else "",
                   "TELEMETRY": 'PYTHONPATH="$task_scratch/code" python3 -m experiments.numerics_rows.prepare_split --check-telemetry numerics_row.json > telemetry-check.json' if phase == "capture" else ""}
-        script = (Path(__file__).with_name("templates") / "job.sh").read_text()
+        script = (Path(__file__).parent / "templates" / "job.sh").read_text()
         for marker, value in values.items():
             script = script.replace("@" + marker + "@", value)
         (directory / "job.sh").write_text(script)

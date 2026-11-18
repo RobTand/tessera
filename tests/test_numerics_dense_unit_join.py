@@ -10,6 +10,7 @@ from experiments.numerics_rows import dependency_code as code, phase_artifact as
 @pytest.mark.parametrize("mutation", ("missing", "duplicate", "unit", "origin", "observer", "digest", "stream-bytes"))
 def test_join_code_reader_checks_each_bound_case(tmp_path, mutation):
     assert "common" in inspect.signature(code.check_unit_code).parameters, "feature absent: streamed unit code proofs"
+    pytest.importorskip("torch")
     from tests.test_numerics_rows_phases import rewrite_stream
     unit = row.new_unit({"cell": "cell", "module": "A", "m_config": {"M": 1}, "tp": {"size": 1, "rank": 0}})
     row.finish_unit(unit)
@@ -46,6 +47,7 @@ def test_join_code_reader_checks_each_bound_case(tmp_path, mutation):
 
 
 def test_join_reads_one_code_stream_once_per_receipt(tmp_path, monkeypatch):
+    pytest.importorskip("torch")
     from experiments.numerics_rows.join import join
     from tests.test_numerics_rows_receipts import joined_inputs
 
