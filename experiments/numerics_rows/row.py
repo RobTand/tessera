@@ -236,7 +236,7 @@ def x_products(products):
     return torch.as_tensor(valid, device=products.device)
 
 
-def dot_reference(a, weight, a_scale, scale, *, exact=True, with_bounds=False, splits=1, top_k=0, router_weight=None):
+def dot_reference(a, weight, a_scale, scale, *, exact=True, with_bounds=False, splits=1, top_k=0, router_weight=None, family="value"):
     import torch
 
     # Sparse exact cases use only the columns that the quantizer actually kept nonzero.
@@ -251,7 +251,7 @@ def dot_reference(a, weight, a_scale, scale, *, exact=True, with_bounds=False, s
             mask = torch.ones(weight.shape[0], dtype=torch.bool, device=a.device)
             acc = torch.zeros(weight.shape[0], dtype=torch.float64, device=a.device)
             products = torch.zeros(weight.shape[0], 1, dtype=torch.float64, device=a.device)
-        bound = FiniteBound.dot(products, weight.shape[1], splits, top_k)
+        bound = FiniteBound.dot(products, weight.shape[1], splits, top_k, e4m3=family == "e4m3")
         value = acc.float()
         if a_scale is not None:
             value = value * a_scale[row].float()
@@ -370,7 +370,7 @@ class Dense:
         for _, weight, scale, _ in self.roles:
             if self.family == "e2m1":
                 scale = torch.tensor([float(scale)], device=weight.device, dtype=torch.float32) / torch.tensor(self.gs, device=weight.device, dtype=torch.float32)
-            y, mask, bound = dot_reference(a, weight, a_scale, scale, exact=exact, with_bounds=True, splits=splits)
+            y, mask, bound = dot_reference(a, weight, a_scale, scale, exact=exact, with_bounds=True, splits=splits, family=self.family)
             parts.append(y)
             masks.append(mask)
             bounds.append(bound)

@@ -48,13 +48,31 @@ class FiniteBound:
         return torch.as_tensor(result, device=values.device)
 
     @staticmethod
+    def exact_sum_e4m3(values, axis):
+        import numpy as np
+        import torch
+        from experiments.numerics_rows.common import Invalid
+        if values.shape[axis] >= 2**27:
+            raise Invalid("E4M3 exact sum requires K < 2^27")
+        array = values.detach().double().cpu().numpy()
+        if not np.isfinite(array).all() or (np.abs(array) > 200704).any():
+            raise Invalid("E4M3 exact sum requires finite terms with |x| <= 200704")
+        scaled = np.ldexp(array, 18)
+        if (scaled != np.trunc(scaled)).any():
+            raise Invalid("E4M3 exact sum requires terms on the 2^-18 grid")
+        totals = scaled.astype(np.int64).sum(axis=axis, dtype=np.int64)
+        rounded = totals.astype(np.float64)
+        rounded = np.where(rounded.astype(np.int64) < totals, np.nextafter(rounded, np.inf), rounded)
+        return torch.as_tensor(np.ldexp(rounded, -18), device=values.device)
+
+    @staticmethod
     def up(value):
         import torch
         return torch.nextafter(value, torch.full_like(value, math.inf))
 
     @classmethod
-    def dot(cls, products, k, splits, top_k=0):
-        total = cls.exact_sum(products.abs(), -1)
+    def dot(cls, products, k, splits, top_k=0, *, e4m3=False):
+        total = (cls.exact_sum_e4m3 if e4m3 else cls.exact_sum)(products.abs(), -1)
         return cls(total).rounded(k + splits) if k + splits + top_k < 2**20 else cls(total, False)
 
     def rounded(self, count=1, *, bf16=False):
