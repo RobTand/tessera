@@ -192,6 +192,51 @@ def feeder_events(canary):
     return [json.loads(line) for line in (canary / 'counted-feeder.jsonl').read_text().splitlines()]
 
 
+def assert_prepare_audit_hold(tmp_path, canary, bookings, configs):
+    """An unknown submit result keeps the intent, writes no PASS, and the next run holds the unit for audit."""
+    key = next(unit['key'] for unit in configs['module-A']['templates'] if unit['phase'] == 'prepare')
+    attempt, = api.attempt_jobs(tmp_path / 'module-A', key)
+    assert attempt.name == '1'
+    assert api.read(attempt / 'prepare-intent.json')['arguments'] == [str(attempt)]
+    assert not (attempt / 'prepare-jobid').exists()
+    with pytest.raises(api.FeederError, match='SUBMISSION_AMBIGUOUS_AUDIT_REQUIRED'):
+        api.run(canary, bookings)
+    events = feeder_events(canary)
+    assert not any(event['event'] == 'COMPLETE' or event.get('outcome') == 'PASS' for event in events)
+    assert any(event['event'] == 'AUDIT_HOLD' and event['module'] == 'module-A'
+               and event['unit'] == key and event['phase'] == 'prepare' for event in events)
+
+
+def test_feeder_records_hold_when_flux_drain_times_out(tmp_path, monkeypatch):
+    canary, bookings, configs = make_graph(tmp_path, monkeypatch, ('module-A',), external=True)
+    settings = api.read(api.SETTINGS)
+    settings.update(client_timeout_seconds=1, fv1_memory_without_fv1e_drain_gib=0)
+    api.SETTINGS.write_text(json.dumps(settings))
+    state_path = canary / 'counted-feeder-state.json'
+    state = api.read(state_path)
+    state['settings_sha256'] = api.sha(api.SETTINGS)
+    state_path.write_text(json.dumps(state))
+    child = tmp_path / 'paused-flux'
+    child.write_text('#!/usr/bin/env python3\nimport signal\nsignal.pause()\n')
+    child.chmod(0o700)
+    fxe = api.FXE
+    monkeypatch.setattr(api, 'FXE', str(child))
+
+    with pytest.raises((api.FeederError, subprocess.TimeoutExpired)):
+        api.run(canary, bookings)
+    monkeypatch.setattr(api, 'FXE', fxe)
+    assert_prepare_audit_hold(tmp_path, canary, bookings, configs)
+
+
+def test_feeder_records_hold_when_gate_dies_from_signal(tmp_path, monkeypatch):
+    canary, bookings, configs = make_graph(tmp_path, monkeypatch, ('module-A',), external=True)
+    (tmp_path / 'stub-gate').write_text('#!/usr/bin/env python3\nimport os, signal\nos.kill(os.getpid(), signal.SIGKILL)\n')
+
+    with pytest.raises(api.FeederError, match='SUBMISSION_AMBIGUOUS_AUDIT_REQUIRED'):
+        api.run(canary, bookings)
+    assert_prepare_audit_hold(tmp_path, canary, bookings, configs)
+
+
 @pytest.mark.parametrize('outcome,finalized', [('FAIL', True), ('STOPPED', True), ('FAIL', False)])
 def test_feeder_continues_after_compare_exit_three(tmp_path, monkeypatch, outcome, finalized):
     assert hasattr(api, 'PhaseJobFailed'), 'feature absent: finalized compare exit 3 lets the wave continue'
