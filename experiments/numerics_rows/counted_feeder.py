@@ -6,6 +6,7 @@ import hashlib
 import json
 from pathlib import Path
 import re
+from shutil import rmtree
 import subprocess
 import sys
 from tempfile import NamedTemporaryFile, TemporaryDirectory
@@ -31,6 +32,28 @@ def read(path):
 
 class FeederError(ValueError):
     pass
+
+
+class PhaseJobFailed(FeederError):
+    pass
+
+
+def stopped_attempts(directory, keys):
+    """Use the compare reader to find attempts that need a lead cause."""
+    from experiments.numerics_rows.dense_phases import inspect_attempts
+    stopped = set()
+    for key in keys:
+        inventory = attempt_jobs(directory, key)
+        source = next((attempt / phase / 'phase.json' for attempt in inventory for phase in ('prepare', 'capture')
+                       if (attempt / phase / 'phase.json').is_file()), None)
+        if source is None:
+            stopped.update(f'{key}/{p.name}' for p in inventory if not (p / 'lead-cause.json').is_file())
+            continue
+        document = read(source)
+        _, _, _, unfinished = inspect_attempts(inventory[0].parent, key, document['scopes'], document['identities'], document['case_set'])
+        stopped.update(reason.removeprefix('open STOPPED attempt ') for reason in unfinished.values()
+                       if reason.startswith('open STOPPED attempt '))
+    return sorted(stopped)
 
 
 def attempt_jobs(root, key):
@@ -161,6 +184,9 @@ def run(canary, bookings, retries=None):
     settings = read(SETTINGS)
     lock = (canary / 'counted-feeder.lock').open('w')
     fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    for scratch in canary.glob('.counted-feeder-*'):
+        if scratch.is_dir() and not scratch.is_symlink():
+            rmtree(scratch)
     rows = read(canary / 'counted-rows.json')
     requested = read(bookings)
     if set(requested) != set(rows):
@@ -214,6 +240,25 @@ def run(canary, bookings, retries=None):
                   effect='new fv1e prepares only; running prepares continue')
         return limit
 
+    def check_ended(previous, key):
+        phases = ['compare'] if key.startswith('compare-') else ['prepare', 'capture']
+        for phase in phases:
+            metadata = previous / (phase + '-instance.json')
+            stored = next((v for v in state['jobs'].values() if v['directory'] == str(previous / phase)), None)
+            if metadata.exists() or stored:
+                identity = read(metadata) if metadata.exists() else stored['instance']
+                if observe(identity['name']) != {k: v for k, v in identity.items() if k != 'job_id'}:
+                    raise FeederError('RESUME_PHASE_INSTANCE_DIFFERS')
+                result = subprocess.run([*client(identity['name']), 'job', 'status', '--exception-exit-code=125', identity['job_id']], check=False)
+                native = int(subprocess.check_output([*client(identity['name']), 'jobs', '-n', '-o', '{returncode}', identity['job_id']], text=True))
+                output = subprocess.check_output([*client(identity['name']), 'job', 'info', identity['job_id'], 'guest.output'])
+                event('RETRY_END', unit=key, phase=phase, id=identity['job_id'], status=result.returncode,
+                      native_exit=native, logs={'flux-kvs': hashlib.sha256(output).hexdigest()})
+            elif not (previous / (phase + '-refused.json')).exists() and (
+                    (previous / phase).exists() or (previous / (phase + '-intent.json')).exists()
+                    or (previous / (phase + '-jobid')).exists()):
+                raise FeederError('SUBMISSION_AMBIGUOUS_AUDIT_REQUIRED')
+
     accepted, attempts, templates = set(), {}, {}
     for module, directory in rows.items():
         directory = Path(directory)
@@ -237,38 +282,25 @@ def run(canary, bookings, retries=None):
                 if target != len(inventory) + 1 or not inventory:
                     raise FeederError('RETRY_MUST_BE_NEXT_ATTEMPT')
                 previous = inventory[-1]
-                phases = ['compare'] if key.startswith('compare-') else ['prepare', 'capture']
-                ended = False
-                for phase in phases:
-                    metadata = previous / (phase + '-instance.json')
-                    stored = next((v for v in state['jobs'].values() if v['directory'] == str(previous / phase)), None)
-                    if metadata.exists() or stored:
-                        identity = read(metadata) if metadata.exists() else stored['instance']
-                        if observe(identity['name']) != {k: v for k, v in identity.items() if k != 'job_id'}:
-                            raise FeederError('RESUME_PHASE_INSTANCE_DIFFERS')
-                        result = subprocess.run([*client(identity['name']), 'job', 'status', '--exception-exit-code=125', identity['job_id']], check=False)
-                        native = int(subprocess.check_output([*client(identity['name']), 'jobs', '-n', '-o', '{returncode}', identity['job_id']], text=True))
-                        output = subprocess.check_output([*client(identity['name']), 'job', 'info', identity['job_id'], 'guest.output'])
-                        event('RETRY_END', unit=key, phase=phase, id=identity['job_id'], status=result.returncode,
-                              native_exit=native, logs={'flux-kvs': hashlib.sha256(output).hexdigest()})
-                        ended = True
-                    elif not (previous / (phase + '-refused.json')).exists() and (
-                            (previous / phase).exists() or (previous / (phase + '-intent.json')).exists()):
-                        raise FeederError('SUBMISSION_AMBIGUOUS_AUDIT_REQUIRED')
-                if not ended:
-                    raise FeederError('RETRY_REQUIRES_ENDED_JOB')
+                check_ended(previous, key)
             attempt = directory / 'units' / key / 'attempts' / str(target)
-            attempt.mkdir(parents=True, exist_ok=True)
             attempts[module, key] = attempt
-            if pairs is not None:
-                (attempt / 'compare-inputs.json').write_text(json.dumps(pairs) + '\n')
 
     if set(retries or {}) - {key for _, key in attempts}:
         raise FeederError('RETRY_UNIT_UNKNOWN')
+    for (module, key), attempt in attempts.items():
+        if not key.startswith('compare-'):
+            attempt.mkdir(parents=True, exist_ok=True)
 
     def phase_job(module, unit, name='fv1', host='sparklina', collect=True):
         phase, key = unit['phase'], unit['key']
         template = Path(rows[module]) / 'templates' / key / phase
+        if phase == 'compare':
+            pairs = {member: str(attempts[module, member]) for member in read(Path(rows[module]) / 'campaign.json')['unit_keys']}
+            current = attempts[module, key]
+            if (current / 'compare-inputs.json').exists() and read(current / 'compare-inputs.json') != pairs:
+                check_ended(current, key)
+                attempts[module, key] = current.with_name(str(int(current.name) + 1))
         arguments = [attempts[module, member] for member in unit.get('unit_keys', [key])]
         jobs = [attempt / phase for attempt in arguments]
         ids = [attempt / (phase + '-jobid') for attempt in arguments]
@@ -312,6 +344,9 @@ def run(canary, bookings, retries=None):
             intent = {'instance': bound, 'arguments': list(map(str, arguments)), 'fv1e_drain': drain,
                       'jobspec_sha256': hashlib.sha256(spec.encode('utf-8')).hexdigest(),
                       'env_names': sorted(table['env_names'])}
+            if phase == 'compare':
+                arguments[0].mkdir(parents=True, exist_ok=True)
+                (arguments[0] / 'compare-inputs.json').write_text(json.dumps(pairs) + '\n')
             with ExitStack() as submission:
                 for path in intents:
                     stream = submission.enter_context(path.open('w'))
@@ -361,11 +396,21 @@ def run(canary, bookings, retries=None):
         kvs = subprocess.check_output([*client(name), 'job', 'info', jobid, 'guest.output'])
         logs = {'flux-kvs': hashlib.sha256(kvs).hexdigest()}
         for job in jobs:
-            exits = {label: (job / (label + '-exit.txt')).read_text().strip() for label in ('tool', 'payload', 'podman')}
+            exits = {label: (job / (label + '-exit.txt')).read_text().strip()
+                     if (job / (label + '-exit.txt')).is_file() else None for label in ('tool', 'payload', 'podman')}
             logs.update({str(p): sha(p) for p in (job / 'payload.stdout', job / 'payload.stderr') if p.is_file()})
+            receipt = read(job / 'numerics_row.json') if (job / 'numerics_row.json').is_file() else {}
+            finalized = (phase == 'compare' and status.returncode == native == 3
+                         and receipt.get('row', {}).get('finalization_finished') is True
+                         and receipt['row']['outcome'] in ('FAIL', 'STOPPED') and all(v in ('0', '3') for v in exits.values()))
+            job_failed = (status.returncode != 0 or native != 0 or any(v != '0' for v in exits.values())) and not finalized
+            if job_failed:
+                state['jobs'][str(job)]['failed'] = True
             event('END', module=module, phase=phase, id=jobid, native_exit=native, exits=exits, logs=logs)
-            if status.returncode != 0 or native != 0 or any(value != '0' for value in exits.values()):
-                raise FeederError('COUNTED_PHASE_FAILED')
+            if job_failed:
+                if receipt.get('row', {}).get('outcome') == 'FAIL' or any(u.get('findings') or u.get('outcome') == 'FAIL' for u in receipt.get('units', [])):
+                    raise FeederError('COUNTED_PHASE_FINDING')
+                raise PhaseJobFailed('COUNTED_PHASE_FAILED')
             if read(job / 'phase.json').get('completion') is not True:
                 raise FeederError('COUNTED_PHASE_UNFINISHED')
             manifest = job / 'completion.sha256'
@@ -425,8 +470,42 @@ def run(canary, bookings, retries=None):
         review_peak((canary / 'prepare/jobid').read_text().strip(), 'fv1')
     pending = [(module, unit) for index in range(max(len(templates[m]) for m in modules))
                for module in modules for unit in templates[module][index:index + 1] if unit['phase'] == 'prepare']
-    finished, refused, captures_running, launched = set(), set(), [], set()
+    finished, refused, failed, captures_running, launched = set(), set(), {}, [], set()
+
+    def collect_phase(module, unit, *lane):
+        try:
+            return phase_job(module, unit, *lane)
+        except FeederError as phase_error:
+            if not str(phase_error).startswith('COUNTED_PHASE_'):
+                raise
+            members = unit.get('unit_keys', [unit['key']])
+            failures = max(sum(v.get('failed', False) for v in state['jobs'].values()
+                               if Path(v['directory']).is_relative_to(Path(rows[module]) / 'units' / member / 'attempts')
+                               and Path(v['directory']).name == unit['phase']) for member in members)
+            table = read(Path(rows[module]) / 'templates' / unit['key'] / unit['phase'] / 'table.json')
+            if (isinstance(phase_error, PhaseJobFailed) and unit['phase'] in ('prepare', 'capture') and failures == 1
+                    and all(int(attempts[module, member].name) < table['max_attempts'] for member in members)):
+                for member in members:
+                    previous = attempts[module, member]
+                    attempt = previous.with_name(str(int(previous.name) + 1))
+                    attempt.mkdir()
+                    attempts[module, member] = attempt
+                    finished.discard((module, member, 'prepare'))
+                    prepare = next(u for u in templates[module] if u['key'] == member and u['phase'] == 'prepare')
+                    if (module, prepare) not in pending:
+                        pending.append((module, prepare))
+                launched.discard((module, unit['key']))
+                event('AUTO_RETRY', module=module, phase=unit['phase'], units=members,
+                      attempts={member: attempts[module, member].name for member in members})
+            else:
+                failed[module] = str(phase_error)
+                event('HOLD_FOR_LEAD', module=module, phase=unit['phase'], units=members, reason=str(phase_error))
+            return False
+
     while pending or captures_running:
+        pending[:] = [(m, u) for m, u in pending if m not in failed]
+        if not pending and not captures_running:
+            break
         previous_captures = list(captures_running)
         if state['fv1e_admission'] == 'pending' and all(m == first for m, _ in pending):
             state.update(fv1e_admission='stopped', fv1e_stop_reason='no valid anon sample in this wave')
@@ -435,8 +514,11 @@ def run(canary, bookings, retries=None):
         e_lanes = [lane for lane in dict.fromkeys(map(tuple, state['lanes'])) if lane[0] != 'fv1'
                    and not (canary / ('pause-fv1e-' + lane[1])).exists() for _ in range(limits[lane[1]])]
         if state['fv1e_admission'] == 'admitted' and 'ep_tensor_check' not in state and e_lanes:
-            probe = next(unit for module, unit in pending if module == first)
-            if phase_job(first, probe, *e_lanes[0]):
+            probe = next((unit for module, unit in pending if module == first), None)
+            if probe is None:
+                state.update(fv1e_admission='stopped', fv1e_stop_reason='counted canary module held for lead')
+                continue
+            if collect_phase(first, probe, *e_lanes[0]):
                 from experiments.numerics_rows.phase_artifact import tensor_subset_equal
                 reference = canary / 'prepare/results/prepare'
                 if canary_config.get('templates'):
@@ -445,11 +527,12 @@ def run(canary, bookings, retries=None):
                     reference = attempt_jobs(canary, original['key'])[-1] / 'prepare'
                 state['ep_tensor_check'] = tensor_subset_equal(reference, attempts[first, probe['key']] / 'prepare')
                 event('EP_TENSOR_EQUAL', **state['ep_tensor_check'])
-            elif (attempts[first, probe['key']] / 'prepare-refused.json').exists():
-                refused.add(first)
-                state.update(fv1e_admission='stopped', fv1e_stop_reason='gate refused counted canary unit')
+            elif first in failed or (attempts[first, probe['key']] / 'prepare-refused.json').exists():
+                if first not in failed:
+                    refused.add(first)
+                state.update(fv1e_admission='stopped', fv1e_stop_reason='counted canary module held for lead' if first in failed else 'gate refused counted canary unit')
                 event('STOP', reason=state['fv1e_stop_reason'], scope='new fv1e prepares only')
-                state['ep_tensor_check'] = {'ran': False, 'reason': 'gate refused counted canary unit'}
+                state['ep_tensor_check'] = {'ran': False, 'reason': state['fv1e_stop_reason']}
                 event('EP_NOT_RUN', **state['ep_tensor_check'])
         if state['fv1e_admission'] == 'stopped' and 'ep_tensor_check' not in state:
             state['ep_tensor_check'] = {'ran': False, 'reason': state.get('fv1e_stop_reason', 'no fv1e in this wave')}
@@ -471,13 +554,13 @@ def run(canary, bookings, retries=None):
                 refused.add(module)
                 pending.remove((module, unit))
         for module, unit in started:
-            phase_job(module, unit)
-            finished.add((module, unit['key'], 'prepare'))
-            pending.remove((module, unit))
+            if collect_phase(module, unit):
+                finished.add((module, unit['key'], 'prepare'))
+                pending.remove((module, unit))
         for module in modules:
             for unit in templates[module]:
                 members = unit.get('unit_keys', [unit['key']])
-                if unit['phase'] != 'capture' or (module, unit['key']) in launched:
+                if module in failed or unit['phase'] != 'capture' or (module, unit['key']) in launched:
                     continue
                 if all((module, member, 'prepare') in finished for member in members):
                     launched.add((module, unit['key']))
@@ -486,28 +569,41 @@ def run(canary, bookings, retries=None):
                     else:
                         refused.add(module)
         for module, unit in previous_captures:
-            phase_job(module, unit)
-            finished.add((module, unit['key'], 'capture'))
+            if collect_phase(module, unit):
+                finished.add((module, unit['key'], 'capture'))
             captures_running.remove((module, unit))
         for module in modules:
             captures = [u for u in templates[module] if u['phase'] == 'capture']
-            if module not in refused and (module, 'compare') not in finished and all(
+            if module not in refused and module not in failed and (module, 'compare') not in finished and all(
                     (module, u['key'], 'capture') in finished for u in captures):
+                stopped = stopped_attempts(Path(rows[module]), read(Path(rows[module]) / 'campaign.json')['unit_keys'])
+                if stopped:
+                    failed[module] = 'COUNTED_PHASE_STOPPED'
+                    event('HOLD_FOR_LEAD', module=module, phase='compare', attempts=stopped, reason=failed[module])
+                    continue
                 compare = next(u for u in templates[module] if u['phase'] == 'compare')
-                if phase_job(module, compare):
+                if collect_phase(module, compare):
                     receipt = read(attempts[module, compare['key']] / 'compare/numerics_row.json')
-                    event('ROW', module=module, outcome=receipt['row']['outcome'])
-                    if not receipt['row'].get('finalization_finished') or receipt['row']['outcome'] != 'PASS':
-                        raise FeederError('COUNTED_COMPARE_NOT_PASS')
-                else:
+                    outcome = receipt['row']['outcome']
+                    if not receipt['row'].get('finalization_finished'):
+                        failed[module] = 'COUNTED_PHASE_COMPARE_UNFINISHED'
+                    else:
+                        if outcome == 'FAIL' and 'first_fail_row' not in state:
+                            state['first_fail_row'] = {'module': module, 'outcome': outcome}
+                            event('FIRST_FAIL_ROW', **state['first_fail_row'])
+                        event('ROW', module=module, outcome=outcome)
+                        if outcome != 'PASS':
+                            failed[module] = 'COUNTED_PHASE_COMPARE_' + outcome
+                elif module not in failed:
                     refused.add(module)
                 finished.add((module, 'compare'))
         if not started and pending and not any(item in eligible for item in pending):
             event('HOLD', reason='canary counted row awaits fv1e admission or pause release')
             time.sleep(settings['pending_poll_seconds'])
-    if refused:
-        event('UNITS_REFUSED', modules=sorted(refused))
-        raise FeederError('COUNTED_UNITS_REFUSED')
+    if failed or refused:
+        event('UNITS_REFUSED', modules=sorted(refused), failed=failed)
+        raise FeederError('COUNTED_PHASE_FAILED ' + json.dumps(failed, sort_keys=True)
+                          + ' COUNTED_UNITS_REFUSED ' + json.dumps(sorted(refused)))
     event('COMPLETE', modules=len(rows))
 
 

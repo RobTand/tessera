@@ -204,6 +204,30 @@ def test_compare_template_lists_all_units_and_uses_fv1e(tmp_path):
     assert list(json.loads((directory / "table.json").read_text())["instances"]) == ["fv1"]
 
 
+@pytest.mark.parametrize('outcome,finalized', [('FAIL', True), ('STOPPED', True), ('FAIL', False)])
+def test_compare_exit_three_keeps_checked_completion_hashes(tmp_path, outcome, finalized):
+    assert 'r.get("finalization_finished")' in (Path(prepare_split.__file__).parent / 'templates/job.sh').read_text(), 'feature absent: finalized compare exit 3 has completion hashes'
+    _, directories = templates(tmp_path / 'module')
+    directory = next(p for p in directories if p.name == 'compare')
+    job = tmp_path / 'compare-output'
+    job.mkdir()
+    (job / 'phase.json').write_text('{"completion":true}')
+    receipt = job / 'numerics_row.json'
+    receipt.write_text(json.dumps({'row': {'outcome': outcome, 'finalization_finished': finalized}}))
+    tail = 'rc=0\n' + (directory / 'job.sh').read_text().split('rc=0\n', 1)[1]
+    script = 'set -euo pipefail\ntimeout() { return 3; }\n'
+    script += 'task_scratch=$PWD\nname=stub\nphase_mounts=()\npopulation_mount=()\nclaimed=("$PWD")\n' + tail
+    result = subprocess.run(['bash', '-c', script], cwd=job, text=True, capture_output=True)
+    assert result.returncode == 3
+    assert (job / 'completion.sha256').exists() is finalized
+    if finalized:
+        checked = subprocess.run(['sha256sum', '-c', 'completion.sha256'], cwd=job, capture_output=True)
+        assert checked.returncode == 0
+        receipt.write_text('{}')
+        changed = subprocess.run(['sha256sum', '-c', 'completion.sha256'], cwd=job, capture_output=True)
+        assert changed.returncode != 0
+
+
 @pytest.mark.parametrize("phase", ("prepare", "capture"))
 def test_phase_local_outputs_keep_partial_fail_evidence(tmp_path, phase):
     assert hasattr(prepare_split, "write_templates"), "feature absent: phase-local files retain partial FAIL and artifact paths"

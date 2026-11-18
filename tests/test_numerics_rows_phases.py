@@ -879,6 +879,7 @@ def test_capture_telemetry_records_known_sample_coverage(split_canary_evidence):
 
 @pytest.fixture
 def feeder_booking(tmp_path, monkeypatch):
+    import hashlib
     from experiments.numerics_rows import counted_feeder as api, prepare_split
     canary, rowdir = tmp_path / "canary", tmp_path / "row"
     canary.mkdir(); rowdir.mkdir()
@@ -921,7 +922,11 @@ def feeder_booking(tmp_path, monkeypatch):
             job.mkdir()
             for label in ('tool', 'payload', 'podman'):
                 (job / (label + '-exit.txt')).write_text('0')
-            write(job / 'phase.json', {'completion': True})
+            empty_digest = hashlib.sha256(b'').hexdigest()
+            write(job / 'phase.json', {'schema': 'tessera.dense_row_phase.v2', 'phase': phase, 'completion': True,
+                  'identities': {}, 'scopes': [{'module': 'module-A', 'unit_key': 'unit-A'}], 'case_set': 'gate',
+                  'ordinal_start': 0, 'streams': {'cases': {'count': 0, 'sha256': empty_digest}}, 'case_ids_sha256': empty_digest})
+            (job / 'cases.jsonl').touch()
             (job / 'payload.stdout').write_text('payload')
             (job / 'payload.stderr').write_text('')
             (job / 'completion.sha256').write_text('a' * 64 + '  phase.json\n')
@@ -1384,7 +1389,7 @@ def test_feeder_undrains_only_after_clean_and_checks(feeder_booking, monkeypatch
             events.append('clean')
         result = original(command, **kw)
         if command[0] == api.read(api.SETTINGS)['fleet_submit_gate'] and Path(command[2]).name == 'capture':
-            capture = rowdir / 'units/unit-A/attempts/1/capture'
+            capture = Path(json.loads(Path(command[4]).read_text())['arguments'][0]) / 'capture'
             if failure == 'native':
                 (capture / 'podman-exit.txt').write_text('1')
             if failure == 'artifact':

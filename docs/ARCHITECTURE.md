@@ -1,6 +1,6 @@
 # Tessera plan-to-serve architecture
 
-Re-stamped 2026-11-18 for #1717 per-unit FAIL and STOPPED across all attempts. Fleet gate remains f480e7d8.
+Re-stamped 2026-11-18 for #1717 unattended module failures and bounded job retries. Fleet gate remains f480e7d8.
 Each module has prepare and capture templates per TP unit and case set, plus one compare template.
 The generator accepts an explicit campaign output root and refuses an existing root. Without that parameter, it keeps the dated shared path.
 The CLI accepts `--output-root` and `--module` for canary generation.
@@ -35,6 +35,7 @@ The phase reader retains FAIL from phase-local partial receipts. It reads no att
 The feeder uses these templates through Fleet's gate. The dense-chain HOLD remains.
 The feeder builds a dry-run jobspec from each table. The gate alone submits the checked bytes and writes the TSV.
 The jobspec uses a mode-0600 file in private feeder scratch outside attempt directories. The feeder removes it after the gate call, also on error.
+At startup, the feeder removes stale private jobspec scratch directories under its exclusive lock, before any submit.
 Attempt intent retains only the jobspec SHA-256 and sorted environment names. It retains no environment values.
 Each edge uses one blocking status call on its producer instance, followed by exit, log-hash, identity, and artifact checks.
 Every jobspec has only singleton. No jobspec contains afterok or a foreign instance's job ID.
@@ -45,15 +46,30 @@ Submit intent precedes the gate call. A blocking intent-file lock keeps the work
 A restart reuses running and finished jobs. An unknown submit result requires an audit and prevents a duplicate.
 Singleton names prevent two attempts of one unit and phase from running at the same time.
 An explicit `--retry UNIT=N` selects only the next attempt after earlier jobs end. FAIL attempts remain.
-Changed unit attempts create a new compare attempt. Its metadata binds the selected unit attempt paths.
+Gate-refused phases and phases without an intent, saved ID, or claim also permit a retry.
+All startup refusals precede attempt creation. Compare attempts and their input bindings are created only at submission.
+Changed unit attempts select a new compare attempt. Its metadata binds the selected unit attempt paths.
 A gate refusal stops that unit. Other units continue, and the feeder records an incomplete run.
+A failed prepare or capture job gets one automatic next attempt within the table's attempt cap. Findings get no automatic retry.
+A second job failure for the same unit and phase records HOLD_FOR_LEAD and holds that module. Other modules continue.
+Compare uses the attempt reader to hold a module until each open STOPPED attempt has its lead cause record.
+A finalized compare with exit 3 retains its checked completion hashes and records ROW with FAIL or STOPPED.
+The first FAIL row records FIRST_FAIL_ROW immediately, before ROW and further submissions. Saved state prevents a duplicate event on restart.
+The feeder continues with other modules and ends with one FeederError that names failed and refused modules using COUNTED_PHASE_ text.
 
 ```mermaid
 flowchart LR
   P[Unit prepares on fv1 or admitted fv1e] --> S1[Producer status and evidence]
   S1 --> C[Single or group captures on fv1]
   C --> S2[Producer status and evidence]
-  S2 --> M[Module compare on fv1]
+  S1 -->|Job failure| R{First failure for this unit and phase?}
+  S2 -->|Job failure| R
+  R -->|Yes, within attempt cap| P
+  R -->|No| L[Hold module for lead]
+  S2 --> H{STOPPED causes recorded?}
+  H -->|Yes| M[Module compare on fv1]
+  H -->|No| L
+  M --> O[Record ROW and first FAIL event; continue other modules]
 ```
 
 The Fleet gate submits every stage from its reviewed table. Singleton is the only native dependency.

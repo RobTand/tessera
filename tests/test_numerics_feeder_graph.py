@@ -12,6 +12,7 @@ import sys
 import pytest
 
 from experiments.numerics_rows import counted_feeder as api, phase_instance, prepare_split
+from experiments.numerics_rows.launch_state import json_digest
 
 
 FAKE = r'''#!/usr/bin/env python3
@@ -83,19 +84,35 @@ elif args[:2] == ['job', 'submit']:
     jobid = 'fAAA' + 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz'[len(state['jobs'])]
     command = spec['tasks'][0]['command']
     phase = pathlib.Path(command[0]).parent.name
-    state['jobs'][jobid] = {'instance': name, 'phase': phase, 'arguments': command[1:]}
-    save()
+    state['jobs'][jobid] = {'instance': name, 'phase': phase, 'arguments': command[1:], 'returncode': 0}
+    rules = json.loads((root / 'job-outcomes.json').read_text()) if (root / 'job-outcomes.json').exists() else []
     for argument in command[1:]:
         job = pathlib.Path(argument) / phase
+        rule = next((r for r in rules if r['module'] == pathlib.Path(argument).parents[3].name and r['phase'] == phase
+                     and int(pathlib.Path(argument).name) in r.get('attempts', [1])
+                     and r.get('key', pathlib.Path(argument).parents[1].name) == pathlib.Path(argument).parents[1].name), {})
+        rc = rule.get('exit', 0)
+        state['jobs'][jobid]['returncode'] = max(state['jobs'][jobid]['returncode'], rc)
         job.mkdir()
-        for label in ('tool', 'payload', 'podman'): (job / (label + '-exit.txt')).write_text('0')
-        (job / 'phase.json').write_text(json.dumps({'completion': True}))
+        for label in ('tool', 'payload', 'podman'): (job / (label + '-exit.txt')).write_text(str(rc))
+        empty_digest = hashlib.sha256(b'').hexdigest()
+        document = {'schema': 'tessera.dense_row_phase.v2', 'phase': phase, 'completion': rule.get('completion', True),
+                    'identities': {}, 'scopes': [{'module': pathlib.Path(argument).parents[3].name,
+                                                'unit_key': pathlib.Path(argument).parents[1].name}],
+                    'case_set': 'diagnostics' if '-diagnostics-' in argument else 'gate', 'ordinal_start': 0,
+                    'streams': {'cases': {'count': 0, 'sha256': empty_digest}}, 'case_ids_sha256': empty_digest}
+        (job / 'phase.json').write_text(json.dumps(document))
+        (job / 'cases.jsonl').touch()
         (job / 'payload.stdout').write_text('payload log')
         (job / 'payload.stderr').write_text('')
-        if phase == 'compare':
-            (job / 'numerics_row.json').write_text(json.dumps({'row': {'outcome': 'PASS', 'finalization_finished': True}}))
+        if phase == 'compare' or 'outcome' in rule:
+            (job / 'numerics_row.json').write_text(json.dumps({'row': {'outcome': rule.get('outcome', 'PASS'),
+                'finalization_finished': rule.get('finalized', phase == 'compare')}}))
         files = sorted(job.iterdir())
         (job / 'completion.sha256').write_text(''.join(hashlib.sha256(p.read_bytes()).hexdigest() + '  ' + p.name + '\n' for p in files))
+        if rule.get('completion') is False:
+            (job / 'completion.sha256').unlink()
+    save()
     record({'action': 'submit', 'instance': name, 'id': jobid, 'phase': phase, 'arguments': command[1:]})
     print(jobid)
 elif args[:2] == ['job', 'status']:
@@ -103,7 +120,7 @@ elif args[:2] == ['job', 'status']:
     if (root / 'block').exists():
         with (root / 'wait-fifo').open('w') as stream: stream.write(args[-1] + '\n')
         while not (root / 'release').exists(): time.sleep(0.01)
-    sys.exit(0)
+    sys.exit(state['jobs'][args[-1]].get('returncode', 0))
 elif args[:2] == ['job', 'info']:
     print('KVS stdout and stderr')
 elif '--json' in args:
@@ -111,7 +128,7 @@ elif '--json' in args:
 elif '{runtime:.6f}' in args:
     print('100')
 elif '{returncode}' in args:
-    print('0')
+    print(state['jobs'][args[-1]].get('returncode', 0))
 else:
     sys.exit('unexpected fake Flux call')
 '''
@@ -161,6 +178,170 @@ def make_graph(tmp_path, monkeypatch, modules=('module-A', 'module-B')):
 
 def calls(graph):
     return [json.loads(line) for line in (graph[0].parent / 'calls.jsonl').read_text().splitlines()]
+
+
+def feeder_events(canary):
+    return [json.loads(line) for line in (canary / 'counted-feeder.jsonl').read_text().splitlines()]
+
+
+@pytest.mark.parametrize('outcome,finalized', [('FAIL', True), ('STOPPED', True), ('FAIL', False)])
+def test_feeder_continues_after_compare_exit_three(tmp_path, monkeypatch, outcome, finalized):
+    assert hasattr(api, 'PhaseJobFailed'), 'feature absent: finalized compare exit 3 lets the wave continue'
+    canary, bookings, _ = graph = make_graph(tmp_path, monkeypatch, ('module-A', 'module-B', 'module-C'))
+    (tmp_path / 'job-outcomes.json').write_text(json.dumps([
+        {'module': module, 'phase': 'compare', 'exit': 3, 'outcome': outcome, 'finalized': finalized}
+        for module in ('module-B', 'module-C')]))
+    with pytest.raises(api.FeederError, match='COUNTED_PHASE_.*module-B.*module-C'):
+        api.run(canary, bookings)
+    trace = feeder_events(canary)
+    rows = [e for e in trace if e['event'] == 'ROW']
+    assert {e['module'] for e in rows} == ({'module-A', 'module-B', 'module-C'} if finalized else {'module-A'})
+    assert all(e['outcome'] == (outcome if e['module'] != 'module-A' else 'PASS') for e in rows)
+    first = [e for e in trace if e['event'] == 'FIRST_FAIL_ROW']
+    assert len(first) == int(finalized and outcome == 'FAIL')
+    if first:
+        assert trace.index(first[0]) + 1 == next(i for i, e in enumerate(trace) if e['event'] == 'ROW' and e['outcome'] == 'FAIL')
+        assert any(e['event'] == 'SUBMIT_INTENT' for e in trace[trace.index(first[0]) + 1:])
+    before = [c for c in calls(graph) if c['action'] == 'submit']
+    with pytest.raises(api.FeederError, match='COUNTED_PHASE_'):
+        api.run(canary, bookings)
+    assert [c for c in calls(graph) if c['action'] == 'submit'] == before
+    assert sum(e['event'] == 'FIRST_FAIL_ROW' for e in feeder_events(canary)) == len(first)
+
+
+@pytest.mark.parametrize('phase', ['prepare', 'capture'])
+@pytest.mark.parametrize('failures', [1, 2])
+def test_feeder_retries_a_job_once_and_holds_its_module(tmp_path, monkeypatch, phase, failures):
+    assert hasattr(api, 'PhaseJobFailed'), 'feature absent: one automatic job retry then a module hold'
+    canary, bookings, configs = graph = make_graph(tmp_path, monkeypatch)
+    key = configs['module-B']['unit_keys'][0]
+    (tmp_path / 'job-outcomes.json').write_text(json.dumps([
+        {'module': 'module-B', 'key': key, 'phase': phase, 'exit': 1,
+         'completion': False, 'attempts': list(range(1, failures + 1))}]))
+    with pytest.raises(api.FeederError, match='COUNTED_PHASE_.*module-B'):
+        api.run(canary, bookings)
+    trace = calls(graph)
+    unit_submits = [c for c in trace if c['action'] == 'submit' and c['phase'] == phase and key in c['arguments'][0]]
+    assert [Path(c['arguments'][0]).name for c in unit_submits] == ['1', '2']
+    assert any(e['event'] == 'ROW' and e['module'] == 'module-A' for e in feeder_events(canary))
+    assert sum(e['event'] == 'AUTO_RETRY' for e in feeder_events(canary)) == 1
+    assert any(e['event'] == 'HOLD_FOR_LEAD' and e['phase'] == (phase if failures == 2 else 'compare') for e in feeder_events(canary))
+    assert not any(c['action'] == 'submit' and c['phase'] == 'compare' and 'module-B' in c['arguments'][0] for c in trace)
+    assert not list((tmp_path / 'module-B/units').glob('compare-*/attempts/*'))
+    before = [c for c in trace if c['action'] == 'submit']
+    with pytest.raises(api.FeederError, match='COUNTED_PHASE_'):
+        api.run(canary, bookings)
+    assert [c for c in calls(graph) if c['action'] == 'submit'] == before
+    attempt = tmp_path / 'module-B/units' / key / 'attempts/1'
+    for number in range(1, failures + 1):
+        (attempt.with_name(str(number)) / 'lead-cause.json').write_text(json.dumps(
+            {'unit': key, 'attempt': number, 'cause': 'The lead confirmed job termination.'}))
+    api.run(canary, bookings, {key: 3} if failures == 2 else None)
+    compare = next((tmp_path / 'module-B/units').glob('compare-*/attempts/1'))
+    pairs = api.read(compare / 'compare-inputs.json')
+    assert pairs[key] == str(attempt.with_name('3' if failures == 2 else '2'))
+    assert (compare / 'compare/numerics_row.json').is_file()
+    assert not compare.with_name('2').exists()
+
+
+@pytest.mark.parametrize('phase', ['prepare', 'capture'])
+def test_feeder_does_not_retry_a_finding(tmp_path, monkeypatch, phase):
+    assert hasattr(api, 'PhaseJobFailed'), 'feature absent: a finding holds its module without a job retry'
+    canary, bookings, configs = graph = make_graph(tmp_path, monkeypatch)
+    key = configs['module-B']['unit_keys'][0]
+    (tmp_path / 'job-outcomes.json').write_text(json.dumps([
+        {'module': 'module-B', 'key': key, 'phase': phase, 'exit': 3, 'outcome': 'FAIL', 'finalized': False}]))
+    with pytest.raises(api.FeederError, match='COUNTED_PHASE_FINDING'):
+        api.run(canary, bookings)
+    assert not any(e['event'] == 'AUTO_RETRY' for e in feeder_events(canary))
+    assert any(e['event'] == 'ROW' and e['module'] == 'module-A' for e in feeder_events(canary))
+    assert not (tmp_path / 'module-B/units' / key / 'attempts/2').exists()
+    assert len([c for c in calls(graph) if c['action'] == 'submit' and c['phase'] == phase and key in c['arguments'][0]]) == 1
+
+
+def test_feeder_reports_failed_and_refused_modules_together(tmp_path, monkeypatch):
+    assert hasattr(api, 'PhaseJobFailed'), 'feature absent: one final error names failed and refused modules'
+    canary, bookings, configs = make_graph(tmp_path, monkeypatch, ('module-A', 'module-B', 'module-C'))
+    key = configs['module-B']['unit_keys'][0]
+    (tmp_path / 'job-outcomes.json').write_text(json.dumps([
+        {'module': 'module-B', 'key': key, 'phase': 'prepare', 'exit': 1, 'completion': False, 'attempts': [1, 2]}]))
+    (tmp_path / 'refuse').write_text('module-C/templates/' + configs['module-C']['unit_keys'][0] + '/prepare')
+    with pytest.raises(api.FeederError, match='COUNTED_PHASE_FAILED.*module-B.*COUNTED_UNITS_REFUSED.*module-C'):
+        api.run(canary, bookings)
+    summary, = [e for e in feeder_events(canary) if e['event'] == 'UNITS_REFUSED']
+    assert summary['modules'] == ['module-C'] and summary['failed'] == {'module-B': 'COUNTED_PHASE_FAILED'}
+    assert any(e['event'] == 'ROW' and e['module'] == 'module-A' for e in feeder_events(canary))
+
+
+@pytest.mark.parametrize('prior', ['refused', 'unused'])
+def test_feeder_explicit_retry_accepts_a_phase_that_never_ran(tmp_path, monkeypatch, prior):
+    assert hasattr(api, 'PhaseJobFailed'), 'feature absent: refused and unused phases permit an explicit retry'
+    canary, bookings, configs = graph = make_graph(tmp_path, monkeypatch)
+    key = configs['module-B']['unit_keys'][0]
+    attempt = tmp_path / 'module-B/units' / key / 'attempts/1'
+    attempt.mkdir(parents=True)
+    if prior == 'refused':
+        (tmp_path / 'refuse').write_text('module-B/templates/' + key + '/prepare')
+        with pytest.raises(api.FeederError, match='COUNTED_UNITS_REFUSED'):
+            api.run(canary, bookings)
+        (tmp_path / 'refuse').unlink()
+    with pytest.raises(api.FeederError, match='COUNTED_PHASE_STOPPED'):
+        api.run(canary, bookings, {key: 2})
+    assert (attempt.with_name('2') / 'capture/phase.json').is_file()
+    assert not list((tmp_path / 'module-B/units').glob('compare-*/attempts/*'))
+    (attempt / 'lead-cause.json').write_text(json.dumps({'unit': key, 'attempt': 1, 'cause': 'The lead confirmed no job ran.'}))
+    api.run(canary, bookings)
+    assert any(c['action'] == 'submit' and c['phase'] == 'compare' and 'module-B' in c['arguments'][0] for c in calls(graph))
+
+
+@pytest.mark.parametrize('refusal', ['unknown', 'unbound', 'bad-next', 'claimed'])
+def test_feeder_checks_all_startup_inputs_before_creating_attempts(tmp_path, monkeypatch, refusal):
+    assert hasattr(api, 'PhaseJobFailed'), 'feature absent: startup checks precede all attempt creation'
+    canary, bookings, configs = graph = make_graph(tmp_path, monkeypatch)
+    api.run(canary, bookings)
+    retries = {configs['module-A']['unit_keys'][0]: 2}
+    if refusal == 'unknown':
+        retries['typo'] = 2
+    elif refusal == 'unbound':
+        config = configs['module-B']
+        config['bound'] = False
+        (tmp_path / 'module-B/campaign.json').write_text(json.dumps(config))
+    else:
+        key = configs['module-B']['unit_keys'][0]
+        retries[key] = 4 if refusal == 'bad-next' else 2
+        if refusal == 'claimed':
+            (tmp_path / 'module-B/units' / key / 'attempts/1/prepare-instance.json').unlink()
+            state_path = canary / 'counted-feeder-state.json'
+            state = api.read(state_path)
+            state['jobs'] = {k: v for k, v in state['jobs'].items() if key not in k}
+            state_path.write_text(json.dumps(state))
+    before = {str(p): p.read_bytes() for p in tmp_path.glob('module-*/units/compare-*/attempts/*/compare-inputs.json')}
+    submits = [c for c in calls(graph) if c['action'] == 'submit']
+    with pytest.raises(api.FeederError, match={'unknown': 'RETRY_UNIT_UNKNOWN', 'unbound': 'COUNTED_ROW_NOT_BOUND',
+                                             'bad-next': 'RETRY_MUST_BE_NEXT_ATTEMPT', 'claimed': 'SUBMISSION_AMBIGUOUS_AUDIT_REQUIRED'}[refusal]):
+        api.run(canary, bookings, retries)
+    assert not list(tmp_path.glob('module-*/units/*/attempts/2'))
+    assert {str(p): p.read_bytes() for p in tmp_path.glob('module-*/units/compare-*/attempts/*/compare-inputs.json')} == before
+    assert [c for c in calls(graph) if c['action'] == 'submit'] == submits
+
+
+def test_feeder_removes_stale_private_scratch_under_its_lock(tmp_path, monkeypatch):
+    assert hasattr(api, 'rmtree'), 'feature absent: feeder start removes stale private jobspec scratch'
+    canary, bookings, _ = make_graph(tmp_path, monkeypatch)
+    stale = canary / '.counted-feeder-stale'
+    stale.mkdir(mode=0o700)
+    (stale / 'spec.json').write_text('private jobspec bytes')
+    original = api.dry_run
+    def checked_submit(*args):
+        assert not stale.exists()
+        with (canary / 'counted-feeder.lock').open() as lock:
+            with pytest.raises(BlockingIOError):
+                fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        return original(*args)
+    monkeypatch.setattr(api, 'dry_run', checked_submit)
+    api.run(canary, bookings)
+    assert not stale.exists()
+    assert not list(canary.glob('.counted-feeder-*'))
 
 
 @pytest.mark.parametrize('ending', ('submit', 'refused', 'error'))
@@ -319,8 +500,18 @@ def test_feeder_explicit_retry_is_next_attempt_and_keeps_fail(tmp_path, monkeypa
     api.run(canary, bookings)
     key = configs['module-B']['unit_keys'][0]
     first = canary.parent / 'module-B/units' / key / 'attempts/1'
-    fail = first / 'capture/numerics_row.json'
-    fail.write_text('{"row":{"outcome":"FAIL"}}')
+    capture, digest_of = first / 'capture', lambda data: hashlib.sha256(data).hexdigest()
+    document = json.loads((capture / 'phase.json').read_text())
+    scope = document['scopes'][0]
+    case = {'ordinal': 0, 'kind': 'dense', 'scope': scope, 'identities': document['identities'], 'configuration': scope['unit_key'][4],
+            'status': {'findings': ['planted FAIL']}, 'id': json_digest([scope, 'dense', 0])}
+    fail = capture / 'cases.jsonl'
+    fail.write_text(json.dumps(case) + '\n')
+    document['streams']['cases'] = {'count': 1, 'sha256': digest_of(fail.read_bytes())}
+    document['case_ids_sha256'] = digest_of((case['id'] + '\n').encode())
+    (capture / 'phase.json').write_text(json.dumps(document))
+    (capture / 'completion.sha256').write_text(''.join(digest_of(p.read_bytes()) + '  ' + p.name + '\n'
+                                                       for p in sorted(capture.iterdir()) if p.name != 'completion.sha256'))
     digest = hashlib.sha256(fail.read_bytes()).hexdigest()
     api.run(canary, bookings, {key: 2})
     assert (first.with_name('2') / 'capture/phase.json').is_file()
@@ -505,9 +696,19 @@ def test_feeder_keeps_predecessor_evidence_checks(tmp_path, monkeypatch, fault):
             return result
         monkeypatch.setattr(api.subprocess, 'run', failed_status)
     before = [c for c in calls(graph) if c['action'] == 'submit']
+    if fault in ('tool', 'payload', 'podman'):
+        (tmp_path / 'job-outcomes.json').write_text(json.dumps([
+            {'module': 'module-B', 'key': job.parents[2].name, 'phase': 'prepare', 'exit': 1,
+             'completion': False, 'attempts': [2]}]))
     with pytest.raises(api.FeederError, match='COUNTED_PHASE_|RESUME_PHASE_INSTANCE_DIFFERS'):
         api.run(canary, bookings)
-    assert [c for c in calls(graph) if c['action'] == 'submit'] == before
+    after = [c for c in calls(graph) if c['action'] == 'submit']
+    if fault in ('native', 'tool', 'payload', 'podman'):
+        assert after[:len(before)] == before and len(after) > len(before)
+        assert all(c['phase'] == 'prepare' and Path(c['arguments'][0]).name == '2' for c in after[len(before):])
+        assert not list(tmp_path.glob('module-*/units/*/attempts/3'))
+    else:
+        assert after == before
     assert not list(canary.parent.rglob('lead-cause.json'))
 
 

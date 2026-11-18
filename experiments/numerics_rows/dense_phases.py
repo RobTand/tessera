@@ -451,6 +451,11 @@ def read_attempts(args, groups, prepare_root, capture_root, common, part):
     if (part not in ("all", "gate", "diagnostics") or directory.name != "attempts" or directory.parent.name != key or directory.parent.parent.name != "units"
             or prepare_root.name != "prepare" or capture_root != prepare_root.parent / "capture"):
         raise Invalid("phase paths differ from the validated unit attempt layout")
+    return inspect_attempts(directory, key, expected, common, part)
+
+
+def inspect_attempts(directory, key, expected, common, part):
+    """Read all unit attempts for both feeder holds and module comparison."""
     listing, failures, stopped, newest = [], {}, {}, None
     expected_keys = {json.dumps([s["module"], s["unit_key"]], sort_keys=True) for s in expected}
     for attempt in attempt_paths(directory):

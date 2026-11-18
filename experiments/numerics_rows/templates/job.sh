@@ -76,7 +76,8 @@ for output in "${claimed[@]}"; do
   cd "$output"
   printf '%s\n' "$rc" > podman-exit.txt
   printf '%s\n' "$rc" > payload-exit.txt
-  if test "$rc" -eq 0; then
+  if test "$rc" -eq 0 || { test '@PHASE@' = compare && test "$rc" -eq 3 &&
+    python3 -c 'import json; r=json.load(open("numerics_row.json"))["row"]; assert r.get("finalization_finished") is True and r["outcome"] in ("FAIL", "STOPPED")'; }; then
     test -s phase.json
     @TELEMETRY@
     find . -type f ! -name completion.sha256 -print0 | sort -z | xargs -0 sha256sum > completion.sha256
