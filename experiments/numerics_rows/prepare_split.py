@@ -236,7 +236,7 @@ def write_templates(root, config, repository):
                                "shapes": [resources], "max_duration_s": minutes * 60}
         table = {"schema": 1, "instances": instances,
                  "job_name": f"tessera-1717-{key}-{phase}", "args": len(ordered),
-                 "max_attempts": cap, "cwd": str(directory),
+                 "max_attempts": cap, "urgency": settings["urgency"], "cwd": str(directory),
                  "env_names": ["PATH", "HOME", "XDG_RUNTIME_DIR", "FLUX_F58_FORCE_ASCII", "FLUX_SCRATCH",
                                "OMP_NUM_THREADS", "MKL_NUM_THREADS", "OPENBLAS_NUM_THREADS"],
                  "shell_options": {}}

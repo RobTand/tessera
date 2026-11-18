@@ -1,6 +1,6 @@
 # Tessera plan-to-serve architecture
 
-Re-stamped 2026-11-18 for #1717 submit checks under STEP5-FORM FLEET GATE, Fleet 11:13:47Z.
+Re-stamped 2026-11-18 for #1717 feeder graph and resume under STEP5-FORM FLEET GATE, Fleet f480e7d8.
 Each module has prepare and capture templates per TP unit and case set, plus one compare template.
 An optional capture group replaces its members' single capture templates. Each unit belongs to exactly one capture template.
 Prepare, compare, and single capture templates take one canonical attempt path with a fixed module and unit key.
@@ -9,20 +9,43 @@ The group validates every argument and prepare hash before any claim. A failed c
 Groups require measured cores, anonymous peak memory, margin, and admitted K in `feeder-settings.json`; unset values refuse generation.
 The group shape is `slot=1/[core=C;memory=M;gpu=1]`. C and M cover all K captures under the canary table.
 Every template's `table.json` uses Fleet's exact gate schema. Fleet checks each jobspec, template hashes, and the attempt cap.
-Fleet checks singleton, job name, argument count, instances, constraints, resources, duration, cwd, environment names, and shell options.
+Fleet checks singleton, exact urgency, job name, argument count, instances, constraints, resources, duration, cwd, environment names, and shell options.
 Templates have no submit script, submit edit check, or job-side attempt cap. Fleet records attempts and runs submit.
 Instance lists come from `feeder-settings.json` by template kind. Each table instance pairs constraints, shapes, and maximum duration.
 Counted prepare defaults to fv1 with 8 GiB, and both fv1e instances with 9 GiB and their own host constraints.
-Counted compare defaults to fv1e. Canary and capture defaults require fv1.
+Counted compare, canary, and capture default to fv1. Dense tables carry exact urgency 8.
 The job hashes its runtime inputs and helpers. Fleet holds job hashes; the runtime manifest excludes job.sh and table.json.
 The existing capture manager uses the claimed capture directories, waits for every child, and retains each child's exit status.
 The job's stop path sends TERM through the container to the manager. The manager sends TERM to every active child.
 The job checks its runtime manifest before it claims the phase directory with one atomic mkdir.
 Capture requires completed prepare evidence and its file hashes before the claim.
 Only the claimed phase directory and job scratch accept worker writes. Cleanup removes job scratch.
-Counted compare selects every unit's newest attempt path and runs on the selected fv1e host without a TP filter.
+Counted compare selects every unit's newest attempt path and runs on fv1 without a TP filter.
 The phase reader retains FAIL from phase-local partial receipts as well as retained attempt-root receipts.
-The feeder does not yet use these templates. The dense-chain HOLD remains.
+The feeder uses these templates through Fleet's gate. The dense-chain HOLD remains.
+The feeder builds a dry-run jobspec from each table. The gate alone submits the checked bytes and writes the TSV.
+Each edge uses one blocking status call on its producer instance, followed by exit, log-hash, identity, and artifact checks.
+Every jobspec has only singleton. No jobspec contains afterok or a foreign instance's job ID.
+One feeder fills bounded prepare batches across modules. It submits the next batch before waiting for earlier captures.
+Captures use fixed template order. Compare waits for all module captures.
+Attempt directories are the inventory. The feeder holds its lock and recovers saved job IDs and instance identities.
+Submit intent precedes the gate call. A blocking intent-file lock keeps the worker behind complete job metadata.
+A restart reuses running and finished jobs. An unknown submit result requires an audit and prevents a duplicate.
+Singleton names prevent two attempts of one unit and phase from running at the same time.
+An explicit `--retry UNIT=N` selects only the next attempt after earlier jobs end. FAIL attempts remain.
+Changed unit attempts create a new compare attempt. Its metadata binds the selected unit attempt paths.
+A gate refusal stops that unit. Other units continue, and the feeder records an incomplete run.
+
+```mermaid
+flowchart LR
+  P[Unit prepares on fv1 or admitted fv1e] --> S1[Producer status and evidence]
+  S1 --> C[Single or group captures on fv1]
+  C --> S2[Producer status and evidence]
+  S2 --> M[Module compare on fv1]
+```
+
+The Fleet gate submits every stage from its reviewed table. Singleton is the only native dependency.
+
 Dense phase artifacts use ordered JSON lines for cases, scale arrays and file hashes.
 Each record binds its original full-row ordinal. A cut selection does not change its case IDs.
 Gate and diagnostics jobs each cover one module TP unit, with every required M configuration.
@@ -58,10 +81,10 @@ Routed row-scale plans keep their own domain metadata across all M configuration
 The strict C1 scope keeps every required role, expert and TP cut. Role files stream into the manifest.
 The measurement-only launchers and sampled manifest schema are not part of this tool.
 Rule v2 and served arithmetic do not change. Dense submissions use urgency 8.
-The sequential feeder holds every dense submission while any aarch64 or portable job is pending.
-Capture has a 15-minute limit. Prepare is limited to one per Spark and two total.
-The sequential feeder uses at most one globally, for every TL3b W.
-It runs at most one dense phase at a time, below the three-per-Spark ceiling.
+The feeder holds new fv1 submissions while any aarch64 or portable job is pending.
+Capture has a 15-minute limit. fv1 prepare admission retains one lane per Spark and two total.
+The fv1e prepare lanes use the live Fleet limits and the anonymous-memory admission check.
+These admission limits are separate from the three-per-Spark TL3b W ceiling.
 Canary launchers use scratch HOME before scratch Podman storage and wait on a background child.
 
 Re-stamped 2026-11-17 for the #1717 dense row phase split under frozen rule v2.

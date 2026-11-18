@@ -4,7 +4,7 @@
     "canary": ["fv1"],
     "prepare": ["fv1", "fv1e-sparky", "fv1e-sparklina"],
     "capture": ["fv1"],
-    "compare": ["fv1e-sparky", "fv1e-sparklina"]
+    "compare": ["fv1"]
   },
   "capture_group_canary": {
     "cores_per_capture": null,
@@ -29,5 +29,6 @@
   "stall_seconds": 1800,
   "drain_poll_seconds": 5,
   "drain_timeout_seconds": 300,
-  "client_timeout_seconds": 30
+  "client_timeout_seconds": 30,
+  "fleet_submit_gate": "/mnt/shared/flux-migration/lead-1114/dense-gate/fleet-submit-gate.py"
 }

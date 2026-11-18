@@ -887,19 +887,24 @@ def feeder_booking(tmp_path, monkeypatch):
     write(canary / "counted-rows.json", {"module-A": str(rowdir)})
     write(canary / "counted-chain-inputs.json", {"module-A": {}})
     write(canary / "campaign.json", {"tool_commit": "tool", "module": "module-A"})
-    write(rowdir / "campaign.json", {"bound": True})
+    write(rowdir / "campaign.json", {"bound": True, "unit_keys": ["unit-A"], "templates": [
+        {"key": "unit-A", "phase": phase} for phase in ("prepare", "capture")]
+        + [{"key": "compare-A", "phase": "compare"}]})
     bookings = tmp_path / "bookings.json"
     write(bookings, {"module-A": {phase: {"memory_gib": 8 if phase == "prepare" else 5, "minutes": 15 if phase == "capture" else 10} for phase in ("prepare", "capture", "compare")}})
     for phase in ("prepare", "capture", "compare"):
-        job = rowdir / phase
-        (job / "results" / phase).mkdir(parents=True)
-        (job / "job.sh").write_text("timeout --kill-after=20s 100s command\n")
-        (job / "submit-after-review.sh").write_text("flux submit -t5m --resources-shape='slot/[core=1;memory=4]' --requires=host:sparklina command\n")
-        (job / "tool-exit.txt").write_text("0")
-        for kind in ("payload", "podman"):
-            (job / f"results/{kind}-exit.txt").write_text("0")
-        write(job / "results" / phase / "phase.json", {"completion": True})
-    write(rowdir / "compare/results/numerics_row.json", {"row": {"outcome": "PASS", "finalization_finished": True}})
+        template = rowdir / 'templates' / ('compare-A' if phase == 'compare' else 'unit-A') / phase
+        template.mkdir(parents=True)
+        def placement(name):
+            return {"constraints": [{"hostlist": [host]} for host in (["sparklina", "sparky"] if name == 'fv1' else [name.removeprefix('fv1e-')])],
+                    "shapes": [[{"type": "slot", "count": 1, "label": "task", "with":
+                       [{"type": "core", "count": 1}, {"type": "memory", "count": (8 if name == 'fv1' else 9) if phase == 'prepare' else 5}]
+                       + ([{"type": "gpu", "count": 1}] if phase == 'capture' else [])}]], "max_duration_s": 900}
+        names = ['fv1', 'fv1e-sparklina', 'fv1e-sparky'] if phase == 'prepare' else ['fv1']
+        write(template / 'table.json', {'schema': 1, 'instances': {name: placement(name) for name in names},
+              'job_name': 'tessera-1717-' + template.parent.name + '-' + phase, 'args': 1, 'max_attempts': 3,
+              'urgency': 8, 'cwd': str(template), 'env_names': ['PATH'], 'shell_options': {}})
+        (template / 'job.sh').write_text('#!/bin/bash\nexit 0\n')
     monkeypatch.setattr(prepare_split, "check_canary", lambda *a: None)
     monkeypatch.setattr(api, "sha", lambda path: "a" * 64)
     write(canary/'counted-feeder-state.json', {'bookings_sha256': 'a'*64, 'settings_sha256': 'a'*64,
@@ -909,17 +914,29 @@ def feeder_booking(tmp_path, monkeypatch):
     from experiments.numerics_rows import phase_artifact
     monkeypatch.setattr(phase_artifact, 'tensor_subset_equal', lambda *a: {'cases': 1})
     def run(command, **kw):
-        if command[0] == "bash":
-            job = Path(command[1]).parent
-            jobid = {'prepare': 'f123', 'capture': 'f124', 'compare': 'f125'}[job.name]
-            (job/'jobid').write_text(jobid)
-            write(job/'instance.json', {'name': (job/'instance-name.txt').read_text().strip(), 'job_id': jobid})
+        if command[0] == str(tmp_path / 'stub-gate'):
+            template, attempt = Path(command[2]), Path(json.loads(Path(command[4]).read_text())['arguments'][0])
+            phase = template.name
+            job = attempt / phase
+            job.mkdir()
+            for label in ('tool', 'payload', 'podman'):
+                (job / (label + '-exit.txt')).write_text('0')
+            write(job / 'phase.json', {'completion': True})
+            (job / 'payload.stdout').write_text('payload')
+            (job / 'payload.stderr').write_text('')
+            (job / 'completion.sha256').write_text('a' * 64 + '  phase.json\n')
+            if phase == 'compare':
+                write(job / 'numerics_row.json', {'row': {'outcome': 'PASS', 'finalization_finished': True}})
+            jobid = {'prepare': 'f123', 'capture': 'f124', 'compare': 'f125'}[phase]
+            return SimpleNamespace(returncode=0, stdout=jobid)
+        return SimpleNamespace(returncode=0)
     monkeypatch.setattr(api.subprocess, "run", run)
     (canary/'fv1e-limit-sparklina').write_text('2\n')
     (canary/'prepare').mkdir()
     (canary/'prepare/jobid').write_text('f111')
     settings = api.read(api.SETTINGS)
     settings['fv1e_jobmem_row_dirs'] = [str(tmp_path/'rows-anon'), str(tmp_path/'rows')]
+    settings['fleet_submit_gate'] = str(tmp_path/'stub-gate')
     settings_path = tmp_path/'settings.json'
     write(settings_path, settings)
     monkeypatch.setattr(api, 'SETTINGS', settings_path)
@@ -927,7 +944,13 @@ def feeder_booking(tmp_path, monkeypatch):
         sample_path = tmp_path/'rows-anon'/(prefix + jobid + '-3.tsv')
         sample_path.parent.mkdir(exist_ok=True)
         sample_path.write_text('0 0 0 0 0 30000000000 0 0 3000000000 50 ok\n')
-    monkeypatch.setattr(api.subprocess, "check_output", lambda command, **kw: json.dumps({'jobs': []}) if '--json' in command else '100' if '{runtime:.6f}' in command else '0')
+    def query(command, **kw):
+        if '--dry-run' in command:
+            return json.dumps({'arguments': command[command.index(next(c for c in command if c.endswith('/job.sh'))) + 1:]})
+        if 'guest.output' in command:
+            return b'flux log'
+        return json.dumps({'jobs': []}) if '--json' in command else '100' if '{runtime:.6f}' in command else '0'
+    monkeypatch.setattr(api.subprocess, "check_output", query)
     monkeypatch.setattr(api, "wait_dense_slot", lambda: None, raising=False)
     return api, canary, rowdir, bookings
 
@@ -983,6 +1006,10 @@ def anon_wave(feeder_booking, monkeypatch):
     for suffix in 'BCDEFG':
         target = rowdir.with_name('row' + suffix)
         shutil.copytree(rowdir, target)
+        for table_path in target.glob('templates/*/*/table.json'):
+            table = api.read(table_path)
+            table['cwd'] = str(table_path.parent)
+            table_path.write_text(json.dumps(table))
         rows['module-' + suffix] = str(target)
         requested['module-' + suffix] = requested['module-A']
     (canary/'counted-rows.json').write_text(json.dumps(rows))
@@ -992,28 +1019,30 @@ def anon_wave(feeder_booking, monkeypatch):
     original = api.subprocess.run
     ids = iter('fAA' + char for char in 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz')
     def run(command, **kw):
-        if 'wait-event' in command:
-            active.pop(command[command.index('wait-event') + 1], None)
-        if command[0] != 'bash':
-            return original(command, **kw)
-        job = Path(command[1]).parent
-        name = (job/'instance-name.txt').read_text().strip()
-        module = next(m for m, path in rows.items() if Path(path) == job.parent)
+        if 'status' in command:
+            active.pop(command[-1], None)
+        result = original(command, **kw)
+        if command[0] != settings['fleet_submit_gate']:
+            return result
+        template = Path(command[2])
+        job = Path(json.loads(Path(command[4]).read_text())['arguments'][0])
+        name = command[1]
+        module = next(m for m, path in rows.items() if Path(path) == template.parents[2])
         jobid = next(ids)
-        (job/'jobid').write_text(jobid)
-        (job/'instance.json').write_text(json.dumps({'name': name, 'job_id': jobid}))
-        submits.append((module, job.name, name))
+        submits.append((module, template.name, name))
         active[jobid] = name
         prefix = '' if name == 'fv1' else name + '-'
         peak = peaks.get(module, 3 * 2**30)
         if peak is not None:
             (Path(settings['fv1e_jobmem_row_dirs'][0])/(prefix+jobid+'-3.tsv')).write_text(f'0 0 0 0 0 30000000000 0 0 {peak} 50 ok')
+        return SimpleNamespace(returncode=0, stdout=jobid)
     monkeypatch.setattr(api.subprocess, 'run', run)
     monkeypatch.setattr(api, 'client', lambda name: ['flux', name])
+    base_query = api.subprocess.check_output
     def query(command, **kw):
         if '--json' in command:
             return json.dumps({'jobs': [{'id': key} for key, name in active.items() if name == command[1]]})
-        return '100' if '{runtime:.6f}' in command else '0'
+        return base_query(command, **kw)
     monkeypatch.setattr(api.subprocess, 'check_output', query)
     def observe(name):
         if name == 'fv1e-sparky':
@@ -1091,7 +1120,7 @@ def test_feeder_anon_rolling_stop_finishes_running_and_keeps_fv1(anon_wave, monk
     original = api.subprocess.run
     def run(command, **kw):
         result = original(command, **kw)
-        if command[0] == 'bash' and Path(command[1]).parent == Path(rows['module-B'])/'capture':
+        if command[0] == api.read(api.SETTINGS)['fleet_submit_gate'] and Path(command[2]) == Path(rows['module-B'])/'templates/unit-A/capture':
             (canary/'fv1e-limit-sparklina').write_text('8\n')
         return result
     monkeypatch.setattr(api.subprocess, 'run', run)
@@ -1103,8 +1132,12 @@ def test_feeder_anon_rolling_stop_finishes_running_and_keeps_fv1(anon_wave, monk
     assert api.read(canary/'counted-feeder-state.json')['fv1e_admission'] == 'stopped'
     assert events[-1]['event'] == 'COMPLETE'
     before = len(submits)
-    for jobid in Path(rows['module-G']).glob('*/jobid'):
-        jobid.unlink()
+    import shutil
+    shutil.rmtree(Path(rows['module-G']) / 'units')
+    state_path = canary / 'counted-feeder-state.json'
+    saved = api.read(state_path)
+    saved['jobs'] = {key: value for key, value in saved['jobs'].items() if not Path(value['directory']).is_relative_to(rows['module-G'])}
+    state_path.write_text(json.dumps(saved))
     api.run(canary, bookings)
     assert submits[before:] == [('module-G', phase, 'fv1') for phase in ('prepare', 'capture', 'compare')], \
         'STOP must block new fv1e prepares after a limit raise and restart'
@@ -1115,7 +1148,7 @@ def test_feeder_fv1e_limit_raise_without_restart(anon_wave, monkeypatch):
     original = api.subprocess.run
     def run(command, **kw):
         result = original(command, **kw)
-        if command[0] == 'bash' and Path(command[1]).parent == Path(rows['module-D'])/'compare':
+        if command[0] == api.read(api.SETTINGS)['fleet_submit_gate'] and Path(command[2]) == Path(rows['module-D'])/'templates/compare-A/compare':
             (canary/'fv1e-limit-sparklina').write_text('4\n')
         return result
     monkeypatch.setattr(api.subprocess, 'run', run)
@@ -1156,11 +1189,11 @@ def test_feeder_fv1e_limit_step_back_between_submits(anon_wave, monkeypatch):
     (canary/'fv1e-limit-sparklina').write_text('4\n')
     original, actions = api.subprocess.run, []
     def run(command, **kw):
-        if ('wait-event' in command and (Path(rows['module-B'])/'prepare/jobid').exists()
-                and command[command.index('wait-event') + 1] == (Path(rows['module-B'])/'prepare/jobid').read_text()):
+        if ('status' in command and (Path(rows['module-B'])/'units/unit-A/attempts/1/prepare-jobid').exists()
+                and command[-1] == (Path(rows['module-B'])/'units/unit-A/attempts/1/prepare-jobid').read_text().strip()):
             actions.append('collect-B')
         result = original(command, **kw)
-        if command[0] == 'bash' and submits[-1][1:] == ('prepare', 'fv1e-sparklina'):
+        if command[0] == api.read(api.SETTINGS)['fleet_submit_gate'] and submits[-1][1:] == ('prepare', 'fv1e-sparklina'):
             actions.append(submits[-1][0])
             if submits[-1][0] == 'module-B':
                 (canary/'fv1e-limit-sparklina').write_text('1\n')
@@ -1171,13 +1204,6 @@ def test_feeder_fv1e_limit_step_back_between_submits(anon_wave, monkeypatch):
         're-read the fv1e limit before each submit; count the running prepare'
     changes = [json.loads(line) for line in (canary/'counted-feeder.jsonl').read_text().splitlines()]
     assert any(e['event'] == 'FV1E_LIMIT' and e['old'] == 4 and e['new'] == 1 for e in changes)
-
-
-def test_feeder_fv1e_submit_books_nine_gib(feeder_booking):
-    api, canary, rowdir, bookings = feeder_booking
-    api.run(canary, bookings)
-    assert 'slot/[core=1;memory=9]' in (rowdir/'prepare/submit-after-review.sh').read_text(), \
-        'fv1e prepare must book memory=9'
 
 
 def test_feeder_fv1e_limit_is_capped_by_pool(feeder_booking):
@@ -1196,7 +1222,7 @@ def test_feeder_fv1e_pause_holds_first_and_preserves_saved_instances(anon_wave, 
     pause.touch()
     def release(seconds):
         assert all(n == 'fv1' for _, p, n in submits if p == 'prepare')
-        assert not (Path(rows['module-A'])/'prepare/jobid').exists()
+        assert not (Path(rows['module-A'])/'units/unit-A/attempts/1/prepare-jobid').exists()
         pause.unlink()
     monkeypatch.setattr(api.time, 'sleep', release)
     api.run(canary, bookings)
@@ -1205,24 +1231,7 @@ def test_feeder_fv1e_pause_holds_first_and_preserves_saved_instances(anon_wave, 
     pause.touch()
     api.run(canary, bookings)
     assert submits == before
-    assert api.read(Path(rows['module-A'])/'prepare/instance.json')['name'] == 'fv1e-sparklina'
-
-
-@pytest.mark.parametrize("field", ("inner-timeout", "walltime", "shape"))
-@pytest.mark.parametrize("mutation", ("missing", "duplicate"))
-def test_feeder_refuses_missing_or_ambiguous_booking_fields(feeder_booking, field, mutation):
-    api, canary, rowdir, bookings = feeder_booking
-    api.run(canary, bookings)
-    for path in rowdir.glob("*/jobid"):
-        path.unlink()
-    job = rowdir / "prepare" / ("job.sh" if field == "inner-timeout" else "submit-after-review.sh")
-    text = job.read_text()
-    token = {"inner-timeout": "--kill-after=20s 540s ", "walltime": " -t10m ", "shape": "slot/[core=1;memory=9]"}[field]
-    assert token in text
-    job.write_text(text.replace(token, "missing" if mutation == "missing" else token + token))
-    with pytest.raises(ValueError, match="EXACTLY_ONE_MATCH"):
-        api.run(canary, bookings)
-    assert not list(rowdir.glob("*/jobid"))
+    assert api.read(Path(rows['module-A'])/'units/unit-A/attempts/1/prepare-instance.json')['name'] == 'fv1e-sparklina'
 
 
 def test_dense_prepare_waits_for_pending_aarch64_jobs(monkeypatch):
@@ -1362,19 +1371,26 @@ def test_feeder_undrains_only_after_clean_and_checks(feeder_booking, monkeypatch
     requested = json.loads(bookings.read_text())
     requested['module-A']['capture']['memory_gib'] = 37
     bookings.write_text(json.dumps(requested))
+    capture_table = rowdir / 'templates/unit-A/capture/table.json'
+    table = api.read(capture_table)
+    table['instances']['fv1']['shapes'][0][0]['with'][1]['count'] = 37
+    capture_table.write_text(json.dumps(table))
     events = []
     monkeypatch.setattr(api, 'drain_ecores_before_submit', lambda memory, *a: {'host': 'sparky', 'reason': 'test-drain'} if memory > 36 else None)
     monkeypatch.setattr(api, 'undrain_ecores', lambda **kw: events.append('undrain'))
     original = api.subprocess.run
     def run(command, **kw):
-        if command[:3] == ['flux', 'job', 'wait-event']:
+        if command[:3] == ['flux', 'job', 'status']:
             events.append('clean')
-        return original(command, **kw)
+        result = original(command, **kw)
+        if command[0] == api.read(api.SETTINGS)['fleet_submit_gate'] and Path(command[2]).name == 'capture':
+            capture = rowdir / 'units/unit-A/attempts/1/capture'
+            if failure == 'native':
+                (capture / 'podman-exit.txt').write_text('1')
+            if failure == 'artifact':
+                (capture / 'phase.json').write_text('{"completion":false}')
+        return result
     monkeypatch.setattr(api.subprocess, 'run', run)
-    if failure == 'native':
-        (rowdir / 'capture/results/podman-exit.txt').write_text('1')
-    if failure == 'artifact':
-        (rowdir / 'capture/results/capture/phase.json').write_text('{"completion":false}')
     if failure:
         with pytest.raises(api.FeederError, match='COUNTED_PHASE_'):
             api.run(canary, bookings)
@@ -1382,25 +1398,6 @@ def test_feeder_undrains_only_after_clean_and_checks(feeder_booking, monkeypatch
     else:
         api.run(canary, bookings)
         assert events == ['clean', 'clean', 'undrain', 'clean']
-
-
-def test_dense_prepare_booking_and_low_urgency(feeder_booking):
-    api, canary, rowdir, bookings = feeder_booking
-    waits = []
-    api.wait_dense_slot = lambda: waits.append(True)
-    api.run(canary, bookings)
-    assert len(waits) == 2
-    assert all('--urgency=8' in p.read_text() for p in rowdir.glob('*/submit-after-review.sh'))
-    bad = json.loads(bookings.read_text())
-    bad['module-A']['prepare']['memory_gib'] = 32
-    bookings.write_text(json.dumps(bad))
-    with pytest.raises(ValueError, match='REQUIRES_8_GIB'):
-        api.run(canary, bookings)
-    bad['module-A']['prepare']['memory_gib'] = 8
-    bad['module-A']['capture']['minutes'] = 60
-    bookings.write_text(json.dumps(bad))
-    with pytest.raises(ValueError, match='REQUIRES_15_MINUTES'):
-        api.run(canary, bookings)
 
 
 def retry_phase_attempts(root):

@@ -12,7 +12,7 @@ import pytest
 from experiments.numerics_rows import phase_instance, prepare_split
 
 
-def templates(root, canary=False, instance_lists=None):
+def templates(root, canary=False, instance_lists=None, module="module-A"):
     root.mkdir()
     source = Path(prepare_split.__file__).parent
     for name in ("phase_instance.py", "feeder-settings.json"):
@@ -21,7 +21,7 @@ def templates(root, canary=False, instance_lists=None):
         settings = json.loads((root / "feeder-settings.json").read_text())
         settings["template_instances"] = instance_lists
         (root / "feeder-settings.json").write_text(json.dumps(settings))
-    config = {"module": "module-A", "tool_commit": "a" * 40, "canary": canary,
+    config = {"module": module, "tool_commit": "a" * 40, "canary": canary,
               "paths": {"source": str(root / "source")}, "staged_population": str(root / "population.json")}
     prepare_split.write_templates(root, config, root / "repository.git")
     prepare_split.bind_templates(root, config)
@@ -155,7 +155,7 @@ def test_every_template_uses_fleet_table_schema(tmp_path, canary, prepare_instan
         assert (directory / "table.json").is_file(), "feature absent: every template uses Fleet table schema"
         phase = directory.name
         fields = json.loads((directory / "table.json").read_text())
-        defaults = {"prepare": ["fv1", "fv1e-sparky", "fv1e-sparklina"], "compare": ["fv1e-sparky", "fv1e-sparklina"]}
+        defaults = {"prepare": ["fv1", "fv1e-sparky", "fv1e-sparklina"], "compare": ["fv1"]}
         names = ["fv1"] if canary or phase == "capture" else (defaults[phase] if prepare_instances is None else placement[phase])
         instances = {}
         for name in names:
@@ -170,7 +170,7 @@ def test_every_template_uses_fleet_table_schema(tmp_path, canary, prepare_instan
                                                   "capture": 900, "compare": 7200 if canary else 21600}[phase]}
         assert fields == {"schema": 1, "instances": instances,
                           "job_name": f"tessera-1717-{directory.parent.name}-{phase}", "args": 1,
-                          "max_attempts": 3,
+                          "max_attempts": 3, "urgency": 8,
                           "cwd": str(directory), "env_names": ["PATH", "HOME", "XDG_RUNTIME_DIR", "FLUX_F58_FORCE_ASCII", "FLUX_SCRATCH",
                                                                  "OMP_NUM_THREADS", "MKL_NUM_THREADS", "OPENBLAS_NUM_THREADS"],
                           "shell_options": {}}
@@ -186,8 +186,8 @@ def test_every_template_uses_fleet_table_schema(tmp_path, canary, prepare_instan
         assert (attempt / phase).is_dir()
 
 
-def test_compare_template_lists_all_units_and_uses_fv1e(tmp_path, monkeypatch):
-    assert hasattr(prepare_split, "write_templates"), "feature absent: one module compare template selects every latest unit on fv1e"
+def test_compare_template_lists_all_units_and_uses_fv1e(tmp_path):
+    assert hasattr(prepare_split, "write_templates"), "feature absent: one module compare template selects every latest unit on fv1"
     config, directories = templates(tmp_path / "module")
     directory = directories[-1]
     payload = (directory / "payload.sh").read_text()
@@ -197,18 +197,7 @@ def test_compare_template_lists_all_units_and_uses_fv1e(tmp_path, monkeypatch):
     assert not {"--tp-size", "--tp-rank"} & set(command)
     for key in config["unit_keys"]:
         assert str(tmp_path / "module/units" / key / "attempts") in payload
-    job = tmp_path / "module/units" / directory.parent.name / "attempts/1"
-    job.mkdir(parents=True)
-    (job / "compare-instance-name.txt").write_text("fv1e-sparklina\n")
-    calls = []
-    monkeypatch.setattr(phase_instance, "observe", lambda name: {"name": name})
-    monkeypatch.setattr(phase_instance, "query", lambda command, *args: calls.append((command, args)) or "f123")
-    phase_instance.submit(job, ["submit", "--urgency=8", "payload"], "compare")
-    assert json.loads((job / "compare-instance.json").read_text())["name"] == "fv1e-sparklina"
-    receipt = {}
-    phase_instance.bind(receipt, "compare", {"name": "fv1e-sparklina"})
-    assert receipt["phase_jobs"]["compare"]["name"] == "fv1e-sparklina"
-    assert calls[0][0] == phase_instance.client("fv1e-sparklina")
+    assert list(json.loads((directory / "table.json").read_text())["instances"]) == ["fv1"]
 
 
 @pytest.mark.parametrize("phase", ("prepare", "capture"))

@@ -1,4 +1,5 @@
 """Bind each phase to one live Flux instance. Run the CLI only after review."""
+import fcntl
 import hashlib
 import json
 import os
@@ -39,10 +40,6 @@ def save(path, value):
     temporary.replace(path)
 
 
-def campaign(job):
-    return next(parent / 'campaign.json' for parent in (job, *job.parents) if (parent / 'campaign.json').is_file())
-
-
 def complete(directory):
     document = json.loads((directory / 'phase.json').read_text())
     if (directory.resolve() != directory or document.get('completion') is not True or document.get('phase') != 'prepare'
@@ -50,30 +47,17 @@ def complete(directory):
         raise ValueError('prepare is not complete or hashes differ')
 
 
-def submit(job, args, phase=None):
-    prefix = phase + '-' if phase else ''
-    selection = job / (prefix + 'instance-name.txt')
-    name = selection.read_text().strip() if selection.exists() else 'fv1'
-    if name != 'fv1' and ((phase or job.name) not in ('prepare', 'compare') or json.loads(campaign(job).read_text())['canary']):
-        raise ValueError('only counted prepare or compare can use fv1e')
-    if args[0] != 'submit' or (job/(prefix + 'jobid')).exists():
-        raise ValueError('phase submission already exists or command is not submit')
-    bound, command = observe(name), client(name)
-    urgency = next((a.split('=')[1] for a in args if a.startswith('--urgency=')), '16')
-    args = [a for a in args if not a.startswith('--urgency=')]
-    jobid = query(command, 'job', 'id', '--to=f58plain', query(command, args[0], '--urgency=0', *args[1:]))
-    (job/(prefix + 'jobid')).write_text(jobid + '\n')
-    save(job/(prefix + 'instance.json'), {**bound, 'job_id': jobid})
-    if observe(name) != bound:
-        raise ValueError('phase instance changed at submit; job remains held')
-    query(command, 'job', 'urgency', jobid, urgency)
-
-
 def check(job, phase=None):
     prefix = INSTANCE.read_text().split()[0]
     command = ['env', f'PATH={prefix}/install/bin:{prefix}/deps/bin:/usr/bin:/bin',
                f'LD_LIBRARY_PATH={prefix}/install/lib:{prefix}/deps/lib', f'{prefix}/install/bin/flux']
-    bound = json.loads((job / ((phase + '-' if phase else '') + 'instance.json')).read_text())
+    metadata = job / ((phase + '-' if phase else '') + 'instance.json')
+    if phase:
+        with (job / (phase + '-intent.json')).open() as intent:
+            fcntl.flock(intent, fcntl.LOCK_SH)
+            bound = json.loads(metadata.read_text())
+    else:
+        bound = json.loads(metadata.read_text())
     live = {**observe(bound['name'], command),
             'job_id': query(command, 'job', 'id', '--to=f58plain', os.environ['FLUX_JOB_ID'])}
     if live != bound:
@@ -91,9 +75,7 @@ def bind(row, phase, identity, canary=False):
 if __name__ == '__main__':
     action, directory, *arguments = sys.argv[1:]
     try:
-        if action == 'submit':
-            submit(Path(directory), arguments)
-        elif action == 'complete':
+        if action == 'complete':
             complete(Path(directory))
         elif action == 'check':
             print(json.dumps(check(Path(directory), *arguments)))

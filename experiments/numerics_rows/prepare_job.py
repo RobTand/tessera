@@ -148,7 +148,28 @@ printf '%s  %s\\n' 8a1536dfbc3df70edbdc37001a0db6947e97d9263926bc85a4d4d3ca231ea
     (out / "submit-after-review.sh").write_text(f'''#!/bin/bash
 set -euo pipefail
 root={out}
-flux() {{ python3 "$root/instance.py" submit "$root" "$@"; }}
+flux() {{
+  (cd "$root" && python3 - "$@" <<'LEGACY_SUBMIT'
+import sys
+from pathlib import Path
+from instance import client, observe, query, save
+job, args = Path.cwd(), sys.argv[1:]
+selection = job / 'instance-name.txt'
+name = selection.read_text().strip() if selection.exists() else 'fv1'
+if name != 'fv1' or args[0] != 'submit' or (job / 'jobid').exists():
+    raise ValueError('generic submission requires fv1 and a new job')
+bound, command = observe(name), client(name)
+urgency = next((a.split('=')[1] for a in args if a.startswith('--urgency=')), '16')
+args = [a for a in args if not a.startswith('--urgency=')]
+jobid = query(command, 'job', 'id', '--to=f58plain', query(command, args[0], '--urgency=0', *args[1:]))
+(job / 'jobid').write_text(jobid + '\\n')
+save(job / 'instance.json', dict(bound, job_id=jobid))
+if observe(name) != bound:
+    raise ValueError('phase instance changed at submit; job remains held')
+query(command, 'job', 'urgency', jobid, urgency)
+LEGACY_SUBMIT
+  )
+}}
 test ! -e "$root/jobid"
 {submit} 2> "$root/submit.stderr"
 cat "$root/jobid"

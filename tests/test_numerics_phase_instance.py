@@ -9,56 +9,6 @@ from experiments.numerics_rows import phase_instance as api
 from experiments.numerics_rows.phase_artifact import tensor_subset_equal
 
 
-def test_prepare_capture_bind_instances_and_hold_until_recorded(tmp_path, monkeypatch):
-    instance = tmp_path/'INSTANCE'
-    instance.write_text('/fixture/flux /fixture/run\n')
-    monkeypatch.setattr(api, 'INSTANCE', instance)
-    calls, live = [], ['fv1e-sparklina']
-    def query(command, *args):
-        name = live[0] if command[0] == 'env' else 'fv1e-' + command[1] if len(command) == 2 else 'fv1'
-        calls.append((name, args))
-        if args[0] == 'python':
-            return '{}' if 'config.get' in args[2] else json.dumps({'broker.starttime': name, 'local-uri': 'local://' + name})
-        if args[0] == 'submit':
-            assert '--urgency=0' in args
-            return 'f123'
-        if args[:2] == ('job', 'id'):
-            return args[-1]
-        assert (job/'instance.json').exists()
-        return ''
-    monkeypatch.setattr(api, 'query', query)
-    monkeypatch.setenv('FLUX_JOB_ID', 'f123')
-    (tmp_path/'campaign.json').write_text('{"canary":false}')
-    row = {}
-    for phase, name in [('prepare', 'fv1e-sparklina'), ('capture', 'fv1')]:
-        job = tmp_path/phase; job.mkdir()
-        (job/'instance-name.txt').write_text(name)
-        api.submit(job, ['submit', '--urgency=8', 'payload'])
-        live[0] = name
-        api.bind(row, phase, api.check(job))
-    assert {p: v['name'] for p, v in row['phase_jobs'].items()} == {'prepare': 'fv1e-sparklina', 'capture': 'fv1'}
-    live[0] = 'fv1e-sparky'
-    with pytest.raises(ValueError, match='live phase instance'):
-        api.check(job)
-    with pytest.raises(ValueError, match='cannot mix'):
-        api.bind(row, 'prepare', {**row['phase_jobs']['prepare'], 'name': 'fv1'})
-    with pytest.raises(ValueError, match='cannot mix'):
-        api.bind({}, 'capture', row['phase_jobs']['prepare'])
-    assert any(args == ('job', 'urgency', 'f123', '8') for _, args in calls)
-
-
-@pytest.mark.parametrize('name', ['fv1e-sparklina', 'fv1e-sparky'])
-def test_canary_prepare_refuses_fv1e_at_submit_and_bind(tmp_path, monkeypatch, name):
-    job = tmp_path/'prepare'; job.mkdir()
-    (job/'instance-name.txt').write_text(name)
-    (tmp_path/'campaign.json').write_text('{"canary":true}')
-    monkeypatch.setattr(api, 'query', lambda *args: pytest.fail('canary must refuse before any Flux query'))
-    with pytest.raises(ValueError, match='only counted prepare'):
-        api.submit(job, ['submit', 'payload'])
-    with pytest.raises(ValueError, match='cannot mix'):
-        api.bind({}, 'prepare', {'name': name}, canary=True)
-
-
 def test_observe_uses_rank_zero_config(monkeypatch, capsys):
     local = ['submit-broker']
     def rpc(topic, payload=None, nodeid=None):
