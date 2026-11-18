@@ -1,6 +1,7 @@
 """Check reviewed unit templates without a Flux client or numerical work."""
 import hashlib
 import json
+import os
 from pathlib import Path
 import shlex
 import shutil
@@ -11,12 +12,16 @@ import pytest
 from experiments.numerics_rows import phase_instance, prepare_split
 
 
-def templates(root):
+def templates(root, canary=False, instance_lists=None):
     root.mkdir()
     source = Path(prepare_split.__file__).parent
-    for name in ("phase_instance.py", "counted_feeder.py", "feeder-settings.json"):
-        shutil.copyfile(source / name, root / {"phase_instance.py": "instance.py", "counted_feeder.py": "admission.py"}.get(name, name))
-    config = {"module": "module-A", "tool_commit": "a" * 40, "canary": False,
+    for name in ("phase_instance.py", "feeder-settings.json"):
+        shutil.copyfile(source / name, root / {"phase_instance.py": "instance.py"}.get(name, name))
+    if instance_lists is not None:
+        settings = json.loads((root / "feeder-settings.json").read_text())
+        settings["template_instances"] = instance_lists
+        (root / "feeder-settings.json").write_text(json.dumps(settings))
+    config = {"module": "module-A", "tool_commit": "a" * 40, "canary": canary,
               "paths": {"source": str(root / "source")}, "staged_population": str(root / "population.json")}
     prepare_split.write_templates(root, config, root / "repository.git")
     prepare_split.bind_templates(root, config)
@@ -61,7 +66,10 @@ def test_templates_cover_units_phases_and_manifest(tmp_path):
                 assert "--phase-local-output" in payload
     for directory in directories:
         manifest = (directory / "template.sha256").read_text()
-        assert all("  " + name + "\n" in manifest for name in ("job.sh", "submit-after-review.sh", "payload.sh", "policy.json"))
+        assert "  payload.sh\n" in manifest
+        assert all("  " + str(tmp_path / "module" / name) + "\n" in manifest
+                   for name in ("instance.py", "campaign.json", "feeder-settings.json"))
+        assert all("  " + name + "\n" not in manifest for name in ("job.sh", "table.json"))
         result = subprocess.run(["sha256sum", "-c", "template.sha256"], cwd=directory, capture_output=True)
         assert result.returncode == 0, result.stderr
     assert not (tmp_path / "module/units").exists()
@@ -76,10 +84,10 @@ def test_template_refuses_argument_count(tmp_path, phase, count):
     refuse(script, ["unused"] * count, "require one attempt argument", tmp_path)
 
 
-@pytest.mark.parametrize("mutation", ("module", "unit", "zero", "cap", "overflow", "symlink", "parent"))
+@pytest.mark.parametrize("mutation", ("module", "unit", "zero", "symlink", "parent"))
 @pytest.mark.parametrize("phase", ("prepare", "capture", "compare"))
 def test_template_refuses_other_paths_and_attempt_ids(tmp_path, mutation, phase):
-    assert hasattr(prepare_split, "write_templates"), "feature absent: template fixes module unit and bounded canonical attempt"
+    assert hasattr(prepare_split, "write_templates"), "feature absent: template fixes module unit and canonical attempt"
     config, directories = templates(tmp_path / "module")
     directory = next(p for p in directories if p.name == phase)
     attempt = tmp_path / "module/units" / directory.parent.name / "attempts/1"
@@ -89,10 +97,8 @@ def test_template_refuses_other_paths_and_attempt_ids(tmp_path, mutation, phase)
         attempt = tmp_path / "other/units" / directory.parent.name / "attempts/1"
     elif mutation == "unit":
         attempt = attempt.parents[2] / config["unit_keys"][1] / "attempts/1"
-    elif mutation in ("zero", "cap", "overflow"):
-        attempt = attempt.with_name({"zero": "0", "cap": "4", "overflow": "9" * 100}[mutation])
-        if mutation != "zero":
-            reason = "attempt id exceeds MAX_ATTEMPTS"
+    elif mutation == "zero":
+        attempt = attempt.with_name("0")
     elif mutation == "symlink":
         target = tmp_path / "target"
         target.mkdir()
@@ -139,35 +145,44 @@ def test_capture_template_requires_complete_prepare(tmp_path, state):
     refuse(directory / "job.sh", [attempt], "prepare is not complete or hashes differ", tmp_path)
 
 
-@pytest.mark.parametrize("field,value", (("host", "unreviewed"), ("minutes", "1441"), ("minutes", "0"), ("shape", "slot/[core=8;memory=256]"), ("urgency", "17"), ("code", "afterany")))
-def test_submit_template_checks_singleton_and_tables(tmp_path, field, value):
-    assert hasattr(prepare_split, "write_templates"), "feature absent: singleton submit template refuses values outside reviewed tables"
-    config, directories = templates(tmp_path / "module")
-    directory = directories[0]
-    script = directory / "submit-after-review.sh"
-    text = script.read_text()
-    assert f"--job-name=tessera-1717-{config['unit_keys'][0]}-prepare --dependency=singleton" in text
-    assert "'--env=-*'" in text
-    old, new = {"host": ("host:sparklina", "host:" + value), "minutes": (" -t1440m ", f" -t{value}m "),
-                "shape": ("slot/[core=1;memory=9]", value), "urgency": ("--urgency=8", "--urgency=" + value),
-                "code": ("singleton", value)}[field]
-    script.write_text(text.replace(old, new))
-    refuse(script, [tmp_path / "unused"], "submit differs from reviewed tables or code" if field != "minutes" or value != "0" else "submit field needs exactly one match", tmp_path)
-
-
-def test_submit_template_accepts_only_four_reviewed_edits(tmp_path):
-    assert hasattr(prepare_split, "write_templates"), "feature absent: submit edits preserve the reviewed template manifest"
-    _, directories = templates(tmp_path / "module")
-    directory = directories[0]
-    script = directory / "submit-after-review.sh"
-    script.write_text(script.read_text().replace("host:sparklina", "host:sparky").replace(" -t1440m ", " -t10m ")
-                      .replace("slot/[core=1;memory=9]", "slot/[core=1;memory=8]").replace("--urgency=8", "--urgency=16"))
-    phase_instance.review(directory)
-    result = subprocess.run(["sha256sum", "-c", "template.sha256"], cwd=directory, capture_output=True)
-    assert result.returncode == 0, result.stderr
-    (directory / "job.sh").write_text("changed job")
-    with pytest.raises(ValueError, match="template manifest differs"):
-        phase_instance.review(directory)
+@pytest.mark.parametrize("canary", (False, True))
+@pytest.mark.parametrize("prepare_instances", (None, ["fv1"], ["fv1e-sparky"], ["fv1", "fv1e-sparklina"]))
+def test_every_template_uses_fleet_table_schema(tmp_path, canary, prepare_instances):
+    placement = {"canary": ["fv1"], "prepare": prepare_instances, "capture": ["fv1"], "compare": ["fv1e-sparklina"]}
+    _, directories = templates(tmp_path / "module", canary, placement if prepare_instances is not None else None)
+    for directory in directories:
+        assert (directory / "table.json").is_file(), "feature absent: every template uses Fleet table schema"
+        phase = directory.name
+        fields = json.loads((directory / "table.json").read_text())
+        defaults = {"prepare": ["fv1", "fv1e-sparky", "fv1e-sparklina"], "compare": ["fv1e-sparky", "fv1e-sparklina"]}
+        names = ["fv1"] if canary or phase == "capture" else (defaults[phase] if prepare_instances is None else placement[phase])
+        instances = {}
+        for name in names:
+            hosts = {"fv1": ["sparky", "sparklina"], "fv1e-sparky": ["sparky"], "fv1e-sparklina": ["sparklina"]}[name]
+            memory = {"fv1": 8, "fv1e-sparky": 9, "fv1e-sparklina": 9}[name] if phase == "prepare" else 32
+            instances[name] = {"constraints": [{"hostlist": [host]} for host in hosts],
+                               "shapes": [[{"type": "slot", "count": 1, "label": "task", "with":
+                                           [{"type": "core", "count": 4 if canary and phase == "capture" else 1},
+                                            {"type": "memory", "count": memory}]
+                                           + ([{"type": "gpu", "count": 1}] if phase == "capture" else [])}]],
+                               "max_duration_s": {"prepare": 21600 if canary else 86400,
+                                                  "capture": 900, "compare": 7200 if canary else 21600}[phase]}
+        assert fields == {"schema": 1, "instances": instances,
+                          "job_name": f"tessera-1717-{directory.parent.name}-{phase}", "args": 1,
+                          "max_attempts": 3,
+                          "cwd": str(directory), "env_names": ["PATH", "HOME", "XDG_RUNTIME_DIR", "FLUX_F58_FORCE_ASCII", "FLUX_SCRATCH",
+                                                                 "OMP_NUM_THREADS", "MKL_NUM_THREADS", "OPENBLAS_NUM_THREADS"],
+                          "shell_options": {}}
+        assert not {"policy.json", "submit-after-review.sh", "submit-reviewed.sh"} & {p.name for p in directory.iterdir()}
+        assert (directory / "job.sh").stat().st_mode & 0o100
+        attempt = tmp_path / "module/units" / directory.parent.name / "attempts/4"
+        attempt.mkdir(parents=True)
+        if phase == "capture":
+            prepared(attempt)
+        result = subprocess.run([str(directory / "job.sh"), str(attempt)], text=True, capture_output=True,
+                                env={"PATH": os.defpath, "PYTHONDONTWRITEBYTECODE": "1"})
+        assert result.returncode != 0 and "FLUX_SCRATCH" in result.stderr
+        assert (attempt / phase).is_dir()
 
 
 def test_compare_template_lists_all_units_and_uses_fv1e(tmp_path, monkeypatch):

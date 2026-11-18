@@ -1,5 +1,11 @@
 {
   "max_attempts": 3,
+  "template_instances": {
+    "canary": ["fv1"],
+    "prepare": ["fv1", "fv1e-sparky", "fv1e-sparklina"],
+    "capture": ["fv1"],
+    "compare": ["fv1e-sparky", "fv1e-sparklina"]
+  },
   "capture_group_canary": {
     "cores_per_capture": null,
     "anon_peak_gib_per_capture": null,

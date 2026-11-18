@@ -20,8 +20,7 @@ from tests.test_numerics_unit_templates import prepared, snapshot, templates
 def inputs(root):
     root.mkdir()
     source = Path(prepare_split.__file__).parent
-    for name, target in (("phase_instance.py", "instance.py"), ("counted_feeder.py", "admission.py"),
-                         ("feeder-settings.json", "feeder-settings.json")):
+    for name, target in (("phase_instance.py", "instance.py"), ("feeder-settings.json", "feeder-settings.json")):
         shutil.copyfile(source / name, root / target)
     keys = [f"tp{size}-{part}-" + json_digest(["module-A", size, part])
             for size in (1, 2) for part in ("gate", "diagnostics")]
@@ -169,13 +168,13 @@ def test_group_uses_canary_shape_and_fleet_table(tmp_path, max_k):
     prepare_split.bind_templates(root, config)
     directory = root / "templates/group-A/capture"
     table = json.loads((directory / "table.json").read_text())
-    assert table == {"schema": 1, "instances": ["fv1"], "job_name": "tessera-1717-group-A-capture", "args": 3,
-                     "max_attempts": 3, "max_duration_s": 900, "cwd": str(directory),
-                     "env_names": ["PATH", "HOME", "XDG_RUNTIME_DIR", "FLUX_F58_FORCE_ASCII", "FLUX_SCRATCH",
-                                   "OMP_NUM_THREADS", "MKL_NUM_THREADS", "OPENBLAS_NUM_THREADS"],
-                     "constraints": [{"hostlist": ["sparky"]}, {"hostlist": ["sparklina"]}],
+    assert table == {"schema": 1, "instances": {"fv1": {"constraints": [{"hostlist": ["sparky"]}, {"hostlist": ["sparklina"]}],
                      "shapes": [[{"type": "slot", "count": 1, "label": "task", "with":
                                  [{"type": "core", "count": 6}, {"type": "memory", "count": 9}, {"type": "gpu", "count": 1}]}]],
+                     "max_duration_s": 900}}, "job_name": "tessera-1717-group-A-capture", "args": 3,
+                     "max_attempts": 3, "cwd": str(directory),
+                     "env_names": ["PATH", "HOME", "XDG_RUNTIME_DIR", "FLUX_F58_FORCE_ASCII", "FLUX_SCRATCH",
+                                   "OMP_NUM_THREADS", "MKL_NUM_THREADS", "OPENBLAS_NUM_THREADS"],
                      "shell_options": {}}
     grouped, = [item for item in config["templates"] if item["key"] == "group-A"]
     assert grouped["shape"] == "slot=1/[core=6;memory=9;gpu=1]"

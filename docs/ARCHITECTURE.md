@@ -1,22 +1,25 @@
 # Tessera plan-to-serve architecture
 
-Re-stamped 2026-11-18 for #1717 capture groups under STEP5-FORM Capture GROUPS and FLEET GATE, Fleet 10:51:32Z.
+Re-stamped 2026-11-18 for #1717 submit checks under STEP5-FORM FLEET GATE, Fleet 11:13:47Z.
 Each module has prepare and capture templates per TP unit and case set, plus one compare template.
 An optional capture group replaces its members' single capture templates. Each unit belongs to exactly one capture template.
-Prepare, compare, and single capture templates take one canonical attempt path with a fixed module, unit key, and retry cap.
+Prepare, compare, and single capture templates take one canonical attempt path with a fixed module and unit key.
 Each group fixes K ordered unit keys and takes exactly K canonical attempt paths within its fixed module root.
 The group validates every argument and prepare hash before any claim. A failed claim removes only this job's empty claims.
 Groups require measured cores, anonymous peak memory, margin, and admitted K in `feeder-settings.json`; unset values refuse generation.
 The group shape is `slot=1/[core=C;memory=M;gpu=1]`. C and M cover all K captures under the canary table.
-Each group's `table.json` uses Fleet's exact gate schema. Fleet checks singleton, job name, resources, and the attempt cap.
-Groups have no submit script, submit edit check, or job-side attempt cap. T1's single-template policy remains for the next step.
-The job hashes its runtime inputs and helpers. Fleet holds group job hashes; the runtime manifest excludes the group job.
+Every template's `table.json` uses Fleet's exact gate schema. Fleet checks each jobspec, template hashes, and the attempt cap.
+Fleet checks singleton, job name, argument count, instances, constraints, resources, duration, cwd, environment names, and shell options.
+Templates have no submit script, submit edit check, or job-side attempt cap. Fleet records attempts and runs submit.
+Instance lists come from `feeder-settings.json` by template kind. Each table instance pairs constraints, shapes, and maximum duration.
+Counted prepare defaults to fv1 with 8 GiB, and both fv1e instances with 9 GiB and their own host constraints.
+Counted compare defaults to fv1e. Canary and capture defaults require fv1.
+The job hashes its runtime inputs and helpers. Fleet holds job hashes; the runtime manifest excludes job.sh and table.json.
 The existing capture manager uses the claimed capture directories, waits for every child, and retains each child's exit status.
 The job's stop path sends TERM through the container to the manager. The manager sends TERM to every active child.
-The job checks its template hashes before it claims the phase directory with one atomic mkdir.
+The job checks its runtime manifest before it claims the phase directory with one atomic mkdir.
 Capture requires completed prepare evidence and its file hashes before the claim.
 Only the claimed phase directory and job scratch accept worker writes. Cleanup removes job scratch.
-The single-template submit check permits only reviewed host, time, slot shape and urgency changes. Fleet requires singleton for groups.
 Counted compare selects every unit's newest attempt path and runs on the selected fv1e host without a TP filter.
 The phase reader retains FAIL from phase-local partial receipts as well as retained attempt-root receipts.
 The feeder does not yet use these templates. The dense-chain HOLD remains.

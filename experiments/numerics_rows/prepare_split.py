@@ -169,12 +169,10 @@ def verify(root):
 
 
 def seal_template(directory):
-    grouped = (directory / "table.json").exists()
-    excluded = {"template.sha256", "job.sh", "table.json"} if grouped else {"template.sha256"}
+    excluded = {"template.sha256", "job.sh", "table.json"}
     files = sorted(p for p in directory.iterdir() if p.name not in excluded)
     root = directory.parents[2]
-    files += [root / name for name in (("instance.py", "campaign.json", "feeder-settings.json") if grouped else
-                                     ("instance.py", "admission.py", "campaign.json", "feeder-settings.json"))]
+    files += [root / name for name in ("instance.py", "campaign.json", "feeder-settings.json")]
     (directory / "template.sha256").write_text("".join(f"{sha256(p)}  {p.name if p.parent == directory else p}\n" for p in files))
 
 
@@ -226,45 +224,42 @@ def write_templates(root, config, repository):
         directory = root / "templates" / key / phase
         directory.mkdir(parents=True)
         minutes = {"prepare": 360 if config["canary"] else 1440, "capture": settings["capture_minutes"], "compare": 120 if config["canary"] else 360}[phase]
-        shapes = {"prepare": ["slot/[core=1;memory=8]", "slot/[core=1;memory=9]"],
-                  "capture": [f"slot/[core={4 if config['canary'] else 1};memory=32;gpu=1]"], "compare": ["slot/[core=1;memory=32]"]}[phase]
         ordered = unit.get("unit_keys", [key])
-        if "shape" in unit:
-            shapes = [unit["shape"]]
-        grouped = len(ordered) > 1
-        policy = {"hosts": ["sparky", "sparklina"], "max_minutes": minutes, "shapes": shapes, "max_urgency": 16}
-        if grouped:
-            policy = {"schema": 1, "instances": ["fv1"], "job_name": f"tessera-1717-{key}-capture", "args": len(ordered),
-                      "max_attempts": cap, "max_duration_s": minutes * 60, "cwd": str(directory),
-                      "env_names": ["PATH", "HOME", "XDG_RUNTIME_DIR", "FLUX_F58_FORCE_ASCII", "FLUX_SCRATCH",
-                                    "OMP_NUM_THREADS", "MKL_NUM_THREADS", "OPENBLAS_NUM_THREADS"],
-                      "constraints": [{"hostlist": [host]} for host in ("sparky", "sparklina")],
-                      "shapes": [unit["resources"]], "shell_options": {}}
-        write_json(directory / ("table.json" if grouped else "policy.json"), policy)
+        instances = {}
+        for name in settings["template_instances"]["canary" if config["canary"] else phase]:
+            hosts = ["sparky", "sparklina"] if name == "fv1" else [name.removeprefix("fv1e-")]
+            memory = settings["fv1_prepare_memory_gib" if name == "fv1" else "fv1e_prepare_memory_gib"] if phase == "prepare" else 32
+            resources = unit.get("resources", [{"type": "slot", "count": 1, "label": "task", "with":
+                                 [{"type": "core", "count": 4 if config["canary"] and phase == "capture" else 1},
+                                  {"type": "memory", "count": memory}] + ([{"type": "gpu", "count": 1}] if phase == "capture" else [])}])
+            instances[name] = {"constraints": [{"hostlist": [host]} for host in hosts],
+                               "shapes": [resources], "max_duration_s": minutes * 60}
+        table = {"schema": 1, "instances": instances,
+                 "job_name": f"tessera-1717-{key}-{phase}", "args": len(ordered),
+                 "max_attempts": cap, "cwd": str(directory),
+                 "env_names": ["PATH", "HOME", "XDG_RUNTIME_DIR", "FLUX_F58_FORCE_ASCII", "FLUX_SCRATCH",
+                               "OMP_NUM_THREADS", "MKL_NUM_THREADS", "OPENBLAS_NUM_THREADS"],
+                 "shell_options": {}}
+        write_json(directory / "table.json", table)
         prerequisites = ""
         if phase == "capture":
             prerequisites = ('python3 ' + shlex.quote(str(root / "instance.py")) + ' complete "$attempt/prepare" || refuse \'prepare is not complete or hashes differ\'\n'
                              '(cd "$attempt/prepare" && sha256sum -c completion.sha256) || refuse \'prepare is not complete or hashes differ\'')
         values = {"ROOT": shlex.quote(str(root)), "ROOT_RAW": str(root), "TEMPLATE": shlex.quote(str(directory)),
-                  "REPOSITORY": shlex.quote(str(repository)), "REVISION": config["tool_commit"], "KEY": key, "PHASE": phase,
+                  "REPOSITORY": shlex.quote(str(repository)), "REVISION": config["tool_commit"], "PHASE": phase,
                   "COUNT": str(len(ordered)), "COUNT_MESSAGE": "require one attempt argument" if len(ordered) == 1 else f"require {len(ordered)} attempt arguments",
                   "PATTERNS": shlex.join(["^" + re.escape(str(root / "units" / item / "attempts")) + "/([1-9][0-9]*)$" for item in ordered]),
                   "ABSENT": 'test ! -e "$attempt/capture" && test ! -L "$attempt/capture" || refuse \'phase claim already exists or failed\'' if len(ordered) > 1 else "",
-                  "ATTEMPT_CAP": "" if grouped else f'id=${{BASH_REMATCH[1]}}\ntest "${{#id}}" -le {len(str(cap))} && test "$id" -le {cap} || refuse \'attempt id exceeds MAX_ATTEMPTS\'',
                   "PREREQUISITES": prerequisites,
-                  "MINUTES": str(minutes), "SECONDS": str(minutes * 60 - 60), "SHAPE": shapes[-1], "OPTIONS": options,
+                  "SECONDS": str(minutes * 60 - 60), "OPTIONS": options,
                   "GPU": "--device nvidia.com/gpu=all" if phase == "capture" else "",
                   "PREFLIGHT": 'PYTHONPATH="$task_scratch/code" python3 -m experiments.numerics_rows.gpu_time --preflight gpu-preflight-host.json' if phase == "capture" else "",
                   "TELEMETRY": 'PYTHONPATH="$task_scratch/code" python3 -m experiments.numerics_rows.prepare_split --check-telemetry numerics_row.json > telemetry-check.json' if phase == "capture" else ""}
-        for name in (("job.sh",) if grouped else ("job.sh", "submit-after-review.sh")):
-            script = (Path(__file__).with_name("templates") / name).read_text()
-            for marker, value in values.items():
-                script = script.replace("@" + marker + "@", value)
-            (directory / name).write_text(script)
-        if grouped:
-            (directory / "job.sh").chmod(0o700)
-        if not grouped:
-            shutil.copyfile(directory / "submit-after-review.sh", directory / "submit-reviewed.sh")
+        script = (Path(__file__).with_name("templates") / "job.sh").read_text()
+        for marker, value in values.items():
+            script = script.replace("@" + marker + "@", value)
+        (directory / "job.sh").write_text(script)
+        (directory / "job.sh").chmod(0o700)
         seal_template(directory)
     write_json(root / "campaign.json", config)
 
@@ -285,7 +280,6 @@ def prepare(cpu_check, *, module=MODULE, canary=True, canary_directory=None):
         "canary_directory": str(canary_directory) if canary_directory else None,
         "paths": dict.fromkeys(INPUTS), "cpu_check": str(cpu_check)})
     shutil.copyfile(Path(__file__).with_name('phase_instance.py'), out / 'instance.py')
-    shutil.copyfile(ROOT / 'experiments/numerics_rows/counted_feeder.py', out / 'admission.py')
     shutil.copyfile(ROOT / 'experiments/numerics_rows/feeder-settings.json', out / 'feeder-settings.json')
     write_templates(out, json.loads((out / "campaign.json").read_text()), repository)
     (out / "bind-inputs.py").write_text(f'''import argparse, json, sys

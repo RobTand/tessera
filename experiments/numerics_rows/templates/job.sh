@@ -10,7 +10,6 @@ patterns=(@PATTERNS@)
 for index in "${!attempts[@]}"; do
 attempt=${attempts[index]}
 [[ "$attempt" =~ ${patterns[index]} ]] || refuse 'attempt path differs from fixed module and unit'
-@ATTEMPT_CAP@
 test "$(realpath -e -- "$attempt")" = "$attempt" || refuse 'attempt path is not canonical'
 @PREREQUISITES@
 @ABSENT@
