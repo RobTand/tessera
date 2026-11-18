@@ -1,4 +1,4 @@
-"""Join every signed module once. A module never stands for another module."""
+"""Join each required module and full unit key exactly once."""
 from __future__ import annotations
 
 import argparse
@@ -106,7 +106,7 @@ def _join(population, digest, manifests, receipts, contract):
                     raise Invalid("C1 omitted or changed an expected M configuration from signed wires")
         case_modules.update(selection)
         cases[case_sha] = case
-    evidence, execution, seen_receipts, seen_full, row_modules = {}, None, set(), set(), set()
+    evidence, execution, seen_receipts, seen_full = {}, None, set(), set()
     key_math = {}
     for receipt_sha, receipt in receipts:
         if receipt_sha in seen_receipts:
@@ -133,9 +133,6 @@ def _join(population, digest, manifests, receipts, contract):
         selection = inputs["selected_modules"]
         if inputs["population_sha256"] != digest or not selection or len(selection) != len(set(selection)) or set(selection) - set(names):
             raise Invalid("row population or selected modules differ")
-        if row_modules.intersection(selection):
-            raise Invalid("duplicate row module selection")
-        row_modules.update(selection)
         case = cases.get(inputs["case_manifest_sha256"])
         if case is not None:
             check_math_binding(receipt["runtime"], case)
@@ -152,7 +149,8 @@ def _join(population, digest, manifests, receipts, contract):
                 continue
             if unit["outcome"] == "PASS":
                 from experiments.numerics_rows.dependency_code import check_unit_code
-                check_unit_code(unit, receipt["runtime"]["image_digest"])
+                from experiments.numerics_rows.phase_artifact import identities
+                check_unit_code(unit, receipt["runtime"]["image_digest"], identities(receipt) if "code_stream" in unit else None)
             check_math_binding(unit, receipt["runtime"])
             module = unit.get("module")
             if module is None and len(selection) == 1:
@@ -222,8 +220,12 @@ def main():
     p.add_argument("--out", type=Path, required=True)
     args = p.parse_args()
     population, digest = load_signed_population(args.population)
-    load = lambda paths: [(sha256(path), json.loads(path.read_text())) for path in paths]
-    write_json(args.out, join(population, digest, load(args.manifest), load(args.row), args.contract))
+    def load(paths):
+        import hashlib
+        for path in paths:
+            raw = path.read_bytes()
+            yield hashlib.sha256(raw).hexdigest(), json.loads(raw)
+    write_json(args.out, join(population, digest, list(load(args.manifest)), list(load(args.row)), args.contract))
 
 
 if __name__ == "__main__":

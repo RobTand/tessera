@@ -7,6 +7,9 @@ Gate and diagnostics jobs each cover one module and cut, with every required M c
 Compare requires both case sets before it creates one finished receipt for that module and cut.
 Case tensors, profiler records and code bindings are written before the next case.
 Only compare can finish a split dense receipt. A stopped capture cannot establish PASS.
+Join accepts disjoint full unit keys from separate receipts for one module.
+Join rejects repeated module and full unit keys. Missing keys remain UNATTESTED.
+Each PASS unit must pass its code checks from the bound comparison stream.
 The capture-group command starts K processes within one admitted GPU job.
 K is explicit. The canary and Fleet review must set memory and concurrency bookings.
 The lead's feeder branch reserves 9 GiB for prepare. Its rebase follows the CPU check.
