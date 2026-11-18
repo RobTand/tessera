@@ -696,6 +696,89 @@ def test_module_compare_refuses_cuts_with_different_launch_states(tmp_path):
     assert receipt["row"]["finalization_finished"] is not True
 
 
+@pytest.mark.parametrize("fault", ["valid", "category", "quantizer", "boundary", "quantizer-calls", "missing-array", "extra-array", "array-order"])
+def test_module_compare_checks_cases_before_writes(tmp_path, monkeypatch, fault):
+    assert hasattr(dense_attempts, "CompareChecks"), "feature absent: case checks precede compare writes"
+    from experiments.numerics_rows.gpu_time import PhaseTimes
+    import hashlib
+    dp, api, args, receipt, groups = module_phase_pairs(tmp_path, case_sets=("all",))
+    prepared, captured = args.prepare_artifact[0], args.capture_artifact[0]
+    documents = [json.loads((root / "phase.json").read_text()) for root in (prepared, captured)]
+    streams = [list(api.cases(root, document)) for root, document in zip((prepared, captured), documents)]
+    reason = {"category": "each prepared case exactly once", "quantizer": "quantizer bytes differ",
+              "boundary": "synchronization boundaries", "quantizer-calls": "two synchronized quantizer calls",
+              "missing-array": "no matching ordered array", "extra-array": "prepare has extra scale arrays",
+              "array-order": "scale case has no matching ordered array"}.get(fault)
+    if fault == "category":
+        streams[1][-1]["category"] = "other"
+    elif fault == "quantizer":
+        streams[1][-1]["tensors"]["quantizer_q"] = streams[1][-1]["tensors"]["quantizer_sf"]
+    elif fault == "boundary":
+        streams[1][-1]["boundaries"][-1]["sync_after"] = False
+    elif fault == "quantizer-calls":
+        streams[1][-1]["boundaries"].pop()
+    elif fault in ("missing-array", "array-order"):
+        for stream in streams:
+            for case in stream[-2:]:
+                case.update(kind="scale", category="scale_index", array_index=0)
+                case["id"] = api.json_digest([case["scope"], case["kind"], case["ordinal"]])
+    for root, document, stream in zip((prepared, captured), documents, streams):
+        (root / "cases.jsonl").write_text("".join(json.dumps(case) + "\n" for case in stream))
+        document["streams"]["cases"] = {"count": len(stream), "sha256": row.sha256(root / "cases.jsonl")}
+        document["case_ids_sha256"] = hashlib.sha256("".join(case["id"] + "\n" for case in stream).encode()).hexdigest()
+        references = [{"file": ref["file"], "sha256": ref["sha256"], "bytes": (root / ref["file"]).stat().st_size}
+                      for case in stream for ref in case["tensors"].values()]
+        (root / "files.jsonl").write_text("".join(json.dumps(ref) + "\n" for ref in references))
+        document["streams"]["files"] = {"count": len(references), "sha256": row.sha256(root / "files.jsonl")}
+    if fault in ("extra-array", "array-order"):
+        arrays = [{"scope": case["scope"], "array_index": 0, "record": {}} for case in streams[0][-2:]]
+        (prepared / "arrays.jsonl").write_text("".join(json.dumps(array) + "\n" for array in reversed(arrays)))
+        documents[0]["streams"]["arrays"] = {"count": len(arrays), "sha256": row.sha256(prepared / "arrays.jsonl")}
+    for root, document in zip((prepared, captured), documents):
+        (root / "phase.json").write_text(json.dumps(document))
+    documents[1]["prepare_digest"] = row.sha256(prepared / "phase.json")
+    (captured / "phase.json").write_text(json.dumps(documents[1]))
+    case_reads = {}
+    original_records, original_artifact = api.records, dp.Artifact
+    def counted(root, name, document=None):
+        if name == "cases":
+            case_reads[Path(root)] = case_reads.get(Path(root), 0) + 1
+        yield from original_records(root, name, document)
+    def create(*arguments):
+        assert case_reads == {root: 1 for root in args.prepare_artifact + args.capture_artifact}
+        return original_artifact(*arguments)
+    monkeypatch.setattr(api, "records", counted)
+    monkeypatch.setattr(dp, "Artifact", create)
+    if fault == "valid":
+        dp.host_compare(args, receipt, PhaseTimes({}), groups)
+        assert receipt["row"]["outcome"] == "PASS" and receipt["row"]["finalization_finished"]
+        return
+    before = {str(p): p.read_bytes() if p.is_file() else None for p in tmp_path.rglob("*")}
+    original = copy.deepcopy(receipt)
+    with pytest.raises(Invalid, match=reason):
+        dp.host_compare(args, receipt, PhaseTimes({}), groups)
+    assert receipt == original
+    assert {str(p): p.read_bytes() if p.is_file() else None for p in tmp_path.rglob("*")} == before
+
+
+def test_module_compare_selects_finished_attempt_before_recorded_stopped(tmp_path):
+    assert hasattr(dense_attempts, "CompareChecks"), "feature absent: compare selects finished attempts without newest phase documents"
+    from experiments.numerics_rows.gpu_time import PhaseTimes
+    dp, _, args, receipt, groups = module_phase_pairs(tmp_path)
+    originals = list(args.prepare_artifact)
+    for prepare in originals:
+        latest = prepare.parent.with_name("2")
+        latest.mkdir()
+        (latest / "lead-cause.json").write_text(json.dumps({"unit": latest.parent.parent.name, "attempt": 2,
+                                                         "cause": "The lead confirmed termination before prepare."}))
+    args.prepare_artifact = [p.parent.with_name("2") / "prepare" for p in originals]
+    args.capture_artifact = [p.parent.with_name("2") / "capture" for p in originals]
+    dp.host_compare(args, receipt, PhaseTimes({}), groups)
+    assert receipt["row"]["finalization_finished"] and receipt["row"]["outcome"] == "PASS"
+    for prepare in originals:
+        assert str(prepare / "phase.json") in {ref["path"] for ref in receipt["phase_artifacts"].values()}
+
+
 def test_tp2_phase_artifact_refuses_one_rank(tmp_path):
     from experiments.numerics_rows import dense_phases
     assert hasattr(dense_phases, "phase_units"), "feature absent: P5 refuses a one-rank TP2 artifact"

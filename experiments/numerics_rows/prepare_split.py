@@ -137,8 +137,7 @@ def bind_templates(root, config):
         if phase == "compare":
             pairs = []
             for index, key in enumerate(config["unit_keys"]):
-                prefix += f'pair_{index}=$(find {shlex.quote(str(root / "units" / key / "attempts"))} -mindepth 1 -maxdepth 1 -type d | sort -V | tail -n 1)\n'
-                prefix += f'test -n "$pair_{index}"\n'
+                prefix += f"pair_{index}=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))[sys.argv[2]])' \"$attempt/compare-inputs.json\" {shlex.quote(key)})\n"
                 pairs.append([Path(f"__PAIR_{index}__") / p for p in ("prepare", "capture")])
             local["phase_artifacts"] = pairs
         payload = row_arguments(local, root, source, population, paths, phase, unit=unit, attempt=Path("__ATTEMPT__"))

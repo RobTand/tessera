@@ -1,6 +1,7 @@
 """Prepare dense cases on CPU, capture on GPU, and finish through host comparison."""
 import copy
 import cProfile
+from collections import deque
 from datetime import datetime, timezone
 from itertools import chain, groupby
 import json
@@ -375,12 +376,6 @@ def compare_case(case, observed, prepare_root, capture_root, unit):
         unit["completed"] &= bool(unit["invalid"] or unit["unattested"])
         return
     outputs = {k: payload(capture_root, v) for k, v in observed["tensors"].items()}
-    quantizer_guard((outputs["quantizer_q"], outputs["quantizer_sf"]), (tensors["q"], tensors["sf"]))
-    boundaries = observed.get("boundaries", [])
-    if not boundaries or any(b.get("sync_before") is not True or b.get("sync_after") is not True for b in boundaries):
-        raise Invalid("completed capture has missing or failed synchronization boundaries")
-    if sum(b["kind"] == "quantizer" for b in boundaries) < 2:
-        raise Invalid("capture omitted the two synchronized quantizer calls")
     if not observed.get("profiler_names") or {r["profiler_name"] for r in observed.get("kernel_origins", [])} != set(observed["profiler_names"]):
         unit["unattested"].append("case kernel origins are incomplete")
     got = outputs["output"]
@@ -451,28 +446,83 @@ def read_attempts(args, groups, prepare_root, capture_root, common, part):
     if (part not in ("all", "gate", "diagnostics") or directory.name != "attempts" or directory.parent.name != key or directory.parent.parent.name != "units"
             or prepare_root.name != "prepare" or capture_root != prepare_root.parent / "capture"):
         raise Invalid("phase paths differ from the validated unit attempt layout")
-    return inspect_attempts(directory, key, expected, common, part)
+    return inspect_attempts(directory, key, expected, common, part, check_cases=True)
 
 
-def inspect_attempts(directory, key, expected, common, part):
+class CompareChecks:
+    """Check case bindings during the existing artifact read. Keep only digests."""
+    def __init__(self):
+        self.pairs, self.arrays, self.group = deque(), deque(), None
+
+    def case(self, phase, case):
+        binding = json_digest([case.get(k) for k in ("id", "ordinal", "scope", "configuration", "kind", "identities", "category")])
+        names = ("q", "sf") if phase == "prepare" else ("quantizer_q", "quantizer_sf")
+        quantizer = json_digest([{k: case["tensors"][name][k] for k in ("sha256", "dtype", "shape")} for name in names]) if phase == "prepare" or case.get("completion") else None
+        if phase == "prepare":
+            self.pairs.append((binding, quantizer))
+            group = json_digest([case["scope"], case.get("array_index")]) if case["kind"] == "scale" else None
+            if group is not None and group != self.group:
+                self.arrays.append(group)
+            self.group = group
+            return
+        wanted = self.pairs.popleft() if self.pairs else None
+        if wanted is None or binding != wanted[0]:
+            raise Invalid("capture must contain each prepared case exactly once")
+        if not case.get("completion"):
+            return
+        if quantizer != wanted[1]:
+            raise Invalid("actual quantizer bytes differ from prepared bytes before native call")
+        boundaries = case.get("boundaries", [])
+        if not boundaries or any(b.get("sync_before") is not True or b.get("sync_after") is not True for b in boundaries):
+            raise Invalid("completed capture has missing or failed synchronization boundaries")
+        if sum(b["kind"] == "quantizer" for b in boundaries) < 2:
+            raise Invalid("capture omitted the two synchronized quantizer calls")
+
+    def array(self, array):
+        if not self.arrays:
+            raise Invalid("prepare has extra scale arrays")
+        if self.arrays.popleft() != json_digest([array["scope"], array["array_index"]]):
+            raise Invalid("scale case has no matching ordered array")
+
+
+def inspect_attempts(directory, key, expected, common, part, *, check_cases=False):
     """Read all unit attempts for both feeder holds and module comparison."""
     listing, failures, stopped, newest = [], {}, {}, None
     expected_keys = {json.dumps([s["module"], s["unit_key"]], sort_keys=True) for s in expected}
     for attempt in attempt_paths(directory):
         number = int(attempt.name)
         documents, evidence, found, finished = {}, {}, {}, True
+        checks = CompareChecks() if check_cases else None
         for phase in ("prepare", "capture"):
             root = attempt / phase
             path = root / "phase.json"
             document = json.loads(path.read_text()) if path.is_file() else None
             evidence[phase] = sha256(path) if document is not None else None
+            def inspect_case(case):
+                nonlocal finished
+                if (document is None or document.get("completion") is not True) and (case.get("identities") != common or case.get("scope") not in expected):
+                    raise Invalid("attempt case has another unit or common identity")
+                state = case.get("status", case)
+                if case.get("findings") or case.get("outcome") == "FAIL" or state.get("findings") or state.get("outcome") == "FAIL":
+                    found[json.dumps([case["scope"]["module"], case["scope"]["unit_key"]], sort_keys=True)] = f"FAIL attempt {key}/{number}"
+                if phase == "capture" and not case.get("completion") and not any(state.get(f) for f in ("findings", "invalid", "unattested")):
+                    finished = False
+                if checks is not None and document is not None and document.get("completion") is True and (phase == "prepare" or "prepare" in documents):
+                    checks.case(phase, case)
             if document is not None:
                 if document.get("case_set") != part:
                     raise Invalid("attempt phase has another case set")
                 if document.get("completion") is True:
-                    documents[phase], evidence[phase] = read(root, phase, common, expected)
+                    if check_cases and document.get("scopes") != expected:
+                        raise Invalid("phase artifact has a foreign module or cut; " + row.P5)
+                    documents[phase], evidence[phase] = read(root, phase, common, expected, check_case=inspect_case,
+                        **({"check_array": checks.array} if checks is not None and phase == "prepare" else {}))
+                    if checks is not None and phase == "prepare" and checks.arrays:
+                        raise Invalid("scale case has no matching ordered array")
+                    if checks is not None and phase == "capture" and "prepare" in documents and checks.pairs:
+                        raise Invalid("capture must contain each prepared case exactly once")
                 elif document.get("identities") != common or document.get("scopes") != expected:
-                    raise Invalid("row phase common identities, module or cut differ")
+                    raise Invalid("incomplete attempt phase identities, module or cut differ")
                 status = document.get("receipt", {"units": []})
             else:
                 status = {"units": []}
@@ -486,14 +536,9 @@ def inspect_attempts(directory, key, expected, common, part):
                     raise Invalid("phase receipt identities or units differ from the selected cut")
                 found.update({k: f"FAIL attempt {key}/{number}" for k, u in unit_map(status["units"]).items() if u.get("findings") or u.get("outcome") == "FAIL"})
             finished &= phase in documents
-            for case in records(root, "cases") if (root / "cases.jsonl").is_file() else ():
-                if case.get("identities") != common or case.get("scope") not in expected:
-                    raise Invalid("attempt case has another unit or common identity")
-                state = case.get("status", case)
-                if case.get("findings") or case.get("outcome") == "FAIL" or state.get("findings") or state.get("outcome") == "FAIL":
-                    found[json.dumps([case["scope"]["module"], case["scope"]["unit_key"]], sort_keys=True)] = f"FAIL attempt {key}/{number}"
-                if phase == "capture" and not case.get("completion") and not any(state.get(f) for f in ("findings", "invalid", "unattested")):
-                    finished = False
+            if phase not in documents:
+                for case in records(root, "cases") if (root / "cases.jsonl").is_file() else ():
+                    inspect_case(case)
             evidence[phase + "_cases"] = sha256(root / "cases.jsonl") if (root / "cases.jsonl").is_file() else None
         cause = attempt / "lead-cause.json"
         if cause.is_file():
@@ -520,15 +565,15 @@ def host_compare(args, receipt, phases, groups):
         raise Invalid("compare requires both phase artifacts with matching gate and diagnostics artifacts")
     bound, listing, failures, stopped, selected = [], [], {}, {}, {(g[0]["name"], g[2]["size"], g[2]["rank"]): [] for g in groups}
     for prepare_root, capture_root in zip(args.prepare_artifact, args.capture_artifact):
-        selection = json.loads((prepare_root / "phase.json").read_text())
-        matched = [unit for unit in phase_units(groups) if scopes(unit) == selection.get("scopes")]
+        matched = [(unit, part) for unit in phase_units(groups) for part in ("all", "gate", "diagnostics")
+                   if prepare_root.parents[2].name == f'tp{unit[0][2]["size"]}-{part}-' + json_digest([unit[0][0]["name"], unit[0][2]["size"], part])]
         if len(matched) != 1:
             raise Invalid("phase artifact has a foreign module or cut; " + row.P5)
-        unit_groups, = matched
+        (unit_groups, part), = matched
         common = identities({**receipt, "inputs": {**receipt.get("inputs", {}), "selected_cuts": [g[2] for g in unit_groups]}})
         for entry, _, cut, _ in unit_groups:
-            selected[(entry["name"], cut["size"], cut["rank"])].append(selection["case_set"])
-        newest, attempts, failed, unfinished = read_attempts(args, unit_groups, prepare_root, capture_root, common, selection["case_set"])
+            selected[(entry["name"], cut["size"], cut["rank"])].append(part)
+        newest, attempts, failed, unfinished = read_attempts(args, unit_groups, prepare_root, capture_root, common, part)
         listing.extend(attempts)
         failures.update(failed)
         stopped.update(unfinished)
@@ -584,8 +629,6 @@ def host_compare(args, receipt, phases, groups):
             unit = units[json.dumps([case["scope"]["module"], case["scope"]["unit_key"]], sort_keys=True)]
             array = next(arrays, None) if case["kind"] == "scale" else None
             if case["kind"] == "scale":
-                if array is None or array["scope"] != case["scope"] or array["array_index"] != case["array_index"]:
-                    raise Invalid("scale case has no matching ordered array")
                 array["record"]["mismatches"] = 0
                 unit["exact"]["scale_index"]["arrays"] = [array["record"]]
             for case, observed in chain([(case, observed)], batch):
@@ -605,8 +648,6 @@ def host_compare(args, receipt, phases, groups):
             if array is not None:
                 summarize_array(unit, array["record"])
                 artifact.record("arrays", array)
-        if next(arrays, None) is not None:
-            raise Invalid("prepare has extra scale arrays")
     for identity, reason in failures.items():
         units[identity]["failed_attempts"] = [reason]
         if not units[identity]["findings"]:

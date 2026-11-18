@@ -51,6 +51,46 @@ def prepared(attempt):
     (directory / "completion.sha256").write_text(hashlib.sha256(raw).hexdigest() + "  phase.json\n")
 
 
+def job_world(root, fault=""):
+    tools, scratch, calls = root / "tools", root / "scratch", root / "calls"
+    tools.mkdir()
+    scratch.mkdir()
+    scripts = {
+        "git": '[[ "$*" != *rev-parse* ]] || printf "%s\\n" ' + "a" * 40,
+        "python3": f'''if [[ "$*" == *--verify* ]]; then step=verify; elif [[ "$2" == check ]]; then step=instance; else exit 0; fi
+printf '%s\\n' "$step" >> {shlex.quote(str(calls))}
+[[ "$step" != {shlex.quote(fault)} ]] || {{ echo "refused $step" >&2; exit 3; }}
+[[ "$step" != instance ]] || printf '{{"checked":true}}\\n'
+''',
+        "podman": '[[ "$1" != run ]] || exit 9',
+    }
+    for name, body in scripts.items():
+        path = tools / name
+        path.write_text("#!/bin/bash\n" + body + "\n")
+        path.chmod(0o700)
+    return {"PATH": str(tools) + os.pathsep + os.defpath, "FLUX_SCRATCH": str(scratch), "FLUX_JOB_ID": "unit-job"}, calls
+
+
+@pytest.mark.parametrize("fault", ["verify", "instance", ""])
+def test_job_checks_documents_before_claim(tmp_path, fault):
+    assert (Path(prepare_split.__file__).parent / "templates/job.sh").read_text().index("--verify @ROOT@") < (Path(prepare_split.__file__).parent / "templates/job.sh").read_text().index('mkdir "$attempt/@PHASE@"'), "feature absent: document checks precede the phase claim"
+    _, directories = templates(tmp_path / "module")
+    directory = next(p for p in directories if p.name == "prepare")
+    attempt = tmp_path / "module/units" / directory.parent.name / "attempts/1"
+    attempt.mkdir(parents=True)
+    environment, calls = job_world(tmp_path, fault)
+    before = snapshot(tmp_path / "module")
+    result = subprocess.run([str(directory / "job.sh"), str(attempt)], env=environment, text=True, capture_output=True)
+    assert result.returncode == (3 if fault else 9)
+    assert calls.read_text().splitlines() == (["verify"] if fault == "verify" else ["verify", "instance"])
+    assert not any((tmp_path / "scratch").iterdir())
+    if fault:
+        assert "refused " + fault in result.stderr
+        assert snapshot(tmp_path / "module") == before
+    else:
+        assert json.loads((attempt / "prepare/instance.json").read_text()) == {"checked": True}
+
+
 def test_templates_cover_units_phases_and_manifest(tmp_path):
     assert hasattr(prepare_split, "write_templates"), "feature absent: one reviewed template per unit and phase"
     config, directories = templates(tmp_path / "module")
@@ -123,7 +163,11 @@ def test_template_refuses_existing_phase_claim(tmp_path, phase):
     if phase == "capture":
         prepared(attempt)
     (attempt / phase).mkdir()
-    refuse(directory / "job.sh", [attempt], "phase claim already exists or failed", tmp_path)
+    environment, _ = job_world(tmp_path)
+    before = snapshot(tmp_path / "module")
+    result = subprocess.run([str(directory / "job.sh"), str(attempt)], env=environment, text=True, capture_output=True)
+    assert result.returncode == 3 and "phase claim already exists or failed" in result.stderr
+    assert snapshot(tmp_path / "module") == before
     script = (directory / "job.sh").read_text()
     assert script.count('mkdir "$attempt/' + phase + '"') == 1
     assert 'mkdir -p "$attempt/' not in script
@@ -186,7 +230,7 @@ def test_every_template_uses_fleet_table_schema(tmp_path, canary, prepare_instan
         result = subprocess.run([str(directory / "job.sh"), str(attempt)], text=True, capture_output=True,
                                 env={"PATH": os.defpath, "PYTHONDONTWRITEBYTECODE": "1"})
         assert result.returncode != 0 and "FLUX_SCRATCH" in result.stderr
-        assert (attempt / phase).is_dir()
+        assert not (attempt / phase).exists()
 
 
 def test_compare_template_lists_all_units_and_uses_fv1e(tmp_path):
@@ -199,8 +243,26 @@ def test_compare_template_lists_all_units_and_uses_fv1e(tmp_path):
     assert command[command.index("--case-set") + 1] == "all"
     assert not {"--tp-size", "--tp-rank"} & set(command)
     for key in config["unit_keys"]:
-        assert str(tmp_path / "module/units" / key / "attempts") in payload
+        assert key in payload
+    assert "compare-inputs.json" in payload and "find " not in payload
     assert list(json.loads((directory / "table.json").read_text())["instances"]) == ["fv1"]
+
+
+def test_compare_payload_uses_saved_attempts(tmp_path):
+    assert "compare-inputs.json" in inspect.getsource(prepare_split.bind_templates), "feature absent: compare payload reads saved input attempts"
+    config, directories = templates(tmp_path / "module")
+    directory = next(p for p in directories if p.name == "compare")
+    attempt = tmp_path / "module/units" / directory.parent.name / "attempts/1"
+    attempt.mkdir(parents=True)
+    selected = {key: str(tmp_path / "module/units" / key / "attempts/1") for key in config["unit_keys"]}
+    for path in selected.values():
+        Path(path).mkdir(parents=True)
+        Path(path).with_name("2").mkdir()
+    (attempt / "compare-inputs.json").write_text(json.dumps(selected))
+    prefix = (directory / "payload.sh").read_text().split("exec ", 1)[0]
+    script = prefix + "printf '%s\\n' " + " ".join(f'"$pair_{index}"' for index in range(len(selected)))
+    result = subprocess.run(["bash", "-c", script, "payload", str(attempt)], text=True, capture_output=True)
+    assert result.returncode == 0 and result.stdout.splitlines() == list(selected.values())
 
 
 @pytest.mark.parametrize('outcome,finalized', [('FAIL', True), ('STOPPED', True), ('FAIL', False)])

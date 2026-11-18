@@ -1,6 +1,6 @@
 # Tessera plan-to-serve architecture
 
-Re-stamped 2026-11-18 for #1717 Fleet gate 1e8d7323: no shell options, eight table keys, max_attempts 5.
+Re-stamped 2026-11-18 for #1717 RC: document refusals before claims and compare writes.
 Each module has prepare and capture templates per TP unit and case set, plus one compare template.
 The generator accepts an explicit campaign output root and refuses an existing root. Without that parameter, it keeps the dated shared path.
 The CLI accepts `--output-root` and `--module` for canary generation.
@@ -27,10 +27,14 @@ Counted compare, canary, and capture default to fv1. Dense tables carry exact ur
 The job hashes its runtime inputs and helpers. Fleet holds job hashes; the runtime manifest excludes job.sh and table.json.
 The existing capture manager uses the claimed capture directories, waits for every child, and retains each child's exit status.
 The job's stop path sends TERM through the container to the manager. The manager sends TERM to every active child.
-The job checks its runtime manifest before it claims the phase directory with one atomic mkdir.
+The job checks its runtime manifest, cloned source, bound campaign, and every saved instance before the atomic phase claims.
+Instance records stay in scratch until all claims succeed. The job then moves each record into its phase directory.
 Capture requires completed prepare evidence and its file hashes before the claim.
 Only the claimed phase directory and job scratch accept worker writes. Cleanup removes job scratch.
-Counted compare selects every unit's newest attempt path and runs on fv1 without a TP filter.
+Counted compare uses its saved compare-inputs.json and runs on fv1 without a TP filter.
+The reader selects each unit's newest finished attempt, including when a later recorded STOPPED attempt has no phase document.
+Case pairing, quantizer byte digests, synchronization boundaries, and scale-array order are checked before compare changes a receipt or writes an artifact.
+These checks use callbacks in the existing artifact read. They retain only case and quantizer digests and array identities.
 The phase reader retains FAIL from phase-local partial receipts. It reads no attempt-root receipt.
 The feeder uses these templates through Fleet's gate. The dense-chain HOLD remains.
 The feeder builds a dry-run jobspec from each table. The dry-run passes `--rlimit=-*` and no shell option, so the jobspec has no shell key. The gate alone submits the checked bytes and writes submits.jsonl; every reservation counts toward max_attempts.

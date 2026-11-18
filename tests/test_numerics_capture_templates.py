@@ -14,7 +14,7 @@ import pytest
 from experiments.numerics_rows import prepare_split
 from experiments.numerics_rows.common import Invalid
 from experiments.numerics_rows.launch_state import json_digest
-from tests.test_numerics_unit_templates import prepared, snapshot, templates
+from tests.test_numerics_unit_templates import job_world, prepared, snapshot, templates
 
 
 def inputs(root):
@@ -49,19 +49,21 @@ def build_group(root):
     return config, directory, attempts
 
 
-def run_job(directory, attempts, path=os.defpath):
+def run_job(directory, attempts, environment=None):
     return subprocess.run(["bash", str(directory / "job.sh"), *map(str, attempts)], text=True, capture_output=True,
-                          env={"PATH": path, "PYTHONDONTWRITEBYTECODE": "1"})
+                          env=environment or {"PATH": os.defpath, "PYTHONDONTWRITEBYTECODE": "1"})
 
 
 @pytest.mark.parametrize("count", (2, 3, 4))
 def test_group_requires_exactly_k_arguments(tmp_path, count):
     assert hasattr(prepare_split, "capture_templates"), "feature absent: capture group requires exactly K arguments"
     _, directory, attempts = build_group(tmp_path / "module")
+    environment, calls = job_world(tmp_path)
     before = snapshot(tmp_path)
-    result = run_job(directory, (attempts + [attempts[0]])[:count])
+    result = run_job(directory, (attempts + [attempts[0]])[:count], environment)
     if count == 3:
-        assert result.returncode != 0 and "FLUX_SCRATCH" in result.stderr
+        assert result.returncode == 9
+        assert calls.read_text().splitlines() == ["verify", "instance", "instance", "instance"]
         assert all((attempt / "capture").is_dir() for attempt in attempts)
     else:
         assert result.returncode == 3 and "require 3 attempt arguments" in result.stderr
@@ -103,6 +105,7 @@ def test_group_validates_every_argument_before_any_claim(tmp_path, index, change
 def test_group_rolls_back_only_its_own_claims(tmp_path, index):
     assert hasattr(prepare_split, "capture_templates"), "feature absent: capture group rolls back partial claims"
     _, directory, attempts = build_group(tmp_path / "module")
+    environment, calls = job_world(tmp_path)
     commands = tmp_path / "bin"
     commands.mkdir()
     mkdir = shlex.quote(shutil.which("mkdir"))
@@ -110,9 +113,11 @@ def test_group_rolls_back_only_its_own_claims(tmp_path, index):
     fake = commands / "mkdir"
     fake.write_text(f'#!/bin/bash\nif test "$1" = {shlex.quote(contested)}; then {mkdir} "$1"; fi\nexec {mkdir} "$@"\n')
     fake.chmod(0o700)
+    environment["PATH"] = str(commands) + os.pathsep + environment["PATH"]
     before = snapshot(tmp_path)
-    result = run_job(directory, attempts, str(commands) + os.pathsep + os.defpath)
+    result = run_job(directory, attempts, environment)
     assert result.returncode == 3 and "phase claim already exists or failed" in result.stderr
+    before[str(calls.relative_to(tmp_path))] = b"verify\ninstance\ninstance\ninstance\n"
     before[str(Path(contested).relative_to(tmp_path))] = None
     assert snapshot(tmp_path) == before
 
@@ -194,8 +199,10 @@ def test_group_leaves_attempt_cap_to_fleet(tmp_path):
         attempts[index] = attempt.with_name("4")
     assert json.loads((directory / "table.json").read_text())["max_attempts"] == 5
     assert "MAX_ATTEMPTS" not in (directory / "job.sh").read_text()
-    result = run_job(directory, attempts)
-    assert result.returncode != 0 and "FLUX_SCRATCH" in result.stderr
+    environment, calls = job_world(tmp_path)
+    result = run_job(directory, attempts, environment)
+    assert result.returncode == 9
+    assert calls.read_text().splitlines() == ["verify", "instance", "instance", "instance"]
     assert all((attempt / "capture").is_dir() for attempt in attempts)
 
 

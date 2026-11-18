@@ -135,7 +135,7 @@ def cases(root, document):
         raise Invalid("row phase must contain each prepared case exactly once")
 
 
-def read(root, phase, common, scopes, *, check_case=lambda case: None):
+def read(root, phase, common, scopes, *, check_case=lambda case: None, check_array=lambda array: None):
     root = Path(root)
     raw = (root / "phase.json").read_bytes()
     document = json.loads(raw)
@@ -158,8 +158,10 @@ def read(root, phase, common, scopes, *, check_case=lambda case: None):
             item = next(inventory, None)
             if item is None or any(item[k] != ref[k] for k in ("file", "sha256")):
                 raise Invalid("row phase tensor is not in the ordered file manifest")
-    for _ in chain(inventory, records(root, "arrays", document) if "arrays" in document["streams"] else ()):
+    for _ in inventory:
         pass
+    for array in records(root, "arrays", document) if "arrays" in document["streams"] else ():
+        check_array(array)
     return document, hashlib.sha256(raw).hexdigest()
 
 

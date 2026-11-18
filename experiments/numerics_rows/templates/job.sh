@@ -14,15 +14,7 @@ test "$(realpath -e -- "$attempt")" = "$attempt" || refuse 'attempt path is not 
 @PREREQUISITES@
 @ABSENT@
 done
-claimed=()
-for attempt in "${attempts[@]}"; do
-  if mkdir "$attempt/@PHASE@"; then claimed+=("$attempt/@PHASE@"); else
-    if test "${#claimed[@]}" -gt 0; then rmdir -- "${claimed[@]}"; fi
-    refuse 'phase claim already exists or failed'
-  fi
-done
-attempt=${attempts[0]}
-cd "$attempt/@PHASE@"
+claimed=() phase_mounts=()
 task_scratch="${FLUX_SCRATCH:?}/${FLUX_JOB_ID:?}"
 name=tessera-dense-@PHASE@-"$FLUX_JOB_ID"
 child=
@@ -51,19 +43,26 @@ export HOME="$task_scratch/home" TMPDIR="$task_scratch/tmp"
 export XDG_CACHE_HOME="$task_scratch/cache" XDG_CONFIG_HOME="$task_scratch/config" XDG_DATA_HOME="$task_scratch/data"
 export PYTHONPYCACHEPREFIX="$task_scratch/host-pycache"
 mkdir -p "$HOME" "$TMPDIR" "$XDG_CACHE_HOME" "$XDG_CONFIG_HOME" "$XDG_DATA_HOME"
-phase_mounts=()
-for attempt in "${attempts[@]}"; do
-  python3 @ROOT@/instance.py check "$attempt" @PHASE@ > "$attempt/@PHASE@/instance.json"
-  phase_mounts+=(-v "$attempt/@PHASE@:$attempt/@PHASE@:rw")
-done
 export CONTAINERS_STORAGE_CONF="$task_scratch/storage.conf" CONTAINERS_CONF="$task_scratch/containers.conf"
 printf '[storage]\ndriver = "overlay"\nrunroot = "%s/podman-run"\ngraphroot = "%s/podman-storage"\n[storage.options]\nadditionalimagestores = ["/home/rob/.local/share/containers/storage"]\n' "$task_scratch" "$task_scratch" > "$CONTAINERS_STORAGE_CONF"
 printf '[engine]\ntmp_dir = "%s/podman-tmp"\n' "$task_scratch" > "$CONTAINERS_CONF"
-grep Cpus_allowed_list /proc/self/status > affinity.txt
 git clone --shared @REPOSITORY@ "$task_scratch/code"
 git -C "$task_scratch/code" checkout --detach @REVISION@
 test "$(git -C "$task_scratch/code" rev-parse HEAD)" = @REVISION@
 PYTHONPATH="$task_scratch/code" python3 -m experiments.numerics_rows.prepare_split --verify @ROOT@
+for index in "${!attempts[@]}"; do python3 @ROOT@/instance.py check "${attempts[index]}" @PHASE@ > "$task_scratch/instance-$index.json"; done
+for attempt in "${attempts[@]}"; do
+  if mkdir "$attempt/@PHASE@"; then claimed+=("$attempt/@PHASE@"); else
+    if test "${#claimed[@]}" -gt 0; then rmdir -- "${claimed[@]}"; claimed=(); fi
+    refuse 'phase claim already exists or failed'
+  fi
+done
+for index in "${!attempts[@]}"; do
+  mv "$task_scratch/instance-$index.json" "${attempts[index]}/@PHASE@/instance.json"
+  phase_mounts+=(-v "${attempts[index]}/@PHASE@:${attempts[index]}/@PHASE@:rw")
+done
+cd "${attempts[0]}/@PHASE@"
+grep Cpus_allowed_list /proc/self/status > affinity.txt
 @PREFLIGHT@
 podman image inspect acc684c06ec7 > "$task_scratch/image-inspect.json"
 mapfile -t population_mount < <(PYTHONPATH="$task_scratch/code" python3 -c 'import json,shlex; print("\n".join(shlex.split(json.load(open("@ROOT_RAW@/campaign.json"))["population_mount"])))')
