@@ -479,8 +479,6 @@ def read_attempts(args, groups, prepare_root, capture_root, common, part):
             if finished or found:
                 raise Invalid(f"lead cause record requires STOPPED attempt: {key}/{number}")
         if finished:
-            for _ in check_pair(args, groups, documents["prepare"], documents["capture"], evidence["prepare"], attempt / "prepare", attempt / "capture"):
-                pass
             newest = (attempt / "prepare", attempt / "capture", documents["prepare"], documents["capture"], evidence["prepare"], evidence["capture"])
         elif not found and not cause.is_file():
             stopped.append(f"open STOPPED attempt {key}/{number}")

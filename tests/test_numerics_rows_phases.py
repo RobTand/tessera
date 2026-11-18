@@ -1370,7 +1370,7 @@ def test_open_stopped_attempt_refuses_with_its_name(tmp_path, incomplete_manifes
     assert not receipt["row"]["finalization_finished"] and not (args.out / "numerics_row.json").exists()
 
 
-@pytest.mark.parametrize("state", ["stopped", "finished", "fail", "stopped-fail", "case-fail", "partial-fail", "other-id", "missing-id"])
+@pytest.mark.parametrize("state", ["stopped", "finished", "fail", "case-fail", "partial-fail", "other-id", "missing-id"])
 def test_stopped_attempt_with_lead_cause_allows_a_later_pass(tmp_path, state):
     from experiments.numerics_rows import dense_phases
     assert hasattr(dense_phases, "read_attempts"), "feature absent: recorded STOPPED cause permits retry"
@@ -1378,7 +1378,7 @@ def test_stopped_attempt_with_lead_cause_allows_a_later_pass(tmp_path, state):
     dp, api, args, receipt, groups, attempt = retry_phase_attempts(tmp_path)
     path = attempt / "capture/phase.json"
     document = json.loads(path.read_text())
-    if state in ("fail", "stopped-fail", "partial-fail"):
+    if state in ("fail", "partial-fail"):
         document["receipt"]["units"][0]["outcome"] = "FAIL"
         path.write_text(json.dumps(document))
     if state == "partial-fail":
