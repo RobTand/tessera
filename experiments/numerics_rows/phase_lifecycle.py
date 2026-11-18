@@ -43,31 +43,17 @@ class Progress:
             self.active["elapsed_seconds"] = now - self.since
             with (self.out / "phase-events.jsonl").open("a") as stream:
                 stream.write(json.dumps(self.active, sort_keys=True) + "\n")
-            key = json.dumps([self.active["module"], self.active["cut"], self.active["phase"]], sort_keys=True)
-            totals = self.receipt["row"].setdefault("cut_phase_wall_seconds", {})
-            totals[key] = totals.get(key, 0) + self.active["elapsed_seconds"]
         self.phases.change(phase)
-        if self.meter is not None:
-            self.meter.phase = phase
-        self.active = {"phase": phase, "module": None if unit is None else unit["module"], "cut": None if unit is None else unit["tp"],
-                       "M": None if unit is None else unit["m_config"]["M"], "case": case,
+        self.active = {"phase": phase, "module": None if unit is None else unit["module"],
+                       "cut": None if unit is None else unit["tp"], "case": case,
+                       "M": None if unit is None else unit["m_config"]["M"],
                        "utc_start": datetime.now(timezone.utc).isoformat(), "elapsed_seconds": 0,
                        "worker_elapsed_seconds": now - self.start}
         self.since = now
         self.receipt["row"]["active"] = self.active
-        write_json(self.out / "progress.json", self.active)
-        if checkpoint:
-            if self.meter is not None:
-                self.receipt["row"]["gpu_minutes"] = self.meter.snapshot(include_samples=False)
-            write_json(self.out / "numerics_row.json", self.receipt)
+        self.checkpoint()
 
     def checkpoint(self):
-        """Flush an active long case before a handled termination."""
         if self.active is not None:
             self.active["elapsed_seconds"] = time.monotonic() - self.since
-            self.active["worker_elapsed_seconds"] = time.monotonic() - self.start
             write_json(self.out / "progress.json", self.active)
-        self.phases.change(self.phases.current)
-        if self.meter is not None:
-            self.receipt["row"]["gpu_minutes"] = self.meter.snapshot(include_samples=False)
-        write_json(self.out / "numerics_row.json", self.receipt)

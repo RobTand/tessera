@@ -1,14 +1,10 @@
-"""Content-bound dense row phases. These files contain no environment values.
-
-Each phase and case carries its own common identities and full rule unit key.
-Tensor payloads use raw bytes, explicit dtype and shape, and a SHA-256. No pickle
-is read. The phase manifest is the completion marker and is written atomically.
-"""
+"""Write ordered phase records and verify the bytes consumed by each reader."""
 from __future__ import annotations
 
 import copy
 import hashlib
 import json
+from itertools import chain, zip_longest
 from pathlib import Path
 
 from experiments.numerics_rows.common import Invalid, sha256, write_json
@@ -37,38 +33,69 @@ def unit_scope(unit, wire_sha256):
     return {"unit_key": unit_identity(unit), "module": unit["module"], "cut": copy.deepcopy(unit["tp"]), "wire_sha256": wire_sha256}
 
 
+def records(root, name, document=None):
+    count, digest = 0, hashlib.sha256()
+    with (Path(root) / (name + ".jsonl")).open("rb") as stream:
+        for line in stream:
+            digest.update(line)
+            count += 1
+            yield json.loads(line)
+    if document is not None and document["streams"][name] != {"count": count, "sha256": digest.hexdigest()}:
+        raise Invalid("row phase stream digest or count differs")
+
+
 class Artifact:
     def __init__(self, root, phase, common):
         self.root, self.phase, self.common = Path(root), phase, copy.deepcopy(common)
         self.root.mkdir(parents=True, exist_ok=True)
-        self.document = {"schema": "tessera.dense_row_phase.v1", "phase": phase, "identities": self.common,
-                         "completion": False, "scopes": [], "cases": [], "files": {}}
+        if (self.root / "phase.json").exists() or any(self.root.glob("*.jsonl")):
+            raise Invalid("use a new phase attempt directory")
+        self.case_ids = hashlib.sha256()
+        self.document = {"schema": "tessera.dense_row_phase.v2", "phase": phase, "identities": self.common,
+                         "completion": False, "scopes": [], "ordinal_start": 0, "case_set": "all", "streams": {}}
+
+    def record(self, name, value):
+        if name == "cases":
+            self.case_ids.update((value["id"] + "\n").encode("ascii"))
+        with (self.root / (name + ".jsonl")).open("a") as stream:
+            stream.write(json.dumps(value, sort_keys=True, separators=(",", ":"), allow_nan=False) + "\n")
+        self.document["streams"].setdefault(name, {"count": 0})["count"] += 1
+
+    def file(self, name):
+        path = self.root / name
+        self.record("files", {"file": str(name), "bytes": path.stat().st_size, "sha256": sha256(path)})
 
     def tensor(self, tensor):
         import torch
         tensor = tensor.detach().cpu().contiguous()
-        data = tensor.reshape(-1).view(torch.uint8).numpy().tobytes()
+        data = memoryview(tensor.reshape(-1).view(torch.uint8).numpy()).cast("B")
         digest = hashlib.sha256(data).hexdigest()
         name = "bytes/" + digest
         path = self.root / name
+        path.parent.mkdir(exist_ok=True)
         if not path.exists():
-            path.parent.mkdir(exist_ok=True)
-            path.write_bytes(data)
+            with path.open("wb") as stream:
+                for start in range(0, len(data), 2**20):
+                    stream.write(data[start:start + 2**20])
         if sha256(path) != digest:
             raise Invalid("existing phase payload differs from its content name")
-        self.document["files"][name] = digest
+        self.file(name)
         return {"file": name, "sha256": digest, "dtype": str(tensor.dtype).removeprefix("torch."), "shape": list(tensor.shape)}
 
     def add(self, scope, configuration, kind, tensors, **fields):
-        key = json_digest([scope, kind, len(self.document["cases"])])
-        case = {"id": key, "identities": copy.deepcopy(self.common), "scope": copy.deepcopy(scope),
-                "configuration": copy.deepcopy(configuration), "kind": kind,
-                "tensors": {name: self.tensor(value) for name, value in tensors.items()}, **fields}
-        self.document["cases"].append(case)
+        ordinal = self.document["ordinal_start"] + self.document["streams"].get("cases", {}).get("count", 0)
+        case = {"id": json_digest([scope, kind, ordinal]), "ordinal": ordinal, "identities": self.common,
+                "scope": scope, "configuration": configuration, "kind": kind,
+                "tensors": {name: self.tensor(value) for name, value in sorted(tensors.items())}, **fields}
+        self.record("cases", case)
         return case
 
     def finish(self, **fields):
-        self.document.update(fields, completion=True)
+        if self.document.get("expected_cases", self.document["streams"].get("cases", {}).get("count", 0)) != self.document["streams"].get("cases", {}).get("count", 0):
+            raise Invalid("prepare differs from the deterministic full row case count")
+        for name, record in self.document["streams"].items():
+            record["sha256"] = sha256(self.root / (name + ".jsonl"))
+        self.document.update(fields, completion=True, case_ids_sha256=self.case_ids.hexdigest())
         write_json(self.root / "phase.json", self.document)
         return sha256(self.root / "phase.json")
 
@@ -95,73 +122,91 @@ def payload(root, reference):
         raise Invalid("phase tensor shape differs from its bytes") from error
 
 
+def cases(root, document):
+    count, digest = 0, hashlib.sha256()
+    positions = iter(chain.from_iterable(range(start, start + length) for start, length in document.get("ranges", [[document["ordinal_start"], document["streams"].get("cases", {}).get("count", 0)]])))
+    for case in records(root, "cases", document):
+        ordinal = next(positions, None)
+        if type(case.get("ordinal")) is not int or case["ordinal"] != ordinal or case.get("id") != json_digest([case["scope"], case["kind"], ordinal]):
+            raise Invalid("row phase must contain each ordered case exactly once")
+        if case.get("identities") != document["identities"] or case.get("scope") not in document["scopes"]:
+            raise Invalid("row phase case has another unit or common identity")
+        if case.get("configuration") != case["scope"]["unit_key"][4]:
+            raise Invalid("row phase case configuration differs from its unit key")
+        count += 1
+        digest.update((case["id"] + "\n").encode("ascii"))
+        yield case
+    if next(positions, None) is not None or count != document.get("expected_cases", count) or count != document["streams"].get("cases", {}).get("count", 0) or digest.hexdigest() != document["case_ids_sha256"]:
+        raise Invalid("row phase must contain each prepared case exactly once")
+
+
 def read(root, phase, common, scopes):
     root = Path(root)
     raw = (root / "phase.json").read_bytes()
     document = json.loads(raw)
-    if document.get("schema") != "tessera.dense_row_phase.v1" or document.get("phase") != phase or document.get("completion") is not True:
+    if document.get("schema") != "tessera.dense_row_phase.v2" or document.get("phase") != phase or document.get("completion") is not True:
         raise Invalid("row phase is missing, incomplete or has the wrong kind")
     if document.get("identities") != common or document.get("scopes") != scopes:
         raise Invalid("row phase common identities, module or cut differ")
-    ids = set()
-    for case in document["cases"]:
-        if case["id"] in ids:
-            raise Invalid("row phase repeats a case")
-        ids.add(case["id"])
-        if case.get("identities") != common or case.get("scope") not in scopes:
-            raise Invalid("row phase case has another unit or common identity")
-        if case.get("configuration") != case["scope"]["unit_key"][4]:
-            raise Invalid("row phase case configuration differs from its unit key")
-        for reference in case["tensors"].values():
-            if document["files"].get(reference["file"]) != reference["sha256"]:
-                raise Invalid("row phase tensor is not in the file manifest")
-    for name, digest in document["files"].items():
-        path = (root / name).resolve()
-        if not path.is_relative_to(root.resolve()) or sha256(path) != digest:
-            raise Invalid("row phase file digest differs")
+    if set(document["streams"]) - {"cases", "arrays", "files"}:
+        raise Invalid("row phase has an unknown stream")
+    def files():
+        for reference in records(root, "files", document) if "files" in document["streams"] else ():
+            path = (root / reference["file"]).resolve()
+            if not path.is_relative_to(root.resolve()) or path.stat().st_size != reference["bytes"] or sha256(path) != reference["sha256"]:
+                raise Invalid("row phase file digest differs")
+            yield reference
+    inventory = files()
+    for case in cases(root, document):
+        for ref in case.get("tensors", {}).values():
+            item = next(inventory, None)
+            if item is None or any(item[k] != ref[k] for k in ("file", "sha256")):
+                raise Invalid("row phase tensor is not in the ordered file manifest")
+    for _ in inventory:
+        pass
+    for _ in records(root, "arrays", document) if "arrays" in document["streams"] else ():
+        pass
     return document, hashlib.sha256(raw).hexdigest()
 
 
-def check_capture(prepare, capture, prepare_digest):
+def check_capture(prepare, capture, prepare_digest, prepare_root, capture_root):
     if capture.get("prepare_digest") != prepare_digest:
         raise Invalid("capture consumed a different prepare artifact")
-    if capture["identities"] != prepare["identities"] or capture["scopes"] != prepare["scopes"]:
+    if any(capture.get(k) != prepare.get(k) for k in ("identities", "scopes", "ordinal_start", "case_set")):
         raise Invalid("prepare and capture identities differ")
-    expected = {case["id"]: case for case in prepare["cases"]}
-    observed = {case["id"]: case for case in capture["cases"]}
-    if len(observed) != len(capture["cases"]) or set(observed) != set(expected):
-        raise Invalid("capture must contain each prepared case exactly once")
-    for key, case in observed.items():
-        wanted = expected[key]
-        if any(case.get(name) != wanted.get(name) for name in ("scope", "configuration", "kind", "identities")):
-            raise Invalid("captured case is attached to another unit")
-    return [(case, observed[case["id"]]) for case in prepare["cases"]]
+    for wanted, observed in zip_longest(cases(prepare_root, prepare), cases(capture_root, capture)):
+        if wanted is None or observed is None or any(observed.get(k) != wanted.get(k) for k in
+                ("id", "ordinal", "scope", "configuration", "kind", "identities", "category")):
+            raise Invalid("capture must contain each prepared case exactly once")
+        yield wanted, observed
 
 
 def tensor_subset_equal(canary, counted):
-    """Match local case parameters. Check all referenced tensor bytes, dtypes and shapes."""
+    """Compare scope-local case parameters and raw bytes in order."""
     roots = [Path(canary), Path(counted)]
-    documents = [json.loads((root/'phase.json').read_text()) for root in roots]
-    scopes = {json_digest(s) for s in documents[0]['scopes']}
-    excluded = {'id', 'ordinal', 'identities', 'tensors', 'seconds', 'utc_start', 'utc_end',
-                'elapsed_seconds', 'worker_elapsed_seconds', 'host', 'hostname', 'job_id', 'flux_job_id', 'instance'}
-    compared = []
-    for root, document in zip(roots, documents):
-        if document.get('completion') is not True:
-            raise Invalid('E/P prepare is unfinished')
-        cases = {}
-        for case in document['cases']:
-            if json_digest(case['scope']) not in scopes:
+    documents = [json.loads((root / "phase.json").read_text()) for root in roots]
+    scopes = documents[0]["scopes"]
+    excluded = {"id", "ordinal", "identities", "tensors", "seconds", "utc_start", "utc_end",
+                "elapsed_seconds", "worker_elapsed_seconds", "host", "hostname", "job_id", "flux_job_id", "instance"}
+    def selected(root, document):
+        if document.get("completion") is not True:
+            raise Invalid("E/P prepare is unfinished")
+        for case in cases(root, document):
+            if case["scope"] not in scopes:
                 continue
-            key = json_digest({k: v for k, v in case.items() if k not in excluded})
             tensors = {}
-            for name, ref in case['tensors'].items():
-                path = (root/ref['file']).resolve()
-                if not path.is_relative_to(root.resolve()) or sha256(path) != ref['sha256']:
-                    raise Invalid('E/P tensor bytes differ from their hash')
-                tensors[name] = {k: ref[k] for k in ('sha256', 'dtype', 'shape')}
-            cases.setdefault(key, []).append(json_digest(tensors))
-        compared.append({k: sorted(v) for k, v in cases.items()})
-    if not compared[0] or compared[0] != compared[1]:
-        raise Invalid('E/P scope-local cases or tensor bytes differ')
-    return {'cases': sum(map(len, compared[0].values())), 'tensor_map_sha256': json_digest(compared[0])}
+            for name, ref in case["tensors"].items():
+                path = (root / ref["file"]).resolve()
+                if not path.is_relative_to(root.resolve()) or sha256(path) != ref["sha256"]:
+                    raise Invalid("E/P tensor bytes differ from their hash")
+                tensors[name] = {k: ref[k] for k in ("sha256", "dtype", "shape")}
+            yield {k: v for k, v in case.items() if k not in excluded}, tensors
+    count, digest = 0, hashlib.sha256()
+    for first, second in zip_longest(*(selected(r, d) for r, d in zip(roots, documents))):
+        if first is None or first != second:
+            raise Invalid("E/P scope-local cases or tensor bytes differ")
+        digest.update(json_digest(first).encode())
+        count += 1
+    if not count:
+        raise Invalid("E/P scope-local cases are missing")
+    return {"cases": count, "tensor_map_sha256": digest.hexdigest()}

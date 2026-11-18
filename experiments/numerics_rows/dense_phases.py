@@ -18,7 +18,7 @@ import pstats
 import time
 
 from experiments.numerics_rows.common import OUTCOMES, BoundaryError, BoundaryRecorder, Invalid, Unattested, sha256, write_json
-from experiments.numerics_rows.phase_artifact import Artifact, identities, unit_scope, read, payload, check_capture
+from experiments.numerics_rows.phase_artifact import Artifact, identities, unit_scope, read, payload, check_capture, cases, records
 from experiments.numerics_rows.phase_lifecycle import Progress
 from experiments.numerics_rows import row
 
@@ -74,6 +74,7 @@ class HostDense:
 class CaseWriter:
     def __init__(self, artifact, progress, wires):
         self.artifact, self.progress, self.wires = artifact, progress, wires
+        self.array_index = 0
 
     def begin(self, unit, case):
         self.progress.record("diagnostics", unit, case, checkpoint=True)
@@ -85,32 +86,68 @@ class CaseWriter:
         if mask is not None:
             tensors["x_mask"] = mask
         tensors.update({k: fields.pop(k) for k in ("diagnostic_reference", "products_abs") if k in fields})
-        case = self.artifact.add(unit_scope(unit, self.wires[unit["module"]]), clean_config(unit), "dense", tensors,
+        case = self.artifact.add(unit_scope(unit, self.wires[unit["module"]]), row.unit_identity(unit)[4], "dense", tensors,
                                  category=category, **fields)
         self.progress.record("diagnostics" if category == "diagnostic" else "gate_cases", unit, case["id"])
-        if category == "diagnostic":
-            self.profile.dump_stats(str(self.progress.out / "diagnostic-reference.prof"))
 
     def scale(self, adapter, unit, x, q, sf, coded_sf, role, plan, coding, case, expected, bound, values):
         import torch
-        output = torch.zeros(bound.value.shape, dtype=torch.bfloat16)
-        output[case["input_row"], case["output_row"]] = expected
-        record = self.artifact.add(unit_scope(unit, self.wires[unit["module"]]), clean_config(unit), "scale", {
+        record = self.artifact.add(unit_scope(unit, self.wires[unit["module"]]), row.unit_identity(unit)[4], "scale", {
             "input": x, "q": q, "sf": sf, "coded_sf": coded_sf,
             "reference": torch.tensor([expected], dtype=torch.bfloat16),
             "finite_value": bound.value, "finite_held": bound.held,
             "coded_values": torch.tensor(list(values), dtype=torch.float32)},
             category="scale_index", scale=plan["scale"], role=role["name"],
             output_index=[case["input_row"], case["output_row"]],
-            array_index=len(unit["exact"]["scale_index"]["arrays"]) - 1,
+            array_index=self.array_index,
             coding=copy.deepcopy(coding), read=case["read"])
         self.progress.record("gate_cases", unit, record["id"])
-        return output
 
 
-def clean_config(unit):
-    return row.unit_identity(unit)[4]
+    def array(self, unit, record):
+        self.artifact.record("arrays", {"scope": unit_scope(unit, self.wires[unit["module"]]),
+                                      "array_index": self.array_index, "record": record})
+        summarize_array(unit, record)
+        unit["exact"]["scale_index"]["arrays"].clear()
+        self.array_index += 1
 
+
+def summarize_array(unit, record):
+    summary = unit["exact"]["scale_index"]
+    summary["streamed"] = True
+    for field in ("passes_total", "reads", "reads_covered", "mismatches", "launches"):
+        summary[field] = summary.get(field, 0) + record.get(field, 0)
+    for field in ("scales", "bases", "families"):
+        values = record.get(field, [record["scale"]] if field == "scales" else [record["base"]] if field == "bases" else [])
+        summary[field] = sorted(set(summary.get(field, [])) | set(values))
+    summary["uncovered_reads"] = record.get("uncovered_reads", [])[:1] or summary.get("uncovered_reads", [])
+
+
+def case_ranges(groups):
+    """Count the full row order before a job selects its cut or case set."""
+    result, offset = {}, 0
+    for part in ("gate", "diagnostics"):
+        for entry, module, cut, units in groups:
+            start = offset
+            for unit in units:
+                m = unit["m_config"]["M"]
+                offset += (9 if part == "diagnostics" else 1 + int(unit["m_config"]["k_split"] > 1)
+                    + (module["roles"][0]["cols"] // unit["m_config"]["chunk_size"] - 1)
+                    + sum((sum(len(r["values"]) for r in role["separation"]["recipes"]) + m - 1) // m for role in module["roles"])
+                    + sum(len({tuple(c["read"]) for c in plan["read_cases"]}) * len(plan["coding"])
+                        for role in module["roles"] for plan in role["scale_index"]
+                        if plan["array"].get("M", m) == m and plan["reads"] == plan["reads_covered"]))
+            result[(entry["name"], cut["size"], cut["rank"], part)] = [start, offset - start]
+    return result
+
+
+
+def check_range(args, groups, document):
+    if getattr(args, "case_ranges", None) and document["case_set"] != "all":
+        entry, _, cut, _ = groups[0]
+        expected = args.case_ranges[(entry["name"], cut["size"], cut["rank"], document["case_set"])]
+        if expected != [document["ordinal_start"], document["streams"]["cases"]["count"]]:
+            raise Invalid("phase cases differ from the deterministic full row enumeration")
 
 def scopes(groups):
     return [unit_scope(u, module["wire_sha256"]) for _, module, _, units in groups for u in units]
@@ -120,53 +157,42 @@ def host_prepare(args, receipt, phases, groups):
     from experiments.numerics_rows.scale_launch import check as scale_checks
     progress = args.progress = Progress(args.out, receipt, phases)
     artifact = Artifact(args.out / "prepare", "prepare", identities(receipt))
-    artifact.document["scopes"] = scopes(groups)
-    artifact.document["receipt"] = receipt
+    artifact.document.update(scopes=scopes(groups), case_set=getattr(args, "case_set", "all"))
+    if getattr(args, "case_set", "all") != "all":
+        entry, _, cut, _ = groups[0]
+        start, count = args.case_ranges[(entry["name"], cut["size"], cut["rank"], args.case_set)]
+        artifact.document.update(ordinal_start=start, expected_cases=count)
     writer = CaseWriter(artifact, progress, {m["name"]: m["wire_sha256"] for _, m, _, _ in groups})
-    q1 = json.loads(args.q1.read_text())
-    recorder = BoundaryRecorder(lambda: None, [])
+    q1, recorder = json.loads(args.q1.read_text()), BoundaryRecorder(lambda: None, [])
     profile = writer.profile = cProfile.Profile()
-    try:
-        for phase in ("gate_cases", "diagnostics"):
-            for entry, module, cut, units in groups:
-                adapter = HostDense(entry, cut, module, q1)
-                adapter.case_writer = writer
-                for unit in units:
-                    progress.record(phase, unit, checkpoint=True)
-                    adapter.splits = unit["m_config"]["k_split"]
-                    if phase == "diagnostics":
-                        profile.enable()
-                        try:
-                            row.dense_diagnostics(adapter, unit, recorder)
-                        finally:
-                            profile.disable()
-                            profile.dump_stats(str(args.out / "diagnostic-reference.prof"))
-                            with (args.out / "diagnostic-reference.txt").open("w") as stream:
-                                pstats.Stats(profile, stream=stream).sort_stats("cumulative").print_stats(80)
-                        continue
+    for part in (("gate", "diagnostics") if getattr(args, "case_set", "all") == "all" else (args.case_set,)):
+        for entry, module, cut, units in groups:
+            adapter = HostDense(entry, cut, module, q1)
+            adapter.case_writer = writer
+            for unit in units:
+                progress.record("diagnostics" if part == "diagnostics" else "gate_cases", unit, checkpoint=True)
+                adapter.splits = unit["m_config"]["k_split"]
+                if part == "diagnostics":
+                    profile.runcall(row.dense_diagnostics, adapter, unit, recorder)
+                else:
                     if any(not role["matches_attested_wire"] for role in module["roles"]):
                         raise Invalid("wire stamp differs from attested_wire")
                     row.verify_cases(adapter, unit, module, q1, None)
-                    # The profiler's zero input is also prepared and finite-checked.
                     row.run_dense_case(adapter, unit, [], recorder, category="profile")
                     row.dense_cases(adapter, unit, module, recorder)
+                    writer.array_index = 0
                     scale_checks(adapter, unit, module, recorder)
-                del adapter
-            if phase == "gate_cases":
-                receipt["row"]["gate_preparation_finished"] = True
-                progress.record("diagnostics", checkpoint=True)
-    finally:
-        profile.dump_stats(str(args.out / "diagnostic-reference.prof"))
-    import shutil
-    shutil.move(str(args.out / "diagnostic-reference.prof"), artifact.root / "diagnostic-reference.prof")
-    artifact.document["files"]["diagnostic-reference.prof"] = sha256(artifact.root / "diagnostic-reference.prof")
-    if (args.out / "diagnostic-reference.txt").exists():
-        shutil.move(str(args.out / "diagnostic-reference.txt"), artifact.root / "diagnostic-reference.txt")
-        artifact.document["files"]["diagnostic-reference.txt"] = sha256(artifact.root / "diagnostic-reference.txt")
-    progress.record("setup", checkpoint=True)
+            del adapter
+        receipt["row"]["gate_preparation_finished"] = part == "gate"
+    profile.dump_stats(str(artifact.root / "diagnostic-reference.prof"))
+    with (artifact.root / "diagnostic-reference.txt").open("w") as stream:
+        pstats.Stats(profile, stream=stream).sort_stats("cumulative").print_stats(80)
+    for name in ("diagnostic-reference.prof", "diagnostic-reference.txt"):
+        artifact.file(name)
     if any(unit["invalid"] for unit in receipt["units"]):
         raise Invalid("CPU preparation failed a required case precondition")
     receipt["row"].update(prepare_finished=True, finalization_finished=False, outcome="STOPPED")
+    progress.record("setup")
     bind_evidence(args.out, artifact)
     artifact.finish(receipt=receipt)
     write_json(args.out / "numerics_row.json", receipt)
@@ -225,141 +251,119 @@ def capture_case(adapter, unit, case, tensors, recorder):
 
 def device_capture(args, receipt, phases, groups, library, compile_paths):
     import torch
+    from itertools import groupby
     from experiments import dense_fused_oracle as dense
     from experiments.routed_pair_oracle import kernel_table
     from experiments.numerics_rows.dependency_code import binding
     if args.prepare_artifact is None:
         raise Invalid("capture requires a finished prepare artifact")
+    prepare_root, = args.prepare_artifact
     common, expected_scopes = identities(receipt), scopes(groups)
-    prepared, prepare_digest = read(args.prepare_artifact, "prepare", common, expected_scopes)
+    prepared, prepare_digest = read(prepare_root, "prepare", common, expected_scopes)
+    check_range(args, groups, prepared)
+    if prepared["case_set"] != getattr(args, "case_set", "all"):
+        raise Invalid("capture case set differs from prepare")
     progress = args.progress = Progress(args.out, receipt, phases, args.meter)
     artifact = Artifact(args.out / "capture", "capture", common)
-    artifact.document.update(scopes=expected_scopes, prepare_digest=prepare_digest)
-    captures = {case["id"]: {**{k: copy.deepcopy(case[k]) for k in ("id", "identities", "scope", "configuration", "kind")},
-                "completion": False, "not_run": True, "tensors": {}, "cuda_errors": []} for case in prepared["cases"]}
-    artifact.document["cases"] = list(captures.values())
+    artifact.document.update(scopes=expected_scopes, prepare_digest=prepare_digest,
+                             ordinal_start=prepared["ordinal_start"], case_set=prepared["case_set"])
     cache, audit = {}, args.code_audit
     native_source = Path(next(r for r in compile_paths if r["key"] == library["key"])["native_source_path"])
     receipt["row"].update(capture_finished=False, finalization_finished=False, outcome="STOPPED")
-    progress.record("setup", checkpoint=True)
-    try:
-        with dense.init_vllm_world1():
-            for phase in ("gate_cases", "diagnostics"):
-                for entry, module, cut, units in groups:
-                    wanted = [case for case in prepared["cases"] if case["scope"]["module"] == entry["name"] and
-                              case["scope"]["cut"]["rank"] == cut["rank"] and case["scope"]["cut"]["size"] == cut["size"] and
-                              (case["category"] == "diagnostic") == (phase == "diagnostics")]
-                    if not wanted:
-                        raise Invalid("prepare omitted an entire cut or phase")
-                    progress.record("setup", checkpoint=True)
-                    audit.unit = None
-                    start = len(audit.records)
-                    with torch.profiler.profile(activities=[torch.profiler.ProfilerActivity.CPU, torch.profiler.ProfilerActivity.CUDA]) as prof:
-                        adapter = row.Dense(entry, cut, module)
-                    transfer_events = {}
-                    preparation_kernels = kernel_table(prof, limit=100000, device_only=True, diagnostics=transfer_events)
-                    actual, served = row.identify_served(adapter, False, native_source, args.out / "served-binaries", cache)
-                    if phase == "gate_cases":
-                        receipt["modules"].append(row.module_receipt(module, adapter, False))
-                    adapter.served_identity = served[0] if served else None
-                    for unit in units:
-                        selected = [case for case in wanted if case["scope"]["unit_key"] == row.unit_identity(unit)]
-                        if not selected:
-                            raise Invalid("prepare omitted a required unit")
-                        if unit["invalid"] or unit["cuda_errors"] or unit["unattested"]:
-                            continue
-                        progress.record("identity_audit", unit, checkpoint=True)
-                        row.check_served_identity(unit, served, library)
-                        row.audit_served(unit, served, library, args.out / "served-comparisons", cache)
-                        if module["launch_geometry"] != row.actual_geometry(adapter, False):
-                            raise Invalid("C1 launch geometry differs from the loaded operands")
-                        unit["tp"].update(row.tp_facts(adapter, module, False))
-                        unit["scales"] = row.scale_receipt(adapter, False)
-                        row.check_preconditions(unit, scale_equal=unit["scales"]["equal"])
-                        unit["arm"]["preparation_kernels"] = preparation_kernels
-                        unit["arm"]["preparation_transfer_events"] = dict(transfer_events)
-                        unit["triton_specializations"] = [binding(unit["unit_id"], r["case"], r["identity"]) for r in audit.records[start:]]
-                        recorder = BoundaryRecorder(torch.cuda.synchronize, unit["boundaries"])
-                        recorder.before_call, recorder.context, recorder.code_audit = args.launch_state.check, audit.context, audit
-                        audit.unit = unit
-                        adapter.splits = unit["m_config"]["k_split"]
-                        case_profiles, unit_captures = [], []
-                        for case in selected:
-                            progress.record(phase, unit, case["id"], checkpoint=False)
-                            # Check the full artifact scope again before the first native call.
-                            if case["identities"] != common or case["scope"] not in expected_scopes:
-                                raise Invalid("prepared case changed its common bindings")
-                            tensors, certificate = preflight_case(args.prepare_artifact, case)
-                            captured = captures[case["id"]]
-                            captured.pop("not_run")
-                            before = time.monotonic()
-                            recorder.context = lambda name, case_id=case["id"]: audit.context(case_id + ":" + name)
-                            try:
-                                args.launch_state.check()
-                                with torch.profiler.profile(activities=[torch.profiler.ProfilerActivity.CPU, torch.profiler.ProfilerActivity.CUDA]) as case_profile:
-                                    with row.native_boundaries({library["key"]: actual}, recorder):
-                                        outputs = capture_case(adapter, unit, case, tensors, recorder)
-                                records = kernel_table(case_profile, limit=100000, device_only=True, diagnostics=unit["arm"].setdefault("cuda_transfer_events", {}))
-                                case_profiles.append({"case": case["id"], "route_count": None, "profiler_names": [r["name"] for r in records], "records": records})
-                                captured["profiler_names"] = [r["name"] for r in records]
-                                captured["emitted_pairs"] = adapter.pairs()
-                                captured["tensors"] = {k: artifact.tensor(v) for k, v in outputs.items()}
-                                captured["completion"] = True
-                            except BoundaryError as error:
-                                row.record_cuda_error(unit, error)
-                                captured["cuda_errors"].append({"message": error_text(error), "attributed_to": error.attributed_to})
-                            except Invalid as error:
-                                unit["invalid"].append(error_text(error))
-                                captured["invalid"] = error_text(error)
-                            except Unattested as error:
-                                unit["unattested"].append(error_text(error))
-                                captured["unattested"] = error_text(error)
-                            finally:
-                                captured["elapsed_seconds"] = time.monotonic() - before
-                                captured["boundaries"] = copy.deepcopy(unit["boundaries"])
-                                unit["boundaries"].clear()
-                                unit_captures.append(captured)
-                                recorder.quantizer_result = None
-                            if not captured["completion"]:
-                                break
-                        row.bind_kernel_profile(adapter, unit, recorder,
-                            [r for p in case_profiles for r in p["records"]],
-                            [{k: v for k, v in p.items() if k != "records"} for p in case_profiles], routed=False)
-                        for captured in unit_captures:
-                            names = captured.get("profiler_names", [])
-                            captured["kernel_origins"] = [r for r in unit.get("kernel_origins", []) if r["profiler_name"] in names]
-                            captured["compiled_kernel_symbols"] = [r for r in unit["m_config"]["compiled_kernel_symbols"] if r["profiler_name"] in names]
-                            captured["triton_specializations"] = [r for r in unit.get("triton_specializations", []) if r["case"].startswith(captured["id"] + ":")]
-                        with phases.measure("identity_audit"):
-                            _, after = row.identify_served(adapter, False, native_source, args.out / "served-binaries", cache)
-                            row.check_served_after(unit, served, after)
-                        row.dispatch(unit, entry["pair"], adapter.pairs(), after, adapter.info.get("lane_reason"))
-                        import sys
-                        unit["flags_latched_diagnostic"] = args.launch_state.latched_diagnostic(getattr(sys.modules.get("tessera.serving.flags"), "_LATCHED", {}))
-                        receipt["runtime"]["environment_diagnostics"] = args.launch_state.diagnostics()
-                        unit["completed"] = False  # Capture cannot grant a row verdict.
-                        row.finish_unit(unit)
-                        progress.record(phase, unit, checkpoint=True)
-                    del adapter
-                if phase == "gate_cases":
-                    expected_gate = [c["id"] for c in prepared["cases"] if c["category"] != "diagnostic"]
-                    captured_gate = [c["id"] for c in artifact.document["cases"] if c["completion"]]
-                    receipt["row"]["gate_capture_finished"] = set(expected_gate) == set(captured_gate)
-                    artifact.document["receipt"] = copy.deepcopy(receipt)
-                    write_json(artifact.root / "gate-complete.json", artifact.document)
-                    progress.record("diagnostics", checkpoint=True)
-            # No reference or diagnostic CPU calculation remains inside the CUDA world.
-    finally:
-        progress.record("setup", checkpoint=True)
-        artifact.document["receipt"] = copy.deepcopy(receipt)
-        write_json(artifact.root / "unfinished.json", artifact.document)
-    complete = len(artifact.document["cases"]) == len(prepared["cases"]) and all(c["completion"] for c in artifact.document["cases"])
-    receipt["row"].update(capture_finished=complete, outcome="FAIL" if any(u["findings"] for u in receipt["units"]) else "STOPPED", finalization_finished=False,
-                          utc_end=datetime.now(timezone.utc).isoformat(), exit_status=0 if complete else 3)
-    progress.record("setup", checkpoint=True)
-    receipt["row"]["gpu_minutes"] = args.meter.finish()
+    complete = True
+    with dense.init_vllm_world1():
+        grouped = groupby(cases(prepare_root, prepared), lambda c: (c["category"] == "diagnostic", c["scope"]["module"], c["scope"]["cut"]["size"], c["scope"]["cut"]["rank"]))
+        for (diagnostic, name, size, rank), selected in grouped:
+            entry, module, cut, units = next(g for g in groups if g[0]["name"] == name and g[2] == {"size": size, "rank": rank})
+            audit.unit = None
+            audit.records.clear()
+            with torch.profiler.profile(activities=[torch.profiler.ProfilerActivity.CPU, torch.profiler.ProfilerActivity.CUDA]) as prof:
+                adapter = row.Dense(entry, cut, module)
+            transfer_events = {}
+            preparation_kernels = kernel_table(prof, limit=100000, device_only=True, diagnostics=transfer_events)
+            actual, served = row.identify_served(adapter, False, native_source, args.out / "served-binaries", cache)
+            preparation_code = list(audit.records)
+            del prof
+            receipt["modules"] = [row.module_receipt(module, adapter, False)]
+            adapter.served_identity = served[0] if served else None
+            for unit in units:
+                row.check_served_identity(unit, served, library)
+                row.audit_served(unit, served, library, args.out / "served-comparisons", cache)
+                if module["launch_geometry"] != row.actual_geometry(adapter, False):
+                    raise Invalid("C1 launch geometry differs from the loaded operands")
+                unit["tp"].update(row.tp_facts(adapter, module, False))
+                unit["scales"] = row.scale_receipt(adapter, False)
+                row.check_preconditions(unit, scale_equal=unit["scales"]["equal"])
+            for case in selected:
+                unit = next(u for u in units if row.unit_identity(u) == case["scope"]["unit_key"])
+                adapter.splits = unit["m_config"]["k_split"]
+                progress.record("diagnostics" if diagnostic else "gate_cases", unit, case["id"])
+                captured = {k: case[k] for k in ("id", "ordinal", "identities", "scope", "configuration", "kind", "category")}
+                captured.update(completion=False, not_run=True, tensors={}, cuda_errors=[])
+                if not (unit["invalid"] or unit["unattested"] or unit["cuda_errors"]):
+                    tensors, _ = preflight_case(prepare_root, case)
+                    unit["boundaries"], audit.records = [], []
+                    unit["arm"] = {**{k: v for k, v in unit["arm"].items() if k not in ("profiler_kernels", "profiler_launches")},
+                                   "preparation_kernels": preparation_kernels, "preparation_transfer_events": transfer_events}
+                    unit["triton_specializations"] = [binding(unit["unit_id"], r["case"], r["identity"]) for r in preparation_code]
+                    audit.unit = unit
+                    recorder = BoundaryRecorder(torch.cuda.synchronize, unit["boundaries"])
+                    recorder.before_call, recorder.context, recorder.code_audit = args.launch_state.check, audit.context, audit
+                    recorder.context = lambda label, case_id=case["id"]: audit.context(case_id + ":" + label)
+                    captured.pop("not_run")
+                    before = time.monotonic()
+                    try:
+                        args.launch_state.check()
+                        with torch.profiler.profile(activities=[torch.profiler.ProfilerActivity.CPU, torch.profiler.ProfilerActivity.CUDA]) as case_profile:
+                            with row.native_boundaries({library["key"]: actual}, recorder):
+                                outputs = capture_case(adapter, unit, case, tensors, recorder)
+                        events = kernel_table(case_profile, limit=100000, device_only=True, diagnostics=unit["arm"].setdefault("cuda_transfer_events", {}))
+                        row.bind_kernel_profile(adapter, unit, recorder, events,
+                            [{"case": case["id"], "route_count": None, "profiler_names": [r["name"] for r in events]}], routed=False)
+                        captured.update(profiler_names=[r["name"] for r in events], emitted_pairs=adapter.pairs(),
+                            tensors={k: artifact.tensor(v) for k, v in sorted(outputs.items())}, completion=True)
+                        row.dispatch(unit, entry["pair"], adapter.pairs(), served, adapter.info.get("lane_reason"))
+                        captured["code"] = {k: copy.deepcopy(unit[k]) for k in ("unit_id", "arm", "triton_specializations", "kernel_origins", "unresolved_kernel_origins", "dependency_code") if k in unit}
+                        captured["kernel_origins"] = [r for r in unit.get("kernel_origins", []) if r["profiler_name"] in captured["profiler_names"]]
+                        captured["compiled_kernel_symbols"] = unit["m_config"]["compiled_kernel_symbols"]
+                        del outputs, case_profile
+                    except BoundaryError as error:
+                        row.record_cuda_error(unit, error)
+                        captured["cuda_errors"].append({"message": error_text(error), "attributed_to": error.attributed_to})
+                    except (Invalid, Unattested) as error:
+                        field = "invalid" if isinstance(error, Invalid) else "unattested"
+                        unit[field].append(error_text(error))
+                        captured[field] = error_text(error)
+                    captured.update(elapsed_seconds=time.monotonic() - before, boundaries=unit["boundaries"])
+                    recorder.quantizer_result = None
+                    del tensors, recorder
+                complete &= captured["completion"]
+                artifact.record("cases", captured)
+                for field in ("triton_specializations", "kernel_origins", "unresolved_kernel_origins"):
+                    unit.pop(field, None)
+                unit["boundaries"].clear()
+                for field in ("profiler_launches", "profiler_kernels"):
+                    unit["arm"].pop(field, None)
+                unit["m_config"]["compiled_kernel_symbols"] = []
+                audit.records.clear()
+                del captured
+            _, after = row.identify_served(adapter, False, native_source, args.out / "served-binaries", cache)
+            for unit in units:
+                row.check_served_after(unit, served, after)
+                row.dispatch(unit, entry["pair"], adapter.pairs(), after, adapter.info.get("lane_reason"))
+                unit["completed"] = False
+                import sys
+                unit["flags_latched_diagnostic"] = args.launch_state.latched_diagnostic(getattr(sys.modules.get("tessera.serving.flags"), "_LATCHED", {}))
+                row.finish_unit(unit)
+            del adapter
+    receipt["runtime"]["environment_diagnostics"] = args.launch_state.diagnostics()
+    receipt["row"].update(capture_finished=complete, gate_capture_finished=complete and prepared["case_set"] != "diagnostics",
+        outcome="FAIL" if any(u["findings"] for u in receipt["units"]) else "STOPPED", finalization_finished=False,
+        utc_end=datetime.now(timezone.utc).isoformat(), exit_status=0 if complete else 3, gpu_minutes=args.meter.finish())
+    progress.record("setup")
     bind_evidence(args.out, artifact)
     artifact.finish(receipt=receipt)
+    write_json(args.out / "numerics_row.json", receipt)
 
 
 def compare_case(case, observed, prepare_root, capture_root, unit):
@@ -385,7 +389,7 @@ def compare_case(case, observed, prepare_root, capture_root, unit):
     if case["kind"] == "scale":
         target = got[tuple(case["output_index"])].reshape(1)
         result = row.compare_output(unit, case["id"], target, tensors["reference"])
-        unit["exact"]["scale_index"]["arrays"][case["array_index"]]["mismatches"] += result["mismatches"]
+        unit["exact"]["scale_index"]["arrays"][0 if unit["exact"]["scale_index"].get("streamed") else case["array_index"]]["mismatches"] += result["mismatches"]
         return
     staged = outputs["staged"]
     if staged.shape != got.shape or staged.dtype != got.dtype:
@@ -411,57 +415,93 @@ def host_compare(args, receipt, phases, groups):
     if args.prepare_artifact is None or args.capture_artifact is None:
         raise Invalid("compare requires both phase artifacts")
     common, expected_scopes = identities(receipt), scopes(groups)
-    prepared, prepare_digest = read(args.prepare_artifact, "prepare", common, expected_scopes)
-    if not (args.capture_artifact / "phase.json").exists():
-        for name in ("unfinished.json", "gate-complete.json"):
-            path = args.capture_artifact / name
-            if path.is_file():
-                partial = json.loads(path.read_text())
-                if partial.get("identities") != common or partial.get("scopes") != expected_scopes or partial.get("prepare_digest") != prepare_digest:
-                    raise Invalid("unfinished capture belongs to another row")
-                receipt.update(partial["receipt"])
-                break
-        raise RuntimeError("capture is unfinished; compare cannot finish this row")
-    captured, capture_digest = read(args.capture_artifact, "capture", common, expected_scopes)
+    prepare_paths, capture_paths = args.prepare_artifact, args.capture_artifact
+    if len(prepare_paths) != len(capture_paths) or len(prepare_paths) not in (1, 2):
+        raise Invalid("compare requires matching gate and diagnostics artifacts")
+    bound = []
+    for prepare_root, capture_root in zip(prepare_paths, capture_paths):
+        prepared, pd = read(prepare_root, "prepare", common, expected_scopes)
+        if not (capture_root / "phase.json").is_file():
+            raise RuntimeError("capture is unfinished; compare cannot finish this row")
+        captured, cd = read(capture_root, "capture", common, expected_scopes)
+        bound.append((prepare_root, capture_root, prepared, captured, pd, cd))
+    for _, _, prepared, _, _, _ in bound:
+        check_range(args, groups, prepared)
+    selected = sorted(p[2]["case_set"] for p in bound)
+    if selected not in (["all"], ["diagnostics", "gate"]):
+        raise Invalid("compare requires the full gate and diagnostics union exactly once")
+    bound.sort(key=lambda p: p[2]["ordinal_start"])
     compare_row = receipt["row"]
-    receipt.update(copy.deepcopy(captured["receipt"]))
-    pairs = check_capture(prepared, captured, prepare_digest)
-    # Reuse verified roster/coverage counts, then replace every device-dependent field.
-    base = copy.deepcopy(prepared["receipt"])
-    final = copy.deepcopy(captured["receipt"])
-    receipt.update(final)
-    receipt["row"]["phase_jobs"] = {"prepare": copy.deepcopy(prepared["receipt"]["row"]),
-        "capture": copy.deepcopy(captured["receipt"]["row"]), "compare": compare_row}
-    for phase, record in receipt['row']['phase_jobs'].items():
-        record.update(record.pop('phase_jobs', {}).get(phase, {}))
+    receipt.update(copy.deepcopy(bound[0][3]["receipt"]))
+    receipt["row"]["phase_jobs"] = {"compare": compare_row}
+    receipt["phase_artifacts"] = {}
+    artifact = Artifact(args.out / "compare", "compare", common)
+    artifact.document.update(scopes=expected_scopes, ranges=[])
     progress = args.progress = Progress(args.out, receipt, phases)
-    known = {json.dumps(row.unit_identity(u), sort_keys=True): u for u in base["units"]}
-    for unit in receipt["units"]:
-        previous = known[json.dumps(row.unit_identity(unit), sort_keys=True)]
-        unit["exact"] = copy.deepcopy(previous["exact"])
+    for unit, base in zip(receipt["units"], bound[0][2]["receipt"]["units"]):
+        unit["exact"] = copy.deepcopy(base["exact"])
         unit["exact"]["finite_certificate"] = {"elements": 0, "held": 0, "nonfinite_where_held": 0}
         unit["exact"]["composition"] = {"cases": 0, "equal": True}
+        if unit["exact"]["scale_index"].get("streamed"):
+            unit["exact"]["scale_index"] = {"arrays": [], "streamed": True}
         unit["completed"] = True
-        for case, observed in pairs:
-            if case["scope"]["unit_key"] != row.unit_identity(unit):
-                continue
-            progress.record("diagnostics" if case["category"] == "diagnostic" else "gate_cases", unit, case["id"])
-            compare_case(case, observed, args.prepare_artifact, args.capture_artifact, unit)
+    for prepare_root, capture_root, prepared, captured, pd, cd in bound:
+        part = prepared["case_set"]
+        for phase, root_path, document, digest in (("prepare", prepare_root, prepared, pd), ("capture", capture_root, captured, cd)):
+            receipt["phase_artifacts"][part + ":" + phase] = {"path": str(root_path / "phase.json"), "sha256": digest}
+            receipt["row"]["phase_jobs"][part + ":" + phase] = document["receipt"]["row"]
+        artifact.document["ranges"].append([prepared["ordinal_start"], prepared["streams"]["cases"]["count"]])
+        for unit, current in zip(receipt["units"], captured["receipt"]["units"]):
+            for field in ("findings", "invalid", "unattested", "cuda_errors"):
+                unit[field] = (unit[field] + current[field])[:1]
+            unit["cuda_unattributed"] |= current["cuda_unattributed"]
+            unit["graph_replay_equal"] = current["graph_replay_equal"] or unit["graph_replay_equal"]
+        arrays = iter(records(prepare_root, "arrays", prepared)) if "arrays" in prepared["streams"] else iter(())
+        from itertools import groupby
+        pairs = check_capture(prepared, captured, pd, prepare_root, capture_root)
+        for _, batch in groupby(pairs, lambda pair: (pair[0]["scope"]["unit_key"], pair[0].get("array_index"))):
+            case, observed = next(batch)
+            unit = next(u for u in receipt["units"] if row.unit_identity(u) == case["scope"]["unit_key"])
+            array = next(arrays, None) if case["kind"] == "scale" else None
+            if case["kind"] == "scale":
+                if array is None or array["scope"] != case["scope"] or array["array_index"] != case["array_index"]:
+                    raise Invalid("scale case has no matching ordered array")
+                array["record"]["mismatches"] = 0
+                unit["exact"]["scale_index"]["arrays"] = [array["record"]]
+            from itertools import chain
+            for case, observed in chain([(case, observed)], batch):
+                progress.record("diagnostics" if case["category"] == "diagnostic" else "gate_cases", unit, case["id"])
+                previous = {field: unit[field] for field in ("findings", "invalid", "unattested")}
+                for field in previous:
+                    unit[field] = []
+                compare_case(case, observed, prepare_root, capture_root, unit)
+                result = {k: case[k] for k in ("id", "ordinal", "identities", "scope", "configuration", "kind", "category")}
+                result.update({field: unit[field] for field in previous}, diagnostic=unit["diagnostic"],
+                              first_mismatch=unit["first_mismatch"], completion=observed.get("completion"), code=observed.get("code"),
+                              counts={k: v for k, v in unit["exact"].items() if k not in ("scale_index", "separation")},
+                              outcome="FAIL" if unit["findings"] else "UNATTESTED" if unit["unattested"] else "PASS" if observed.get("completion") else "STOPPED")
+                artifact.record("cases", result)
+                for field in previous:
+                    unit[field] = (previous[field] + unit[field])[:1]
+                unit["diagnostic"].clear()
+                unit.pop("diagnostic_composition_equal", None)
+            if array is not None:
+                summarize_array(unit, array["record"])
+                artifact.record("arrays", array)
+                unit["exact"]["scale_index"]["arrays"].clear()
+        if next(arrays, None) is not None:
+            raise Invalid("prepare has extra scale arrays")
+    for unit in receipt["units"]:
         row.finish_unit(unit)
-    # Only a finished, validated compare creates a joinable receipt.
-    receipt["row"]["utc_start"] = prepared["receipt"]["row"]["utc_start"]
     compare_row.update(utc_end=datetime.now(timezone.utc).isoformat())
-    receipt["row"].update(utc_end=compare_row["utc_end"],
-                          outcome=min((u["outcome"] for u in receipt["units"]), key=OUTCOMES.index),
-                          exit_status=3 if any(u["outcome"] in ("FAIL", "STOPPED", "INVALID") for u in receipt["units"]) else 0)
-    receipt["phase_artifacts"] = {"prepare": {"path": str(args.prepare_artifact / "phase.json"), "sha256": prepare_digest},
-                                  "capture": {"path": str(args.capture_artifact / "phase.json"), "sha256": capture_digest}}
-    artifact = Artifact(args.out / "compare", "compare", common)
-    artifact.document.update(scopes=expected_scopes, prepare_digest=prepare_digest, capture_digest=capture_digest)
-    progress.record("setup", checkpoint=True)
+    receipt["row"].update(utc_end=compare_row["utc_end"], outcome=min((u["outcome"] for u in receipt["units"]), key=OUTCOMES.index),
+        exit_status=3 if any(u["outcome"] in ("FAIL", "STOPPED", "INVALID") for u in receipt["units"]) else 0)
+    progress.record("setup")
     bind_evidence(args.out, artifact)
-    artifact.finish(case_ids=[case["id"] for case, _ in pairs], receipt=receipt)
-    receipt["phase_artifacts"]["compare"] = {"path": str(artifact.root / "phase.json"), "sha256": sha256(artifact.root / "phase.json")}
+    digest = artifact.finish(receipt=receipt)
+    receipt["phase_artifacts"]["compare"] = {"path": str(artifact.root / "phase.json"), "sha256": digest}
+    for unit in receipt["units"]:
+        unit["code_stream"] = receipt["phase_artifacts"]["compare"]
     receipt["diagnostic_cells"] = row.diagnostic_cells(receipt["units"])
     compare_row["finalization_finished"] = receipt["row"]["finalization_finished"] = True
     write_json(args.out / "numerics_row.json", receipt)
@@ -496,7 +536,4 @@ def bind_evidence(out, artifact):
             destination = artifact.root / relative
             destination.parent.mkdir(parents=True, exist_ok=True)
             shutil.copyfile(path, destination)
-            artifact.document["files"][str(relative)] = sha256(destination)
-    checkpoint = artifact.root / "gate-complete.json"
-    if checkpoint.is_file():
-        artifact.document["files"][checkpoint.name] = sha256(checkpoint)
+            artifact.file(str(relative))

@@ -79,24 +79,32 @@ def test_observe_uses_rank_zero_config(monkeypatch, capsys):
 
 @pytest.mark.parametrize('change', ['bytes', 'dtype', 'shape', 'seed'])
 def test_ep_tensor_subset_ignores_records_and_refuses_tensor_changes(tmp_path, change):
-    scopes = [{'unit_key': ['u'], 'cut': {'size': 2, 'rank': 0}}]
+    from experiments.numerics_rows.phase_artifact import Artifact, records
+    from tests.test_numerics_rows_phases import rewrite_stream
+    scopes = [{'unit_key': ['cell', 'symbol', 'decoder', 1024, {'M': 1}], 'cut': {'size': 2, 'rank': 0}}]
     ref = {'file': 'tensor', 'sha256': hashlib.sha256(b'1234').hexdigest(), 'dtype': 'float32', 'shape': [1]}
-    case = {'scope': scopes[0], 'category': 'diagnostic', 'configuration': {'M': 1}, 'seed': 0,
-            'tensors': {'input': ref}, 'id': 'ordinal-0', 'identities': {'canary': True}, 'seconds': 1}
-    roots = [tmp_path/'canary', tmp_path/'counted']
-    for i, root in enumerate(roots):
-        root.mkdir(); (root/'tensor').write_bytes(b'1234')
-        record = {**copy.deepcopy(case), 'id': str(i), 'seconds': i+2, 'identities': {'canary': not i}}
-        document = {'completion': True, 'scopes': scopes, 'cases': [record]}
-        if i:
-            document['cases'].insert(0, {**copy.deepcopy(record), 'scope': {'unit_key': ['other-cut']}})
-        (root/'phase.json').write_text(json.dumps(document))
-    assert tensor_subset_equal(*roots)['cases'] == 1
+    artifacts = []
+    for index, name in enumerate(('canary', 'counted')):
+        artifact = Artifact(tmp_path / name, 'prepare', {'canary': not index})
+        artifact.document['scopes'] = scopes
+        (artifact.root / 'tensor').write_bytes(b'1234')
+        if index:
+            other = {**scopes[0], 'cut': {'size': 1, 'rank': 0}}
+            artifact.document['scopes'] = [other, *scopes]
+            artifact.add(other, {'M': 1}, 'dense', {}, category='diagnostic', seed=0)
+        record = artifact.add(scopes[0], {'M': 1}, 'dense', {}, category='diagnostic', seed=0, seconds=index + 2)
+        record['tensors'] = {'input': copy.deepcopy(ref)}
+        changed = list(records(artifact.root, 'cases'))
+        changed[-1] = record
+        rewrite_stream(artifact, 'cases', changed)
+        artifacts.append(artifact)
+    assert tensor_subset_equal(*(a.root for a in artifacts))['cases'] == 1
     if change == 'bytes':
-        (roots[1]/'tensor').write_bytes(b'4321')
+        (artifacts[1].root / 'tensor').write_bytes(b'4321')
     else:
         target = record if change == 'seed' else record['tensors']['input']
         target[change] = {'dtype': 'int32', 'shape': [2], 'seed': 1}[change]
-        (roots[1]/'phase.json').write_text(json.dumps(document))
+        changed[-1] = record
+        rewrite_stream(artifacts[1], 'cases', changed)
     with pytest.raises(ValueError, match='E/P'):
-        tensor_subset_equal(*roots)
+        tensor_subset_equal(*(a.root for a in artifacts))

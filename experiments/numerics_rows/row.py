@@ -40,7 +40,7 @@ def missing_cases(unit):
     exact = unit["exact"]
     required = {"sweep": exact["sweep"]["elements"],
                 "separation": sum(r["both"] for r in exact["separation"]["records"]),
-                "scale_index": sum(r.get("launches", 0) for r in exact["scale_index"]["arrays"]),
+                "scale_index": exact["scale_index"].get("launches", sum(r.get("launches", 0) for r in exact["scale_index"]["arrays"])),
                 "chunk_pairs": exact["chunk_pairs"]["x_elements"], "composition": exact["composition"]["cases"]}
     if unit.get("structure") == "routed_moe":
         required.update({name: exact[name]["elements"] for name in ("swiglu", "down_input", "token_sum")})
@@ -71,6 +71,8 @@ def aggregate_exact(unit):
         sep[field] = sum(r.get(field, 0) for r in records)
     sep["by_sign"] = {sign: [sum(r.get("by_sign", {}).get(sign, [0, 0])[side] for r in records) for side in (0, 1)]
                       for sign in ("positive", "negative")}
+    if scales.get("streamed"):
+        return
     arrays = scales["arrays"]
     scales.update(scales=sorted({r.get("scale", "row") for r in arrays}), bases=sorted({r["base"] for r in arrays if "base" in r}),
                   families=sorted({f for r in arrays for f in r.get("families", [])}))
@@ -632,9 +634,11 @@ def main():
     p.add_argument("--module", action="append", default=[], help="Explicit module name in the signed population; repeat for a subset")
     p.add_argument("--canary", action="store_true", help="Uncounted pre-freeze run; its receipt cannot be joined")
     p.add_argument("--phase", choices=("prepare", "capture", "compare"))
+    p.add_argument("--capture-group-proof", type=Path)
+    p.add_argument("--case-set", choices=("all", "gate", "diagnostics"), default="all")
     p.add_argument("--phase-instance", type=Path)
-    p.add_argument("--prepare-artifact", type=Path)
-    p.add_argument("--capture-artifact", type=Path)
+    p.add_argument("--prepare-artifact", type=Path, action="append")
+    p.add_argument("--capture-artifact", type=Path, action="append")
     p.add_argument("--tp-size", type=int, choices=(1, 2))
     p.add_argument("--tp-rank", type=int, choices=(0, 1))
     args = p.parse_args()
@@ -663,7 +667,9 @@ def main():
         receipt["runtime"].update({k: v for k, v in fields.items() if k != "launch_levers_sha256"})
         receipt["inputs"]["launch_levers_sha256"] = fields["launch_levers_sha256"]
         if args.phase == "capture":
-            receipt["row"]["gpu_preflight"] = preflight(processes=None)
+            from experiments.numerics_rows.capture_group import slot_preflight
+            receipt["row"]["gpu_preflight"] = (slot_preflight(args.capture_group_proof, args.out)
+                if args.capture_group_proof else preflight(processes=None))
             if receipt["row"]["gpu_preflight"]["verdict"] != "FREE":
                 raise RuntimeError("GPU preflight not free")
             import torch
@@ -775,7 +781,12 @@ def run_row(args, receipt, phases):
     from experiments.numerics_rows.scope import check_selectors
     check_selectors(contract, population, launch_state.mapping)
     groups = planned_units(contract, runtime["image_digest"], population, manifest)
+    if getattr(args, "phase", None):
+        from experiments.numerics_rows.dense_phases import case_ranges
+        args.case_ranges = case_ranges(groups)
     groups = selected_groups(groups, getattr(args, "tp_size", None), getattr(args, "tp_rank", None))
+    if getattr(args, "case_set", "all") != "all" and len(groups) != 1:
+        raise Invalid("a case-set job requires one module and one cut")
     receipt["units"] = [unit for _, _, _, units in groups for unit in units]
     for unit in receipt["units"]:
         unit["launch_state_sha256"] = launch_state.sha256

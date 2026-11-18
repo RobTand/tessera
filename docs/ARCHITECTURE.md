@@ -1,5 +1,16 @@
 # Tessera plan-to-serve architecture
 
+Re-stamped 2026-11-18 for the #1717 dense v2 case streams.
+Dense phase artifacts use ordered JSON lines for cases, scale arrays and file hashes.
+Each record binds its original full-row ordinal. A cut selection does not change its case IDs.
+Gate and diagnostics jobs each cover one module and cut, with every required M configuration.
+Compare requires both case sets before it creates one finished receipt for that module and cut.
+Case tensors, profiler records and code bindings are written before the next case.
+Only compare can finish a split dense receipt. A stopped capture cannot establish PASS.
+The capture-group command starts K processes within one admitted GPU job.
+K is explicit. The canary and Fleet review must set memory and concurrency bookings.
+The lead's feeder branch reserves 9 GiB for prepare. Its rebase follows the CPU check.
+
 Re-stamped 2026-11-17 for the #1717 joined reference tool.
 Finite bounds sum exact dyadic integers. Scalar rounding uses exact integer ratios.
 C1 and row scale-index checks use one table-owned memo and batch binary32 candidates by default.
@@ -7,8 +18,7 @@ Other operands use the scalar integer evaluator. Every read retains its ordered 
 Routed row-scale plans keep their own domain metadata across all M configurations.
 The strict C1 scope keeps every required role, expert and TP cut. Role files stream into the manifest.
 The measurement-only launchers and sampled manifest schema are not part of this tool.
-These changes do not change rule v2, served arithmetic or receipt fields.
-Dense prepare books one core and 8 GiB. Dense submissions use urgency 8.
+Rule v2 and served arithmetic do not change. Dense submissions use urgency 8.
 The sequential feeder holds every dense submission while any aarch64 or portable job is pending.
 Capture has a 15-minute limit. Prepare is limited to one per Spark and two total.
 The sequential feeder uses at most one globally, for every TL3b W.
@@ -23,7 +33,7 @@ Each artifact binds the full unit key, common identities and raw tensor hashes.
 An unfinished capture remains STOPPED. A known FAIL remains FAIL.
 Capture records unrun cases. Compare preserves refusals and finalizes after its artifact binding.
 Composition mismatches fail on exact and realistic inputs in both row paths.
-The capture writes a gate checkpoint before diagnostics. Phase records, diagnostic
+The capture writes case records without receipt checkpoints. Phase records, diagnostic
 reference profiles, NVML power and resident time, and cgroup peak memory expose
 host work and interrupted cases. These tools change no serving default or arithmetic.
 The split generator keeps counted module jobs held behind a finished PASS canary.

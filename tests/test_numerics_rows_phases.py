@@ -22,6 +22,17 @@ def phase_api():
     return importlib.import_module(name)
 
 
+def rewrite_stream(artifact, name, values):
+    import hashlib
+    artifact.case_ids = hashlib.sha256()
+    artifact.document["streams"].pop(name, None)
+    (artifact.root / (name + ".jsonl")).write_text("")
+    for value in values:
+        artifact.record(name, value)
+    artifact.document["streams"].setdefault(name, {"count": 0})
+    artifact.finish()
+
+
 @pytest.fixture
 def phase_pair(tmp_path):
     return lambda: make_pair(tmp_path)
@@ -40,11 +51,13 @@ def make_pair(tmp_path):
     digest = prepared.finish()
     prepare, _ = api.read(prepared.root, "prepare", common, [scope])
     captured = api.Artifact(tmp_path / "capture", "capture", common)
-    captured.document.update(scopes=[scope], prepare_digest=digest, cases=[copy.deepcopy(case)])
-    captured.document["cases"][0]["tensors"] = {"output": captured.tensor(torch.ones(1, 2))}
+    captured.document.update(scopes=[scope], prepare_digest=digest)
+    observed = copy.deepcopy(case)
+    observed["tensors"] = {"output": captured.tensor(torch.ones(1, 2))}
+    captured.record("cases", observed)
     captured.finish()
     capture, _ = api.read(captured.root, "capture", common, [scope])
-    assert len(api.check_capture(prepare, capture, digest)) == 1
+    assert len(list(api.check_capture(prepare, capture, digest, prepared.root, captured.root))) == 1
     return api, prepared, prepare, captured, capture, digest, common, scope
 
 
@@ -59,36 +72,39 @@ def test_old_phase_pair_cannot_be_attached_to_another_module(phase_pair, phase):
 @pytest.mark.parametrize("field", ["unit_key", "module", "cut", "wire_sha256"])
 def test_inner_phase_scope_cannot_be_relabelled(phase_pair, field):
     api, prepared, _, _, _, _, common, scope = phase_pair()
-    document = prepared.document
-    document["cases"][0]["scope"][field] = "other"
-    prepared.finish()
-    with pytest.raises(Invalid, match="another unit"):
+    changed = list(api.records(prepared.root, "cases"))
+    changed[0]["scope"][field] = "other"
+    rewrite_stream(prepared, "cases", changed)
+    with pytest.raises(Invalid, match="another unit|exactly once"):
         api.read(prepared.root, "prepare", common, [scope])
 
 
 def test_capture_must_consume_the_exact_prepare_digest(phase_pair):
-    api, _, prepare, _, capture, digest, _, _ = phase_pair()
+    api, prepared, prepare, captured, capture, digest, _, _ = phase_pair()
     capture["prepare_digest"] = "other"
     with pytest.raises(Invalid, match="different prepare"):
-        api.check_capture(prepare, capture, digest)
+        list(api.check_capture(prepare, capture, digest, prepared.root, captured.root))
 
 
 @pytest.mark.parametrize("change", ["missing", "duplicate", "foreign"])
 def test_compare_requires_each_case_exactly_once(phase_pair, change):
-    api, _, prepare, _, capture, digest, _, _ = phase_pair()
+    api, prepared, prepare, captured, capture, digest, _, _ = phase_pair()
+    changed = list(api.records(captured.root, "cases"))
     if change == "missing":
-        capture["cases"].clear()
+        changed.clear()
     elif change == "duplicate":
-        capture["cases"].append(copy.deepcopy(capture["cases"][0]))
+        changed.append(copy.deepcopy(changed[0]))
     else:
-        capture["cases"][0]["id"] = "other"
+        changed[0]["id"] = "other"
+    rewrite_stream(captured, "cases", changed)
+    capture.update(captured.document)
     with pytest.raises(Invalid, match="exactly once"):
-        api.check_capture(prepare, capture, digest)
+        list(api.check_capture(prepare, capture, digest, prepared.root, captured.root))
 
 
 def test_phase_payload_bytes_and_configuration_are_bound(phase_pair):
     api, prepared, _, _, _, _, common, scope = phase_pair()
-    reference = prepared.document["cases"][0]["tensors"]["input"]
+    reference = next(api.records(prepared.root, "cases"))["tensors"]["input"]
     assert torch.equal(api.payload(prepared.root, reference), torch.ones(1, 2))
     (prepared.root / reference["file"]).write_bytes(b"changed")
     with pytest.raises(Invalid, match="digest"):
@@ -161,11 +177,11 @@ def test_progress_checkpoint_precedes_diagnostics(tmp_path, monkeypatch):
     progress = Progress(tmp_path, receipt, phases, meter)
     progress.record("gate_cases")
     progress.record("diagnostics", checkpoint=True)
-    saved = json.loads((tmp_path / "numerics_row.json").read_text())
-    assert saved["row"]["gate_capture_finished"] is True
-    assert saved["row"]["finalization_finished"] is False
-    assert saved["row"]["active"]["phase"] == "diagnostics"
-    assert saved["row"]["gpu_minutes"]["wall_minutes"] == 1
+    assert not (tmp_path / "numerics_row.json").exists()
+    assert receipt["row"]["gate_capture_finished"] is True
+    assert receipt["row"]["finalization_finished"] is False
+    assert json.loads((tmp_path / "progress.json").read_text())["phase"] == "diagnostics"
+    assert "gpu_minutes" not in receipt["row"]
     assert json.loads((tmp_path / "phase-events.jsonl").read_text())["phase"] == "gate_cases"
 
 
@@ -246,7 +262,7 @@ def test_shared_dense_roster_prepares_every_case_without_native_calls(tmp_path):
         def apply(self, x): pytest.fail("prepare made a native call")
     module = {"complete": True, "roles": [{"separation": {"complete": True, "both": 4, "recipes": [{"column": 0, "values": [1, -1]}, {"column": 1, "values": [1]}]}}]}
     row.dense_cases(Adapter(), unit, module, BoundaryRecorder(lambda: None, []))
-    assert [c["category"] for c in artifact.document["cases"]] == ["sweep", "sweep", "sweep", "chunk_pairs"]
+    assert [c["category"] for c in api.records(artifact.root, "cases")] == ["sweep", "sweep", "sweep", "chunk_pairs"]
     assert unit["exact"]["sweep"]["columns"] == 3
     assert unit["exact"]["chunk_pairs"]["rows"] == 1
 
@@ -298,7 +314,7 @@ def test_host_phase_negative_reference_control_allocates_no_device(monkeypatch):
 
 def test_payload_hash_covers_the_same_read_that_is_decoded(phase_pair, monkeypatch):
     api, prepared, _, _, _, _, _, _ = phase_pair()
-    reference = prepared.document["cases"][0]["tensors"]["input"]
+    reference = next(api.records(prepared.root, "cases"))["tensors"]["input"]
     target = prepared.root / reference["file"]
     original, reads = Path.read_bytes, []
     def changing(path):
@@ -358,7 +374,9 @@ def split_capture(tmp_path, monkeypatch):
     def bind_profile(adapter, unit, recorder, records, profiles, **kw):
         unit["kernel_origins"] = [{"profiler_name": "kernel", "origin": "tessera"}]
     monkeypatch.setattr(row, "bind_kernel_profile", bind_profile)
-    def run(error=None, index=0, *, bind_error=False):
+    def run(error=None, index=0, *, bind_error=False, partition=False, selection=None):
+        if partition:
+            assert hasattr(dp, "cases"), "feature absent: gate and diagnostics stream union"
         root = tmp_path / str(len(runs)); runs.append(root)
         unit = row.new_unit({"cell": "dense", "module": "A", "role": "unit", "admitted_by_v68": True,
             "symbol": "dense", "decoder": "native", "rung": 1024, "launch_state_sha256": "a" * 64,
@@ -376,7 +394,7 @@ def split_capture(tmp_path, monkeypatch):
         prepared.document["scopes"] = [scope]
         x = torch.ones(1, 1, dtype=torch.bfloat16); sf = torch.ones(1, 1)
         for category in ("sweep", "sweep", "diagnostic"):
-            prepared.add(scope, dp.clean_config(unit), "dense", {"input": x, "q": x, "sf": sf, "reference": x * 2,
+            prepared.add(scope, row.unit_identity(unit)[4], "dense", {"input": x, "q": x, "sf": sf, "reference": x * 2,
                 "x_mask": torch.ones_like(x, dtype=torch.bool), "finite_value": sf * 10, "finite_held": sf.bool(),
                 "diagnostic_reference": sf * 2, "products_abs": sf}, category=category, distribution="gauss", seed=1)
         prepared.finish(receipt=copy.deepcopy(receipt))
@@ -391,22 +409,56 @@ def split_capture(tmp_path, monkeypatch):
             return {"output": x * 2, "staged": x * 2, "quantizer_q": x, "quantizer_sf": sf}
         monkeypatch.setattr(dp, "capture_case", capture)
         out = root / "capture-job"; out.mkdir()
-        args = SimpleNamespace(out=out, prepare_artifact=prepared.root,
+        args = SimpleNamespace(out=out, prepare_artifact=[prepared.root],
             code_audit=SimpleNamespace(records=[], unit=None, context=lambda *a: nullcontext()),
             meter=SimpleNamespace(snapshot=lambda **kw: {}, finish=lambda: {}),
             launch_state=SimpleNamespace(check=lambda: None, diagnostics=lambda: {}, latched_diagnostic=lambda *a: {}))
         dp.device_capture(args, receipt, PhaseTimes(receipt["row"]), groups, {"key": "e4m3mma"}, [{"key": "e4m3mma", "native_source_path": "kernel.cu"}])
-        args.capture_artifact = out / "capture"
+        args.capture_artifact = [out / "capture"]
+        if partition:
+            from shutil import copytree
+            paired = []
+            original_prepare = list(dp.cases(prepared.root, prepared.document))
+            original_capture = list(dp.cases(args.capture_artifact[0], json.loads((args.capture_artifact[0] / "phase.json").read_text())))
+            for part, indices in (("gate", [0, 1]), ("diagnostics", [2])):
+                prep = dp.Artifact(root / part / "prepare", "prepare", common)
+                prep.document.update(scopes=[scope], case_set=part, ordinal_start=indices[0])
+                copytree(prepared.root / "bytes", prep.root / "bytes")
+                for position in indices:
+                    for reference in original_prepare[position]["tensors"].values():
+                        prep.file(reference["file"])
+                    prep.record("cases", original_prepare[position])
+                part_digest = prep.finish(receipt=copy.deepcopy(prepared.document["receipt"]))
+                cap = dp.Artifact(root / part / "capture", "capture", common)
+                cap.document.update(scopes=[scope], case_set=part, ordinal_start=indices[0], prepare_digest=part_digest)
+                copytree(args.capture_artifact[0] / "bytes", cap.root / "bytes")
+                for position in indices:
+                    for reference in original_capture[position]["tensors"].values():
+                        cap.file(reference["file"])
+                    cap.record("cases", original_capture[position])
+                cap.finish(receipt=copy.deepcopy(receipt))
+                paired.append((prep.root, cap.root))
+            if selection == "missing": paired.pop()
+            if selection == "duplicate": paired[1] = paired[0]
+            args.prepare_artifact = [pair[0] for pair in reversed(paired)]
+            args.capture_artifact = [pair[1] for pair in reversed(paired)]
         args.out = root / "compare-job"; args.out.mkdir()
         if bind_error:
             monkeypatch.setattr(dp, "bind_evidence", lambda *a: (_ for _ in ()).throw(RuntimeError("compare binding failed")))
             with pytest.raises(RuntimeError, match="compare binding failed"):
                 dp.host_compare(args, receipt, PhaseTimes({}), groups)
-            return json.loads((args.out / "numerics_row.json").read_text()), calls
+            return receipt, calls
+        if selection:
+            with pytest.raises(Invalid, match="union exactly once"):
+                dp.host_compare(args, receipt, PhaseTimes({}), groups)
+            return receipt, {}
         dp.host_compare(args, receipt, PhaseTimes({}), groups)
-        captured = json.loads((args.capture_artifact / "phase.json").read_text())
-        assert len(captured["cases"]) == len(prepared.document["cases"])
-        return receipt, captured
+        if partition:
+            return receipt, json.loads((args.out / "compare/phase.json").read_text())
+        captured = json.loads((args.capture_artifact[0] / "phase.json").read_text())
+        observed = list(dp.cases(args.capture_artifact[0], captured))
+        assert len(observed) == prepared.document["streams"]["cases"]["count"]
+        return receipt, {**captured, "cases": observed}
     return run
 
 
@@ -432,6 +484,19 @@ def test_split_compare_binds_its_artifact_before_finalization(split_capture):
     partial, _ = split_capture(bind_error=True)
     assert partial["row"]["finalization_finished"] is False
 
+
+
+def test_split_gate_and_diagnostics_finish_one_receipt(split_capture):
+    receipt, compared = split_capture(partition=True)
+    assert receipt["row"]["finalization_finished"] and receipt["row"]["outcome"] == "PASS"
+    assert len(receipt["units"]) == 1 and compared["streams"]["cases"]["count"] == 3
+    assert compared["ranges"] == [[0, 2], [2, 1]]
+
+
+@pytest.mark.parametrize("selection", ("missing", "duplicate"))
+def test_split_compare_refuses_a_partial_or_duplicate_case_set(split_capture, selection):
+    receipt, _ = split_capture(partition=True, selection=selection)
+    assert not receipt["row"]["finalization_finished"]
 
 def test_lever_addendum_refuses_another_path_with_identical_bytes(tmp_path, monkeypatch):
     from experiments.numerics_rows.common import sha256
@@ -598,9 +663,9 @@ def feeder_booking(tmp_path, monkeypatch):
     write(settings_path, settings)
     monkeypatch.setattr(api, 'SETTINGS', settings_path)
     for jobid, prefix in [('f111', ''), ('f123', 'fv1e-sparklina-')]:
-        row = tmp_path/'rows-anon'/(prefix + jobid + '-3.tsv')
-        row.parent.mkdir(exist_ok=True)
-        row.write_text('0 0 0 0 0 30000000000 0 0 3000000000 50 ok\n')
+        sample_path = tmp_path/'rows-anon'/(prefix + jobid + '-3.tsv')
+        sample_path.parent.mkdir(exist_ok=True)
+        sample_path.write_text('0 0 0 0 0 30000000000 0 0 3000000000 50 ok\n')
     monkeypatch.setattr(api.subprocess, "check_output", lambda command, **kw: '100' if '{runtime:.6f}' in command else '0')
     monkeypatch.setattr(api, "wait_dense_slot", lambda: None, raising=False)
     return api, canary, rowdir, bookings

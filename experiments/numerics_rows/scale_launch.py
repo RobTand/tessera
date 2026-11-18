@@ -249,7 +249,9 @@ def check(adapter, unit, manifest, recorder):
                             output_row = int(positions[0])
                     else:
                         if hasattr(adapter, "case_writer"):
-                            out = adapter.case_writer.scale(adapter, unit, x, q, sf, ss, role, plan, coding, case, expected, bound, vals)
+                            adapter.case_writer.scale(adapter, unit, x, q, sf, ss, role, plan, coding, case, expected, bound, vals)
+                            record["launches"] += 1
+                            continue
                         else:
                             out = dense_launch(adapter, role, qq, ss, plan["scale"], vals, recorder)
                         output_row = case["input_row"]
@@ -260,3 +262,6 @@ def check(adapter, unit, manifest, recorder):
                     result = compare_output(unit, f"scale-index:{role['name']}:{coding['family']}:{coding['digit']}:{case['read']}", got, ref, operands={"input": case["input"], "column": case["column"], "read": case["read"],
                         "scales": [vals[i] for i in case["read"]], "g": case["g"], "u": case["u"]})
                     record["mismatches"] += result["mismatches"]
+
+            if hasattr(adapter, "case_writer"):
+                adapter.case_writer.array(unit, record)

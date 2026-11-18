@@ -253,7 +253,7 @@ test -s results/{phase}/phase.json
         submit = submit.replace('flux submit ', 'flux submit --urgency=8 ')
         submit = submit.replace('flux submit ', f'if test "$(cat {job}/instance-name.txt 2>/dev/null || echo fv1)" = fv1; then python3 {out}/admission.py --wait-dense-slot; fi\nflux submit ', 1)
         submit = submit.replace('--env=FLUX_SCRATCH=/var/tmp ', '--env=FLUX_SCRATCH=/var/tmp/flux-rob ')
-        submit = submit.replace("-t30m", f"-t{minutes}m").replace("core=4;memory=16", f"core={cores};memory={8 if phase == 'prepare' else 32}" + (";gpu=1" if gpu else "")).replace("host:dl380g10", "host:sparklina")
+        submit = submit.replace("-t30m", f"-t{minutes}m").replace("core=4;memory=16", f"core={cores};memory={9 if phase == 'prepare' else 32}" + (";gpu=1" if gpu else "")).replace("host:dl380g10", "host:sparklina")
         (job / "submit-after-review.sh").write_text(submit)
     (out / "bind-inputs.py").write_text(f'''import argparse, json, sys
 from pathlib import Path
@@ -268,45 +268,16 @@ p.add_argument("paths", help="JSON object with the eight F chain paths")
 a=p.parse_args()
 bind({str(out)!r}, json.load(open(a.paths)))
 ''')
-    (out / "README.md").write_text(f'''# Split dense {"canary" if canary else "module row"}
+    (out / "README.md").write_text(f"""# Split dense jobs
 
-Prepared only. No job was submitted. Tool {revision}; Tessera F {SOURCE}.
-Rule {RULE}, SHA-256 {RULE_SHA}. Freeze record {FREEZE}.
-The lever freeze addendum and the clean F P/Q1/H1/C1 chain are required inputs.
-No old source tree or receipt can fill them. Run bind-inputs.py with their eight
-shared paths, then obtain Fleet OK. Each job rechecks every bound file and F.
-The CPU prerequisite is {cpu_check}. It must report PASS at this tool commit.
-Module: {module}. Canary flag: {canary}. Counted rows run all three cuts in one
-worker per phase and one finished compare receipt. There is no consolidation.
-The join refuses canary receipts. Counted bookings remain provisional until the
-canary's measured host and device peaks and phase times are read and Fleet approves.
-Counted binding and execution both require its finished PASS receipt and clean
-phase exits, with the same tool, rule, population, build, Q1, H1 and addendum.
-
-| Job | Cores | Memory GiB | GPU | Limit | Time basis |
-|---|---:|---:|---:|---|---|
-| prepare | 1 | 8 | 0 | {360 if canary else 1440} min | Fleet shape. Exact-sum CPU peak was 3.05 GiB; old whole-row peak was 4.93 GiB. |
-| capture | {capture_cores} | 32 | 1 | 15 min | Old one-cut device peak was 0.86 GiB; F remains unmeasured. |
-| compare | 1 | 32 | 0 | {120 if canary else 360} min | No separate peak. Keep the canary booking until measured. |
-
-All jobs use aarch64 IMG-N on sparklina. These are prepared limits, not new measurements.
-No case, M, distribution or seed is removed. Prepare records an in-process
-cProfile of all diagnostic reference work, with per-case progress and phase times.
-Capture writes the gate-complete checkpoint before diagnostics. It runs only
-device work plus preflight, code audits and byte I/O. Each case is profiled.
-The receipt records NVML resident time and power, torch memory, and cgroup
-whole-job peak memory. Inspect the coverage and errors beside each number.
-Capture starts its own RowMeter before Tessera imports. It records raw 1 s
-NVML samples, kernel-resident minutes, compute-app device-memory peak, power
-against the 140 W envelope, torch peaks and inherited Flux cgroup memory.peak.
-The job checks these measurements after capture and refuses success if missing.
-A handled TERM or INT writes STOPPED and preserves known FAIL. Only compare
-can set finalization_finished=true. Every phase binds the full unit scope,
-common identities and content hashes. Reused module artifacts are refused.
-Run prepare, capture, compare in that order. Read each Flux status, exit files,
-phase.json, payload.stdout and payload.stderr. Do not fan out counted rows
-until the canary and its compare pass, reviews finish and Fleet approves.
-''')
+Prepared only. Tool {revision}; Tessera {SOURCE}.
+Module: {module}. Canary: {canary}.
+Bind the eight F chain inputs with bind-inputs.py.
+Require a PASS CPU check at this tool commit: {cpu_check}.
+Require Fleet review before submission.
+Read each Flux verdict, exit status and logs.
+Only compare can finish the row.
+""")
     print(out)
     return out
 
