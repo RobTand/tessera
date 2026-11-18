@@ -675,6 +675,20 @@ def test_module_compare_keeps_exact_cut_bindings(tmp_path, fault):
     assert not receipt["row"]["finalization_finished"]
 
 
+def test_module_compare_refuses_cuts_with_different_launch_states(tmp_path):
+    from experiments.numerics_rows.gpu_time import PhaseTimes
+    dp, _, args, receipt, groups = module_phase_pairs(tmp_path, case_sets=("all",))
+    path = args.capture_artifact[0] / "phase.json"
+    document = json.loads(path.read_text())
+    assert document["scopes"][0]["cut"] == groups[1][2]
+    document["identities"]["runtime"]["launch_state_sha256"] = "b" * 64
+    document["receipt"]["runtime"]["launch_state_sha256"] = "b" * 64
+    path.write_text(json.dumps(document))
+    with pytest.raises(Invalid, match="^row phase common identities, module or cut differ$"):
+        dp.host_compare(args, receipt, PhaseTimes({}), groups)
+    assert receipt["row"]["finalization_finished"] is not True
+
+
 def test_module_compare_arguments_keep_every_artifact_pair(tmp_path):
     from experiments.numerics_rows import dense_phases, prepare_split
     assert hasattr(dense_phases, "unit_map"), "feature absent: module cut artifact union"
