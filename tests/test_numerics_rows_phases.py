@@ -535,6 +535,157 @@ def test_capture_keeps_case_findings_in_records_and_a_bounded_summary(split_capt
     assert len(captured["receipt"]["units"][0]["findings"]) == 1
     assert all(case["status"]["findings"] == [case["id"]] for case in captured["cases"])
 
+
+def module_phase_pairs(root, *, case_sets=("gate", "diagnostics"), cuts=None, finding=False):
+    from experiments.numerics_rows import dense_phases
+    api = phase_api()
+    cuts = cuts or [{"size": 2, "rank": 0}, {"size": 2, "rank": 1}]
+    receipt = {"canary": False, "row": {"name": "module compare", "finalization_finished": False},
+        "tool": dict.fromkeys(("commit", "tree_sha256"), "tool"),
+        "tessera": dict.fromkeys(("commit", "contract_sha256", "src_tree_sha256", "kernel_source_sha256", "build_provenance_sha256", "retained_source"), "F"),
+        "runtime": dict.fromkeys(("image_digest", "vllm", "torch", "launch_state_names", "launch_state_sha256", "start_environment_spec_sha256", "dependency_math", "dependency_math_sha256"), "runtime"),
+        "inputs": {**dict.fromkeys(("population_sha256", "case_manifest_sha256", "build_sha256", "q1_table_sha256", "launch_levers_sha256"), "input"),
+                   "selected_modules": ["A"], "selected_cuts": cuts},
+        "rule": dict.fromkeys(("sha256", "h1_sha256", "frozen_utc"), "rule"), "units": [], "modules": []}
+    groups, pairs, ranges = [], [], {}
+    for cut in cuts:
+        units = [row.new_unit({"cell": "dense", "module": "A", "symbol": "dense", "decoder": "native", "rung": 1024,
+            "role": "unit", "tp": cut, "m_config": {"M": m, "k_split": 1}, "launch_state_sha256": "a" * 64, "arm": {}}) for m in (1, 2)]
+        groups.append(({"name": "A"}, {"wire_sha256": "w"}, cut, units))
+        receipt["units"].extend(units)
+    for index, group in enumerate(groups):
+        _, _, cut, units = group
+        common = api.identities({**receipt, "inputs": {**receipt["inputs"], "selected_cuts": [cut]}})
+        for part in case_sets:
+            job = root / str(index) / part
+            start = index * 4 if part == "all" else index * 2 + (len(groups) * 2 if part == "diagnostics" else 0)
+            prepared = api.Artifact(job / "prepare", "prepare", common)
+            prepared.document.update(scopes=dense_phases.scopes([group]), case_set=part, ordinal_start=start)
+            previous = copy.deepcopy({**receipt, "inputs": {**receipt["inputs"], "selected_cuts": [cut]}, "units": units})
+            for unit in previous["units"]:
+                unit["exact"]["separation"]["records"] = [{"both": 1}]
+                unit["exact"]["sweep"]["elements"] = 10 * (index + 1) + unit["m_config"]["M"] if part != "diagnostics" else 0
+                unit["exact"]["scale_index"]["arrays"] = [{"launches": 1}]
+                unit["exact"]["chunk_pairs"]["x_elements"] = 1
+            x, sf = torch.ones(1, 1, dtype=torch.bfloat16), torch.ones(1, 1)
+            for category in (("sweep", "diagnostic") if part == "all" else ("diagnostic" if part == "diagnostics" else "sweep",)):
+                for unit in units:
+                    prepared.add(api.unit_scope(unit, "w"), row.unit_identity(unit)[4], "dense", {
+                        "input": x, "q": x, "sf": sf, "reference": x, "x_mask": sf.bool(),
+                        "finite_value": sf * 10, "finite_held": sf.bool(), "diagnostic_reference": sf, "products_abs": sf},
+                        category=category, distribution="gauss", seed=1)
+            previous["units"].reverse()
+            pd = prepared.finish(receipt=previous)
+            captured = api.Artifact(job / "capture", "capture", common)
+            captured.document.update(scopes=dense_phases.scopes([group]), case_set=part, ordinal_start=start, prepare_digest=pd)
+            current = copy.deepcopy({**previous, "units": units, "modules": [{"name": "A", "tp": cut}]})
+            current["row"] = {"name": f"cut {index} {part}", "finalization_finished": False}
+            for unit in current["units"]:
+                unit["arm"]["capture_fact"] = row.unit_identity(unit)
+                if finding and index == 1 and part != "diagnostics" and unit["m_config"]["M"] == 2:
+                    unit["findings"] = ["cut 2 exact mismatch"]
+            for case in api.cases(prepared.root, prepared.document):
+                captured.record("cases", {**case, "completion": True,
+                    "boundaries": [{"kind": "quantizer", "sync_before": True, "sync_after": True}] * 2,
+                    "profiler_names": ["kernel"], "kernel_origins": [{"profiler_name": "kernel"}],
+                    "code": {"unit_id": case["scope"]["unit_key"], "proof": case["id"]},
+                    "tensors": {k: captured.tensor(v) for k, v in sorted({"output": x, "staged": x, "quantizer_q": x, "quantizer_sf": sf}.items())}})
+            captured.finish(receipt=current)
+            pairs.append((prepared.root, captured.root))
+            ranges[("A", cut["size"], cut["rank"], part)] = [start, prepared.document["streams"]["cases"]["count"]]
+    out = root / "compare-job"
+    out.mkdir()
+    args = SimpleNamespace(out=out, case_ranges=ranges, prepare_artifact=[p[0] for p in reversed(pairs)], capture_artifact=[p[1] for p in reversed(pairs)])
+    return dense_phases, api, args, receipt, groups
+
+
+@pytest.mark.parametrize("case_sets", [("gate", "diagnostics"), ("all",)])
+def test_module_compare_finishes_one_receipt_with_every_cut(tmp_path, case_sets):
+    from experiments.numerics_rows import dense_phases
+    assert hasattr(dense_phases, "unit_map"), "feature absent: module cut artifact union"
+    from experiments.numerics_rows.gpu_time import PhaseTimes
+    dp, api, args, receipt, groups = module_phase_pairs(tmp_path, case_sets=case_sets)
+    dp.host_compare(args, receipt, PhaseTimes({}), groups)
+    assert receipt["row"]["finalization_finished"] and receipt["row"]["outcome"] == "PASS"
+    assert len(receipt["units"]) == 4 and len(receipt["modules"]) == 2
+    keys = {f'A:tp2r{rank}:{part}:{phase}' for rank in (0, 1) for part in case_sets for phase in ("prepare", "capture")}
+    assert set(receipt["phase_artifacts"]) == set(receipt["row"]["phase_jobs"]) == keys | {"compare"}
+    for key in keys:
+        reference = receipt["phase_artifacts"][key]
+        assert reference["sha256"] == row.sha256(Path(reference["path"]))
+        assert not receipt["row"]["phase_jobs"][key]["finalization_finished"]
+    for unit in receipt["units"]:
+        assert unit["exact"]["sweep"]["elements"] == 10 * (unit["tp"]["rank"] + 1) + unit["m_config"]["M"]
+        assert unit["arm"]["capture_fact"] == unit["unit_id"]
+        assert unit["code_stream"] == receipt["phase_artifacts"]["compare"]
+    document, digest = api.read(args.out / "compare", "compare", api.identities(receipt), dp.scopes(groups))
+    expected = sorted((case for root in args.capture_artifact for case in api.cases(root, json.loads((root / "phase.json").read_text()))), key=lambda case: case["ordinal"])
+    compared = list(api.cases(args.out / "compare", document))
+    assert len(compared) == 8 and digest == receipt["phase_artifacts"]["compare"]["sha256"]
+    for source, result in zip(expected, compared, strict=True):
+        assert all(result[field] == source[field] for field in ("id", "ordinal", "scope", "configuration", "code"))
+        assert result["identities"] == api.identities(receipt)
+
+
+@pytest.mark.parametrize("fault", ["missing", "duplicate", "foreign", "mixed"])
+def test_module_compare_refuses_invalid_cut_unions(tmp_path, fault):
+    from experiments.numerics_rows import dense_phases
+    assert hasattr(dense_phases, "unit_map"), "feature absent: module cut artifact union"
+    from experiments.numerics_rows.gpu_time import PhaseTimes
+    dp, _, args, receipt, groups = module_phase_pairs(tmp_path / "module")
+    if fault == "missing":
+        args.prepare_artifact, args.capture_artifact = args.prepare_artifact[2:], args.capture_artifact[2:]
+    else:
+        extra = args if fault == "duplicate" else module_phase_pairs(tmp_path / "extra", case_sets=("all",),
+            cuts=[{"size": 1, "rank": 0}] if fault == "foreign" else [groups[0][2]])[2]
+        args.prepare_artifact.append(extra.prepare_artifact[0])
+        args.capture_artifact.append(extra.capture_artifact[0])
+    with pytest.raises(Invalid, match="foreign module or cut|union exactly once"):
+        dp.host_compare(args, receipt, PhaseTimes({}), groups)
+    assert not receipt["row"]["finalization_finished"]
+
+
+def test_module_compare_keeps_cut_two_fail_after_diagnostics(tmp_path):
+    from experiments.numerics_rows import dense_phases
+    assert hasattr(dense_phases, "unit_map"), "feature absent: module cut artifact union"
+    from experiments.numerics_rows.gpu_time import PhaseTimes
+    dp, _, args, receipt, groups = module_phase_pairs(tmp_path, finding=True)
+    dp.host_compare(args, receipt, PhaseTimes({}), groups)
+    assert receipt["row"]["finalization_finished"] and receipt["row"]["outcome"] == "FAIL"
+    failed = [unit for unit in receipt["units"] if unit["outcome"] == "FAIL"]
+    assert len(failed) == 1 and failed[0]["tp"]["rank"] == 1 and failed[0]["m_config"]["M"] == 2
+    assert failed[0]["findings"] == ["cut 2 exact mismatch"] and receipt["row"]["exit_status"] == 3
+
+
+@pytest.mark.parametrize("fault", ["cut identity", "tool identity", "range", "receipt units"])
+def test_module_compare_keeps_exact_cut_bindings(tmp_path, fault):
+    from experiments.numerics_rows import dense_phases
+    assert hasattr(dense_phases, "unit_map"), "feature absent: module cut artifact union"
+    from experiments.numerics_rows.gpu_time import PhaseTimes
+    dp, _, args, receipt, groups = module_phase_pairs(tmp_path)
+    path = args.prepare_artifact[0] / "phase.json"
+    document = json.loads(path.read_text())
+    if fault == "cut identity": document["identities"]["inputs"]["selected_cuts"] = receipt["inputs"]["selected_cuts"]
+    elif fault == "tool identity": document["identities"]["tool"]["commit"] = "other"
+    elif fault == "receipt units": document["receipt"]["units"].pop()
+    else: args.case_ranges[("A", 2, 1, "diagnostics")][0] += 1
+    path.write_text(json.dumps(document))
+    with pytest.raises(Invalid, match="identities, module or cut|deterministic full row|receipt identities or units"):
+        dp.host_compare(args, receipt, PhaseTimes({}), groups)
+    assert not receipt["row"]["finalization_finished"]
+
+
+def test_module_compare_arguments_keep_every_artifact_pair(tmp_path):
+    from experiments.numerics_rows import dense_phases, prepare_split
+    assert hasattr(dense_phases, "unit_map"), "feature absent: module cut artifact union"
+    import shlex
+    pairs = [[tmp_path / f"cut{cut}/{part}/{phase}" for phase in ("prepare", "capture")] for cut in (0, 1) for part in ("gate", "diagnostics")]
+    config = {"module": "A", "canary": False, "phase_artifacts": pairs}
+    command = shlex.split(prepare_split.row_arguments(config, tmp_path, tmp_path, tmp_path, {}, "compare"))
+    for flag, position in (("--prepare-artifact", 0), ("--capture-artifact", 1)):
+        assert [command[i + 1] for i, value in enumerate(command) if value == flag] == [str(pair[position]) for pair in pairs]
+    assert not {"--tp-size", "--tp-rank"} & set(command)
+
 def test_lever_addendum_refuses_another_path_with_identical_bytes(tmp_path, monkeypatch):
     from experiments.numerics_rows.common import sha256
     rule, freeze, addendum = (tmp_path / n for n in ("rule.md", "freeze.json", "freeze-addendum-v2.json"))

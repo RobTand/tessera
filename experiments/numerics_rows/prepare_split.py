@@ -71,10 +71,11 @@ def row_arguments(config, root, source, population, paths, phase):
         arguments += ["--canary", "--tp-size", "2", "--tp-rank", "0"]
     for key, value in paths.items():
         arguments += ["--" + key.replace("_", "-"), str(population) if key == "population" else str(value)]
-    if phase != "prepare":
+    if phase == "capture":
         arguments += ["--prepare-artifact", str(root / "prepare/results/prepare")]
     if phase == "compare":
-        arguments += ["--capture-artifact", str(root / "capture/results/capture")]
+        for prepared, captured in config.get("phase_artifacts", [(root / "prepare/results/prepare", root / "capture/results/capture")]):
+            arguments += ["--prepare-artifact", str(prepared), "--capture-artifact", str(captured)]
     return worker_command(source, "experiments.numerics_rows.row", arguments)
 
 

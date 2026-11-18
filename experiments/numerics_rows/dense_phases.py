@@ -128,9 +128,9 @@ def case_ranges(groups):
 
 
 
-def check_range(args, groups, document):
+def check_range(args, group, document):
     if getattr(args, "case_ranges", None) and document["case_set"] != "all":
-        entry, _, cut, _ = groups[0]
+        entry, _, cut, _ = group
         expected = args.case_ranges[(entry["name"], cut["size"], cut["rank"], document["case_set"])]
         if expected != [document["ordinal_start"], document["streams"]["cases"]["count"]]:
             raise Invalid("phase cases differ from the deterministic full row enumeration")
@@ -241,7 +241,7 @@ def device_capture(args, receipt, phases, groups, library, compile_paths):
     prepare_root, = args.prepare_artifact
     common, expected_scopes = identities(receipt), scopes(groups)
     prepared, prepare_digest = read(prepare_root, "prepare", common, expected_scopes)
-    check_range(args, groups, prepared)
+    check_range(args, groups[0], prepared)
     if prepared["case_set"] != getattr(args, "case_set", "all"):
         raise Invalid("capture case set differs from prepare")
     for unit, previous in zip(receipt["units"], prepared["receipt"]["units"]):
@@ -396,62 +396,85 @@ def compare_case(case, observed, prepare_root, capture_root, unit):
             unit["exact"][case["category"]]["mismatches"] += result["mismatches"]
 
 
+def unit_map(units):
+    result = {json.dumps([u["module"], row.unit_identity(u)], sort_keys=True): u for u in units}
+    if len(result) != len(units):
+        raise Invalid("phase receipt has duplicate units")
+    return result
+
+
 def host_compare(args, receipt, phases, groups):
     if args.prepare_artifact is None or args.capture_artifact is None:
         raise Invalid("compare requires both phase artifacts")
-    common, expected_scopes = identities(receipt), scopes(groups)
     prepare_paths, capture_paths = args.prepare_artifact, args.capture_artifact
-    if len(prepare_paths) != len(capture_paths) or len(prepare_paths) not in (1, 2):
+    if len(prepare_paths) != len(capture_paths):
         raise Invalid("compare requires matching gate and diagnostics artifacts")
-    bound = []
+    bound, selected = [], {(g[0]["name"], g[2]["size"], g[2]["rank"]): [] for g in groups}
     for prepare_root, capture_root in zip(prepare_paths, capture_paths):
-        prepared, pd = read(prepare_root, "prepare", common, expected_scopes)
+        selection = json.loads((prepare_root / "phase.json").read_text())
+        matched = [g for g in groups if scopes([g]) == selection.get("scopes")]
+        if len(matched) != 1:
+            raise Invalid("phase artifact has a foreign module or cut")
+        group, = matched
+        entry, _, cut, _ = group
+        common = identities({**receipt, "inputs": {**receipt.get("inputs", {}), "selected_cuts": [cut]}})
+        prepared, pd = read(prepare_root, "prepare", common, scopes([group]))
+        check_range(args, group, prepared)
+        selected[(entry["name"], cut["size"], cut["rank"])].append(prepared["case_set"])
         if not (capture_root / "phase.json").is_file():
             partial = capture_root.parent / "numerics_row.json"
             if partial.is_file():
                 status = json.loads(partial.read_text())
                 if identities(status) != common:
                     raise Invalid("unfinished capture belongs to another row")
-                receipt.update(status)
+                for key, unit in unit_map(status["units"]).items():
+                    unit_map(receipt["units"])[key].update(unit)
             raise RuntimeError("capture is unfinished; compare cannot finish this row")
-        captured, cd = read(capture_root, "capture", common, expected_scopes)
+        captured, cd = read(capture_root, "capture", common, scopes([group]))
+        for document in (prepared, captured):
+            if identities(document["receipt"]) != common or unit_map(document["receipt"]["units"]).keys() != unit_map(group[3]).keys():
+                raise Invalid("phase receipt identities or units differ from the selected cut")
         bound.append((prepare_root, capture_root, prepared, captured, pd, cd))
-    for _, _, prepared, _, _, _ in bound:
-        check_range(args, groups, prepared)
-    selected = sorted(p[2]["case_set"] for p in bound)
-    if selected not in (["all"], ["diagnostics", "gate"]):
+    if any(sorted(parts) not in (["all"], ["diagnostics", "gate"]) for parts in selected.values()):
         raise Invalid("compare requires the full gate and diagnostics union exactly once")
     bound.sort(key=lambda p: p[2]["ordinal_start"])
-    compare_row = receipt["row"]
-    receipt.update(copy.deepcopy(bound[0][3]["receipt"]))
+    common, units = identities(receipt), unit_map(receipt["units"])
+    compare_row = copy.deepcopy(receipt["row"])
     receipt["row"]["phase_jobs"] = {"compare": compare_row}
     receipt["phase_artifacts"] = {}
     artifact = Artifact(args.out / "compare", "compare", common)
-    artifact.document.update(scopes=expected_scopes, ranges=[])
+    artifact.document.update(scopes=scopes(groups), ranges=[])
     progress = args.progress = Progress(args.out, receipt, phases)
-    for unit, base in zip(receipt["units"], bound[0][2]["receipt"]["units"]):
-        unit["exact"] = copy.deepcopy(base["exact"])
-        unit["exact"]["finite_certificate"] = {"elements": 0, "held": 0, "nonfinite_where_held": 0}
-        unit["exact"]["composition"] = {"cases": 0, "equal": True}
-        if unit["exact"]["scale_index"].get("streamed"):
-            unit["exact"]["scale_index"] = {"arrays": [], "streamed": True}
+    for unit in units.values():
         unit["completed"] = True
     for prepare_root, capture_root, prepared, captured, pd, cd in bound:
         part = prepared["case_set"]
+        receipt["modules"].extend(copy.deepcopy(m) for m in captured["receipt"]["modules"] if m not in receipt["modules"])
+        scope = prepared["scopes"][0]
+        key = f'{scope["module"]}:tp{scope["cut"]["size"]}r{scope["cut"]["rank"]}:{part}:'
         for phase, root_path, document, digest in (("prepare", prepare_root, prepared, pd), ("capture", capture_root, captured, cd)):
-            receipt["phase_artifacts"][part + ":" + phase] = {"path": str(root_path / "phase.json"), "sha256": digest}
-            receipt["row"]["phase_jobs"][part + ":" + phase] = document["receipt"]["row"]
+            receipt["phase_artifacts"][key + phase] = {"path": str(root_path / "phase.json"), "sha256": digest}
+            receipt["row"]["phase_jobs"][key + phase] = document["receipt"]["row"]
         artifact.document["ranges"].append([prepared["ordinal_start"], prepared["streams"]["cases"]["count"]])
-        for unit, current, previous in zip(receipt["units"], captured["receipt"]["units"], prepared["receipt"]["units"]):
+        previous_units = unit_map(prepared["receipt"]["units"])
+        for identity, current in unit_map(captured["receipt"]["units"]).items():
+            unit, previous = units[identity], previous_units[identity]
+            unit.update(copy.deepcopy({k: v for k, v in current.items() if k not in (
+                "exact", "completed", "findings", "invalid", "unattested", "cuda_errors", "cuda_unattributed", "graph_replay_equal", "first_mismatch")}))
+            if part != "diagnostics":
+                unit["exact"] = copy.deepcopy(previous["exact"])
+                unit["exact"].update(finite_certificate={"elements": 0, "held": 0, "nonfinite_where_held": 0}, composition={"cases": 0, "equal": True})
+                if unit["exact"]["scale_index"].get("streamed"):
+                    unit["exact"]["scale_index"] = {"arrays": [], "streamed": True}
             for field in ("findings", "invalid", "unattested", "cuda_errors"):
                 unit[field] = (unit[field] + previous[field] + current[field])[:1]
             unit["cuda_unattributed"] |= current["cuda_unattributed"]
             unit["graph_replay_equal"] = current["graph_replay_equal"] or unit["graph_replay_equal"]
         arrays = iter(records(prepare_root, "arrays", prepared)) if "arrays" in prepared["streams"] else iter(())
         pairs = check_capture(prepared, captured, pd, prepare_root, capture_root)
-        for _, batch in groupby(pairs, lambda pair: (pair[0]["scope"]["unit_key"], pair[0].get("array_index"))):
+        for _, batch in groupby(pairs, lambda pair: (pair[0]["scope"]["module"], pair[0]["scope"]["unit_key"], pair[0].get("array_index"))):
             case, observed = next(batch)
-            unit = next(u for u in receipt["units"] if row.unit_identity(u) == case["scope"]["unit_key"])
+            unit = units[json.dumps([case["scope"]["module"], case["scope"]["unit_key"]], sort_keys=True)]
             array = next(arrays, None) if case["kind"] == "scale" else None
             if case["kind"] == "scale":
                 if array is None or array["scope"] != case["scope"] or array["array_index"] != case["array_index"]:
@@ -461,17 +484,15 @@ def host_compare(args, receipt, phases, groups):
             for case, observed in chain([(case, observed)], batch):
                 progress.record("diagnostics" if case["category"] == "diagnostic" else "gate_cases", unit, case["id"])
                 previous = {field: unit[field] for field in ("findings", "invalid", "unattested")}
-                for field in previous:
-                    unit[field] = observed.get("status", {}).get(field, [])
+                unit.update({field: observed.get("status", {}).get(field, []) for field in previous})
                 compare_case(case, observed, prepare_root, capture_root, unit)
                 result = {k: case[k] for k in ("id", "ordinal", "identities", "scope", "configuration", "kind", "category")}
-                result.update({field: unit[field] for field in previous}, diagnostic=unit["diagnostic"],
+                result.update({field: unit[field] for field in previous}, identities=common, diagnostic=unit["diagnostic"],
                               first_mismatch=unit["first_mismatch"], completion=observed.get("completion"), code=observed.get("code"),
                               counts={k: v for k, v in unit["exact"].items() if k not in ("scale_index", "separation")},
                               outcome="FAIL" if unit["findings"] else "INVALID" if unit["invalid"] else "UNATTESTED" if unit["unattested"] else "PASS" if observed.get("completion") else "STOPPED")
                 artifact.record("cases", result)
-                for field in previous:
-                    unit[field] = (previous[field] + unit[field])[:1]
+                unit.update({field: (previous[field] + unit[field])[:1] for field in previous})
                 unit["diagnostic"].clear()
                 unit.pop("diagnostic_composition_equal", None)
             if array is not None:
