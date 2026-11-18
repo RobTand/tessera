@@ -258,8 +258,7 @@ def write_templates(root, config, repository):
                  "job_name": f"tessera-1717-{key}-{phase}", "args": len(ordered),
                  "max_attempts": cap, "urgency": settings["urgency"], "cwd": str(directory),
                  "env_names": ["PATH", "HOME", "XDG_RUNTIME_DIR", "FLUX_F58_FORCE_ASCII", "FLUX_SCRATCH",
-                               "OMP_NUM_THREADS", "MKL_NUM_THREADS", "OPENBLAS_NUM_THREADS"],
-                 "shell_options": {}}
+                               "OMP_NUM_THREADS", "MKL_NUM_THREADS", "OPENBLAS_NUM_THREADS"]}
         write_json(directory / "table.json", table)
         prerequisites = ""
         if phase == "capture":

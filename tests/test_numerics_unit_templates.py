@@ -174,10 +174,9 @@ def test_every_template_uses_fleet_table_schema(tmp_path, canary, prepare_instan
                                                   "compare": 86400}[phase]}
         assert fields == {"schema": 1, "instances": instances,
                           "job_name": f"tessera-1717-{directory.parent.name}-{phase}", "args": 1,
-                          "max_attempts": 3, "urgency": 8,
+                          "max_attempts": 5, "urgency": 8,
                           "cwd": str(directory), "env_names": ["PATH", "HOME", "XDG_RUNTIME_DIR", "FLUX_F58_FORCE_ASCII", "FLUX_SCRATCH",
-                                                                 "OMP_NUM_THREADS", "MKL_NUM_THREADS", "OPENBLAS_NUM_THREADS"],
-                          "shell_options": {}}
+                                                                 "OMP_NUM_THREADS", "MKL_NUM_THREADS", "OPENBLAS_NUM_THREADS"]}
         assert not {"policy.json", "submit-after-review.sh", "submit-reviewed.sh"} & {p.name for p in directory.iterdir()}
         assert (directory / "job.sh").stat().st_mode & 0o100
         attempt = tmp_path / "module/units" / directory.parent.name / f"attempts/{attempt_id}"

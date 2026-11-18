@@ -1,5 +1,5 @@
 {
-  "max_attempts": 3,
+  "max_attempts": 5,
   "template_instances": {
     "canary": ["fv1"],
     "prepare": ["fv1", "fv1e-sparky", "fv1e-sparklina"],

@@ -1,6 +1,6 @@
 # Tessera plan-to-serve architecture
 
-Re-stamped 2026-11-18 for #1717 unattended module failures and bounded job retries. Fleet gate remains f480e7d8.
+Re-stamped 2026-11-18 for #1717 Fleet gate 1e8d7323: no shell options, eight table keys, max_attempts 5.
 Each module has prepare and capture templates per TP unit and case set, plus one compare template.
 The generator accepts an explicit campaign output root and refuses an existing root. Without that parameter, it keeps the dated shared path.
 The CLI accepts `--output-root` and `--module` for canary generation.
@@ -33,7 +33,7 @@ Only the claimed phase directory and job scratch accept worker writes. Cleanup r
 Counted compare selects every unit's newest attempt path and runs on fv1 without a TP filter.
 The phase reader retains FAIL from phase-local partial receipts. It reads no attempt-root receipt.
 The feeder uses these templates through Fleet's gate. The dense-chain HOLD remains.
-The feeder builds a dry-run jobspec from each table. The gate alone submits the checked bytes and writes the TSV.
+The feeder builds a dry-run jobspec from each table. The dry-run passes `--rlimit=-*` and no shell option, so the jobspec has no shell key. The gate alone submits the checked bytes and writes submits.jsonl; every reservation counts toward max_attempts.
 The jobspec uses a mode-0600 file in private feeder scratch outside attempt directories. The feeder removes it after the gate call, also on error.
 At startup, the feeder removes stale private jobspec scratch directories under its exclusive lock, before any submit.
 Attempt intent retains only the jobspec SHA-256 and sorted environment names. It retains no environment values.

@@ -904,7 +904,7 @@ def feeder_booking(tmp_path, monkeypatch):
         names = ['fv1', 'fv1e-sparklina', 'fv1e-sparky'] if phase == 'prepare' else ['fv1']
         write(template / 'table.json', {'schema': 1, 'instances': {name: placement(name) for name in names},
               'job_name': 'tessera-1717-' + template.parent.name + '-' + phase, 'args': 1, 'max_attempts': 3,
-              'urgency': 8, 'cwd': str(template), 'env_names': ['PATH'], 'shell_options': {}})
+              'urgency': 8, 'cwd': str(template), 'env_names': ['PATH']})
         (template / 'job.sh').write_text('#!/bin/bash\nexit 0\n')
     monkeypatch.setattr(prepare_split, "check_canary", lambda *a: None)
     monkeypatch.setattr(api, "sha", lambda path: "a" * 64)

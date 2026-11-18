@@ -172,10 +172,9 @@ def test_group_uses_canary_shape_and_fleet_table(tmp_path, max_k):
                      "shapes": [[{"type": "slot", "count": 1, "label": "task", "with":
                                  [{"type": "core", "count": 6}, {"type": "memory", "count": 9}, {"type": "gpu", "count": 1}]}]],
                      "max_duration_s": 36000}}, "job_name": "tessera-1717-group-A-capture", "args": 3,
-                     "max_attempts": 3, "urgency": 8, "cwd": str(directory),
+                     "max_attempts": 5, "urgency": 8, "cwd": str(directory),
                      "env_names": ["PATH", "HOME", "XDG_RUNTIME_DIR", "FLUX_F58_FORCE_ASCII", "FLUX_SCRATCH",
-                                   "OMP_NUM_THREADS", "MKL_NUM_THREADS", "OPENBLAS_NUM_THREADS"],
-                     "shell_options": {}}
+                                   "OMP_NUM_THREADS", "MKL_NUM_THREADS", "OPENBLAS_NUM_THREADS"]}
     grouped, = [item for item in config["templates"] if item["key"] == "group-A"]
     assert grouped["shape"] == "slot=1/[core=6;memory=9;gpu=1]"
     captures = [key for item in config["templates"] if item["phase"] == "capture" for key in item.get("unit_keys", [item["key"]])]
@@ -193,7 +192,7 @@ def test_group_leaves_attempt_cap_to_fleet(tmp_path):
     for index, attempt in enumerate(attempts):
         attempt.rename(attempt.with_name("4"))
         attempts[index] = attempt.with_name("4")
-    assert json.loads((directory / "table.json").read_text())["max_attempts"] == 3
+    assert json.loads((directory / "table.json").read_text())["max_attempts"] == 5
     assert "MAX_ATTEMPTS" not in (directory / "job.sh").read_text()
     result = run_job(directory, attempts)
     assert result.returncode != 0 and "FLUX_SCRATCH" in result.stderr

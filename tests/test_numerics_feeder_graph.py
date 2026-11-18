@@ -1,5 +1,6 @@
 """Check the feeder with a stub gate and fake Flux on PATH."""
 import hashlib
+import inspect
 import json
 import os
 from pathlib import Path
@@ -42,7 +43,7 @@ if pathlib.Path(sys.argv[0]).name == 'stub-gate':
     elif system['dependencies'] != [{'scheme': 'singleton', 'value': ''}]: reason = 'dependencies'
     elif system['cwd'] != table['cwd']: reason = 'cwd'
     elif set(system['environment']) != set(table['env_names']): reason = 'environment'
-    elif system['shell']['options'] != table['shell_options']: reason = 'shell'
+    elif set(system) != {'constraints', 'cwd', 'dependencies', 'duration', 'environment', 'job'}: reason = 'system keys'
     elif spec['tasks'][0]['command'][0] != str(pathlib.Path(template) / 'job.sh'): reason = 'command'
     elif len(spec['tasks'][0]['command']) != table['args'] + 1: reason = 'arguments'
     if (root / 'refuse').exists() and (root / 'refuse').read_text() in template:
@@ -68,8 +69,9 @@ if args[:2] == ['submit', '--dry-run']:
             'attributes': {'system': {'constraints': {'hostlist': [option('--requires=host:')]},
               'cwd': option('--cwd='), 'dependencies': [{'scheme': 'singleton', 'value': ''}],
               'duration': int(option('-t').rstrip('s')), 'job': {'name': option('--job-name=')},
-              'environment': {a[6:].split('=', 1)[0]: '' for a in args if a.startswith('--env=') and a != '--env=-*'},
-              'shell': {'options': {}}}}}
+              'environment': {a[6:].split('=', 1)[0]: '' for a in args if a.startswith('--env=') and a != '--env=-*'}}}}
+    if '--rlimit=-*' not in args:
+        spec['attributes']['system']['shell'] = {'options': {'rlimit': {'cpu': 1}}}
     if (root / 'mutate').exists():
         field = (root / 'mutate').read_text()
         if field == 'shape': spec['resources'][0]['with'][1]['count'] += 1
@@ -464,6 +466,19 @@ def test_feeder_gate_refusal_stops_unit_and_keeps_other_units(tmp_path, monkeypa
     assert result.returncode == 3 and result.stdout.startswith('REFUSED: ')
     assert not argument.exists()
 
+
+def test_dry_run_has_no_shell_key_and_table_keys_are_exact(tmp_path, monkeypatch):
+    assert "'--rlimit=-*'" in inspect.getsource(api.dry_run), 'feature absent: dry-run turns off copied shell limits'
+    canary, _, configs = make_graph(tmp_path, monkeypatch)
+    template = canary.parent / 'module-B/templates' / configs['module-B']['unit_keys'][0] / 'prepare'
+    spec = json.loads(api.dry_run(template, [canary.parent / 'unclaimed'], 'fv1', 'sparklina'))
+    assert set(spec['attributes']['system']) == {'constraints', 'cwd', 'dependencies', 'duration', 'environment', 'job'}
+    table = json.loads((template / 'table.json').read_text())
+    assert set(table) == {'schema', 'instances', 'job_name', 'args', 'max_attempts', 'urgency', 'cwd', 'env_names'}
+    assert all(type(table[key]) is int for key in ('args', 'max_attempts', 'urgency')) and table['max_attempts'] == 5
+    assert set(table['instances']) <= {'fv1', 'fv1e-sparky', 'fv1e-sparklina'}
+    assert all(set(entry) == {'constraints', 'shapes', 'max_duration_s'} for entry in table['instances'].values())
+    assert all(type(name) is str for name in table['env_names'])
 
 def test_feeder_restart_reuses_finished_attempts_and_saved_ids(tmp_path, monkeypatch):
     assert hasattr(api, 'attempt_jobs'), 'feature absent: finished attempts and saved ids are reused'

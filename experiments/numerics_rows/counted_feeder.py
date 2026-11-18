@@ -81,12 +81,11 @@ def dry_run(template, arguments, name, host):
     command = [*client(name), 'submit', '--dry-run', '--dependency=singleton',
                '--job-name=' + table['job_name'], '--cwd=' + table['cwd'],
                '--requires=host:' + constraint['hostlist'][0], '--resources-shape=' + shape,
-               '-t' + str(placement['max_duration_s']) + 's', '--env=-*']
+               '-t' + str(placement['max_duration_s']) + 's', '--rlimit=-*', '--env=-*']
     environment = dict(PATH='/usr/bin:/bin', HOME='/home/rob', XDG_RUNTIME_DIR='/run/user/1000',
                        FLUX_F58_FORCE_ASCII='1', FLUX_SCRATCH='/var/tmp',
                        OMP_NUM_THREADS='1', MKL_NUM_THREADS='1', OPENBLAS_NUM_THREADS='1')
     command += ['--env=' + field + '=' + environment[field] for field in table['env_names']]
-    command += ['-o' + key + '=' + json.dumps(value) for key, value in table['shell_options'].items()]
     return subprocess.check_output([*command, str(template / 'job.sh'), *map(str, arguments)], text=True)
 
 
