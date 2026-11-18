@@ -145,17 +145,19 @@ def _join(population, digest, manifests, receipts, contract):
                 raise Invalid("row unit launch state differs from its worker")
             if unit["unit_id"] != unit_identity(unit) or unit["outcome"] not in OUTCOMES or unit["role"] not in ("unit", "observation") or type(unit["admitted_by_v68"]) is not bool:
                 raise Invalid("row unit key or outcome is invalid")
+            module = unit.get("module")
+            if module is None and len(selection) == 1:
+                module = selection[0]
+            key = pack(rule_unit_id(unit))
             if unit["role"] != "unit" or unit["admitted_by_v68"] is not True:
+                if module in required.get(key, ()):
+                    raise Invalid("observation label conflicts with the required signed scope")
                 continue
             if unit["outcome"] == "PASS":
                 from experiments.numerics_rows.dependency_code import check_unit_code
                 from experiments.numerics_rows.phase_artifact import identities
                 check_unit_code(unit, receipt["runtime"]["image_digest"], identities(receipt) if "code_stream" in unit else None)
             check_math_binding(unit, receipt["runtime"])
-            module = unit.get("module")
-            if module is None and len(selection) == 1:
-                module = selection[0]
-            key = pack(rule_unit_id(unit))
             check_math_binding(unit, key_math.setdefault(key, unit))
             full = pack(unit_identity({**unit, "tp": {k: unit["tp"][k] for k in ("size", "rank")}}))
             if module not in selection or full not in allowed.get((module, key), ()):

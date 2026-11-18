@@ -68,12 +68,29 @@ def test_an_unrelated_modules_absent_key_does_not_weaken_pass(monkeypatch):
 
 
 @pytest.mark.parametrize("field,value", [("role", "observation"), ("admitted_by_v68", False)])
+def test_join_refuses_observation_labels_on_required_fail_keys(monkeypatch, field, value):
+    population, digest, manifests, receipts = joined_inputs(monkeypatch)
+    positive = join(population, digest, manifests, receipts)
+    assert positive["verdict"] == "PASS"
+    unit = receipts[0][1]["units"][0]
+    observation = copy.deepcopy(unit)
+    observation.update(outcome="FAIL", role="observation", admitted_by_v68=False, rung=unit["rung"] + 1)
+    observation["unit_id"] = row.unit_identity(observation)
+    receipts[0][1]["units"].append(observation)
+    assert join(population, digest, manifests, receipts) == positive
+    unit.update(outcome="FAIL", **{field: value})
+    with pytest.raises(Invalid, match="observation label.*required signed scope"):
+        join(population, digest, manifests, receipts)
+
+
+@pytest.mark.parametrize("field,value", [("role", "observation"), ("admitted_by_v68", False)])
 def test_observation_pass_never_supplies_attestation(monkeypatch, field, value):
     population, digest, manifests, receipts = joined_inputs(monkeypatch)
     assert join(population, digest, manifests, receipts)["verdict"] == "PASS"
     for unit in receipts[1][1]["units"]:
         unit[field] = value
-    assert join(population, digest, manifests, receipts)["verdict"] == "UNATTESTED"
+    with pytest.raises(Invalid, match="observation label conflicts with the required signed scope"):
+        join(population, digest, manifests, receipts)
 
 
 @pytest.mark.parametrize("duplicate", ["document", "unit", "module"])
