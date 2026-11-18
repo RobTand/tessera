@@ -158,7 +158,7 @@ def check_pair(args, groups, prepared, captured, digest, prepare_root, capture_r
 def host_prepare(args, receipt, phases, groups):
     from experiments.numerics_rows.scale_launch import check as scale_checks
     progress = args.progress = Progress(args.out, receipt, phases)
-    artifact = Artifact(args.out / "prepare", "prepare", identities(receipt))
+    artifact = Artifact(getattr(args, "phase_root", args.out / "prepare"), "prepare", identities(receipt))
     artifact.document.update(scopes=scopes(groups), case_set=getattr(args, "case_set", "all"))
     if getattr(args, "case_set", "all") != "all":
         start, count = unit_range(args, groups, args.case_set)
@@ -263,7 +263,7 @@ def device_capture(args, receipt, phases, groups, library, compile_paths):
         for field in ("findings", "invalid", "unattested"):
             unit[field] = (unit[field] + previous[field])[:1]
     progress = args.progress = Progress(args.out, receipt, phases, args.meter)
-    artifact = Artifact(args.out / "capture", "capture", common)
+    artifact = Artifact(getattr(args, "phase_root", args.out / "capture"), "capture", common)
     artifact.document.update(scopes=expected_scopes, prepare_digest=prepare_digest,
                              ordinal_start=prepared["ordinal_start"], case_set=prepared["case_set"])
     cache, audit = {}, args.code_audit
@@ -450,7 +450,12 @@ def read_attempts(args, groups, prepare_root, capture_root, common, part):
                 status = document.get("receipt", {"units": []})
             else:
                 status = {"units": []}
-            if "receipt" in (document or {}):
+            statuses = [status] if "receipt" in (document or {}) else []
+            local_receipt = root / "numerics_row.json"
+            if local_receipt.is_file():
+                statuses.append(json.loads(local_receipt.read_text()))
+                evidence[phase + "_partial"] = sha256(local_receipt)
+            for status in statuses:
                 if identities(status) != common or unit_map(status["units"]).keys() != expected_keys:
                     raise Invalid("phase receipt identities or units differ from the selected cut")
                 found.update({k: f"FAIL attempt {key}/{number}" for k, u in unit_map(status["units"]).items() if u.get("findings") or u.get("outcome") == "FAIL"})
@@ -523,7 +528,7 @@ def host_compare(args, receipt, phases, groups):
     compare_row = copy.deepcopy(receipt["row"])
     receipt["row"]["phase_jobs"] = {"compare": compare_row}
     receipt["phase_artifacts"] = {}
-    artifact = Artifact(args.out / "compare", "compare", common)
+    artifact = Artifact(getattr(args, "phase_root", args.out / "compare"), "compare", common)
     artifact.document.update(scopes=scopes(groups), ranges=[])
     (artifact.root / "cases.jsonl").touch()
     artifact.document["streams"]["cases"] = {"count": 0}

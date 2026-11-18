@@ -5,6 +5,7 @@ import argparse
 from datetime import datetime, timezone
 import json
 import math
+import re
 from pathlib import Path
 import shlex
 import shutil
@@ -44,7 +45,12 @@ def check_telemetry(path):
 def check_canary(directory, revision, paths):
     directory = Path(directory)
     config = json.loads((directory / "campaign.json").read_text())
+    phase_roots = [directory / phase for phase in ("prepare", "capture", "compare")]
     path = directory / "compare/results/numerics_row.json"
+    if config.get("templates"):
+        phase_roots = [max((directory / "units" / unit["key"] / "attempts").iterdir(), key=lambda p: int(p.name)) / unit["phase"]
+                       for unit in config["templates"]]
+        path = phase_roots[-1] / "numerics_row.json"
     receipt = json.loads(path.read_text())
     if (not config["canary"] or config["tool_commit"] != revision or receipt.get("canary") is not True
             or receipt["tool"].get("commit") != revision or receipt["tessera"].get("commit") != SOURCE
@@ -55,24 +61,31 @@ def check_canary(directory, revision, paths):
     if config["paths"]["source"] != str(paths["source"]) or any(
             config["digests"].get(k) != sha256(v) for k, v in paths.items() if k not in ("source", "manifest")):
         raise Invalid("counted row and canary must use the same F chain")
-    for phase in ("prepare", "capture", "compare"):
-        if (directory / phase / "tool-exit.txt").read_text().strip() != "0":
-            raise Invalid("canary phase did not exit successfully: " + phase)
-    check_telemetry(directory / "capture/results/numerics_row.json")
+    for phase_root in phase_roots:
+        if (phase_root / "tool-exit.txt").read_text().strip() != "0":
+            raise Invalid("canary phase did not exit successfully: " + phase_root.name)
+        if phase_root.name == "capture":
+            check_telemetry(phase_root / ("numerics_row.json" if config.get("templates") else "results/numerics_row.json"))
     return {"path": str(path), "sha256": sha256(path)}
 
 
-def row_arguments(config, root, source, population, paths, phase):
+def row_arguments(config, root, source, population, paths, phase, *, unit=None, attempt=None):
     arguments = ["--image", "N", "--name", config["module"], "--phase", phase,
                  "--phase-instance", str(root / phase / "results/instance.json"),
                  "--out", str(root / phase / "results"), "--rule", str(RULE), "--freeze", str(FREEZE),
                  "--module", config["module"]]
+    if attempt is not None:
+        arguments[arguments.index("--out") + 1] = str(attempt)
+        arguments[arguments.index("--phase-instance") + 1] = str(attempt / phase / "instance.json")
+        arguments += ["--phase-local-output", "--case-set", unit["case_set"]]
+        if unit.get("size"):
+            arguments += ["--tp-size", str(unit["size"])]
     if config["canary"]:
-        arguments += ["--canary", "--tp-size", "2"]
+        arguments += ["--canary"] + (["--tp-size", "2"] if attempt is None else [])
     for key, value in paths.items():
         arguments += ["--" + key.replace("_", "-"), str(population) if key == "population" else str(value)]
     if phase == "capture":
-        arguments += ["--prepare-artifact", str(root / "prepare/results/prepare")]
+        arguments += ["--prepare-artifact", str(attempt / "prepare" if attempt is not None else root / "prepare/results/prepare")]
     if phase == "compare":
         for prepared, captured in config.get("phase_artifacts", [(root / "prepare/results/prepare", root / "capture/results/capture")]):
             arguments += ["--prepare-artifact", str(prepared), "--capture-artifact", str(captured)]
@@ -101,11 +114,30 @@ def bind(root, paths):
     config.update(paths={k: str(v) for k, v in paths.items()}, digests={k: sha256(v) for k, v in paths.items() if k != "source"},
                   staged_population=str(population), population_mount=mount, bound=True)
     write_json(root / "campaign.json", config)
-    for phase in ("prepare", "capture", "compare"):
-        directory = root / phase
-        payload = row_arguments(config, root, source, population, paths, phase)
-        (directory / "payload.sh").write_text(f"#!/bin/bash\nset -euo pipefail\nexec {payload}\n")
+    bind_templates(root, config)
     return root
+
+
+def bind_templates(root, config):
+    paths, population = config["paths"], config["staged_population"]
+    source = Path(paths["source"])
+    for unit in config["templates"]:
+        directory, phase = root / "templates" / unit["key"] / unit["phase"], unit["phase"]
+        local = dict(config)
+        prefix = ""
+        if phase == "compare":
+            pairs = []
+            for index, key in enumerate(config["unit_keys"]):
+                prefix += f'pair_{index}=$(find {shlex.quote(str(root / "units" / key / "attempts"))} -mindepth 1 -maxdepth 1 -type d | sort -V | tail -n 1)\n'
+                prefix += f'test -n "$pair_{index}"\n'
+                pairs.append([Path(f"__PAIR_{index}__") / p for p in ("prepare", "capture")])
+            local["phase_artifacts"] = pairs
+        payload = row_arguments(local, root, source, population, paths, phase, unit=unit, attempt=Path("__ATTEMPT__"))
+        payload = payload.replace("__ATTEMPT__", '"$attempt"')
+        for index in range(len(config["unit_keys"])):
+            payload = payload.replace(f"__PAIR_{index}__", f'"$pair_{index}"')
+        (directory / "payload.sh").write_text(f'#!/bin/bash\nset -euo pipefail\nattempt=$1\n{prefix}exec {payload}\n')
+        seal_template(directory)
 
 
 def verify(root):
@@ -127,6 +159,57 @@ def verify(root):
     return config
 
 
+def seal_template(directory):
+    files = sorted(p for p in directory.iterdir() if p.name != "template.sha256")
+    root = directory.parents[2]
+    files += [root / name for name in ("instance.py", "admission.py", "campaign.json", "feeder-settings.json")]
+    (directory / "template.sha256").write_text("".join(f"{sha256(p)}  {p.name if p.parent == directory else p}\n" for p in files))
+
+
+def write_templates(root, config, repository):
+    from experiments.numerics_rows.launch_state import json_digest
+    settings = json.loads((root / "feeder-settings.json").read_text())
+    cap = settings["max_attempts"]
+    if type(cap) is not int or not 1 <= cap <= 999999:
+        raise Invalid("max_attempts must be an integer from 1 through 999999")
+    units = [{"key": f"tp{size}-{part}-" + json_digest([config["module"], size, part]), "size": size, "case_set": part}
+             for size in (1, 2) for part in ("gate", "diagnostics")]
+    config["unit_keys"] = [unit["key"] for unit in units]
+    config["templates"] = [dict(unit, phase=phase) for unit in units for phase in ("prepare", "capture")]
+    config["templates"].append({"key": "compare-" + json_digest([config["module"], "compare"]), "phase": "compare", "case_set": "all"})
+    write_json(root / "campaign.json", config)
+    options = shlex.join(container_options("$task_scratch")).replace("'$task_scratch", '\"$task_scratch').replace(":rw'", ':rw\"').replace(":ro'", ':ro\"')
+    for unit in config["templates"]:
+        phase, key = unit["phase"], unit["key"]
+        directory = root / "templates" / key / phase
+        directory.mkdir(parents=True)
+        minutes = {"prepare": 360 if config["canary"] else 1440, "capture": settings["capture_minutes"], "compare": 120 if config["canary"] else 360}[phase]
+        shapes = {"prepare": ["slot/[core=1;memory=8]", "slot/[core=1;memory=9]"],
+                  "capture": [f"slot/[core={4 if config['canary'] else 1};memory=32;gpu=1]"], "compare": ["slot/[core=1;memory=32]"]}[phase]
+        policy = {"hosts": ["sparky", "sparklina"], "max_minutes": minutes, "shapes": shapes, "max_urgency": 16}
+        write_json(directory / "policy.json", policy)
+        prerequisites = ""
+        if phase == "capture":
+            prerequisites = ('python3 ' + shlex.quote(str(root / "instance.py")) + ' complete "$attempt/prepare" || refuse \'prepare is not complete or hashes differ\'\n'
+                             '(cd "$attempt/prepare" && sha256sum -c completion.sha256) || refuse \'prepare is not complete or hashes differ\'')
+        values = {"ROOT": shlex.quote(str(root)), "ROOT_RAW": str(root), "TEMPLATE": shlex.quote(str(directory)),
+                  "REPOSITORY": shlex.quote(str(repository)), "REVISION": config["tool_commit"], "KEY": key, "PHASE": phase,
+                  "PATTERN": "^" + re.escape(str(root / "units" / key / "attempts")) + "/([1-9][0-9]*)$",
+                  "MAX_ATTEMPTS": str(cap), "MAX_DIGITS": str(len(str(cap))), "PREREQUISITES": prerequisites,
+                  "MINUTES": str(minutes), "SECONDS": str(minutes * 60 - 60), "SHAPE": shapes[-1], "OPTIONS": options,
+                  "GPU": "--device nvidia.com/gpu=all" if phase == "capture" else "",
+                  "PREFLIGHT": 'PYTHONPATH="$task_scratch/code" python3 -m experiments.numerics_rows.gpu_time --preflight gpu-preflight-host.json' if phase == "capture" else "",
+                  "TELEMETRY": 'PYTHONPATH="$task_scratch/code" python3 -m experiments.numerics_rows.prepare_split --check-telemetry numerics_row.json > telemetry-check.json' if phase == "capture" else ""}
+        for name in ("job.sh", "submit-after-review.sh"):
+            script = (Path(__file__).with_name("templates") / name).read_text()
+            for marker, value in values.items():
+                script = script.replace("@" + marker + "@", value)
+            (directory / name).write_text(script)
+        shutil.copyfile(directory / "submit-after-review.sh", directory / "submit-reviewed.sh")
+        seal_template(directory)
+    write_json(root / "campaign.json", config)
+
+
 def prepare(cpu_check, *, module=MODULE, canary=True, canary_directory=None):
     revision = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=ROOT, text=True).strip()
     stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
@@ -138,93 +221,14 @@ def prepare(cpu_check, *, module=MODULE, canary=True, canary_directory=None):
         subprocess.run(["git", "clone", "--bare", "--no-hardlinks", str(ROOT), str(repository)], check=True)
     write_json(out / "campaign.json", {"tool_commit": revision, "source_revision": SOURCE, "rule": str(RULE),
         "rule_sha256": RULE_SHA, "freeze": str(FREEZE), "freeze_sha256": sha256(FREEZE),
-        "module": module, "cuts": ([] if canary else [{"size": 1, "rank": 0}]) + [{"size": 2, "rank": 0}, {"size": 2, "rank": 1}],
+        "module": module, "cuts": [{"size": 1, "rank": 0}, {"size": 2, "rank": 0}, {"size": 2, "rank": 1}],
         "canary": canary, "bound": False, "bookings_provisional": not canary,
         "canary_directory": str(canary_directory) if canary_directory else None,
         "paths": dict.fromkeys(INPUTS), "cpu_check": str(cpu_check)})
-    shutil.copyfile(__file__, out / "prepare.py")
     shutil.copyfile(Path(__file__).with_name('phase_instance.py'), out / 'instance.py')
     shutil.copyfile(ROOT / 'experiments/numerics_rows/counted_feeder.py', out / 'admission.py')
     shutil.copyfile(ROOT / 'experiments/numerics_rows/feeder-settings.json', out / 'feeder-settings.json')
-    capture_cores = 4 if canary else 1
-    for phase, minutes in (("prepare", 360 if canary else 1440), ("capture", 15), ("compare", 120 if canary else 360)):
-        job = out / phase
-        job.mkdir()
-        gpu = phase == "capture"
-        cores = capture_cores if gpu else 1
-        options = shlex.join(container_options("$task_scratch")).replace("'$task_scratch", '"$task_scratch').replace(":rw'", ':rw"').replace(":ro'", ':ro"')
-        bootstrap = f'PYTHONPATH="$task_scratch/code" python3 -m experiments.numerics_rows.prepare_split --verify {out}'
-        prerequisites = ""
-        for prior in (("prepare",) if gpu else ("prepare", "capture") if phase == "compare" else ()):
-            prerequisites += f"test -s {out}/{prior}/results/{prior}/phase.json\n"
-        telemetry = f'PYTHONPATH="$task_scratch/code" python3 -m experiments.numerics_rows.prepare_split --check-telemetry {job}/results/numerics_row.json > results/telemetry-check.json\n' if gpu else ""
-        preflight = 'PYTHONPATH="$task_scratch/code" python3 -m experiments.numerics_rows.gpu_time --preflight results/gpu-preflight-host.json\n' if gpu else ""
-        (job / "job.sh").write_text(f'''#!/bin/bash
-set -euo pipefail
-umask 077
-cd {job}
-task_scratch="${{FLUX_SCRATCH:?}}/${{FLUX_JOB_ID:?}}"
-name=tessera-dense-{phase}-"$FLUX_JOB_ID"
-child=
-cleanup() {{
-  rc=$?
-  trap - EXIT
-  if test -s "$task_scratch/containers.conf"; then
-    podman rm -f "$name" >/dev/null 2>&1 || true
-    podman unshare rm -rf -- "$task_scratch/podman-storage" "$task_scratch/podman-run" >/dev/null 2>&1 || true
-  fi
-  rm -rf -- "$task_scratch" || rc=3
-  test ! -e "$task_scratch" || rc=3
-  printf '%s\\n' "$rc" > tool-exit.txt
-  exit "$rc"
-}}
-stop() {{
-  trap '' TERM INT
-  if test -n "$child"; then kill -TERM "$child" 2>/dev/null || true; fi
-  if test -s "$task_scratch/containers.conf"; then podman stop --time 1 "$name" >/dev/null 2>&1 || true; fi
-  exit "$1"
-}}
-trap cleanup EXIT
-trap 'stop 143' TERM
-trap 'stop 130' INT
-export HOME="$task_scratch/home" TMPDIR="$task_scratch/tmp"
-export XDG_CACHE_HOME="$task_scratch/cache" XDG_CONFIG_HOME="$task_scratch/config" XDG_DATA_HOME="$task_scratch/data"
-export PYTHONPYCACHEPREFIX="$task_scratch/host-pycache"
-mkdir -p results "$HOME" "$TMPDIR" "$XDG_CACHE_HOME" "$XDG_CONFIG_HOME" "$XDG_DATA_HOME"
-python3 {out}/instance.py check {job} > results/instance.json
-export CONTAINERS_STORAGE_CONF="$task_scratch/storage.conf" CONTAINERS_CONF="$task_scratch/containers.conf"
-printf '[storage]\\ndriver = "overlay"\\nrunroot = "%s/podman-run"\\ngraphroot = "%s/podman-storage"\\n[storage.options]\\nadditionalimagestores = ["/home/rob/.local/share/containers/storage"]\\n' "$task_scratch" "$task_scratch" > "$CONTAINERS_STORAGE_CONF"
-printf '[engine]\\ntmp_dir = "%s/podman-tmp"\\n' "$task_scratch" > "$CONTAINERS_CONF"
-grep Cpus_allowed_list /proc/self/status > results/affinity.txt
-git clone --shared {repository} "$task_scratch/code"
-git -C "$task_scratch/code" checkout --detach {revision}
-test "$(git -C "$task_scratch/code" rev-parse HEAD)" = {revision}
-{bootstrap}
-{prerequisites}{preflight}podman image inspect acc684c06ec7 > "$task_scratch/image-inspect.json"
-# The population draft mount is supplied from the bound, reviewed campaign file.
-mapfile -t population_mount < <(PYTHONPATH="$task_scratch/code" python3 -c 'import json,shlex; print("\\n".join(shlex.split(json.load(open("{out}/campaign.json"))["population_mount"])))')
-rc=0
-timeout --signal=TERM --kill-after=20s {minutes * 60 - 60}s podman run --rm --name "$name" --pull=never --cgroups=disabled --network=none {'--device nvidia.com/gpu=all' if gpu else ''} -v /mnt/shared:/mnt/shared:ro -v {job}:{job}:rw -v "$task_scratch/code:/numerics:ro" "${{population_mount[@]}}" {options} --entrypoint /bin/bash acc684c06ec7 -euo pipefail {job}/payload.sh > results/payload.stdout 2> results/payload.stderr &
-child=$!
-wait "$child" || rc=$?
-child=
-printf '%s\\n' "$rc" > results/podman-exit.txt
-printf '%s\\n' "$rc" > results/payload-exit.txt
-test "$rc" -eq 0
-test -s results/{phase}/phase.json
-{telemetry}''')
-        base = Path("/mnt/shared/flux-jobs/tessera-1717-RECEIPT-CPU-7d69093d-20261116T235639Z")
-        submit = (base / "submit-after-review.sh").read_text().replace(str(base), str(job))
-        start = submit.index('read -r FLUX_PREFIX')
-        end = submit.index('flux submit', start)
-        submit = submit[:start] + f'flux() {{ python3 {out}/instance.py submit "$root" "$@"; }}\n' + submit[end:]
-        submit = submit.replace(f' > {job}/jobid', '')
-        submit = submit.replace("tessera-1717-RECEIPT-CPU", "tessera-1717-DENSE-" + phase.upper())
-        submit = submit.replace('flux submit ', 'flux submit --urgency=8 ')
-        submit = submit.replace('flux submit ', f'if test "$(cat {job}/instance-name.txt 2>/dev/null || echo fv1)" = fv1; then python3 {out}/admission.py --wait-dense-slot; fi\nflux submit ', 1)
-        submit = submit.replace('--env=FLUX_SCRATCH=/var/tmp ', '--env=FLUX_SCRATCH=/var/tmp/flux-rob ')
-        submit = submit.replace("-t30m", f"-t{minutes}m").replace("core=4;memory=16", f"core={cores};memory={9 if phase == 'prepare' else 32}" + (";gpu=1" if gpu else "")).replace("host:dl380g10", "host:sparklina")
-        (job / "submit-after-review.sh").write_text(submit)
+    write_templates(out, json.loads((out / "campaign.json").read_text()), repository)
     (out / "bind-inputs.py").write_text(f'''import argparse, json, sys
 from pathlib import Path
 import subprocess

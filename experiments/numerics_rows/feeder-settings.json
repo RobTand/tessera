@@ -1,4 +1,5 @@
 {
+  "max_attempts": 3,
   "fv1_memory_without_fv1e_drain_gib": 36,
   "fv1e_prepare_memory_gib": 9,
   "fv1e_pool_memory_gib": 72,

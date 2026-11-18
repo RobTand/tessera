@@ -1,6 +1,15 @@
 # Tessera plan-to-serve architecture
 
-Re-stamped 2026-11-18 for the #1717 dense v2 attempt checks and Fleet fv1e ramp carry under rule v2 L219-221 and L267.
+Re-stamped 2026-11-18 for #1717 unit templates under STEP5-FORM items 1-3, P5, and rule v2 L219-221 and L267.
+Each module has one reviewed prepare and capture template per TP unit and case set, plus one compare template.
+Each template takes one canonical attempt path with a fixed module, unit key, and retry cap from feeder settings.
+The job checks its template hashes before it claims the phase directory with one atomic mkdir.
+Capture requires completed prepare evidence and its file hashes before the claim.
+Only the claimed phase directory and job scratch accept worker writes. Cleanup removes job scratch.
+The submit check permits only reviewed host, time, slot shape and urgency changes. Each job uses a singleton dependency.
+Counted compare selects every unit's newest attempt path and runs on the selected fv1e host without a TP filter.
+The phase reader retains FAIL from phase-local partial receipts as well as retained attempt-root receipts.
+This template commit does not connect the feeder or add capture groups. The dense-chain HOLD remains.
 Dense phase artifacts use ordered JSON lines for cases, scale arrays and file hashes.
 Each record binds its original full-row ordinal. A cut selection does not change its case IDs.
 Gate and diagnostics jobs each cover one module TP unit, with every required M configuration.

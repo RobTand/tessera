@@ -634,12 +634,18 @@ def main():
     p.add_argument("--phase", choices=("prepare", "capture", "compare"))
     p.add_argument("--capture-group-proof", type=Path)
     p.add_argument("--case-set", choices=("all", "gate", "diagnostics"), default="all")
+    p.add_argument("--phase-local-output", action="store_true", help="Write only in the claimed phase directory")
     p.add_argument("--phase-instance", type=Path)
     p.add_argument("--prepare-artifact", type=Path, action="append", help="Repeat paired prepare/capture paths for every module cut and case set")
     p.add_argument("--capture-artifact", type=Path, action="append", help="Pair each path with the prepare path at the same position")
     p.add_argument("--tp-size", type=int, choices=(1, 2))
     p.add_argument("--tp-rank", type=int, choices=(0, 1))
     args = p.parse_args()
+    if args.phase_local_output:
+        if not args.phase:
+            p.error("--phase-local-output requires --phase")
+        args.phase_root = args.out / args.phase
+        args.out = args.phase_root
     args.out.mkdir(parents=True, exist_ok=True)
     receipt = {"schema": "tessera.numerics_row.v2", "canary": args.canary,
                "row": {"name": args.name,
