@@ -59,7 +59,7 @@ def test_cut_and_diagnostics_keep_full_enumeration_ordinals(tmp_path):
         assert case["ordinal"] == start and case["id"] == json_digest([scope, "dense", start])
 
 
-@pytest.mark.parametrize("change", ("duplicate", "gap", "id", "bytes", "stream", "count", "configuration", "unfinished"))
+@pytest.mark.parametrize("change", ("duplicate", "overlap", "gap", "id", "bytes", "stream", "count", "configuration", "unfinished"))
 def test_stream_refuses_changed_order_and_bytes(tmp_path, change):
     artifact = stream_feature(tmp_path)
     scope = streams.unit_scope(row.new_unit({"m_config": {"M": 1}}), "wire")
@@ -80,8 +80,11 @@ def test_stream_refuses_changed_order_and_bytes(tmp_path, change):
         if change == "gap": case["ordinal"] += 1
         if change == "id": case["id"] = "other"
         if change == "configuration": case["configuration"] = {"M": 2}
+        if change == "overlap":
+            case["tensors"] = {}
+            artifact.document["ranges"] = [[0, 1], [0, 1]]
         from tests.test_numerics_rows_phases import rewrite_stream
-        rewrite_stream(artifact, "cases", [case, copy.deepcopy(case)] if change == "duplicate" else [case])
+        rewrite_stream(artifact, "cases", [case, copy.deepcopy(case)] if change in ("duplicate", "overlap") else [case])
     if change in ("count", "unfinished"):
         (artifact.root / "phase.json").write_text(json.dumps(artifact.document))
     with pytest.raises(Invalid):

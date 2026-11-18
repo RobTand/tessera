@@ -123,12 +123,13 @@ def payload(root, reference):
 
 
 def cases(root, document):
-    count, digest = 0, hashlib.sha256()
+    count, digest, previous = 0, hashlib.sha256(), -1
     positions = iter(chain.from_iterable(range(start, start + length) for start, length in document.get("ranges", [[document["ordinal_start"], document["streams"].get("cases", {}).get("count", 0)]])))
     for case in records(root, "cases", document):
         ordinal = next(positions, None)
-        if type(case.get("ordinal")) is not int or case["ordinal"] != ordinal or case.get("id") != json_digest([case["scope"], case["kind"], ordinal]):
+        if type(case.get("ordinal")) is not int or case["ordinal"] != ordinal or case["ordinal"] <= previous or case.get("id") != json_digest([case["scope"], case["kind"], ordinal]):
             raise Invalid("row phase must contain each ordered case exactly once")
+        previous = case["ordinal"]
         if case.get("identities") != document["identities"] or case.get("scope") not in document["scopes"]:
             raise Invalid("row phase case has another unit or common identity")
         if case.get("configuration") != case["scope"]["unit_key"][4]:
