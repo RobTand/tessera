@@ -727,8 +727,8 @@ def test_module_compare_finishes_tp1_and_tp2_pair_in_one_receipt(tmp_path, case_
     assert all(u["code_stream"] == receipt["phase_artifacts"]["compare"] for u in receipt["units"])
 
 
-@pytest.mark.parametrize("field", ["start", "count"])
-def test_tp2_pair_range_requires_both_rank_ranges(tmp_path, field):
+@pytest.mark.parametrize("rank, field", [(0, 0), (1, 0), (0, 1), (1, 1)], ids=["rank0-start", "rank1-start", "rank0-count", "rank1-count"])
+def test_tp2_pair_range_requires_both_rank_ranges(tmp_path, rank, field):
     from experiments.numerics_rows import dense_phases
     assert hasattr(dense_phases, "phase_units"), "feature absent: P5 checks the whole TP2 pair range"
     from experiments.numerics_rows.gpu_time import PhaseTimes
@@ -736,15 +736,7 @@ def test_tp2_pair_range_requires_both_rank_ranges(tmp_path, field):
     dp.host_compare(args, receipt, PhaseTimes({}), groups)
     assert receipt["row"]["outcome"] == "PASS"
     receipt["row"]["finalization_finished"] = False
-    path = args.prepare_artifact[0] / "phase.json"
-    document = json.loads(path.read_text())
-    part = document["case_set"]
-    left, right = (args.case_ranges[("A", 2, rank, part)] for rank in (0, 1))
-    assert left[0] + left[1] == right[0]
-    assert [document["ordinal_start"], document["streams"]["cases"]["count"]] == [left[0], left[1] + right[1]]
-    if field == "start": document["ordinal_start"] = right[0]
-    else: document["streams"]["cases"]["count"] = left[1]
-    path.write_text(json.dumps(document))
+    args.case_ranges[("A", 2, rank, "diagnostics")][field] += 1
     with pytest.raises(Invalid, match="deterministic full row enumeration"):
         dp.host_compare(args, receipt, PhaseTimes({}), groups)
     assert not receipt["row"]["finalization_finished"]

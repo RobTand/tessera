@@ -138,8 +138,11 @@ def unit_range(args, groups, part):
 
 
 def check_range(args, groups, document):
-    if (getattr(args, "case_ranges", None) and document["case_set"] != "all"
-            and unit_range(args, groups, document["case_set"]) != [document["ordinal_start"], document["streams"]["cases"]["count"]]):
+    if not getattr(args, "case_ranges", None) or document["case_set"] == "all":
+        return
+    ranges = [args.case_ranges[(e["name"], c["size"], c["rank"], document["case_set"])] for e, _, c, _ in groups]
+    if (unit_range(args, groups, document["case_set"]) != [document["ordinal_start"], document["streams"]["cases"]["count"]]
+            or any(left[0] + left[1] != right[0] for left, right in zip(ranges, ranges[1:]))):
         raise Invalid("phase cases differ from the deterministic full row enumeration")
 
 def scopes(groups):
