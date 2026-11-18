@@ -68,11 +68,6 @@ def binding(unit_id, case, identity):
     return {**record, "sha256": json_digest(record)}
 
 
-def symbol_aliases(functions):
-    names = subprocess.check_output(["c++filt"], input="\n".join(functions) + "\n", text=True).splitlines() if functions else []
-    return [{"symbol": symbol, "demangled": name} for symbol, name in zip(functions, names, strict=True)]
-
-
 def image_symbols(path):
     """cuobjdump's ELF function roster avoids disassembling whole torch libraries."""
     result = subprocess.run(["cuobjdump", "-symbols", str(path)], capture_output=True, text=True)
@@ -80,7 +75,8 @@ def image_symbols(path):
         raise Unattested(f"image CUDA symbol roster unavailable: {path}: {result.stderr}")
     # ELF entries printed by cuobjdump: STT_FUNC ... <exact mangled name>.
     functions = sorted({line.split()[-1] for line in result.stdout.splitlines() if re.search(r"\bSTT_FUNC\b", line)})
-    return symbol_aliases(functions)
+    names = subprocess.check_output(["c++filt"], input="\n".join(functions) + "\n", text=True).splitlines() if functions else []
+    return [{"symbol": symbol, "demangled": name} for symbol, name in zip(functions, names, strict=True)]
 
 
 def kernel_origins(names, libraries, specializations):

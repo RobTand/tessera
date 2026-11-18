@@ -1,23 +1,14 @@
-"""A8S E4M3 dense host preparation, device capture and host comparison.
-
-The existing dense and scale-index case generators build the prepare artifact.
-Only the capture maps a GPU. It consumes prepared bytes and certificates, and
-runs the real serving adapter. Compare alone can finish a row. Environment
-values remain in LaunchState's live mapping and never enter phase artifacts.
-"""
-from __future__ import annotations
-
-from experiments.numerics_rows.common import error_text
-
+"""Prepare dense cases on CPU, capture on GPU, and finish through host comparison."""
 import copy
 import cProfile
 from datetime import datetime, timezone
+from itertools import chain, groupby
 import json
 from pathlib import Path
 import pstats
 import time
 
-from experiments.numerics_rows.common import OUTCOMES, BoundaryError, BoundaryRecorder, Invalid, Unattested, sha256, write_json
+from experiments.numerics_rows.common import error_text, OUTCOMES, BoundaryError, BoundaryRecorder, Invalid, Unattested, sha256, write_json
 from experiments.numerics_rows.phase_artifact import Artifact, identities, unit_scope, read, payload, check_capture, cases, records
 from experiments.numerics_rows.phase_lifecycle import Progress
 from experiments.numerics_rows import row
@@ -51,11 +42,9 @@ class HostDense:
         self.quantizer = QuantizerTable(q1, "e4m3")
 
     def quantized(self, x, recorder):
-        """Predict bytes on CPU. Capture must match them before any served call.
+        """Use Q1 scales or binary32 amax/448 with the Q1 zero-row floor.
 
-        Q1 supplies exact scales for its alphabet, including the zero-row scale.
-        Other rows use binary32 amax/448 and the Q1 zero-row floor. Predictions
-        have no device authority: disagreement is INVALID before native use.
+        Capture must match these predicted bytes before any served call.
         """
         import torch
         maximum = x.float().abs().amax(1)
@@ -75,9 +64,6 @@ class CaseWriter:
     def __init__(self, artifact, progress, wires):
         self.artifact, self.progress, self.wires = artifact, progress, wires
         self.array_index = 0
-
-    def begin(self, unit, case):
-        self.progress.record("diagnostics", unit, case, checkpoint=True)
 
     def dense(self, adapter, unit, x, q, sf, reference, mask, bound, *, category, **fields):
         row.finite_reference(reference)
@@ -164,7 +150,7 @@ def host_prepare(args, receipt, phases, groups):
         artifact.document.update(ordinal_start=start, expected_cases=count)
     writer = CaseWriter(artifact, progress, {m["name"]: m["wire_sha256"] for _, m, _, _ in groups})
     q1, recorder = json.loads(args.q1.read_text()), BoundaryRecorder(lambda: None, [])
-    profile = writer.profile = cProfile.Profile()
+    profile = cProfile.Profile()
     for part in (("gate", "diagnostics") if getattr(args, "case_set", "all") == "all" else (args.case_set,)):
         for entry, module, cut, units in groups:
             adapter = HostDense(entry, cut, module, q1)
@@ -192,9 +178,7 @@ def host_prepare(args, receipt, phases, groups):
     if any(unit["invalid"] for unit in receipt["units"]):
         raise Invalid("CPU preparation failed a required case precondition")
     receipt["row"].update(prepare_finished=True, finalization_finished=False, outcome="STOPPED")
-    progress.record("setup")
-    bind_evidence(args.out, artifact)
-    artifact.finish(receipt=receipt)
+    finish_phase(args.out, artifact, receipt, progress)
     write_json(args.out / "numerics_row.json", receipt)
 
 
@@ -227,9 +211,7 @@ def capture_case(adapter, unit, case, tensors, recorder):
     q, sf, _, _ = adapter.quantized(x, recorder)
     quantizer_guard((q, sf), (tensors["q"], tensors["sf"]))
     # Check quantizer calls made inside the actual apply as well as the two preflight calls.
-    def checked_quantizer(result):
-        quantizer_guard(result, (tensors["q"], tensors["sf"]))
-    recorder.quantizer_result = checked_quantizer
+    recorder.quantizer_result = lambda result: quantizer_guard(result, (tensors["q"], tensors["sf"]))
     if case["kind"] == "scale":
         result = dense_launch(adapter, {"name": case["role"]}, q, tensors["coded_sf"].to("cuda"), case["scale"],
                               tensors["coded_values"].tolist(), recorder)
@@ -251,7 +233,6 @@ def capture_case(adapter, unit, case, tensors, recorder):
 
 def device_capture(args, receipt, phases, groups, library, compile_paths):
     import torch
-    from itertools import groupby
     from experiments import dense_fused_oracle as dense
     from experiments.routed_pair_oracle import kernel_table
     from experiments.numerics_rows.dependency_code import binding
@@ -311,7 +292,7 @@ def device_capture(args, receipt, phases, groups, library, compile_paths):
                     unit["triton_specializations"] = [binding(unit["unit_id"], r["case"], r["identity"]) for r in preparation_code]
                     audit.unit = unit
                     recorder = BoundaryRecorder(torch.cuda.synchronize, unit["boundaries"])
-                    recorder.before_call, recorder.context, recorder.code_audit = args.launch_state.check, audit.context, audit
+                    recorder.before_call, recorder.code_audit = args.launch_state.check, audit
                     recorder.context = lambda label, case_id=case["id"]: audit.context(case_id + ":" + label)
                     captured.pop("not_run")
                     before = time.monotonic()
@@ -367,9 +348,7 @@ def device_capture(args, receipt, phases, groups, library, compile_paths):
     receipt["row"].update(capture_finished=complete, gate_capture_finished=complete and prepared["case_set"] != "diagnostics",
         outcome="FAIL" if any(u["findings"] for u in receipt["units"]) else "STOPPED", finalization_finished=False,
         utc_end=datetime.now(timezone.utc).isoformat(), exit_status=0 if complete else 3, gpu_minutes=args.meter.finish())
-    progress.record("setup")
-    bind_evidence(args.out, artifact)
-    artifact.finish(receipt=receipt)
+    finish_phase(args.out, artifact, receipt, progress)
     write_json(args.out / "numerics_row.json", receipt)
 
 
@@ -470,7 +449,6 @@ def host_compare(args, receipt, phases, groups):
             unit["cuda_unattributed"] |= current["cuda_unattributed"]
             unit["graph_replay_equal"] = current["graph_replay_equal"] or unit["graph_replay_equal"]
         arrays = iter(records(prepare_root, "arrays", prepared)) if "arrays" in prepared["streams"] else iter(())
-        from itertools import groupby
         pairs = check_capture(prepared, captured, pd, prepare_root, capture_root)
         for _, batch in groupby(pairs, lambda pair: (pair[0]["scope"]["unit_key"], pair[0].get("array_index"))):
             case, observed = next(batch)
@@ -481,7 +459,6 @@ def host_compare(args, receipt, phases, groups):
                     raise Invalid("scale case has no matching ordered array")
                 array["record"]["mismatches"] = 0
                 unit["exact"]["scale_index"]["arrays"] = [array["record"]]
-            from itertools import chain
             for case, observed in chain([(case, observed)], batch):
                 progress.record("diagnostics" if case["category"] == "diagnostic" else "gate_cases", unit, case["id"])
                 previous = {field: unit[field] for field in ("findings", "invalid", "unattested")}
@@ -509,9 +486,7 @@ def host_compare(args, receipt, phases, groups):
     compare_row.update(utc_end=datetime.now(timezone.utc).isoformat())
     receipt["row"].update(utc_end=compare_row["utc_end"], outcome=min((u["outcome"] for u in receipt["units"]), key=OUTCOMES.index),
         exit_status=3 if any(u["outcome"] in ("FAIL", "STOPPED", "INVALID") for u in receipt["units"]) else 0)
-    progress.record("setup")
-    bind_evidence(args.out, artifact)
-    digest = artifact.finish(receipt=receipt)
+    digest = finish_phase(args.out, artifact, receipt, progress)
     receipt["phase_artifacts"]["compare"] = {"path": str(artifact.root / "phase.json"), "sha256": digest}
     for unit in receipt["units"]:
         unit["code_stream"] = receipt["phase_artifacts"]["compare"]
@@ -536,6 +511,12 @@ def run_phase(args, receipt, phases, groups, library, q1, compile_paths):
     else:
         host_compare(args, receipt, phases, groups)
     raise SystemExit(receipt["row"].get("exit_status") or 0)
+
+
+def finish_phase(out, artifact, receipt, progress):
+    progress.record("setup")
+    bind_evidence(out, artifact)
+    return artifact.finish(receipt=receipt)
 
 
 def bind_evidence(out, artifact):

@@ -983,7 +983,7 @@ def dense_diagnostics(adapter, unit, recorder):
     for seed in (0, 1, 2):
         for distribution in ("gauss", "outlier", "zero"):
             if hasattr(adapter, "case_writer"):
-                adapter.case_writer.begin(unit, f"diagnostic:{distribution}:{seed}:reference")
+                adapter.case_writer.progress.record("diagnostics", unit, f"diagnostic:{distribution}:{seed}:reference", checkpoint=True)
             x = torch.randn(m, adapter.cols, device=adapter.device, generator=torch.Generator(device=adapter.device).manual_seed(seed)).bfloat16()
             if distribution == "zero":
                 x.zero_()

@@ -1,6 +1,4 @@
 """Write ordered phase records and verify the bytes consumed by each reader."""
-from __future__ import annotations
-
 import copy
 import hashlib
 import json
@@ -20,9 +18,7 @@ def identities(receipt):
         "inputs": ("population_sha256", "selected_modules", "selected_cuts", "case_manifest_sha256", "build_sha256", "q1_table_sha256", "launch_levers_sha256"),
         "rule": ("sha256", "h1_sha256", "frozen_utc"),
     }.items()}
-    for name in ("freeze_addendum_sha256",):
-        if name in receipt["rule"]:
-            result["rule"][name] = receipt["rule"][name]
+    result["rule"].update({k: receipt["rule"][k] for k in ("freeze_addendum_sha256",) if k in receipt["rule"]})
     result["tessera"]["retained_source"] = copy.deepcopy(receipt["tessera"]["retained_source"])
     result["canary"] = receipt["canary"]
     return result
@@ -46,7 +42,7 @@ def records(root, name, document=None):
 
 class Artifact:
     def __init__(self, root, phase, common):
-        self.root, self.phase, self.common = Path(root), phase, copy.deepcopy(common)
+        self.root, self.common = Path(root), copy.deepcopy(common)
         self.root.mkdir(parents=True, exist_ok=True)
         if (self.root / "phase.json").exists() or any(self.root.glob("*.jsonl")):
             raise Invalid("use a new phase attempt directory")
@@ -74,9 +70,7 @@ class Artifact:
         path = self.root / name
         path.parent.mkdir(exist_ok=True)
         if not path.exists():
-            with path.open("wb") as stream:
-                for start in range(0, len(data), 2**20):
-                    stream.write(data[start:start + 2**20])
+            path.write_bytes(data)
         if sha256(path) != digest:
             raise Invalid("existing phase payload differs from its content name")
         self.file(name)
