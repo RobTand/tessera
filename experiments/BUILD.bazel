@@ -2046,6 +2046,13 @@ ts_py_library(
 )
 
 ts_py_library(
+    name = "numerics_rows/cdi_env",
+    srcs = [
+        "numerics_rows/cdi_env.py",
+    ],
+)
+
+ts_py_library(
     name = "numerics_rows/common",
     srcs = [
         "numerics_rows/common.py",
