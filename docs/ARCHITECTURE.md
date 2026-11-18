@@ -1,6 +1,6 @@
 # Tessera plan-to-serve architecture
 
-Re-stamped 2026-11-18 for the #1717 dense v2 module compare and module receipt rule.
+Re-stamped 2026-11-18 for the #1717 dense v2 module compare and single stream scan per receipt.
 Dense phase artifacts use ordered JSON lines for cases, scale arrays and file hashes.
 Each record binds its original full-row ordinal. A cut selection does not change its case IDs.
 Gate and diagnostics jobs each cover one module and cut, with every required M configuration.
@@ -11,7 +11,8 @@ Case tensors, profiler records and code bindings are written before the next cas
 Only compare can finish a split dense receipt. A stopped capture cannot establish PASS.
 Join accepts one row receipt per module.
 Join rejects repeated module selections and full unit keys. Missing keys remain UNATTESTED.
-Each PASS unit must pass its code checks from the bound comparison stream.
+Join scans each distinct comparison stream once per receipt and checks every matching PASS unit's case proof.
+Each PASS unit must have a matching case. Join skips code proofs for cases outside those PASS units.
 The capture-group command starts K processes within one admitted GPU job.
 K is explicit. The canary and Fleet review must set memory and concurrency bookings.
 The lead's feeder branch reserves 9 GiB for prepare. Its rebase follows the CPU check.

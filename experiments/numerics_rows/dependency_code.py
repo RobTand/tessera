@@ -256,25 +256,24 @@ class CodeAudit:
             unit["unattested"].append("profiled kernel origin is missing or ambiguous")
 
 
-def check_unit_code(unit, image_digest=None, common=None):
+def check_unit_code(unit, image_digest=None, common=None, *, stream_units=()):
     if "code_stream" in unit:
-        from experiments.numerics_rows.phase_artifact import read, cases
-        reference = unit["code_stream"]
-        phase_path = Path(reference["path"])
+        from experiments.numerics_rows.phase_artifact import read
+        phase_path = Path(unit["code_stream"]["path"])
         header = json.loads(phase_path.read_text())
-        document, digest = read(phase_path.parent, "compare", common if common is not None else header["identities"], header["scopes"])
-        if digest != reference["sha256"] or document["identities"].get("runtime", {}).get("image_digest") != image_digest:
+        found = {json_digest([u["module"], u["unit_id"]]): False for u in stream_units or [unit]}
+        def check_case(case):
+            key = json_digest([case["scope"]["module"], case["scope"]["unit_key"]])
+            if key in found:
+                proof = case.get("code")
+                if case.get("completion") is not True or not proof or proof.get("unit_id") != case["scope"]["unit_key"] or "code_stream" in proof:
+                    raise Invalid("unit case has no finished compiled-code proof")
+                check_unit_code(proof, image_digest)
+                found[key] = True
+        document, digest = read(phase_path.parent, "compare", common if common is not None else header["identities"], header["scopes"], check_case=check_case)
+        if digest != unit["code_stream"]["sha256"] or document["identities"].get("runtime", {}).get("image_digest") != image_digest:
             raise Invalid("unit code stream identity or digest differs")
-        count = 0
-        for case in cases(phase_path.parent, document):
-            if case["scope"]["unit_key"] != unit["unit_id"] or case["scope"]["module"] != unit["module"]:
-                continue
-            proof = case.get("code")
-            if case.get("completion") is not True or not proof or proof.get("unit_id") != unit["unit_id"] or "code_stream" in proof:
-                raise Invalid("unit case has no finished compiled-code proof")
-            check_unit_code(proof, image_digest)
-            count += 1
-        if not count:
+        if not all(found.values()):
             raise Invalid("unit code stream has no matching cases")
         return
     evidence = unit.get("dependency_code", {})

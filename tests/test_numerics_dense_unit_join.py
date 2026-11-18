@@ -43,3 +43,38 @@ def test_join_code_reader_checks_each_bound_case(tmp_path, mutation):
         unit["code_stream"]["sha256"] = sha256(artifact.root / "phase.json")
     with pytest.raises(ValueError):
         code.check_unit_code(unit, "image", common)
+
+
+def test_join_reads_one_code_stream_once_per_receipt(tmp_path, monkeypatch):
+    from experiments.numerics_rows.join import join
+    from tests.test_numerics_rows_receipts import joined_inputs
+
+    population, digest, manifests, receipts = joined_inputs(monkeypatch)
+    assert join(population, digest, manifests, receipts)["verdict"] == "PASS"
+    receipt = receipts[0][1]
+    receipt["canary"] = False
+    receipt["tessera"].update(dict.fromkeys(("src_tree_sha256", "kernel_source_sha256", "build_provenance_sha256", "retained_source"), "source"))
+    receipt["runtime"].update(vllm="vllm", torch="torch")
+    receipt["inputs"]["selected_cuts"] = [unit["tp"] for unit in receipt["units"]]
+    artifact = streams.Artifact(tmp_path / "compare", "compare", streams.identities(receipt))
+    passed = [unit for unit in receipt["units"] if unit["role"] == "unit" and unit["admitted_by_v68"] and unit["outcome"] == "PASS"]
+    assert len(passed) > 1
+    for unit in passed:
+        scope = streams.unit_scope(unit, "wire")
+        artifact.document["scopes"].append(scope)
+        for _ in range(2):
+            artifact.add(scope, unit["unit_id"][4], "dense", {}, completion=True, code=copy.deepcopy(unit))
+    foreign = copy.deepcopy(artifact.document["scopes"][0])
+    foreign["module"] = "outside-receipt"
+    artifact.document["scopes"].append(foreign)
+    artifact.add(foreign, foreign["unit_key"][4], "dense", {}, completion=False, code={"code_stream": {}})
+    reference = {"path": str(artifact.root / "phase.json"), "sha256": artifact.finish()}
+    for unit in passed:
+        unit["code_stream"] = dict(reference)
+    calls, read_cases = [], streams.cases
+    def counted_cases(root, document):
+        calls.append(root)
+        yield from read_cases(root, document)
+    monkeypatch.setattr(streams, "cases", counted_cases)
+    assert join(population, digest, manifests, receipts)["verdict"] == "PASS"
+    assert len(calls) == 1, f"stream read once per receipt: {len(calls)} reads"

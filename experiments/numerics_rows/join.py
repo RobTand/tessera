@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 import argparse
-from collections import Counter
+import hashlib
 import json
 from pathlib import Path
 
@@ -46,8 +46,7 @@ def join(population, digest, manifests, receipts, contract=None):
 
 
 def _join(population, digest, manifests, receipts, contract):
-    import hashlib
-    from experiments.numerics_rows import scope
+    from experiments.numerics_rows import dependency_code, phase_artifact, scope
     from experiments.numerics_rows.common import IMAGES
     from experiments.numerics_rows.population import select_modules
     from experiments.numerics_rows.row import planned_units, unit_identity
@@ -143,6 +142,7 @@ def _join(population, digest, manifests, receipts, contract):
                 raise Invalid("row and C1 selected modules differ")
             if any(case.get(k) != identity[k] for k in ("source_commit", "contract_sha256", "q1_table_sha256")):
                 raise Invalid("joined C1 and row execution identities differ")
+        code_groups = {}
         for unit in receipt["units"]:
             if unit.get("launch_state_sha256") != state:
                 raise Invalid("row unit launch state differs from its worker")
@@ -157,9 +157,10 @@ def _join(population, digest, manifests, receipts, contract):
                     raise Invalid("observation label conflicts with the required signed scope")
                 continue
             if unit["outcome"] == "PASS":
-                from experiments.numerics_rows.dependency_code import check_unit_code
-                from experiments.numerics_rows.phase_artifact import identities
-                check_unit_code(unit, receipt["runtime"]["image_digest"], identities(receipt) if "code_stream" in unit else None)
+                if "code_stream" in unit:
+                    code_groups.setdefault(tuple(unit["code_stream"][k] for k in ("path", "sha256")), []).append(unit)
+                else:
+                    dependency_code.check_unit_code(unit, image)
             check_math_binding(unit, receipt["runtime"])
             check_math_binding(unit, key_math.setdefault(key, unit))
             full = pack(unit_identity({**unit, "tp": {k: unit["tp"][k] for k in ("size", "rank")}}))
@@ -174,6 +175,8 @@ def _join(population, digest, manifests, receipts, contract):
             record["outcomes"].append(unit["outcome"])
             record["receipts"].add(receipt_sha)
             record["c1_present"] &= case is not None
+        for group in code_groups.values():
+            dependency_code.check_unit_code(group[0], image, phase_artifact.identities(receipt), stream_units=group)
     units = []
     for key, modules in sorted(required.items()):
         joined = {"unit_id": json.loads(key), "modules": []}
@@ -226,7 +229,6 @@ def main():
     args = p.parse_args()
     population, digest = load_signed_population(args.population)
     def load(paths):
-        import hashlib
         for path in paths:
             raw = path.read_bytes()
             yield hashlib.sha256(raw).hexdigest(), json.loads(raw)
