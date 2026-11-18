@@ -9,6 +9,27 @@ from experiments.numerics_rows.join import join, rule_unit_id
 from tests.test_numerics_rows_receipts import joined_inputs
 
 
+def test_join_keeps_stopped_per_key_below_fail(monkeypatch):
+    population, digest, manifests, receipts = joined_inputs(monkeypatch)
+    assert join(population, digest, manifests, receipts)["verdict"] == "PASS"
+    stopped_key = rule_unit_id(receipts[0][1]["units"][0])
+    failed = next(u for u in receipts[0][1]["units"] if rule_unit_id(u) != stopped_key and u["role"] == "unit" and u["admitted_by_v68"])
+    for _, receipt in receipts:
+        assert receipt["row"]["finalization_finished"]
+        for unit in receipt["units"]:
+            if rule_unit_id(unit) == stopped_key:
+                unit.update(outcome="STOPPED", completed=False, reasons=["open STOPPED attempt unit/1"])
+    result = join(population, digest, manifests, receipts)
+    assert result["verdict"] == "STOPPED"
+    stopped, = [u for u in result["units"] if u["unit_id"] == stopped_key]
+    assert stopped["outcome"] == "STOPPED" and all(m["outcome"] == "STOPPED" for m in stopped["modules"])
+    failed.update(outcome="FAIL", findings=["known mismatch"])
+    mixed = join(population, digest, manifests, receipts)
+    assert mixed["verdict"] == "FAIL"
+    assert next(u for u in mixed["units"] if u["unit_id"] == stopped_key) == stopped
+    assert next(u for u in mixed["units"] if u["unit_id"] == rule_unit_id(failed))["outcome"] == "FAIL"
+
+
 @pytest.mark.parametrize("target", ("manifest", "runtime", "unit"))
 def test_join_refuses_missing_dependency_math_binding(monkeypatch, target):
     population, digest, manifests, receipts = joined_inputs(monkeypatch)
