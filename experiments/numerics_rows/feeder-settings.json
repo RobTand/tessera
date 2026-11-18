@@ -1,5 +1,11 @@
 {
   "max_attempts": 3,
+  "capture_group_canary": {
+    "cores_per_capture": null,
+    "anon_peak_gib_per_capture": null,
+    "margin_gib": null,
+    "max_k": null
+  },
   "fv1_memory_without_fv1e_drain_gib": 36,
   "fv1e_prepare_memory_gib": 9,
   "fv1e_pool_memory_gib": 72,

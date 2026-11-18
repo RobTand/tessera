@@ -1,15 +1,25 @@
 # Tessera plan-to-serve architecture
 
-Re-stamped 2026-11-18 for #1717 unit templates under STEP5-FORM items 1-3, P5, and rule v2 L219-221 and L267.
-Each module has one reviewed prepare and capture template per TP unit and case set, plus one compare template.
-Each template takes one canonical attempt path with a fixed module, unit key, and retry cap from feeder settings.
+Re-stamped 2026-11-18 for #1717 capture groups under STEP5-FORM Capture GROUPS and FLEET GATE, Fleet 10:51:32Z.
+Each module has prepare and capture templates per TP unit and case set, plus one compare template.
+An optional capture group replaces its members' single capture templates. Each unit belongs to exactly one capture template.
+Prepare, compare, and single capture templates take one canonical attempt path with a fixed module, unit key, and retry cap.
+Each group fixes K ordered unit keys and takes exactly K canonical attempt paths within its fixed module root.
+The group validates every argument and prepare hash before any claim. A failed claim removes only this job's empty claims.
+Groups require measured cores, anonymous peak memory, margin, and admitted K in `feeder-settings.json`; unset values refuse generation.
+The group shape is `slot=1/[core=C;memory=M;gpu=1]`. C and M cover all K captures under the canary table.
+Each group's `table.json` uses Fleet's exact gate schema. Fleet checks singleton, job name, resources, and the attempt cap.
+Groups have no submit script, submit edit check, or job-side attempt cap. T1's single-template policy remains for the next step.
+The job hashes its runtime inputs and helpers. Fleet holds group job hashes; the runtime manifest excludes the group job.
+The existing capture manager uses the claimed capture directories, waits for every child, and retains each child's exit status.
+The job's stop path sends TERM through the container to the manager. The manager sends TERM to every active child.
 The job checks its template hashes before it claims the phase directory with one atomic mkdir.
 Capture requires completed prepare evidence and its file hashes before the claim.
 Only the claimed phase directory and job scratch accept worker writes. Cleanup removes job scratch.
-The submit check permits only reviewed host, time, slot shape and urgency changes. Each job uses a singleton dependency.
+The single-template submit check permits only reviewed host, time, slot shape and urgency changes. Fleet requires singleton for groups.
 Counted compare selects every unit's newest attempt path and runs on the selected fv1e host without a TP filter.
 The phase reader retains FAIL from phase-local partial receipts as well as retained attempt-root receipts.
-This template commit does not connect the feeder or add capture groups. The dense-chain HOLD remains.
+The feeder does not yet use these templates. The dense-chain HOLD remains.
 Dense phase artifacts use ordered JSON lines for cases, scale arrays and file hashes.
 Each record binds its original full-row ordinal. A cut selection does not change its case IDs.
 Gate and diagnostics jobs each cover one module TP unit, with every required M configuration.

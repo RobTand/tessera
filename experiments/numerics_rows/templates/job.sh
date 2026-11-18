@@ -4,14 +4,25 @@ umask 077
 cd @TEMPLATE@
 sha256sum -c template.sha256
 refuse() { echo "$1" >&2; exit 3; }
-test "$#" -eq 1 || refuse 'require one attempt argument'
-attempt=$1
-[[ "$attempt" =~ @PATTERN@ ]] || refuse 'attempt path differs from fixed module and unit'
-id=${BASH_REMATCH[1]}
-test "${#id}" -le @MAX_DIGITS@ && test "$id" -le @MAX_ATTEMPTS@ || refuse 'attempt id exceeds MAX_ATTEMPTS'
+test "$#" -eq @COUNT@ || refuse '@COUNT_MESSAGE@'
+attempts=("$@")
+patterns=(@PATTERNS@)
+for index in "${!attempts[@]}"; do
+attempt=${attempts[index]}
+[[ "$attempt" =~ ${patterns[index]} ]] || refuse 'attempt path differs from fixed module and unit'
+@ATTEMPT_CAP@
 test "$(realpath -e -- "$attempt")" = "$attempt" || refuse 'attempt path is not canonical'
 @PREREQUISITES@
-mkdir "$attempt/@PHASE@" || refuse 'phase claim already exists or failed'
+@ABSENT@
+done
+claimed=()
+for attempt in "${attempts[@]}"; do
+  if mkdir "$attempt/@PHASE@"; then claimed+=("$attempt/@PHASE@"); else
+    if test "${#claimed[@]}" -gt 0; then rmdir -- "${claimed[@]}"; fi
+    refuse 'phase claim already exists or failed'
+  fi
+done
+attempt=${attempts[0]}
 cd "$attempt/@PHASE@"
 task_scratch="${FLUX_SCRATCH:?}/${FLUX_JOB_ID:?}"
 name=tessera-dense-@PHASE@-"$FLUX_JOB_ID"
@@ -25,7 +36,7 @@ cleanup() {
   fi
   rm -rf -- "$task_scratch" || rc=3
   test ! -e "$task_scratch" || rc=3
-  printf '%s\n' "$rc" > tool-exit.txt
+  for output in "${claimed[@]}"; do printf '%s\n' "$rc" > "$output/tool-exit.txt"; done
   exit "$rc"
 }
 stop() {
@@ -41,7 +52,11 @@ export HOME="$task_scratch/home" TMPDIR="$task_scratch/tmp"
 export XDG_CACHE_HOME="$task_scratch/cache" XDG_CONFIG_HOME="$task_scratch/config" XDG_DATA_HOME="$task_scratch/data"
 export PYTHONPYCACHEPREFIX="$task_scratch/host-pycache"
 mkdir -p "$HOME" "$TMPDIR" "$XDG_CACHE_HOME" "$XDG_CONFIG_HOME" "$XDG_DATA_HOME"
-python3 @ROOT@/instance.py check "$attempt" @PHASE@ > instance.json
+phase_mounts=()
+for attempt in "${attempts[@]}"; do
+  python3 @ROOT@/instance.py check "$attempt" @PHASE@ > "$attempt/@PHASE@/instance.json"
+  phase_mounts+=(-v "$attempt/@PHASE@:$attempt/@PHASE@:rw")
+done
 export CONTAINERS_STORAGE_CONF="$task_scratch/storage.conf" CONTAINERS_CONF="$task_scratch/containers.conf"
 printf '[storage]\ndriver = "overlay"\nrunroot = "%s/podman-run"\ngraphroot = "%s/podman-storage"\n[storage.options]\nadditionalimagestores = ["/home/rob/.local/share/containers/storage"]\n' "$task_scratch" "$task_scratch" > "$CONTAINERS_STORAGE_CONF"
 printf '[engine]\ntmp_dir = "%s/podman-tmp"\n' "$task_scratch" > "$CONTAINERS_CONF"
@@ -54,13 +69,18 @@ PYTHONPATH="$task_scratch/code" python3 -m experiments.numerics_rows.prepare_spl
 podman image inspect acc684c06ec7 > "$task_scratch/image-inspect.json"
 mapfile -t population_mount < <(PYTHONPATH="$task_scratch/code" python3 -c 'import json,shlex; print("\n".join(shlex.split(json.load(open("@ROOT_RAW@/campaign.json"))["population_mount"])))')
 rc=0
-timeout --signal=TERM --kill-after=20s @SECONDS@s podman run --rm --name "$name" --pull=never --cgroups=disabled --network=none @GPU@ -v /mnt/shared:/mnt/shared:ro -v "$PWD:$PWD:rw" -v "$task_scratch/code:/numerics:ro" "${population_mount[@]}" @OPTIONS@ --entrypoint /bin/bash acc684c06ec7 -euo pipefail @TEMPLATE@/payload.sh "$attempt" > payload.stdout 2> payload.stderr &
+timeout --signal=TERM --kill-after=20s @SECONDS@s podman run --rm --name "$name" --pull=never --cgroups=disabled --network=none @GPU@ -v /mnt/shared:/mnt/shared:ro "${phase_mounts[@]}" -v "$task_scratch/code:/numerics:ro" "${population_mount[@]}" @OPTIONS@ --entrypoint /bin/bash acc684c06ec7 -euo pipefail @TEMPLATE@/payload.sh "${attempts[@]}" > payload.stdout 2> payload.stderr &
 child=$!
 wait "$child" || rc=$?
 child=
-printf '%s\n' "$rc" > podman-exit.txt
-printf '%s\n' "$rc" > payload-exit.txt
-test "$rc" -eq 0
-test -s phase.json
-@TELEMETRY@
-find . -type f ! -name completion.sha256 -print0 | sort -z | xargs -0 sha256sum > completion.sha256
+for output in "${claimed[@]}"; do
+  cd "$output"
+  printf '%s\n' "$rc" > podman-exit.txt
+  printf '%s\n' "$rc" > payload-exit.txt
+  if test "$rc" -eq 0; then
+    test -s phase.json
+    @TELEMETRY@
+    find . -type f ! -name completion.sha256 -print0 | sort -z | xargs -0 sha256sum > completion.sha256
+  fi
+done
+exit "$rc"

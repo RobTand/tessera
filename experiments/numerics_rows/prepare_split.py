@@ -48,8 +48,8 @@ def check_canary(directory, revision, paths):
     phase_roots = [directory / phase for phase in ("prepare", "capture", "compare")]
     path = directory / "compare/results/numerics_row.json"
     if config.get("templates"):
-        phase_roots = [max((directory / "units" / unit["key"] / "attempts").iterdir(), key=lambda p: int(p.name)) / unit["phase"]
-                       for unit in config["templates"]]
+        phase_roots = [max((directory / "units" / key / "attempts").iterdir(), key=lambda p: int(p.name)) / unit["phase"]
+                       for unit in config["templates"] for key in unit.get("unit_keys", [unit["key"]])]
         path = phase_roots[-1] / "numerics_row.json"
     receipt = json.loads(path.read_text())
     if (not config["canary"] or config["tool_commit"] != revision or receipt.get("canary") is not True
@@ -123,6 +123,15 @@ def bind_templates(root, config):
     source = Path(paths["source"])
     for unit in config["templates"]:
         directory, phase = root / "templates" / unit["key"] / unit["phase"], unit["phase"]
+        if "unit_keys" in unit:
+            commands = [{"command": shlex.split(row_arguments(config, root, source, population, paths, phase,
+                        unit=member, attempt=Path("__ATTEMPT__")))} for member in unit["members"]]
+            write_json(directory / "commands.json", commands)
+            command = worker_command(source, "experiments.numerics_rows.capture_group",
+                                     [len(commands), directory / "commands.json", "--claimed"])
+            (directory / "payload.sh").write_text(f'#!/bin/bash\nset -euo pipefail\nexec {command} "$@"\n')
+            seal_template(directory)
+            continue
         local = dict(config)
         prefix = ""
         if phase == "compare":
@@ -160,10 +169,43 @@ def verify(root):
 
 
 def seal_template(directory):
-    files = sorted(p for p in directory.iterdir() if p.name != "template.sha256")
+    grouped = (directory / "table.json").exists()
+    excluded = {"template.sha256", "job.sh", "table.json"} if grouped else {"template.sha256"}
+    files = sorted(p for p in directory.iterdir() if p.name not in excluded)
     root = directory.parents[2]
-    files += [root / name for name in ("instance.py", "admission.py", "campaign.json", "feeder-settings.json")]
+    files += [root / name for name in (("instance.py", "campaign.json", "feeder-settings.json") if grouped else
+                                     ("instance.py", "admission.py", "campaign.json", "feeder-settings.json"))]
     (directory / "template.sha256").write_text("".join(f"{sha256(p)}  {p.name if p.parent == directory else p}\n" for p in files))
+
+
+def capture_templates(units, groups, table):
+    """Fix group membership and shape before the generator writes a template."""
+    members = {unit["key"]: unit for unit in units}
+    seen, keys, result = set(), set(members), []
+    for group in groups:
+        key, ordered = group["key"], group["unit_keys"]
+        if not isinstance(key, str) or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_-]*", key) or key in keys or key.startswith("compare-"):
+            raise Invalid("capture group key is invalid or repeated")
+        if not isinstance(ordered, list) or len(ordered) < 2 or any(item not in members for item in ordered):
+            raise Invalid("capture group requires at least two known unit keys")
+        if len(set(ordered)) != len(ordered) or seen.intersection(ordered):
+            raise Invalid("unit key appears in two capture templates")
+        if (any(type(table.get(field)) is not int or table[field] < 1 for field in ("cores_per_capture", "max_k"))
+                or any(type(table.get(field)) not in (int, float) or not math.isfinite(table[field]) or table[field] <= 0
+                       for field in ("anon_peak_gib_per_capture", "margin_gib"))):
+            raise Invalid("capture group canary table is unset or invalid")
+        k = len(ordered)
+        if k > table["max_k"]:
+            raise Invalid("capture group K exceeds canary admission")
+        cores, memory = k * table['cores_per_capture'], math.ceil(k * table['anon_peak_gib_per_capture'] + table['margin_gib'])
+        shape = f"slot=1/[core={cores};memory={memory};gpu=1]"
+        resources = [{"type": "slot", "count": 1, "label": "task", "with":
+                      [{"type": "core", "count": cores}, {"type": "memory", "count": memory}, {"type": "gpu", "count": 1}]}]
+        result.append(dict(group, phase="capture", members=[members[item] for item in ordered], shape=shape, resources=resources))
+        seen.update(ordered)
+        keys.add(key)
+    return [dict(unit, phase=phase) for unit in units for phase in ("prepare", "capture")
+            if phase != "capture" or unit["key"] not in seen] + result
 
 
 def write_templates(root, config, repository):
@@ -175,7 +217,7 @@ def write_templates(root, config, repository):
     units = [{"key": f"tp{size}-{part}-" + json_digest([config["module"], size, part]), "size": size, "case_set": part}
              for size in (1, 2) for part in ("gate", "diagnostics")]
     config["unit_keys"] = [unit["key"] for unit in units]
-    config["templates"] = [dict(unit, phase=phase) for unit in units for phase in ("prepare", "capture")]
+    config["templates"] = capture_templates(units, config.get("capture_groups", []), settings["capture_group_canary"])
     config["templates"].append({"key": "compare-" + json_digest([config["module"], "compare"]), "phase": "compare", "case_set": "all"})
     write_json(root / "campaign.json", config)
     options = shlex.join(container_options("$task_scratch")).replace("'$task_scratch", '\"$task_scratch').replace(":rw'", ':rw\"').replace(":ro'", ':ro\"')
@@ -186,26 +228,43 @@ def write_templates(root, config, repository):
         minutes = {"prepare": 360 if config["canary"] else 1440, "capture": settings["capture_minutes"], "compare": 120 if config["canary"] else 360}[phase]
         shapes = {"prepare": ["slot/[core=1;memory=8]", "slot/[core=1;memory=9]"],
                   "capture": [f"slot/[core={4 if config['canary'] else 1};memory=32;gpu=1]"], "compare": ["slot/[core=1;memory=32]"]}[phase]
+        ordered = unit.get("unit_keys", [key])
+        if "shape" in unit:
+            shapes = [unit["shape"]]
+        grouped = len(ordered) > 1
         policy = {"hosts": ["sparky", "sparklina"], "max_minutes": minutes, "shapes": shapes, "max_urgency": 16}
-        write_json(directory / "policy.json", policy)
+        if grouped:
+            policy = {"schema": 1, "instances": ["fv1"], "job_name": f"tessera-1717-{key}-capture", "args": len(ordered),
+                      "max_attempts": cap, "max_duration_s": minutes * 60, "cwd": str(directory),
+                      "env_names": ["PATH", "HOME", "XDG_RUNTIME_DIR", "FLUX_F58_FORCE_ASCII", "FLUX_SCRATCH",
+                                    "OMP_NUM_THREADS", "MKL_NUM_THREADS", "OPENBLAS_NUM_THREADS"],
+                      "constraints": [{"hostlist": [host]} for host in ("sparky", "sparklina")],
+                      "shapes": [unit["resources"]], "shell_options": {}}
+        write_json(directory / ("table.json" if grouped else "policy.json"), policy)
         prerequisites = ""
         if phase == "capture":
             prerequisites = ('python3 ' + shlex.quote(str(root / "instance.py")) + ' complete "$attempt/prepare" || refuse \'prepare is not complete or hashes differ\'\n'
                              '(cd "$attempt/prepare" && sha256sum -c completion.sha256) || refuse \'prepare is not complete or hashes differ\'')
         values = {"ROOT": shlex.quote(str(root)), "ROOT_RAW": str(root), "TEMPLATE": shlex.quote(str(directory)),
                   "REPOSITORY": shlex.quote(str(repository)), "REVISION": config["tool_commit"], "KEY": key, "PHASE": phase,
-                  "PATTERN": "^" + re.escape(str(root / "units" / key / "attempts")) + "/([1-9][0-9]*)$",
-                  "MAX_ATTEMPTS": str(cap), "MAX_DIGITS": str(len(str(cap))), "PREREQUISITES": prerequisites,
+                  "COUNT": str(len(ordered)), "COUNT_MESSAGE": "require one attempt argument" if len(ordered) == 1 else f"require {len(ordered)} attempt arguments",
+                  "PATTERNS": shlex.join(["^" + re.escape(str(root / "units" / item / "attempts")) + "/([1-9][0-9]*)$" for item in ordered]),
+                  "ABSENT": 'test ! -e "$attempt/capture" && test ! -L "$attempt/capture" || refuse \'phase claim already exists or failed\'' if len(ordered) > 1 else "",
+                  "ATTEMPT_CAP": "" if grouped else f'id=${{BASH_REMATCH[1]}}\ntest "${{#id}}" -le {len(str(cap))} && test "$id" -le {cap} || refuse \'attempt id exceeds MAX_ATTEMPTS\'',
+                  "PREREQUISITES": prerequisites,
                   "MINUTES": str(minutes), "SECONDS": str(minutes * 60 - 60), "SHAPE": shapes[-1], "OPTIONS": options,
                   "GPU": "--device nvidia.com/gpu=all" if phase == "capture" else "",
                   "PREFLIGHT": 'PYTHONPATH="$task_scratch/code" python3 -m experiments.numerics_rows.gpu_time --preflight gpu-preflight-host.json' if phase == "capture" else "",
                   "TELEMETRY": 'PYTHONPATH="$task_scratch/code" python3 -m experiments.numerics_rows.prepare_split --check-telemetry numerics_row.json > telemetry-check.json' if phase == "capture" else ""}
-        for name in ("job.sh", "submit-after-review.sh"):
+        for name in (("job.sh",) if grouped else ("job.sh", "submit-after-review.sh")):
             script = (Path(__file__).with_name("templates") / name).read_text()
             for marker, value in values.items():
                 script = script.replace("@" + marker + "@", value)
             (directory / name).write_text(script)
-        shutil.copyfile(directory / "submit-after-review.sh", directory / "submit-reviewed.sh")
+        if grouped:
+            (directory / "job.sh").chmod(0o700)
+        if not grouped:
+            shutil.copyfile(directory / "submit-after-review.sh", directory / "submit-reviewed.sh")
         seal_template(directory)
     write_json(root / "campaign.json", config)
 
