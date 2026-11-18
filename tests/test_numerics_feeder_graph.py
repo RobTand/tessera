@@ -163,6 +163,62 @@ def calls(graph):
     return [json.loads(line) for line in (graph[0].parent / 'calls.jsonl').read_text().splitlines()]
 
 
+@pytest.mark.parametrize('ending', ('submit', 'refused', 'error'))
+def test_feeder_keeps_environment_values_out_of_attempt_records(tmp_path, monkeypatch, ending):
+    assert hasattr(api, 'NamedTemporaryFile'), 'feature absent: no environment values in attempt records'
+    canary, bookings, _ = make_graph(tmp_path, monkeypatch, ('module-A',))
+    original_dry_run, original_run = api.dry_run, api.subprocess.run
+    checked, private_values = [], set()
+
+    def private_spec(*args):
+        document = json.loads(original_dry_run(*args))
+        environment = document['attributes']['system']['environment']
+        for field in environment:
+            environment[field] = 'private-' + hashlib.sha256(field.encode()).hexdigest()
+        private_values.update(value.encode() for value in environment.values())
+        return json.dumps(document)
+
+    def check_gate(command, **kwargs):
+        if command[0] == api.read(api.SETTINGS)['fleet_submit_gate']:
+            path = Path(command[4])
+            raw = path.read_bytes()
+            document = json.loads(raw)
+            arguments = list(map(Path, document['tasks'][0]['command'][1:]))
+            assert path.stat().st_mode & 0o777 == 0o600
+            assert path.parent.stat().st_mode & 0o777 == 0o700
+            assert path.parent.parent == canary
+            assert all(not path.is_relative_to(attempt) for attempt in arguments)
+            checked.append((path, arguments, Path(command[2]).name, hashlib.sha256(raw).hexdigest(),
+                            sorted(document['attributes']['system']['environment'])))
+            result = original_run(command, **kwargs)
+            if ending == 'error':
+                raise OSError('gate transport failed')
+            return result
+        return original_run(command, **kwargs)
+
+    monkeypatch.setattr(api, 'dry_run', private_spec)
+    monkeypatch.setattr(api.subprocess, 'run', check_gate)
+    if ending == 'refused':
+        (tmp_path / 'refuse').write_text('module-A/templates')
+    if ending == 'submit':
+        api.run(canary, bookings)
+        assert any(row['action'] == 'submit' for row in calls((canary,)))
+    else:
+        with pytest.raises(OSError if ending == 'error' else api.FeederError,
+                           match='gate transport failed' if ending == 'error' else 'COUNTED_UNITS_REFUSED'):
+            api.run(canary, bookings)
+    assert checked and private_values
+    for path, arguments, phase, digest, names in checked:
+        assert not path.exists() and not path.parent.exists()
+        for attempt in arguments:
+            intent = api.read(attempt / (phase + '-intent.json'))
+            assert intent['jobspec_sha256'] == digest
+            assert intent['env_names'] == names
+    files = [path for path in (tmp_path / 'module-A/units').rglob('*') if path.is_file()]
+    assert files
+    assert all(value not in path.read_bytes() for path in files for value in private_values)
+
+
 def test_feeder_uses_gate_table_and_producer_status(tmp_path, monkeypatch):
     assert hasattr(api, 'dry_run'), 'feature absent: gate table and producer status on every edge'
     canary, bookings, _ = graph = make_graph(tmp_path, monkeypatch)

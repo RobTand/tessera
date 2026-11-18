@@ -1,6 +1,6 @@
 # Tessera plan-to-serve architecture
 
-Re-stamped 2026-11-18 for #1717 generator root, phase durations, and v2 CPU checks. Fleet gate remains f480e7d8.
+Re-stamped 2026-11-18 for #1717 generator root, phase durations, v2 CPU checks, and private feeder jobspecs. Fleet gate remains f480e7d8.
 Each module has prepare and capture templates per TP unit and case set, plus one compare template.
 The generator accepts an explicit campaign output root and refuses an existing root. Without that parameter, it keeps the dated shared path.
 The CLI accepts `--output-root` and `--module` for canary generation.
@@ -34,6 +34,8 @@ Counted compare selects every unit's newest attempt path and runs on fv1 without
 The phase reader retains FAIL from phase-local partial receipts as well as retained attempt-root receipts.
 The feeder uses these templates through Fleet's gate. The dense-chain HOLD remains.
 The feeder builds a dry-run jobspec from each table. The gate alone submits the checked bytes and writes the TSV.
+The jobspec uses a mode-0600 file in private feeder scratch outside attempt directories. The feeder removes it after the gate call, also on error.
+Attempt intent retains only the jobspec SHA-256 and sorted environment names. It retains no environment values.
 Each edge uses one blocking status call on its producer instance, followed by exit, log-hash, identity, and artifact checks.
 Every jobspec has only singleton. No jobspec contains afterok or a foreign instance's job ID.
 One feeder fills bounded prepare batches across modules. It submits the next batch before waiting for earlier captures.

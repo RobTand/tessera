@@ -8,6 +8,7 @@ from pathlib import Path
 import re
 import subprocess
 import sys
+from tempfile import NamedTemporaryFile, TemporaryDirectory
 import time
 
 if __package__:
@@ -305,12 +306,12 @@ def run(canary, bookings, retries=None):
                     return False
             table = read(template / 'table.json')
             spec = dry_run(template, arguments, name, host)
-            jobspec = arguments[0] / (phase + '-jobspec.json')
-            jobspec.write_text(spec)
             memory = sum(r['count'] for r in table['instances'][name]['shapes'][0][0]['with'] if r['type'] == 'memory')
             drain = drain_ecores_before_submit(memory, '--requires=host:' + host, 'tessera-1717:' + str(jobs[0]))
             bound = observe(name)
-            intent = {'instance': bound, 'arguments': list(map(str, arguments)), 'fv1e_drain': drain}
+            intent = {'instance': bound, 'arguments': list(map(str, arguments)), 'fv1e_drain': drain,
+                      'jobspec_sha256': hashlib.sha256(spec.encode('utf-8')).hexdigest(),
+                      'env_names': sorted(table['env_names'])}
             with ExitStack() as submission:
                 for path in intents:
                     stream = submission.enter_context(path.open('w'))
@@ -318,8 +319,12 @@ def run(canary, bookings, retries=None):
                     stream.write(json.dumps(intent) + '\n')
                     stream.flush()
                 event('SUBMIT_INTENT', module=module, phase=phase, unit=key)
-                result = subprocess.run([settings['fleet_submit_gate'], name, str(template), str(table['urgency']), str(jobspec)],
-                                        text=True, capture_output=True, check=False)
+                with TemporaryDirectory(prefix='.counted-feeder-', dir=canary) as scratch:
+                    with NamedTemporaryFile(mode='w', encoding='utf-8', dir=scratch) as jobspec:
+                        jobspec.write(spec)
+                        jobspec.flush()
+                        result = subprocess.run([settings['fleet_submit_gate'], name, str(template), str(table['urgency']), jobspec.name],
+                                                text=True, capture_output=True, check=False)
                 if result.returncode == 3:
                     for path in refusals:
                         path.write_text(json.dumps({'reason': result.stdout.strip()}) + '\n')
