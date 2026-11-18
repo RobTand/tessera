@@ -30,5 +30,18 @@
   "drain_poll_seconds": 5,
   "drain_timeout_seconds": 300,
   "client_timeout_seconds": 30,
-  "fleet_submit_gate": "/mnt/shared/flux-migration/lead-1114/dense-gate/fleet-submit-gate.py"
+  "fleet_submit_gate": "/mnt/shared/flux-migration/lead-1114/dense-gate/fleet-submit-gate.py",
+  "phase_minutes": {
+    "prepare": {
+      "gate": 480,
+      "diagnostics": 300
+    },
+    "capture": {
+      "gate": 600,
+      "diagnostics": 300
+    },
+    "compare": {
+      "all": 1440
+    }
+  }
 }

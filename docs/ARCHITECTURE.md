@@ -1,7 +1,17 @@
 # Tessera plan-to-serve architecture
 
-Re-stamped 2026-11-18 for #1717 feeder graph and resume under STEP5-FORM FLEET GATE, Fleet f480e7d8.
+Re-stamped 2026-11-18 for #1717 generator root, phase durations, and v2 CPU checks. Fleet gate remains f480e7d8.
 Each module has prepare and capture templates per TP unit and case set, plus one compare template.
+The generator accepts an explicit campaign output root and refuses an existing root. Without that parameter, it keeps the dated shared path.
+The CLI accepts `--output-root` and `--module` for canary generation.
+`feeder-settings.json` supplies template minutes by phase and case set for canary and counted templates.
+Prepare uses 480 minutes for gate and 300 for diagnostics. Capture uses 600 minutes for gate and 300 for diagnostics.
+Module compare uses 1440 minutes. A capture group uses the largest duration among its members' case sets.
+Each table carries seconds. Each job timeout leaves 60 seconds for cleanup and keeps the 20-second TERM grace.
+The v2 CPU record needs PASS, two passed AFTER arms, matching positive selected counts, and the campaign tool commit in both arms.
+Both arms need exit 0 and zero failures, errors, and skips. The record needs no top-level source field.
+Its `test_files` set must equal the `tests/test_numerics_*.py` files in that tool commit's Git tree.
+The verifier reads that tree with `git ls-tree`. The BEFORE record keeps its original meaning.
 An optional capture group replaces its members' single capture templates. Each unit belongs to exactly one capture template.
 Prepare, compare, and single capture templates take one canonical attempt path with a fixed module and unit key.
 Each group fixes K ordered unit keys and takes exactly K canonical attempt paths within its fixed module root.

@@ -1,15 +1,18 @@
 """Check reviewed unit templates without a Flux client or numerical work."""
 import hashlib
+import inspect
 import json
 import os
 from pathlib import Path
 import shlex
 import shutil
 import subprocess
+import sys
 
 import pytest
 
 from experiments.numerics_rows import phase_instance, prepare_split
+from experiments.numerics_rows.common import Invalid
 
 
 def templates(root, canary=False, instance_lists=None, module="module-A"):
@@ -166,8 +169,9 @@ def test_every_template_uses_fleet_table_schema(tmp_path, canary, prepare_instan
                                            [{"type": "core", "count": 4 if canary and phase == "capture" else 1},
                                             {"type": "memory", "count": memory}]
                                            + ([{"type": "gpu", "count": 1}] if phase == "capture" else [])}]],
-                               "max_duration_s": {"prepare": 21600 if canary else 86400,
-                                                  "capture": 900, "compare": 7200 if canary else 21600}[phase]}
+                               "max_duration_s": {"prepare": 28800 if "-gate-" in directory.parent.name else 18000,
+                                                  "capture": 36000 if "-gate-" in directory.parent.name else 18000,
+                                                  "compare": 86400}[phase]}
         assert fields == {"schema": 1, "instances": instances,
                           "job_name": f"tessera-1717-{directory.parent.name}-{phase}", "args": 1,
                           "max_attempts": 3, "urgency": 8,
@@ -231,3 +235,127 @@ def test_phase_local_outputs_keep_partial_fail_evidence(tmp_path, phase):
     prefix = str(args.out.relative_to(tmp_path)) + "/"
     assert all(name.startswith(prefix) for name, value in snapshot(tmp_path).items() if name not in before or before[name] != value)
     api.read(args.out, "compare", api.identities(receipt), dp.scopes(groups))
+
+
+def test_prepare_takes_output_root_and_refuses_existing_root(tmp_path, monkeypatch):
+    assert "output_root" in inspect.signature(prepare_split.prepare).parameters, "feature absent: explicit campaign output root with existing root refusal"
+    assert inspect.signature(prepare_split.prepare).parameters["output_root"].default is None
+    freeze = tmp_path / "freeze.json"
+    freeze.write_text("{}")
+    monkeypatch.setattr(prepare_split, "FREEZE", freeze)
+    monkeypatch.setattr(prepare_split.subprocess, "check_output", lambda *args, **kwargs: "a" * 40)
+    clones = []
+    monkeypatch.setattr(prepare_split.subprocess, "run", lambda command, **kwargs: clones.append(command))
+    output = tmp_path / "chosen root"
+    module = "model.language_model.layers.2.mlp.gate_up_proj"
+    assert prepare_split.prepare(tmp_path / "checks.json", module=module, output_root=output) == output
+    config = json.loads((output / "campaign.json").read_text())
+    assert config["module"] == module and config["canary"] is True
+    assert len(config["templates"]) == 9 and len(clones) == 1
+    before = snapshot(tmp_path)
+    with pytest.raises(FileExistsError):
+        prepare_split.prepare(tmp_path / "checks.json", output_root=output)
+    assert snapshot(tmp_path) == before and len(clones) == 1
+    monkeypatch.undo()
+    help_result = subprocess.run([sys.executable, "-m", "experiments.numerics_rows.prepare_split", "--help"],
+                                 cwd=prepare_split.ROOT, capture_output=True, text=True)
+    assert help_result.returncode == 0
+    assert "--output-root" in help_result.stdout and "--module" in help_result.stdout
+
+
+@pytest.mark.parametrize("canary", [True, False])
+def test_phase_durations_from_settings_reach_table_and_job(tmp_path, canary):
+    assert "phase_minutes" in json.loads(Path(prepare_split.__file__).with_name("feeder-settings.json").read_text()), "feature absent: phase and case set durations come from settings"
+    config, directories = templates(tmp_path / "module", canary=canary)
+    expected = {"prepare": {"gate": 480, "diagnostics": 300},
+                "capture": {"gate": 600, "diagnostics": 300}, "compare": {"all": 1440}}
+    for custom in (False, True):
+        if custom:
+            shutil.rmtree(tmp_path / "module/templates")
+            expected = {phase: {part: minutes + 7 for part, minutes in parts.items()} for phase, parts in expected.items()}
+            settings_path = tmp_path / "module/feeder-settings.json"
+            settings = json.loads(settings_path.read_text())
+            settings["phase_minutes"] = expected
+            settings_path.write_text(json.dumps(settings))
+            prepare_split.write_templates(tmp_path / "module", config, tmp_path / "module/repository.git")
+        for unit, directory in zip(config["templates"], directories):
+            seconds = expected[unit["phase"]][unit["case_set"]] * 60
+            table = json.loads((directory / "table.json").read_text())
+            assert all(instance["max_duration_s"] == seconds for instance in table["instances"].values())
+            assert f"timeout --signal=TERM --kill-after=20s {seconds - 60}s podman run" in (directory / "job.sh").read_text()
+
+
+def cpu_campaign(tmp_path, monkeypatch):
+    files = ["tests/test_numerics_alpha.py", "tests/test_numerics_beta.py"]
+    rule, freeze, data, checks_path = [tmp_path / name for name in ("rule.md", "freeze.json", "population.json", "checks.json")]
+    for path in (rule, freeze, data):
+        path.write_text("{}")
+    monkeypatch.setattr(prepare_split, "RULE", rule)
+    monkeypatch.setattr(prepare_split, "RULE_SHA", prepare_split.sha256(rule))
+    monkeypatch.setattr(prepare_split, "FREEZE", freeze)
+    config = {"bound": True, "source_revision": prepare_split.SOURCE, "rule_sha256": prepare_split.RULE_SHA,
+              "freeze_sha256": prepare_split.sha256(freeze), "tool_commit": "a" * 40, "cpu_check": str(checks_path),
+              "canary": True, "paths": {"source": str(tmp_path), "population": str(data)},
+              "digests": {"population": prepare_split.sha256(data)}}
+    (tmp_path / "campaign.json").write_text(json.dumps(config))
+    def git_output(command, **kwargs):
+        if command[1] == "ls-tree":
+            assert command == ["git", "ls-tree", "-r", "--name-only", config["tool_commit"], "--", "tests"]
+            assert kwargs["cwd"] == prepare_split.ROOT
+            return "\n".join(files + ["tests/test_other.py", "tests/nested/test_numerics_other.py"])
+        assert command == ["git", "rev-parse", "HEAD"] and kwargs["cwd"] == str(tmp_path)
+        return prepare_split.SOURCE
+    monkeypatch.setattr(prepare_split.subprocess, "check_output", git_output)
+    record = {"verdict": "PASS", "before": {"source": "b" * 40, "exit": 1, "failures": 4},
+              "after": [dict(source=config["tool_commit"], exit=0, failures=0, errors=0, skips=0, selected=1234, passed=True)
+                        for _ in range(2)], "test_files": files[::-1]}
+    checks_path.write_text(json.dumps(record))
+    return config, record, checks_path
+
+
+def test_verify_accepts_v2_cpu_check(tmp_path, monkeypatch):
+    assert hasattr(prepare_split, "check_cpu_check"), "feature absent: verify accepts the whole package v2 CPU check"
+    config, record, checks_path = cpu_campaign(tmp_path, monkeypatch)
+    assert "source" not in record
+    assert prepare_split.verify(tmp_path) == config
+    for arm in record["after"]:
+        arm["selected"] = 4321
+    checks_path.write_text(json.dumps(record))
+    assert prepare_split.verify(tmp_path) == config
+
+
+@pytest.mark.parametrize("arm_index", [0, 1])
+@pytest.mark.parametrize("fault", ["source", "exit", "failures", "errors", "skips", "passed", "zero", "count", "missing-count", "bool-count",
+                                   "verdict", "subset", "other-file", "one-arm", "three-arms"])
+def test_verify_refuses_invalid_v2_cpu_check(tmp_path, monkeypatch, arm_index, fault):
+    assert hasattr(prepare_split, "check_cpu_check"), "feature absent: verify refuses failed arms other sources and partial packages"
+    config, record, checks_path = cpu_campaign(tmp_path, monkeypatch)
+    assert prepare_split.verify(tmp_path) == config
+    arm = record["after"][arm_index]
+    if fault == "source":
+        arm["source"] = "b" * 40
+    elif fault in ("exit", "failures", "errors", "skips"):
+        arm[fault] = 1
+    elif fault == "passed":
+        arm["passed"] = False
+    elif fault == "zero":
+        arm["selected"] = 0
+    elif fault == "count":
+        arm["selected"] += 1
+    elif fault == "missing-count":
+        del arm["selected"]
+    elif fault == "bool-count":
+        arm["selected"] = True
+    elif fault == "verdict":
+        record["verdict"] = "FAIL"
+    elif fault == "subset":
+        record["test_files"].pop()
+    elif fault == "other-file":
+        record["test_files"].append("tests/test_numerics_other.py")
+    elif fault == "one-arm":
+        record["after"].pop()
+    else:
+        record["after"].append(dict(arm))
+    checks_path.write_text(json.dumps(record))
+    with pytest.raises(Invalid, match="CPU check"):
+        prepare_split.verify(tmp_path)

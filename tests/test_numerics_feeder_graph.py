@@ -315,7 +315,8 @@ def test_generator_keeps_nine_gib_and_exact_dense_urgency(tmp_path):
         for name in ('fv1e-sparky', 'fv1e-sparklina'):
             shape, = table['instances'][name]['shapes']
             assert next(r['count'] for r in shape[0]['with'] if r['type'] == 'memory') == 9
-    assert all(api.read(d / 'table.json')['instances']['fv1']['max_duration_s'] == 900 for d in directories if d.name == 'capture')
+    assert all(api.read(d / 'table.json')['instances']['fv1']['max_duration_s'] == (36000 if '-gate-' in d.parent.name else 18000)
+               for d in directories if d.name == 'capture')
 
 
 def test_feeder_gate_keeps_booking_checks_and_dense_admission(tmp_path, monkeypatch):

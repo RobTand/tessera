@@ -149,6 +149,22 @@ def bind_templates(root, config):
         seal_template(directory)
 
 
+def check_cpu_check(checks, revision, test_files):
+    arms, files = checks.get("after"), checks.get("test_files")
+    if (not isinstance(files, list) or any(not isinstance(name, str) for name in files)
+            or not test_files or set(files) != set(test_files)):
+        raise Invalid("CPU check test_files differs from the tool commit numerics package")
+    if (checks.get("verdict") != "PASS" or not isinstance(arms, list) or len(arms) != 2
+            or any(not isinstance(arm, dict) or arm.get("passed") is not True
+                   or arm.get("source") != revision
+                   or type(arm.get("selected")) is not int or arm["selected"] <= 0
+                   or arm["selected"] != arms[0].get("selected")
+                   or any(type(arm.get(field)) is not int or arm[field] != value
+                          for field, value in (("exit", 0), ("failures", 0), ("errors", 0), ("skips", 0)))
+                   for arm in arms)):
+        raise Invalid("split row requires two passing CPU check arms at its tool commit and selected count")
+
+
 def verify(root):
     config = json.loads((root / "campaign.json").read_text())
     if not config.get("bound") or config["source_revision"] != SOURCE or config["rule_sha256"] != RULE_SHA:
@@ -156,8 +172,9 @@ def verify(root):
     if sha256(RULE) != RULE_SHA or sha256(FREEZE) != config["freeze_sha256"]:
         raise Invalid("frozen v2 rule or record changed")
     checks = json.loads(Path(config["cpu_check"]).read_text())
-    if checks.get("verdict") != "PASS" or checks.get("source") != config["tool_commit"]:
-        raise Invalid("split row requires a passing CPU check at its tool commit")
+    tree = subprocess.check_output(["git", "ls-tree", "-r", "--name-only", config["tool_commit"], "--", "tests"],
+                                   cwd=ROOT, text=True).splitlines()
+    check_cpu_check(checks, config["tool_commit"], [name for name in tree if re.fullmatch(r"tests/test_numerics_[^/]+\.py", name)])
     for name, digest in config["digests"].items():
         if sha256(config["paths"][name]) != digest:
             raise Invalid("split row bound input changed: " + name)
@@ -223,7 +240,10 @@ def write_templates(root, config, repository):
         phase, key = unit["phase"], unit["key"]
         directory = root / "templates" / key / phase
         directory.mkdir(parents=True)
-        minutes = {"prepare": 360 if config["canary"] else 1440, "capture": settings["capture_minutes"], "compare": 120 if config["canary"] else 360}[phase]
+        parts = [member["case_set"] for member in unit["members"]] if "members" in unit else [unit["case_set"]]
+        minutes = max(settings["phase_minutes"][phase][part] for part in parts)
+        if type(minutes) is not int or minutes <= 1:
+            raise Invalid("phase duration must be an integer greater than one minute")
         ordered = unit.get("unit_keys", [key])
         instances = {}
         for name in settings["template_instances"]["canary" if config["canary"] else phase]:
@@ -264,12 +284,13 @@ def write_templates(root, config, repository):
     write_json(root / "campaign.json", config)
 
 
-def prepare(cpu_check, *, module=MODULE, canary=True, canary_directory=None):
+def prepare(cpu_check, *, module=MODULE, canary=True, canary_directory=None, output_root=None):
     revision = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=ROOT, text=True).strip()
     stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
     label = "CANARY" if canary else module.replace("model.language_model.layers.", "L").replace(".mlp.", "-").replace(".", "-")
-    out = Path(f"/mnt/shared/flux-jobs/tessera-1717-SPLIT-{label}-N-{revision[:8]}-{stamp}")
+    out = Path(output_root) if output_root is not None else Path(f"/mnt/shared/flux-jobs/tessera-1717-SPLIT-{label}-N-{revision[:8]}-{stamp}")
     out.mkdir()
+    out = out.resolve()
     repository = Path(canary_directory) / "repository.git" if canary_directory else out / "repository.git"
     if not canary_directory:
         subprocess.run(["git", "clone", "--bare", "--no-hardlinks", str(ROOT), str(repository)], check=True)
@@ -323,6 +344,8 @@ if __name__ == "__main__":
     parser.add_argument("--verify", type=Path)
     parser.add_argument("--check-telemetry", type=Path)
     parser.add_argument("--cpu-check", type=Path)
+    parser.add_argument("--output-root", type=Path)
+    parser.add_argument("--module", default=MODULE)
     parser.add_argument("--counted-population", type=Path)
     parser.add_argument("--canary-directory", type=Path)
     args = parser.parse_args()
@@ -330,9 +353,9 @@ if __name__ == "__main__":
         print(json.dumps(check_telemetry(args.check_telemetry), allow_nan=False))
     elif args.verify:
         verify(args.verify)
-    elif args.cpu_check and args.counted_population and args.canary_directory:
+    elif args.cpu_check and args.counted_population and args.canary_directory and args.output_root is None:
         prepare_counted(args.cpu_check, args.counted_population, args.canary_directory)
     elif args.cpu_check and not (args.counted_population or args.canary_directory):
-        prepare(args.cpu_check)
+        prepare(args.cpu_check, module=args.module, output_root=args.output_root)
     else:
         parser.error("prepare requires --cpu-check")
