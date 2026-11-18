@@ -511,9 +511,9 @@ def diagnostic_cells(units):
 
 def planned_units(contract, image_digest, population, manifest):
     """Enumerate every expected unit before a loader or native call can fail."""
-    from experiments.numerics_rows.cases import admitted_units, configurations
+    from experiments.numerics_rows.cases import configurations
     from experiments.numerics_rows.population import module_key
-    from experiments.numerics_rows.scope import check_population_cells
+    from experiments.numerics_rows.scope import check_population_cells, unit_scopes
 
     check_population_cells(contract, image_digest, population)
 
@@ -544,17 +544,10 @@ def planned_units(contract, image_digest, population, manifest):
             if module["m_configs"] != expected:
                 raise Invalid("case manifest omitted or changed an expected M configuration")
             for config in module["m_configs"]:
-                scopes = admitted_units(contract, image_digest, entry["contract_family"], module["structure"], module["q256"], entry["pair"], config["M"])
-                if not scopes:
-                    raise Invalid("population pair has no matching contract unit")
-                for scope in scopes:
-                    unit = new_unit({**scope, "module": entry["name"], "symbol": entry["pair"][0], "decoder": entry["pair"][1], "rung": module["q256"], "structure": module["structure"],
-                                     "m_config": config, "tp": dict(cut),
-                                     "arm": {"selector_env": entry.get("selector_env", {}), "profiler_kernels": []}})
-                    if cut["size"] > 1 and entry["contract_family"] != "TESSERA_E4M3_K1":
-                        unit["role"], unit["admitted_by_v68"] = "observation", False
-                    finish_unit(unit)
-                    units.append(unit)
+                units.extend(new_unit({**scope, "tp": dict(cut), "arm": {"selector_env": entry.get("selector_env", {}), "profiler_kernels": []}})
+                    for scope in unit_scopes(contract, image_digest, {**entry, "structure": module["structure"], "q256": module["q256"]}, config, cut))
+            for unit in units:
+                finish_unit(unit)
             groups.append((entry, module, cut, units))
     return groups
 
@@ -610,12 +603,17 @@ def bind_freeze_addendum(freeze, freeze_path, rule_path, addendum_path):
     return {**freeze, "launch_levers_sha256": digest, "freeze_addendum_sha256": sha256(addendum_path)}
 
 
+P5 = "rule P5 requires both TP2 ranks in one process"
+
+
 def selected_groups(groups, size=None, rank=None):
     if size is None and rank is None:
         return groups
-    if size not in (1, 2) or rank is None or not 0 <= rank < size:
-        raise Invalid("select both a valid TP size and TP rank")
-    selected = [group for group in groups if group[2] == {"size": size, "rank": rank}]
+    if size == 2 and rank is not None:
+        raise Invalid(P5)
+    if (size, rank) not in ((1, 0), (2, None)):
+        raise Invalid("select TP1 rank 0 or TP2 without a rank")
+    selected = [group for group in groups if group[2]["size"] == size]
     if not selected:
         raise Invalid("selected TP cut is absent from the validated full manifest")
     return selected
@@ -785,8 +783,8 @@ def run_row(args, receipt, phases):
         from experiments.numerics_rows.dense_phases import case_ranges
         args.case_ranges = case_ranges(groups)
     groups = selected_groups(groups, getattr(args, "tp_size", None), getattr(args, "tp_rank", None))
-    if getattr(args, "case_set", "all") != "all" and len(groups) != 1:
-        raise Invalid("a case-set job requires one module and one cut")
+    if getattr(args, "case_set", "all") != "all" and len({(g[0]["name"], g[2]["size"]) for g in groups}) != 1:
+        raise Invalid("a case-set job requires one module and one TP unit")
     receipt["units"] = [unit for _, _, _, units in groups for unit in units]
     for unit in receipt["units"]:
         unit["launch_state_sha256"] = launch_state.sha256

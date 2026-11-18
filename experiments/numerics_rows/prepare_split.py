@@ -68,7 +68,7 @@ def row_arguments(config, root, source, population, paths, phase):
                  "--out", str(root / phase / "results"), "--rule", str(RULE), "--freeze", str(FREEZE),
                  "--module", config["module"]]
     if config["canary"]:
-        arguments += ["--canary", "--tp-size", "2", "--tp-rank", "0"]
+        arguments += ["--canary", "--tp-size", "2"]
     for key, value in paths.items():
         arguments += ["--" + key.replace("_", "-"), str(population) if key == "population" else str(value)]
     if phase == "capture":
@@ -138,7 +138,7 @@ def prepare(cpu_check, *, module=MODULE, canary=True, canary_directory=None):
         subprocess.run(["git", "clone", "--bare", "--no-hardlinks", str(ROOT), str(repository)], check=True)
     write_json(out / "campaign.json", {"tool_commit": revision, "source_revision": SOURCE, "rule": str(RULE),
         "rule_sha256": RULE_SHA, "freeze": str(FREEZE), "freeze_sha256": sha256(FREEZE),
-        "module": module, "cuts": [{"size": 2, "rank": 0}] if canary else [{"size": 1, "rank": 0}, {"size": 2, "rank": 0}, {"size": 2, "rank": 1}],
+        "module": module, "cuts": ([] if canary else [{"size": 1, "rank": 0}]) + [{"size": 2, "rank": 0}, {"size": 2, "rank": 1}],
         "canary": canary, "bound": False, "bookings_provisional": not canary,
         "canary_directory": str(canary_directory) if canary_directory else None,
         "paths": dict.fromkeys(INPUTS), "cpu_check": str(cpu_check)})

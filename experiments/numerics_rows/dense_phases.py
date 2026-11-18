@@ -94,7 +94,6 @@ class CaseWriter:
         self.artifact.record("arrays", {"scope": unit_scope(unit, self.wires[unit["module"]]),
                                       "array_index": self.array_index, "record": record})
         summarize_array(unit, record)
-        unit["exact"]["scale_index"]["arrays"].clear()
         self.array_index += 1
 
 
@@ -107,6 +106,7 @@ def summarize_array(unit, record):
         values = record.get(field, [record["scale"]] if field == "scales" else [record["base"]] if field == "bases" else [])
         summary[field] = sorted(set(summary.get(field, [])) | set(values))
     summary["uncovered_reads"] = record.get("uncovered_reads", [])[:1] or summary.get("uncovered_reads", [])
+    summary["arrays"].clear()
 
 
 def case_ranges(groups):
@@ -128,12 +128,19 @@ def case_ranges(groups):
 
 
 
-def check_range(args, group, document):
-    if getattr(args, "case_ranges", None) and document["case_set"] != "all":
-        entry, _, cut, _ = group
-        expected = args.case_ranges[(entry["name"], cut["size"], cut["rank"], document["case_set"])]
-        if expected != [document["ordinal_start"], document["streams"]["cases"]["count"]]:
-            raise Invalid("phase cases differ from the deterministic full row enumeration")
+def phase_units(groups):
+    return [list(unit) for _, unit in groupby(groups, lambda g: (g[0]["name"], g[2]["size"]))]
+
+
+def unit_range(args, groups, part):
+    ranges = [args.case_ranges[(e["name"], c["size"], c["rank"], part)] for e, _, c, _ in groups]
+    return [ranges[0][0], sum(count for _, count in ranges)]
+
+
+def check_range(args, groups, document):
+    if (getattr(args, "case_ranges", None) and document["case_set"] != "all"
+            and unit_range(args, groups, document["case_set"]) != [document["ordinal_start"], document["streams"]["cases"]["count"]]):
+        raise Invalid("phase cases differ from the deterministic full row enumeration")
 
 def scopes(groups):
     return [unit_scope(u, module["wire_sha256"]) for _, module, _, units in groups for u in units]
@@ -145,8 +152,7 @@ def host_prepare(args, receipt, phases, groups):
     artifact = Artifact(args.out / "prepare", "prepare", identities(receipt))
     artifact.document.update(scopes=scopes(groups), case_set=getattr(args, "case_set", "all"))
     if getattr(args, "case_set", "all") != "all":
-        entry, _, cut, _ = groups[0]
-        start, count = args.case_ranges[(entry["name"], cut["size"], cut["rank"], args.case_set)]
+        start, count = unit_range(args, groups, args.case_set)
         artifact.document.update(ordinal_start=start, expected_cases=count)
     writer = CaseWriter(artifact, progress, {m["name"]: m["wire_sha256"] for _, m, _, _ in groups})
     q1, recorder = json.loads(args.q1.read_text()), BoundaryRecorder(lambda: None, [])
@@ -241,7 +247,7 @@ def device_capture(args, receipt, phases, groups, library, compile_paths):
     prepare_root, = args.prepare_artifact
     common, expected_scopes = identities(receipt), scopes(groups)
     prepared, prepare_digest = read(prepare_root, "prepare", common, expected_scopes)
-    check_range(args, groups[0], prepared)
+    check_range(args, groups, prepared)
     if prepared["case_set"] != getattr(args, "case_set", "all"):
         raise Invalid("capture case set differs from prepare")
     for unit, previous in zip(receipt["units"], prepared["receipt"]["units"]):
@@ -268,7 +274,9 @@ def device_capture(args, receipt, phases, groups, library, compile_paths):
             actual, served = row.identify_served(adapter, False, native_source, args.out / "served-binaries", cache)
             preparation_code = list(audit.records)
             del prof
-            receipt["modules"] = [row.module_receipt(module, adapter, False)]
+            module_record = row.module_receipt(module, adapter, False)
+            if module_record not in receipt["modules"]:
+                receipt["modules"].append(module_record)
             adapter.served_identity = served[0] if served else None
             for unit in units:
                 row.check_served_identity(unit, served, library)
@@ -404,23 +412,21 @@ def unit_map(units):
 
 
 def host_compare(args, receipt, phases, groups):
-    if args.prepare_artifact is None or args.capture_artifact is None:
-        raise Invalid("compare requires both phase artifacts")
-    prepare_paths, capture_paths = args.prepare_artifact, args.capture_artifact
-    if len(prepare_paths) != len(capture_paths):
-        raise Invalid("compare requires matching gate and diagnostics artifacts")
+    if (args.prepare_artifact is None or args.capture_artifact is None
+            or len(args.prepare_artifact) != len(args.capture_artifact)):
+        raise Invalid("compare requires both phase artifacts with matching gate and diagnostics artifacts")
     bound, selected = [], {(g[0]["name"], g[2]["size"], g[2]["rank"]): [] for g in groups}
-    for prepare_root, capture_root in zip(prepare_paths, capture_paths):
+    for prepare_root, capture_root in zip(args.prepare_artifact, args.capture_artifact):
         selection = json.loads((prepare_root / "phase.json").read_text())
-        matched = [g for g in groups if scopes([g]) == selection.get("scopes")]
+        matched = [unit for unit in phase_units(groups) if scopes(unit) == selection.get("scopes")]
         if len(matched) != 1:
-            raise Invalid("phase artifact has a foreign module or cut")
-        group, = matched
-        entry, _, cut, _ = group
-        common = identities({**receipt, "inputs": {**receipt.get("inputs", {}), "selected_cuts": [cut]}})
-        prepared, pd = read(prepare_root, "prepare", common, scopes([group]))
-        check_range(args, group, prepared)
-        selected[(entry["name"], cut["size"], cut["rank"])].append(prepared["case_set"])
+            raise Invalid("phase artifact has a foreign module or cut; " + row.P5)
+        unit_groups, = matched
+        common, expected = identities({**receipt, "inputs": {**receipt.get("inputs", {}), "selected_cuts": [g[2] for g in unit_groups]}}), scopes(unit_groups)
+        prepared, pd = read(prepare_root, "prepare", common, expected)
+        check_range(args, unit_groups, prepared)
+        for entry, _, cut, _ in unit_groups:
+            selected[(entry["name"], cut["size"], cut["rank"])].append(prepared["case_set"])
         if not (capture_root / "phase.json").is_file():
             partial = capture_root.parent / "numerics_row.json"
             if partial.is_file():
@@ -430,9 +436,9 @@ def host_compare(args, receipt, phases, groups):
                 for key, unit in unit_map(status["units"]).items():
                     unit_map(receipt["units"])[key].update(unit)
             raise RuntimeError("capture is unfinished; compare cannot finish this row")
-        captured, cd = read(capture_root, "capture", common, scopes([group]))
+        captured, cd = read(capture_root, "capture", common, expected)
         for document in (prepared, captured):
-            if identities(document["receipt"]) != common or unit_map(document["receipt"]["units"]).keys() != unit_map(group[3]).keys():
+            if identities(document["receipt"]) != common or unit_map(document["receipt"]["units"]).keys() != unit_map([u for g in unit_groups for u in g[3]]).keys():
                 raise Invalid("phase receipt identities or units differ from the selected cut")
         bound.append((prepare_root, capture_root, prepared, captured, pd, cd))
     if any(sorted(parts) not in (["all"], ["diagnostics", "gate"]) for parts in selected.values()):
@@ -498,7 +504,6 @@ def host_compare(args, receipt, phases, groups):
             if array is not None:
                 summarize_array(unit, array["record"])
                 artifact.record("arrays", array)
-                unit["exact"]["scale_index"]["arrays"].clear()
         if next(arrays, None) is not None:
             raise Invalid("prepare has extra scale arrays")
     for unit in receipt["units"]:
@@ -524,12 +529,8 @@ def run_phase(args, receipt, phases, groups, library, q1, compile_paths):
         for unit in units:
             unit["tp"].update(cut_axis=[r["cut_axis"] for r in module["roles"]], cut_range=[r["cut_range"] for r in module["roles"]])
             row.finish_unit(unit)
-    if args.phase == "prepare":
-        host_prepare(args, receipt, phases, groups)
-    elif args.phase == "capture":
-        device_capture(args, receipt, phases, groups, library, compile_paths)
-    else:
-        host_compare(args, receipt, phases, groups)
+    operation = {"prepare": host_prepare, "capture": device_capture, "compare": host_compare}[args.phase]
+    operation(args, receipt, phases, groups, **({"library": library, "compile_paths": compile_paths} if args.phase == "capture" else {}))
     raise SystemExit(receipt["row"].get("exit_status") or 0)
 
 

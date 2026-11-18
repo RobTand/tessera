@@ -156,10 +156,16 @@ def test_canary_freeze_record_is_explicit_and_cannot_be_counted(tmp_path, mutati
 def test_tp_selection_requires_a_valid_cut_and_retains_only_that_cut():
     groups = [(None, None, {"size": size, "rank": rank}, []) for size, rank in ((1, 0), (2, 0), (2, 1))]
     assert row.selected_groups(groups) == groups
-    assert row.selected_groups(groups, 2, 0) == [groups[1]]
-    for size, rank in ((1, 1), (2, None), (None, 0)):
+    assert row.selected_groups(groups, 1, 0) == [groups[0]]
+    assert row.selected_groups(groups, 2, None) == groups[1:]
+    for rank in (0, 1):
+        with pytest.raises(Invalid, match="rule P5 requires both TP2 ranks in one process"):
+            row.selected_groups(groups, 2, rank)
+    for size, rank in ((1, 1), (None, 0)):
         with pytest.raises(Invalid):
             row.selected_groups(groups, size, rank)
+    with pytest.raises(Invalid, match="selected TP cut is absent"):
+        row.selected_groups(groups[:1], 2)
 
 
 def test_gpu_minutes_integrate_measured_resident_time_and_record_coverage():

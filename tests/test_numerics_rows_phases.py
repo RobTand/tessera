@@ -553,18 +553,18 @@ def module_phase_pairs(root, *, case_sets=("gate", "diagnostics"), cuts=None, fi
             "role": "unit", "tp": cut, "m_config": {"M": m, "k_split": 1}, "launch_state_sha256": "a" * 64, "arm": {}}) for m in (1, 2)]
         groups.append(({"name": "A"}, {"wire_sha256": "w"}, cut, units))
         receipt["units"].extend(units)
-    for index, group in enumerate(groups):
-        _, _, cut, units = group
-        common = api.identities({**receipt, "inputs": {**receipt["inputs"], "selected_cuts": [cut]}})
+    for index, selected in enumerate(dense_phases.phase_units(groups)):
+        selected_cuts, units = [g[2] for g in selected], [u for g in selected for u in g[3]]
+        common = api.identities({**receipt, "inputs": {**receipt["inputs"], "selected_cuts": selected_cuts}})
         for part in case_sets:
             job = root / str(index) / part
-            start = index * 4 if part == "all" else index * 2 + (len(groups) * 2 if part == "diagnostics" else 0)
+            start = cuts.index(selected_cuts[0]) * (4 if part == "all" else 2) + (len(groups) * 2 if part == "diagnostics" else 0)
             prepared = api.Artifact(job / "prepare", "prepare", common)
-            prepared.document.update(scopes=dense_phases.scopes([group]), case_set=part, ordinal_start=start)
-            previous = copy.deepcopy({**receipt, "inputs": {**receipt["inputs"], "selected_cuts": [cut]}, "units": units})
+            prepared.document.update(scopes=dense_phases.scopes(selected), case_set=part, ordinal_start=start)
+            previous = copy.deepcopy({**receipt, "inputs": {**receipt["inputs"], "selected_cuts": selected_cuts}, "units": units})
             for unit in previous["units"]:
                 unit["exact"]["separation"]["records"] = [{"both": 1}]
-                unit["exact"]["sweep"]["elements"] = 10 * (index + 1) + unit["m_config"]["M"] if part != "diagnostics" else 0
+                unit["exact"]["sweep"]["elements"] = 10 * (cuts.index(unit["tp"]) + 1) + unit["m_config"]["M"] if part != "diagnostics" else 0
                 unit["exact"]["scale_index"]["arrays"] = [{"launches": 1}]
                 unit["exact"]["chunk_pairs"]["x_elements"] = 1
             x, sf = torch.ones(1, 1, dtype=torch.bfloat16), torch.ones(1, 1)
@@ -577,12 +577,12 @@ def module_phase_pairs(root, *, case_sets=("gate", "diagnostics"), cuts=None, fi
             previous["units"].reverse()
             pd = prepared.finish(receipt=previous)
             captured = api.Artifact(job / "capture", "capture", common)
-            captured.document.update(scopes=dense_phases.scopes([group]), case_set=part, ordinal_start=start, prepare_digest=pd)
-            current = copy.deepcopy({**previous, "units": units, "modules": [{"name": "A", "tp": cut}]})
+            captured.document.update(scopes=dense_phases.scopes(selected), case_set=part, ordinal_start=start, prepare_digest=pd)
+            current = copy.deepcopy({**previous, "units": units, "modules": [{"name": "A", "tp": cut} for cut in selected_cuts]})
             current["row"] = {"name": f"cut {index} {part}", "finalization_finished": False}
             for unit in current["units"]:
                 unit["arm"]["capture_fact"] = row.unit_identity(unit)
-                if finding and index == 1 and part != "diagnostics" and unit["m_config"]["M"] == 2:
+                if finding and unit["tp"] == {"size": 2, "rank": 1} and part != "diagnostics" and unit["m_config"]["M"] == 2:
                     unit["findings"] = ["cut 2 exact mismatch"]
             for case in api.cases(prepared.root, prepared.document):
                 captured.record("cases", {**case, "completion": True,
@@ -592,7 +592,9 @@ def module_phase_pairs(root, *, case_sets=("gate", "diagnostics"), cuts=None, fi
                     "tensors": {k: captured.tensor(v) for k, v in sorted({"output": x, "staged": x, "quantizer_q": x, "quantizer_sf": sf}.items())}})
             captured.finish(receipt=current)
             pairs.append((prepared.root, captured.root))
-            ranges[("A", cut["size"], cut["rank"], part)] = [start, prepared.document["streams"]["cases"]["count"]]
+            for offset, cut in enumerate(selected_cuts):
+                count = 4 if part == "all" else 2
+                ranges[("A", cut["size"], cut["rank"], part)] = [start + offset * count, count]
     out = root / "compare-job"
     out.mkdir()
     args = SimpleNamespace(out=out, case_ranges=ranges, prepare_artifact=[p[0] for p in reversed(pairs)], capture_artifact=[p[1] for p in reversed(pairs)])
@@ -608,7 +610,7 @@ def test_module_compare_finishes_one_receipt_with_every_cut(tmp_path, case_sets)
     dp.host_compare(args, receipt, PhaseTimes({}), groups)
     assert receipt["row"]["finalization_finished"] and receipt["row"]["outcome"] == "PASS"
     assert len(receipt["units"]) == 4 and len(receipt["modules"]) == 2
-    keys = {f'A:tp2r{rank}:{part}:{phase}' for rank in (0, 1) for part in case_sets for phase in ("prepare", "capture")}
+    keys = {f'A:tp2r0:{part}:{phase}' for part in case_sets for phase in ("prepare", "capture")}
     assert set(receipt["phase_artifacts"]) == set(receipt["row"]["phase_jobs"]) == keys | {"compare"}
     for key in keys:
         reference = receipt["phase_artifacts"][key]
@@ -637,7 +639,7 @@ def test_module_compare_refuses_invalid_cut_unions(tmp_path, fault):
         args.prepare_artifact, args.capture_artifact = args.prepare_artifact[2:], args.capture_artifact[2:]
     else:
         extra = args if fault == "duplicate" else module_phase_pairs(tmp_path / "extra", case_sets=("all",),
-            cuts=[{"size": 1, "rank": 0}] if fault == "foreign" else [groups[0][2]])[2]
+            cuts=[{"size": 1, "rank": 0}] if fault == "foreign" else [g[2] for g in groups])[2]
         args.prepare_artifact.append(extra.prepare_artifact[0])
         args.capture_artifact.append(extra.capture_artifact[0])
     with pytest.raises(Invalid, match="foreign module or cut|union exactly once"):
@@ -665,7 +667,7 @@ def test_module_compare_keeps_exact_cut_bindings(tmp_path, fault):
     dp, _, args, receipt, groups = module_phase_pairs(tmp_path)
     path = args.prepare_artifact[0] / "phase.json"
     document = json.loads(path.read_text())
-    if fault == "cut identity": document["identities"]["inputs"]["selected_cuts"] = receipt["inputs"]["selected_cuts"]
+    if fault == "cut identity": document["identities"]["inputs"]["selected_cuts"] = receipt["inputs"]["selected_cuts"][:1]
     elif fault == "tool identity": document["identities"]["tool"]["commit"] = "other"
     elif fault == "receipt units": document["receipt"]["units"].pop()
     else: args.case_ranges[("A", 2, 1, "diagnostics")][0] += 1
@@ -680,13 +682,72 @@ def test_module_compare_refuses_cuts_with_different_launch_states(tmp_path):
     dp, _, args, receipt, groups = module_phase_pairs(tmp_path, case_sets=("all",))
     path = args.capture_artifact[0] / "phase.json"
     document = json.loads(path.read_text())
-    assert document["scopes"][0]["cut"] == groups[1][2]
+    assert [s["cut"] for s in document["scopes"][::2]] == [g[2] for g in groups]
     document["identities"]["runtime"]["launch_state_sha256"] = "b" * 64
     document["receipt"]["runtime"]["launch_state_sha256"] = "b" * 64
     path.write_text(json.dumps(document))
     with pytest.raises(Invalid, match="^row phase common identities, module or cut differ$"):
         dp.host_compare(args, receipt, PhaseTimes({}), groups)
     assert receipt["row"]["finalization_finished"] is not True
+
+
+def test_tp2_phase_artifact_refuses_one_rank(tmp_path):
+    from experiments.numerics_rows import dense_phases
+    assert hasattr(dense_phases, "phase_units"), "feature absent: P5 refuses a one-rank TP2 artifact"
+    from experiments.numerics_rows.gpu_time import PhaseTimes
+    dp, _, args, receipt, groups = module_phase_pairs(tmp_path)
+    dp.host_compare(args, receipt, PhaseTimes({}), groups)
+    assert receipt["row"]["outcome"] == "PASS"
+    receipt["row"]["finalization_finished"] = False
+    path = args.prepare_artifact[0] / "phase.json"
+    document = json.loads(path.read_text())
+    document["scopes"] = document["scopes"][:2]
+    path.write_text(json.dumps(document))
+    with pytest.raises(Invalid, match="rule P5 requires both TP2 ranks in one process"):
+        dp.host_compare(args, receipt, PhaseTimes({}), groups)
+    assert not receipt["row"]["finalization_finished"]
+
+
+@pytest.mark.parametrize("case_sets", [("gate", "diagnostics"), ("all",)])
+def test_module_compare_finishes_tp1_and_tp2_pair_in_one_receipt(tmp_path, case_sets):
+    from experiments.numerics_rows import dense_phases
+    assert hasattr(dense_phases, "phase_units"), "feature absent: P5 module receipt holds TP1 and the TP2 pair"
+    from experiments.numerics_rows.gpu_time import PhaseTimes
+    cuts = [{"size": 1, "rank": 0}, {"size": 2, "rank": 0}, {"size": 2, "rank": 1}]
+    dp, api, args, receipt, groups = module_phase_pairs(tmp_path, cuts=cuts, case_sets=case_sets)
+    assert [len(unit) for unit in dp.phase_units(groups)] == [1, 2]
+    dp.host_compare(args, receipt, PhaseTimes({}), groups)
+    assert receipt["row"]["finalization_finished"] and receipt["row"]["outcome"] == "PASS"
+    assert receipt["inputs"]["selected_cuts"] == cuts and len(receipt["units"]) == 6
+    assert [m["tp"] for m in receipt["modules"]] == cuts
+    assert set(receipt["phase_artifacts"]) == {"compare"} | {
+        f"A:tp{size}r0:{part}:{phase}" for size in (1, 2) for part in case_sets for phase in ("prepare", "capture")}
+    document, _ = api.read(args.out / "compare", "compare", api.identities(receipt), dp.scopes(groups))
+    assert len(list(api.cases(args.out / "compare", document))) == 12
+    assert all(u["code_stream"] == receipt["phase_artifacts"]["compare"] for u in receipt["units"])
+
+
+@pytest.mark.parametrize("field", ["start", "count"])
+def test_tp2_pair_range_requires_both_rank_ranges(tmp_path, field):
+    from experiments.numerics_rows import dense_phases
+    assert hasattr(dense_phases, "phase_units"), "feature absent: P5 checks the whole TP2 pair range"
+    from experiments.numerics_rows.gpu_time import PhaseTimes
+    dp, _, args, receipt, groups = module_phase_pairs(tmp_path)
+    dp.host_compare(args, receipt, PhaseTimes({}), groups)
+    assert receipt["row"]["outcome"] == "PASS"
+    receipt["row"]["finalization_finished"] = False
+    path = args.prepare_artifact[0] / "phase.json"
+    document = json.loads(path.read_text())
+    part = document["case_set"]
+    left, right = (args.case_ranges[("A", 2, rank, part)] for rank in (0, 1))
+    assert left[0] + left[1] == right[0]
+    assert [document["ordinal_start"], document["streams"]["cases"]["count"]] == [left[0], left[1] + right[1]]
+    if field == "start": document["ordinal_start"] = right[0]
+    else: document["streams"]["cases"]["count"] = left[1]
+    path.write_text(json.dumps(document))
+    with pytest.raises(Invalid, match="deterministic full row enumeration"):
+        dp.host_compare(args, receipt, PhaseTimes({}), groups)
+    assert not receipt["row"]["finalization_finished"]
 
 
 def test_module_compare_arguments_keep_every_artifact_pair(tmp_path):
@@ -727,7 +788,7 @@ def test_counted_split_launch_selects_a_whole_module_and_preserves_artifact_inpu
     assert ("--capture-artifact" in command) == (phase == "compare")
     canary = shlex.split(api.row_arguments({**config, "canary": True}, tmp_path, Path(paths["source"]), "/signed/population.json", paths, phase))
     assert "--canary" in canary and canary[canary.index("--tp-size") + 1] == "2"
-    assert canary[canary.index("--tp-rank") + 1] == "0"
+    assert "--tp-rank" not in canary
 
 
 @pytest.fixture
