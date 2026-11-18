@@ -915,6 +915,7 @@ def feeder_booking(tmp_path, monkeypatch):
             (job/'jobid').write_text(jobid)
             write(job/'instance.json', {'name': (job/'instance-name.txt').read_text().strip(), 'job_id': jobid})
     monkeypatch.setattr(api.subprocess, "run", run)
+    (canary/'fv1e-limit-sparklina').write_text('2\n')
     (canary/'prepare').mkdir()
     (canary/'prepare/jobid').write_text('f111')
     settings = api.read(api.SETTINGS)
@@ -926,7 +927,7 @@ def feeder_booking(tmp_path, monkeypatch):
         sample_path = tmp_path/'rows-anon'/(prefix + jobid + '-3.tsv')
         sample_path.parent.mkdir(exist_ok=True)
         sample_path.write_text('0 0 0 0 0 30000000000 0 0 3000000000 50 ok\n')
-    monkeypatch.setattr(api.subprocess, "check_output", lambda command, **kw: '100' if '{runtime:.6f}' in command else '0')
+    monkeypatch.setattr(api.subprocess, "check_output", lambda command, **kw: json.dumps({'jobs': []}) if '--json' in command else '100' if '{runtime:.6f}' in command else '0')
     monkeypatch.setattr(api, "wait_dense_slot", lambda: None, raising=False)
     return api, canary, rowdir, bookings
 
@@ -977,8 +978,6 @@ def anon_wave(feeder_booking, monkeypatch):
     import shutil
     api, canary, rowdir, bookings = feeder_booking
     settings = api.read(api.SETTINGS)
-    settings['fv1e_max_prepares_per_spark'] = 2
-    api.SETTINGS.write_text(json.dumps(settings))
     (canary/'counted-feeder-state.json').unlink()
     rows, requested = api.read(canary/'counted-rows.json'), api.read(bookings)
     for suffix in 'BCDEFG':
@@ -989,10 +988,12 @@ def anon_wave(feeder_booking, monkeypatch):
     (canary/'counted-rows.json').write_text(json.dumps(rows))
     (canary/'counted-chain-inputs.json').write_text(json.dumps(dict.fromkeys(rows, {})))
     bookings.write_text(json.dumps(requested))
-    peaks, submits = {}, []
+    peaks, submits, active = {}, [], {}
     original = api.subprocess.run
-    ids = iter('fAA' + char for char in 'ABCDEFGHJKLMNPQRSTUVWXYZ')
+    ids = iter('fAA' + char for char in 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz')
     def run(command, **kw):
+        if 'wait-event' in command:
+            active.pop(command[command.index('wait-event') + 1], None)
         if command[0] != 'bash':
             return original(command, **kw)
         job = Path(command[1]).parent
@@ -1002,11 +1003,18 @@ def anon_wave(feeder_booking, monkeypatch):
         (job/'jobid').write_text(jobid)
         (job/'instance.json').write_text(json.dumps({'name': name, 'job_id': jobid}))
         submits.append((module, job.name, name))
+        active[jobid] = name
         prefix = '' if name == 'fv1' else name + '-'
         peak = peaks.get(module, 3 * 2**30)
         if peak is not None:
             (Path(settings['fv1e_jobmem_row_dirs'][0])/(prefix+jobid+'-3.tsv')).write_text(f'0 0 0 0 0 30000000000 0 0 {peak} 50 ok')
     monkeypatch.setattr(api.subprocess, 'run', run)
+    monkeypatch.setattr(api, 'client', lambda name: ['flux', name])
+    def query(command, **kw):
+        if '--json' in command:
+            return json.dumps({'jobs': [{'id': key} for key, name in active.items() if name == command[1]]})
+        return '100' if '{runtime:.6f}' in command else '0'
+    monkeypatch.setattr(api.subprocess, 'check_output', query)
     def observe(name):
         if name == 'fv1e-sparky':
             raise OSError('not installed')
@@ -1015,7 +1023,7 @@ def anon_wave(feeder_booking, monkeypatch):
     return api, canary, rows, bookings, peaks, submits
 
 
-@pytest.mark.parametrize('canary_peak', (4 * 2**30, 4 * 2**30 + 1, None))
+@pytest.mark.parametrize('canary_peak', (5728710656, 6 * 2**30, 6 * 2**30 + 1, None))
 def test_feeder_anon_admission_falls_back_and_rechecks(anon_wave, canary_peak):
     api, canary, _, bookings, _, submits = anon_wave
     assert hasattr(api, 'anon_peak'), 'feature absent: sampled anon admission'
@@ -1024,12 +1032,13 @@ def test_feeder_anon_admission_falls_back_and_rechecks(anon_wave, canary_peak):
     api.run(canary, bookings)
     prepares = [(m, n) for m, p, n in submits if p == 'prepare']
     events = [json.loads(line) for line in (canary/'counted-feeder.jsonl').read_text().splitlines()]
-    if canary_peak == 4 * 2**30 + 1:
+    if canary_peak == 6 * 2**30 + 1:
         assert all(name == 'fv1' for _, name in prepares)
         assert prepares[-1][0] == 'module-A'
         assert next(e for e in events if e['event'] == 'EP_NOT_RUN')['ran'] is False
     else:
-        assert next(m for m, n in prepares if n != 'fv1') == 'module-A'
+        e_prepares = [m for m, n in prepares if n != 'fv1']
+        assert e_prepares and e_prepares[0] == 'module-A', 'a valid anon peak at or below 6 GiB must admit fv1e'
         if canary_peak is None:
             assert prepares[0][0] != 'module-A' and prepares[0][1] == 'fv1'
         ep = next(i for i, e in enumerate(events) if e['event'] == 'EP_TENSOR_EQUAL')
@@ -1038,7 +1047,7 @@ def test_feeder_anon_admission_falls_back_and_rechecks(anon_wave, canary_peak):
     assert any('LOWER bound' in e.get('policy', '') and 'MemoryMax' in e.get('policy', '') for e in events)
 
 
-@pytest.mark.parametrize('late_peak', (3 * 2**30, 4 * 2**30 + 1))
+@pytest.mark.parametrize('late_peak', (3 * 2**30, 6 * 2**30 + 1))
 def test_feeder_invalid_rows_hold_until_a_valid_fv1_probe(anon_wave, late_peak):
     api, canary, rows, bookings, peaks, submits = anon_wave
     assert hasattr(api, 'anon_peak'), 'feature absent: sampled anon admission'
@@ -1048,11 +1057,12 @@ def test_feeder_invalid_rows_hold_until_a_valid_fv1_probe(anon_wave, late_peak):
     peaks.update({'module-C': late_peak, 'module-A': 3 * 2**30})
     api.run(canary, bookings)
     prepares = [(m, n) for m, p, n in submits if p == 'prepare']
-    if late_peak > 4 * 2**30:
+    if late_peak > 6 * 2**30:
         assert prepares[-1] == ('module-A', 'fv1')
     else:
         assert prepares[:2] == [('module-B', 'fv1'), ('module-C', 'fv1')]
-        assert next(m for m, n in prepares if n != 'fv1') == 'module-A'
+        e_prepares = [m for m, n in prepares if n != 'fv1']
+        assert e_prepares and e_prepares[0] == 'module-A', 'a valid anon peak at or below 6 GiB must admit fv1e'
 
 
 def test_feeder_invalid_anon_wave_releases_held_row_last(anon_wave, monkeypatch):
@@ -1075,10 +1085,16 @@ def test_feeder_invalid_anon_wave_releases_held_row_last(anon_wave, monkeypatch)
     assert events[-1]['event'] == 'COMPLETE'
 
 
-def test_feeder_anon_rolling_stop_finishes_running_and_keeps_fv1(anon_wave):
-    api, canary, _, bookings, peaks, submits = anon_wave
-    assert hasattr(api, 'anon_peak'), 'feature absent: sampled anon admission'
-    peaks['module-B'] = 4 * 2**30 + 1
+def test_feeder_anon_rolling_stop_finishes_running_and_keeps_fv1(anon_wave, monkeypatch):
+    api, canary, rows, bookings, peaks, submits = anon_wave
+    peaks['module-B'] = 6 * 2**30 + 1
+    original = api.subprocess.run
+    def run(command, **kw):
+        result = original(command, **kw)
+        if command[0] == 'bash' and Path(command[1]).parent == Path(rows['module-B'])/'capture':
+            (canary/'fv1e-limit-sparklina').write_text('8\n')
+        return result
+    monkeypatch.setattr(api.subprocess, 'run', run)
     api.run(canary, bookings)
     events = [json.loads(line) for line in (canary/'counted-feeder.jsonl').read_text().splitlines()]
     stop = next(i for i, e in enumerate(events) if e['event'] == 'STOP')
@@ -1086,6 +1102,91 @@ def test_feeder_anon_rolling_stop_finishes_running_and_keeps_fv1(anon_wave):
     assert all(name == 'fv1' for module, phase, name in submits if module in ('module-F', 'module-G'))
     assert api.read(canary/'counted-feeder-state.json')['fv1e_admission'] == 'stopped'
     assert events[-1]['event'] == 'COMPLETE'
+    before = len(submits)
+    for jobid in Path(rows['module-G']).glob('*/jobid'):
+        jobid.unlink()
+    api.run(canary, bookings)
+    assert submits[before:] == [('module-G', phase, 'fv1') for phase in ('prepare', 'capture', 'compare')], \
+        'STOP must block new fv1e prepares after a limit raise and restart'
+
+
+def test_feeder_fv1e_limit_raise_without_restart(anon_wave, monkeypatch):
+    api, canary, rows, bookings, _, submits = anon_wave
+    original = api.subprocess.run
+    def run(command, **kw):
+        result = original(command, **kw)
+        if command[0] == 'bash' and Path(command[1]).parent == Path(rows['module-D'])/'compare':
+            (canary/'fv1e-limit-sparklina').write_text('4\n')
+        return result
+    monkeypatch.setattr(api.subprocess, 'run', run)
+    api.run(canary, bookings)
+    assert all((module, 'prepare', 'fv1e-sparklina') in submits for module in ('module-F', 'module-G')), \
+        'feature absent: per-Spark fv1e limit files'
+    changes = [json.loads(line) for line in (canary/'counted-feeder.jsonl').read_text().splitlines()]
+    assert any(e['event'] == 'FV1E_LIMIT' and e['old'] == 2 and e['new'] == 4 for e in changes), \
+        'feature absent: per-Spark fv1e limit files'
+
+
+@pytest.mark.parametrize('value,reason', [(None, 'FileNotFoundError'), ('two', 'non-integer'), ('-1', 'negative')])
+def test_feeder_fv1e_invalid_limit_and_tmp_give_zero(anon_wave, monkeypatch, value, reason):
+    api, canary, _, bookings, _, submits = anon_wave
+    assert any(getattr(code, 'co_name', None) == 'fv1e_limit' for code in api.run.__code__.co_consts), \
+        'feature absent: invalid fv1e limits must give zero lanes; ignore .tmp files'
+    control = canary/'fv1e-limit-sparklina'
+    control.unlink()
+    (canary/'fv1e-limit-sparklina.tmp').write_text('8\n')
+    if value is not None:
+        control.write_text(value)
+    holds = []
+    def release(seconds):
+        assert all(name == 'fv1' for _, phase, name in submits if phase == 'prepare'), \
+            'invalid fv1e limits must give zero lanes; ignore .tmp files'
+        holds.append(True)
+        control.write_text('2\n')
+    monkeypatch.setattr(api.time, 'sleep', release)
+    api.run(canary, bookings)
+    assert holds == [True], 'feature absent: invalid fv1e limits must hold the counted canary row'
+    changes = [json.loads(line) for line in (canary/'counted-feeder.jsonl').read_text().splitlines()]
+    invalid = [e for e in changes if e['event'] == 'FV1E_LIMIT_INVALID' and e['spark'] == 'sparklina']
+    assert len(invalid) == 1 and invalid[0]['reason'] == reason and invalid[0]['new'] == 0
+
+
+def test_feeder_fv1e_limit_step_back_between_submits(anon_wave, monkeypatch):
+    api, canary, rows, bookings, _, submits = anon_wave
+    (canary/'fv1e-limit-sparklina').write_text('4\n')
+    original, actions = api.subprocess.run, []
+    def run(command, **kw):
+        if ('wait-event' in command and (Path(rows['module-B'])/'prepare/jobid').exists()
+                and command[command.index('wait-event') + 1] == (Path(rows['module-B'])/'prepare/jobid').read_text()):
+            actions.append('collect-B')
+        result = original(command, **kw)
+        if command[0] == 'bash' and submits[-1][1:] == ('prepare', 'fv1e-sparklina'):
+            actions.append(submits[-1][0])
+            if submits[-1][0] == 'module-B':
+                (canary/'fv1e-limit-sparklina').write_text('1\n')
+        return result
+    monkeypatch.setattr(api.subprocess, 'run', run)
+    api.run(canary, bookings)
+    assert actions[actions.index('module-B') + 1] == 'collect-B', \
+        're-read the fv1e limit before each submit; count the running prepare'
+    changes = [json.loads(line) for line in (canary/'counted-feeder.jsonl').read_text().splitlines()]
+    assert any(e['event'] == 'FV1E_LIMIT' and e['old'] == 4 and e['new'] == 1 for e in changes)
+
+
+def test_feeder_fv1e_submit_books_nine_gib(feeder_booking):
+    api, canary, rowdir, bookings = feeder_booking
+    api.run(canary, bookings)
+    assert 'slot/[core=1;memory=9]' in (rowdir/'prepare/submit-after-review.sh').read_text(), \
+        'fv1e prepare must book memory=9'
+
+
+def test_feeder_fv1e_limit_is_capped_by_pool(feeder_booking):
+    api, canary, _, bookings = feeder_booking
+    (canary/'fv1e-limit-sparklina').write_text('100\n')
+    api.run(canary, bookings)
+    changes = [json.loads(line) for line in (canary/'counted-feeder.jsonl').read_text().splitlines()]
+    assert any(e['event'] == 'FV1E_LIMIT' and e['spark'] == 'sparklina' and e['new'] == 8 for e in changes), \
+        'feature absent: cap per-Spark fv1e limits at 72 // 9 = 8'
 
 
 def test_feeder_fv1e_pause_holds_first_and_preserves_saved_instances(anon_wave, monkeypatch):
@@ -1116,7 +1217,7 @@ def test_feeder_refuses_missing_or_ambiguous_booking_fields(feeder_booking, fiel
         path.unlink()
     job = rowdir / "prepare" / ("job.sh" if field == "inner-timeout" else "submit-after-review.sh")
     text = job.read_text()
-    token = {"inner-timeout": "--kill-after=20s 540s ", "walltime": " -t10m ", "shape": "slot/[core=1;memory=6]"}[field]
+    token = {"inner-timeout": "--kill-after=20s 540s ", "walltime": " -t10m ", "shape": "slot/[core=1;memory=9]"}[field]
     assert token in text
     job.write_text(text.replace(token, "missing" if mutation == "missing" else token + token))
     with pytest.raises(ValueError, match="EXACTLY_ONE_MATCH"):

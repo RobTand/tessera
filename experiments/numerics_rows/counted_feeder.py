@@ -163,6 +163,28 @@ def run(canary, bookings):
     revision = read(canary / 'campaign.json')['tool_commit']
     from experiments.numerics_rows.prepare_split import check_canary
     check_canary(canary, revision, inputs[next(iter(rows))])
+    def fv1e_limit(host):
+        reason = None
+        try:
+            value = (canary / ('fv1e-limit-' + host)).read_text().strip()
+            if not re.fullmatch(r'[+-]?[0-9]+', value):
+                raise ValueError('non-integer')
+            limit = int(value)
+            if limit < 0:
+                raise ValueError('negative')
+        except (OSError, ValueError) as failure:
+            limit, reason = 0, str(failure) if isinstance(failure, ValueError) else type(failure).__name__
+        limit = min(limit, settings['fv1e_pool_memory_gib'] // settings['fv1e_prepare_memory_gib'])
+        limits = state.setdefault('fv1e_limits', {})
+        previous = limits.get(host, {})
+        current = {'limit': limit, 'reason': reason}
+        if previous != current:
+            limits[host] = current
+            event('FV1E_LIMIT_INVALID' if reason else 'FV1E_LIMIT', spark=host,
+                  old=previous.get('limit'), new=limit, reason=reason,
+                  effect='new fv1e prepares only; running prepares continue')
+        return limit
+
     def phase_job(module, phase, name='fv1', host='sparklina', collect=True):
         directory = rows[module]
         directory = Path(directory)
@@ -179,8 +201,6 @@ def run(canary, bookings):
             if not re.fullmatch(r'f[1-9A-HJ-NP-Za-km-z]+', jobid):
                 raise FeederError('SUBMISSION_ID_AMBIGUOUS')
         else:
-            if name != 'fv1' and (state['fv1e_admission'] != 'admitted' or (canary/('pause-fv1e-' + host)).exists()):
-                return False
             shape = dict(requested[module][phase])
             if name != 'fv1':
                 shape['memory_gib'] = settings['fv1e_prepare_memory_gib']
@@ -201,6 +221,14 @@ def run(canary, bookings):
             if name == 'fv1':
                 wait_dense_slot()
             drain = drain_ecores_before_submit(shape['memory_gib'], submit, 'tessera-1717:' + str(job))
+            if name != 'fv1':
+                active = json.loads(subprocess.check_output(
+                    [*client(name), 'jobs', '--json', '--filter=pending,running'], text=True,
+                    timeout=settings['client_timeout_seconds']))['jobs']
+                limit = fv1e_limit(host)
+                if (state['fv1e_admission'] != 'admitted' or len(active) >= limit
+                        or (canary/('pause-fv1e-' + host)).exists()):
+                    return False
             subprocess.run(['bash', str(job / 'submit-after-review.sh')], check=True)
             jobid = (job / 'jobid').read_text().strip()
         bound = read(job/'instance.json')
@@ -234,7 +262,7 @@ def run(canary, bookings):
         if state['fv1e_admission'] == 'stopped':
             return
         peak = anon_peak(jobid, name, settings)
-        if peak is not None and peak > settings['fv1e_anon_peak_limit_gib'] * 2**30:
+        if peak is not None and peak > settings['fv1e_prepare_memory_gib'] * 2**30 * 2 / 3:
             state['fv1e_admission'] = 'stopped'
             event('STOP', instance=name, id=jobid, anon_peak_bytes=peak, scope='new fv1e prepares only')
         elif peak is not None and state['fv1e_admission'] == 'pending':
@@ -244,8 +272,7 @@ def run(canary, bookings):
                     observe('fv1e-' + host)
                 except (OSError, subprocess.SubprocessError):
                     continue
-                slots = min(settings['fv1e_max_prepares_per_spark'], settings['fv1e_pool_memory_gib']//settings['fv1e_prepare_memory_gib'])
-                lanes += [('fv1e-' + host, host)] * slots
+                lanes.append(('fv1e-' + host, host))
             if lanes:
                 state['lanes'] = lanes + fv1_lanes
                 state['fv1e_admission'] = 'admitted'
@@ -264,7 +291,9 @@ def run(canary, bookings):
         if state['fv1e_admission'] == 'pending' and pending == [first]:
             state.update(fv1e_admission='stopped', fv1e_stop_reason='no valid anon sample in this wave')
             event('STOP', reason=state['fv1e_stop_reason'], scope='new fv1e prepares only')
-        e_lanes = [lane for lane in state['lanes'] if lane[0] != 'fv1' and not (canary/('pause-fv1e-' + lane[1])).exists()]
+        limits = {host: fv1e_limit(host) for host in ('sparklina', 'sparky')}
+        e_lanes = [lane for lane in dict.fromkeys(map(tuple, state['lanes'])) if lane[0] != 'fv1'
+                   and not (canary/('pause-fv1e-' + lane[1])).exists() for _ in range(limits[lane[1]])]
         if state['fv1e_admission'] == 'admitted' and 'ep_tensor_check' not in state and e_lanes:
             if not phase_job(first, 'prepare', *e_lanes[0]):
                 continue
@@ -321,7 +350,7 @@ if __name__ == '__main__':
         run(args.canary, args.bookings)
         (args.result_directory / 'last-error.txt').write_text('last_error=none\n')
     except Exception as error:
-        reason = str(error) if isinstance(error, FeederError) else type(error).__name__
-        (args.result_directory / 'last-error.txt').write_text('last_error=' + reason + '\n')
-        print('Counted feeder stopped: ' + reason, file=sys.stderr)
+        failure_reason = str(error) if isinstance(error, FeederError) else type(error).__name__
+        (args.result_directory / 'last-error.txt').write_text('last_error=' + failure_reason + '\n')
+        print('Counted feeder stopped: ' + failure_reason, file=sys.stderr)
         raise SystemExit(3) from None

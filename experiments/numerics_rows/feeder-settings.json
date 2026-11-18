@@ -1,10 +1,8 @@
 {
   "fv1_memory_without_fv1e_drain_gib": 36,
-  "fv1e_prepare_memory_gib": 6,
+  "fv1e_prepare_memory_gib": 9,
   "fv1e_pool_memory_gib": 72,
-  "fv1e_max_prepares_per_spark": 9,
   "fv1e_anon_peak_column": 9,
-  "fv1e_anon_peak_limit_gib": 4.0,
   "fv1e_jobmem_row_dirs": [
     "/mnt/shared/flux-migration/fleet-qual/jobmem/rows-anon",
     "/mnt/shared/flux-migration/fleet-qual/jobmem/rows"

@@ -1,6 +1,6 @@
 # Tessera plan-to-serve architecture
 
-Re-stamped 2026-11-18 for the #1717 dense v2 attempt checks under rule v2 L219-221 and L267.
+Re-stamped 2026-11-18 for the #1717 dense v2 attempt checks and Fleet fv1e ramp carry under rule v2 L219-221 and L267.
 Dense phase artifacts use ordered JSON lines for cases, scale arrays and file hashes.
 Each record binds its original full-row ordinal. A cut selection does not change its case IDs.
 Gate and diagnostics jobs each cover one module TP unit, with every required M configuration.
@@ -23,7 +23,10 @@ Join scans each distinct comparison stream once per receipt and checks every mat
 Each PASS unit must have a matching case. Join skips code proofs for cases outside those PASS units.
 The capture-group command starts K processes within one admitted GPU job.
 K is explicit. The canary and Fleet review must set memory and concurrency bookings.
-The lead's feeder branch reserves 9 GiB for prepare. Its rebase follows the CPU check.
+The counted feeder reserves 9 GiB per fv1e prepare within each Spark's 72 GiB pool.
+It reads Fleet's per-Spark limit file before each submit and counts pending and running jobs.
+Missing or invalid limits give zero lanes. Temporary files do not set limits.
+Limit changes and pause files affect new submits. The anonymous-memory STOP persists across restarts and limit raises.
 
 Re-stamped 2026-11-17 for the #1717 joined reference tool.
 Finite bounds sum exact dyadic integers. Scalar rounding uses exact integer ratios.
