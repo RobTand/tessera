@@ -716,3 +716,25 @@ def test_mapped_key_sees_a_write_to_the_same_inode(code, tmp_path):
     entries = {e[0]: e for e in map(json.loads, after)}
     assert before != after and entries[str(path)][3][:3] == [4, path.stat().st_ctime_ns, path.stat().st_ino]
     assert entries["/gone.so"] == ["/gone.so", "00:01", "9", None]
+
+
+def test_served_sass_and_origin_index_are_built_once_per_key(profiled, code, tmp_path, monkeypatch):
+    from experiments.t4_code import sass_dump
+    run, _, _, _ = profiled
+    parsed, indexed = [], []
+    parse, index = sass_dump.parse_sass, getattr(code, "origin_index", None)
+    monkeypatch.setattr(sass_dump, "parse_sass", lambda text: parsed.append(1) or parse(text))
+    monkeypatch.setattr(code, "origin_index", lambda *a, **k: indexed.append(bool(a)) or index(*a, **k), raising=False)
+    units = [run() for _ in range(3)]
+    assert len(parsed) == 1, "SASS_PARSED_PER_CASE"
+    assert indexed.count(True) == 1, "ORIGIN_INDEX_PER_CASE"
+    assert all(not u["unattested"] and len(u["kernel_origins"]) == 5 for u in units)
+    sass = tmp_path / "library.sass"
+    copy_ = sass.with_suffix(".new")
+    copy_.write_bytes(sass.read_bytes())
+    copy_.replace(sass)  # the same bytes in a new inode: the key changes, the hash still matches
+    run()
+    assert len(parsed) == 2
+    sass.write_text("another roster")
+    with pytest.raises(Invalid, match="SASS symbol list changed"):
+        run()
