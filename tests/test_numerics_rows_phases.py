@@ -2529,3 +2529,102 @@ def test_compare_attempt_history_refuses_invalid_input(tmp_path, fault):
     with pytest.raises(Invalid, match=f"^{reason}$"):
         dp.host_compare(args, receipt, PhaseTimes({}), groups)
     assert not receipt["row"]["finalization_finished"] and not (args.out / "compare").exists()
+
+
+TORN_RECORD_TOKEN = "TORN_LAST_RECORD_CANNOT_BE_RELEASED"
+TORN_FAIL_TOKEN = "FAIL_BEFORE_TORN_RECORD_WAS_LOST"
+
+
+def torn_attempt(root, phase, *, cause=False, outcome="PASS", stream="cases", fragment=b'{"id":', middle=False, sealed=False):
+    from experiments.numerics_rows.gpu_time import PhaseTimes
+
+    dp, api, args, receipt, groups = module_phase_pairs(root, case_sets=("all",), cuts=[{"size": 1, "rank": 0}])
+    if phase == "capture":
+        prior = args.capture_artifact[0].parent
+        later = prior.rename(prior.with_name("2"))
+        args.prepare_artifact[0], args.capture_artifact[0] = later / "prepare", later / "capture"
+    else:
+        key = "compare-" + api.json_digest(["A", "compare"])
+        prior = root / "units" / key / "attempts/1"
+        args.out = args.phase_root = prior.with_name("2") / "compare"
+    key = prior.parents[1].name
+    artifact = api.Artifact(prior / phase, phase, api.identities(receipt))
+    scopes = artifact.document["scopes"] = dp.scopes(groups)
+    scope = scopes[0]
+    case = artifact.add(scope, scope["unit_key"][4], "dense", {}, completion=True, outcome=outcome)
+    if sealed:
+        artifact.finish()
+    path = artifact.root / (stream + ".jsonl")
+    with path.open("ab") as handle:
+        offset = handle.tell()
+        handle.write(fragment)
+    if middle:
+        artifact.record("cases", case)
+    if cause:
+        (prior / "lead-cause.json").write_text(json.dumps({"unit": key, "attempt": 1, "cause": "The job ended during the append."}))
+
+    def compare():
+        dp.host_compare(args, receipt, PhaseTimes({}), groups)
+        saved = json.loads((args.out / "numerics_row.json").read_text())
+        return saved, next(a for a in saved["attempts"]["listing"] if a["unit"] == key and a["attempt"] == 1)
+
+    return compare, key, offset, scope["unit_key"]
+
+
+def compare_torn_attempt(compare, token):
+    try:
+        return compare()
+    except json.JSONDecodeError as error:
+        raise AssertionError(token) from error
+
+
+def test_torn_last_record_leaves_an_open_stopped_attempt(tmp_path):
+    for phase, stream in (("capture", "cases"), ("compare", "cases"), ("capture", "files"), ("compare", "arrays")):
+        compare, key, offset, _ = torn_attempt(tmp_path / phase / stream, phase, stream=stream)
+        receipt, prior = compare_torn_attempt(compare, TORN_RECORD_TOKEN)
+        assert receipt["row"]["finalization_finished"] and receipt["row"]["outcome"] == "STOPPED", TORN_RECORD_TOKEN
+        assert (prior["state"], prior["cause_record"]) == ("STOPPED", None), TORN_RECORD_TOKEN
+        assert prior["stop_cause"] == f"torn last case record at byte offset {offset} in {phase}/{stream}.jsonl", TORN_RECORD_TOKEN
+        assert all(f"open STOPPED attempt {key}/1" in u["reasons"] for u in receipt["units"]), TORN_RECORD_TOKEN
+
+
+def test_lead_cause_releases_a_torn_last_record_for_a_later_pass(tmp_path):
+    for phase in ("capture", "compare"):
+        compare, key, _, _ = torn_attempt(tmp_path / phase, phase, cause=True)
+        receipt, prior = compare_torn_attempt(compare, TORN_RECORD_TOKEN)
+        assert receipt["row"]["finalization_finished"] and receipt["row"]["outcome"] == "PASS", TORN_RECORD_TOKEN
+        assert prior["state"] == "STOPPED" and prior["cause_record"], TORN_RECORD_TOKEN
+        assert all(u["outcome"] == "PASS" for u in receipt["units"]), TORN_RECORD_TOKEN
+        if phase == "capture":
+            assert any(a["unit"] == key and a["attempt"] == 2 and a["state"] == "FINISHED" for a in receipt["attempts"]["listing"]), TORN_RECORD_TOKEN
+
+
+def test_fail_before_a_torn_last_record_stands(tmp_path):
+    for phase in ("capture", "compare"):
+        compare, _, _, unit_id = torn_attempt(tmp_path / phase, phase, cause=True, outcome="FAIL")
+        receipt, prior = compare_torn_attempt(compare, TORN_FAIL_TOKEN)
+        assert receipt["row"]["outcome"] == prior["state"] == "FAIL", TORN_FAIL_TOKEN
+        failed, = [u for u in receipt["units"] if u["outcome"] == "FAIL"]
+        assert failed["unit_id"] == unit_id and prior["cause_record"], TORN_FAIL_TOKEN
+        assert all(u["outcome"] == "PASS" for u in receipt["units"] if u is not failed), TORN_FAIL_TOKEN
+
+
+def test_torn_middle_record_is_invalid(tmp_path):
+    for phase in ("capture", "compare"):
+        compare, _, offset, _ = torn_attempt(tmp_path / phase, phase, fragment=b'{"id":\n', middle=True)
+        with pytest.raises(Invalid, match=f"invalid phase record at byte offset {offset}"):
+            compare()
+
+
+def test_malformed_last_record_with_newline_is_invalid(tmp_path):
+    for phase in ("capture", "compare"):
+        compare, _, offset, _ = torn_attempt(tmp_path / phase, phase, fragment=b'{"id":\n')
+        with pytest.raises(Invalid, match=f"invalid phase record at byte offset {offset}"):
+            compare()
+
+
+def test_torn_last_record_in_a_sealed_phase_is_invalid(tmp_path):
+    for phase in ("capture", "compare"):
+        compare, _, offset, _ = torn_attempt(tmp_path / phase, phase, sealed=True)
+        with pytest.raises(Invalid, match=f"invalid phase record at byte offset {offset}"):
+            compare()

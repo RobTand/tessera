@@ -9,6 +9,9 @@ from experiments.numerics_rows.common import Invalid, sha256, write_json
 from experiments.numerics_rows.launch_state import json_digest
 
 
+PHASE_STREAMS = ("cases", "arrays", "files")
+
+
 def identities(receipt):
     """Select all common rule bindings, independent of phase-local measurements."""
     result = {section: {key: copy.deepcopy(receipt[section][key]) for key in keys} for section, keys in {
@@ -29,15 +32,34 @@ def unit_scope(unit, wire_sha256):
     return {"unit_key": unit_identity(unit), "module": unit["module"], "cut": copy.deepcopy(unit["tp"]), "wire_sha256": wire_sha256}
 
 
-def records(root, name, document=None):
+def records(root, name, document=None, *, torn=None):
     count, digest = 0, hashlib.sha256()
-    with (Path(root) / (name + ".jsonl")).open("rb") as stream:
+    path = Path(root) / (name + ".jsonl")
+    with path.open("rb") as stream:
         for line in stream:
             digest.update(line)
             count += 1
-            yield json.loads(line)
+            try:
+                record = json.loads(line)
+            except (json.JSONDecodeError, UnicodeDecodeError) as error:
+                offset = stream.tell() - len(line)
+                location = f"at byte offset {offset} in {path.parent.name}/{path.name}"
+                if document is None and torn is not None and not line.endswith(b"\n"):
+                    torn.append(f"torn last case record {location}")
+                    return
+                raise Invalid(f"invalid phase record {location}") from error
+            yield record
     if document is not None and document["streams"][name] != {"count": count, "sha256": digest.hexdigest()}:
         raise Invalid("row phase stream digest or count differs")
+
+
+def attempt_cases(root, torn, document=None):
+    for name in PHASE_STREAMS:
+        present = name in document["streams"] if document is not None else (root / (name + ".jsonl")).is_file()
+        if present:
+            for record in records(root, name, document, torn=torn):
+                if name == "cases":
+                    yield record
 
 
 class Artifact:
@@ -51,10 +73,13 @@ class Artifact:
                          "completion": False, "scopes": [], "ordinal_start": 0, "case_set": "all", "streams": {}}
 
     def record(self, name, value):
-        if name == "cases":
-            self.case_ids.update((value["id"] + "\n").encode("ascii"))
-        with (self.root / (name + ".jsonl")).open("a") as stream:
-            stream.write(json.dumps(value, sort_keys=True, separators=(",", ":"), allow_nan=False) + "\n")
+        case_id = (value["id"] + "\n").encode("ascii") if name == "cases" else None
+        data = (json.dumps(value, sort_keys=True, separators=(",", ":"), allow_nan=False) + "\n").encode("utf-8")
+        with (self.root / (name + ".jsonl")).open("ab", buffering=0) as stream:
+            if stream.write(data) != len(data):
+                raise OSError("short phase record append")
+        if case_id is not None:
+            self.case_ids.update(case_id)
         self.document["streams"].setdefault(name, {"count": 0})["count"] += 1
 
     def file(self, name):
@@ -143,7 +168,7 @@ def read(root, phase, common, scopes, *, check_case=lambda case: None, check_arr
         raise Invalid("row phase is missing, incomplete or has the wrong kind")
     if document.get("identities") != common or document.get("scopes") != scopes:
         raise Invalid("row phase common identities, module or cut differ")
-    if set(document["streams"]) - {"cases", "arrays", "files"}:
+    if document["streams"].keys() - PHASE_STREAMS:
         raise Invalid("row phase has an unknown stream")
     def files():
         for reference in records(root, "files", document) if "files" in document["streams"] else ():

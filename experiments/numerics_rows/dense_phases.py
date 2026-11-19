@@ -10,7 +10,7 @@ import pstats
 import time
 
 from experiments.numerics_rows.common import error_text, OUTCOMES, BoundaryError, BoundaryRecorder, Invalid, Unattested, sha256, write_json
-from experiments.numerics_rows.phase_artifact import Artifact, identities, unit_scope, read, payload, check_capture, cases, records
+from experiments.numerics_rows.phase_artifact import Artifact, identities, unit_scope, read, payload, check_capture, cases, records, attempt_cases
 from experiments.numerics_rows.phase_lifecycle import Progress
 from experiments.numerics_rows.launch_state import json_digest
 from experiments.numerics_rows import row
@@ -464,6 +464,11 @@ def failed_case_unit(case, common, expected, *, checked=False):
         return attempt_unit_key(case["scope"])
 
 
+def attempt_stop_cause(status, torn):
+    cause = status.get("stop_cause")
+    return "\n".join(([cause] if cause else []) + torn) if torn else cause
+
+
 def read_compare_attempts(directory, expected, common, running_attempt):
     key = "compare-" + json_digest([expected[0]["module"], "compare"])
     expected_keys = {attempt_unit_key(scope) for scope in expected}
@@ -480,8 +485,11 @@ def read_compare_attempts(directory, expected, common, running_attempt):
             digest = sha256(path)
         finished = units is not None and status.get("finalization_finished") is True
         found = {identity for identity, unit in (units or {}).items() if unit.get("findings") or unit.get("outcome") == "FAIL"}
-        if not finished and (root / "cases.jsonl").is_file():
-            for case in records(root, "cases"):
+        torn = []
+        if not finished:
+            phase = root / "phase.json"
+            document = json.loads(phase.read_text()) if phase.is_file() else {}
+            for case in attempt_cases(root, torn, document if document.get("completion") is True else None):
                 identity = failed_case_unit(case, common, expected)
                 if identity is not None:
                     found.add(identity)
@@ -492,7 +500,7 @@ def read_compare_attempts(directory, expected, common, running_attempt):
             failures.setdefault(identity, f"FAIL compare attempt {key}/{number}")
         status = {} if finished else status
         listing.append({"unit": key, "attempt": number, "receipt_sha256": digest, "outcome": status.get("outcome"),
-            "stop_cause": status.get("stop_cause"), "cause_record": cause,
+            "stop_cause": attempt_stop_cause(status, torn), "cause_record": cause,
             "state": "FAIL" if found else "FINISHED" if finished else "STOPPED"})
     return listing, failures, stopped
 
@@ -550,6 +558,7 @@ def inspect_attempts(directory, key, expected, common, part, *, check_cases=Fals
     for attempt in attempt_paths(directory):
         number = int(attempt.name)
         documents, evidence, found, attempt_row, finished = {}, {}, {}, {}, True
+        torn = []
         checks = CompareChecks() if check_cases else None
         for phase in ("prepare", "capture"):
             root = attempt / phase
@@ -594,8 +603,8 @@ def inspect_attempts(directory, key, expected, common, part, *, check_cases=Fals
                     attempt_row = phase_row
                 found.update({k: f"FAIL attempt {key}/{number}" for k, u in (units or {}).items() if u.get("findings") or u.get("outcome") == "FAIL"})
             finished &= phase in documents
-            if phase not in documents and cases.is_file():
-                for case in records(root, "cases"):
+            if not complete:
+                for case in attempt_cases(root, torn):
                     inspect_case(case)
             evidence[phase + "_cases"] = sha256(cases) if cases.is_file() else None
         cause = lead_cause(attempt, key, number, not finished and found.keys() != expected_keys)
@@ -606,7 +615,7 @@ def inspect_attempts(directory, key, expected, common, part, *, check_cases=Fals
             stopped.update({identity: f"open STOPPED attempt {key}/{number}" for identity in expected_keys - found.keys()})
         failures.update(found)
         listing.append({"unit": key, "attempt": number, "state": "FAIL" if found else "FINISHED" if finished else "STOPPED", "phases": evidence,
-            "outcome": attempt_row.get("outcome"), "stop_cause": attempt_row.get("stop_cause"),
+            "outcome": attempt_row.get("outcome"), "stop_cause": attempt_stop_cause(attempt_row, torn),
             "cause_record": cause})
     if newest is None:
         stopped.update({identity: f"no finished attempt: {key}" for identity in expected_keys - failures.keys() - stopped.keys()})
