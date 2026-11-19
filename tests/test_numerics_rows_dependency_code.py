@@ -510,3 +510,169 @@ def test_profile_refuses_unaudited_mapped_device_owners(profiled, code, tmp_path
     assert unit["unattested"]
     if mutation in ("shared_name", "unaudited_only"):
         assert any(any(c["origin"] == "unaudited" for c in r["candidates"]) for r in unit["unresolved_kernel_origins"])
+
+
+EMPTY_ROSTERS = Path(__file__).parent.parent / "experiments" / "numerics_rows" / "empty-rosters.json"
+FATBIN_ELF = dict(extra_sections=[(".nv_fatbin", 1, 2, b"device code", 11)])
+EMPTY_SYMBOLS = "\nFatbin elf code:\n================\narch = sm_75\ncode version = [1,8]\nhost = linux\ncompile_size = 64bit\ncompressed\n\nsymbols:\n"
+
+
+def replay_mapped(profiled, tmp_path, monkeypatch, files, calls=None, after_first=None):
+    """Map each {name: (file bytes, -symbols listing)} and run the real audit; cuobjdump replays the listing of the
+    bytes it is given to read (the verified descriptor or a path); every other call runs."""
+    from tessera._dev import native_identity
+    import hashlib, os, subprocess
+    run, _, _, audit = profiled
+    monkeypatch.setattr(audit, "unaudited_libraries", type(audit).unaudited_libraries.__get__(audit))
+    paths = {}
+    for name, (data, _) in files.items():
+        paths[name] = tmp_path / name
+        paths[name].write_bytes(data)
+    stats = {name: path.stat() for name, path in paths.items()}
+    maps = "".join(f"1000-2000 r-xp 00000000 {os.major(s.st_dev):x}:{os.minor(s.st_dev):x} {s.st_ino} {paths[n]}\n"
+                   for n, s in stats.items())
+    original = Path.read_text
+    monkeypatch.setattr(Path, "read_text", lambda self, *a, **k: maps if str(self) == "/proc/self/maps" else original(self, *a, **k))
+    device = next(iter(stats.values())).st_dev
+    monkeypatch.setattr(native_identity, "mapped_file_device", lambda fd: (os.major(device), os.minor(device)))
+    by_content = {hashlib.sha256(data).hexdigest(): listing for data, listing in files.values()}
+    real, pending = subprocess.run, [after_first] if after_first else []
+    def cuobjdump(argv, *args, **kwargs):
+        listing = by_content.get(hashlib.sha256(Path(argv[-1]).read_bytes()).hexdigest()) if argv[0] == "cuobjdump" else None
+        if listing is None:
+            return real(argv, *args, **kwargs)
+        if calls is not None:
+            calls.append(argv[-1])
+        while pending:
+            pending.pop()(paths)
+        return subprocess.CompletedProcess(argv, 0, listing if kwargs.get("text") else listing.encode(), "" if kwargs.get("text") else b"")
+    monkeypatch.setattr(subprocess, "run", cuobjdump)
+    unit = run()
+    return unit, unit["dependency_code"].get("proved_empty_rosters", []), paths
+
+
+def reviewed(code, tmp_path, monkeypatch, data):
+    """A reviewed-proof file that lists exactly `data`, in the real file's form."""
+    import hashlib
+    proofs = tmp_path / "empty-rosters.json"
+    entry = {"elf": 1, "ptx": 0, "sass_functions": 0, "image_paths": ["/image/lib.so"],
+             "listings_sha256": {"symbols": "a" * 64, "lelf": "b" * 64, "lptx": "c" * 64}}
+    proofs.write_text(json.dumps({"files": {hashlib.sha256(data).hexdigest(): entry}}))
+    monkeypatch.setattr(code, "EMPTY_ROSTERS", proofs, raising=False)
+    return proofs
+
+
+def test_empty_roster_with_a_reviewed_proof_is_accepted_and_recorded(profiled, code, tmp_path, monkeypatch):
+    import hashlib
+    from tests.test_numerics_rows_receipts import elf_bytes
+    data = elf_bytes(**FATBIN_ELF)
+    proofs = reviewed(code, tmp_path, monkeypatch, data)
+    unit, recorded, paths = replay_mapped(profiled, tmp_path, monkeypatch, {"mapped.so": (data, EMPTY_SYMBOLS)})
+    assert not unit["unattested"], unit["unattested"]
+    assert recorded == [{"path": str(paths["mapped.so"]), "sha256": hashlib.sha256(data).hexdigest(), "elf_count": 1, "ptx_count": 0,
+                         "evidence_sha256": hashlib.sha256(proofs.read_bytes()).hexdigest(),
+                         "symbols_sha256": "a" * 64, "lelf_sha256": "b" * 64, "lptx_sha256": "c" * 64}], unit["unattested"]
+
+
+def test_empty_roster_without_a_reviewed_proof_stays_refused(profiled, tmp_path, monkeypatch):
+    """Any other empty roster refuses, whatever its listings say: the bytes are not a reviewed entry."""
+    import hashlib
+    from tests.test_numerics_rows_receipts import elf_bytes
+    data = elf_bytes(**FATBIN_ELF)
+    unit, recorded, paths = replay_mapped(profiled, tmp_path, monkeypatch, {"mapped.so": (data, EMPTY_SYMBOLS)})
+    assert recorded == [], unit["unattested"]
+    assert unit["unattested"][-1] == (f"mapped file or device-code roster unavailable: {paths['mapped.so']}: Unattested: mapped "
+                                      f"device-code roster is empty and sha256 {hashlib.sha256(data).hexdigest()} has no reviewed proof"), unit["unattested"]
+
+
+def test_reviewed_empty_rosters_are_the_proved_files():
+    """The evidence: five IMG-N files proved by Flux jobs to hold one ELF with no function, no PTX, no SASS function.
+    libcudnn_ext.so.9.26.0 (22 sm_121 PTX) is not among them."""
+    assert EMPTY_ROSTERS.is_file(), "REVIEWED_EMPTY_ROSTERS_MISSING"
+    proofs = json.loads(EMPTY_ROSTERS.read_text())
+    assert sorted(h[:8] for h in proofs["files"]) == ["3053d32e", "58d0f3c5", "5e2be143", "7bceb090", "af44d604"]
+    assert not any(h.startswith("785ba5ca") for h in proofs["files"])
+    assert proofs["evidence_jobs"] == {"roster_diag": "fHmSFFMKeP", "fatbin_diag": "fHorQAsQk7", "sass_functions": "fHsHu8S4jy", "listings": "fHrdtcL1GK"}
+    assert all((e["elf"], e["ptx"], e["sass_functions"]) == (1, 0, 0) for e in proofs["files"].values())
+    cufft = next(e for h, e in proofs["files"].items() if h.startswith("58d0f3c5"))
+    assert cufft["listings_sha256"]["symbols"] == "c5aeee84b93be31cd9fadcc0d559b2c16609bc42b3eb03ee675e71110833c52d"
+
+
+def test_roster_lists_the_verified_inode_not_the_path(profiled, code, tmp_path, monkeypatch):
+    """cuobjdump reads /proc/<pid>/fd/<n> of the checked open file: a path swapped after the check cannot reach it."""
+    import os
+    from tests.test_numerics_rows_receipts import elf_bytes
+    data, calls = elf_bytes(**FATBIN_ELF), []
+    reviewed(code, tmp_path, monkeypatch, data)
+    replay_mapped(profiled, tmp_path, monkeypatch, {"mapped.so": (data, EMPTY_SYMBOLS)}, calls)
+    assert calls and all(c.startswith(f"/proc/{os.getpid()}/fd/") for c in calls), f"LISTED_BY_PATH: {calls}"
+
+
+@pytest.mark.parametrize("change", ("rewritten", "grown"))
+def test_empty_roster_refuses_bytes_that_change_while_read(profiled, code, tmp_path, monkeypatch, change):
+    """The file changes in place (same inode) after the first listing: the hash, the snapshot listing and the mapped
+    inode no longer hold the same bytes, so the reviewed proof is not used. A grown file is found even when each
+    read returns at most the original length."""
+    import os
+    from tests.test_numerics_rows_receipts import elf_bytes
+    data = elf_bytes(**FATBIN_ELF)
+    reviewed(code, tmp_path, monkeypatch, data)
+    if change == "grown":
+        read = os.read
+        monkeypatch.setattr(os, "read", lambda fd, n: read(fd, min(n, len(data))))
+    def rewrite(paths):
+        with open(paths["mapped.so"], "r+b" if change == "rewritten" else "ab") as stream:
+            stream.write(b"\0" * 8)
+    unit, recorded, paths = replay_mapped(profiled, tmp_path, monkeypatch, {"mapped.so": (data, EMPTY_SYMBOLS)}, after_first=rewrite)
+    assert recorded == [], unit["unattested"]
+    assert unit["unattested"][-1].startswith(f"mapped file or device-code roster unavailable: {paths['mapped.so']}: Unattested: "
+                                             "mapped device-code roster changed while it was read"), unit["unattested"]
+
+
+def test_roster_proof_survives_another_files_failure(profiled, code, tmp_path, monkeypatch):
+    from tests.test_numerics_rows_receipts import elf_bytes
+    data = elf_bytes(**FATBIN_ELF)
+    reviewed(code, tmp_path, monkeypatch, data)
+    unit, recorded, paths = replay_mapped(profiled, tmp_path, monkeypatch, {
+        "a.so": (data, EMPTY_SYMBOLS), "b.so": (b"unreadable ELF sections", "")})
+    assert [r["path"] for r in recorded] == [str(paths["a.so"])], unit["unattested"]
+    assert unit["unattested"][-1] == (f"mapped file or device-code roster unavailable: {paths['b.so']}: "
+                                      "ValueError: unsupported ELF encoding"), unit["unattested"]
+
+
+def test_roster_reads_the_symbol_type_field(code, monkeypatch):
+    """A data symbol whose name holds STT_FUNC, or a bare STT_FUNC line, is not a function; a failed listing names its
+    flag and exit code, also when its stderr is not UTF-8."""
+    import subprocess
+    listing = EMPTY_SYMBOLS + "STT_OBJECT STB_LOCAL STV_DEFAULT foo.STT_FUNC\nSTT_FUNC\n"
+    monkeypatch.setattr(code.subprocess, "run", lambda argv, **kwargs: subprocess.CompletedProcess(argv, 0, listing, ""))
+    monkeypatch.setattr(code.subprocess, "check_output", lambda argv, input, **kwargs: input)  # c++filt: names unchanged
+    assert code.image_symbols("/image/lib.so") == [], "DATA_SYMBOL_NAMED_STT_FUNC_COUNTED"
+    monkeypatch.setattr(code.subprocess, "run", lambda argv, **kwargs: subprocess.CompletedProcess(argv, 7, "", b"err\xff\n".decode(errors="replace")))
+    with pytest.raises(code.Unattested, match=r"^image CUDA symbol roster unavailable: /image/lib\.so: cuobjdump -symbols exit 7: err"):
+        code.image_symbols("/image/lib.so")
+
+
+def test_case_status_keeps_the_roster_cause_before_a_later_effect():
+    from experiments.numerics_rows import dense_phases
+    assert hasattr(dense_phases, "case_status"), "CASE_STATUS_PREFERS_ROSTER_CAUSE"
+    roster = "mapped file or device-code roster unavailable: /x.so: Unattested: mapped device-code roster is empty"
+    unit = {"findings": [], "invalid": [], "cuda_errors": [],
+            "unattested": [roster, "profiled kernel origin is missing or ambiguous", "NOT_EXERCISED: lane"]}
+    assert dense_phases.case_status(unit) == {"findings": [], "invalid": [], "unattested": [roster], "cuda_errors": []}
+    unit["unattested"] = ["profiled kernel origin is missing or ambiguous", "NOT_EXERCISED: lane"]
+    assert dense_phases.case_status(unit)["unattested"] == ["NOT_EXERCISED: lane"]
+
+
+@pytest.mark.parametrize("mutation", ("unreadable_roster", "unreadable_file"))
+def test_roster_refusal_names_its_failing_step(profiled, code, tmp_path, monkeypatch, mutation):
+    """One reason line per failure, with the error class and the tool's first error line."""
+    from tests.test_numerics_rows_receipts import elf_bytes
+    data = elf_bytes(**FATBIN_ELF) if mutation == "unreadable_roster" else b"unreadable ELF sections"
+    if mutation == "unreadable_roster":
+        def unreadable(path): raise code.Unattested("image CUDA symbol roster unavailable: first line\nsecond line")
+        monkeypatch.setattr(code, "image_symbols", unreadable)
+    unit, _, paths = replay_mapped(profiled, tmp_path, monkeypatch, {"mapped.so": (data, {})})
+    cause = {"unreadable_roster": "Unattested: image CUDA symbol roster unavailable: first line",
+             "unreadable_file": "ValueError: unsupported ELF encoding"}[mutation]
+    assert unit["unattested"][-1] == f"mapped file or device-code roster unavailable: {paths['mapped.so']}: {cause}", unit["unattested"]
