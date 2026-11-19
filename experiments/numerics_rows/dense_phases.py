@@ -425,15 +425,10 @@ def attempt_paths(directory):
 
 def checked_attempt_receipt(receipt, common, expected, has_phase_evidence, mismatch):
     status, units = receipt.get("row", {}), unit_map(receipt["units"])
-    bound = "commit" in receipt.get("tessera", {})
-    if (bound or units) and units.keys() != expected:
-        raise Invalid(mismatch)
-    if bound:
-        if (not all(section in receipt and (not isinstance(fields, dict)
-                    or isinstance(receipt[section], dict) and fields.keys() <= receipt[section].keys())
-                    for section, fields in common.items()) or identities(receipt) != common):
+    if has_phase_evidence or "commit" in receipt.get("tessera", {}):
+        if units.keys() != expected or identities(receipt) != common:
             raise Invalid(mismatch)
-    elif (has_phase_evidence or status.get("finalization_finished") is True
+    elif (units and units.keys() != expected or status.get("finalization_finished") is True
           or status.get("outcome") in ("PASS", "FAIL") or status.get("exit_status") == 0):
         raise Invalid(mismatch)
     return status, units

@@ -434,6 +434,9 @@ def gate_worker(root, monkeypatch):
     paired = {u["phase"]: p for u, p in zip(config["templates"], directories) if u.get("size") == 1 and u["case_set"] == "gate"}
     attempt = root / "campaign/units" / paired["prepare"].parent.name / "attempts/1"
     monkeypatch.setattr(sys, "path", sys.path[:])
+    check_output = row.subprocess.check_output
+    monkeypatch.setattr(row.subprocess, "check_output", lambda command, **kw: commit + "\n"
+                        if command == ["git", "rev-parse", "HEAD"] else check_output(command, **kw))
 
     def run(phase):
         out = attempt / phase

@@ -2300,7 +2300,7 @@ def test_finished_attempts_list_null_outcome_and_stop_cause(tmp_path):
     args.out.mkdir(parents=True)
     dp.host_compare(args, receipt, PhaseTimes({}), groups)
     saved = json.loads((args.out / "numerics_row.json").read_text())
-    history = {a["unit"]: (a["state"], a["outcome"], a["stop_cause"]) for a in saved["attempts"]["listing"]}
+    history = {a["unit"]: (a.get("state"), a.get("outcome"), a.get("stop_cause")) for a in saved["attempts"]["listing"]}
     assert history == {key: ("FINISHED", None, None),
         args.prepare_artifact[0].parents[2].name: ("FINISHED", None, None)}, token
 
