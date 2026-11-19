@@ -14608,12 +14608,21 @@ ts_py_test(
     library = ":test_numerics_capture_templates_lib",
     data = [
         "//:pyproject.toml",
+        "//experiments:build_identity.sh",
         "//experiments:numerics_rows/templates/job.sh",
+        "//experiments:runtime_image.sh",
+        "//experiments:serve_and_dump_kl.sh",
+        "//experiments:serve_lock.sh",
+        "//experiments:serve_metrics.sh",
         "//experiments:t8r_speed/bench_t8r.sh",
         "//experiments:t8r_speed/build_ext.sh",
+        "//experiments:tessera_plugin_served.sh",
+        "//src/tessera:serving/runtime_contract.json",
     ],
     deps = [
         "//experiments:glm53_508_graph_qual/eq-member-508",
+        "//experiments:retarget_checkpoint_to_plugin",
+        "//experiments:serving_compile_divergence",
         "//experiments:t8r_speed/bench_class_dispatch",
         "//experiments:t8r_speed/bench_uniform_production_arm",
         "//experiments:t8r_speed/finalize_native_build",
@@ -14634,12 +14643,21 @@ ts_py_test(
     library = ":test_numerics_capture_templates_lib",
     data = [
         "//:pyproject.toml",
+        "//experiments:build_identity.sh",
         "//experiments:numerics_rows/templates/job.sh",
+        "//experiments:runtime_image.sh",
+        "//experiments:serve_and_dump_kl.sh",
+        "//experiments:serve_lock.sh",
+        "//experiments:serve_metrics.sh",
         "//experiments:t8r_speed/bench_t8r.sh",
         "//experiments:t8r_speed/build_ext.sh",
+        "//experiments:tessera_plugin_served.sh",
+        "//src/tessera:serving/runtime_contract.json",
     ],
     deps = [
         "//experiments:glm53_508_graph_qual/eq-member-508",
+        "//experiments:retarget_checkpoint_to_plugin",
+        "//experiments:serving_compile_divergence",
         "//experiments:t8r_speed/bench_class_dispatch",
         "//experiments:t8r_speed/bench_uniform_production_arm",
         "//experiments:t8r_speed/finalize_native_build",
@@ -14665,7 +14683,7 @@ ts_py_library(
         "//experiments:numerics_rows/gpu_time",
         "//experiments:numerics_rows/launch_state",
         "//experiments:numerics_rows/prepare_split",
-        ":test_numerics_unit_templates_lib",
+        ":test_numerics_feeder_graph_lib_cycle",
     ],
 )
 
@@ -14676,6 +14694,7 @@ ts_py_test(
     data = [
         "//:pyproject.toml",
         "//experiments:build_identity.sh",
+        "//experiments:numerics_rows/templates/job.sh",
         "//experiments:runtime_image.sh",
         "//experiments:serve_and_dump_kl.sh",
         "//experiments:serve_lock.sh",
@@ -14710,6 +14729,7 @@ ts_py_test(
     data = [
         "//:pyproject.toml",
         "//experiments:build_identity.sh",
+        "//experiments:numerics_rows/templates/job.sh",
         "//experiments:runtime_image.sh",
         "//experiments:serve_and_dump_kl.sh",
         "//experiments:serve_lock.sh",
@@ -14757,12 +14777,21 @@ ts_py_test(
     library = ":test_numerics_dense_streams_lib",
     data = [
         "//:pyproject.toml",
+        "//experiments:build_identity.sh",
         "//experiments:numerics_rows/templates/job.sh",
+        "//experiments:runtime_image.sh",
+        "//experiments:serve_and_dump_kl.sh",
+        "//experiments:serve_lock.sh",
+        "//experiments:serve_metrics.sh",
         "//experiments:t8r_speed/bench_t8r.sh",
         "//experiments:t8r_speed/build_ext.sh",
+        "//experiments:tessera_plugin_served.sh",
+        "//src/tessera:serving/runtime_contract.json",
     ],
     deps = [
         "//experiments:glm53_508_graph_qual/eq-member-508",
+        "//experiments:retarget_checkpoint_to_plugin",
+        "//experiments:serving_compile_divergence",
         "//experiments:t8r_speed/bench_class_dispatch",
         "//experiments:t8r_speed/bench_uniform_production_arm",
         "//experiments:t8r_speed/finalize_native_build",
@@ -14783,12 +14812,21 @@ ts_py_test(
     library = ":test_numerics_dense_streams_lib",
     data = [
         "//:pyproject.toml",
+        "//experiments:build_identity.sh",
         "//experiments:numerics_rows/templates/job.sh",
+        "//experiments:runtime_image.sh",
+        "//experiments:serve_and_dump_kl.sh",
+        "//experiments:serve_lock.sh",
+        "//experiments:serve_metrics.sh",
         "//experiments:t8r_speed/bench_t8r.sh",
         "//experiments:t8r_speed/build_ext.sh",
+        "//experiments:tessera_plugin_served.sh",
+        "//src/tessera:serving/runtime_contract.json",
     ],
     deps = [
         "//experiments:glm53_508_graph_qual/eq-member-508",
+        "//experiments:retarget_checkpoint_to_plugin",
+        "//experiments:serving_compile_divergence",
         "//experiments:t8r_speed/bench_class_dispatch",
         "//experiments:t8r_speed/bench_uniform_production_arm",
         "//experiments:t8r_speed/finalize_native_build",
@@ -14814,7 +14852,7 @@ ts_py_library(
         "//experiments:numerics_rows/common",
         "//experiments:numerics_rows/gpu_time",
         "//experiments:numerics_rows/launch_state",
-        ":test_numerics_rows_phases_lib",
+        ":test_numerics_feeder_graph_lib_cycle",
     ],
 )
 
@@ -14897,7 +14935,7 @@ ts_py_library(
         "//experiments:numerics_rows/batch_evaluator_cycle",
         "//experiments:numerics_rows/common",
         "//experiments:numerics_rows/join",
-        ":test_numerics_rows_phases_lib",
+        ":test_numerics_feeder_graph_lib_cycle",
         ":test_numerics_rows_receipts_lib",
     ],
 )
@@ -14905,15 +14943,24 @@ ts_py_library(
 ts_py_test(
     name = "test_numerics_feeder_graph",
     path = "tests/test_numerics_feeder_graph.py",
-    library = ":test_numerics_feeder_graph_lib",
+    library = ":test_numerics_feeder_graph_lib_cycle",
     data = [
         "//:pyproject.toml",
+        "//experiments:build_identity.sh",
         "//experiments:numerics_rows/templates/job.sh",
+        "//experiments:runtime_image.sh",
+        "//experiments:serve_and_dump_kl.sh",
+        "//experiments:serve_lock.sh",
+        "//experiments:serve_metrics.sh",
         "//experiments:t8r_speed/bench_t8r.sh",
         "//experiments:t8r_speed/build_ext.sh",
+        "//experiments:tessera_plugin_served.sh",
+        "//src/tessera:serving/runtime_contract.json",
     ],
     deps = [
         "//experiments:glm53_508_graph_qual/eq-member-508",
+        "//experiments:retarget_checkpoint_to_plugin",
+        "//experiments:serving_compile_divergence",
         "//experiments:t8r_speed/bench_class_dispatch",
         "//experiments:t8r_speed/bench_uniform_production_arm",
         "//experiments:t8r_speed/finalize_native_build",
@@ -14931,15 +14978,24 @@ ts_py_test(
 ts_py_test(
     name = "test_numerics_feeder_graph.bytes",
     path = "tests/test_numerics_feeder_graph.py",
-    library = ":test_numerics_feeder_graph_lib",
+    library = ":test_numerics_feeder_graph_lib_cycle",
     data = [
         "//:pyproject.toml",
+        "//experiments:build_identity.sh",
         "//experiments:numerics_rows/templates/job.sh",
+        "//experiments:runtime_image.sh",
+        "//experiments:serve_and_dump_kl.sh",
+        "//experiments:serve_lock.sh",
+        "//experiments:serve_metrics.sh",
         "//experiments:t8r_speed/bench_t8r.sh",
         "//experiments:t8r_speed/build_ext.sh",
+        "//experiments:tessera_plugin_served.sh",
+        "//src/tessera:serving/runtime_contract.json",
     ],
     deps = [
         "//experiments:glm53_508_graph_qual/eq-member-508",
+        "//experiments:retarget_checkpoint_to_plugin",
+        "//experiments:serving_compile_divergence",
         "//experiments:t8r_speed/bench_class_dispatch",
         "//experiments:t8r_speed/bench_uniform_production_arm",
         "//experiments:t8r_speed/finalize_native_build",
@@ -14955,16 +15011,38 @@ ts_py_test(
 )
 
 ts_py_library(
-    name = "test_numerics_feeder_graph_lib",
+    name = "test_numerics_feeder_graph_lib_cycle",
     srcs = [
         "test_numerics_feeder_graph.py",
+        "test_numerics_rows_phases.py",
+        "test_numerics_unit_templates.py",
+    ],
+    data = [
+        "//experiments:numerics_rows/feeder-settings.json",
+        "//src/tessera:serving/runtime_contract.json",
+        "data/legacy/e4m3-1024-window-channel-256c.tessera",
     ],
     deps = [
+        "//experiments:dense_fused_oracle",
+        "//experiments:graph_attest_702/receipt",
+        "//experiments:numerics_rows/batch_evaluator_cycle",
+        "//experiments:numerics_rows/build_cycle",
+        "//experiments:numerics_rows/common",
         "//experiments:numerics_rows/counted_feeder",
+        "//experiments:numerics_rows/gpu_time",
         "//experiments:numerics_rows/launch_state",
         "//experiments:numerics_rows/phase_instance",
         "//experiments:numerics_rows/prepare_split",
-        ":test_numerics_unit_templates_lib",
+        "//experiments:numerics_rows/quantizers",
+        "//experiments:numerics_rows/reference",
+        "//experiments:numerics_rows/sass_slice",
+        "//experiments:pair",
+        "//experiments:routed_pair_oracle",
+        "//src/tessera:__init___cycle",
+        "//src/tessera:bf16_route_cycle",
+        "//src/tessera:fused",
+        "//tools:__init__",
+        ":test_numerics_rows_receipts_lib",
     ],
 )
 
@@ -15152,12 +15230,21 @@ ts_py_test(
     library = ":test_numerics_phase_instance_lib",
     data = [
         "//:pyproject.toml",
+        "//experiments:build_identity.sh",
         "//experiments:numerics_rows/templates/job.sh",
+        "//experiments:runtime_image.sh",
+        "//experiments:serve_and_dump_kl.sh",
+        "//experiments:serve_lock.sh",
+        "//experiments:serve_metrics.sh",
         "//experiments:t8r_speed/bench_t8r.sh",
         "//experiments:t8r_speed/build_ext.sh",
+        "//experiments:tessera_plugin_served.sh",
+        "//src/tessera:serving/runtime_contract.json",
     ],
     deps = [
         "//experiments:glm53_508_graph_qual/eq-member-508",
+        "//experiments:retarget_checkpoint_to_plugin",
+        "//experiments:serving_compile_divergence",
         "//experiments:t8r_speed/bench_class_dispatch",
         "//experiments:t8r_speed/bench_uniform_production_arm",
         "//experiments:t8r_speed/finalize_native_build",
@@ -15178,12 +15265,21 @@ ts_py_test(
     library = ":test_numerics_phase_instance_lib",
     data = [
         "//:pyproject.toml",
+        "//experiments:build_identity.sh",
         "//experiments:numerics_rows/templates/job.sh",
+        "//experiments:runtime_image.sh",
+        "//experiments:serve_and_dump_kl.sh",
+        "//experiments:serve_lock.sh",
+        "//experiments:serve_metrics.sh",
         "//experiments:t8r_speed/bench_t8r.sh",
         "//experiments:t8r_speed/build_ext.sh",
+        "//experiments:tessera_plugin_served.sh",
+        "//src/tessera:serving/runtime_contract.json",
     ],
     deps = [
         "//experiments:glm53_508_graph_qual/eq-member-508",
+        "//experiments:retarget_checkpoint_to_plugin",
+        "//experiments:serving_compile_divergence",
         "//experiments:t8r_speed/bench_class_dispatch",
         "//experiments:t8r_speed/bench_uniform_production_arm",
         "//experiments:t8r_speed/finalize_native_build",
@@ -15206,7 +15302,7 @@ ts_py_library(
     deps = [
         "//experiments:numerics_rows/batch_evaluator_cycle",
         "//experiments:numerics_rows/phase_instance",
-        ":test_numerics_rows_phases_lib",
+        ":test_numerics_feeder_graph_lib_cycle",
     ],
 )
 
@@ -15265,6 +15361,7 @@ ts_py_test(
     data = [
         "//:pyproject.toml",
         "//experiments:build_identity.sh",
+        "//experiments:numerics_rows/templates/job.sh",
         "//experiments:runtime_image.sh",
         "//experiments:serve_and_dump_kl.sh",
         "//experiments:serve_lock.sh",
@@ -15299,6 +15396,7 @@ ts_py_test(
     data = [
         "//:pyproject.toml",
         "//experiments:build_identity.sh",
+        "//experiments:numerics_rows/templates/job.sh",
         "//experiments:runtime_image.sh",
         "//experiments:serve_and_dump_kl.sh",
         "//experiments:serve_lock.sh",
@@ -15345,6 +15443,7 @@ ts_py_test(
     data = [
         "//:pyproject.toml",
         "//experiments:build_identity.sh",
+        "//experiments:numerics_rows/templates/job.sh",
         "//experiments:runtime_image.sh",
         "//experiments:serve_and_dump_kl.sh",
         "//experiments:serve_lock.sh",
@@ -15379,6 +15478,7 @@ ts_py_test(
     data = [
         "//:pyproject.toml",
         "//experiments:build_identity.sh",
+        "//experiments:numerics_rows/templates/job.sh",
         "//experiments:runtime_image.sh",
         "//experiments:serve_and_dump_kl.sh",
         "//experiments:serve_lock.sh",
@@ -15432,6 +15532,7 @@ ts_py_test(
     data = [
         "//:pyproject.toml",
         "//experiments:build_identity.sh",
+        "//experiments:numerics_rows/templates/job.sh",
         "//experiments:runtime_image.sh",
         "//experiments:serve_and_dump_kl.sh",
         "//experiments:serve_lock.sh",
@@ -15466,6 +15567,7 @@ ts_py_test(
     data = [
         "//:pyproject.toml",
         "//experiments:build_identity.sh",
+        "//experiments:numerics_rows/templates/job.sh",
         "//experiments:runtime_image.sh",
         "//experiments:serve_and_dump_kl.sh",
         "//experiments:serve_lock.sh",
@@ -15526,15 +15628,24 @@ ts_py_library(
 ts_py_test(
     name = "test_numerics_rows_phases",
     path = "tests/test_numerics_rows_phases.py",
-    library = ":test_numerics_rows_phases_lib",
+    library = ":test_numerics_feeder_graph_lib_cycle",
     data = [
         "//:pyproject.toml",
+        "//experiments:build_identity.sh",
         "//experiments:numerics_rows/templates/job.sh",
+        "//experiments:runtime_image.sh",
+        "//experiments:serve_and_dump_kl.sh",
+        "//experiments:serve_lock.sh",
+        "//experiments:serve_metrics.sh",
         "//experiments:t8r_speed/bench_t8r.sh",
         "//experiments:t8r_speed/build_ext.sh",
+        "//experiments:tessera_plugin_served.sh",
+        "//src/tessera:serving/runtime_contract.json",
     ],
     deps = [
         "//experiments:glm53_508_graph_qual/eq-member-508",
+        "//experiments:retarget_checkpoint_to_plugin",
+        "//experiments:serving_compile_divergence",
         "//experiments:t8r_speed/bench_class_dispatch",
         "//experiments:t8r_speed/bench_uniform_production_arm",
         "//experiments:t8r_speed/finalize_native_build",
@@ -15552,15 +15663,24 @@ ts_py_test(
 ts_py_test(
     name = "test_numerics_rows_phases.bytes",
     path = "tests/test_numerics_rows_phases.py",
-    library = ":test_numerics_rows_phases_lib",
+    library = ":test_numerics_feeder_graph_lib_cycle",
     data = [
         "//:pyproject.toml",
+        "//experiments:build_identity.sh",
         "//experiments:numerics_rows/templates/job.sh",
+        "//experiments:runtime_image.sh",
+        "//experiments:serve_and_dump_kl.sh",
+        "//experiments:serve_lock.sh",
+        "//experiments:serve_metrics.sh",
         "//experiments:t8r_speed/bench_t8r.sh",
         "//experiments:t8r_speed/build_ext.sh",
+        "//experiments:tessera_plugin_served.sh",
+        "//src/tessera:serving/runtime_contract.json",
     ],
     deps = [
         "//experiments:glm53_508_graph_qual/eq-member-508",
+        "//experiments:retarget_checkpoint_to_plugin",
+        "//experiments:serving_compile_divergence",
         "//experiments:t8r_speed/bench_class_dispatch",
         "//experiments:t8r_speed/bench_uniform_production_arm",
         "//experiments:t8r_speed/finalize_native_build",
@@ -15575,27 +15695,6 @@ ts_py_test(
     timeout = "moderate",
 )
 
-ts_py_library(
-    name = "test_numerics_rows_phases_lib",
-    srcs = [
-        "test_numerics_rows_phases.py",
-    ],
-    deps = [
-        "//experiments:dense_fused_oracle",
-        "//experiments:graph_attest_702/receipt",
-        "//experiments:numerics_rows/batch_evaluator_cycle",
-        "//experiments:numerics_rows/build_cycle",
-        "//experiments:numerics_rows/common",
-        "//experiments:numerics_rows/counted_feeder",
-        "//experiments:numerics_rows/gpu_time",
-        "//experiments:numerics_rows/prepare_split",
-        "//experiments:numerics_rows/reference",
-        "//experiments:pair",
-        "//experiments:routed_pair_oracle",
-        "//src/tessera:__init___cycle",
-    ],
-)
-
 ts_py_test(
     name = "test_numerics_rows_receipts",
     path = "tests/test_numerics_rows_receipts.py",
@@ -15603,6 +15702,7 @@ ts_py_test(
     data = [
         "//:pyproject.toml",
         "//experiments:build_identity.sh",
+        "//experiments:numerics_rows/templates/job.sh",
         "//experiments:runtime_image.sh",
         "//experiments:serve_and_dump_kl.sh",
         "//experiments:serve_lock.sh",
@@ -15637,6 +15737,7 @@ ts_py_test(
     data = [
         "//:pyproject.toml",
         "//experiments:build_identity.sh",
+        "//experiments:numerics_rows/templates/job.sh",
         "//experiments:runtime_image.sh",
         "//experiments:serve_and_dump_kl.sh",
         "//experiments:serve_lock.sh",
@@ -15695,6 +15796,7 @@ ts_py_library(
         "//experiments:numerics_rows/join",
         "//experiments:numerics_rows/launch_state",
         "//experiments:numerics_rows/prepare_job",
+        "//experiments:numerics_rows/prepare_split",
         "//experiments:numerics_rows/quantizers",
         "//experiments:numerics_rows/reference",
         "//experiments:numerics_rows/sass_slice",
@@ -15780,15 +15882,24 @@ ts_py_library(
 ts_py_test(
     name = "test_numerics_unit_templates",
     path = "tests/test_numerics_unit_templates.py",
-    library = ":test_numerics_unit_templates_lib",
+    library = ":test_numerics_feeder_graph_lib_cycle",
     data = [
         "//:pyproject.toml",
+        "//experiments:build_identity.sh",
         "//experiments:numerics_rows/templates/job.sh",
+        "//experiments:runtime_image.sh",
+        "//experiments:serve_and_dump_kl.sh",
+        "//experiments:serve_lock.sh",
+        "//experiments:serve_metrics.sh",
         "//experiments:t8r_speed/bench_t8r.sh",
         "//experiments:t8r_speed/build_ext.sh",
+        "//experiments:tessera_plugin_served.sh",
+        "//src/tessera:serving/runtime_contract.json",
     ],
     deps = [
         "//experiments:glm53_508_graph_qual/eq-member-508",
+        "//experiments:retarget_checkpoint_to_plugin",
+        "//experiments:serving_compile_divergence",
         "//experiments:t8r_speed/bench_class_dispatch",
         "//experiments:t8r_speed/bench_uniform_production_arm",
         "//experiments:t8r_speed/finalize_native_build",
@@ -15806,15 +15917,24 @@ ts_py_test(
 ts_py_test(
     name = "test_numerics_unit_templates.bytes",
     path = "tests/test_numerics_unit_templates.py",
-    library = ":test_numerics_unit_templates_lib",
+    library = ":test_numerics_feeder_graph_lib_cycle",
     data = [
         "//:pyproject.toml",
+        "//experiments:build_identity.sh",
         "//experiments:numerics_rows/templates/job.sh",
+        "//experiments:runtime_image.sh",
+        "//experiments:serve_and_dump_kl.sh",
+        "//experiments:serve_lock.sh",
+        "//experiments:serve_metrics.sh",
         "//experiments:t8r_speed/bench_t8r.sh",
         "//experiments:t8r_speed/build_ext.sh",
+        "//experiments:tessera_plugin_served.sh",
+        "//src/tessera:serving/runtime_contract.json",
     ],
     deps = [
         "//experiments:glm53_508_graph_qual/eq-member-508",
+        "//experiments:retarget_checkpoint_to_plugin",
+        "//experiments:serving_compile_divergence",
         "//experiments:t8r_speed/bench_class_dispatch",
         "//experiments:t8r_speed/bench_uniform_production_arm",
         "//experiments:t8r_speed/finalize_native_build",
@@ -15827,25 +15947,6 @@ ts_py_test(
         "--budget='{\"enforce\":true,\"seconds\":80,\"slow\":{}}'",
     ],
     timeout = "moderate",
-)
-
-ts_py_library(
-    name = "test_numerics_unit_templates_lib",
-    srcs = [
-        "test_numerics_unit_templates.py",
-    ],
-    data = [
-        "//experiments:numerics_rows/feeder-settings.json",
-    ],
-    deps = [
-        "//experiments:numerics_rows/batch_evaluator_cycle",
-        "//experiments:numerics_rows/common",
-        "//experiments:numerics_rows/gpu_time",
-        "//experiments:numerics_rows/phase_instance",
-        "//experiments:numerics_rows/prepare_split",
-        ":test_numerics_rows_phases_lib",
-        ":test_numerics_rows_receipts_lib",
-    ],
 )
 
 ts_py_test(
