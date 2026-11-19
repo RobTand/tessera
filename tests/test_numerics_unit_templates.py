@@ -350,8 +350,7 @@ def gate_worker(root, monkeypatch):
     contract, population, _ = population_cases()
     entry = population["modules"][0]
     name = entry["name"] = "model.layers.0.mlp.down_proj"
-    wire = Path(__file__).with_name("data") / "legacy/e4m3-1024-window-channel-256c.tessera"
-    unit = wire.read_bytes()
+    unit = (Path(__file__).parent / "data/legacy/e4m3-1024-window-channel-256c.tessera").read_bytes()
     blob = pack_fused([("down_proj", parse_unit_metadata(unit).rows, unit)])
     scheme = cases.projection_scheme(dict(family="TESSERA_FP8", grid="E4M3", body="WINDOW", plane="CHANNEL"), "down_proj", blob)
     entry.update(root=str(root), family=scheme["family"], roles=scheme["roles"], q256=scheme["q256"])
@@ -390,7 +389,7 @@ def gate_worker(root, monkeypatch):
         library, native_source_path=str(kernel), native_source_sha256=sha(kernel))]))
     for module in (common, serving_build):
         monkeypatch.setattr(module, "KERNEL_SHA256", sha(kernel))
-    monkeypatch.setattr(ext, "csrc_dir", lambda: str(kernel.parent))
+    monkeypatch.setattr(ext, "native_source_path", lambda name: str(kernel))
     monkeypatch.setattr(row, "check_runtime", lambda image: dict(runtime))
     monkeypatch.setattr(common, "register_native_ops", lambda image: {"result": "PASS"})
     monkeypatch.setattr(dependency_code.CodeAudit, "install", lambda self: self)
