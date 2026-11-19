@@ -1839,6 +1839,75 @@ def retry_phase_attempts(root):
     return dp, api, args, initial, groups, attempt
 
 
+SETUP_INVALID_TOKEN = "SETUP_INVALID_PREDECESSOR_BLOCKS_COMPARE"
+
+
+def compare_after_setup_refusal(root, *, record_cause=False):
+    from experiments.numerics_rows.gpu_time import PhaseTimes
+    cuts = [{"size": 1, "rank": 0}, {"size": 2, "rank": 0}, {"size": 2, "rank": 1}]
+    dp, _, args, receipt, groups = module_phase_pairs(root, cuts=cuts)
+    index = next(i for i, p in enumerate(args.prepare_artifact) if p.parents[2].name.startswith("tp1-gate-"))
+    attempt = args.prepare_artifact[index].parent
+    retry = attempt.with_name("2")
+    attempt.rename(retry)
+    args.prepare_artifact[index], args.capture_artifact[index] = retry / "prepare", retry / "capture"
+    partial = attempt / "prepare/numerics_row.json"
+    partial.parent.mkdir(parents=True)
+    refusal = {"schema": "tessera.numerics_row.v2", "canary": False,
+        "row": {"name": "A", "utc_start": "2026-11-19T00:00:00Z", "utc_end": "2026-11-19T00:00:01Z",
+                "exit_status": 3, "stop_cause": "select TP1 rank 0 or TP2 without a rank",
+                "finalization_finished": False, "phase_jobs": {"prepare": {}}, "phase_wall_seconds": {}, "outcome": "INVALID"},
+        "tool": {"commit": "tool", "tree_sha256": "tool"}, "rule": {}, "runtime": {},
+        "tessera": {"retained_source": {"commit": "F"}, "serving_compile": []}, "probe": {},
+        "inputs": {"launch_levers_sha256": "input"}, "modules": [], "units": [],
+        "negative_controls": [], "diagnostic_cells": [], "findings": ["Setup refused the cut."]}
+    partial.write_text(json.dumps(refusal))
+    if record_cause:
+        (attempt / "lead-cause.json").write_text(json.dumps({
+            "unit": attempt.parents[1].name, "attempt": 1, "cause": "The lead confirmed the setup refusal."}))
+    try:
+        dp.host_compare(args, receipt, PhaseTimes({}), groups)
+    except KeyError as error:
+        raise AssertionError(SETUP_INVALID_TOKEN) from error
+    path = args.out / "numerics_row.json"
+    assert path.is_file(), SETUP_INVALID_TOKEN
+    return json.loads(path.read_text()), attempt, refusal["row"]["stop_cause"]
+
+
+def test_compare_setup_invalid_predecessor_without_cause_is_stopped(tmp_path):
+    receipt, attempt, stop_cause = compare_after_setup_refusal(tmp_path)
+    assert receipt["row"]["finalization_finished"] and receipt["row"]["outcome"] == "STOPPED", SETUP_INVALID_TOKEN
+    assert receipt["row"]["exit_status"] == 3, SETUP_INVALID_TOKEN
+    key = attempt.parents[1].name
+    for unit in receipt["units"]:
+        if unit["tp"]["size"] == 1:
+            assert unit["outcome"] == "STOPPED" and not unit["completed"], SETUP_INVALID_TOKEN
+            assert f"open STOPPED attempt {key}/1" in unit["reasons"], SETUP_INVALID_TOKEN
+        else:
+            assert unit["outcome"] == "PASS", SETUP_INVALID_TOKEN
+    earlier = next(a for a in receipt["attempts"]["listing"] if (a["unit"], a["attempt"]) == (key, 1))
+    assert (earlier["state"], earlier["outcome"], earlier["stop_cause"]) == ("STOPPED", "INVALID", stop_cause), SETUP_INVALID_TOKEN
+    assert earlier["cause_record"] is None, SETUP_INVALID_TOKEN
+
+
+def test_compare_setup_invalid_predecessor_with_cause_passes(tmp_path):
+    receipt, attempt, stop_cause = compare_after_setup_refusal(tmp_path, record_cause=True)
+    assert receipt["row"]["finalization_finished"] and receipt["row"]["outcome"] == "PASS", SETUP_INVALID_TOKEN
+    listing = receipt["attempts"]["listing"]
+    attempts = [a for a in listing if a["unit"] == attempt.parents[1].name]
+    assert [a["attempt"] for a in attempts] == [1, 2], SETUP_INVALID_TOKEN
+    assert receipt["attempts"]["sha256"] == phase_api().json_digest(listing), SETUP_INVALID_TOKEN
+    assert (attempts[0]["outcome"], attempts[0]["stop_cause"]) == ("INVALID", stop_cause), SETUP_INVALID_TOKEN
+    partial = attempt / "prepare/numerics_row.json"
+    assert attempts[0]["phases"]["prepare_partial"] == row.sha256(partial), SETUP_INVALID_TOKEN
+    cause = attempt / "lead-cause.json"
+    assert attempts[0]["cause_record"] == {"path": str(cause), "sha256": row.sha256(cause)}, SETUP_INVALID_TOKEN
+    selected = receipt["phase_artifacts"]["A:tp1r0:gate:capture"]
+    path = attempt.with_name("2") / "capture/phase.json"
+    assert selected == {"path": str(path), "sha256": row.sha256(path)}, SETUP_INVALID_TOKEN
+    assert attempts[1]["phases"]["capture"] == selected["sha256"], SETUP_INVALID_TOKEN
+
+
 @pytest.mark.parametrize("finding", ["unit", "unit-outcome", "case", "stopped-case", "stopped-unit", "stopped-case-only"])
 def test_attempt_fail_stands_beside_a_later_pass(tmp_path, finding):
     from experiments.numerics_rows import dense_phases
@@ -2015,6 +2084,54 @@ def test_module_compare_keeps_fail_and_stopped_per_unit(tmp_path, part, state):
     saved = json.loads((args.out / "numerics_row.json").read_text())
     assert [u["outcome"] for u in saved["units"]] == [u["outcome"] for u in receipt["units"]]
     api.read(args.out / "compare", "compare", api.identities(receipt), dp.scopes(groups))
+
+
+def compare_after_module_setup_refusal(root, *, record_cause=False):
+    from experiments.numerics_rows.gpu_time import PhaseTimes
+    dp, api, args, receipt, groups = module_phase_pairs(root)
+    key = "compare-" + api.json_digest(["A", "compare"])
+    directory = root / "units" / key / "attempts"
+    prior = directory / "1/compare/numerics_row.json"
+    prior.parent.mkdir(parents=True)
+    refusal = {"tool": receipt["tool"], "tessera": {}, "units": [],
+        "row": {"outcome": "INVALID", "exit_status": 3, "stop_cause": "split phase requires --phase-instance",
+                "finalization_finished": False}}
+    prior.write_text(json.dumps(refusal))
+    if record_cause:
+        (directory / "1/lead-cause.json").write_text(json.dumps(
+            {"unit": key, "attempt": 1, "cause": "The lead confirmed the setup refusal."}))
+    args.out = args.phase_root = directory / "2/compare"
+    args.out.mkdir(parents=True)
+    try:
+        dp.host_compare(args, receipt, PhaseTimes({}), groups)
+    except KeyError as error:
+        raise AssertionError("SETUP_INVALID_COMPARE_PREDECESSOR_BLOCKS_COMPARE") from error
+    return json.loads((args.out / "numerics_row.json").read_text()), prior, refusal["row"]["stop_cause"]
+
+
+def test_module_compare_setup_refusal_without_cause_is_stopped(tmp_path):
+    receipt, prior, stop_cause = compare_after_module_setup_refusal(tmp_path)
+    key = prior.parents[3].name
+    assert receipt["row"]["finalization_finished"] and receipt["row"]["outcome"] == "STOPPED"
+    assert receipt["row"]["exit_status"] == 3
+    assert [unit["outcome"] for unit in receipt["units"]] == ["STOPPED"] * 4
+    assert all(not unit["completed"] and f"open STOPPED attempt {key}/1" in unit["reasons"] for unit in receipt["units"])
+    earlier = next(a for a in receipt["attempts"]["listing"] if a["unit"] == key and a["attempt"] == 1)
+    assert (earlier["state"], earlier["outcome"], earlier["stop_cause"], earlier["cause_record"]) == ("STOPPED", "INVALID", stop_cause, None)
+
+
+def test_module_compare_setup_refusal_with_cause_passes(tmp_path):
+    receipt, prior, stop_cause = compare_after_module_setup_refusal(tmp_path, record_cause=True)
+    assert receipt["row"]["finalization_finished"] and receipt["row"]["outcome"] == "PASS"
+    assert [unit["outcome"] for unit in receipt["units"]] == ["PASS"] * 4
+    listing = receipt["attempts"]["listing"]
+    earlier, retry = [a for a in listing if a["unit"] == prior.parents[3].name]
+    assert [earlier["attempt"], retry["attempt"]] == [1, 2]
+    assert (earlier["state"], earlier["outcome"], earlier["stop_cause"]) == ("STOPPED", "INVALID", stop_cause)
+    assert earlier["receipt_sha256"] == row.sha256(prior)
+    cause = prior.parents[1] / "lead-cause.json"
+    assert earlier["cause_record"] == {"path": str(cause), "sha256": row.sha256(cause)}
+    assert receipt["attempts"]["sha256"] == phase_api().json_digest(listing)
 
 
 @pytest.mark.parametrize("evidence", ["findings", "outcome"])

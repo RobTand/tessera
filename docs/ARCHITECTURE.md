@@ -102,6 +102,8 @@ The join refuses an IMG-G E4M3 population until D5 cell withdrawal has code. IMG
 The lead writes `lead-cause.json` with `unit`, integer `attempt`, and nonempty `cause` fields in that STOPPED attempt directory.
 Compare refuses a cause record for a finished attempt, an attempt with every unit FAIL, or a record with another attempt id.
 In a mixed FAIL and STOPPED attempt, a cause record releases only the units without a FAIL.
+A prepare, capture or module compare setup refusal with no case or phase record follows the STOPPED cause rule.
+An open module compare attempt stops each unit without a FAIL. The attempt listing keeps the worker's outcome and stop cause.
 The receipt binds the full listing, phase digests, partial evidence digests and cause record digests through one listing SHA-256.
 Case tensors, profiler records and code bindings are written before the next case.
 Only compare can finish a split dense receipt. A stopped capture cannot establish PASS.
