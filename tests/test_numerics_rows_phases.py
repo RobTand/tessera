@@ -540,35 +540,43 @@ def test_capture_keeps_case_findings_in_records_and_a_bounded_summary(split_capt
     assert all(case["status"]["findings"] == [case["id"]] for case in captured["cases"])
 
 
-def module_phase_pairs(root, *, case_sets=("gate", "diagnostics"), cuts=None, finding=False, scale_arrays=None):
+def module_phase_pairs(root, *, case_sets=("gate", "diagnostics"), cuts=None, finding=False, scale_arrays=None, groups=None):
     from experiments.numerics_rows import dense_phases
     api = phase_api()
-    cuts = cuts or [{"size": 2, "rank": 0}, {"size": 2, "rank": 1}]
+    name = groups[0][0]["name"] if groups else "A"
+    cuts = cuts or ([g[2] for g in groups] if groups else [{"size": 2, "rank": 0}, {"size": 2, "rank": 1}])
     receipt = {"canary": False, "row": {"name": "module compare", "finalization_finished": False},
         "tool": dict.fromkeys(("commit", "tree_sha256"), "tool"),
         "tessera": dict.fromkeys(("commit", "contract_sha256", "src_tree_sha256", "kernel_source_sha256", "build_provenance_sha256", "retained_source"), "F"),
         "runtime": dict.fromkeys(("image_digest", "vllm", "torch", "launch_state_names", "launch_state_sha256", "start_environment_spec_sha256", "dependency_math", "dependency_math_sha256"), "runtime"),
         "inputs": {**dict.fromkeys(("population_sha256", "case_manifest_sha256", "build_sha256", "q1_table_sha256", "launch_levers_sha256"), "input"),
-                   "selected_modules": ["A"], "selected_cuts": cuts},
+                   "selected_modules": [name], "selected_cuts": cuts},
         "rule": dict.fromkeys(("sha256", "h1_sha256", "frozen_utc"), "rule"), "units": [], "modules": []}
-    groups, pairs, ranges = [], [], {}
-    for cut in cuts:
-        units = [row.new_unit({"cell": "dense", "module": "A", "symbol": "dense", "decoder": "native", "rung": 1024,
-            "role": "unit", "tp": cut, "m_config": {"M": m, "k_split": 1}, "launch_state_sha256": "a" * 64, "arm": {}}) for m in (1, 2)]
-        groups.append(({"name": "A"}, {"wire_sha256": "w"}, cut, units))
-        if scale_arrays is not None:
-            groups[-1][0]["family"] = "TESSERA_FP8"
-            groups[-1][1].update(structure="dense", roles=[])
-            for unit in units:
-                unit["tp"] = {**cut, "cut_axis": [], "cut_range": []}
-        receipt["units"].extend(units)
+    pairs, ranges = [], {}
+    if groups is None:
+        groups = []
+        for cut in cuts:
+            units = [row.new_unit({"cell": "dense", "module": name, "symbol": "dense", "decoder": "native", "rung": 1024,
+                "role": "unit", "tp": cut, "m_config": {"M": m, "k_split": 1}, "launch_state_sha256": "a" * 64, "arm": {}}) for m in (1, 2)]
+            groups.append(({"name": name}, {"wire_sha256": "w"}, cut, units))
+            if scale_arrays is not None:
+                groups[-1][0]["family"] = "TESSERA_FP8"
+                groups[-1][1].update(structure="dense", roles=[])
+                for unit in units:
+                    unit["tp"] = {**cut, "cut_axis": [], "cut_range": []}
+    receipt["units"] = [unit for _, _, _, units in groups for unit in units]
+    unit_counts = [len(g[3]) for g in groups]
     for index, selected in enumerate(dense_phases.phase_units(groups)):
         selected_cuts, units = [g[2] for g in selected], [u for g in selected for u in g[3]]
         common = api.identities({**receipt, "inputs": {**receipt["inputs"], "selected_cuts": selected_cuts}})
+        wire = selected[0][1]["wire_sha256"]
         for part in case_sets:
-            key = f'tp{selected_cuts[0]["size"]}-{part}-' + api.json_digest(["A", selected_cuts[0]["size"], part])
+            key = f'tp{selected_cuts[0]["size"]}-{part}-' + api.json_digest([name, selected_cuts[0]["size"], part])
             job = root / "units" / key / "attempts/1"
-            start = cuts.index(selected_cuts[0]) * (4 if part == "all" else 2) + (len(groups) * 2 if part == "diagnostics" else 0)
+            per_unit = 2 if part == "all" else 1
+            start = sum(unit_counts[:cuts.index(selected_cuts[0])]) * per_unit
+            if part == "diagnostics":
+                start += sum(unit_counts)
             prepared = api.Artifact(job / "prepare", "prepare", common)
             prepared.document.update(scopes=dense_phases.scopes(selected), case_set=part, ordinal_start=start)
             previous = copy.deepcopy({**receipt, "inputs": {**receipt["inputs"], "selected_cuts": selected_cuts}, "units": units})
@@ -584,13 +592,13 @@ def module_phase_pairs(root, *, case_sets=("gate", "diagnostics"), cuts=None, fi
                 for unit in units:
                     if scale_arrays is not None and part == "gate" and len(selected_cuts) == 1:
                         from experiments.numerics_rows.reference import FiniteBound
-                        writer = dense_phases.CaseWriter(prepared, SimpleNamespace(record=lambda *a: None), {"A": "w"})
+                        writer = dense_phases.CaseWriter(prepared, SimpleNamespace(record=lambda *a: None), {name: wire})
                         writer.array_index = len(arrays)
                         writer.scale(None, unit, x, x, sf, sf, {"name": "down"}, {"scale": "weight"},
                                      {}, {"input_row": 0, "output_row": 0, "read": [0]}, 1, FiniteBound(sf * 10), [1])
                         arrays.append((unit, writer, {"scale": "weight", "base": len(arrays), "launches": 1}))
                         continue
-                    prepared.add(api.unit_scope(unit, "w"), row.unit_identity(unit)[4], "dense", {
+                    prepared.add(api.unit_scope(unit, wire), row.unit_identity(unit)[4], "dense", {
                         "input": x, "q": x, "sf": sf, "reference": x, "x_mask": sf.bool(),
                         "finite_value": sf * 10, "finite_held": sf.bool(), "diagnostic_reference": sf, "products_abs": sf},
                         category=category, distribution="gauss", seed=1)
@@ -601,7 +609,7 @@ def module_phase_pairs(root, *, case_sets=("gate", "diagnostics"), cuts=None, fi
             pd = prepared.finish(receipt=previous)
             captured = api.Artifact(job / "capture", "capture", common)
             captured.document.update(scopes=dense_phases.scopes(selected), case_set=part, ordinal_start=start, prepare_digest=pd)
-            current = copy.deepcopy({**previous, "units": units, "modules": [{"name": "A", "tp": cut} for cut in selected_cuts]})
+            current = copy.deepcopy({**previous, "units": units, "modules": [{"name": name, "tp": cut} for cut in selected_cuts]})
             current["row"] = {"name": f"cut {index} {part}", "finalization_finished": False}
             for unit in current["units"]:
                 unit["arm"]["capture_fact"] = row.unit_identity(unit)
@@ -615,9 +623,10 @@ def module_phase_pairs(root, *, case_sets=("gate", "diagnostics"), cuts=None, fi
                     "tensors": {k: captured.tensor(v) for k, v in sorted({"output": x, "staged": x, "quantizer_q": x, "quantizer_sf": sf}.items())}})
             captured.finish(receipt=current)
             pairs.append((prepared.root, captured.root))
-            for offset, cut in enumerate(selected_cuts):
-                count = 4 if part == "all" else 2
-                ranges[("A", cut["size"], cut["rank"], part)] = [start + offset * count, count]
+            for _, _, cut, cut_units in selected:
+                count = per_unit * len(cut_units)
+                ranges[(name, cut["size"], cut["rank"], part)] = [start, count]
+                start += count
     out = root / "compare-job"
     out.mkdir()
     args = SimpleNamespace(out=out, case_ranges=ranges, prepare_artifact=[p[0] for p in reversed(pairs)], capture_artifact=[p[1] for p in reversed(pairs)])
@@ -1908,53 +1917,88 @@ def test_compare_setup_invalid_predecessor_with_cause_passes(tmp_path):
     assert attempts[1]["phases"]["capture"] == selected["sha256"], SETUP_INVALID_TOKEN
 
 
-def test_killed_unit_attempt_requires_cause_before_later_pass(tmp_path):
+@pytest.mark.parametrize("window", ["first-write", "first-case"])
+def test_killed_unit_attempt_requires_cause_before_later_pass(tmp_path, monkeypatch, window):
     from experiments.numerics_rows.gpu_time import PhaseTimes
+    from tests.test_numerics_unit_templates import gate_worker
 
-    token = "KILLED_ATTEMPT_CANNOT_BE_RELEASED"
-    dp, api, args, receipt, groups = module_phase_pairs(tmp_path, case_sets=("all",))
+    token = ("KILLED_ATTEMPT_CANNOT_BE_RELEASED" if window == "first-write"
+             else "KILLED_AFTER_FIRST_CASE_CANNOT_BE_RELEASED")
+    run, worker_attempt, paths = gate_worker(tmp_path, monkeypatch)
+    first_write = None
+
+    class Killed(SystemExit):
+        pass
+
+    def kill(_, phase):
+        nonlocal first_write
+        assert phase == "identity_audit"
+        first_write = (worker_attempt / "prepare/numerics_row.json").read_bytes()
+        raise Killed
+
+    with monkeypatch.context() as patch:
+        patch.setattr(PhaseTimes, "measure", kill)
+        with pytest.raises(Killed):
+            run("prepare")
+    early = json.loads(first_write)
+    assert early["units"] and "commit" not in early["tessera"] and not early["row"]["finalization_finished"], token
+    module, = json.loads(paths["manifest"].read_text())["modules"]
+    cut, = [c for c in module["cuts"] if c["tp"] == {"size": 1, "rank": 0}]
+    for unit in early["units"]:
+        assert unit["tp"] == cut["tp"], token
+        unit["tp"].update(cut_axis=[r["cut_axis"] for r in cut["roles"]], cut_range=[r["cut_range"] for r in cut["roles"]])
+    dp, api, args, receipt, groups = module_phase_pairs(tmp_path / "history", groups=[(module, module, cut["tp"], early["units"])])
     control = copy.deepcopy(receipt)
     dp.host_compare(args, control, PhaseTimes({}), groups)
     assert control["row"]["outcome"] == "PASS", token
-    attempt = args.prepare_artifact[0].parent
-    retry = attempt.with_name("2")
-    attempt.rename(retry)
-    args.prepare_artifact, args.capture_artifact = [retry / "prepare"], [retry / "capture"]
+    index = next(i for i, p in enumerate(args.prepare_artifact) if p.parents[2].name == worker_attempt.parents[1].name)
+    attempt = args.prepare_artifact[index].parent
+    retry = attempt.rename(attempt.with_name("2"))
+    args.prepare_artifact[index], args.capture_artifact[index] = retry / "prepare", retry / "capture"
     partial = attempt / "prepare/numerics_row.json"
     partial.parent.mkdir(parents=True)
-    partial.write_text(json.dumps({**receipt,
-        "row": {"finalization_finished": False, "exit_status": None},
-        "tessera": {"retained_source": receipt["tessera"]["retained_source"]}, "rule": {},
-        "inputs": {"launch_levers_sha256": receipt["inputs"]["launch_levers_sha256"]}}))
+    partial.write_bytes(first_write)
+    stream = partial.with_name("cases.jsonl")
+    if window == "first-case":
+        case = next(api.records(retry / "prepare", "cases"))
+        stream.write_text(json.dumps(case) + "\n")
     key, cause = attempt.parents[1].name, attempt / "lead-cause.json"
-    for outcome in ("STOPPED", "PASS"):
-        cause_record = None
+    for outcome in (("STOPPED", "PASS", "FAIL") if window == "first-case" else ("STOPPED", "PASS")):
         if outcome == "PASS":
-            cause.write_text(json.dumps({"unit": key, "attempt": 1, "cause": "The job ended before it recorded identities."}))
-            cause_record = {"path": str(cause), "sha256": row.sha256(cause)}
+            cause.write_text(json.dumps({"unit": key, "attempt": 1, "cause": "The job ended before it finished the phase."}))
+        if outcome == "FAIL":
+            case["status"] = {"findings": ["The first case failed."]}
+            stream.write_text(json.dumps(case) + "\n")
         args.out = tmp_path / outcome
         current = copy.deepcopy(receipt)
         try:
             dp.host_compare(args, current, PhaseTimes({}), groups)
-        except KeyError as error:
+        except (Invalid, KeyError) as error:
             raise AssertionError(token) from error
         saved = json.loads((args.out / "numerics_row.json").read_text())
         assert saved["row"]["finalization_finished"] and saved["row"]["outcome"] == outcome, token
-        assert saved["row"]["exit_status"] == (3 if outcome == "STOPPED" else 0), token
-        assert all(u["outcome"] == outcome and u["completed"] == (outcome == "PASS") for u in saved["units"]), token
-        assert all((f"open STOPPED attempt {key}/1" in u["reasons"]) == (outcome == "STOPPED") for u in saved["units"]), token
+        assert saved["row"]["exit_status"] == (0 if outcome == "PASS" else 3), token
+        if outcome == "FAIL":
+            failed, = [u for u in saved["units"] if u["outcome"] == "FAIL"]
+            assert failed["unit_id"] == case["scope"]["unit_key"] and failed["failed_attempts"] == [f"FAIL attempt {key}/1"], token
+            assert all(u["outcome"] == "PASS" for u in saved["units"] if u is not failed), token
+        else:
+            assert all(u["outcome"] == outcome and u["completed"] == (outcome == "PASS") for u in saved["units"]), token
+            assert all((f"open STOPPED attempt {key}/1" in u["reasons"]) == (outcome == "STOPPED") for u in saved["units"]), token
         listing = saved["attempts"]["listing"]
-        prior, later = listing
+        prior, later = [a for a in listing if a["unit"] == key]
         assert (prior["unit"], prior["attempt"], prior["state"], prior["outcome"], prior["stop_cause"]) == (
-            key, 1, "STOPPED", None, None), token
-        assert prior["phases"]["prepare_partial"] == row.sha256(partial) and prior["cause_record"] == cause_record, token
+            key, 1, "FAIL" if outcome == "FAIL" else "STOPPED", early["row"].get("outcome"), early["row"]["stop_cause"]), token
+        assert prior["phases"]["prepare_partial"] == row.sha256(partial), token
+        assert prior["phases"]["prepare_cases"] == (row.sha256(stream) if stream.is_file() else None), token
+        assert prior["cause_record"] == (None if outcome == "STOPPED" else {"path": str(cause), "sha256": row.sha256(cause)}), token
         assert (later["unit"], later["attempt"], later["state"]) == (key, 2, "FINISHED"), token
         assert saved["attempts"]["sha256"] == api.json_digest(listing), token
 
 
-@pytest.mark.parametrize("fault", ["phase.json", "cases.jsonl", "FAIL", "PASS", "exit-zero"])
+@pytest.mark.parametrize("fault", ["phase.json", "cases.jsonl", "FAIL", "PASS", "exit-zero", "finalized"])
 def test_unbound_unit_receipt_refuses_completion_evidence(tmp_path, fault):
-    token = "UNBOUND_UNIT_RECEIPT_ESCAPES_IDENTITY_CHECK"
+    token = "UNBOUND_UNIT_RECEIPT_COUNTS_AS_EVIDENCE"
     dp, _, args, _, _ = module_phase_pairs(tmp_path, case_sets=("all",))
     document = json.loads((args.prepare_artifact[0] / "phase.json").read_text())
     directory = tmp_path / "unit" / "attempts"
@@ -1970,6 +2014,8 @@ def test_unbound_unit_receipt_refuses_completion_evidence(tmp_path, fault):
         (prior / fault).touch()
     elif fault == "exit-zero":
         previous["row"]["exit_status"] = 0
+    elif fault == "finalized":
+        previous["row"]["finalization_finished"] = True
     else:
         previous["row"]["outcome"] = fault
     path.write_text(json.dumps(previous))
@@ -1977,13 +2023,13 @@ def test_unbound_unit_receipt_refuses_completion_evidence(tmp_path, fault):
     newest, listing, failed, stopped = dp.inspect_attempts(*scope)
     assert newest is None and listing[0]["state"] == "STOPPED" and not failed and stopped, token
     previous["tessera"].pop("commit")
+    previous["units"][0].update(outcome="FAIL", findings=["Unbound finding"])
+    if fault == "phase.json":
+        previous["row"].pop("outcome")
     path.write_text(json.dumps(previous))
-    try:
-        dp.inspect_attempts(*scope)
-    except (Invalid, KeyError) as error:
-        assert str(error) in ("'commit'", "phase receipt identities or units differ from the selected cut"), token
-    else:
-        pytest.fail(token)
+    newest, listing, failed, stopped = dp.inspect_attempts(*scope)
+    assert newest is None and listing[0]["state"] == "STOPPED" and not failed and stopped, token
+    assert (listing[0]["outcome"], listing[0]["stop_cause"]) == (previous["row"].get("outcome"), previous["row"]["stop_cause"]), token
 
 
 @pytest.mark.parametrize("finding", ["unit", "unit-outcome", "case", "stopped-case", "stopped-unit", "stopped-case-only"])
@@ -2254,8 +2300,10 @@ def test_unfinished_compare_attempt_needs_a_cause(tmp_path, state, record_cause)
 
 @pytest.mark.parametrize("evidence", [None, "phase.json", "cases.jsonl"])
 def test_unbound_compare_receipt_refuses_completion_evidence(tmp_path, evidence):
-    token = "UNBOUND_COMPARE_RECEIPT_ESCAPES_IDENTITY_CHECK"
-    dp, api, _, receipt, _ = module_phase_pairs(tmp_path, case_sets=("all",))
+    from experiments.numerics_rows.gpu_time import PhaseTimes
+
+    token = "UNBOUND_COMPARE_RECEIPT_COUNTS_AS_EVIDENCE"
+    dp, api, args, receipt, groups = module_phase_pairs(tmp_path, case_sets=("all",))
     directory = tmp_path / "units"
     key = "compare-" + api.json_digest(["A", "compare"])
     prior = directory / key / "attempts/1/compare"
@@ -2270,13 +2318,14 @@ def test_unbound_compare_receipt_refuses_completion_evidence(tmp_path, evidence)
     assert listing[0]["state"] == ("FINISHED" if evidence is None else "STOPPED"), token
     assert not failed and bool(stopped) == (evidence is not None), token
     previous["tessera"].pop("commit")
+    previous["row"].update(finalization_finished=True, outcome="PASS", exit_status=0, stop_cause="Unbound status")
+    previous["units"][0].update(outcome="FAIL", findings=["Unbound finding"])
     path.write_text(json.dumps(previous))
-    try:
-        dp.read_compare_attempts(directory, "A", receipt, None)
-    except (Invalid, KeyError) as error:
-        assert str(error) in ("'commit'", "compare attempt receipt identities or units differ from the module"), token
-    else:
-        pytest.fail(token)
+    dp.host_compare(args, receipt, PhaseTimes({}), groups)
+    earlier, = [a for a in receipt["attempts"]["listing"] if a["unit"] == key]
+    assert (earlier["state"], earlier["outcome"], earlier["stop_cause"]) == ("STOPPED", "PASS", "Unbound status"), token
+    assert receipt["row"]["finalization_finished"] and receipt["row"]["outcome"] == "STOPPED", token
+    assert all(u["outcome"] == "STOPPED" and not u["findings"] for u in receipt["units"]), token
 
 
 def test_finished_attempts_list_null_outcome_and_stop_cause(tmp_path):

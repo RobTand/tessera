@@ -423,13 +423,13 @@ def attempt_paths(directory):
     return [directory / str(number) for number in range(1, len(attempts) + 1)]
 
 
-def checked_attempt_receipt(receipt, common, expected, has_phase_evidence, mismatch):
-    status, units = receipt.get("row", {}), unit_map(receipt["units"])
-    if has_phase_evidence or "commit" in receipt.get("tessera", {}):
-        if units.keys() != expected or identities(receipt) != common:
-            raise Invalid(mismatch)
-    elif (units and units.keys() != expected or status.get("finalization_finished") is True
-          or status.get("outcome") in ("PASS", "FAIL") or status.get("exit_status") == 0):
+def checked_attempt_receipt(receipt, common, expected, mismatch):
+    status = receipt.get("row", {})
+    tessera = receipt.get("tessera")
+    if not isinstance(tessera, dict) or "commit" not in tessera:
+        return status, None
+    units = unit_map(receipt["units"])
+    if units.keys() != expected or identities(receipt) != common:
         raise Invalid(mismatch)
     return status, units
 
@@ -455,14 +455,13 @@ def read_compare_attempts(directory, module, receipt, running_attempt):
             continue
         number, root = int(attempt.name), attempt / "compare"
         path = root / "numerics_row.json"
-        status, units, digest = {}, {}, None
+        status, units, digest = {}, None, None
         if path.is_file():
             status, units = checked_attempt_receipt(json.loads(path.read_text()), identities(receipt), expected,
-                (root / "phase.json").is_file() or (root / "cases.jsonl").is_file(),
                 "compare attempt receipt identities or units differ from the module")
             digest = sha256(path)
-        finished = status.get("finalization_finished") is True
-        found = {identity for identity, unit in units.items() if unit.get("findings") or unit.get("outcome") == "FAIL"}
+        finished = units is not None and status.get("finalization_finished") is True
+        found = {identity for identity, unit in (units or {}).items() if unit.get("findings") or unit.get("outcome") == "FAIL"}
         cause = lead_cause(attempt, key, number, not finished and found != expected)
         if not finished and cause is None:
             stopped.update({identity: f"open STOPPED attempt {key}/{number}" for identity in expected - found})
@@ -566,11 +565,11 @@ def inspect_attempts(directory, key, expected, common, part, *, check_cases=Fals
                 statuses.append(json.loads(local_receipt.read_text()))
                 evidence[phase + "_partial"] = sha256(local_receipt)
             for status in statuses:
-                phase_row, units = checked_attempt_receipt(status, common, expected_keys, document is not None or cases.is_file(),
+                phase_row, units = checked_attempt_receipt(status, common, expected_keys,
                     "phase receipt identities or units differ from the selected cut")
-                if "outcome" in phase_row:
+                if "outcome" in phase_row or phase_row.get("stop_cause"):
                     attempt_row = phase_row
-                found.update({k: f"FAIL attempt {key}/{number}" for k, u in units.items() if u.get("findings") or u.get("outcome") == "FAIL"})
+                found.update({k: f"FAIL attempt {key}/{number}" for k, u in (units or {}).items() if u.get("findings") or u.get("outcome") == "FAIL"})
             finished &= phase in documents
             if phase not in documents and cases.is_file():
                 for case in records(root, "cases"):

@@ -102,10 +102,9 @@ The join refuses an IMG-G E4M3 population until D5 cell withdrawal has code. IMG
 The lead writes `lead-cause.json` with `unit`, integer `attempt`, and nonempty `cause` fields in that STOPPED attempt directory.
 Compare refuses a cause record for a finished attempt, an attempt with every unit FAIL, or a record with another attempt id.
 In a mixed FAIL and STOPPED attempt, a cause record releases only the units without a FAIL.
-A unit attempt needs two verified, complete phase documents to finish. A module compare attempt needs a finalized receipt with matching identities.
-The STOPPED cause rule applies if a job ends before it records identities.
-Compare refuses unbound receipts that claim finalization, PASS, FAIL, or exit status 0.
-Compare also refuses unbound receipts next to phase or case evidence.
+A unit attempt needs two complete phase documents with matching identities and scopes.
+A module compare attempt needs a finalized receipt with `tessera.commit`, matching identities and matching unit keys.
+The attempt readers use receipts without `tessera.commit` only for worker status. Checked case records keep their FAIL findings.
 The attempt listing keeps the worker's outcome and stop cause for unfinished attempts. Finished attempts use null for both fields.
 The receipt binds the full listing, phase digests, partial evidence digests and cause record digests through one listing SHA-256.
 Case tensors, profiler records and code bindings are written before the next case.
