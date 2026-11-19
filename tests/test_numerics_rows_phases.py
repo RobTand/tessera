@@ -540,7 +540,7 @@ def test_capture_keeps_case_findings_in_records_and_a_bounded_summary(split_capt
     assert all(case["status"]["findings"] == [case["id"]] for case in captured["cases"])
 
 
-def module_phase_pairs(root, *, case_sets=("gate", "diagnostics"), cuts=None, finding=False):
+def module_phase_pairs(root, *, case_sets=("gate", "diagnostics"), cuts=None, finding=False, scale_arrays=None):
     from experiments.numerics_rows import dense_phases
     api = phase_api()
     cuts = cuts or [{"size": 2, "rank": 0}, {"size": 2, "rank": 1}]
@@ -556,6 +556,11 @@ def module_phase_pairs(root, *, case_sets=("gate", "diagnostics"), cuts=None, fi
         units = [row.new_unit({"cell": "dense", "module": "A", "symbol": "dense", "decoder": "native", "rung": 1024,
             "role": "unit", "tp": cut, "m_config": {"M": m, "k_split": 1}, "launch_state_sha256": "a" * 64, "arm": {}}) for m in (1, 2)]
         groups.append(({"name": "A"}, {"wire_sha256": "w"}, cut, units))
+        if scale_arrays is not None:
+            groups[-1][0]["family"] = "TESSERA_FP8"
+            groups[-1][1].update(structure="dense", roles=[])
+            for unit in units:
+                unit["tp"] = {**cut, "cut_axis": [], "cut_range": []}
         receipt["units"].extend(units)
     for index, selected in enumerate(dense_phases.phase_units(groups)):
         selected_cuts, units = [g[2] for g in selected], [u for g in selected for u in g[3]]
@@ -569,16 +574,29 @@ def module_phase_pairs(root, *, case_sets=("gate", "diagnostics"), cuts=None, fi
             previous = copy.deepcopy({**receipt, "inputs": {**receipt["inputs"], "selected_cuts": selected_cuts}, "units": units})
             for unit in previous["units"]:
                 unit["exact"]["separation"]["records"] = [{"both": 1}]
-                unit["exact"]["sweep"]["elements"] = 10 * (cuts.index(unit["tp"]) + 1) + unit["m_config"]["M"] if part != "diagnostics" else 0
+                cut = {field: unit["tp"][field] for field in ("size", "rank")}
+                unit["exact"]["sweep"]["elements"] = 10 * (cuts.index(cut) + 1) + unit["m_config"]["M"] if part != "diagnostics" else 0
                 unit["exact"]["scale_index"]["arrays"] = [{"launches": 1}]
                 unit["exact"]["chunk_pairs"]["x_elements"] = 1
             x, sf = torch.ones(1, 1, dtype=torch.bfloat16), torch.ones(1, 1)
+            arrays = []
             for category in (("sweep", "diagnostic") if part == "all" else ("diagnostic" if part == "diagnostics" else "sweep",)):
                 for unit in units:
+                    if scale_arrays is not None and part == "gate" and len(selected_cuts) == 1:
+                        from experiments.numerics_rows.reference import FiniteBound
+                        writer = dense_phases.CaseWriter(prepared, SimpleNamespace(record=lambda *a: None), {"A": "w"})
+                        writer.array_index = len(arrays)
+                        writer.scale(None, unit, x, x, sf, sf, {"name": "down"}, {"scale": "weight"},
+                                     {}, {"input_row": 0, "output_row": 0, "read": [0]}, 1, FiniteBound(sf * 10), [1])
+                        arrays.append((unit, writer, {"scale": "weight", "base": len(arrays), "launches": 1}))
+                        continue
                     prepared.add(api.unit_scope(unit, "w"), row.unit_identity(unit)[4], "dense", {
                         "input": x, "q": x, "sf": sf, "reference": x, "x_mask": sf.bool(),
                         "finite_value": sf * 10, "finite_held": sf.bool(), "diagnostic_reference": sf, "products_abs": sf},
                         category=category, distribution="gauss", seed=1)
+            for index in scale_arrays if arrays else ():
+                unit, writer, record = arrays[index]
+                writer.array(next(u for u in previous["units"] if row.unit_identity(u) == row.unit_identity(unit)), record)
             previous["units"].reverse()
             pd = prepared.finish(receipt=previous)
             captured = api.Artifact(job / "capture", "capture", common)
@@ -604,6 +622,325 @@ def module_phase_pairs(root, *, case_sets=("gate", "diagnostics"), cuts=None, fi
     out.mkdir()
     args = SimpleNamespace(out=out, case_ranges=ranges, prepare_artifact=[p[0] for p in reversed(pairs)], capture_artifact=[p[1] for p in reversed(pairs)])
     return dense_phases, api, args, receipt, groups
+
+
+def test_generated_compare_pairs(tmp_path, monkeypatch):
+    import os
+    import shutil
+    import subprocess
+    import sys
+    from experiments.numerics_rows import counted_feeder
+    from experiments.numerics_rows.gpu_time import PhaseTimes
+    from experiments.numerics_rows.h1 import negative_controls
+    from tests.test_numerics_feeder_graph import make_graph
+    from tests.test_numerics_unit_templates import payload_arguments
+
+    canary, bookings, configs = make_graph(tmp_path, monkeypatch, modules=("A",))
+    counted_feeder.run(canary, bookings)
+    compare = next(unit for unit in configs["A"]["templates"] if unit["phase"] == "compare")
+    root = tmp_path / "A"
+    attempt, = counted_feeder.attempt_jobs(root, compare["key"])
+    directory = root / "templates" / compare["key"] / "compare"
+    arguments = payload_arguments(directory, attempt, tmp_path / "tools")
+    out = attempt / "compare"
+    shutil.copyfile(attempt / "compare-instance.json", out / "instance.json")
+    project = Path(__file__).resolve().parents[1]
+    started = subprocess.run(["bash", directory / "payload.sh", attempt], capture_output=True, timeout=30,
+                             env={"PATH": str(Path(sys.executable).parent) + os.pathsep + os.defpath,
+                                  "PYTHONPATH": str(project), "PYTHONDONTWRITEBYTECODE": "1"})
+    assert started.returncode == 3
+    startup = json.loads((out / "numerics_row.json").read_text())
+    assert startup["row"]["phase_jobs"]["compare"] == json.loads((attempt / "compare-instance.json").read_text())
+    assert not startup["row"]["finalization_finished"]
+    parts = {}
+    for phase in ("prepare", "capture"):
+        parts[phase] = [Path(arguments[i + 1]) for i, word in enumerate(arguments) if word == f"--{phase}-artifact"]
+        assert len(parts[phase]) == 4
+    cuts = [{"size": 1, "rank": 0}, {"size": 2, "rank": 0}, {"size": 2, "rank": 1}]
+    controls = negative_controls(device="cpu")
+    for fault, arrays, refusal in (
+        ("valid", (0, 1), None),
+        ("unpaired", (0, 1), "compare requires both phase artifacts"),
+        ("duplicate", (0, 1), "compare requires the full gate and diagnostics union exactly once"),
+        ("missing-array", (0,), "scale case has no matching ordered array"),
+        ("extra-array", (0, 1, 1), "prepare has extra scale arrays"),
+        ("array-order", (1, 0), "scale case has no matching ordered array"),
+        ("identity", (0, 1), "row phase common identities, module or cut differ"),
+        ("control", (0, 1), "reference self-test or mutated reference control failed"),
+        ("image", (0, 1), "split phases support IMG-N E4M3 dense only"),
+        ("unfinished", (0, 1), None),
+    ):
+        for path in [out, *parts["prepare"], *parts["capture"]]:
+            if path.exists():
+                shutil.rmtree(path)
+        dp, api, args, receipt, groups = module_phase_pairs(root, cuts=cuts, scale_arrays=arrays)
+        (root / "compare-job").rmdir()
+        assert set(args.prepare_artifact) == set(parts["prepare"])
+        assert set(args.capture_artifact) == set(parts["capture"])
+        args.prepare_artifact, args.capture_artifact = parts["prepare"][:], parts["capture"][:]
+        args.out = args.phase_root = out
+        args.phase, args.image = "compare", "N"
+        receipt["inputs"]["reference_selftest"] = row.selftest(samples=32, device="cpu")
+        receipt["negative_controls"] = controls if fault != "control" else [{**controls[0], "flagged_exactly": False}]
+        if fault == "unpaired":
+            args.capture_artifact.pop()
+        elif fault == "duplicate":
+            for paths in (args.prepare_artifact, args.capture_artifact):
+                paths[-1] = paths[0]
+        elif fault == "identity":
+            receipt["tool"]["commit"] = "other"
+        elif fault == "image":
+            args.image = "G"
+        elif fault == "unfinished":
+            for path in args.capture_artifact:
+                shutil.rmtree(path)
+        if refusal:
+            with pytest.raises(Invalid, match=refusal):
+                dp.run_phase(args, receipt, PhaseTimes({}), groups, None, None, None)
+            assert not (out / "phase.json").exists()
+            continue
+        with pytest.raises(SystemExit) as finished:
+            dp.run_phase(args, receipt, PhaseTimes({}), groups, None, None, None)
+        unfinished = fault == "unfinished"
+        assert finished.value.code == (3 if unfinished else 0)
+        saved = json.loads((out / "numerics_row.json").read_text())
+        assert saved["row"]["finalization_finished"] and saved["row"]["outcome"] == ("STOPPED" if unfinished else "PASS")
+        document, _ = api.read(out, "compare", api.identities(receipt), dp.scopes(groups))
+        assert len(list(api.cases(out, document))) == (0 if unfinished else 12)
+        if not unfinished:
+            assert set(saved["phase_artifacts"]) == {"compare"} | {
+                f"A:tp{size}r0:{part}:{phase}" for size in (1, 2)
+                for part in ("gate", "diagnostics") for phase in ("prepare", "capture")}
+            assert [a["record"]["base"] for a in api.records(out, "arrays", document)] == [0, 1]
+
+
+def test_generated_tp1_split_setup(tmp_path, monkeypatch):
+    from contextlib import contextmanager, nullcontext
+    import numpy as np
+    from experiments import dense_fused_oracle as dense, routed_pair_oracle
+    from experiments.numerics_rows import cases, population
+    from experiments.numerics_rows.common import sha256
+    from experiments.numerics_rows.gpu_time import PhaseTimes
+    from tessera.fused import pack_fused
+    from tessera import routed_fused
+    from tessera.serving.sharding import plan_shard
+    from tessera.unit_artifact import parse_unit_metadata
+    from tests.test_numerics_unit_templates import payload_arguments, templates
+
+    root = tmp_path / "A"
+    config, directories = templates(root, module="A")
+    tp1, tp2 = {"size": 1, "rank": 0}, {"size": 2, "rank": 0}
+    dp, api, fixture, receipt, groups = module_phase_pairs(root, cuts=[tp1, tp2, {"size": 2, "rank": 1}])
+    entry, module, _, units = groups[0]
+    incoming = (Path(__file__).parent / "data/legacy/e4m3-1024-window-channel-256c.tessera").read_bytes()
+    meta = parse_unit_metadata(incoming)
+    fused = pack_fused([("down_proj", meta.rows, incoming)])
+    wire = tmp_path / "wire"
+    wire.write_bytes(fused)
+    scheme = cases.projection_scheme({"family": "TESSERA_FP8", "grid": "E4M3", "body": "WINDOW", "plane": "CHANNEL"}, "down_proj", fused)
+    store = SimpleNamespace(schemes={"A": scheme}, wire=lambda name: torch.tensor(list(fused), dtype=torch.uint8))
+    monkeypatch.setattr(population, "store_for", lambda entry: store)
+
+    class Parsed(Exception):
+        pass
+
+    class FirstCase(Exception):
+        pass
+
+    parse_args = row.argparse.ArgumentParser.parse_args
+    opened = []
+
+    def artifact(*args):
+        result = api.Artifact(*args)
+        opened.append(result)
+        return result
+
+    def parse(parser):
+        nonlocal args
+        args = parse_args(parser)
+        raise Parsed
+
+    @contextmanager
+    def device_boundary():
+        raise FirstCase
+        yield
+
+    def gate_case(adapter, *args, **kwargs):
+        assert adapter.cut == tp1 and (adapter.rows, adapter.cols) == (meta.rows, meta.columns)
+        assert adapter.roles[0][3].manifest.geometry.rows == meta.rows
+        raise FirstCase
+
+    def capture_boundary(check, root, observed):
+        check(root, observed)
+        raise FirstCase
+
+    monkeypatch.setattr(row.argparse.ArgumentParser, "parse_args", parse)
+    monkeypatch.setattr(row, "run_dense_case", gate_case)
+    monkeypatch.setattr(dense, "init_vllm_world1", device_boundary)
+    monkeypatch.setattr(dp, "Artifact", artifact)
+
+    samples = torch.tensor([0, *cases.sweep_values("e4m3")], dtype=torch.bfloat16)
+    scales = (samples.float().abs() / 448).clamp_min(2**-24)
+    quantizer = tmp_path / "quantizer.npz"
+    np.savez(quantizer, input_bits=samples.view(torch.uint16).numpy()[:, None],
+             code_bytes=(samples.float() / scales).to(torch.float8_e4m3fn).view(torch.uint8).numpy(),
+             scale_bytes=scales.numpy().view(np.uint8))
+    q1 = {"quantizers": [{"family": "e4m3", "gs": 1.0, "path": str(quantizer),
+                          "sha256": sha256(quantizer), "repeat_equal": True, "smallest_normal_unsaturated_j": None}]}
+    q1_path = Path(config["paths"]["q1"])
+    q1_path.write_text(json.dumps(q1))
+    roles = cases.decode_roles(fused, scheme, "A")
+    _, weights, scales, _ = roles[0]
+    scales = scales.float()
+    assert weights.shape == (meta.rows, meta.columns)
+    checked = cases.column_coverage(weights.numpy(), scales.expand(meta.rows).numpy() if scales.numel() == 1 else scales.numpy(),
+                                    "e4m3", cases.QuantizerTable(q1, "e4m3"))
+    role = {"name": "down_proj", "matches_attested_wire": True, "reader_path": str(wire),
+            "reader_sha256": sha256(wire), "separation": checked, "gs": 1.0, "lut": []}
+    args = None
+    for template, directory in zip(config["templates"], directories):
+        if template.get("size") != 1:
+            continue
+        phase, part = template["phase"], template["case_set"]
+        attempt = root / "units" / template["key"] / "attempts/1"
+        argv = payload_arguments(directory, attempt, tmp_path / "tools")
+        with monkeypatch.context() as patch:
+            import sys
+            patch.setattr(sys, "argv", ["row", *argv])
+            with pytest.raises(Parsed):
+                row.main()
+        assert args.phase == phase and args.case_set == part and args.phase_local_output
+        assert args.out == attempt
+        assert row.selected_groups(groups, args.tp_size, args.tp_rank) == groups[:1]
+        with pytest.raises(Invalid, match="selected TP cut is absent from the validated full manifest"):
+            row.selected_groups(groups[1:], args.tp_size, args.tp_rank)
+        with pytest.raises(Invalid, match="select TP1 rank 0 or TP2 without a rank"):
+            row.selected_groups(groups, args.tp_size, None)
+        args.case_ranges = fixture.case_ranges
+        args.out = args.phase_root = attempt / f"test-{phase}"
+        current = copy.deepcopy(receipt)
+        current["inputs"]["selected_cuts"] = [tp1]
+        current["units"] = copy.deepcopy(units)
+        selection = [(entry, module, tp1, current["units"])]
+        phase_out = args.out
+        if phase == "capture":
+            assert args.prepare_artifact == [attempt / "prepare"]
+            args.meter = None
+            args.code_audit = None
+            with monkeypatch.context() as patch:
+                plan = plan_shard("A", roles=scheme["roles"], columns=meta.columns,
+                                  out_partitions=[meta.rows], in_size=meta.columns, tp_size=1, tp_rank=0,
+                                  input_size=meta.columns, output_size=meta.rows)
+                layer = SimpleNamespace(tessera_shard_plan=plan, tessera_rows=meta.rows, tessera_columns=meta.columns)
+                patch.setattr(dense, "build_served", lambda *a, **kw: (layer, None, {}))
+                decode = cases.decode_roles
+                patch.setattr(cases, "decode_roles", lambda blob, scheme, name, *, device, plan: decode(blob, scheme, name, plan=plan))
+                loaded = row.Dense(dict(entry, library="e4m3"), tp1, {"wire_sha256": sha256(wire)})
+                assert torch.equal(loaded.roles[0][1], weights)
+                with pytest.raises(Invalid, match="loaded wire differs from the C1 reader artifact"):
+                    row.Dense(dict(entry, library="e4m3"), tp1, {"wire_sha256": "other"})
+            prepared, _ = api.read(args.prepare_artifact[0], "prepare", api.identities(current), dp.scopes(selection))
+            case = next(api.cases(args.prepare_artifact[0], prepared))
+            tensors, bound = dp.preflight_case(args.prepare_artifact[0], case)
+            assert torch.isfinite(tensors["reference"]).all() and bound.held.all()
+            previous = args.prepare_artifact[0] / "phase.json"
+            prepared["receipt"]["units"].reverse()
+            prepared["receipt"]["units"][0]["unattested"] = ["known prepare refusal"]
+            previous.write_text(json.dumps(prepared))
+            with pytest.raises(FirstCase):
+                dp.device_capture(args, current, PhaseTimes({}), selection, {"key": "e4m3"},
+                                  [{"key": "e4m3", "native_source_path": str(wire)}])
+            assert current["units"][0]["unattested"] == ["known prepare refusal"]
+            assert opened[-1].root == phase_out and opened[-1].document["prepare_digest"] == sha256(previous)
+            args.case_set = "diagnostics" if part == "gate" else "gate"
+            with pytest.raises(Invalid, match="capture case set differs from prepare"):
+                dp.device_capture(args, current, PhaseTimes({}), selection, {}, [])
+            args.prepare_artifact = None
+            with pytest.raises(Invalid, match="capture requires a finished prepare artifact"):
+                dp.device_capture(args, current, PhaseTimes({}), selection, {}, [])
+            args.prepare_artifact = [attempt / "prepare"] * 2
+            with pytest.raises(ValueError, match="too many values to unpack"):
+                dp.device_capture(args, current, PhaseTimes({}), selection, {}, [])
+            first = fixture.case_ranges[("A", 1, 0, part)]
+            args.case_ranges = {**args.case_ranges, ("A", 1, 0, part): [first[0] + 1, first[1]]}
+            args.prepare_artifact = [attempt / "prepare"]
+            with pytest.raises(Invalid, match="phase cases differ from the deterministic full row enumeration"):
+                dp.device_capture(args, current, PhaseTimes({}), selection, {}, [])
+            with pytest.raises(Invalid, match="row phase case has another unit or common identity"):
+                next(api.cases(attempt / "prepare", {**prepared, "scopes": []}))
+            if part == "diagnostics":
+                payload = dp.payload
+                reference = case["tensors"]["diagnostic_reference"]
+                with monkeypatch.context() as patch:
+                    patch.setattr(dp, "payload", lambda root, ref: torch.full_like(tensors["diagnostic_reference"], float("nan"))
+                                  if ref is reference else payload(root, ref))
+                    with pytest.raises(Invalid, match="reference is not finite before the native call"):
+                        dp.preflight_case(attempt / "prepare", case)
+            args.case_set, args.case_ranges = part, fixture.case_ranges
+            prepared["receipt"]["units"][0]["unattested"].clear()
+            current["units"][0]["unattested"].clear()
+            previous.write_text(json.dumps(prepared))
+            bundle = SimpleNamespace(rows=meta.rows, cols=meta.columns, tile_words=1, library="e4m3")
+            native = SimpleNamespace(lane="native", role_bundles=[bundle], _PreparedDenseNativeModule__fused=[bundle])
+            adapter = SimpleNamespace(family="e4m3", library="e4m3", layer=SimpleNamespace(tessera_native=native))
+            module["launch_geometry"] = {"rows": meta.rows, "cols": meta.columns, "tile_words": 1,
+                                         "blocks": (meta.rows + 127) // 128, "merged": False}
+            args.code_audit = SimpleNamespace(records=[], unit=None)
+            library = {"key": "e4m3", "library_canonical_code_sha256": "host-test", "cubin_canonical_sha256s": ["host-test"]}
+            compile_paths = [{"key": "e4m3", "native_source_path": str(wire)}]
+            with monkeypatch.context() as patch:
+                patch.setattr(dense, "init_vllm_world1", nullcontext)
+                patch.setattr(torch.profiler, "profile", lambda **kwargs: nullcontext())
+                patch.setattr(routed_pair_oracle, "kernel_table", lambda *a, **kw: [])
+                patch.setattr(row, "Dense", lambda *a: adapter)
+                patch.setattr(routed_fused, "_ext", lambda key: SimpleNamespace(name=key))
+                patch.setattr(routed_fused, "dense_module_launch_enabled", lambda: False)
+                patch.setattr(row, "unit_libraries", lambda library_object, *a: [library] if library_object.name == "e4m3" else [])
+                patch.setattr(row, "audit_served", lambda *a: None)
+                patch.setattr(row, "module_receipt", lambda *a: {"tp": tp1})
+                patch.setattr(row, "tp_facts", lambda *a: {})
+                patch.setattr(row, "scale_receipt", lambda *a: {"equal": True})
+                check = dp.preflight_case
+                patch.setattr(dp, "preflight_case", lambda root, observed: capture_boundary(check, root, observed))
+                with pytest.raises(FirstCase):
+                    dp.device_capture(args, current, PhaseTimes({}), selection, library, compile_paths)
+                progress = json.loads((phase_out / "progress.json").read_text())
+                assert progress["case"] == case["id"] and progress["cut"] == tp1
+                assert current["units"][0]["arm"]["library_identity_verified"]
+                bundle.cols += 1
+                with pytest.raises(Invalid, match="C1 launch geometry differs from the loaded operands"):
+                    dp.device_capture(args, current, PhaseTimes({}), selection, library, compile_paths)
+                bundle.cols -= 1
+                native._PreparedDenseNativeModule__fused.append(SimpleNamespace(library="e2m1"))
+                with pytest.raises(Invalid, match="served dense roles do not select one library"):
+                    dp.device_capture(args, current, PhaseTimes({}), selection, library, compile_paths)
+        else:
+            prepare_module = {**module, "name": entry["name"], "wire_sha256": sha256(wire), "structure": "dense", "roles": [role]}
+            one = current["units"][:1]
+            selection = [(dict(entry, library="e4m3"), prepare_module, tp1, one)]
+            if part == "diagnostics":
+                with monkeypatch.context() as patch:
+                    patch.setattr(dp.HostDense, "quantized", gate_case)
+                    with pytest.raises(FirstCase):
+                        dp.host_prepare(args, current, PhaseTimes({}), selection)
+                progress = json.loads((phase_out / "progress.json").read_text())
+                assert progress["phase"] == "diagnostics" and progress["case"] == "diagnostic:gauss:0:reference"
+            else:
+                with pytest.raises(FirstCase):
+                    dp.host_prepare(args, current, PhaseTimes({}), selection)
+            start, count = fixture.case_ranges[("A", 1, 0, part)]
+            assert json.loads((phase_out / "progress.json").read_text())["cut"] == tp1
+            assert opened[-1].document["ordinal_start"] == start and opened[-1].document["expected_cases"] == count
+            if part == "gate":
+                prepare_module["roles"] = [{**role, "separation": {**checked, "both": checked["both"] + 1}}]
+                with pytest.raises(Invalid, match="C1 separation does not match the loaded reader operands"):
+                    dp.host_prepare(args, current, PhaseTimes({}), selection)
+                prepare_module["wire_sha256"] = "changed"
+                with pytest.raises(Invalid, match="loaded wire differs from the C1 reader artifact"):
+                    dp.host_prepare(args, current, PhaseTimes({}), selection)
+            (phase_out / "phase.json").touch()
+            with pytest.raises(Invalid, match="use a new phase attempt directory"):
+                dp.host_prepare(args, current, PhaseTimes({}), selection)
 
 
 @pytest.mark.parametrize("case_sets", [("gate", "diagnostics"), ("all",)])

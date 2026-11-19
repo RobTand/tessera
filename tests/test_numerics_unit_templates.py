@@ -32,6 +32,27 @@ def templates(root, canary=False, instance_lists=None, module="module-A"):
     return config, [root / "templates" / unit["key"] / unit["phase"] for unit in config["templates"]]
 
 
+def payload_arguments(directory, attempt, tools):
+    """Expand the generated shell. Collect arguments at the Python worker boundary."""
+    tools.mkdir(exist_ok=True)
+    python = tools / "python3"
+    collected = tools / "arguments.json"
+    collected.unlink(missing_ok=True)
+    python.write_text(f"""#!{sys.executable}
+import json, os, sys
+from pathlib import Path
+if sys.argv[1] == '-c' and sys.argv[5:6] == ['experiments.numerics_rows.row']:
+    Path({str(collected)!r}).write_text(json.dumps(sys.argv[6:]))
+else:
+    os.execv(sys.executable, [sys.executable, *sys.argv[1:]])
+""")
+    python.chmod(0o700)
+    result = subprocess.run(["bash", directory / "payload.sh", attempt], capture_output=True, text=True,
+                            env={"PATH": str(tools) + os.pathsep + os.defpath})
+    assert result.returncode == 0, "generated payload did not reach the Python worker"
+    return json.loads(collected.read_text())
+
+
 def snapshot(root):
     return {str(p.relative_to(root)): p.read_bytes() if p.is_file() else None for p in root.rglob("*")}
 
@@ -71,6 +92,185 @@ printf '%s\\n' "$step" >> {shlex.quote(str(calls))}
         path.write_text("#!/bin/bash\n" + body + "\n")
         path.chmod(0o700)
     return {"PATH": str(tools) + os.pathsep + os.defpath, "FLUX_SCRATCH": str(scratch), "FLUX_JOB_ID": "unit-job"}, calls
+
+
+def test_generated_job_setup(tmp_path, monkeypatch):
+    from experiments.numerics_rows import counted_feeder
+    from experiments.numerics_rows.common import write_json
+    from tests.test_numerics_feeder_graph import make_graph
+
+    canary, bookings, configs = make_graph(tmp_path, monkeypatch, modules=("module-A",))
+    root = tmp_path / "module-A"
+    config = configs["module-A"]
+    repository = root / "repository.git"
+    repository.mkdir()
+    files = ["tests/test_numerics_fixture.py"]
+    (repository / "tests").mkdir()
+    (repository / files[0]).touch()
+    tool = Path(prepare_split.__file__)
+    local_module = repository / "experiments/numerics_rows" / tool.name
+    local_module.parent.mkdir(parents=True)
+    shutil.copyfile(tool, local_module)
+    for arguments in (("init", "-q"), ("add", "."), ("-c", "user.name=Fixture", "-c",
+                      "user.email=fixture@example.com", "commit", "-qm", "fixture")):
+        assert subprocess.run(["git", *arguments], cwd=repository, capture_output=True).returncode == 0
+    revision = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=repository, text=True).strip()
+    for unit in config["templates"]:
+        shutil.rmtree(root / "templates" / unit["key"] / unit["phase"])
+    cpu_check = root / "cpu-check.json"
+    arm = dict(source=revision, exit=0, failures=0, errors=0, skips=0, selected=1, passed=True)
+    cpu_check.write_text(json.dumps(dict(verdict="PASS", after=[arm, arm], test_files=files)))
+    population = Path(config["paths"]["population"])
+    population.write_text("{}")
+    digests = {}
+    for key, path in config["paths"].items():
+        if key not in ("source", "manifest"):
+            Path(path).touch()
+            digests[key] = prepare_split.sha256(path)
+    write_json(canary / "campaign.json", dict(canary=True, module="module-A", tool_commit=revision,
+               paths=config["paths"], digests=digests))
+    for phase in ("prepare", "capture", "compare"):
+        (canary / phase / "results").mkdir(parents=True)
+        (canary / phase / "tool-exit.txt").write_text("0\n")
+    canary_receipt = canary / "compare/results/numerics_row.json"
+    write_json(canary_receipt, dict(canary=True, tool={"commit": revision},
+               tessera={"commit": prepare_split.SOURCE}, rule={"sha256": prepare_split.RULE_SHA},
+               row=dict(outcome="PASS", exit_status=0, finalization_finished=True), units=[{"outcome": "PASS"}]))
+    meter = dict.fromkeys(("wall_minutes", "gpu_busy_minutes", "peak_device_memory_mib", "peak_power_watts",
+                          "mean_sample_power_watts", "whole_job_peak_memory_bytes", "sampled_seconds", "busy_sampled_seconds"), 1)
+    write_json(canary / "capture/results/numerics_row.json",
+               {"row": {"gpu_minutes": dict(meter, samples=[{"compute_process_count": 1}] * 2, errors=[])}})
+    config.update(tool_commit=revision, source_revision=prepare_split.SOURCE, rule_sha256=prepare_split.RULE_SHA,
+                  freeze_sha256=prepare_split.RULE_SHA, cpu_check=str(cpu_check), digests=digests,
+                  canary_directory=str(canary), canary_evidence={"path": str(canary_receipt), "sha256": prepare_split.sha256(canary_receipt)})
+    prepare_split.write_templates(root, config, repository)
+    prepare_split.bind_templates(root, config)
+    freeze_sha = json.loads((root / "campaign.json").read_text())["freeze_sha256"]
+    broker = {"broker.starttime": "123", "local-uri": "local://test"}
+    monkeypatch.setattr(counted_feeder, "observe", lambda name: dict(name=name, broker_starttime=broker["broker.starttime"],
+                        uri=broker["local-uri"], config_sha256=hashlib.sha256(b"{}").hexdigest()))
+    counted_feeder.run(canary, bookings)
+    unit = next(u for u in config["templates"] if u["phase"] == "compare")
+    directory = root / "templates" / unit["key"] / "compare"
+    attempt, = counted_feeder.attempt_jobs(root, unit["key"])
+    out = attempt / "compare"
+    shutil.rmtree(out)
+    scratch, tools = tmp_path / "scratch", tmp_path / "tools"
+    scratch.mkdir()
+    tools.mkdir()
+    job_id = (attempt / "compare-jobid").read_text().strip()
+    task = scratch / job_id / "work"
+    for name, code in {
+        "git": f"""if [[ "$PWD" == {shlex.quote(config["paths"]["source"])} ]]; then printf '%s\\n' {prepare_split.SOURCE}
+elif [[ "${{FIXTURE_WRONG_HEAD:-}}" && "$3" == rev-parse ]]; then printf 'other\\n'
+else exec {shutil.which("git")} "$@"; fi""",
+        "grep": f"""if [[ "${{FIXTURE_SIGNAL:-}}" ]]; then kill -s "$FIXTURE_SIGNAL" "$PPID"; fi
+exec {shutil.which("grep")} "$@" """,
+        "podman": """if [[ "$1" == image ]]; then
+    test -d "$HOME" -a -d "$TMPDIR" -a -s "$CONTAINERS_CONF" -a -s "$CONTAINERS_STORAGE_CONF" || exit 18
+    printf 'observation boundary\\n' >&2
+    exit 17
+fi""",
+        "python3": f"""#!{sys.executable}
+import json, os, runpy, sys
+from pathlib import Path
+from unittest.mock import patch
+sys.path.insert(0, {str(tool.parents[2])!r})
+from experiments.numerics_rows import common, phase_instance
+if sys.argv[1] == '-m':
+    script = Path(os.environ['PYTHONPATH']) / 'experiments/numerics_rows/prepare_split.py'
+    sys.argv = [str(script), *sys.argv[3:]]
+    original = common.sha256
+    pinned = {{{str(prepare_split.RULE)!r}: {prepare_split.RULE_SHA!r}, {str(prepare_split.FREEZE)!r}: {freeze_sha!r}}}
+    with patch.object(common, 'sha256', lambda path: pinned.get(str(path)) or original(path)):
+        runpy.run_path(script, run_name='__main__')
+elif sys.argv[2] == 'complete':
+    phase_instance.complete(Path(sys.argv[3]))
+else:
+    assert sys.argv[2] == 'check'
+    phase_instance.INSTANCE = Path({str(canary / "fixture-instance")!r})
+    def query(command, *args):
+        if args[0] == 'job':
+            return args[-1]
+        return {json.dumps(broker)!r} if 'attr.get' in args[-1] else '{{}}'
+    phase_instance.query = query
+    print(json.dumps(phase_instance.check(Path(sys.argv[3]), sys.argv[4])))
+""",
+    }.items():
+        path = tools / name
+        path.write_text(code if code.startswith("#!") else "#!/bin/bash\n" + code + "\n")
+        path.chmod(0o700)
+
+    env = {"PATH": str(tools) + os.pathsep + os.defpath, "FLUX_SCRATCH": str(scratch), "FLUX_JOB_ID": job_id}
+    (canary / "fixture-instance").write_text(str(tools))
+    Path(config["paths"]["source"]).mkdir()
+
+    def run(environment=env, *, script=directory / "job.sh", job=attempt):
+        return subprocess.run([script, job], env=environment, capture_output=True, text=True, timeout=30)
+
+    accepted = run()
+    assert accepted.returncode == 17 and "observation boundary" in accepted.stderr
+    assert (out / "affinity.txt").read_text().startswith("Cpus_allowed_list:")
+    assert json.loads((out / "instance.json").read_text()) == json.loads((attempt / "compare-instance.json").read_text())
+    assert (out / "tool-exit.txt").read_text() == "17\n"
+    assert not task.parent.exists()
+    shutil.rmtree(out)
+
+    import signal
+    from experiments.numerics_rows import row
+    from experiments.numerics_rows.phase_lifecycle import handled_signals
+
+    for unit in config["templates"]:
+        phase, key = unit["phase"], unit["key"]
+        job, = counted_feeder.attempt_jobs(root, key)
+        phase_out = job / phase
+        saved = phase_out.rename(job / "fixture-output") if phase_out.exists() else None
+        job_id = (job / f"{phase}-jobid").read_text().strip()
+        for number in (signal.SIGTERM, signal.SIGINT):
+            script = root / "templates" / key / phase / "job.sh"
+            stopped = run(dict(env, FLUX_JOB_ID=job_id, FIXTURE_SIGNAL=number.name), script=script, job=job)
+            assert stopped.returncode == 128 + number
+            assert (phase_out / "tool-exit.txt").read_text().strip() == str(128 + number)
+            assert not (scratch / job_id).exists()
+            worker_unit = row.new_unit({"cell": "dense", "role": "unit"})
+            if number == signal.SIGINT:
+                worker_unit["findings"].append("exact mismatch")
+            with pytest.raises(SystemExit) as worker:
+                with handled_signals({"row": {}, "units": [worker_unit]}, phase_out):
+                    signal.raise_signal(number)
+            result = json.loads((phase_out / "numerics_row.json").read_text())["row"]
+            assert worker.value.code == result["exit_status"] == 128 + number
+            assert result["stop_cause"] == number.name and not result["finalization_finished"]
+            assert result["outcome"] == ("FAIL" if number == signal.SIGINT else "STOPPED")
+            shutil.rmtree(phase_out)
+        if saved is not None:
+            saved.rename(phase_out)
+
+    for name in ("FLUX_SCRATCH", "FLUX_JOB_ID"):
+        rejected = run({key: value for key, value in env.items() if key != name})
+        assert rejected.returncode != 0 and name in rejected.stderr and not out.exists()
+    blocked = tmp_path / "blocked-scratch"
+    blocked.touch()
+    rejected = run(dict(env, FLUX_SCRATCH=str(blocked)))
+    assert rejected.returncode != 0 and "mkdir:" in rejected.stderr and not out.exists()
+    moved_repository = repository.rename(repository.with_name("moved.git"))
+    rejected = run()
+    assert rejected.returncode != 0 and "does not exist" in rejected.stderr and not out.exists()
+    moved_repository.rename(repository)
+    rejected = run(dict(env, FIXTURE_WRONG_HEAD="1"))
+    assert rejected.returncode == 1 and "observation boundary" not in rejected.stderr and not out.exists()
+    population.write_text("[]")
+    rejected = run()
+    assert rejected.returncode != 0 and "split row bound input changed: population" in rejected.stderr
+    assert not out.exists()
+    payload = directory / "payload.sh"
+    payload.write_text(payload.read_text() + "\n")
+    rejected = run()
+    assert rejected.returncode != 0 and "payload.sh: FAILED" in rejected.stdout
+    assert not out.exists()
+    moved = directory.rename(directory.with_name("moved"))
+    rejected = run(script=moved / "job.sh")
+    assert rejected.returncode != 0 and "No such file or directory" in rejected.stderr and not out.exists()
 
 
 @pytest.mark.parametrize("fault", ["verify", "instance", ""])

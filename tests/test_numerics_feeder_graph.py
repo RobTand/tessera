@@ -184,6 +184,58 @@ def make_graph(tmp_path, monkeypatch, modules=('module-A', 'module-B'), *, exter
     return canary, bookings, configs
 
 
+def test_generated_instance_match(tmp_path, monkeypatch):
+    from concurrent.futures import ThreadPoolExecutor
+    from threading import Event
+
+    canary, bookings, configs = make_graph(tmp_path, monkeypatch, modules=('module-A',), external=True)
+    instance = tmp_path / 'INSTANCE'
+    instance.write_text(str(tmp_path / 'flux-install') + '\n')
+    monkeypatch.setattr(phase_instance, 'INSTANCE', instance)
+    attrs = {'broker.starttime': '123', 'local-uri': 'local://test'}
+    config = {'policy': {}}
+    live = {}
+
+    def query(command, *args):
+        if args[0] == 'job':
+            assert Path(command[-1]) == tmp_path / 'flux-install/install/bin/flux'
+            return live.get('job_id', args[-1])
+        return json.dumps(attrs if 'attr.get' in args[-1] else config)
+
+    monkeypatch.setattr(phase_instance, 'query', query)
+    monkeypatch.setattr(api, 'observe', phase_instance.observe)
+    api.run(canary, bookings)
+    key = next(unit['key'] for unit in configs['module-A']['templates'] if unit['phase'] == 'compare')
+    attempt, = api.attempt_jobs(tmp_path / 'module-A', key)
+    metadata = attempt / 'compare-instance.json'
+    expected = api.read(metadata)
+    monkeypatch.setenv('FLUX_JOB_ID', (attempt / 'compare-jobid').read_text().strip())
+
+    waiting, flock = Event(), fcntl.flock
+
+    def observe_lock(stream, operation):
+        assert operation == fcntl.LOCK_SH and Path(stream.name) == attempt / 'compare-intent.json'
+        waiting.set()
+        flock(stream, operation)
+
+    monkeypatch.setattr(phase_instance.fcntl, 'flock', observe_lock)
+    pending = metadata.rename(metadata.with_suffix('.held'))
+    with ThreadPoolExecutor(max_workers=1) as pool, (attempt / 'compare-intent.json').open() as intent:
+        flock(intent, fcntl.LOCK_EX)
+        check = pool.submit(phase_instance.check, attempt, 'compare')
+        assert waiting.wait(10)
+        pending.rename(metadata)
+        flock(intent, fcntl.LOCK_UN)
+        assert check.result(timeout=10) == expected
+
+    for record, field, value in ((attrs, 'broker.starttime', '456'), (config, 'policy', {'changed': True}),
+                                 (live, 'job_id', 'fZZZ')):
+        with monkeypatch.context() as patch:
+            patch.setitem(record, field, value)
+            with pytest.raises(ValueError, match='live phase instance or job differs from submission'):
+                phase_instance.check(attempt, 'compare')
+
+
 def calls(graph):
     return [json.loads(line) for line in (graph[0].parent / 'calls.jsonl').read_text().splitlines()]
 

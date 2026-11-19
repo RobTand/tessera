@@ -1161,6 +1161,7 @@ def row_execution(tmp_path, monkeypatch):
     args.out.mkdir()
     contract, pop, manifest = population_cases()
     pop["modules"] = pop["modules"][:1]
+    args._population = pop
     entry = pop["modules"][0]
     module = {**manifest["modules"][0], **manifest["modules"][0]["cuts"][0], "roles": [{"matches_attested_wire": True}]}
     scope = row.new_unit({"cell": "cell", "symbol": entry["pair"][0], "decoder": entry["pair"][1], "rung": 1024,
@@ -1185,6 +1186,7 @@ def row_execution(tmp_path, monkeypatch):
     doc = json.loads(args.manifest.read_text())
     doc.update(source_commit="cell-commit", contract_sha256=common.sha256(contract_path))
     write_json(args.manifest, doc)
+    args._load_population = population.load_signed_population
     monkeypatch.setattr(population, "load_signed_population", lambda path: (pop, "population-hash"))
     monkeypatch.setattr(row, "check_source", lambda path: "cell-commit")
     monkeypatch.setattr(row, "check_runtime", lambda image: runtime)
@@ -1194,6 +1196,7 @@ def row_execution(tmp_path, monkeypatch):
         pass  # The pre-fix checkout has no compile-path verifier.
     else:
         args._compile_paths = serving_build.check_compile_paths
+        args._retained_source = serving_build.check_retained_source
         monkeypatch.setattr(serving_build, "check_compile_paths", lambda *args: [{"key": "e4m3", "native_source_path": "/P/kernel.cu"}])
         if hasattr(serving_build, "check_retained_source"):
             monkeypatch.setattr(serving_build, "check_retained_source", lambda *args: {"commit": "cell-commit"})
@@ -1209,7 +1212,9 @@ def row_execution(tmp_path, monkeypatch):
     for name, value in (("get_device_capability", (12, 1)), ("get_device_name", "CPU test device"), ("synchronize", None)):
         monkeypatch.setattr(torch.cuda, name, lambda *args, _value=value: _value)
     monkeypatch.setattr(row, "selftest", lambda **kwargs: {"mismatches": 0})
+    args._negative_controls = h1.negative_controls
     monkeypatch.setattr(h1, "negative_controls", lambda: [{"flagged_exactly": True}])
+    args._match_library, args._dtable = sass_slice.match_library, cases.DTable
     monkeypatch.setattr(sass_slice, "match_library", lambda *args: {**identity, "matched": True})
     monkeypatch.setattr(cases, "DTable", lambda value: SimpleNamespace(finite_certificate=True))
     monkeypatch.setattr(row, "planned_units", lambda *args: [(entry, module, {"rank": 0, "size": 1}, [scope])])
@@ -1240,6 +1245,302 @@ def row_execution(tmp_path, monkeypatch):
     monkeypatch.setattr(scale_launch, "check", case)
     receipt = {"row": {"stop_cause": None}, "tessera": {}, "inputs": {}, "units": [], "modules": [], "findings": []}
     return args, receipt, scope, events, served
+
+
+def test_generated_compare_worker_setup(tmp_path, monkeypatch, capsys, row_execution, retained_binary_receipts):
+    from itertools import count
+    import shlex
+    from pathlib import Path
+    from experiments.numerics_rows import build, cases, common, dense_phases, launch_state, population, prepare_split, sass_slice, serving_build, start_env
+    from experiments.numerics_rows.prepare_job import stage_population
+
+    fixture, _, _, _, _ = row_execution
+    monkeypatch.setattr(population, "load_signed_population", fixture._load_population)
+    entry, = fixture._population["modules"]
+    entry["selector_env"] = {"TESSERA_SERVE_MODE": "resident"}
+    draft = tmp_path / "draft.json"
+    saved_draft = tmp_path / "drafts" / draft.name
+    saved_draft.parent.mkdir()
+    document = dict(fixture._population, reviewed=False, wire_stamps_read=True)
+    write_json(saved_draft, document)
+    write_json(fixture.population, dict(document, reviewed=True, review={
+        "signed_by": "lead", "signed_utc": "then", "source_file": str(draft), "source_flux_job": "inventory",
+        "source_sha256": common.sha256(saved_draft), "spec": "test"}))
+    fixture.population, draft_mount = stage_population(fixture.population, fixture.out)
+    staged, target, mode = shlex.split(draft_mount)[1].split(":")
+    assert Path(target) == draft and mode == "ro" and not draft.exists()
+    draft.write_bytes(Path(staged).read_bytes())
+    h1_job = tmp_path / "h1-job"
+    h1_job.mkdir()
+    (h1_job / "artifacts").mkdir()
+    fixture.h1 = fixture.h1.rename(h1_job / "artifacts/h1.json")
+    (h1_job / "jobid").write_text("\n")
+    contract_path = fixture.source / "src/tessera/serving/runtime_contract.json"
+    contract = json.loads(contract_path.read_text())
+    for cell in contract["lane_eligibility"]["cells"]:
+        cell["requires_serve_flags"] = ["TESSERA_SERVE_MODE=resident"]
+    write_json(contract_path, contract)
+
+    kernel = fixture.source / common.KERNEL
+    kernel.parent.mkdir(parents=True)
+    kernel.write_bytes(b"retained kernel")
+    kernel_sha = common.sha256(kernel)
+    monkeypatch.setattr(common, "KERNEL_SHA256", kernel_sha)
+    monkeypatch.setattr(serving_build, "KERNEL_SHA256", kernel_sha)
+    monkeypatch.setattr(serving_build, "check_retained_source", fixture._retained_source)
+    dirty = []
+
+    def git(command, **kwargs):
+        if command[1] == "status":
+            return " M src\n" if dirty else ""
+        return "cell-commit\n"
+
+    monkeypatch.setattr(row.subprocess, "check_output", git)
+    image = IMAGES["N"]
+    options = start_env.container_options(tmp_path)
+    mount = next(word for word in options if ":/run/numerics/image-inspect.json:" in word)
+    inspect_path = Path(mount.split(":", 1)[0])
+    write_json(inspect_path, [{"Id": "sha256:" + image["local_id"] + "0" * 52, "Digest": image["image_digest"]}])
+    monkeypatch.setenv("NUMERICS_IMAGE_INSPECT", str(inspect_path))
+    import importlib.metadata
+    version = importlib.metadata.version
+    monkeypatch.setattr(importlib.metadata, "version", lambda name: image[name] if name in image else version(name))
+    monkeypatch.setattr(row, "check_runtime", common.check_runtime)
+    monkeypatch.setattr(cases, "DTable", fixture._dtable)
+    monkeypatch.setattr(sass_slice, "match_library", fixture._match_library)
+    monkeypatch.setattr(sys, "path", sys.path[:])
+
+    retained, _ = retained_binary_receipts
+    library, = json.loads(retained.read_text())["libraries"]
+    identity = build.library_identity(library["library"]["path"], tmp_path / "p-cubins")
+    for label in ("library", "probe"):
+        for kind in ("sass", "elf"):
+            path = tmp_path / f"{label}.{kind}"
+            path.write_text("")
+            library[label][kind] = {"path": str(path), "sha256": common.sha256(path)}
+    library.update(probe_source_sha256="probe-source", cflags=[])
+    write_json(fixture.build, {"commit": "cell-commit", "runtime": image, "libraries": [library]})
+    write_json(fixture.build_provenance, {"commit": "cell-commit", "build_sha256": common.sha256(fixture.build),
+        "libraries": [{**library, "native_source_path": str(kernel), "native_source_sha256": kernel_sha}]})
+    dom, table = tmp_path / "domain", tmp_path / "table"
+    np.array([-1, 0, 1], dtype="<f4").tofile(dom)
+    np.array([-0.25, 0, 0.75], dtype="<f4").tofile(table)
+    q1 = {"tables": [{"key": "e4m3", "library_so_sha256": library["library"]["sha256"],
+                     "probe_sha256": library["probe"]["sha256"], "L_bits": 0, "dom_size": 3,
+                     "d_nondecreasing_0_L": True, "dom_path": str(dom), "dom_sha256": common.sha256(dom),
+                     "d_table_path": str(table), "d_table_sha256": common.sha256(table)}]}
+    write_json(fixture.q1, q1)
+    state = launch_state.LaunchState()
+    state.bind_math(sys.modules["torch"])
+    for path, fields in ((fixture.manifest, {"q1_table_sha256": common.sha256(fixture.q1),
+                            "population_sha256": common.sha256(fixture.population), "contract_sha256": common.sha256(contract_path)}),
+                         (fixture.h1, {"build_sha256": common.sha256(fixture.build), "P3": {"e4m3": identity}})):
+        write_json(path, {**json.loads(path.read_text()), **state.fields(), **fields})
+    monkeypatch.setattr(launch_state, "LaunchState", lambda path=launch_state.LEVERS, **kwargs: type(state)(path))
+    addendum = tmp_path / "addendum.json"
+    write_json(addendum, {"freeze_record_sha256": common.sha256(fixture.freeze), "rule_sha256": common.sha256(fixture.rule),
+                          "reviewer": "lead", "frozen_utc": "then", "launch_levers_sha256": state.levers_sha256})
+    monkeypatch.setattr(row, "FREEZE_ADDENDUM", addendum)
+    monkeypatch.setattr(prepare_split, "RULE", fixture.rule)
+    monkeypatch.setattr(prepare_split, "FREEZE", fixture.freeze)
+    paths = {key: getattr(fixture, key) for key in prepare_split.INPUTS if key != "freeze_addendum"}
+    paths["freeze_addendum"] = addendum
+
+    def launch(attempt, phase, part, **unit):
+        output = attempt / phase
+        output.mkdir(parents=True)
+        write_json(output / "instance.json", {"name": "fv1"})
+        command = shlex.split(prepare_split.row_arguments({"module": "module-a", "canary": False}, tmp_path,
+                              fixture.source, fixture.population, paths, phase,
+                              unit={"case_set": part, **unit}, attempt=attempt))
+        return output, command[command.index("experiments.numerics_rows.row") + 1:]
+
+    from experiments.numerics_rows.reference import selftest
+    monkeypatch.setattr(row, "selftest", lambda *, device: selftest(samples=32, device=device))
+    monkeypatch.setattr(h1, "negative_controls", fixture._negative_controls)
+    entries = []
+
+    def compare(args, receipt, phases, groups):
+        entries.append(args.out)
+        receipt["row"]["exit_status"] = 0
+
+    monkeypatch.setattr(dense_phases, "host_compare", compare)
+    planned = row.planned_units
+    def groups(*args):
+        result = planned(*args)
+        result[0][0]["family"] = "TESSERA_FP8"
+        result[0][1].update(structure="dense", roles=[{"cut_axis": "whole", "cut_range": [0, 1],
+            "cols": 32, "separation": {"recipes": []}, "scale_index": []}])
+        result[0][3][0]["m_config"]["chunk_size"] = 32
+        return result
+    monkeypatch.setattr(row, "planned_units", groups)
+
+    attempts = count(1)
+
+    def run(status, flag=None, value=None):
+        output, argv = launch(tmp_path / "compare-attempts" / str(next(attempts)), "compare", "all")
+        if flag is not None:
+            index = argv.index(flag)
+            argv[index:index + 2] = [] if value is None else [flag, value]
+        monkeypatch.setattr(sys, "argv", ["row", *argv])
+        with pytest.raises(SystemExit) as exited:
+            row.main()
+        assert exited.value.code == status
+        if status != 2:
+            return json.loads((output / "numerics_row.json").read_text())
+
+    receipt = run(0)
+    out = tmp_path / "compare-attempts/1/compare"
+    assert entries == [out] and (out / "native_ops.json").is_file()
+    assert receipt["row"]["phase_jobs"]["compare"]["name"] == "fv1"
+    assert receipt["tessera"]["retained_source"]["kernel_source_sha256"] == kernel_sha
+    assert receipt["probe"]["finite_certificate"]["held"]
+    assert receipt["rule"]["preconditions"]["P5"]["h1_job"] == "h1-job"
+    from experiments.numerics_rows import gpu_time
+
+    def two_cuts(*inputs):
+        group, = groups(*inputs)
+        entry, module, _, units = copy.deepcopy(group)
+        cut = {"size": 2, "rank": 0}
+        units[0]["tp"] = cut
+        return [group, (entry, module, cut, units)]
+
+    with monkeypatch.context() as patch:
+        patch.setattr(row, "planned_units", two_cuts)
+        patch.setattr(gpu_time, "RowMeter", lambda: SimpleNamespace(finish=lambda: {}))
+        patch.setattr(gpu_time, "preflight", lambda **kwargs: {"verdict": "FREE"})
+        patch.setattr(gpu_time, "self_visibility", lambda torch: {"verdict": "VISIBLE"})
+        patch.setattr(dense_phases, "host_prepare", compare)
+        patch.setattr(dense_phases, "device_capture", lambda *a, **kw: compare(*a))
+        for phase in ("prepare", "capture"):
+            for part in ("gate", "diagnostics"):
+                for size_selected in (True, False):
+                    attempt = tmp_path / f"{phase}-{part}-{size_selected}"
+                    output, argv = launch(attempt, phase, part, size=1)
+                    if not size_selected:
+                        start = argv.index("--tp-size")
+                        assert argv[start + 2] == "--tp-rank"
+                        argv = argv[:start] + argv[start + 4:]
+                    patch.setattr(sys, "argv", ["row", *argv])
+                    with pytest.raises(SystemExit) as exited:
+                        row.main()
+                    result = json.loads((output / "numerics_row.json").read_text())
+                    assert exited.value.code == (0 if size_selected else 3)
+                    if size_selected:
+                        assert entries.pop() == output
+                        assert result["inputs"]["selected_cuts"] == [{"size": 1, "rank": 0}]
+                    else:
+                        assert result["row"]["stop_cause"] == "a case-set job requires one module and one TP unit"
+    draft.write_bytes(draft.read_bytes() + b"\n")
+    assert "signed population source sha256 differs" in run(3)["row"]["stop_cause"]
+    draft.write_bytes(saved_draft.read_bytes())
+    run(2, "--phase")
+    assert "--phase-local-output requires --phase" in capsys.readouterr().err
+    run(2, "--phase", "invalid")
+    assert "argument --phase: invalid choice" in capsys.readouterr().err
+
+    for path, field, value, reason in (
+        (addendum, "launch_levers_sha256", "bad", "lever freeze addendum has no lever-file digest"),
+        (addendum, "launch_levers_sha256", "b" * 64, "lever freeze addendum differs from frozen lever binding"),
+        (fixture.manifest, "population_sha256", "other", "case manifest input identity differs"),
+        (fixture.manifest, "modules", [], "case manifest omitted a population module"),
+        (fixture.manifest, "launch_state_names", ["duplicate", "duplicate"], "launch state names are missing or malformed"),
+        (fixture.manifest, "launch_state", {}, "launch state values must not be recorded"),
+        (fixture.manifest, "launch_state_sha256", "bad", "launch state binding is missing or malformed"),
+        (fixture.manifest, "launch_selectors", [], "launch state selectors are missing or malformed"),
+        (fixture.manifest, "launch_selectors", {"TESSERA_SERVE_MODE": "other"}, "outside the non-secret list"),
+        (fixture.manifest, "launch_state_sha256", "b" * 64, "C1 launch state or lever file differs"),
+        (fixture.h1, "launch_state_sha256", "b" * 64, "H1 launch state or lever file differs"),
+        (fixture.h1, "preconditions_confirmed", False, "H1 did not confirm this binary set"),
+        (fixture.h1, "P3", {"e4m3": {}}, "H1 code identity differs"),
+        (fixture.h1, "flux_job_id", "", "rule receipt requires a confirmed H1 job"),
+    ):
+        original = path.read_bytes()
+        write_json(path, {**json.loads(original), field: value})
+        assert reason in run(3)["row"]["stop_cause"]
+        path.write_bytes(original)
+    assert "split phase requires --phase-instance" in run(3, "--phase-instance")["row"]["stop_cause"]
+    assert "lever freeze addendum is not at its fixed rule path" in run(
+        3, "--freeze-addendum", str(tmp_path / "other-addendum.json"))["row"]["stop_cause"]
+    dirty.append(True)
+    assert "kernel source is not clean commit" in run(3)["row"]["stop_cause"]
+    dirty.clear()
+    kernel.write_bytes(b"changed kernel")
+    assert "kernel source sha256 differs" in run(3)["row"]["stop_cause"]
+    kernel.write_bytes(b"retained kernel")
+    inspect_path.unlink()
+    assert "missing Podman image inspection" in run(3)["row"]["stop_cause"]
+    write_json(inspect_path, [{"Id": "sha256:" + image["local_id"] + "0" * 52, "Digest": image["image_digest"]}])
+    evidence = library["library"]["sass"]["path"]
+    Path(evidence).write_text("changed")
+    assert "changed library sass evidence" in run(3)["row"]["stop_cause"]
+    Path(evidence).write_text("")
+    original_contract, original_manifest = contract_path.read_bytes(), fixture.manifest.read_bytes()
+    for fields, reason in (({"runtime": {"execution_modes": ["graph"]}}, "source cell does not admit the eager row"),
+                           ({"requires_serve_flags": ["TESSERA_SERVE_MODE=other"]}, "required selector differs from the source cell")):
+        changed = json.loads(original_contract)
+        changed["lane_eligibility"]["cells"][0].update(fields)
+        write_json(contract_path, changed)
+        write_json(fixture.manifest, {**json.loads(original_manifest), "contract_sha256": common.sha256(contract_path)})
+        assert reason in run(3)["row"]["stop_cause"]
+    contract_path.write_bytes(original_contract)
+    fixture.manifest.write_bytes(original_manifest)
+    table.write_bytes(b"changed")
+    assert "changed D table" in run(3)["row"]["stop_cause"]
+    np.array([0.25, 0, 0.75], dtype="<f4").tofile(table)
+    q1["tables"][0]["d_table_sha256"] = common.sha256(table)
+    write_json(fixture.q1, q1)
+    write_json(fixture.manifest, {**json.loads(fixture.manifest.read_text()), "q1_table_sha256": common.sha256(fixture.q1)})
+    assert "D table does not establish the gate sign facts" in run(3)["row"]["stop_cause"]
+    assert entries == [out]
+
+
+def test_generated_launch_policy(tmp_path, monkeypatch):
+    import csv
+    from experiments.numerics_rows import launch_state, start_env
+
+    options = start_env.container_options(tmp_path)
+    mapping = dict(options[i + 1].split("=", 1) for i, word in enumerate(options) if word == "--env")
+    for name, value in mapping.items():
+        monkeypatch.setenv(name, value)
+    state = launch_state.LaunchState()
+    state.check()
+    assert set(mapping) <= state.mapping.keys()
+    assert len(launch_state.digest(mapping)) == 64
+    with pytest.raises(Invalid, match="launch state must map names to exact strings"):
+        launch_state.digest({**mapping, "TESSERA_SERVE_MODE": 1})
+    monkeypatch.delenv("TESSERA_SERVE_MODE")
+    with pytest.raises(Invalid, match="launch state changed after worker start: TESSERA_SERVE_MODE"):
+        state.check()
+
+    with launch_state.LEVERS.open() as stream:
+        reader = csv.DictReader(stream, delimiter="\t")
+        rows = list(reader)
+    path = tmp_path / "launch-levers.tsv"
+    for name, field, value, reason in (
+        ("TESSERA_SERVE_MODE", "name", "", "no environment name"),
+        ("TESSERA_SERVE_MODE", "launch_state", "malformed", "policy is malformed or inconsistent"),
+        ("PATH", "evidence", "", "exclusion has no cited reason"),
+        ("TESSERA_SERVE_MODE", "public_values", "1", "malformed non-secret enum policy"),
+        ("TESSERA_SERVE_MODE", "public_values", '["different"]', "inconsistent non-secret enum policy"),
+        ("TESSERA_SERVE_MODE", None, None, "must retain the residency selector"),
+        ("PATH", None, None, "must exclude the seven toolchain diagnostics"),
+        ("PRISMAQUANT_DEV_MODE", None, None, "must include PRISMAQUANT_DEV_MODE"),
+    ):
+        updated = rows[:]
+        index = next(i for i, record in enumerate(rows) if record["name"] == name)
+        if field is None:
+            updated = [record for record in rows if record["name"] != name]
+        elif "inconsistent non-secret enum" in reason:
+            updated.append({**updated[index], field: value})
+        else:
+            updated[index] = {**updated[index], field: value}
+        with path.open("w") as stream:
+            writer = csv.DictWriter(stream, reader.fieldnames, delimiter="\t")
+            writer.writeheader()
+            writer.writerows(updated)
+        with pytest.raises(Invalid, match=reason):
+            launch_state.LaunchState(path)
 
 
 def test_run_checks_identity_before_every_case_and_rechecks_after(row_execution):
