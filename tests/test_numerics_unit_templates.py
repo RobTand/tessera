@@ -434,9 +434,13 @@ def gate_worker(root, monkeypatch):
     paired = {u["phase"]: p for u, p in zip(config["templates"], directories) if u.get("size") == 1 and u["case_set"] == "gate"}
     attempt = root / "campaign/units" / paired["prepare"].parent.name / "attempts/1"
     monkeypatch.setattr(sys, "path", sys.path[:])
-    check_output = row.subprocess.check_output
-    monkeypatch.setattr(row.subprocess, "check_output", lambda command, **kw: commit + "\n"
-                        if command == ["git", "rev-parse", "HEAD"] else check_output(command, **kw))
+    check_output, tool_root = row.subprocess.check_output, Path(row.__file__).resolve().parents[2]
+
+    def tool_git(command, **kw):  # the CPU check runs the tool from an exported tree, not a Git checkout
+        if command[:1] != ["git"] or Path(kw.get("cwd", ".")).resolve() != tool_root:
+            return check_output(command, **kw)
+        return commit + "\n" if command[1:] == ["rev-parse", "HEAD"] else b"experiments/numerics_rows/row.py\0"
+    monkeypatch.setattr(row.subprocess, "check_output", tool_git)
 
     def run(phase):
         out = attempt / phase
