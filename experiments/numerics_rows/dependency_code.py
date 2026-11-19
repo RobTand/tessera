@@ -132,6 +132,19 @@ def proved_empty_roster(path, data, live):
             **{f"{k}_sha256": v for k, v in entry["listings_sha256"].items()}}
 
 
+def mapped_executables(maps=None):
+    """Each executable mapping with its file's size and change time; a write to the same inode changes the entry."""
+    import os
+    def stat(path):
+        try:
+            s = os.stat(path)
+            return [s.st_size, s.st_ctime_ns, s.st_ino, s.st_dev]
+        except OSError:
+            return None
+    lines = (Path("/proc/self/maps").read_text() if maps is None else maps).splitlines()
+    return sorted({json.dumps([f[5], f[3], f[4], stat(f[5])]) for f in map(lambda l: l.split(None, 5), lines) if len(f) == 6 and "x" in f[1]})
+
+
 def kernel_origins(names, libraries, specializations):
     """Require a unique code owner for every profiler CUDA event, without prefixes."""
     normalize = lambda s: re.sub(r"\s+", "", s)
@@ -164,6 +177,7 @@ class CodeAudit:
         self.inventory_path = Path(inventory)
         self.loaded, self.images, self.records, self.saved = {}, {}, [], None
         self.case, self.unit = "preparation", None
+        self.audit = None
         self.p2 = []
 
     def install(self, kernel_type=None):
@@ -296,12 +310,20 @@ class CodeAudit:
         return libraries
 
     def bind_profile(self, unit, names, native=()):
-        libraries = list(native)
-        try:
-            libraries.extend(self.image_libraries())
-            libraries.extend(self.unaudited_libraries(libraries))
-        except Unattested as error:
-            unit["unattested"].append(str(error))
+        # The full library audit runs again only when the mapped files change (path, inode, size or change time).
+        key = json_digest([mapped_executables(), list(native)])
+        audited_at_case = self.audit is None or self.audit[0] != key
+        if audited_at_case:
+            libraries, refusal = list(native), None
+            try:
+                libraries.extend(self.image_libraries())
+                libraries.extend(self.unaudited_libraries(libraries))
+            except Unattested as error:
+                refusal = str(error)
+            self.audit = key, libraries, refusal, json_digest(libraries)
+        _, libraries, refusal, audit_sha256 = self.audit
+        if refusal:
+            unit["unattested"].append(refusal)
         records, unresolved = kernel_origins(names, libraries, unit.get("triton_specializations", []))
         unit["kernel_origins"] = records
         unit["unresolved_kernel_origins"] = unresolved
@@ -309,7 +331,8 @@ class CodeAudit:
                                    "observation_complete": self.saved is not None,
                                    "p2_verified": all(any(all(r["identity"][k] == p["identity"][k] for k in ("cubin_sha256", "entry", "target", "constants")) for p in self.p2) for r in unit.get("triton_specializations", [])),
                                    "image_inventory_sha256": sha256(self.inventory_path) if self.inventory_path.is_file() else None,
-                                   "proved_empty_rosters": [r["empty_roster_proof"] for r in libraries if "empty_roster_proof" in r]}
+                                   "proved_empty_rosters": [r["empty_roster_proof"] for r in libraries if "empty_roster_proof" in r],
+                                   "library_audit": {"mapped_key_sha256": key, "audit_sha256": audit_sha256, "audited_at_case": audited_at_case}}
         if not unit["dependency_code"]["p2_verified"]:
             unit["unattested"].append("H1 P2 did not check a prepared Triton specialization")
         if unresolved:

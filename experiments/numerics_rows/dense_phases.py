@@ -326,11 +326,18 @@ def device_capture(args, receipt, phases, groups, library, compile_paths):
                     try:
                         args.launch_state.check()
                         with torch.profiler.profile(activities=[torch.profiler.ProfilerActivity.CPU, torch.profiler.ProfilerActivity.CUDA]) as case_profile:
+                            clock = [time.monotonic()]
                             with row.native_boundaries({library["key"]: actual}, recorder):
                                 outputs = capture_case(adapter, unit, case, tensors, recorder)
+                            clock.append(time.monotonic())
+                        clock.append(time.monotonic())
                         events = kernel_table(case_profile, limit=100000, device_only=True, diagnostics=unit["arm"].setdefault("cuda_transfer_events", {}))
+                        clock.append(time.monotonic())
                         row.bind_kernel_profile(adapter, unit, recorder, events,
                             [{"case": case["id"], "route_count": None, "profiler_names": [r["name"] for r in events]}], routed=False)
+                        # Measurement only: where the case time goes (profiler start, case work, profiler stop, event table, code binding).
+                        captured["timing_seconds"] = dict(zip(("profiler_start", "case", "profiler_stop", "kernel_table", "bind"),
+                                                              (b - a for a, b in zip([before, *clock], [*clock, time.monotonic()]))))
                         captured.update(profiler_names=[r["name"] for r in events], emitted_pairs=adapter.pairs(),
                             tensors={k: artifact.tensor(v) for k, v in sorted(outputs.items())}, completion=True)
                         unit["arm"]["case_completed"] = True
