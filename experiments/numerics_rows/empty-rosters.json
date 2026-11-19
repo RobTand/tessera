@@ -1,0 +1,89 @@
+{
+ "evidence_jobs": {
+  "fatbin_diag": "fHorQAsQk7",
+  "listings": "fHrdtcL1GK",
+  "roster_diag": "fHmSFFMKeP",
+  "sass_functions": "fHsHu8S4jy"
+ },
+ "files": {
+  "3053d32e7e4d6909f3a98d581022dc8ceebbdfa51118d694cd619eb26295394e": {
+   "elf": 1,
+   "image_paths": [
+    "/usr/local/cuda/lib64/libnppc.so",
+    "/usr/local/cuda/lib64/libnppc.so.13",
+    "/usr/local/cuda/lib64/libnppc.so.13.0.1.2"
+   ],
+   "listings_sha256": {
+    "lelf": "112796b4f635b2929094799bc793bb9a44c083c358c7d215dc277bb5c85e37e2",
+    "lptx": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "symbols": "823331dafec2c7152a6672dacf9c711d13680015b5b3fe4ad3009fa248ae5f09"
+   },
+   "ptx": 0,
+   "sass_functions": 0
+  },
+  "58d0f3c53a56aa8e407df4a53be21969b60fa464b4dfa71631188f4e13596c28": {
+   "elf": 1,
+   "image_paths": [
+    "/usr/local/cuda/lib64/libcufft.so",
+    "/usr/local/cuda/lib64/libcufft.so.12",
+    "/usr/local/cuda/lib64/libcufft.so.12.0.0.61",
+    "/usr/local/lib/python3.12/dist-packages/nvidia/cu13/lib/libcufft.so.12"
+   ],
+   "listings_sha256": {
+    "lelf": "3befca7e8503bcac95453b5172e38092fdbf06337ff556861d3f79e8c644d56e",
+    "lptx": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "symbols": "c5aeee84b93be31cd9fadcc0d559b2c16609bc42b3eb03ee675e71110833c52d"
+   },
+   "ptx": 0,
+   "sass_functions": 0
+  },
+  "5e2be143a6c953256c5e390aefde1d8720e742b18ba3c6fb7d5a7389fd6521db": {
+   "elf": 1,
+   "image_paths": [
+    "/usr/local/cuda/lib64/libcufftw.so",
+    "/usr/local/cuda/lib64/libcufftw.so.12",
+    "/usr/local/cuda/lib64/libcufftw.so.12.0.0.61",
+    "/usr/local/lib/python3.12/dist-packages/nvidia/cu13/lib/libcufftw.so.12"
+   ],
+   "listings_sha256": {
+    "lelf": "679d50c3d0cd9a85f5ae782ade3fde35184fe4ba5cd7a774ccddcdf04eacaab5",
+    "lptx": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "symbols": "823331dafec2c7152a6672dacf9c711d13680015b5b3fe4ad3009fa248ae5f09"
+   },
+   "ptx": 0,
+   "sass_functions": 0
+  },
+  "7bceb090955616fc11b0cb55041d8670ee247ba7d97b4bcb6b43bfe76a11dc82": {
+   "elf": 1,
+   "image_paths": [
+    "/usr/local/lib/python3.12/dist-packages/flashinfer_jit_cache/providers/sm121a/jit_cache/dcp_lse_reduce/dcp_lse_reduce.so"
+   ],
+   "listings_sha256": {
+    "lelf": "751844d00430893af9a069eded1cdcad6368fd440798d296c7aaddae6e493c84",
+    "lptx": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "symbols": "090aba8a269038a6ee3edd290e9fef2e07424a5b3334218895cb7b1926bdb798"
+   },
+   "ptx": 0,
+   "sass_functions": 0
+  },
+  "af44d604d0f956cc405ad189fd6f8b10371f4e8dd0d2a6e58e62957b59acfd52": {
+   "elf": 1,
+   "image_paths": [
+    "/usr/local/cuda/lib64/libnppisu.so",
+    "/usr/local/cuda/lib64/libnppisu.so.13",
+    "/usr/local/cuda/lib64/libnppisu.so.13.0.1.2"
+   ],
+   "listings_sha256": {
+    "lelf": "119f205630c2bb2b95249045206af076a4680ae3b1f0843e4c16ffbee0e18593",
+    "lptx": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "symbols": "823331dafec2c7152a6672dacf9c711d13680015b5b3fe4ad3009fa248ae5f09"
+   },
+   "ptx": 0,
+   "sass_functions": 0
+  }
+ },
+ "image_digest": "sha256:5be13705acaecc7b4aaf342a84f80d67844c9970ff8375bf9fbeecc9c98ce84a",
+ "rule": "An empty cuobjdump -symbols roster counts only for a mapped file whose verified sha256 is a key here. Each entry: one ELF with no function, no PTX, no SASS function; proved once by the named Flux jobs and reviewed. A new file version has a new sha256 and refuses until it is proved and reviewed.",
+ "schema": "tessera-1717 proved-empty device-code rosters v1",
+ "who_may_add": "The #1717 lead only, after a diagnosis job on the pinned image and a second-vendor read of the new entry; never a maker in a change about something else."
+}

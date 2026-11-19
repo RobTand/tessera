@@ -14,6 +14,7 @@ from experiments.numerics_rows.phase_artifact import Artifact, identities, unit_
 from experiments.numerics_rows.phase_lifecycle import Progress
 from experiments.numerics_rows.launch_state import json_digest
 from experiments.numerics_rows import row
+from experiments.numerics_rows.dependency_code import ROSTER_REFUSAL
 
 
 class HostDense:
@@ -98,6 +99,13 @@ class CaseWriter:
         summarize_array(unit, record)
         self.array_index += 1
 
+
+
+def case_status(unit):
+    """One reason per field. A roster refusal is the cause, so it is kept in preference to a later effect."""
+    roster = [r for r in unit["unattested"] if isinstance(r, str) and r.startswith(ROSTER_REFUSAL)]
+    return {field: (roster or unit[field])[-1:] if field == "unattested" else unit[field][-1:]
+            for field in ("findings", "invalid", "unattested", "cuda_errors")}
 
 def summarize_array(unit, record):
     summary = unit["exact"]["scale_index"]
@@ -340,7 +348,7 @@ def device_capture(args, receipt, phases, groups, library, compile_paths):
                     captured.update(elapsed_seconds=time.monotonic() - before, boundaries=unit["boundaries"])
                     recorder.quantizer_result = None
                     del tensors, recorder
-                captured["status"] = status = {field: unit[field][-1:] for field in ("findings", "invalid", "unattested", "cuda_errors")}
+                captured["status"] = status = case_status(unit)
                 if complete and not captured["completion"]:
                     reason = (status["invalid"] or status["unattested"]
                               or [error["message"] for error in status["cuda_errors"]]

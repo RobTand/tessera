@@ -70,13 +70,66 @@ def binding(unit_id, case, identity):
 
 def image_symbols(path):
     """cuobjdump's ELF function roster avoids disassembling whole torch libraries."""
-    result = subprocess.run(["cuobjdump", "-symbols", str(path)], capture_output=True, text=True)
+    result = subprocess.run(["cuobjdump", "-symbols", str(path)], capture_output=True, text=True, errors="replace")
     if result.returncode:
-        raise Unattested(f"image CUDA symbol roster unavailable: {path}: {result.stderr}")
-    # ELF entries printed by cuobjdump: STT_FUNC ... <exact mangled name>.
-    functions = sorted({line.split()[-1] for line in result.stdout.splitlines() if re.search(r"\bSTT_FUNC\b", line)})
+        cause = (result.stderr.splitlines() or [""])[0][:200]
+        raise Unattested(f"image CUDA symbol roster unavailable: {path}: cuobjdump -symbols exit {result.returncode}: {cause}")
+    # ELF entries printed by cuobjdump: STT_FUNC <binding> <visibility> [U] <exact mangled name>; the type is the first field.
+    rows = [line.split() for line in result.stdout.splitlines()]
+    functions = sorted({fields[-1] for fields in rows if fields[:1] == ["STT_FUNC"] and len(fields) >= 4})
     names = subprocess.check_output(["c++filt"], input="\n".join(functions) + "\n", text=True).splitlines() if functions else []
     return [{"symbol": symbol, "demangled": name} for symbol, name in zip(functions, names, strict=True)]
+
+
+ROSTER_REFUSAL = "mapped file or device-code roster unavailable: "
+EMPTY_ROSTERS = Path(__file__).with_name("empty-rosters.json")
+
+
+# Linux memfd and seal constants (linux/memfd.h, linux/fcntl.h); some Python builds do not export them.
+MFD_CLOEXEC, MFD_ALLOW_SEALING, F_ADD_SEALS = 0x1, 0x2, 1033
+F_SEAL_SEAL, F_SEAL_SHRINK, F_SEAL_GROW, F_SEAL_WRITE = 0x1, 0x2, 0x4, 0x8
+
+
+def sealable_memfd():
+    import ctypes, os
+    if hasattr(os, "memfd_create"):
+        return os.memfd_create("roster-snapshot", MFD_CLOEXEC | MFD_ALLOW_SEALING)
+    libc = ctypes.CDLL(None, use_errno=True)
+    fd = libc.memfd_create(b"roster-snapshot", MFD_CLOEXEC | MFD_ALLOW_SEALING)
+    if fd < 0:
+        raise OSError(ctypes.get_errno(), "memfd_create failed")
+    return fd
+
+
+def proved_empty_roster(path, data, live):
+    """An empty roster counts only for a file whose verified bytes are a reviewed entry of empty-rosters.json.
+
+    The roster is listed again from a sealed in-memory snapshot of exactly those bytes, and the live descriptor `live`
+    must still hold them afterwards, so the hash, the empty listing and the mapped inode are the same bytes."""
+    import fcntl, os
+    digest = hashlib.sha256(data).hexdigest()
+    evidence = EMPTY_ROSTERS.read_bytes()
+    entry = json.loads(evidence)["files"].get(digest)
+    if entry is None:
+        raise Unattested(f"mapped device-code roster is empty and sha256 {digest} has no reviewed proof")
+    snapshot = sealable_memfd()
+    try:
+        with os.fdopen(snapshot, "wb", closefd=False) as stream:
+            stream.write(data)
+        fcntl.fcntl(snapshot, F_ADD_SEALS, F_SEAL_WRITE | F_SEAL_GROW | F_SEAL_SHRINK | F_SEAL_SEAL)
+        if image_symbols(f"/proc/{os.getpid()}/fd/{snapshot}"):
+            raise Unattested(f"mapped device-code roster changed while it was read: sha256 {digest}")
+    finally:
+        os.close(snapshot)
+    os.lseek(live, 0, os.SEEK_SET)
+    held = b""
+    while len(held) <= len(data) and (chunk := os.read(live, len(data) + 1 - len(held))):
+        held += chunk
+    if hashlib.sha256(held).hexdigest() != digest:
+        raise Unattested(f"mapped device-code roster changed while it was read: sha256 {digest}")
+    return {"path": str(path), "sha256": digest, "elf_count": entry["elf"], "ptx_count": entry["ptx"],
+            "evidence_sha256": hashlib.sha256(evidence).hexdigest(),
+            **{f"{k}_sha256": v for k, v in entry["listings_sha256"].items()}}
 
 
 def kernel_origins(names, libraries, specializations):
@@ -225,15 +278,21 @@ class CodeAudit:
                         raise ValueError("mapped inode differs")
                     if path in known:
                         continue
-                    _, _, sections = elf_sections(stream.read())
-                if not any(r["name"] in (".nv_fatbin", ".nvFatBinSegment") for r in sections):
-                    continue
-                symbols = image_symbols(path)
-                if not symbols:
-                    raise Unattested("mapped device-code roster is empty: " + path)
-                libraries.append({"origin": "unaudited", "path": path, "sha256": None, "symbols": symbols})
+                    data = stream.read()
+                    _, _, sections = elf_sections(data)
+                    if not any(r["name"] in (".nv_fatbin", ".nvFatBinSegment") for r in sections):
+                        continue
+                    verified = f"/proc/{os.getpid()}/fd/{stream.fileno()}"  # the checked inode, not a path that can change
+                    symbols = image_symbols(verified)
+                    record = {"origin": "unaudited", "path": path, "sha256": None, "symbols": symbols}
+                    if not symbols:
+                        record["empty_roster_proof"] = proved_empty_roster(path, data, stream.fileno())
+                libraries.append(record)
             except (OSError, ValueError, RuntimeError) as error:
-                raise Unattested("mapped file or device-code roster unavailable: " + path) from error
+                cause = (str(error).splitlines() or [""])[0][:300]
+                # Keep every other file's roster and proof: each failing file is its own UNATTESTED reason.
+                libraries.append({"origin": "unaudited", "path": path, "sha256": None, "symbols": [], "error":
+                                  f"{ROSTER_REFUSAL}{path}: {type(error).__name__}: {cause}"})
         return libraries
 
     def bind_profile(self, unit, names, native=()):
@@ -249,11 +308,14 @@ class CodeAudit:
         unit["dependency_code"] = {"observer": "IMG-N Triton 3.7.1 CompiledKernel load/run",
                                    "observation_complete": self.saved is not None,
                                    "p2_verified": all(any(all(r["identity"][k] == p["identity"][k] for k in ("cubin_sha256", "entry", "target", "constants")) for p in self.p2) for r in unit.get("triton_specializations", [])),
-                                   "image_inventory_sha256": sha256(self.inventory_path) if self.inventory_path.is_file() else None}
+                                   "image_inventory_sha256": sha256(self.inventory_path) if self.inventory_path.is_file() else None,
+                                   "proved_empty_rosters": [r["empty_roster_proof"] for r in libraries if "empty_roster_proof" in r]}
         if not unit["dependency_code"]["p2_verified"]:
             unit["unattested"].append("H1 P2 did not check a prepared Triton specialization")
         if unresolved:
             unit["unattested"].append("profiled kernel origin is missing or ambiguous")
+        # Last, so that the case status (its last reason) names the roster cause, not only its effect.
+        unit["unattested"].extend(r["error"] for r in libraries if "error" in r)
 
 
 def check_unit_code(unit, image_digest=None, common=None, *, stream_units=()):

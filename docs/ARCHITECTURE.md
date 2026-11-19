@@ -176,14 +176,16 @@ on loaded-library and kernel-origin audits. IMG-N OpenCV prepends it uncondition
 The source-read audit is diagnostic and cannot block attestation.
 Effective math settings, actual Triton identities and every-kernel origin checks remain required.
 The origin check includes unaudited mapped device-code owners. Shared names and
-unreadable rosters are UNATTESTED. H1 and C1 must match the row start state.
+unreadable rosters are UNATTESTED. An empty roster counts only for a file whose verified sha256 is a
+reviewed entry of experiments/numerics_rows/empty-rosters.json (proved once by Flux jobs: one ELF, no
+function, no PTX); the unit records that entry. H1 and C1 must match the row start state.
 Dense H1 checks every output byte for five setup specializations, including repack at zero and nonzero row offsets.
 For each launch shape, H1 flips one input bit and runs the same cubin again.
 P2 requires the compile identity, exact clean bytes, and the single output byte change that the CPU reference predicts.
 Public environment values are restricted to the frozen boolean and enum list.
 Unknown code origins are UNATTESTED. No serving default or kernel arithmetic changes.
 
-Re-stamped 2026-11-16 for the #1717 rule v2 attestation tool.
+Re-stamped 2026-11-19 for #1717: an empty device-code roster counts only for a reviewed file hash.
 The tool binds worker-start environment inputs and the frozen lever file in C1,
 row and joined receipts. It checks prepared routed layouts against resolved
 compiled symbols. This evidence does not change runtime contract admission.
