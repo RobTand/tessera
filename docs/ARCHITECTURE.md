@@ -177,6 +177,9 @@ The source-read audit is diagnostic and cannot block attestation.
 Effective math settings, actual Triton identities and every-kernel origin checks remain required.
 The origin check includes unaudited mapped device-code owners. Shared names and
 unreadable rosters are UNATTESTED. H1 and C1 must match the row start state.
+Dense H1 checks every output byte for five setup specializations, including repack at zero and nonzero row offsets.
+For each launch shape, H1 flips one input bit and runs the same cubin again.
+P2 requires the compile identity, exact clean bytes, and the single output byte change that the CPU reference predicts.
 Public environment values are restricted to the frozen boolean and enum list.
 Unknown code origins are UNATTESTED. No serving default or kernel arithmetic changes.
 

@@ -1986,6 +1986,7 @@ ts_py_library(
         "//src/tessera:fused",
         "//src/tessera:fused_frame",
         "//src/tessera:kernel_a4",
+        "//src/tessera:kernel_wire",
         "//src/tessera:serving/flags",
         "//tests:window_gemm_grouped_support",
         ":dense_fused_oracle",

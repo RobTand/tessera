@@ -7,10 +7,11 @@ import copy
 import importlib
 from types import SimpleNamespace
 
+import numpy as np
 import pytest
 import torch
 
-from experiments.numerics_rows import common, row
+from experiments.numerics_rows import common, h1, row
 from experiments.numerics_rows.common import BoundaryRecorder, Invalid
 
 
@@ -111,6 +112,135 @@ def test_missing_load_observation_refuses_before_triton_execution(code, tmp_path
         assert k.calls == []
     finally:
         audit.close()
+
+
+def test_setup_byte_reference_detects_planted_faults():
+    assert hasattr(h1, "setup_reference"), "H1_SETUP_BYTE_CHECKS_MISSING"
+    packed = np.array([0xAB, 0x10, 0x2F, 0xC3], dtype=np.uint8)
+    unpacked = np.array([[10, 2], [11, 15], [1, 12], [0, 3]], dtype=np.uint8)
+
+    plane = np.zeros(1024, dtype=np.uint8)
+    repacked = np.zeros_like(plane)
+    plane[:4], plane[256:260], plane[512:516], plane[768:772] = (
+        [1, 2, 3, 4], [5, 6, 7, 8], [9, 10, 11, 12], [13, 14, 15, 16])
+    repacked[:4], repacked[256:260], repacked[512:516], repacked[768:772] = (
+        [4, 3, 2, 1], [12, 11, 10, 9], [8, 7, 6, 5], [16, 15, 14, 13])
+    cases = (
+        (packed, 4, {"repack": False}, unpacked, 3, 7),
+        (plane, 1024, {"repack": True}, repacked, 513, 258),
+        (plane, 1024, {"repack": True, "row0": 512, "rows_local": 512}, repacked[512:], 769, 258),
+    )
+    for data, rows, args, expected, byte_index, output_index in cases:
+        np.testing.assert_array_equal(h1.setup_reference(data, rows, 2, **args), expected)
+        changed = data.copy()
+        changed[byte_index] ^= 1
+        expected_changed = expected.copy()
+        expected_changed.flat[output_index] ^= 1
+        reference_changed = h1.setup_reference(changed, rows, 2, **args)
+        np.testing.assert_array_equal(reference_changed, expected_changed)
+        check = h1.check_setup_bytes(expected, expected, expected_changed, reference_changed, byte_index)
+        delta = {"count": 1, "indices": [output_index]}
+        assert check == {"bytes": expected.size, "mismatches": 0, "result": "PASS",
+                         "fault": {"byte_index": byte_index, "input_bit": 0, "predicted": delta,
+                                   "observed": delta, "detected": True}}
+        wrong_index, wrong_value, extra = (output.copy() for output in (expected, expected, expected_changed))
+        wrong_index.flat[0] ^= 1
+        wrong_value.flat[output_index] ^= 2
+        extra.flat[0] ^= 1
+        for output in (expected, wrong_index, wrong_value, extra):
+            check = h1.check_setup_bytes(expected, expected, output, reference_changed, byte_index)
+            assert check["mismatches"] == 0 and check["result"] == "FAIL" and not check["fault"]["detected"]
+
+
+def test_dense_keys_have_h1_p2_records(code, tmp_path):
+    # Use the November 17 H1 P2 key and the five keys from the compile receipt.
+    target = {"backend": "cuda", "arch": 121, "warp_size": 32}
+    legacy = {
+        "unit_id": None, "case": "P2:ties",
+        "sha256": "aa0f2952b76b1efa8da1554492f8140237a33b40918857bc922df8f235c33065",
+        "identity": {
+            "entry": "_window_gemm_kernel", "target": target,
+            "cubin_sha256": "042c944ddb9024cdbe565cdfae923a6e7b23f56068810598506010b97ae71ed5",
+            "constants": [[[19], 64], [[20], 64], [[22], True], [[18], 64], [[16], 14], [[17], 512], [[21], False], [[10], 1]],
+            "launch": {"grid": [4, 1, 1], "packed_metadata": [8, 1, 4096], "metadata": [
+                ["tensordesc_meta", []], ["arch", "sm121"], ["target", [["backend", "cuda"], ["warp_size", 32], ["arch", 121]]],
+                ["debug", False], ["profile_scratch_align", 1], ["ptx_version", None], ["enable_reflect_ftz", True],
+                ["instrumentation_mode", ""], ["extern_libs", [["libdevice", "/usr/local/lib/python3.12/dist-packages/triton/backends/nvidia/lib/libdevice.10.bc"]]],
+                ["maxnreg", None], ["global_scratch_align", 1], ["allowed_dot_input_precisions", ["tf32", "tf32x3", "ieee", "bf16x3", "bf16x6"]],
+                ["hash", "612453067f84b77ad4708093ea46d40b73b174d6841d476ddeab866b19e41c31"],
+                ["num_warps", 8], ["triton_version", "3.7.1"], ["profile_scratch_size", 0], ["shared", 4096],
+                ["supported_fp8_dtypes", ["fp8e4b15", "fp8e4nv", "fp8e5"]], ["max_num_imprecise_acc_default", 0],
+                ["enable_fp_fusion", True], ["warp_size", 32], ["tmem_size", 0], ["launch_pdl", False],
+                ["launch_cooperative_grid", False], ["ir_override", None], ["global_scratch_size", 0],
+                ["deprecated_fp8_dot_operand_dtypes", ["fp8e4b15"]], ["backend_name", "cuda"], ["sanitize_overflow", True],
+                ["default_dot_input_precision", "tf32"], ["num_stages", 3], ["num_ctas", 1], ["ptx_options", None],
+                ["name", "_window_gemm_kernel"],
+            ]},
+        },
+    }
+    keys = [
+        ("_window_repack_kernel", "4096x1024", "d84293f5b6af75ac381516a75993f6a548096fec489e6d18d03f05e0494190b0",
+         [[[14], 256]]),
+        ("_unpack_body_kernel", "4096x12288", "667889ef2d96e7e0ad8206a00d2a3c815806366d4a4c46cea0957e59c4366540",
+         [[[5], 1], [[6], 256], [[3], 4096], [[4], 12288]]),
+        ("_unpack_body_kernel", "12288x4096", "34e10f5b900c25d1ab59b27de3f1e8ce3c0aa8b3113750d25c410a612f05a9df",
+         [[[4], 4096], [[5], 1], [[3], 12288], [[6], 256]]),
+        ("_unpack_body_kernel", "2048x4096", "9ee921a3cd388db00421af43b65dd604ea7cba131fccbf9a4bcc10ae37316949",
+         [[[4], 4096], [[3], 2048], [[5], 1], [[6], 256]]),
+        ("_unpack_body_kernel", "4096x2048", "620cde4bff8b1c0e4648f3756e011b37d5b222960be0acdb7104b60bcd5f007d",
+         [[[4], 2048], [[5], 1], [[6], 256], [[3], 4096]]),
+    ]
+    audit = code.CodeAudit("sha256:5be13705acaecc7b4aaf342a84f80d67844c9970ff8375bf9fbeecc9c98ce84a", tmp_path,
+                           inventory=tmp_path / "inventory.json")
+    p2 = {"triton_specializations": [legacy]}
+    audit.p2 = p2["triton_specializations"]
+
+    def accepted(identity):
+        unit = {"unattested": [], "triton_specializations": [{"identity": identity}]}
+        audit.bind_profile(unit, [identity["entry"]])
+        return (unit["dependency_code"]["p2_verified"]
+                and "H1 P2 did not check a prepared Triton specialization" not in unit["unattested"])
+
+    assert accepted(legacy["identity"])
+    refused = []
+    declared = {case: key for case, *_, key in h1.setup_cases()} if hasattr(h1, "setup_cases") else {}
+    rank1 = "P2:bytes:_window_repack_kernel:2048x4096"
+    if declared:
+        assert rank1 in declared, "H1_RANK1_REPACK_MISSING"
+        assert declared[rank1] == declared["P2:bytes:_window_repack_kernel:4096x1024"]
+    for entry, shape, digest, constants in keys:
+        case = f"P2:bytes:{entry}:{shape}"
+        identity = {"entry": entry, "cubin_sha256": digest, "target": target, "constants": constants}
+        assert not accepted(identity)
+        if hasattr(h1, "record_setup_p2"):
+            key = {**declared[case], "cubin_sha256": digest}
+            assert key == identity
+            captured = code.binding(None, case, identity)
+            expected = np.array([0xAB, 0xCD], dtype=np.uint8)
+            expected_changed = np.array([0xAB, 0xCC], dtype=np.uint8)
+            wrong = h1.check_setup_bytes(expected, expected, expected, expected_changed, 0)
+            h1.record_setup_p2(p2, case, key, [captured], wrong)
+            assert not accepted(identity)
+            check = h1.check_setup_bytes(expected, expected, expected_changed, expected_changed, 0)
+            wrong = h1.check_setup_bytes(expected[::-1], expected, expected_changed, expected_changed, 0)
+            h1.record_setup_p2(p2, case, key, [captured], wrong)
+            assert not accepted(identity)
+            changed = {"entry": "another_entry", "cubin_sha256": "0" * 64,
+                       "target": {**target, "arch": 120}, "constants": []}
+            for field, value in changed.items():
+                with pytest.raises(Invalid, match="Loaded Triton cubin identity differs"):
+                    h1.record_setup_p2(p2, case, key, [code.binding(None, case, {**identity, field: value})], check)
+            h1.record_setup_p2(p2, case, key, [captured], check)
+            assert audit.p2[-1] == captured
+            for field, value in changed.items():
+                assert not accepted({**identity, field: value})
+        if not accepted(identity):
+            refused.append(case)
+    assert not refused, f"DENSE_KEYS_LACK_H1_RECORDS: {', '.join(refused)}"
+    assert not h1.setup_p2_passed(p2)
+    key = {**declared[rank1], "cubin_sha256": keys[0][2]}
+    h1.record_setup_p2(p2, rank1, key, [code.binding(None, rank1, key)], check)
+    assert h1.setup_p2_passed(p2)
 
 
 @pytest.mark.parametrize("dev", ("0", "1"))

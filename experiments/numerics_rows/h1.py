@@ -9,10 +9,11 @@ import importlib.util
 import json
 import os
 from pathlib import Path
+import re
 import subprocess
 import sys
 
-from experiments.numerics_rows.common import BoundaryError, BoundaryRecorder, check_runtime, check_source, load_build, register_native_ops, sha256, write_json
+from experiments.numerics_rows.common import BoundaryError, BoundaryRecorder, Invalid, check_runtime, check_source, load_build, register_native_ops, sha256, write_json
 from experiments.numerics_rows.reference import compare, selftest
 
 
@@ -74,6 +75,146 @@ def p2_ties(recorder):
         order_equal &= bool((actual.view(torch.int16).to(torch.int32).bitwise_and(65535) == expected).all())
     return {"ties": 128, "ties_equal": ties_equal, "order_cases": len(indices), "order_equal": order_equal,
             "result": "PASS" if ties_equal and order_equal else "FAIL"}
+
+
+def setup_cases():
+    from experiments.numerics_rows.dependency_code import canonical
+
+    target = {"backend": "cuda", "arch": 121, "warp_size": 32}
+    repack = "_window_repack_kernel"
+    cases = [(repack, 4096, 1024, 0, 4096, {(14,): 256}),
+             (repack, 2048, 4096, 1024, 1024, {(14,): 256})]
+    cases.extend(("_unpack_body_kernel", rows, cols, 0, rows, {(3,): rows, (4,): cols, (5,): 1, (6,): 256})
+                 for rows, cols in ((4096, 12288), (12288, 4096), (2048, 4096), (4096, 2048)))
+    for entry, rows, cols, row0, rows_local, constants in cases:
+        yield f"P2:bytes:{entry}:{rows}x{cols}", rows, cols, row0, rows_local, {
+            "entry": entry, "target": target, "constants": canonical(constants)}
+
+
+def matches_setup_key(identity, key):
+    return all(identity.get(field) == value for field, value in key.items())
+
+
+def setup_keys(path):
+    manifest = json.loads(path.read_text())
+    if manifest["controls_passed"] is not True:
+        raise Invalid("CPU compile receipt has failed controls")
+    keys = {}
+    matched = set()
+    for case, *_, key in setup_cases():
+        matches = [row for row in manifest["cubins"] if matches_setup_key(row, key)]
+        if len(matches) != 1:
+            raise Invalid(f"CPU compile receipt has no unique cubin for {case}")
+        row, = matches
+        digest = row["cubin_sha256"]
+        if (not re.fullmatch(r"[0-9a-f]{64}", digest) or row["file"] != digest + ".cubin"
+                or row["expected_cubin_sha256"] not in (None, digest)
+                or sha256(path.with_name(row["file"])) != digest):
+            raise Invalid(f"CPU compile cubin bytes differ for {case}")
+        keys[case] = {**key, "cubin_sha256": digest}
+        matched.add(row["file"])
+    if len(matched) != len(manifest["cubins"]):
+        raise Invalid("CPU compile receipt has the wrong number of cubins")
+    return keys
+
+
+def setup_reference(plane, rows, cols, *, repack, row0=0, rows_local=None):
+    import numpy as np
+
+    if repack:
+        # Put tiles first and reverse the bytes in each 32-bit word.
+        stop = rows if rows_local is None else row0 + rows_local
+        cut = plane.reshape(cols, rows // 2)[:, row0 // 2:stop // 2]
+        return cut.reshape(cols, -1, 64, 4).transpose(1, 0, 2, 3)[..., ::-1].ravel()
+    packed = plane.reshape(cols, rows // 2).T
+    result = np.empty((rows, cols), dtype=np.uint8)
+    result[::2], result[1::2] = packed >> 4, packed & 15
+    return result
+
+
+def check_setup_bytes(actual, expected, changed, expected_changed, byte_index):
+    import numpy as np
+
+    if any(out.shape != expected.shape or out.dtype != expected.dtype
+           for out in (actual, changed, expected_changed)):
+        raise Invalid("Setup output shape or dtype differs from the CPU reference")
+    def delta(output):
+        diff = output != expected
+        count = int(np.count_nonzero(diff))
+        return {"count": count, "indices": [int(diff.argmax())] if count == 1 else []}
+
+    clean = int(np.count_nonzero(actual != expected))
+    predicted, observed = delta(expected_changed), delta(changed)
+    detected = predicted["count"] == 1 and observed == predicted and np.array_equal(changed, expected_changed)
+    return {"bytes": expected.nbytes, "mismatches": clean,
+            "fault": {"byte_index": byte_index, "input_bit": 0, "predicted": predicted,
+                      "observed": observed, "detected": detected},
+            "result": "PASS" if clean == 0 and detected else "FAIL"}
+
+
+def record_setup_p2(p2, case, key, records, check):
+    p2.setdefault("byte_checks", {})[case] = check
+    observed = [r for r in records if r["case"] == case]
+    if len(observed) != 1 or not matches_setup_key(observed[0]["identity"], key):
+        raise Invalid(f"Loaded Triton cubin identity differs for {case}")
+    if check["result"] == "PASS":
+        p2["triton_specializations"].append(observed[0])
+
+
+def run_setup_p2(p2, path, recorder, records, save):
+    import numpy as np
+    import torch
+    from tessera import kernel_wire
+
+    p2["setup_cubins_sha256"] = sha256(path)
+    keys = setup_keys(path)
+    device = torch.device("cuda")
+    rng = np.random.default_rng(0)
+    for case, rows, cols, row0, rows_local, key in setup_cases():
+        repack = key["entry"] == "_window_repack_kernel"
+        plane = rng.integers(0, 256, size=rows * cols // 2, dtype=np.uint8)
+        plane[:256] = np.arange(256, dtype=np.uint8)
+        if repack:
+            columns = torch.arange(cols, dtype=torch.int32, device=device)
+            starts = columns.to(torch.int64) * (rows * 4)
+            def launch():
+                return kernel_wire.window_repack_stream_cuda(
+                    torch.from_numpy(plane).to(device), col_starts=starts, perm=columns, row0=row0,
+                    rows_local=rows_local, rate=4, group_col0=0, group_byte0=0, n_cols=cols,
+                    n_tiles=rows_local // 512, chunk_bytes=256, tile_bytes=cols * 256, device=device)
+        else:
+            def launch():
+                return kernel_wire.unpack_body_cuda(plane.tobytes(), (4,) * cols, rows, device, span=1)
+        ref_args = {"repack": repack, "row0": row0, "rows_local": rows_local}
+        expected = setup_reference(plane, rows, cols, **ref_args)
+        actual = recorder.call(case, "tessera", launch).cpu().numpy()
+        byte_index = rows // 2 + row0 // 2 + 1
+        plane[byte_index] ^= 1
+        expected_changed = setup_reference(plane, rows, cols, **ref_args)
+        changed = recorder.call(case, "tessera", launch).cpu().numpy()
+        record_setup_p2(p2, case, keys[case], records,
+                        check_setup_bytes(actual, expected, changed, expected_changed, byte_index))
+        save()
+
+
+def setup_p2_passed(p2):
+    checks = p2.get("byte_checks", {})
+    records = [r["case"] for r in p2.get("triton_specializations", []) if r["case"].startswith("P2:bytes:")]
+    return (set(checks) == {case for case, *_ in setup_cases()} == set(records)
+            and len(records) == len(checks)
+            and all(c["result"] == "PASS" and c["mismatches"] == 0
+                    and c["fault"]["detected"] is True and c["fault"].get("predicted", {}).get("count") == 1
+                    and len(c["fault"]["predicted"]["indices"]) == 1
+                    and c["fault"]["predicted"] == c["fault"]["observed"] for c in checks.values()))
+
+
+def confirm_setup_p2(p2, path):
+    if p2.get("setup_cubins_sha256") != sha256(path) or not setup_p2_passed(p2):
+        raise Invalid("H1 setup byte checks are incomplete or use another CPU compile receipt")
+    keys = setup_keys(path)
+    if any(not matches_setup_key(record["identity"], keys[record["case"]])
+           for record in p2["triton_specializations"] if record["case"] in keys):
+        raise Invalid("H1 setup identity differs from the CPU compile receipt")
 
 
 def dense_preconditions(key, recorder):
@@ -348,6 +489,7 @@ def gpu_preconditions(report):
         and set(libraries) == set(report.get("runtime", {}).get("libraries", []))
         and report.get("P1", {}).get("samples") == 1_000_000 and report["P1"].get("mismatches") == 0
         and (set(libraries) == {"value"} or report.get("P2", {}).get("result") == "PASS")
+        and ("setup_cubins_sha256" not in report.get("P2", {}) or setup_p2_passed(report["P2"]))
         and all(not v.get("error") and v.get("P4") is True
                 and (v.get("routed") or {}).get("P4") is True
                 and (key not in ("e4m3", "e4m3mma") or v.get("P5") is True and v["routed"].get("P5") is True)
@@ -426,6 +568,8 @@ def run_checks(args, report):
         report["P2"] = p2_ties(recorder) if set(loaded) != {"value"} else {"result": "not applicable to value-only build"}
         report["P2"]["triton_specializations"] = [r for r in args.code_audit.records if r["case"].startswith("P2:")]
         save()
+        if args.setup_cubins:
+            run_setup_p2(report["P2"], args.setup_cubins, recorder, args.code_audit.records, save)
         for key, lib in loaded.items():
             entry = report["libraries"].setdefault(key, {})
             try:
@@ -456,6 +600,7 @@ def main():
     p.add_argument("--out", type=Path)
     p.add_argument("--image", choices=("G", "N"))
     p.add_argument("--build", type=Path)
+    p.add_argument("--setup-cubins", type=Path)
     p.add_argument("--cuda-control", choices=("inside", "outside"))
     p.add_argument("--gpu-receipt", type=Path)
     p.add_argument("--p3-receipt", type=Path)
@@ -467,6 +612,8 @@ def main():
         report = json.loads(args.gpu_receipt.read_text())
         report["preconditions_confirmed"] = False
         try:
+            if args.setup_cubins:
+                confirm_setup_p2(report.get("P2", {}), args.setup_cubins)
             confirm_p3(report, json.loads(args.p3_receipt.read_text()))
             jobid = args.p3_receipt.parent.parent / "jobid"
             report["p3_receipt"] = {"path": str(args.p3_receipt), "sha256": sha256(args.p3_receipt),
