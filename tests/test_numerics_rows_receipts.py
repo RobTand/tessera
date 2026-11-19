@@ -13,6 +13,7 @@ from experiments.numerics_rows.common import write_json
 from experiments.numerics_rows.build import code_identity
 from experiments.numerics_rows import h1
 from experiments.numerics_rows import row
+from experiments.numerics_rows import dense_phases  # noqa: F401  (load before a fixture patches row.Dense)
 from experiments.numerics_rows.common import IMAGES, Invalid, artifact_limit, check_runtime, load_build
 
 
@@ -2890,3 +2891,50 @@ def test_fixed_worker_launcher_reads_a_private_script_from_an_existing_mount(tmp
     assert result.returncode == 0
     assert json.loads(output.read_text()) == expected
     assert script.stat().st_mode & 0o111 == 0
+
+
+def test_compare_ignores_its_running_attempt(tmp_path, monkeypatch, row_execution):
+    from experiments.numerics_rows import h1, launch_state, prepare_split, row
+    from tests.test_numerics_unit_templates import payload_arguments, templates
+
+    fixture, _, _, _, _ = row_execution
+    addendum = tmp_path / "addendum.json"
+    addendum.write_text(json.dumps({"freeze_record_sha256": row.sha256(fixture.freeze),
+        "rule_sha256": row.sha256(fixture.rule), "reviewer": "lead", "frozen_utc": "then",
+        "launch_levers_sha256": fixture.launch_state.levers_sha256}))
+    for name in ("rule", "freeze"):
+        monkeypatch.setattr(prepare_split, name.upper(), getattr(fixture, name))
+    monkeypatch.setattr(row, "FREEZE_ADDENDUM", addendum)
+    monkeypatch.setattr(launch_state, "LaunchState", lambda path=launch_state.LEVERS, **kwargs: type(fixture.launch_state)(path))
+    monkeypatch.setattr(h1, "negative_controls", lambda **kwargs: [{"flagged_exactly": True}])
+    monkeypatch.setattr(sys, "path", sys.path[:])
+    paths = {key: str(getattr(fixture, key)) for key in prepare_split.INPUTS if key != "freeze_addendum"}
+    paths["freeze_addendum"] = str(addendum)
+    root = tmp_path / "module"
+    config, directories = templates(root, module="module-a", paths=paths)
+    directory = next(p for p in directories if p.name == "compare")
+    attempt = root / "units" / directory.parent.name / "attempts/1"
+    out = attempt / "compare"
+    out.mkdir(parents=True)
+    (out / "instance.json").write_text('{"name":"fv1"}')
+    selected = {key: root / "units" / key / "attempts/1" for key in config["unit_keys"]}
+    for path in selected.values():
+        path.mkdir(parents=True)
+    (attempt / "compare-inputs.json").write_text(json.dumps({key: str(path) for key, path in selected.items()}))
+    groups = []
+    for size, rank in ((1, 0), (2, 0), (2, 1)):
+        cut = {"size": size, "rank": rank}
+        role = {"cols": 32, "separation": {"recipes": []}, "scale_index": [], "cut_axis": "whole", "cut_range": [0, 1]}
+        unit = row.new_unit({"module": "module-a", "cell": "dense", "role": "unit", "tp": cut,
+                             "m_config": {"M": 1, "k_split": 1, "chunk_size": 32}})
+        groups.append(({"name": "module-a", "family": "TESSERA_FP8"},
+                       {"structure": "dense", "wire_sha256": "wire", "roles": [role]}, cut, [unit]))
+    monkeypatch.setattr(row, "planned_units", lambda *args: groups)
+    monkeypatch.setattr(sys, "argv", ["row", *payload_arguments(directory, attempt, tmp_path / "tools")])
+    with pytest.raises(SystemExit) as exited:
+        row.main()
+    saved = json.loads((out / "numerics_row.json").read_text())
+    assert saved["row"]["finalization_finished"], "COMPARE_REFUSES_ITS_OWN_ATTEMPT"
+    assert exited.value.code == 3 and saved["row"]["outcome"] == "STOPPED"
+    assert {entry["unit"] for entry in saved["attempts"]["listing"]} == set(selected)
+    assert saved["phase_artifacts"]["compare"]["sha256"] == row.sha256(out / "phase.json")
