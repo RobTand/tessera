@@ -1908,6 +1908,84 @@ def test_compare_setup_invalid_predecessor_with_cause_passes(tmp_path):
     assert attempts[1]["phases"]["capture"] == selected["sha256"], SETUP_INVALID_TOKEN
 
 
+def test_killed_unit_attempt_requires_cause_before_later_pass(tmp_path):
+    from experiments.numerics_rows.gpu_time import PhaseTimes
+
+    token = "KILLED_ATTEMPT_CANNOT_BE_RELEASED"
+    dp, api, args, receipt, groups = module_phase_pairs(tmp_path, case_sets=("all",))
+    control = copy.deepcopy(receipt)
+    dp.host_compare(args, control, PhaseTimes({}), groups)
+    assert control["row"]["outcome"] == "PASS", token
+    attempt = args.prepare_artifact[0].parent
+    retry = attempt.with_name("2")
+    attempt.rename(retry)
+    args.prepare_artifact, args.capture_artifact = [retry / "prepare"], [retry / "capture"]
+    partial = attempt / "prepare/numerics_row.json"
+    partial.parent.mkdir(parents=True)
+    partial.write_text(json.dumps({**receipt,
+        "row": {"finalization_finished": False, "exit_status": None},
+        "tessera": {"retained_source": receipt["tessera"]["retained_source"]}, "rule": {},
+        "inputs": {"launch_levers_sha256": receipt["inputs"]["launch_levers_sha256"]}}))
+    key, cause = attempt.parents[1].name, attempt / "lead-cause.json"
+    for outcome in ("STOPPED", "PASS"):
+        cause_record = None
+        if outcome == "PASS":
+            cause.write_text(json.dumps({"unit": key, "attempt": 1, "cause": "The job ended before it recorded identities."}))
+            cause_record = {"path": str(cause), "sha256": row.sha256(cause)}
+        args.out = tmp_path / outcome
+        current = copy.deepcopy(receipt)
+        try:
+            dp.host_compare(args, current, PhaseTimes({}), groups)
+        except KeyError as error:
+            raise AssertionError(token) from error
+        saved = json.loads((args.out / "numerics_row.json").read_text())
+        assert saved["row"]["finalization_finished"] and saved["row"]["outcome"] == outcome, token
+        assert saved["row"]["exit_status"] == (3 if outcome == "STOPPED" else 0), token
+        assert all(u["outcome"] == outcome and u["completed"] == (outcome == "PASS") for u in saved["units"]), token
+        assert all((f"open STOPPED attempt {key}/1" in u["reasons"]) == (outcome == "STOPPED") for u in saved["units"]), token
+        listing = saved["attempts"]["listing"]
+        prior, later = listing
+        assert (prior["unit"], prior["attempt"], prior["state"], prior["outcome"], prior["stop_cause"]) == (
+            key, 1, "STOPPED", None, None), token
+        assert prior["phases"]["prepare_partial"] == row.sha256(partial) and prior["cause_record"] == cause_record, token
+        assert (later["unit"], later["attempt"], later["state"]) == (key, 2, "FINISHED"), token
+        assert saved["attempts"]["sha256"] == api.json_digest(listing), token
+
+
+@pytest.mark.parametrize("fault", ["phase.json", "cases.jsonl", "FAIL", "PASS", "exit-zero"])
+def test_unbound_unit_receipt_refuses_completion_evidence(tmp_path, fault):
+    token = "UNBOUND_UNIT_RECEIPT_ESCAPES_IDENTITY_CHECK"
+    dp, _, args, _, _ = module_phase_pairs(tmp_path, case_sets=("all",))
+    document = json.loads((args.prepare_artifact[0] / "phase.json").read_text())
+    directory = tmp_path / "unit" / "attempts"
+    prior = directory / "1/prepare"
+    prior.mkdir(parents=True)
+    path = prior / "numerics_row.json"
+    previous = document.pop("receipt")
+    previous["row"].update(outcome="STOPPED", exit_status=3, stop_cause="The job stopped.")
+    if fault == "phase.json":
+        document["completion"] = False
+        (prior / fault).write_text(json.dumps(document))
+    elif fault == "cases.jsonl":
+        (prior / fault).touch()
+    elif fault == "exit-zero":
+        previous["row"]["exit_status"] = 0
+    else:
+        previous["row"]["outcome"] = fault
+    path.write_text(json.dumps(previous))
+    scope = (directory, "unit", document["scopes"], document["identities"], document["case_set"])
+    newest, listing, failed, stopped = dp.inspect_attempts(*scope)
+    assert newest is None and listing[0]["state"] == "STOPPED" and not failed and stopped, token
+    previous["tessera"].pop("commit")
+    path.write_text(json.dumps(previous))
+    try:
+        dp.inspect_attempts(*scope)
+    except (Invalid, KeyError) as error:
+        assert str(error) in ("'commit'", "phase receipt identities or units differ from the selected cut"), token
+    else:
+        pytest.fail(token)
+
+
 @pytest.mark.parametrize("finding", ["unit", "unit-outcome", "case", "stopped-case", "stopped-unit", "stopped-case-only"])
 def test_attempt_fail_stands_beside_a_later_pass(tmp_path, finding):
     from experiments.numerics_rows import dense_phases
@@ -2172,6 +2250,59 @@ def test_unfinished_compare_attempt_needs_a_cause(tmp_path, state, record_cause)
         "cause_record": {"path": str(cause), "sha256": row.sha256(cause)} if record_cause else None,
     }], token
     assert receipt["attempts"]["sha256"] == api.json_digest(listing)
+
+
+@pytest.mark.parametrize("evidence", [None, "phase.json", "cases.jsonl"])
+def test_unbound_compare_receipt_refuses_completion_evidence(tmp_path, evidence):
+    token = "UNBOUND_COMPARE_RECEIPT_ESCAPES_IDENTITY_CHECK"
+    dp, api, _, receipt, _ = module_phase_pairs(tmp_path, case_sets=("all",))
+    directory = tmp_path / "units"
+    key = "compare-" + api.json_digest(["A", "compare"])
+    prior = directory / key / "attempts/1/compare"
+    prior.mkdir(parents=True)
+    path = prior / "numerics_row.json"
+    previous = copy.deepcopy(receipt)
+    previous["row"]["finalization_finished"] = evidence is None
+    if evidence is not None:
+        (prior / evidence).touch()
+    path.write_text(json.dumps(previous))
+    listing, failed, stopped = dp.read_compare_attempts(directory, "A", receipt, None)
+    assert listing[0]["state"] == ("FINISHED" if evidence is None else "STOPPED"), token
+    assert not failed and bool(stopped) == (evidence is not None), token
+    previous["tessera"].pop("commit")
+    path.write_text(json.dumps(previous))
+    try:
+        dp.read_compare_attempts(directory, "A", receipt, None)
+    except (Invalid, KeyError) as error:
+        assert str(error) in ("'commit'", "compare attempt receipt identities or units differ from the module"), token
+    else:
+        pytest.fail(token)
+
+
+def test_finished_attempts_list_null_outcome_and_stop_cause(tmp_path):
+    from experiments.numerics_rows.gpu_time import PhaseTimes
+
+    token = "FINISHED_ATTEMPT_LISTS_PROVISIONAL_OUTCOME"
+    dp, api, args, receipt, groups = module_phase_pairs(tmp_path, case_sets=("all",))
+    path = args.capture_artifact[0] / "phase.json"
+    document = json.loads(path.read_text())
+    document["receipt"]["row"].update(outcome="STOPPED", stop_cause="The worker recorded a provisional status.")
+    path.write_text(json.dumps(document))
+    key = "compare-" + api.json_digest(["A", "compare"])
+    directory = tmp_path / "units" / key / "attempts"
+    args.out = args.phase_root = directory / "1/compare"
+    first = copy.deepcopy(receipt)
+    dp.host_compare(args, first, PhaseTimes({}), groups)
+    assert first["row"]["finalization_finished"] and first["row"]["outcome"] == "PASS", token
+    first["row"]["stop_cause"] = "The worker recorded a provisional status."
+    (args.out / "numerics_row.json").write_text(json.dumps(first))
+    args.out = args.phase_root = directory / "2/compare"
+    args.out.mkdir(parents=True)
+    dp.host_compare(args, receipt, PhaseTimes({}), groups)
+    saved = json.loads((args.out / "numerics_row.json").read_text())
+    history = {a["unit"]: (a["state"], a["outcome"], a["stop_cause"]) for a in saved["attempts"]["listing"]}
+    assert history == {key: ("FINISHED", None, None),
+        args.prepare_artifact[0].parents[2].name: ("FINISHED", None, None)}, token
 
 
 @pytest.mark.parametrize("evidence", ["findings", "outcome"])
