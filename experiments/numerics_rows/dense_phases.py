@@ -186,11 +186,12 @@ def host_prepare(args, receipt, phases, groups):
                     scale_checks(adapter, unit, module, recorder)
             del adapter
         receipt["row"]["gate_preparation_finished"] = part == "gate"
-    profile.dump_stats(str(artifact.root / "diagnostic-reference.prof"))
-    with (artifact.root / "diagnostic-reference.txt").open("w") as stream:
-        pstats.Stats(profile, stream=stream).sort_stats("cumulative").print_stats(80)
-    for name in ("diagnostic-reference.prof", "diagnostic-reference.txt"):
-        artifact.file(name)
+    if profile.getstats():
+        profile.dump_stats(str(artifact.root / "diagnostic-reference.prof"))
+        with (artifact.root / "diagnostic-reference.txt").open("w") as stream:
+            pstats.Stats(profile, stream=stream).sort_stats("cumulative").print_stats(80)
+        for name in ("diagnostic-reference.prof", "diagnostic-reference.txt"):
+            artifact.file(name)
     if any(unit["invalid"] for unit in receipt["units"]):
         raise Invalid("CPU preparation failed a required case precondition")
     receipt["row"].update(prepare_finished=True, finalization_finished=False, outcome="STOPPED")

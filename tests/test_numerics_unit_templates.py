@@ -334,6 +334,143 @@ def test_unit_payloads_select_their_tp_groups(tmp_path, monkeypatch):
                 row.main()
 
 
+def gate_worker(root, monkeypatch):
+    import numpy as np
+    import torch
+    from safetensors.torch import save_file
+    from experiments.numerics_rows import cases, common, dependency_code, launch_state, row, sass_slice, scope, serving_build
+    from tessera import routed_fused
+    from tessera.fused import pack_fused
+    from tessera.serving import ext
+    from tessera.unit_artifact import parse_unit_metadata
+    from tests.test_numerics_rows_receipts import population_cases
+
+    sha, write = common.sha256, common.write_json
+    paths = {key: root / key for key in (*prepare_split.INPUTS, "rule", "freeze")}
+    contract, population, _ = population_cases()
+    entry = population["modules"][0]
+    name = entry["name"] = "model.layers.0.mlp.down_proj"
+    wire = Path(__file__).with_name("data") / "legacy/e4m3-1024-window-channel-256c.tessera"
+    unit = wire.read_bytes()
+    blob = pack_fused([("down_proj", parse_unit_metadata(unit).rows, unit)])
+    scheme = cases.projection_scheme(dict(family="TESSERA_FP8", grid="E4M3", body="WINDOW", plane="CHANNEL"), "down_proj", blob)
+    entry.update(root=str(root), family=scheme["family"], roles=scheme["roles"], q256=scheme["q256"])
+    write(root / "config.json", {"quantization_config": {"config_groups": {"dense": {"scheme": scheme, "targets": [name]}}}})
+    tensor = name + ".wire_bytes"
+    write(root / "model.safetensors.index.json", {"weight_map": {tensor: "wire.safetensors"}})
+    save_file({tensor: torch.frombuffer(bytearray(blob), dtype=torch.uint8)}, root / "wire.safetensors")
+    wire = root / "reader.wire"
+    wire.write_bytes(blob)
+    runtime = common.IMAGES["N"]
+    for cell in contract["lane_eligibility"]["cells"]:
+        cell["runtime"]["image"] = runtime["image_digest"]
+        cell["rungs_q256"] = [scheme["q256"]]
+    draft = root / "draft.json"
+    write(draft, dict(population, image="N", modules=[entry], wire_stamps_read=True))
+    write(paths["population"], dict(json.loads(draft.read_text()), reviewed=True,
+        review=dict(signed_by="lead", signed_utc="then", source_file=str(draft), source_flux_job="inventory", source_sha256=sha(draft), spec="test")))
+
+    source = paths["source"]
+    contract_path = source / "src/tessera/serving/runtime_contract.json"
+    kernel = source / common.KERNEL
+    kernel.parent.mkdir(parents=True)
+    kernel.write_bytes(b"retained kernel fixture\n")
+    write(contract_path, contract)
+    for args in (("init", "-q"), ("add", "src"), ("-c", "user.name=Fixture", "-c", "user.email=fixture@example.com",
+                 "-c", "commit.gpgsign=false", "-c", "core.hooksPath=/dev/null", "commit", "-qm", "fixture")):
+        status = subprocess.run(["git", *args], cwd=source, capture_output=True).returncode
+        assert status == 0
+    commit = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=source, text=True).strip()
+    binary = dict(sha256="a" * 64)
+    library = dict(key="e4m3", name=ext.ROUTED_FUSED_E4M3_MODULE_NAME, library=binary, probe=binary,
+                   probe_source_sha256="probe", cflags=routed_fused._cflags("sm_121", True))
+    proof = dict(library_so_sha256=binary["sha256"], library_code_sha256="code", library_code_sections=[], cubin_sha256s=["cubin"])
+    write(paths["build"], dict(commit=commit, runtime=runtime, libraries=[library]))
+    write(paths["build_provenance"], dict(commit=commit, build_sha256=sha(paths["build"]), libraries=[dict(
+        library, native_source_path=str(kernel), native_source_sha256=sha(kernel))]))
+    for module in (common, serving_build):
+        monkeypatch.setattr(module, "KERNEL_SHA256", sha(kernel))
+    monkeypatch.setattr(ext, "csrc_dir", lambda: str(kernel.parent))
+    monkeypatch.setattr(row, "check_runtime", lambda image: dict(runtime))
+    monkeypatch.setattr(common, "register_native_ops", lambda image: {"result": "PASS"})
+    monkeypatch.setattr(dependency_code.CodeAudit, "install", lambda self: self)
+    monkeypatch.setattr(sass_slice, "match_library", lambda *args: proof)
+
+    state = launch_state.LaunchState()
+    state.bind_math(torch)
+    monkeypatch.setattr(launch_state, "LaunchState", lambda path=launch_state.LEVERS, **kwargs: type(state)(path))
+    paths["rule"].write_text("rule fixture\n")
+    write(paths["freeze"], dict(sha256=sha(paths["rule"]), frozen_utc="then", reviewer="lead",
+          decisions={f"D{i}": "yes" for i in range(1, 10)}))
+    write(paths["freeze_addendum"], dict(freeze_record_sha256=sha(paths["freeze"]), rule_sha256=sha(paths["rule"]),
+          reviewer="lead", frozen_utc="then", launch_levers_sha256=state.levers_sha256))
+    monkeypatch.setattr(row, "FREEZE_ADDENDUM", paths["freeze_addendum"])
+    for key in ("rule", "freeze"):
+        monkeypatch.setattr(prepare_split, key.upper(), paths[key])
+    write(paths["h1"], dict(state.fields(), flux_job_id="H1", build_sha256=sha(paths["build"]), preconditions_confirmed=True,
+          P1={"mismatches": 0}, P2={"result": "PASS"}, P3={"e4m3": proof}, libraries={"e4m3": {"P4": True, "P5": True}}))
+    dom = root / "d-table"
+    np.zeros(1, dtype="<f4").tofile(dom)
+    samples = torch.tensor([0, *cases.sweep_values("e4m3")], dtype=torch.bfloat16)
+    scales = (samples.float().abs() / 448).clamp_min(2**-24)
+    quantizer = root / "quantizer.npz"
+    np.savez(quantizer, input_bits=samples.view(torch.uint16).numpy()[:, None],
+             code_bytes=(samples.float() / scales).to(torch.float8_e4m3fn).view(torch.uint8).numpy(), scale_bytes=scales.numpy().view(np.uint8))
+    q1 = dict(tables=[dict(key="e4m3", library_so_sha256=binary["sha256"], probe_sha256=binary["sha256"], L_bits=0, dom_size=1,
+        d_table_sha256=sha(dom), dom_sha256=sha(dom), dom_path=str(dom), d_table_path=str(dom), d_nondecreasing_0_L=True)],
+        quantizers=[dict(family="e4m3", gs=1.0, path=str(quantizer), sha256=sha(quantizer), repeat_equal=True, smallest_normal_unsaturated_j=None)])
+    write(paths["q1"], q1)
+    _, weights, scale, _ = cases.decode_roles(blob, scheme, name)[0]
+    scale = scale.float().reshape(-1).expand(scheme["rows"])
+    checked = cases.column_coverage(weights.numpy(), scale.numpy(), "e4m3", cases.QuantizerTable(q1, "e4m3"))
+    cuts = [dict(tp=cut, launch_geometry=geometry, m_configs=cases.configurations(**geometry, library="e4m3", sms=1, structure="dense"),
+            roles=[dict(name="down_proj", expert=0, cols=geometry["cols"], cut_axis="column", cut_range=[0, geometry["cols"]],
+                        matches_attested_wire=True, reader_path=str(wire), reader_sha256=sha(wire), separation=checked, gs=1.0, lut=[], scale_index=[])])
+            for cut, geometry in scope.wire_geometries(entry)]
+    write(paths["manifest"], dict(state.fields(), source_commit=commit, contract_sha256=sha(contract_path),
+          population_sha256=sha(paths["population"]), q1_table_sha256=sha(paths["q1"]), selected_modules=[name],
+          generation_finished=True, modules=[dict(entry, cuts=cuts, complete=checked["complete"], wire_sha256=sha(wire))]))
+    config, directories = templates(root / "campaign", module=name, canary=True,
+                                    paths={key: str(paths[key]) for key in prepare_split.INPUTS})
+    paired = {u["phase"]: p for u, p in zip(config["templates"], directories) if u.get("size") == 1 and u["case_set"] == "gate"}
+    attempt = root / "campaign/units" / paired["prepare"].parent.name / "attempts/1"
+    monkeypatch.setattr(sys, "path", sys.path[:])
+
+    def run(phase):
+        out = attempt / phase
+        out.mkdir(parents=True)
+        write(out / "instance.json", {"name": "fv1"})
+        fields = shlex.split((paired[phase] / "payload.sh").read_text().split("exec ", 1)[1])
+        payload = fields[fields.index("experiments.numerics_rows.row") + 1:]
+        monkeypatch.setattr(sys, "argv", ["row", *(arg.replace("$attempt", str(attempt)) for arg in payload)])
+        row.main()
+
+    return run, attempt, paths
+
+
+def finish_gate_prepare(run, prepared):
+    with pytest.raises(SystemExit) as exited:
+        run("prepare")
+    cause = exited.value.__cause__
+    if isinstance(cause, TypeError) and "pstats.Stats" in str(cause):
+        raise AssertionError("GATE_PREPARE_CANNOT_FINISH") from cause
+    if exited.value.code != 0:
+        raise exited.value
+    return json.loads((prepared / "phase.json").read_text())
+
+
+def test_generated_tp1_gate_prepare_finishes(tmp_path, monkeypatch):
+    from experiments.numerics_rows.phase_artifact import records
+
+    run, attempt, _ = gate_worker(tmp_path, monkeypatch)
+    prepared = attempt / "prepare"
+    document = finish_gate_prepare(run, prepared)
+    assert document["completion"] is True and document["case_set"] == "gate"
+    assert document["receipt"]["row"]["prepare_finished"] is True
+    assert document["streams"]["cases"]["count"] > 0
+    assert all(not record["file"].startswith("diagnostic-reference.") for record in records(prepared, "files", document))
+
+
 def test_templates_cover_units_phases_and_manifest(tmp_path):
     assert hasattr(prepare_split, "write_templates"), "feature absent: one reviewed template per unit and phase"
     config, directories = templates(tmp_path / "module")
