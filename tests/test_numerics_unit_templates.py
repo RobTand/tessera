@@ -446,7 +446,10 @@ def gate_worker(root, monkeypatch):
         out = attempt / phase
         out.mkdir(parents=True)
         write(out / "instance.json", {"name": "fv1"})
-        fields = shlex.split((paired[phase] / "payload.sh").read_text().split("exec ", 1)[1])
+        command = (prepare_split.row_arguments(config, root / "campaign", source, paths["population"], config["paths"],
+                    phase, unit={"case_set": "all"}, attempt=attempt) if phase == "compare"
+                   else (paired[phase] / "payload.sh").read_text().split("exec ", 1)[1])
+        fields = shlex.split(command)
         payload = fields[fields.index("experiments.numerics_rows.row") + 1:]
         monkeypatch.setattr(sys, "argv", ["row", *(arg.replace("$attempt", str(attempt)) for arg in payload)])
         row.main()
@@ -477,10 +480,23 @@ def test_generated_tp1_gate_prepare_finishes(tmp_path, monkeypatch):
     assert all(not record["file"].startswith("diagnostic-reference.") for record in records(prepared, "files", document))
 
 
-def test_generated_tp1_gate_capture_enters_device_capture(tmp_path, monkeypatch):
+def stub_capture_device(monkeypatch):
     from types import SimpleNamespace
     import torch
-    from experiments.numerics_rows import dense_phases, gpu_time
+    from experiments.numerics_rows import gpu_time
+
+    check_output = subprocess.check_output
+    monkeypatch.setattr(subprocess, "check_output", lambda command, *args, **kwargs:
+                        "fixture driver\n" if command[0] == "nvidia-smi" else check_output(command, *args, **kwargs))
+    monkeypatch.setattr(gpu_time, "RowMeter", lambda: SimpleNamespace(finish=lambda: {}))
+    monkeypatch.setattr(gpu_time, "preflight", lambda **kwargs: {"verdict": "FREE"})
+    monkeypatch.setattr(gpu_time, "self_visibility", lambda torch: {"verdict": "VISIBLE"})
+    monkeypatch.setattr(torch.cuda, "get_device_capability", lambda: (12, 1))
+    monkeypatch.setattr(torch.cuda, "get_device_name", lambda: "fixture device")
+
+
+def test_generated_tp1_gate_capture_enters_device_capture(tmp_path, monkeypatch):
+    from experiments.numerics_rows import dense_phases
 
     run, attempt, _ = gate_worker(tmp_path, monkeypatch)
     prepared = attempt / "prepare"
@@ -494,14 +510,7 @@ def test_generated_tp1_gate_capture_enters_device_capture(tmp_path, monkeypatch)
         assert args.prepare_artifact == [prepared] and args.case_set == "gate"
         raise CaptureEntered
 
-    check_output = subprocess.check_output
-    monkeypatch.setattr(subprocess, "check_output", lambda command, *args, **kwargs:
-                        "fixture driver\n" if command[0] == "nvidia-smi" else check_output(command, *args, **kwargs))
-    monkeypatch.setattr(gpu_time, "RowMeter", lambda: SimpleNamespace(finish=lambda: {}))
-    monkeypatch.setattr(gpu_time, "preflight", lambda **kwargs: {"verdict": "FREE"})
-    monkeypatch.setattr(gpu_time, "self_visibility", lambda torch: {"verdict": "VISIBLE"})
-    monkeypatch.setattr(torch.cuda, "get_device_capability", lambda: (12, 1))
-    monkeypatch.setattr(torch.cuda, "get_device_name", lambda: "fixture device")
+    stub_capture_device(monkeypatch)
     monkeypatch.setattr(dense_phases, "device_capture", enter)
     with pytest.raises(CaptureEntered):
         run("capture")

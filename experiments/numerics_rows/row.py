@@ -755,7 +755,8 @@ def run_row(args, receipt, phases):
     launch_state.check()
     receipt["runtime"] = runtime
     write_json(args.out / "native_ops.json", runtime["native_ops"])
-    host_phase = getattr(args, "phase", None) in ("prepare", "compare")
+    split_phase = getattr(args, "phase", None)
+    host_phase = split_phase in ("prepare", "compare")
     if not host_phase and torch.cuda.get_device_capability() != (12, 1):
         raise Invalid("device capability differs from the sm_121 cell")
     freeze = json.loads(args.freeze.read_text())
@@ -785,16 +786,20 @@ def run_row(args, receipt, phases):
     from experiments.numerics_rows.scope import check_selectors
     check_selectors(contract, population, launch_state.mapping)
     groups = planned_units(contract, runtime["image_digest"], population, manifest)
-    if getattr(args, "phase", None):
+    if split_phase:
         from experiments.numerics_rows.dense_phases import case_ranges
         args.case_ranges = case_ranges(groups)
     groups = selected_groups(groups, getattr(args, "tp_size", None), getattr(args, "tp_rank", None))
     if getattr(args, "case_set", "all") != "all" and len({(g[0]["name"], g[2]["size"]) for g in groups}) != 1:
         raise Invalid("a case-set job requires one module and one TP unit")
+    for _, module, _, units in groups:
+        for unit in units:
+            unit["launch_state_sha256"] = launch_state.sha256
+            unit.update({k: v for k, v in launch_state.fields().items() if k.startswith("dependency_math")})
+            if split_phase:
+                unit["tp"].update(cut_axis=[r["cut_axis"] for r in module["roles"]], cut_range=[r["cut_range"] for r in module["roles"]])
+                finish_unit(unit)
     receipt["units"] = [unit for _, _, _, units in groups for unit in units]
-    for unit in receipt["units"]:
-        unit["launch_state_sha256"] = launch_state.sha256
-        unit.update({k: v for k, v in launch_state.fields().items() if k.startswith("dependency_math")})
     write_json(args.out / "numerics_row.json", receipt)
     if built["commit"] != commit or built["runtime"]["image_digest"] != runtime["image_digest"]:
         raise Invalid("library build does not match the cell")
@@ -821,9 +826,9 @@ def run_row(args, receipt, phases):
                "inputs": {"population_sha256": population_digest, "build_sha256": sha256(args.build), "case_manifest_sha256": sha256(args.manifest),
                           "selected_modules": [entry["name"] for entry in population["modules"]],
                           "selected_cuts": [dict(cut) for _, _, cut, _ in groups],
-                          "q1_table_sha256": sha256(args.q1), "launch_levers_sha256": launch_state.levers_sha256, "reference_selftest": selftest(device="cpu" if getattr(args, "phase", None) else "cuda")},
-               "negative_controls": negative_controls(device="cpu") if getattr(args, "phase", None) else negative_controls()})
-    if getattr(args, "phase", None):
+                          "q1_table_sha256": sha256(args.q1), "launch_levers_sha256": launch_state.levers_sha256, "reference_selftest": selftest(device="cpu" if split_phase else "cuda")},
+               "negative_controls": negative_controls(device="cpu") if split_phase else negative_controls()})
+    if split_phase:
         from experiments.numerics_rows.dense_phases import run_phase
         run_phase(args, receipt, phases, groups, library, q1, compile_paths)
         return

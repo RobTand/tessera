@@ -546,7 +546,8 @@ def test_capture_keeps_case_findings_in_records_and_a_bounded_summary(split_capt
     assert all(case["status"]["findings"] == [case["id"]] for case in captured["cases"])
 
 
-def module_phase_pairs(root, *, case_sets=("gate", "diagnostics"), cuts=None, finding=False, scale_arrays=None, groups=None):
+def module_phase_pairs(root, *, case_sets=("gate", "diagnostics"), cuts=None, finding=False, scale_arrays=None, groups=None,
+                       bound_receipt=None):
     from experiments.numerics_rows import dense_phases
     api = phase_api()
     name = groups[0][0]["name"] if groups else "A"
@@ -558,6 +559,8 @@ def module_phase_pairs(root, *, case_sets=("gate", "diagnostics"), cuts=None, fi
         "inputs": {**dict.fromkeys(("population_sha256", "case_manifest_sha256", "build_sha256", "q1_table_sha256", "launch_levers_sha256"), "input"),
                    "selected_modules": [name], "selected_cuts": cuts},
         "rule": dict.fromkeys(("sha256", "h1_sha256", "frozen_utc"), "rule"), "units": [], "modules": []}
+    if bound_receipt is not None:
+        receipt.update(api.identities(bound_receipt))
     pairs, ranges = [], {}
     if groups is None:
         groups = []
@@ -1923,37 +1926,69 @@ def test_compare_setup_invalid_predecessor_with_cause_passes(tmp_path):
     assert attempts[1]["phases"]["capture"] == selected["sha256"], SETUP_INVALID_TOKEN
 
 
-@pytest.mark.parametrize("window", ["first-write", "first-case"])
-def test_killed_unit_attempt_requires_cause_before_later_pass(tmp_path, monkeypatch, window):
+def kill_after_first_receipt(run, attempt, phase, monkeypatch):
     from experiments.numerics_rows.gpu_time import PhaseTimes
-    from tests.test_numerics_unit_templates import gate_worker
-
-    token = ("KILLED_ATTEMPT_CANNOT_BE_RELEASED" if window == "first-write"
-             else "KILLED_AFTER_FIRST_CASE_CANNOT_BE_RELEASED")
-    run, worker_attempt, paths = gate_worker(tmp_path, monkeypatch)
-    first_write = None
 
     class Killed(SystemExit):
         pass
 
-    def kill(_, phase):
+    def kill(_, step):
         nonlocal first_write
-        assert phase == "identity_audit"
-        first_write = (worker_attempt / "prepare/numerics_row.json").read_bytes()
+        assert step == "identity_audit"
+        first_write = (attempt / phase / "numerics_row.json").read_bytes()
         raise Killed
 
+    first_write = None
     with monkeypatch.context() as patch:
         patch.setattr(PhaseTimes, "measure", kill)
         with pytest.raises(Killed):
-            run("prepare")
-    early = json.loads(first_write)
-    assert early["units"] and "commit" not in early["tessera"] and not early["row"]["finalization_finished"], token
+            run(phase)
+    return first_write
+
+
+def worker_phase_groups(paths, receipt):
     module, = json.loads(paths["manifest"].read_text())["modules"]
-    cut, = [c for c in module["cuts"] if c["tp"] == {"size": 1, "rank": 0}]
-    for unit in early["units"]:
-        assert unit["tp"] == cut["tp"], token
-        unit["tp"].update(cut_axis=[r["cut_axis"] for r in cut["roles"]], cut_range=[r["cut_range"] for r in cut["roles"]])
-    dp, api, args, receipt, groups = module_phase_pairs(tmp_path / "history", groups=[(module, module, cut["tp"], early["units"])])
+    groups = []
+    for cut in module["cuts"]:
+        units = [copy.deepcopy(u) for u in receipt["units"] if all(u["tp"][k] == v for k, v in cut["tp"].items())]
+        if units:
+            for unit in units:
+                unit["tp"].update(cut_axis=[r["cut_axis"] for r in cut["roles"]], cut_range=[r["cut_range"] for r in cut["roles"]])
+                unit["invalid"].clear()
+                unit["completed"] = False
+            groups.append((module, module, cut["tp"], units))
+    return groups
+
+
+@pytest.mark.parametrize("window,token", [
+    ("first-write", "KILLED_ATTEMPT_CANNOT_BE_RELEASED"),
+    ("first-case", "KILLED_AFTER_FIRST_CASE_CANNOT_BE_RELEASED"),
+    ("bound-refusal", "CUT_LESS_BOUND_RECEIPT_STUCK"),
+    ("capture", "KILLED_CAPTURE_ATTEMPT_GUARD"),
+], ids=["first-write", "first-case", "bound-refusal", "capture"])
+def test_killed_unit_attempt_requires_cause_before_later_pass(tmp_path, monkeypatch, window, token):
+    from shutil import copytree
+    from experiments.numerics_rows.gpu_time import PhaseTimes
+    from tests.test_numerics_unit_templates import gate_worker, stub_capture_device
+
+    run, worker_attempt, paths = gate_worker(tmp_path, monkeypatch)
+    phase = "capture" if window == "capture" else "prepare"
+    bound = window == "bound-refusal"
+    if bound:
+        monkeypatch.setattr(row, "selftest", lambda **kwargs: {"mismatches": 1})
+        with pytest.raises(SystemExit) as refused:
+            run(phase)
+        assert refused.value.code == 3 and isinstance(refused.value.__cause__, Invalid), token
+        assert str(refused.value.__cause__) == "reference self-test or mutated reference control failed", token
+        raw = (worker_attempt / phase / "numerics_row.json").read_bytes()
+    else:
+        if phase == "capture":
+            stub_capture_device(monkeypatch)
+        raw = kill_after_first_receipt(run, worker_attempt, phase, monkeypatch)
+    early = json.loads(raw)
+    assert early["units"] and ("commit" in early["tessera"]) == bound and not early["row"]["finalization_finished"], token
+    dp, api, args, receipt, groups = module_phase_pairs(tmp_path / "history", groups=worker_phase_groups(paths, early),
+                                                        bound_receipt=early if bound else None)
     control = copy.deepcopy(receipt)
     dp.host_compare(args, control, PhaseTimes({}), groups)
     assert control["row"]["outcome"] == "PASS", token
@@ -1961,15 +1996,18 @@ def test_killed_unit_attempt_requires_cause_before_later_pass(tmp_path, monkeypa
     attempt = args.prepare_artifact[index].parent
     retry = attempt.rename(attempt.with_name("2"))
     args.prepare_artifact[index], args.capture_artifact[index] = retry / "prepare", retry / "capture"
-    partial = attempt / "prepare/numerics_row.json"
+    partial = attempt / phase / "numerics_row.json"
     partial.parent.mkdir(parents=True)
-    partial.write_bytes(first_write)
+    partial.write_bytes(raw)
     stream = partial.with_name("cases.jsonl")
-    if window == "first-case":
-        case = next(api.records(retry / "prepare", "cases"))
+    has_case = window in ("first-case", "capture")
+    if phase == "capture":
+        copytree(retry / "prepare", attempt / "prepare")
+    if has_case:
+        case = next(api.records(retry / phase, "cases"))
         stream.write_text(json.dumps(case) + "\n")
     key, cause = attempt.parents[1].name, attempt / "lead-cause.json"
-    for outcome in (("STOPPED", "PASS", "FAIL") if window == "first-case" else ("STOPPED", "PASS")):
+    for outcome in (("STOPPED", "PASS", "FAIL") if has_case else ("STOPPED", "PASS")):
         if outcome == "PASS":
             cause.write_text(json.dumps({"unit": key, "attempt": 1, "cause": "The job ended before it finished the phase."}))
         if outcome == "FAIL":
@@ -1995,8 +2033,8 @@ def test_killed_unit_attempt_requires_cause_before_later_pass(tmp_path, monkeypa
         prior, later = [a for a in listing if a["unit"] == key]
         assert (prior["unit"], prior["attempt"], prior["state"], prior["outcome"], prior["stop_cause"]) == (
             key, 1, "FAIL" if outcome == "FAIL" else "STOPPED", early["row"].get("outcome"), early["row"]["stop_cause"]), token
-        assert prior["phases"]["prepare_partial"] == row.sha256(partial), token
-        assert prior["phases"]["prepare_cases"] == (row.sha256(stream) if stream.is_file() else None), token
+        assert prior["phases"][phase + "_partial"] == row.sha256(partial), token
+        assert prior["phases"][phase + "_cases"] == (row.sha256(stream) if has_case else None), token
         assert prior["cause_record"] == (None if outcome == "STOPPED" else {"path": str(cause), "sha256": row.sha256(cause)}), token
         assert (later["unit"], later["attempt"], later["state"]) == (key, 2, "FINISHED"), token
         assert saved["attempts"]["sha256"] == api.json_digest(listing), token
@@ -2304,6 +2342,50 @@ def test_unfinished_compare_attempt_needs_a_cause(tmp_path, state, record_cause)
     assert receipt["attempts"]["sha256"] == api.json_digest(listing)
 
 
+def test_killed_compare_case_fail_stands_after_cause_and_later_pass(tmp_path, monkeypatch):
+    from experiments.numerics_rows.gpu_time import PhaseTimes
+    from tests.test_numerics_unit_templates import gate_worker
+
+    token = "COMPARE_CASE_FAIL_DROPPED"
+    run, attempt, paths = gate_worker(tmp_path, monkeypatch)
+    raw = kill_after_first_receipt(run, attempt, "compare", monkeypatch)
+    early = json.loads(raw)
+    assert early["units"] and "commit" not in early["tessera"] and not early["row"]["finalization_finished"], token
+    history = tmp_path / "history"
+    dp, api, args, receipt, groups = module_phase_pairs(history, case_sets=("all",), groups=worker_phase_groups(paths, early))
+    key = "compare-" + api.json_digest([groups[0][0]["name"], "compare"])
+    prior = history / "units" / key / "attempts/1"
+    (prior / "compare").mkdir(parents=True)
+    (prior / "compare/numerics_row.json").write_bytes(raw)
+    cause = prior / "lead-cause.json"
+    cause.write_text(json.dumps({"unit": key, "attempt": 1, "cause": "The job ended before finalization."}))
+    args.out = args.phase_root = prior.with_name("2") / "compare"
+    control = copy.deepcopy(receipt)
+    dp.host_compare(args, control, PhaseTimes({}), groups)
+    assert control["row"]["finalization_finished"] and control["row"]["outcome"] == "PASS", token
+
+    case = next(api.records(args.out, "cases"))
+    assert case["outcome"] == "PASS", token
+    case["outcome"] = "FAIL"
+    stream = prior / "compare/cases.jsonl"
+    stream.write_text(json.dumps(case) + "\n")
+    args.out = args.phase_root = prior.with_name("3") / "compare"
+    current = copy.deepcopy(receipt)
+    dp.host_compare(args, current, PhaseTimes({}), groups)
+    assert current["row"]["outcome"] == "FAIL", token
+    failed, = [unit for unit in current["units"] if unit["outcome"] == "FAIL"]
+    assert failed["unit_id"] == case["scope"]["unit_key"], token
+    assert failed["failed_attempts"] == [f"FAIL compare attempt {key}/1"], token
+    assert all(unit["outcome"] == "PASS" for unit in current["units"] if unit is not failed), token
+    first, later = [a for a in current["attempts"]["listing"] if a["unit"] == key]
+    assert (first["attempt"], first["state"], first["cause_record"]) == (1, "FAIL", {"path": str(cause), "sha256": row.sha256(cause)}), token
+    assert (later["attempt"], later["state"]) == (2, "FINISHED"), token
+    for field in ("identities", "scope"):
+        stream.write_text(json.dumps({**case, field: {}}) + "\n")
+        with pytest.raises(Invalid, match="attempt case has another unit or common identity"):
+            dp.host_compare(args, copy.deepcopy(receipt), PhaseTimes({}), groups)
+
+
 @pytest.mark.parametrize("evidence", [None, "phase.json", "cases.jsonl"])
 def test_unbound_compare_receipt_refuses_completion_evidence(tmp_path, evidence):
     from experiments.numerics_rows.gpu_time import PhaseTimes
@@ -2320,13 +2402,16 @@ def test_unbound_compare_receipt_refuses_completion_evidence(tmp_path, evidence)
     if evidence is not None:
         (prior / evidence).touch()
     path.write_text(json.dumps(previous))
-    listing, failed, stopped = dp.read_compare_attempts(directory, "A", receipt, None)
-    assert listing[0]["state"] == ("FINISHED" if evidence is None else "STOPPED"), token
-    assert not failed and bool(stopped) == (evidence is not None), token
+    bound = copy.deepcopy(receipt)
+    dp.host_compare(args, bound, PhaseTimes({}), groups)
+    earlier, = [a for a in bound["attempts"]["listing"] if a["unit"] == key]
+    assert earlier["state"] == ("FINISHED" if evidence is None else "STOPPED"), token
+    assert all(u["outcome"] == ("PASS" if evidence is None else "STOPPED") for u in bound["units"]), token
     previous["tessera"].pop("commit")
     previous["row"].update(finalization_finished=True, outcome="PASS", exit_status=0, stop_cause="Unbound status")
     previous["units"][0].update(outcome="FAIL", findings=["Unbound finding"])
     path.write_text(json.dumps(previous))
+    args.out = tmp_path / "unbound"
     dp.host_compare(args, receipt, PhaseTimes({}), groups)
     earlier, = [a for a in receipt["attempts"]["listing"] if a["unit"] == key]
     assert (earlier["state"], earlier["outcome"], earlier["stop_cause"]) == ("STOPPED", "PASS", "Unbound status"), token

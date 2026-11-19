@@ -452,8 +452,21 @@ def lead_cause(attempt, key, number, stopped):
     return {"path": str(path), "sha256": sha256(path)}
 
 
-def read_compare_attempts(directory, module, receipt, running_attempt):
-    key, expected = "compare-" + json_digest([module, "compare"]), unit_map(receipt["units"]).keys()
+def attempt_unit_key(scope):
+    return json.dumps([scope["module"], scope["unit_key"]], sort_keys=True)
+
+
+def failed_case_unit(case, common, expected, *, checked=False):
+    if not checked and (case.get("identities") != common or case.get("scope") not in expected):
+        raise Invalid("attempt case has another unit or common identity")
+    state = case.get("status", case)
+    if case.get("findings") or case.get("outcome") == "FAIL" or state.get("findings") or state.get("outcome") == "FAIL":
+        return attempt_unit_key(case["scope"])
+
+
+def read_compare_attempts(directory, expected, common, running_attempt):
+    key = "compare-" + json_digest([expected[0]["module"], "compare"])
+    expected_keys = {attempt_unit_key(scope) for scope in expected}
     listing, failures, stopped = [], {}, {}
     for attempt in attempt_paths(directory / key / "attempts"):
         if attempt == running_attempt:
@@ -462,14 +475,19 @@ def read_compare_attempts(directory, module, receipt, running_attempt):
         path = root / "numerics_row.json"
         status, units, digest = {}, None, None
         if path.is_file():
-            status, units = checked_attempt_receipt(json.loads(path.read_text()), identities(receipt), expected,
+            status, units = checked_attempt_receipt(json.loads(path.read_text()), common, expected_keys,
                 "compare attempt receipt identities or units differ from the module")
             digest = sha256(path)
         finished = units is not None and status.get("finalization_finished") is True
         found = {identity for identity, unit in (units or {}).items() if unit.get("findings") or unit.get("outcome") == "FAIL"}
-        cause = lead_cause(attempt, key, number, not finished and found != expected)
+        if not finished and (root / "cases.jsonl").is_file():
+            for case in records(root, "cases"):
+                identity = failed_case_unit(case, common, expected)
+                if identity is not None:
+                    found.add(identity)
+        cause = lead_cause(attempt, key, number, not finished and found != expected_keys)
         if not finished and cause is None:
-            stopped.update({identity: f"open STOPPED attempt {key}/{number}" for identity in expected - found})
+            stopped.update({identity: f"open STOPPED attempt {key}/{number}" for identity in expected_keys - found})
         for identity in found:
             failures.setdefault(identity, f"FAIL compare attempt {key}/{number}")
         status = {} if finished else status
@@ -528,7 +546,7 @@ class CompareChecks:
 def inspect_attempts(directory, key, expected, common, part, *, check_cases=False):
     """Read all unit attempts for both feeder holds and module comparison."""
     listing, failures, stopped, newest = [], {}, {}, None
-    expected_keys = {json.dumps([s["module"], s["unit_key"]], sort_keys=True) for s in expected}
+    expected_keys = {attempt_unit_key(scope) for scope in expected}
     for attempt in attempt_paths(directory):
         number = int(attempt.name)
         documents, evidence, found, attempt_row, finished = {}, {}, {}, {}, True
@@ -537,23 +555,23 @@ def inspect_attempts(directory, key, expected, common, part, *, check_cases=Fals
             root = attempt / phase
             path = root / "phase.json"
             document = json.loads(path.read_text()) if path.is_file() else None
+            complete = document is not None and document.get("completion") is True
             evidence[phase] = sha256(path) if document is not None else None
             cases = root / "cases.jsonl"
             def inspect_case(case):
                 nonlocal finished
-                if (document is None or document.get("completion") is not True) and (case.get("identities") != common or case.get("scope") not in expected):
-                    raise Invalid("attempt case has another unit or common identity")
+                identity = failed_case_unit(case, common, expected, checked=complete)
+                if identity is not None:
+                    found[identity] = f"FAIL attempt {key}/{number}"
                 state = case.get("status", case)
-                if case.get("findings") or case.get("outcome") == "FAIL" or state.get("findings") or state.get("outcome") == "FAIL":
-                    found[json.dumps([case["scope"]["module"], case["scope"]["unit_key"]], sort_keys=True)] = f"FAIL attempt {key}/{number}"
                 if phase == "capture" and not case.get("completion") and not any(state.get(f) for f in ("findings", "invalid", "unattested")):
                     finished = False
-                if checks is not None and document is not None and document.get("completion") is True and (phase == "prepare" or "prepare" in documents):
+                if checks is not None and complete and (phase == "prepare" or "prepare" in documents):
                     checks.case(phase, case)
             if document is not None:
                 if document.get("case_set") != part:
                     raise Invalid("attempt phase has another case set")
-                if document.get("completion") is True:
+                if complete:
                     if check_cases and document.get("scopes") != expected:
                         raise Invalid("phase artifact has a foreign module or cut; " + row.P5)
                     documents[phase], evidence[phase] = read(root, phase, common, expected, check_case=inspect_case,
@@ -617,8 +635,9 @@ def host_compare(args, receipt, phases, groups):
     if any(sorted(parts) not in (["all"], ["diagnostics", "gate"]) for parts in selected.values()):
         raise Invalid("compare requires the full gate and diagnostics union exactly once")
     phase_root = getattr(args, "phase_root", None)
-    earlier, failed, unfinished = read_compare_attempts(args.prepare_artifact[0].parents[3], groups[0][0]["name"],
-        receipt, phase_root.parent if phase_root is not None else None)
+    common, module_scopes = identities(receipt), scopes(groups)
+    earlier, failed, unfinished = read_compare_attempts(args.prepare_artifact[0].parents[3], module_scopes,
+        common, phase_root.parent if phase_root is not None else None)
     listing.extend(earlier)
     failures.update(failed)
     stopped.update(unfinished)
@@ -626,14 +645,14 @@ def host_compare(args, receipt, phases, groups):
               unit_map(prepared["receipt"]["units"]), unit_map(captured["receipt"]["units"]),
               check_pair(args, unit_groups, prepared, captured, pd, prepare_root, capture_root))
              for prepare_root, capture_root, prepared, captured, pd, cd, unit_groups in sorted(bound, key=lambda p: p[2]["ordinal_start"])]
-    common, units = identities(receipt), unit_map(receipt["units"])
+    units = unit_map(receipt["units"])
     listing.sort(key=lambda item: (item["unit"], item["attempt"]))
     receipt["attempts"] = {"listing": listing, "sha256": json_digest(listing)}
     compare_row = copy.deepcopy(receipt["row"])
     receipt["row"]["phase_jobs"] = {"compare": compare_row}
     receipt["phase_artifacts"] = {}
     artifact = Artifact(getattr(args, "phase_root", args.out / "compare"), "compare", common)
-    artifact.document.update(scopes=scopes(groups), ranges=[])
+    artifact.document.update(scopes=module_scopes, ranges=[])
     (artifact.root / "cases.jsonl").touch()
     artifact.document["streams"]["cases"] = {"count": 0}
     progress = args.progress = Progress(args.out, receipt, phases)
@@ -664,7 +683,7 @@ def host_compare(args, receipt, phases, groups):
         arrays = iter(records(prepare_root, "arrays", prepared)) if "arrays" in prepared["streams"] else iter(())
         for _, batch in groupby(pairs, lambda pair: (pair[0]["scope"]["module"], pair[0]["scope"]["unit_key"], pair[0].get("array_index"))):
             case, observed = next(batch)
-            unit = units[json.dumps([case["scope"]["module"], case["scope"]["unit_key"]], sort_keys=True)]
+            unit = units[attempt_unit_key(case["scope"])]
             array = next(arrays, None) if case["kind"] == "scale" else None
             if case["kind"] == "scale":
                 array["record"]["mismatches"] = 0
@@ -714,10 +733,6 @@ def run_phase(args, receipt, phases, groups, library, q1, compile_paths):
         raise Invalid("split phases support IMG-N E4M3 dense only")
     if receipt["inputs"]["reference_selftest"]["mismatches"] or not all(c["flagged_exactly"] for c in receipt["negative_controls"]):
         raise Invalid("reference self-test or mutated reference control failed")
-    for _, module, _, units in groups:
-        for unit in units:
-            unit["tp"].update(cut_axis=[r["cut_axis"] for r in module["roles"]], cut_range=[r["cut_range"] for r in module["roles"]])
-            row.finish_unit(unit)
     operation = {"prepare": host_prepare, "capture": device_capture, "compare": host_compare}[args.phase]
     operation(args, receipt, phases, groups, **({"library": library, "compile_paths": compile_paths} if args.phase == "capture" else {}))
     raise SystemExit(receipt["row"].get("exit_status") or 0)
