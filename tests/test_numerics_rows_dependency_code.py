@@ -384,13 +384,15 @@ def test_image_symbol_audit_refuses_changed_or_missing_code(offline_image_audit,
 
 
 @pytest.mark.parametrize("mutation", ("unknown", "image_missing", "ambiguous"))
-def test_profile_refuses_a_kernel_without_a_unique_code_owner(profiled, mutation):
-    run, names, image, _ = profiled
+def test_profile_refuses_a_kernel_without_a_unique_code_owner(profiled, mutation, monkeypatch):
+    run, names, image, audit = profiled
     positive = run()
     assert not positive["unattested"] and not positive["findings"]
     if mutation == "unknown": names.append("unknown_generated_kernel")
     elif mutation == "image_missing": image.pop()
     else: image.append({**copy.deepcopy(image[0]), "path": "/other/image.so"})
+    # A changed library set comes with a changed mapping; the audit runs again only then.
+    monkeypatch.setattr(importlib.import_module(type(audit).__module__), "mapped_executables", lambda: ["remapped"], raising=False)
     assert "profiled kernel origin is missing or ambiguous" in run()["unattested"]
 
 
@@ -402,6 +404,7 @@ def test_profile_checks_image_file_identity_before_accepting_origin(profiled, mo
     def changed():
         raise Invalid("image library identity: loaded bytes changed")
     monkeypatch.setattr(audit, "image_libraries", changed)
+    monkeypatch.setattr(importlib.import_module(type(audit).__module__), "mapped_executables", lambda: ["remapped"], raising=False)
     with pytest.raises(Invalid, match="loaded bytes changed"):
         run()
 
@@ -676,3 +679,40 @@ def test_roster_refusal_names_its_failing_step(profiled, code, tmp_path, monkeyp
     cause = {"unreadable_roster": "Unattested: image CUDA symbol roster unavailable: first line",
              "unreadable_file": "ValueError: unsupported ELF encoding"}[mutation]
     assert unit["unattested"][-1] == f"mapped file or device-code roster unavailable: {paths['mapped.so']}: {cause}", unit["unattested"]
+
+
+def test_library_audit_runs_once_per_mapped_key(code, tmp_path, monkeypatch):
+    audit = code.CodeAudit("image", tmp_path)
+    audit.saved = (object, None, None)
+    image = [{"origin": "image", "path": "/lib/a.so", "sha256": "a" * 64, "symbols": [{"symbol": "k", "demangled": "k"}]}]
+    calls, key = [], ["k1"]
+    monkeypatch.setattr(audit, "image_libraries", lambda: calls.append(key[0]) or [dict(r) for r in image])
+    monkeypatch.setattr(audit, "unaudited_libraries", lambda libraries: [], raising=False)
+    monkeypatch.setattr(code, "mapped_executables", lambda: [key[0]], raising=False)
+    def case():
+        unit = {"unattested": [], "triton_specializations": []}
+        audit.bind_profile(unit, ["k"])
+        assert not unit["unattested"] and unit["kernel_origins"][0]["sha256"] == image[0]["sha256"], unit
+        return unit["dependency_code"].get("library_audit", {})
+    first = [case() for _ in range(3)]
+    assert len(calls) == 1, "LIBRARY_AUDIT_PER_CASE"
+    assert [r.get("audited_at_case") for r in first] == [True, False, False]
+    key[0] = "k2"
+    remapped = case()
+    assert calls == ["k1", "k2"] and remapped["audited_at_case"] and remapped["mapped_key_sha256"] != first[0]["mapped_key_sha256"]
+    assert remapped["audit_sha256"] == first[0]["audit_sha256"]
+    image[0]["sha256"], key[0] = "b" * 64, "k3"
+    assert case()["audit_sha256"] != first[0]["audit_sha256"]
+
+
+def test_mapped_key_sees_a_write_to_the_same_inode(code, tmp_path):
+    assert hasattr(code, "mapped_executables"), "MAPPED_KEY_ABSENT"
+    path = tmp_path / "lib.so"
+    path.write_bytes(b"one")
+    maps = f"1000-2000 r-xp 00000000 00:01 {path.stat().st_ino} {path}\n1000-2000 r-xp 00000000 00:01 9 /gone.so\n"
+    before = code.mapped_executables(maps)
+    path.write_bytes(b"two!")
+    after = code.mapped_executables(maps)
+    entries = {e[0]: e for e in map(json.loads, after)}
+    assert before != after and entries[str(path)][3][:3] == [4, path.stat().st_ctime_ns, path.stat().st_ino]
+    assert entries["/gone.so"] == ["/gone.so", "00:01", "9", None]
