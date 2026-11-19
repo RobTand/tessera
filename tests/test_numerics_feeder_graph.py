@@ -207,6 +207,27 @@ def assert_prepare_audit_hold(tmp_path, canary, bookings, configs):
                and event['unit'] == key and event['phase'] == 'prepare' for event in events)
 
 
+@pytest.mark.parametrize('attempt_id', [1, 2])
+def test_feeder_dry_run_failure_creates_no_attempt(tmp_path, monkeypatch, attempt_id):
+    canary, bookings, configs = make_graph(tmp_path, monkeypatch, ('module-A',))
+    key = configs['module-A']['unit_keys'][0]
+    attempt = tmp_path / 'module-A/units' / key / 'attempts' / str(attempt_id)
+    if attempt_id == 2:
+        (tmp_path / 'job-outcomes.json').write_text(json.dumps([
+            {'module': 'module-A', 'key': key, 'phase': 'prepare', 'exit': 1, 'completion': False}]))
+    dry_run = api.dry_run
+
+    def fail_dry_run(template, arguments, name, host):
+        if attempt in arguments:
+            raise api.FeederError('dry run failed')
+        return dry_run(template, arguments, name, host)
+
+    monkeypatch.setattr(api, 'dry_run', fail_dry_run)
+    with pytest.raises(api.FeederError, match='dry run failed'):
+        api.run(canary, bookings)
+    assert not attempt.exists(), "EMPTY_ATTEMPT_BEFORE_INTENT"
+
+
 def test_feeder_records_hold_when_flux_drain_times_out(tmp_path, monkeypatch):
     canary, bookings, configs = make_graph(tmp_path, monkeypatch, ('module-A',), external=True)
     settings = api.read(api.SETTINGS)

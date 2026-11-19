@@ -285,9 +285,6 @@ def run(canary, bookings, retries=None):
 
     if set(retries or {}) - {key for _, key in attempts}:
         raise FeederError('RETRY_UNIT_UNKNOWN')
-    for (module, key), attempt in attempts.items():
-        if not key.startswith('compare-'):
-            attempt.mkdir(parents=True, exist_ok=True)
 
     def phase_job(module, unit, name='fv1', host='sparklina', collect=True):
         phase, key = unit['phase'], unit['key']
@@ -342,15 +339,15 @@ def run(canary, bookings, retries=None):
             intent = {'instance': bound, 'arguments': list(map(str, arguments)), 'fv1e_drain': drain,
                       'jobspec_sha256': hashlib.sha256(spec.encode('utf-8')).hexdigest(),
                       'env_names': sorted(table['env_names'])}
-            if phase == 'compare':
-                arguments[0].mkdir(parents=True, exist_ok=True)
-                (arguments[0] / 'compare-inputs.json').write_text(json.dumps(pairs) + '\n')
             with ExitStack() as submission:
                 for path in intents:
+                    path.parent.mkdir(parents=True, exist_ok=True)
                     stream = submission.enter_context(path.open('w'))
                     fcntl.flock(stream, fcntl.LOCK_EX)
                     stream.write(json.dumps(intent) + '\n')
                     stream.flush()
+                if phase == 'compare':
+                    (arguments[0] / 'compare-inputs.json').write_text(json.dumps(pairs) + '\n')
                 event('SUBMIT_INTENT', module=module, phase=phase, unit=key)
                 drain_ecores_before_submit(memory, '--requires=host:' + host, 'tessera-1717:' + str(jobs[0]))
                 with TemporaryDirectory(prefix='.counted-feeder-', dir=canary) as scratch:
@@ -488,9 +485,7 @@ def run(canary, bookings, retries=None):
                     and all(int(attempts[module, member].name) < table['max_attempts'] for member in members)):
                 for member in members:
                     previous = attempts[module, member]
-                    attempt = previous.with_name(str(int(previous.name) + 1))
-                    attempt.mkdir()
-                    attempts[module, member] = attempt
+                    attempts[module, member] = previous.with_name(str(int(previous.name) + 1))
                     finished.discard((module, member, 'prepare'))
                     prepare = next(u for u in templates[module] if u['key'] == member and u['phase'] == 'prepare')
                     if (module, prepare) not in pending:
