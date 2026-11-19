@@ -25,7 +25,8 @@ def templates(root, canary=False, instance_lists=None, module="module-A"):
         settings["template_instances"] = instance_lists
         (root / "feeder-settings.json").write_text(json.dumps(settings))
     config = {"module": module, "tool_commit": "a" * 40, "canary": canary,
-              "paths": {"source": str(root / "source")}, "staged_population": str(root / "population.json")}
+              "paths": {key: str(root / key) for key in prepare_split.INPUTS},
+              "staged_population": str(root / "population.json")}
     prepare_split.write_templates(root, config, root / "repository.git")
     prepare_split.bind_templates(root, config)
     return config, [root / "templates" / unit["key"] / unit["phase"] for unit in config["templates"]]
@@ -104,6 +105,33 @@ def test_every_template_uses_cdi_replay_or_gpu_device(tmp_path):
             assert replay and not device, f"{directory.name} lacks CPU CDI replay"
 
 
+def test_unit_payloads_select_their_tp_groups(tmp_path, monkeypatch):
+    from experiments.numerics_rows import row
+
+    config, directories = templates(tmp_path / "module", canary=True)
+    groups = [(None, None, {"size": size}) for size in (1, 2)]
+    parse_args = row.argparse.ArgumentParser.parse_args
+
+    class PayloadParsed(Exception):
+        pass
+
+    def check_payload(parser):
+        args = parse_args(parser, payload[payload.index("experiments.numerics_rows.row") + 1:])
+        try:
+            selected = row.selected_groups(groups, args.tp_size, args.tp_rank)
+        except row.Invalid as error:
+            raise AssertionError(f"TP_PAYLOAD_REFUSED: {error}") from error
+        assert selected == [groups[unit["size"] - 1]], "TP_PAYLOAD_WRONG_GROUP"
+        raise PayloadParsed
+
+    monkeypatch.setattr(row.argparse.ArgumentParser, "parse_args", check_payload)
+    for unit, directory in zip(config["templates"], directories):
+        if "size" in unit:
+            payload = shlex.split((directory / "payload.sh").read_text().split("exec ", 1)[1])
+            with pytest.raises(PayloadParsed):
+                row.main()
+
+
 def test_templates_cover_units_phases_and_manifest(tmp_path):
     assert hasattr(prepare_split, "write_templates"), "feature absent: one reviewed template per unit and phase"
     config, directories = templates(tmp_path / "module")
@@ -117,7 +145,10 @@ def test_templates_cover_units_phases_and_manifest(tmp_path):
                 payload = shlex.split((directory / "payload.sh").read_text().split("exec ", 1)[1])
                 assert payload[payload.index("--tp-size") + 1] == str(size)
                 assert payload[payload.index("--case-set") + 1] == part
-                assert "--tp-rank" not in payload
+                if size == 1:
+                    assert payload[payload.index("--tp-rank") + 1] == "0"
+                else:
+                    assert "--tp-rank" not in payload
                 assert payload[payload.index("--out") + 1] == "$attempt"
                 assert "--phase-local-output" in payload
     for directory in directories:

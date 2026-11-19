@@ -79,7 +79,7 @@ def row_arguments(config, root, source, population, paths, phase, *, unit=None, 
         arguments[arguments.index("--phase-instance") + 1] = str(attempt / phase / "instance.json")
         arguments += ["--phase-local-output", "--case-set", unit["case_set"]]
         if unit.get("size"):
-            arguments += ["--tp-size", str(unit["size"])]
+            arguments += ["--tp-size", str(unit["size"])] + (["--tp-rank", "0"] if unit["size"] == 1 else [])
     if config["canary"]:
         arguments += ["--canary"] + (["--tp-size", "2"] if attempt is None else [])
     for key, value in paths.items():
