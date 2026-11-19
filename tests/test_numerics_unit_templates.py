@@ -334,6 +334,7 @@ def test_unit_payloads_select_their_tp_groups(tmp_path, monkeypatch):
 
 
 def gate_worker(root, monkeypatch):
+    pytest.importorskip("torch")
     import numpy as np
     import torch
     from safetensors.torch import save_file
