@@ -2158,8 +2158,11 @@ def test_unfinished_compare_attempt_needs_a_cause(tmp_path, state, record_cause)
         cause.write_text(json.dumps({"unit": key, "attempt": 1, "cause": "The job ended early."}))
     args.out = args.phase_root = prior.with_name("2") / "compare"
     args.out.mkdir(parents=True)
-    dp.host_compare(args, receipt, PhaseTimes({}), groups)
     token = "COMPARE_ATTEMPT_WITHOUT_RECEIPT_DOES_NOT_BLOCK"
+    try:
+        dp.host_compare(args, receipt, PhaseTimes({}), groups)
+    except KeyError as error:
+        raise AssertionError(f"{token}: {error!r}") from error
     assert receipt["row"]["finalization_finished"], token
     assert receipt["row"]["outcome"] == ("PASS" if record_cause else "STOPPED"), token
     listing = receipt["attempts"]["listing"]
