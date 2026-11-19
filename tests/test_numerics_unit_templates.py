@@ -165,7 +165,7 @@ def test_generated_job_setup(tmp_path, monkeypatch):
         "git": f"""if [[ "$PWD" == {shlex.quote(config["paths"]["source"])} ]]; then printf '%s\\n' {prepare_split.SOURCE}
 elif [[ "${{FIXTURE_WRONG_HEAD:-}}" && "$3" == rev-parse ]]; then printf 'other\\n'
 else exec {shutil.which("git")} "$@"; fi""",
-        "grep": f"""if [[ "${{FIXTURE_SIGNAL:-}}" ]]; then kill -s "$FIXTURE_SIGNAL" "$PPID"; fi
+        "grep": f"""if [[ "${{FIXTURE_SIGNAL:-}}" ]]; then kill -s "$FIXTURE_SIGNAL" 0; fi
 exec {shutil.which("grep")} "$@" """,
         "podman": """if [[ "$1" == image ]]; then
     test -d "$HOME" -a -d "$TMPDIR" -a -s "$CONTAINERS_CONF" -a -s "$CONTAINERS_STORAGE_CONF" || exit 18
@@ -207,7 +207,7 @@ else:
     Path(config["paths"]["source"]).mkdir()
 
     def run(environment=env, *, script=directory / "job.sh", job=attempt):
-        return subprocess.run([script, job], env=environment, capture_output=True, text=True, timeout=30)
+        return subprocess.run([script, job], env=environment, capture_output=True, text=True, timeout=30, start_new_session=True)
 
     accepted = run()
     assert accepted.returncode == 17 and "observation boundary" in accepted.stderr
