@@ -483,6 +483,12 @@ def test_split_first_cuda_error_finishes_compare_as_fail(split_capture):
     assert all(c["not_run"] and not c["completion"] for c in captured["cases"][1:])
 
 
+def test_incomplete_capture_names_the_first_incomplete_case(split_capture):
+    _, captured = split_capture("unattested", index=1)
+    case = captured["cases"][1]
+    assert captured["receipt"]["row"].get("stop_cause") == f"{case['id']}: refused capture", "INCOMPLETE_CAPTURE_HAS_NO_CAUSE"
+
+
 @pytest.mark.parametrize("error", ("invalid", "unattested"))
 def test_split_last_case_preserves_refusal_class(split_capture, error):
     positive, _ = split_capture()

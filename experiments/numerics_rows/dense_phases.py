@@ -340,8 +340,13 @@ def device_capture(args, receipt, phases, groups, library, compile_paths):
                     captured.update(elapsed_seconds=time.monotonic() - before, boundaries=unit["boundaries"])
                     recorder.quantizer_result = None
                     del tensors, recorder
+                captured["status"] = status = {field: unit[field][-1:] for field in ("findings", "invalid", "unattested", "cuda_errors")}
+                if complete and not captured["completion"]:
+                    reason = (status["invalid"] or status["unattested"]
+                              or [error["message"] for error in status["cuda_errors"]]
+                              or ["required case did not complete"])[0]
+                    receipt["row"]["stop_cause"] = f"{case['id']}: {reason}"
                 complete &= captured["completion"]
-                captured["status"] = {field: unit[field][-1:] for field in ("findings", "invalid", "unattested", "cuda_errors")}
                 artifact.record("cases", captured)
                 unit.update(captured["status"])
                 for field in ("triton_specializations", "kernel_origins", "unresolved_kernel_origins"):
