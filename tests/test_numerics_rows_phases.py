@@ -2406,7 +2406,7 @@ def test_unbound_compare_receipt_refuses_completion_evidence(tmp_path, evidence)
     previous = copy.deepcopy(receipt)
     previous["row"]["finalization_finished"] = evidence is None
     if evidence is not None:
-        (prior / evidence).touch()
+        (prior / evidence).write_text("{}" if evidence == "phase.json" else "")  # phase.json is written atomically, never empty
     path.write_text(json.dumps(previous))
     bound = copy.deepcopy(receipt)
     dp.host_compare(args, bound, PhaseTimes({}), groups)
