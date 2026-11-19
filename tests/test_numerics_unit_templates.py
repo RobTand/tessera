@@ -135,7 +135,7 @@ def test_generated_job_setup(tmp_path, monkeypatch):
         (canary / phase / "tool-exit.txt").write_text("0\n")
     canary_receipt = canary / "compare/results/numerics_row.json"
     write_json(canary_receipt, dict(canary=True, tool={"commit": revision},
-               tessera={"commit": prepare_split.SOURCE}, rule={"sha256": prepare_split.RULE_SHA},
+               tessera={"commit": prepare_split.SOURCE}, rule={"sha256": prepare_split.RULE_SHA, "h1_sha256": prepare_split.H1_SHA},
                row=dict(outcome="PASS", exit_status=0, finalization_finished=True), units=[{"outcome": "PASS"}]))
     meter = dict.fromkeys(("wall_minutes", "gpu_busy_minutes", "peak_device_memory_mib", "peak_power_watts",
                           "mean_sample_power_watts", "whole_job_peak_memory_bytes", "sampled_seconds", "busy_sampled_seconds"), 1)
