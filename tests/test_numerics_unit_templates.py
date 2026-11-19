@@ -471,6 +471,55 @@ def test_generated_tp1_gate_prepare_finishes(tmp_path, monkeypatch):
     assert all(not record["file"].startswith("diagnostic-reference.") for record in records(prepared, "files", document))
 
 
+def test_generated_tp1_gate_capture_enters_device_capture(tmp_path, monkeypatch):
+    from types import SimpleNamespace
+    import torch
+    from experiments.numerics_rows import dense_phases, gpu_time
+
+    run, attempt, _ = gate_worker(tmp_path, monkeypatch)
+    prepared = attempt / "prepare"
+    assert finish_gate_prepare(run, prepared)["completion"] is True
+
+    class CaptureEntered(SystemExit):
+        pass
+
+    def enter(args, receipt, phases, groups, *, library, compile_paths):
+        assert [cut for _, _, cut, _ in groups] == [{"size": 1, "rank": 0}]
+        assert args.prepare_artifact == [prepared] and args.case_set == "gate"
+        raise CaptureEntered
+
+    check_output = subprocess.check_output
+    monkeypatch.setattr(subprocess, "check_output", lambda command, *args, **kwargs:
+                        "fixture driver\n" if command[0] == "nvidia-smi" else check_output(command, *args, **kwargs))
+    monkeypatch.setattr(gpu_time, "RowMeter", lambda: SimpleNamespace(finish=lambda: {}))
+    monkeypatch.setattr(gpu_time, "preflight", lambda **kwargs: {"verdict": "FREE"})
+    monkeypatch.setattr(gpu_time, "self_visibility", lambda torch: {"verdict": "VISIBLE"})
+    monkeypatch.setattr(torch.cuda, "get_device_capability", lambda: (12, 1))
+    monkeypatch.setattr(torch.cuda, "get_device_name", lambda: "fixture device")
+    monkeypatch.setattr(dense_phases, "device_capture", enter)
+    with pytest.raises(CaptureEntered):
+        run("capture")
+
+
+def test_join_cli_refuses_finished_canary(tmp_path, monkeypatch):
+    from experiments.numerics_rows.common import write_json
+
+    _, _, paths = gate_worker(tmp_path, monkeypatch)
+    manifest = json.loads(paths["manifest"].read_text())
+    receipt, output = tmp_path / "canary.json", tmp_path / "join.json"
+    runtime = {key: manifest[key] for key in ("launch_state_names", "launch_state_sha256", "launch_selectors", "start_environment_spec_sha256")}
+    write_json(receipt, {"schema": "tessera.numerics_row.v2", "canary": True, "runtime": runtime,
+        "inputs": {"launch_levers_sha256": manifest["launch_levers_sha256"]},
+        "row": {"outcome": "PASS", "exit_status": 0, "utc_end": "then", "finalization_finished": True}})
+    contract = paths["source"] / "src/tessera/serving/runtime_contract.json"
+    result = subprocess.run([sys.executable, "-B", "-m", "experiments.numerics_rows.join",
+        "--population", str(paths["population"]), "--contract", str(contract), "--manifest", str(paths["manifest"]),
+        "--row", str(receipt), "--out", str(output)], capture_output=True, text=True,
+        env={**os.environ, "PYTHONPATH": os.pathsep.join(sys.path)})
+    assert result.stderr.splitlines()[-1:] == ["experiments.numerics_rows.common.Invalid: a canary cannot supply attestation"]
+    assert result.returncode == 1 and not output.exists()
+
+
 def test_templates_cover_units_phases_and_manifest(tmp_path):
     assert hasattr(prepare_split, "write_templates"), "feature absent: one reviewed template per unit and phase"
     config, directories = templates(tmp_path / "module")
