@@ -1975,6 +1975,7 @@ ts_py_library(
     data = [
         "//src/tessera:serving/runtime_contract.json",
         "numerics_rows/dependency-image.json",
+        "numerics_rows/empty-rosters.json",
     ],
     deps = [
         "//src/tessera:__init___cycle",

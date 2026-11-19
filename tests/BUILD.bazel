@@ -15533,6 +15533,9 @@ ts_py_library(
     srcs = [
         "test_numerics_rows_dependency_code.py",
     ],
+    data = [
+        "//experiments:numerics_rows/empty-rosters.json",
+    ],
     deps = [
         "//experiments:numerics_rows/batch_evaluator_cycle",
         "//experiments:numerics_rows/common",
