@@ -6,6 +6,7 @@ import os
 from pathlib import Path
 import shlex
 import shutil
+import signal
 import subprocess
 import sys
 
@@ -207,7 +208,8 @@ else:
     Path(config["paths"]["source"]).mkdir()
 
     def run(environment=env, *, script=directory / "job.sh", job=attempt):
-        return subprocess.run([script, job], env=environment, capture_output=True, text=True, timeout=30, start_new_session=True)
+        return subprocess.run([script, job], env=environment, capture_output=True, text=True, timeout=30, start_new_session=True,
+                              preexec_fn=lambda: signal.signal(signal.SIGINT, signal.SIG_DFL))
 
     accepted = run()
     assert accepted.returncode == 17 and "observation boundary" in accepted.stderr
@@ -217,7 +219,6 @@ else:
     assert not task.parent.exists()
     shutil.rmtree(out)
 
-    import signal
     from experiments.numerics_rows import row
     from experiments.numerics_rows.phase_lifecycle import handled_signals
 
