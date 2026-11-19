@@ -92,7 +92,7 @@ Each unit supplies one all-case pair or one gate pair and one diagnostics pair.
 Compare binds each phase digest and merges units by full identity. Compare records bind the module identities.
 Phase pairs locate `units/<validated key>/attempts/<id>/{prepare,capture}/`. Attempt ids start at 1 without a gap.
 Compare reads every attempt and uses the newest finished pair for each unit and case set.
-Compare also reads every module compare attempt under `compare-<digest>`, with contiguous attempt ids.
+Compare checks contiguous attempt IDs under `compare-<digest>` and skips its claimed attempt when it reads the history.
 The receipt binds each earlier compare receipt by SHA-256. A unit's earlier compare finding or FAIL remains FAIL after a retry.
 FAIL and STOPPED remain per unit across all attempts and case sets. FAIL takes precedence.
 An open STOPPED without a finding remains STOPPED in a finalized module receipt, with `completed` false and the named attempt.
@@ -103,7 +103,8 @@ The lead writes `lead-cause.json` with `unit`, integer `attempt`, and nonempty `
 Compare refuses a cause record for a finished attempt, an attempt with every unit FAIL, or a record with another attempt id.
 In a mixed FAIL and STOPPED attempt, a cause record releases only the units without a FAIL.
 A prepare, capture or module compare setup refusal with no case or phase record follows the STOPPED cause rule.
-An open module compare attempt stops each unit without a FAIL. The attempt listing keeps the worker's outcome and stop cause.
+An earlier module compare attempt needs a finalized receipt or a lead cause record. An open attempt stops each unit without a FAIL.
+The attempt listing keeps the worker's outcome and stop cause. It uses null for these fields when the receipt is missing.
 The receipt binds the full listing, phase digests, partial evidence digests and cause record digests through one listing SHA-256.
 Case tensors, profiler records and code bindings are written before the next case.
 Only compare can finish a split dense receipt. A stopped capture cannot establish PASS.

@@ -13,9 +13,10 @@ import pytest
 
 from experiments.numerics_rows import phase_instance, prepare_split
 from experiments.numerics_rows.common import Invalid
+from tests.test_numerics_rows_receipts import row_execution
 
 
-def templates(root, canary=False, instance_lists=None, module="module-A"):
+def templates(root, canary=False, instance_lists=None, module="module-A", paths=None):
     root.mkdir()
     source = Path(prepare_split.__file__).parent
     for name in ("phase_instance.py", "feeder-settings.json"):
@@ -25,8 +26,8 @@ def templates(root, canary=False, instance_lists=None, module="module-A"):
         settings["template_instances"] = instance_lists
         (root / "feeder-settings.json").write_text(json.dumps(settings))
     config = {"module": module, "tool_commit": "a" * 40, "canary": canary,
-              "paths": {key: str(root / key) for key in prepare_split.INPUTS},
-              "staged_population": str(root / "population.json")}
+              "paths": paths or {key: str(root / key) for key in prepare_split.INPUTS},
+              "staged_population": paths["population"] if paths else str(root / "population.json")}
     prepare_split.write_templates(root, config, root / "repository.git")
     prepare_split.bind_templates(root, config)
     return config, [root / "templates" / unit["key"] / unit["phase"] for unit in config["templates"]]
@@ -508,6 +509,52 @@ def test_compare_payload_uses_saved_attempts(tmp_path):
     script = prefix + "printf '%s\\n' " + " ".join(f'"$pair_{index}"' for index in range(len(selected)))
     result = subprocess.run(["bash", "-c", script, "payload", str(attempt)], text=True, capture_output=True)
     assert result.returncode == 0 and result.stdout.splitlines() == list(selected.values())
+
+
+def test_compare_ignores_its_running_attempt(tmp_path, monkeypatch, row_execution):
+    from experiments.numerics_rows import h1, launch_state, row
+
+    fixture, _, _, _, _ = row_execution
+    addendum = tmp_path / "addendum.json"
+    addendum.write_text(json.dumps({"freeze_record_sha256": row.sha256(fixture.freeze),
+        "rule_sha256": row.sha256(fixture.rule), "reviewer": "lead", "frozen_utc": "then",
+        "launch_levers_sha256": fixture.launch_state.levers_sha256}))
+    for name in ("rule", "freeze"):
+        monkeypatch.setattr(prepare_split, name.upper(), getattr(fixture, name))
+    monkeypatch.setattr(row, "FREEZE_ADDENDUM", addendum)
+    monkeypatch.setattr(launch_state, "LaunchState", lambda path=launch_state.LEVERS, **kwargs: type(fixture.launch_state)(path))
+    monkeypatch.setattr(h1, "negative_controls", lambda **kwargs: [{"flagged_exactly": True}])
+    monkeypatch.setattr(sys, "path", sys.path[:])
+    paths = {key: str(getattr(fixture, key)) for key in prepare_split.INPUTS if key != "freeze_addendum"}
+    paths["freeze_addendum"] = str(addendum)
+    root = tmp_path / "module"
+    config, directories = templates(root, module="module-a", paths=paths)
+    directory = next(p for p in directories if p.name == "compare")
+    attempt = root / "units" / directory.parent.name / "attempts/1"
+    out = attempt / "compare"
+    out.mkdir(parents=True)
+    (out / "instance.json").write_text('{"name":"fv1"}')
+    selected = {key: root / "units" / key / "attempts/1" for key in config["unit_keys"]}
+    for path in selected.values():
+        path.mkdir(parents=True)
+    (attempt / "compare-inputs.json").write_text(json.dumps({key: str(path) for key, path in selected.items()}))
+    groups = []
+    for size, rank in ((1, 0), (2, 0), (2, 1)):
+        cut = {"size": size, "rank": rank}
+        role = {"cols": 32, "separation": {"recipes": []}, "scale_index": [], "cut_axis": "whole", "cut_range": [0, 1]}
+        unit = row.new_unit({"module": "module-a", "cell": "dense", "role": "unit", "tp": cut,
+                             "m_config": {"M": 1, "k_split": 1, "chunk_size": 32}})
+        groups.append(({"name": "module-a", "family": "TESSERA_FP8"},
+                       {"structure": "dense", "wire_sha256": "wire", "roles": [role]}, cut, [unit]))
+    monkeypatch.setattr(row, "planned_units", lambda *args: groups)
+    monkeypatch.setattr(sys, "argv", ["row", *payload_arguments(directory, attempt, tmp_path / "tools")])
+    with pytest.raises(SystemExit) as exited:
+        row.main()
+    saved = json.loads((out / "numerics_row.json").read_text())
+    assert saved["row"]["finalization_finished"], "COMPARE_REFUSES_ITS_OWN_ATTEMPT"
+    assert exited.value.code == 3 and saved["row"]["outcome"] == "STOPPED"
+    assert {entry["unit"] for entry in saved["attempts"]["listing"]} == set(selected)
+    assert saved["phase_artifacts"]["compare"]["sha256"] == row.sha256(out / "phase.json")
 
 
 @pytest.mark.parametrize('outcome,finalized', [('FAIL', True), ('STOPPED', True), ('FAIL', False)])

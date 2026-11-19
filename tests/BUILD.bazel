@@ -15844,6 +15844,7 @@ ts_py_library(
         "//experiments:numerics_rows/phase_instance",
         "//experiments:numerics_rows/prepare_split",
         ":test_numerics_rows_phases_lib",
+        ":test_numerics_rows_receipts_lib",
     ],
 )
 

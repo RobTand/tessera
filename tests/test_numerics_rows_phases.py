@@ -2125,13 +2125,50 @@ def test_module_compare_setup_refusal_with_cause_passes(tmp_path):
     assert receipt["row"]["finalization_finished"] and receipt["row"]["outcome"] == "PASS"
     assert [unit["outcome"] for unit in receipt["units"]] == ["PASS"] * 4
     listing = receipt["attempts"]["listing"]
-    earlier, retry = [a for a in listing if a["unit"] == prior.parents[3].name]
-    assert [earlier["attempt"], retry["attempt"]] == [1, 2]
+    earlier, = [a for a in listing if a["unit"] == prior.parents[3].name]
+    assert earlier["attempt"] == 1
     assert (earlier["state"], earlier["outcome"], earlier["stop_cause"]) == ("STOPPED", "INVALID", stop_cause)
     assert earlier["receipt_sha256"] == row.sha256(prior)
     cause = prior.parents[1] / "lead-cause.json"
     assert earlier["cause_record"] == {"path": str(cause), "sha256": row.sha256(cause)}
     assert receipt["attempts"]["sha256"] == phase_api().json_digest(listing)
+
+
+@pytest.mark.parametrize("state", ["no-receipt", "no-finalization", "provisional"])
+@pytest.mark.parametrize("record_cause", [False, True])
+def test_unfinished_compare_attempt_needs_a_cause(tmp_path, state, record_cause):
+    from experiments.numerics_rows.gpu_time import PhaseTimes
+
+    dp, api, args, receipt, groups = module_phase_pairs(tmp_path)
+    key = "compare-" + api.json_digest(["A", "compare"])
+    prior = tmp_path / "units" / key / "attempts/1"
+    prior.mkdir(parents=True)
+    path = prior / "compare/numerics_row.json"
+    if state != "no-receipt":
+        previous = copy.deepcopy(receipt)
+        if state == "provisional":
+            previous["tessera"].clear()
+        else:
+            previous["row"].pop("finalization_finished")
+            previous["row"]["outcome"] = "PASS"
+        path.parent.mkdir()
+        path.write_text(json.dumps(previous))
+    cause = prior / "lead-cause.json"
+    if record_cause:
+        cause.write_text(json.dumps({"unit": key, "attempt": 1, "cause": "The job ended early."}))
+    args.out = args.phase_root = prior.with_name("2") / "compare"
+    args.out.mkdir(parents=True)
+    dp.host_compare(args, receipt, PhaseTimes({}), groups)
+    token = "COMPARE_ATTEMPT_WITHOUT_RECEIPT_DOES_NOT_BLOCK"
+    assert receipt["row"]["finalization_finished"], token
+    assert receipt["row"]["outcome"] == ("PASS" if record_cause else "STOPPED"), token
+    listing = receipt["attempts"]["listing"]
+    assert [a for a in listing if a["unit"] == key] == [{
+        "unit": key, "attempt": 1, "state": "STOPPED", "receipt_sha256": row.sha256(path) if path.is_file() else None,
+        "outcome": "PASS" if state == "no-finalization" else None, "stop_cause": None,
+        "cause_record": {"path": str(cause), "sha256": row.sha256(cause)} if record_cause else None,
+    }], token
+    assert receipt["attempts"]["sha256"] == api.json_digest(listing)
 
 
 @pytest.mark.parametrize("evidence", ["findings", "outcome"])
@@ -2189,7 +2226,7 @@ def test_compare_fail_stands_after_unit_retry(tmp_path, evidence, earlier):
     assert all(u["outcome"] == "PASS" for u in initial["units"] if u is not retained)
     assert row.sha256(first) == first_digest
     history = [a for a in initial["attempts"]["listing"] if a["unit"] == key]
-    assert [a["attempt"] for a in history] == list(range(1, earlier + 2))
+    assert [a["attempt"] for a in history] == list(range(1, earlier + 1))
     assert history[0]["receipt_sha256"] == first_digest
     assert initial["attempts"]["sha256"] == api.json_digest(initial["attempts"]["listing"])
 
