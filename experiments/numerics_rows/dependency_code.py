@@ -15,6 +15,7 @@ import json
 from pathlib import Path
 import re
 import subprocess
+import time
 from types import SimpleNamespace
 
 from experiments.numerics_rows.common import Invalid, Unattested, sha256
@@ -145,8 +146,7 @@ def mapped_executables(maps=None):
     return sorted({json.dumps([f[5], f[3], f[4], stat(f[5])]) for f in map(lambda l: l.split(None, 5), lines) if len(f) == 6 and "x" in f[1]})
 
 
-def kernel_origins(names, libraries, specializations):
-    """Require a unique code owner for every profiler CUDA event, without prefixes."""
+def origin_index(libraries=(), specializations=()):
     normalize = lambda s: re.sub(r"\s+", "", s)
     index = {}
     def add(name, record):
@@ -160,9 +160,17 @@ def kernel_origins(names, libraries, specializations):
     for record in specializations:
         identity = record["identity"]
         add(identity["entry"], {"origin": "compiled", "code": {k: v for k, v in identity.items() if k != "launch"}})
+    return index
+
+
+def kernel_origins(names, libraries, specializations, index=None):
+    """Require a unique code owner for every profiler CUDA event, without prefixes."""
+    index = origin_index(libraries) if index is None else index
+    compiled = origin_index(specializations=specializations)
     records, unresolved = [], []
     for name in sorted(set(names)):
-        candidates = index.get(normalize(name), {})
+        normal = re.sub(r"\s+", "", name)
+        candidates = {**index.get(normal, {}), **compiled.get(normal, {})}
         if len(candidates) != 1 or any(r["origin"] == "unaudited" for r in candidates.values()):
             unresolved.append({"name": name, "candidates": list(candidates.values())})
         else:
@@ -311,7 +319,9 @@ class CodeAudit:
 
     def bind_profile(self, unit, names, native=()):
         # The full library audit runs again only when the mapped files change (path, inode, size or change time).
-        key = json_digest([mapped_executables(), list(native)])
+        # Native records are keyed by file, hash and parsed SASS roster, not by their long symbol lists.
+        started = time.monotonic()
+        key = json_digest([mapped_executables(), [[r["path"], r["sha256"], r.get("roster")] for r in native]])
         audited_at_case = self.audit is None or self.audit[0] != key
         if audited_at_case:
             libraries, refusal = list(native), None
@@ -320,11 +330,12 @@ class CodeAudit:
                 libraries.extend(self.unaudited_libraries(libraries))
             except Unattested as error:
                 refusal = str(error)
-            self.audit = key, libraries, refusal, json_digest(libraries)
-        _, libraries, refusal, audit_sha256 = self.audit
+            self.audit = key, libraries, refusal, json_digest(libraries), origin_index(libraries)
+        _, libraries, refusal, audit_sha256, index = self.audit
+        audited = time.monotonic()
         if refusal:
             unit["unattested"].append(refusal)
-        records, unresolved = kernel_origins(names, libraries, unit.get("triton_specializations", []))
+        records, unresolved = kernel_origins(names, libraries, unit.get("triton_specializations", []), index)
         unit["kernel_origins"] = records
         unit["unresolved_kernel_origins"] = unresolved
         unit["dependency_code"] = {"observer": "IMG-N Triton 3.7.1 CompiledKernel load/run",
@@ -332,7 +343,8 @@ class CodeAudit:
                                    "p2_verified": all(any(all(r["identity"][k] == p["identity"][k] for k in ("cubin_sha256", "entry", "target", "constants")) for p in self.p2) for r in unit.get("triton_specializations", [])),
                                    "image_inventory_sha256": sha256(self.inventory_path) if self.inventory_path.is_file() else None,
                                    "proved_empty_rosters": [r["empty_roster_proof"] for r in libraries if "empty_roster_proof" in r],
-                                   "library_audit": {"mapped_key_sha256": key, "audit_sha256": audit_sha256, "audited_at_case": audited_at_case}}
+                                   "library_audit": {"mapped_key_sha256": key, "audit_sha256": audit_sha256, "audited_at_case": audited_at_case},
+                                   "seconds": {"audit": audited - started, "origins": time.monotonic() - audited}}
         if not unit["dependency_code"]["p2_verified"]:
             unit["unattested"].append("H1 P2 did not check a prepared Triton specialization")
         if unresolved:

@@ -10,10 +10,12 @@ from datetime import datetime, timezone
 import hashlib
 import json
 import math
+import os
 from pathlib import Path
 import re
 import sys
 import subprocess
+import time
 
 from experiments.numerics_rows.common import BoundaryError, BoundaryRecorder, Invalid, Unattested, IMAGES, KERNEL_SHA256, check_runtime, check_source, sha256, write_json
 from experiments.numerics_rows.build import IDENTITY_FIELDS, library_identity
@@ -1065,13 +1067,18 @@ def check_routed_layout(adapter, unit):
         unit["unattested"].append("routed layout proof is missing, ambiguous or unsupported")
 
 
-def resolve_symbols(functions, names, demangled):
-    """Resolve complete profiler names to exact symbols from this binary's SASS."""
-    normalize = lambda name: re.sub(r"\s+", "", name)
+def symbol_aliases(functions, demangled):
     aliases = {}
     for symbol, name in zip(functions, demangled, strict=True):
         for alias in (symbol, name):
-            aliases.setdefault(normalize(alias), set()).add(symbol)
+            aliases.setdefault(re.sub(r"\s+", "", alias), set()).add(symbol)
+    return aliases
+
+
+def resolve_symbols(functions, names, demangled, aliases=None):
+    """Resolve complete profiler names to exact symbols from this binary's SASS."""
+    normalize = lambda name: re.sub(r"\s+", "", name)
+    aliases = symbol_aliases(functions, demangled) if aliases is None else aliases
     found, unresolved = [], []
     for name in names:
         matches = aliases.get(normalize(name), set())
@@ -1143,6 +1150,25 @@ def profile_unit(adapter, unit, recorder, *, routed):
     bind_kernel_profile(adapter, unit, recorder, list(kernels.values()), launches, routed=routed)
 
 
+SASS_ROSTERS = {}
+
+
+def sass_roster(sass):
+    """Parse and demangle the served SASS dump again only when its path, size, change time or inode changes."""
+    stat = os.stat(sass["path"])
+    key = json.dumps([sass["path"], sass["sha256"], stat.st_size, stat.st_ctime_ns, stat.st_ino, stat.st_dev])
+    if key not in SASS_ROSTERS:
+        from experiments.t4_code.sass_dump import parse_sass
+        if sha256(sass["path"]) != sass["sha256"]:
+            raise Invalid("SASS symbol list changed")
+        functions = sorted(parse_sass(Path(sass["path"]).read_text()))
+        demangled = subprocess.check_output(["c++filt"], input="\n".join(functions) + "\n", text=True).splitlines() if functions else []
+        SASS_ROSTERS.clear()
+        SASS_ROSTERS[key] = (functions, demangled, symbol_aliases(functions, demangled), dict(zip(functions, demangled, strict=True)),
+                             [{"symbol": s, "demangled": n} for s, n in zip(functions, demangled, strict=True)])
+    return key, SASS_ROSTERS[key]
+
+
 def bind_kernel_profile(adapter, unit, recorder, records, launches, *, routed):
     audit = getattr(recorder, "code_audit", None)
     kernels = {r["name"]: r for r in unit["arm"].get("profiler_kernels", []) + records}
@@ -1150,20 +1176,16 @@ def bind_kernel_profile(adapter, unit, recorder, records, launches, *, routed):
     unit["arm"]["profiler_kernels"] = list(kernels.values())
     unit["m_config"]["compiled_kernel_symbols"] = []
     library = adapter.served_identity
-    from experiments.t4_code.sass_dump import parse_sass
-
-    if library and sha256(library["sass"]["path"]) != library["sass"]["sha256"]:
-        raise Invalid("SASS symbol list changed")
-    functions = sorted(parse_sass(Path(library["sass"]["path"]).read_text())) if library else []
-    demangled = subprocess.check_output(["c++filt"], input="\n".join(functions) + "\n", text=True).splitlines() if functions else []
-    symbols, unresolved = resolve_symbols(functions, [r["name"] for r in unit["arm"]["profiler_kernels"]], demangled)
-    names = dict(zip(functions, demangled, strict=True))
+    started = time.monotonic()
+    roster, (functions, demangled, aliases, names, native_symbols) = sass_roster(library["sass"]) if library else (None, ([], [], {}, {}, []))
+    symbols, unresolved = resolve_symbols(functions, [r["name"] for r in unit["arm"]["profiler_kernels"]], demangled, aliases)
+    unit["arm"]["sass_seconds"] = time.monotonic() - started
     unit["m_config"]["compiled_kernel_symbols"] = [{**record, "demangled_symbol": names[record["symbol"]], **{k: library[k] for k in IDENTITY_FIELDS if k != "library_code_sections"}} for record in symbols]
     # Auxiliary image kernels have their own origins; they are not PM evidence.
     unit["arm"]["unresolved_kernel_names"] = unresolved
     if audit is not None:
-        native = [{"origin": "tessera", "path": library["path"], "sha256": library["library_so_sha256"],
-                   "symbols": [{"symbol": s, "demangled": n} for s, n in zip(functions, demangled, strict=True)]}] if library else []
+        native = [{"origin": "tessera", "path": library["path"], "sha256": library["library_so_sha256"], "roster": roster,
+                   "symbols": native_symbols}] if library else []
         all_names = [r["name"] for r in unit["arm"]["profiler_kernels"] + unit["arm"].get("preparation_kernels", [])]
         audit.bind_profile(unit, all_names, native)
         unit["arm"]["unresolved_kernel_names"] = [r["name"] for r in unit["unresolved_kernel_origins"]]

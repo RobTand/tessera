@@ -181,6 +181,7 @@ reviewed entry of experiments/numerics_rows/empty-rosters.json (proved once by F
 function, no PTX); the unit records that entry. H1 and C1 must match the row start state.
 A worker audits its mapped libraries again only when a mapped file's path, inode, size or change time changes;
 each case records that key, the audit digest and whether the audit ran at that case.
+The served SASS dump is parsed once per path, size, change time and inode, and the origin index once per audit.
 Dense H1 checks every output byte for five setup specializations, including repack at zero and nonzero row offsets.
 For each launch shape, H1 flips one input bit and runs the same cubin again.
 P2 requires the compile identity, exact clean bytes, and the single output byte change that the CPU reference predicts.
