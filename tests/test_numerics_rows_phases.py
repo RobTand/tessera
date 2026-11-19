@@ -1963,8 +1963,8 @@ def worker_phase_groups(paths, receipt):
 @pytest.mark.parametrize("window,token", [
     ("first-write", "KILLED_ATTEMPT_CANNOT_BE_RELEASED"),
     ("first-case", "KILLED_AFTER_FIRST_CASE_CANNOT_BE_RELEASED"),
-    ("bound-refusal", "CUT_LESS_BOUND_RECEIPT_STUCK"),
-    ("capture", "KILLED_CAPTURE_ATTEMPT_GUARD"),
+    ("bound-refusal", "CUT_LESS_BOUND_RECEIPT_CANNOT_BE_RELEASED"),
+    ("capture", "KILLED_CAPTURE_ATTEMPT_CANNOT_BE_RELEASED"),
 ], ids=["first-write", "first-case", "bound-refusal", "capture"])
 def test_killed_unit_attempt_requires_cause_before_later_pass(tmp_path, monkeypatch, window, token):
     from shutil import copytree
@@ -2361,7 +2361,10 @@ def test_killed_compare_case_fail_stands_after_cause_and_later_pass(tmp_path, mo
     cause.write_text(json.dumps({"unit": key, "attempt": 1, "cause": "The job ended before finalization."}))
     args.out = args.phase_root = prior.with_name("2") / "compare"
     control = copy.deepcopy(receipt)
-    dp.host_compare(args, control, PhaseTimes({}), groups)
+    try:
+        dp.host_compare(args, control, PhaseTimes({}), groups)
+    except KeyError as error:
+        raise AssertionError(f"{token}: {error!r}") from error
     assert control["row"]["finalization_finished"] and control["row"]["outcome"] == "PASS", token
 
     case = next(api.records(args.out, "cases"))
@@ -2371,7 +2374,10 @@ def test_killed_compare_case_fail_stands_after_cause_and_later_pass(tmp_path, mo
     stream.write_text(json.dumps(case) + "\n")
     args.out = args.phase_root = prior.with_name("3") / "compare"
     current = copy.deepcopy(receipt)
-    dp.host_compare(args, current, PhaseTimes({}), groups)
+    try:
+        dp.host_compare(args, current, PhaseTimes({}), groups)
+    except KeyError as error:
+        raise AssertionError(f"{token}: {error!r}") from error
     assert current["row"]["outcome"] == "FAIL", token
     failed, = [unit for unit in current["units"] if unit["outcome"] == "FAIL"]
     assert failed["unit_id"] == case["scope"]["unit_key"], token
