@@ -6,7 +6,7 @@ import hashlib
 import json
 from pathlib import Path
 
-from experiments.numerics_rows.common import OUTCOMES, Invalid, sha256, write_json
+from experiments.numerics_rows.common import H1_SHA, OUTCOMES, RULE_SHA, Invalid, sha256, write_json
 
 
 def rule_unit_id(unit):
@@ -125,6 +125,8 @@ def _join(population, digest, manifests, receipts, contract):
         check_binding({**receipt["runtime"], "launch_levers_sha256": receipt["inputs"]["launch_levers_sha256"]}, launch)
         if execution is not None and execution != identity:
             raise Invalid("joined rows have different execution identities")
+        if (identity["rule_sha256"], identity["h1_sha256"]) != (RULE_SHA, H1_SHA):
+            raise Invalid("joined rows are not bound to the frozen rule and its H1")
         if identity["contract_sha256"] != contract_hash or identity["image_digest"] != image:
             raise Invalid("joined rows have different execution identities from the signed scope")
         if case_identity is not None and tuple(identity[k] for k in ("source_commit", "contract_sha256", "q1_table_sha256")) != case_identity:

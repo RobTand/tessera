@@ -586,7 +586,7 @@ def check_rule_freeze(rule, freeze, *, canary=False, launch_levers_sha256=None):
         raise Invalid("rule is not the reviewed, frozen rule")
 
 
-FREEZE_ADDENDUM = Path("/mnt/shared/flux-jobs/tessera-1717-rule/freeze-addendum-v2.json")
+FREEZE_ADDENDUM = Path("/mnt/shared/flux-jobs/tessera-1717-rule/freeze-addendum-v3.json")
 
 
 def bind_freeze_addendum(freeze, freeze_path, rule_path, addendum_path):

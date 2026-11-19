@@ -1240,7 +1240,7 @@ def split_canary_evidence(tmp_path):
     for phase in ("prepare", "capture", "compare"):
         (directory / phase / "results").mkdir(parents=True)
         (directory / phase / "tool-exit.txt").write_text("0\n")
-    receipt = {"canary": True, "tool": {"commit": "tool"}, "tessera": {"commit": api.SOURCE}, "rule": {"sha256": api.RULE_SHA},
+    receipt = {"canary": True, "tool": {"commit": "tool"}, "tessera": {"commit": api.SOURCE}, "rule": {"sha256": api.RULE_SHA, "h1_sha256": api.H1_SHA},
         "row": {"outcome": "PASS", "exit_status": 0, "finalization_finished": True}, "units": [{"outcome": "PASS"}]}
     write_json(directory / "compare/results/numerics_row.json", receipt)
     meter = {"wall_minutes": 1, "gpu_busy_minutes": 0.2, "peak_device_memory_mib": 800, "peak_power_watts": 15,
@@ -1250,7 +1250,7 @@ def split_canary_evidence(tmp_path):
     return api, directory, paths, receipt, meter
 
 
-@pytest.mark.parametrize("mutation", ("unfinished", "fail", "tool", "source", "input", "exit"))
+@pytest.mark.parametrize("mutation", ("unfinished", "fail", "tool", "source", "h1", "input", "exit"))
 def test_counted_split_refuses_an_unfinished_failed_or_mixed_canary(split_canary_evidence, mutation):
     from experiments.numerics_rows.common import write_json
     api, directory, paths, receipt, _ = split_canary_evidence
@@ -1259,6 +1259,7 @@ def test_counted_split_refuses_an_unfinished_failed_or_mixed_canary(split_canary
     elif mutation == "fail": receipt["units"][0]["outcome"] = "FAIL"
     elif mutation == "tool": receipt["tool"]["commit"] = "other"
     elif mutation == "source": receipt["tessera"]["commit"] = "other"
+    elif mutation == "h1": receipt["rule"]["h1_sha256"] = "0" * 64
     elif mutation == "input": paths["build"].write_text("changed bytes")
     else: (directory / "capture/tool-exit.txt").write_text("3\n")
     write_json(directory / "compare/results/numerics_row.json", receipt)

@@ -11,15 +11,14 @@ import shlex
 import shutil
 import subprocess
 
-from experiments.numerics_rows.common import Invalid, sha256, write_json
+from experiments.numerics_rows.common import H1_SHA, RULE_SHA, Invalid, sha256, write_json
 from experiments.numerics_rows.prepare_job import stage_population
 from experiments.numerics_rows.start_env import container_options, worker_command
 
 ROOT = Path(__file__).resolve().parents[2]
 SOURCE = "272507f18de39fc90f03c1588373c031a9e43717"
-RULE = Path("/mnt/shared/flux-jobs/tessera-1717-rule/pass-rule-v2.md")
-RULE_SHA = "ec8d4b3bbbb8df5f6c1be860bd20204f0f0a14ff3faa26eadc8c5e764fff5d53"
-FREEZE = RULE.with_name("freeze-record-v2.json")
+RULE = Path("/mnt/shared/flux-jobs/tessera-1717-rule/pass-rule-v3.md")
+FREEZE = RULE.with_name("freeze-record-v3.json")
 MODULE = "model.language_model.layers.32.mlp.shared_experts.down_proj"
 INPUTS = ("source", "population", "manifest", "build", "build_provenance", "q1", "h1", "freeze_addendum")
 
@@ -54,7 +53,7 @@ def check_canary(directory, revision, paths):
     receipt = json.loads(path.read_text())
     if (not config["canary"] or config["tool_commit"] != revision or receipt.get("canary") is not True
             or receipt["tool"].get("commit") != revision or receipt["tessera"].get("commit") != SOURCE
-            or receipt["rule"].get("sha256") != RULE_SHA or not receipt["row"].get("finalization_finished")
+            or receipt["rule"].get("sha256") != RULE_SHA or receipt["rule"].get("h1_sha256") != H1_SHA or not receipt["row"].get("finalization_finished")
             or receipt["row"].get("exit_status") != 0 or receipt["row"].get("outcome") != "PASS"
             or not receipt["units"] or any(u["outcome"] != "PASS" for u in receipt["units"])):
         raise Invalid("counted row requires a finished PASS canary at the same tool, F and rule")

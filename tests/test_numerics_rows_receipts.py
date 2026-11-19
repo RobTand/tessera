@@ -1669,6 +1669,9 @@ def test_manifest_requires_every_declared_expert_role(kind):
 
 
 def joined_inputs(monkeypatch):
+    from experiments.numerics_rows import join as join_module
+    monkeypatch.setattr(join_module, "RULE_SHA", "rule", raising=False)
+    monkeypatch.setattr(join_module, "H1_SHA", "h1", raising=False)
     from experiments.numerics_rows import scope
     from experiments.numerics_rows.common import IMAGES
     from experiments.numerics_rows.launch_state import LaunchState
@@ -1802,6 +1805,21 @@ def test_join_refuses_mixed_execution_identity(path, monkeypatch):
     receipts[1][1][owner][field] = "different"
     with pytest.raises(Invalid, match="execution identities"):
         join(population, digest, manifests, receipts)
+
+
+@pytest.mark.parametrize("field", ["h1_sha256", "sha256"])
+def test_join_refuses_rows_that_agree_on_another_rule_or_h1(field, monkeypatch):
+    from experiments.numerics_rows.join import join
+
+    population, digest, manifests, receipts = joined_inputs(monkeypatch)
+    for _, receipt in receipts:
+        receipt["rule"][field] = "0" * 64
+    try:
+        join(population, digest, manifests, receipts)
+    except Invalid as error:
+        assert "frozen rule and its H1" in str(error)
+    else:
+        raise AssertionError("JOIN_ACCEPTS_ANOTHER_RULE_OR_H1")
 
 
 @pytest.mark.parametrize("field", ["source_commit", "contract_sha256", "q1_table_sha256"])

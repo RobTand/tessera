@@ -10,6 +10,8 @@ import os
 from pathlib import Path
 import subprocess
 
+RULE_SHA = "3102a320a5957887d091942015eee3525f8d6ace59907d12acbcfc8778f7a42f"  # pass-rule-v3.md
+H1_SHA = "fe4d62c565f81f6fa752bc61660ebc870ab0ea5f3b7dfe47caebb224eabfd7ba"  # H1-CONFIRM record that rule v3 binds
 OUTCOMES = ("FAIL", "STOPPED", "INVALID", "UNATTESTED", "PASS")
 KERNEL = "src/tessera/serving/csrc/routed_fused_window.cu"
 KERNEL_SHA256 = "8a1536dfbc3df70edbdc37001a0db6947e97d9263926bc85a4d4d3ca231eae4f"
