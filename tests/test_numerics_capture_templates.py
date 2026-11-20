@@ -178,7 +178,7 @@ def test_group_uses_canary_shape_and_fleet_table(tmp_path, max_k):
     assert table == {"schema": 1, "instances": {"fv1": {"constraints": [{"hostlist": ["sparky"]}, {"hostlist": ["sparklina"]}],
                      "shapes": [[{"type": "slot", "count": 1, "label": "task", "with":
                                  [{"type": "core", "count": 6}, {"type": "memory", "count": 9}, {"type": "gpu", "count": 1}]}]],
-                     "max_duration_s": 36000}}, "job_name": f"tessera-1717-{key}-capture", "args": 3,
+                     "max_duration_s": 172800}}, "job_name": f"tessera-1717-{key}-capture", "args": 3,
                      "max_attempts": 5, "urgency": 8, "cwd": str(directory),
                      "env_names": ["PATH", "HOME", "XDG_RUNTIME_DIR", "FLUX_F58_FORCE_ASCII", "FLUX_SCRATCH",
                                    "OMP_NUM_THREADS", "MKL_NUM_THREADS", "OPENBLAS_NUM_THREADS"]}

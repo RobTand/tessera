@@ -661,9 +661,9 @@ def test_every_template_uses_fleet_table_schema(tmp_path, canary, prepare_instan
                                            [{"type": "core", "count": 4 if canary and phase == "capture" else 1},
                                             {"type": "memory", "count": memory}]
                                            + ([{"type": "gpu", "count": 1}] if phase == "capture" else [])}]],
-                               "max_duration_s": {"prepare": 28800 if "-gate-" in directory.parent.name else 18000,
-                                                  "capture": 36000 if "-gate-" in directory.parent.name else 18000,
-                                                  "compare": 86400}[phase]}
+                               "max_duration_s": {"prepare": 86400,
+                                                  "capture": 172800 if "-gate-" in directory.parent.name else 86400,
+                                                  "compare": 172800}[phase]}
         assert fields == {"schema": 1, "instances": instances,
                           "job_name": f"tessera-1717-{directory.parent.name}-{phase}", "args": 1,
                           "max_attempts": 5, "urgency": 8,
@@ -801,12 +801,13 @@ def test_prepare_takes_output_root_and_refuses_existing_root(tmp_path, monkeypat
 def test_phase_durations_from_settings_reach_table_and_job(tmp_path, canary):
     assert "phase_minutes" in json.loads(Path(prepare_split.__file__).with_name("feeder-settings.json").read_text()), "feature absent: phase and case set durations come from settings"
     config, directories = templates(tmp_path / "module", canary=canary)
-    expected = {"prepare": {"gate": 480, "diagnostics": 300},
-                "capture": {"gate": 600, "diagnostics": 300}, "compare": {"all": 1440}}
+    expected = {"prepare": {"gate": 1440, "diagnostics": 1440},
+                "capture": {"gate": 2880, "diagnostics": 1440}, "compare": {"all": 2880}}
     for custom in (False, True):
         if custom:
             shutil.rmtree(tmp_path / "module/templates")
-            expected = {phase: {part: minutes + 7 for part, minutes in parts.items()} for phase, parts in expected.items()}
+            offsets = iter(range(7, 100, 2))  # a distinct value per phase and case set, so a wrong key cannot pass
+            expected = {phase: {part: minutes + next(offsets) for part, minutes in parts.items()} for phase, parts in expected.items()}
             settings_path = tmp_path / "module/feeder-settings.json"
             settings = json.loads(settings_path.read_text())
             settings["phase_minutes"] = expected

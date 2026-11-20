@@ -32,15 +32,15 @@
   "fleet_submit_gate": "/mnt/shared/flux-migration/lead-1114/dense-gate/fleet-submit-gate.py",
   "phase_minutes": {
     "prepare": {
-      "gate": 480,
-      "diagnostics": 300
+      "gate": 1440,
+      "diagnostics": 1440
     },
     "capture": {
-      "gate": 600,
-      "diagnostics": 300
+      "gate": 2880,
+      "diagnostics": 1440
     },
     "compare": {
-      "all": 1440
+      "all": 2880
     }
   }
 }
