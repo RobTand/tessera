@@ -162,6 +162,8 @@ def _join(population, digest, manifests, receipts, contract):
                 continue
             if unit["outcome"] == "PASS":
                 if "code_stream" in unit:
+                    if unit["code_stream"] != receipt.get("phase_artifacts", {}).get("compare"):
+                        raise Invalid("unit code stream is not the row's own compare artifact")
                     code_groups.setdefault(tuple(unit["code_stream"][k] for k in ("path", "sha256")), []).append(unit)
                 else:
                     dependency_code.check_unit_code(unit, image)
