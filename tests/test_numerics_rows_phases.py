@@ -1116,6 +1116,58 @@ def test_module_compare_checks_cases_before_writes(tmp_path, monkeypatch, fault)
     assert {str(p): p.read_bytes() if p.is_file() else None for p in tmp_path.rglob("*")} == before
 
 
+def test_module_compare_passes_over_zero_launch_arrays(tmp_path):
+    from experiments.numerics_rows.gpu_time import PhaseTimes
+    from experiments.numerics_rows.reference import FiniteBound
+
+    dp, api, args, receipt, groups = module_phase_pairs(tmp_path, case_sets=("all",))
+    prepare_root, = args.prepare_artifact
+    capture_root, = args.capture_artifact
+    prepare, capture = [json.loads((root / "phase.json").read_text()) for root in (prepare_root, capture_root)]
+    attempt = prepare_root.parent.with_name("2")
+    prepared = api.Artifact(attempt / "prepare", "prepare", prepare["identities"])
+    captured = api.Artifact(attempt / "capture", "capture", capture["identities"])
+    prepared.document["scopes"] = captured.document["scopes"] = prepare["scopes"]
+    writer = dp.CaseWriter(prepared, SimpleNamespace(record=lambda *a: None), {"A": "w"})
+    x, sf = torch.ones(1, 1, dtype=torch.bfloat16), torch.ones(1, 1)
+    bound = FiniteBound(sf * 10)
+    for unit in reversed(prepare["receipt"]["units"]):
+        writer.dense(None, unit, x, x, sf, x, sf.bool(), bound, category="sweep")
+        if unit["m_config"]["M"] == 1:
+            for launches in (1, 0, 1):
+                if launches:
+                    writer.scale(None, unit, x, x, sf, sf, {"name": "down"}, {"scale": "weight"},
+                                 {}, {"input_row": 0, "output_row": 0, "read": [0]}, 1, bound, [1])
+                writer.array(unit, {"scale": "weight", "base": writer.array_index,
+                                    "launches": launches, "passes_total": launches})
+    digest = prepared.finish(receipt=prepare["receipt"])
+    for case in api.cases(prepared.root, prepared.document):
+        captured.record("cases", {**case, "completion": True,
+            "boundaries": [{"kind": "quantizer", "sync_before": True, "sync_after": True}] * 2,
+            "profiler_names": ["kernel"], "kernel_origins": [{"profiler_name": "kernel"}], "code": {},
+            "tensors": {key: captured.tensor(value) for key, value in
+                        (("output", x), ("quantizer_q", x), ("quantizer_sf", sf), ("staged", x))}})
+    captured.finish(prepare_digest=digest, receipt=capture["receipt"])
+
+    compared = copy.deepcopy(receipt)
+    try:
+        dp.host_compare(args, compared, PhaseTimes({}), groups)
+    except Invalid as error:
+        raise AssertionError(f"F8_ZERO_LAUNCH_ARRAY: {error}") from error
+    assert compared["row"]["outcome"] == "PASS"
+    root = args.out / "compare"
+    document, _ = api.read(root, "compare", api.identities(receipt), dp.scopes(groups))
+    assert [case["scope"]["cut"]["rank"] for case in api.cases(root, document) if case["kind"] == "scale"] == [0, 0, 1, 1]
+    assert [(a["array_index"], a["record"]["launches"], a["record"]["mismatches"])
+            for a in api.records(root, "arrays", document)] == [(i, 1, 0) for i in (0, 2, 3, 5)]
+
+    writer.array(unit, {"scale": "weight", "base": writer.array_index, "launches": 1})
+    captured.finish(prepare_digest=prepared.finish())
+    args.out = tmp_path / "orphan-compare"
+    with pytest.raises(Invalid, match="^prepare has extra scale arrays$"):
+        dp.host_compare(args, receipt, PhaseTimes({}), groups)
+
+
 def test_module_compare_selects_finished_attempt_before_recorded_stopped(tmp_path):
     assert hasattr(dense_attempts, "CompareChecks"), "feature absent: compare selects finished attempts without newest phase documents"
     from experiments.numerics_rows.gpu_time import PhaseTimes
