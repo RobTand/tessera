@@ -77,6 +77,7 @@ def test_join_reads_one_code_stream_once_per_receipt(tmp_path, monkeypatch):
     reference = {"path": str(artifact.root / "phase.json"), "sha256": artifact.finish()}
     for unit in passed:
         unit["code_stream"] = dict(reference)
+    receipt["phase_artifacts"] = {"compare": dict(reference)}  # the compare writes both (dense_phases.py:747-749)
     calls, read_cases = [], streams.cases
     def counted_cases(root, document):
         calls.append(root)
@@ -205,3 +206,11 @@ def test_real_writer_compare_join_with_synthetic_capture(tmp_path, monkeypatch):
     covered, = [u for u in joined["units"] if u["unit_id"] == rule_unit_id(unit)]
     assert covered["outcome"] == "PASS" and covered["modules"][0]["receipt_sha256s"] == [receipt_sha]
     assert joined["verdict"] == "UNATTESTED"
+    # F4: a unit's code_stream must be the row's own compare artifact, not a byte-equal copy at another path.
+    import shutil
+    shutil.copytree(args.out / "compare", tmp_path / "other-compare")
+    forged = json.loads(receipt_path.read_text())
+    forged["units"][0]["code_stream"] = {**stream, "path": str(tmp_path / "other-compare/phase.json")}
+    with pytest.raises(Invalid, match="not the row's own compare artifact"):
+        join(population, digest, manifests[:1], [("forged", forged)])
+        raise AssertionError("F4_FOREIGN_STREAM: join accepted a code stream that is not the row's compare artifact")
