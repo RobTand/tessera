@@ -90,6 +90,7 @@ Compare requires all declared cuts before it creates one finished receipt for th
 Each unit supplies one all-case pair or one gate pair and one diagnostics pair.
 `dense_phases.check_pair` checks each rank's contiguous range union before it checks the phase pair.
 Compare binds each phase digest and merges units by full identity. Compare records bind the module identities.
+Compare skips prepare array records with zero launches and writes one array record per scale-case group.
 Phase pairs locate `units/<validated key>/attempts/<id>/{prepare,capture}/`. Attempt ids start at 1 without a gap.
 Compare reads every attempt and uses the newest finished pair for each unit and case set.
 Compare checks contiguous attempt IDs under `compare-<digest>` and skips its claimed attempt when it reads the history.

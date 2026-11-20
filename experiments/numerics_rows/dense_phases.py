@@ -560,6 +560,8 @@ class CompareChecks:
             raise Invalid("capture omitted the two synchronized quantizer calls")
 
     def array(self, array):
+        if array.get("record", {}).get("launches") == 0:
+            return
         if not self.arrays:
             raise Invalid("prepare has extra scale arrays")
         if self.arrays.popleft() != json_digest([array["scope"], array["array_index"]]):
@@ -704,7 +706,8 @@ def host_compare(args, receipt, phases, groups):
                 unit[field] = (unit[field] + previous[field] + current[field])[:1]
             unit["cuda_unattributed"] |= current["cuda_unattributed"]
             unit["graph_replay_equal"] = current["graph_replay_equal"] or unit["graph_replay_equal"]
-        arrays = iter(records(prepare_root, "arrays", prepared)) if "arrays" in prepared["streams"] else iter(())
+        arrays = records(prepare_root, "arrays", prepared) if "arrays" in prepared["streams"] else ()
+        arrays = (array for array in arrays if array.get("record", {}).get("launches") != 0)
         for _, batch in groupby(pairs, lambda pair: (pair[0]["scope"]["module"], pair[0]["scope"]["unit_key"], pair[0].get("array_index"))):
             case, observed = next(batch)
             unit = units[attempt_unit_key(case["scope"])]
